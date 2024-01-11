@@ -12,6 +12,7 @@ import re
 import sys
 import multiprocessing
 import argparse
+import atexit
 
 import pprint
 pp = pprint.PrettyPrinter(indent=2, width=120)
@@ -108,7 +109,36 @@ def needs_rebuild(files_in, files_out, file_kwargs):
 
 ################################################################################
 
+def await_array(input):
+  result = []
+
+  for f in input:
+
+    if type(f) is str:
+      result.append(f)
+      continue
+
+    f = f.get()
+    if type(f) is str:
+      result.append(f)
+      continue
+
+    return None
+
+  return result
+
+################################################################################
+
+
 def run_command(file_kwargs):
+
+  files_in  = file_kwargs["files_in"]
+  files_out = file_kwargs["files_out"]
+
+  files_in = await_array(files_in)
+
+  if not needs_rebuild(files_in, files_out, file_kwargs):
+    return 0
 
   if desc := file_kwargs.get("desc", None):
     print(expand(desc, file_kwargs))
@@ -175,34 +205,25 @@ def create_rule(do_map, do_reduce, kwargs):
         os.system(f"rm -f {file_out}")
       return []
 
+    results = []
+
     ########################################
     # Dispatch the command as a map
 
     if do_map:
-      results = []
       for i in range(len(files_in)):
         file_in  = files_in[i]
         file_out = files_out[i]
 
         file_kwargs = dict(command_kwargs)
-        #file_kwargs["command_args"] = command_kwargs
         file_kwargs["file_in"]      = file_in
         file_kwargs["file_out"]     = file_out
 
-        if needs_rebuild(file_in, file_out, file_kwargs):
-          if file_kwargs["serial"]:
-            run_command(file_kwargs)
-          else:
-            result = pool.apply_async(run_command, [file_kwargs])
-            results.append(result)
-
-      # Block until all tasks done
-      sum = 0
-      for result in results:
-        sum = sum + result.get()
-      if sum:
-        print("Command failed, aborting build")
-        sys.exit(-1)
+        if file_kwargs["serial"]:
+          run_command(file_kwargs)
+        else:
+          result = pool.apply_async(run_command, [file_kwargs])
+          results.append(result)
 
     ########################################
     # Dispatch the command as a reduce
@@ -212,9 +233,23 @@ def create_rule(do_map, do_reduce, kwargs):
       file_kwargs["command_args"]   = command_kwargs
       file_kwargs["file_in"]  = files_in[0]
       file_kwargs["file_out"] = files_out[0]
-      if needs_rebuild(files_in, files_out, file_kwargs):
-        run_command(file_kwargs)
+      result = pool.apply_async(run_command, [file_kwargs])
+      results.append(result)
+
+    ########################################
+    # Block until all tasks done
+
+    sum = 0
+    for result in results:
+      r = result.get()
+      sum = sum + result.get()
+    if sum:
+      print("Command failed, aborting build")
+      sys.exit(-1)
+
     return files_out
+
+  ########################################
 
   return rule
 
@@ -225,6 +260,17 @@ def map(**kwargs):
 
 def reduce(**kwargs):
   return create_rule(do_map = False, do_reduce = True, kwargs = kwargs)
+
+def finish():
+  pool.close()
+  pool.join()
+
+def blah():
+  pool.close()
+  pool.join()
+  print("blkasjdlkjasdjf")
+
+atexit.register(blah)
 
 ################################################################################
 

@@ -2,6 +2,7 @@
 
 import sys
 import glob
+import os
 
 sys.path.append("symlinks/tinybuild")
 import tinybuild
@@ -52,11 +53,49 @@ def compile_dir(dir):
   return objs
 
 
-blah = compile_cpp("src/main.cpp", "obj/main.o")
-print(blah)
-compile_cpp("src/test.cpp", "obj/test.o")
+"""
+from concurrent.futures import ProcessPoolExecutor
+import asyncio
+import time
 
-link_c_bin(["obj/test.o", "obj/main.o"], "bin/main")
+def dummy_processing_fun():
+    import time
+    print('start processing')
+    time.sleep(4)
+    print('finished processing')
+    return 'result'
+
+if __name__ == '__main__':
+    async def main():
+        pool = ProcessPoolExecutor(2)
+        while True:
+            future = pool.submit(dummy_processing_fun)
+            future = asyncio.wrap_future(future)
+            # print(next(future.__await__())) # would show same as print(future)
+            # print(await future) # would stall indefinitely because pool result isn't in
+            # time.sleep(5)
+            # print(next(future.__await__())) # would raise StopIteration
+            print(await future) # prints 'result'
+    asyncio.run(main())
+"""
+
+
+
+
+#blah = compile_cpp("src/main.cpp", "obj/main.o")
+
+#compile_cpp("src/test.cpp", "obj/test.o")
+
+#link_c_bin(["obj/test.o", "obj/main.o"], "bin/main")
+
+
+tinybuild.pool.apply_async(os.system, ["ls"])
+
+#print(tinybuild.pool)
+
+#tinybuild.finish()
+
+
 
 """
 objs = []
