@@ -13,6 +13,8 @@ import sys
 import multiprocessing
 import argparse
 import atexit
+import asyncio
+import inspect
 
 import pprint
 pp = pprint.PrettyPrinter(indent=2, width=120)
@@ -26,13 +28,20 @@ def join(names, divider = ' '):
   return divider.join(names)
 
 def expand(text, arg_dict):
+  global global_config
   if text is not None:
+    if global_config["debug"]: print(f"expand: {text}")
     while re.search("{[^}]+}", text) is not None:
       text = eval("f\"" + text + "\"", {}, arg_dict)
+      if global_config["debug"]: print(f"expand: {text}")
   return text
 
 def listify(x):
-  return x if type(x) is list else [x]
+  if not type(x) is list: return [x]
+  result = []
+  for y in x:
+    result.extend(listify(y))
+  return result
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
@@ -43,11 +52,13 @@ parser.add_argument('--debug',    default=False, action='store_true', help='Dump
 options = parser.parse_args()
 
 global_config = {
-  "verbose"    : options.verbose or options.debug,
+#  "verbose"    : options.verbose or options.debug,
+  "verbose"    : True,
   "clean"      : options.clean,
   "serial"     : options.serial,
   "dry_run"    : options.dry_run,
-  "debug"      : options.debug,
+  #"debug"      : options.debug,
+  "debug"      : True,
   "swap_ext"   : swap_ext,
   "join"       : join
 }
@@ -109,33 +120,73 @@ def needs_rebuild(files_in, files_out, file_kwargs):
 
 ################################################################################
 
-def await_array(input):
-  result = []
+proc_sem = asyncio.Semaphore(os.cpu_count())
 
-  for f in input:
+#----------------------------------------
 
-    if type(f) is str:
-      result.append(f)
-      continue
+async def await_deps(input_deps):
+  input_deps = listify(input_deps)
 
-    f = f.get()
-    if type(f) is str:
-      result.append(f)
-      continue
+  dep_filenames = []
+  for f in input_deps:
+    if inspect.isawaitable(f): f = await f
+    dep_filenames.append(f)
+  return listify(dep_filenames)
 
-    return None
+#----------------------------------------
 
-  return result
+async def run_command_async(file_kwargs):
+  files_in  = await await_deps(file_kwargs["files_in"])
+  files_out = file_kwargs["files_out"]
+
+  file_in = file_kwargs["file_in"]
+  if inspect.isawaitable(file_in):
+    file_in = await file_in
+    file_kwargs["file_in"] = file_in
+
+  file_kwargs["files_in"] = files_in
+
+  for f in files_in:
+    if not type(f) is str:
+      print(f"run_command_async got non-string {f}")
+      sys.exit(-1)
+
+  if not needs_rebuild(files_in, files_out, file_kwargs):
+    return files_out
+
+  if desc := file_kwargs.get("desc", None):
+    print(expand(desc, file_kwargs))
+
+  if file_kwargs["debug"]:
+    pp.pprint(file_kwargs)
+
+  command = expand(file_kwargs["command"], file_kwargs)
+  result = -1
+
+  if file_kwargs["verbose"]:
+    print(f"Command starting: \"{command}\"")
+
+  if file_kwargs.get("dry_run", False):
+    print(f"Dry run: \"{command}\"")
+    return files_out
+
+  async with proc_sem:
+    proc = await asyncio.create_subprocess_shell(command)
+    result = await proc.wait()
+
+  if result:
+    print(f"Command failed: \"{command}\"")
+  elif file_kwargs["verbose"]:
+    print(f"Command done: \"{command}\"")
+
+  return files_out
 
 ################################################################################
-
 
 def run_command(file_kwargs):
 
   files_in  = file_kwargs["files_in"]
   files_out = file_kwargs["files_out"]
-
-  files_in = await_array(files_in)
 
   if not needs_rebuild(files_in, files_out, file_kwargs):
     return 0
@@ -166,6 +217,85 @@ def run_command(file_kwargs):
 
 ################################################################################
 
+def create_rule_async(do_map, do_reduce, kwargs):
+  # Take a snapshot of the global config at the time the rule is defined
+  global_kwargs = dict(global_config)
+
+  # Take a snapshot of the config kwargs and patch in our rule kwargs
+  rule_kwargs = dict(global_kwargs)
+  rule_kwargs.update(kwargs)
+  #rule_kwargs["global_args"] = global_kwargs;
+
+  #----------
+
+  def rule(files_in, files_out, **kwargs):
+    files_in  = listify(files_in)
+    files_out = listify(files_out)
+
+    # Make sure our output directories exist
+    for file_out in files_out:
+      if dirname := os.path.dirname(file_out):
+        os.makedirs(dirname, exist_ok = True)
+
+    if do_map:
+      assert len(files_in) == len(files_out)
+
+    # Take a snapshot of the rule kwargs and patch in our command kwargs
+    command_kwargs = dict(rule_kwargs)
+    command_kwargs.update(kwargs)
+    #command_kwargs["rule_args"] = rule_kwargs
+    command_kwargs["files_in"]  = files_in
+    command_kwargs["files_out"] = files_out
+
+    ########################################
+    # Clean files if requested
+
+    if command_kwargs.get("clean", None):
+      for file_out in command_kwargs["files_out"]:
+        file_out = expand(file_out, command_kwargs)
+        if command_kwargs.get("verbose", False):
+          print(f"rm -f {file_out}")
+        os.system(f"rm -f {file_out}")
+      return []
+
+    ########################################
+    # Dispatch the command as a map
+
+    if do_map:
+      results = []
+      for i in range(len(files_in)):
+        file_in  = files_in[i]
+        file_out = files_out[i]
+
+        file_kwargs = dict(command_kwargs)
+        file_kwargs["file_in"]  = file_in
+        file_kwargs["file_out"] = file_out
+        #file_kwargs["rule_args"] = rule_kwargs
+        #file_kwargs["global_args"] = global_kwargs
+
+        if file_kwargs["serial"]:
+          run_command(file_kwargs)
+        else:
+          result = asyncio.create_task(run_command_async(file_kwargs))
+          results.append(result)
+      return results
+
+    ########################################
+    # Dispatch the command as a reduce
+
+    if do_reduce:
+      file_kwargs = dict(command_kwargs)
+      file_kwargs["file_in"]  = files_in[0]
+      file_kwargs["file_out"] = files_out[0]
+      result = asyncio.create_task(run_command_async(file_kwargs))
+      return [result]
+
+  #----------
+
+  return rule
+
+################################################################################
+
 def create_rule(do_map, do_reduce, kwargs):
   # Take a snapshot of the global config at the time the rule is defined
   global_kwargs = dict(global_config)
@@ -173,7 +303,7 @@ def create_rule(do_map, do_reduce, kwargs):
   # Take a snapshot of the config kwargs and patch in our rule kwargs
   rule_kwargs = dict(global_kwargs)
   rule_kwargs.update(kwargs)
-  rule_kwargs["global_args"] = global_kwargs;
+  rule_kwargs["global_args"] = global_kwargs
 
   def rule(files_in, files_out, **kwargs):
     files_in  = listify(files_in)
@@ -230,7 +360,6 @@ def create_rule(do_map, do_reduce, kwargs):
 
     if do_reduce:
       file_kwargs = dict(command_kwargs)
-      file_kwargs["command_args"]   = command_kwargs
       file_kwargs["file_in"]  = files_in[0]
       file_kwargs["file_out"] = files_out[0]
       result = pool.apply_async(run_command, [file_kwargs])
@@ -261,16 +390,23 @@ def map(**kwargs):
 def reduce(**kwargs):
   return create_rule(do_map = False, do_reduce = True, kwargs = kwargs)
 
+def map_async(**kwargs):
+  return create_rule_async(do_map = True, do_reduce = False, kwargs = kwargs)
+
+def reduce_async(**kwargs):
+  return create_rule_async(do_map = False, do_reduce = True, kwargs = kwargs)
+
 def finish():
   pool.close()
   pool.join()
 
+"""
 def blah():
   pool.close()
   pool.join()
-  print("blkasjdlkjasdjf")
 
 atexit.register(blah)
+"""
 
 ################################################################################
 
