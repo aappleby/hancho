@@ -6,7 +6,6 @@
 
 import os
 import re
-import sys
 import argparse
 import asyncio
 import subprocess
@@ -125,43 +124,42 @@ class ProtoArgs(object):
 ################################################################################
 
 def check_mtime(files_in, file_out):
-
   for file_in in files_in:
     if os.path.getmtime(file_in) > os.path.getmtime(file_out):
       if flags.verbose: print(f"Rebuilding {file_out} because it's older than dependency {file_in}")
       return True
-
   return False
 
 ################################################################################
 
 def needs_rebuild(args):
-
+  # Adding "args.force = True" makes the rule always rebuild.
   if args.force: return f"File {args.file_out} forced to rebuild"
 
   for file_out in args.files_out:
-
+    # Check for missing outputs.
     if not os.path.exists(file_out):
       return f"Rebuilding {file_out} because it's missing"
 
-    # Check user-specified deps
+    # Check user-specified deps.
     if check_mtime(args.deps, file_out):
       return f"Rebuilding {file_out} because a dependency has changed"
 
-    # Check depfile, if present
+    # Check depfile, if present.
     if os.path.exists(file_out + ".d"):
       deplines = open(file_out + ".d").read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
       if check_mtime(deplines, file_out):
         return f"Rebuilding {file_out} because a dependency in {args.file_out}.d has changed"
 
-    # Check input files
+    # Check input files.
     if check_mtime(args.files_in, file_out):
       return f"Rebuilding {file_out} because an input has changed"
 
-    # All checks passed, don't need to rebuild this output
+    # All checks passed, so we don't need to rebuild this output.
     if flags.verbose: print(f"File {args.file_out} is up to date")
 
+  # All deps were up-to-date, nothing to do.
   return ""
 
 ################################################################################
@@ -191,9 +189,9 @@ global_args = ProtoArgs(
 
 promise_map = {}
 
-################################################################################
-
 proc_sem = asyncio.Semaphore(1 if flags.serial else os.cpu_count())
+
+################################################################################
 
 async def run_command_async(args):
 
@@ -217,7 +215,9 @@ async def run_command_async(args):
       print(f"Dependency {dep} missing!")
       return -1
 
+  # Our dependencies are ready, we can grab a process semaphore slot now.
   async with proc_sem:
+
     # Print description
     print(args.expand(args.desc))
 
@@ -282,6 +282,8 @@ async def run_command_async(args):
     return returncode
 
 ################################################################################
+# Creates the actual rule eval coroutine, adds it to the global task queue, and
+# records its result promise in the global promise map.
 
 def queue_command(files_in, files_out, action_args):
   command_args = ProtoArgs(
@@ -297,10 +299,11 @@ def queue_command(files_in, files_out, action_args):
     promise_map[output] = promise
 
 ################################################################################
+# Our generic rule dispatcher has dispatch_as_map/rule_args bound by
+# create_rule(), and the rest are provided at rule invocation.
 
 def eval_rule(
-    do_map,
-    do_reduce,
+    dispatch_as_map,
     rule_args,
     files_in = [],
     files_out = [],
@@ -338,32 +341,35 @@ def eval_rule(
       os.makedirs(dirname, exist_ok = True)
 
   # Dispatch the command as a map
-  if do_map:
+  if dispatch_as_map:
     assert len(action_args.files_in) == len(action_args.files_out)
     for i in range(len(action_args.files_in)):
       queue_command([action_args.files_in[i]], [action_args.files_out[i]], action_args)
 
   # Or dispatch the command as a reduce
-  elif do_reduce:
+  else:
     queue_command(action_args.files_in, action_args.files_out, action_args)
 
 ################################################################################
-
-def create_rule(do_map, do_reduce, rule_dict):
-  rule_args = ProtoArgs(
-    prototype = global_args,
-    **rule_dict,
-    global_args = global_args,
-  )
-  return partial(eval_rule, do_map, do_reduce, rule_args)
-
-################################################################################
+# To create a new rule, we just bind kwargs to the generic eval_rule() above.
 
 def map(**kwargs):
-  return create_rule(do_map = True, do_reduce = False, rule_dict = kwargs)
+  rule_args = ProtoArgs(
+    prototype = global_args,
+    **kwargs,
+    global_args = global_args,
+  )
+  return partial(eval_rule, dispatch_as_map = True, rule_args = rule_args)
 
 def reduce(**kwargs):
-  return create_rule(do_map = False, do_reduce = True, rule_dict = kwargs)
+  rule_args = ProtoArgs(
+    prototype = global_args,
+    **kwargs,
+    global_args = global_args,
+  )
+  return partial(eval_rule, dispatch_as_map = False, rule_args = rule_args)
+
+################################################################################
 
 async def top(build_func):
   if flags.dotty: print("digraph {")
