@@ -9,7 +9,18 @@ import re
 import sys
 import argparse
 import asyncio
-import pprint
+import subprocess
+from functools import partial
+
+"""
+Special args
+  desc:      Description of the rule printed every time it runs
+  command:   Command to run for the rule
+  files_in:  Either a single filename or a list of filenames
+  files_out: Either a single filename or a list of filenames
+  deps:      Additional dependencies for the rule
+  force:     Makes the rule always run even if dependencies are up to date
+"""
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
@@ -17,105 +28,140 @@ parser.add_argument('--clean',    default=False, action='store_true', help='Dele
 parser.add_argument('--serial',   default=False, action='store_true', help='Do not parallelize commands')
 parser.add_argument('--dry_run',  default=False, action='store_true', help='Do not run commands')
 parser.add_argument('--debug',    default=False, action='store_true', help='Dump debugging information')
+parser.add_argument('--dotty',    default=False, action='store_true', help='Dump dependency graph as dotty')
 flags = parser.parse_args()
 
 ################################################################################
+# Minimal JSON-style pretty printer for ProtoArgs
 
-class ProtoDict(object):
-  def __init__(self, obj=None):
-    self.proto = obj
+def dump_dict(d, depth):
+  print("{")
+  for (k,v) in d.items():
+    if k == "prototype": continue
+    print("  " * (depth + 1), end="")
+    print(f"\"{k}\" : ", end="")
+    dump_val(v, depth + 1)
+    print(",")
+  print(("  " * depth) + "}", end="")
+
+def dump_list(l, depth):
+  print("[", end="")
+  for s in l:
+    dump_val(s, depth)
+    print(", ", end="");
+  print("]", end="")
+
+def dump_val(v, depth):
+  if   v is None:            print("null")
+  elif type(v) is ProtoArgs: dump_dict(v.__dict__, depth)
+  elif type(v) is str:       print(f"\"{v}\"", end="")
+  elif type(v) is dict:      dump_dict(v, depth + 1)
+  elif type(v) is list:      dump_list(v, depth + 1)
+  elif callable(v):          print(f"\"{v}\"", end="")
+  else:                      print(v, end="")
+
+################################################################################
+
+class ProtoArgs(object):
+  """
+  ProtoArgs is a Javascript-style prototypal-inheritance text-expansion tool.
+  It allows you to create objects with trees of attributes (and attribute
+  inheritance) and use those trees to repeatedly expand Python strings ala
+  f-strings until they no longer contain {}s.
+
+  ProtoArgs instances behave like Javascript objects. String fields can
+  contain Python expressions in curly braces, which will be evaluated when
+  the args are used to "expand" a template string.
+
+  ```
+    args1 = ProtoArgs()
+    args1.foo = "foo_option1"
+    args1.bar = "bar_option77"
+    args1.message = "Foo is {foo}, bar is {bar}, undefined is {undefined}."
+  ```
+
+  ProtoArgs can use prototype-style inheritance. This "args2" instance will
+  appear to contain all the fields of args1, but can override them.
+
+  ```
+    args2 = ProtoArgs(args1)
+    args2.bar = "bar_override"
+  ```
+
+  ProtoArgs can be used to expand a string containing {}s. Variable lookup
+  will happen using the arg object itself as a context, with lookup
+  proceeding up the prototype chain until a match is found (or "" if there
+  was no match).
+
+  Prints "Foo is foo_option1, bar is bar_override, undefined is ."
+  ```
+    print(args2.expand(args2.message))
+  ```
+  """
+
+  def __init__(self, **kwargs):
+    self.prototype = getattr(kwargs, "prototype", None)
+    self.__dict__.update(kwargs)
 
   def __getitem__(self, name):
     if name in self.__dict__: return self.__dict__[name]
-    if self.proto: return self.proto[name]
-    return None
+    if self.prototype: return self.prototype[name]
+    return ""
 
   def __getattr__(self, name):
-    if name in self.__dict__: return self.__dict__[name]
-    if self.proto: return self.proto[name]
-    return None
-
-  #=============================================================================
+    return self.__getitem__(name)
 
   def expand(self, text):
-    if self.verbose: print(f"expand: {text}")
+    if self.debug: print(f"expand: {text}")
     if text is not None:
       while re.search("{[^}]*}", text) is not None:
         text = eval("f\"" + text + "\"", None, self)
-        if self.verbose: print(f"expand: {text}")
+        if self.debug: print(f"expand: {text}")
     return text
 
-  #=============================================================================
+  def dump(self, depth = 0):
+    dump_dict(self.__dict__, depth)
 
-  def dump(self, depth=0):
-    for (k,v) in self.__dict__.items():
-      if k == "proto": continue
-      print(f"{'  ' * depth}{k} : ", end="")
-      if type(v) is ProtoDict:
-        print()
-        v.dump(depth + 1)
-      else:
-        print(v)
+################################################################################
 
-  #=============================================================================
+def check_mtime(files_in, file_out):
 
-  def needs_rebuild(self):
+  if not os.path.exists(file_out):
+    if flags.verbose: print(f"Rebuilding {file_out} because it's missing")
+    return True
 
-    for file_in in self.files_in:
-      file_in = self.expand(file_in)
-      if not os.path.exists(file_in):
-        print(f"Input file {file_in} missing, aborting build!")
-        # Is there a better way to handle this?
-        sys.exit(-1)
-
-    for dep in self.deps:
-      dep = self.expand(dep)
-      if not os.path.exists(dep):
-        print(f"Dependency {dep} missing, aborting build!")
-        # Is there a better way to handle this?
-        sys.exit(-1)
-
-    if self.force: return True
-
-    for file_out in self.files_out:
-      file_out = self.expand(file_out)
-
-      # Check user-specified deps
-      if self.check_mtime(self.deps, file_out): return True
-
-      # Check depfile, if present
-      if os.path.exists(file_out + ".d"):
-        deplines = open(file_out + ".d").read().split()
-        deplines = [d for d in deplines[1:] if d != '\\']
-        if self.check_mtime(deplines, file_out):
-          return True
-
-      # Check input files
-      if self.check_mtime(self.files_in, file_out): return True
-
-      # All checks passed, don't need to rebuild this output
-      if self.verbose: print(f"File {self.file_out} is up to date")
-
-    return False
-
-  #=============================================================================
-
-  def check_mtime(self, files_in, file_out):
-
-    file_out = self.expand(file_out)
-    if not os.path.exists(file_out):
-      if self.verbose: print(f"Rebuilding {file_out} because it's missing")
+  for file_in in files_in:
+    if os.path.getmtime(file_in) > os.path.getmtime(file_out):
+      if flags.verbose: print(f"Rebuilding {file_out} because it's older than dependency {file_in}")
       return True
 
-    for file_in in files_in:
-      file_in = self.expand(file_in)
-      if os.path.getmtime(file_in) > os.path.getmtime(file_out):
-        if self.verbose: print(f"Rebuilding {file_out} because it's older than dependency {file_in}")
+  return False
+
+################################################################################
+
+def needs_rebuild(args):
+
+  if args.force: return True
+
+  for file_out in args.files_out:
+
+    # Check user-specified deps
+    if check_mtime(args.deps, file_out): return True
+
+    # Check depfile, if present
+    if os.path.exists(file_out + ".d"):
+      deplines = open(file_out + ".d").read().split()
+      deplines = [d for d in deplines[1:] if d != '\\']
+      if check_mtime(deplines, file_out):
         return True
 
-    return False
+    # Check input files
+    if check_mtime(args.files_in, file_out): return True
 
+    # All checks passed, don't need to rebuild this output
+    if flags.verbose: print(f"File {args.file_out} is up to date")
 
+  return False
 
 ################################################################################
 
@@ -123,18 +169,8 @@ def swap_ext(name, new_ext):
   return os.path.splitext(name)[0] + new_ext
 
 def join(names, divider = ' '):
+  if names is None: return ""
   return divider.join(names)
-
-# Repeatedly expands 'text' as if it was a f-string until it contains no {}s.
-"""
-def expand(text, arg_dict, verbose = False):
-  if text is not None:
-    if verbose: print(f"expand: {text}")
-    while re.search("{[^}]*}", text) is not None:
-      text = eval("f\"" + text + "\"", {}, arg_dict)
-      if verbose: print(f"expand: {text}")
-  return text
-"""
 
 # Wraps scalars in a list, flattens nested lists into a single list.
 def listify(x):
@@ -146,125 +182,169 @@ def listify(x):
 
 ################################################################################
 
-global_args = ProtoDict()
-global_args.verbose  = flags.verbose or flags.debug
-global_args.clean    = flags.clean
-global_args.serial   = flags.serial
-global_args.dry_run  = flags.dry_run
-global_args.debug    = flags.debug
-global_args.swap_ext = swap_ext
-global_args.join     = join
-
-################################################################################
-
-proc_sem = asyncio.Semaphore(1 if flags.serial else os.cpu_count())
+global_args = ProtoArgs(
+  swap_ext = swap_ext,
+  join     = join,
+  desc     = "{files_in} -> {files_out}",
+)
 
 promise_map = {}
 
 ################################################################################
 
+proc_sem = asyncio.Semaphore(1 if flags.serial else os.cpu_count())
+
 async def run_command_async(args):
 
-  for f in args.files_in:
-    if promise := promise_map.get(f, None):
+  # Wait on all our input files to be updated
+  for file_in in args.files_in:
+    if promise := promise_map.get(file_in, None):
       dep_result = await promise
       if dep_result != 0: return dep_result
+    if file_in and not os.path.exists(file_in):
+      print(f"Input file {file_in} missing!")
+      return -1
 
-  for d in args.deps:
-    if promise := promise_map.get(d, None):
+  # Wait on all our dependencies to be updated
+  for dep in args.deps:
+    if promise := promise_map.get(dep, None):
       dep_result = await promise
       if dep_result != 0: return dep_result
+    if dep and not os.path.exists(dep):
+      print(f"Dependency {dep} missing!")
+      return -1
 
-  if not args.needs_rebuild(): return 0
-
-  if args.desc: print(args.expand(args.desc))
-
-  if args.debug: args.dump(1)
-
-  command = args.expand(args.command)
-
-  if args.dry_run:
-    print(f"Dry run: \"{command}\"")
-    return 0
-
-  if args.verbose: print(f"Command starting: \"{command}\"")
+  if not needs_rebuild(args): return 0
 
   async with proc_sem:
-    proc = await asyncio.create_subprocess_shell(
-      command,
-      stdout = asyncio.subprocess.PIPE,
-      stderr = asyncio.subprocess.PIPE)
-    (stdout_data, stderr_data) = await proc.communicate()
+    print(args.expand(args.desc))
 
-  if proc.returncode != 0:
-    print(f"Command failed: \"{command}\"")
-    stderr_text = stderr_data.decode()
-    if len(stderr_text): print(f"stderr =\n{stderr_text}")
-  elif args.verbose:
-    print(f"Command done: \"{command}\"")
-    stdout_text = stdout_data.decode()
-    if len(stdout_text): print(f"stdout =\n{stdout_text}")
+    if flags.debug:
+      args.dump()
+      print()
 
-  return proc.returncode
+    if flags.dry_run:
+      print(f"Dry run: \"{args.command}\"")
+      return 0
+
+    # We expand "command" as late as possible, just in case.
+    command = args.expand(args.command)
+
+    if not command:
+      print(f"Command missing for input {args.file_in}!")
+      return -1
+
+    if flags.verbose: print(f"Command starting: \"{command}\"")
+
+    # In serial mode we run the subprocess synchronously.
+    if flags.serial:
+      result = subprocess.run(
+        command,
+        shell = True,
+        stdout = subprocess.PIPE,
+        stderr = subprocess.PIPE)
+      stdout_data = result.stdout
+      stderr_data = result.stderr
+      returncode = result.returncode
+
+    # In parallel mode we dispatch the subprocess via asyncio and then await
+    # the result.
+    else:
+      proc = await asyncio.create_subprocess_shell(
+        command,
+        stdout = asyncio.subprocess.PIPE,
+        stderr = asyncio.subprocess.PIPE)
+      (stdout_data, stderr_data) = await proc.communicate()
+      returncode = proc.returncode
+
+    # Command done, print output and fulfill our promise with the return code.
+    if returncode != 0:
+      print(f"Command failed: \"{command}\"")
+      stderr_text = stderr_data.decode()
+      if len(stderr_text): print(f"stderr =\n{stderr_text}")
+    elif flags.verbose:
+      print(f"Command done: \"{command}\"")
+      stdout_text = stdout_data.decode()
+      if len(stdout_text): print(f"stdout =\n{stdout_text}")
+      print()
+
+    return returncode
+
+################################################################################
+
+def queue_command(files_in, files_out, action_args):
+  command_args = ProtoArgs(
+    prototype   = action_args,
+    file_in     = files_in[0],
+    file_out    = files_out[0],
+    action_args = action_args,
+  )
+
+  coroutine = run_command_async(command_args)
+  promise = asyncio.create_task(coroutine)
+  for output in files_out:
+    promise_map[output] = promise
+
+################################################################################
+
+def eval_rule(
+    do_map,
+    do_reduce,
+    rule_args,
+    files_in = [],
+    files_out = [],
+    deps = [],
+    **kwargs):
+
+  # Build our per-action args by expanding the templates in rule_args
+  action_args = ProtoArgs(
+    prototype = rule_args,
+    files_in  = [rule_args.expand(f) for f in listify(files_in)],
+    files_out = [rule_args.expand(f) for f in listify(files_out)],
+    deps      = [rule_args.expand(f) for f in listify(deps)],
+    **kwargs,
+    rule_args = rule_args,
+  )
+
+  # Print dotty graph if requested
+  if flags.dotty:
+    for file_in in action_args.files_in:
+      for file_out in action_args.files_out:
+        print(f"  \"{file_in}\" -> \"{file_out}\";")
+    return
+
+  # Clean files if requested
+  if flags.clean:
+    for file_out in action_args.files_out:
+      if flags.verbose:
+        print(f"rm -f {file_out}")
+      os.system(f"rm -f {file_out}")
+    return
+
+  # Make sure our output directories exist
+  for file_out in action_args.files_out:
+    if dirname := os.path.dirname(file_out):
+      os.makedirs(dirname, exist_ok = True)
+
+  # Dispatch the command as a map
+  if do_map:
+    assert len(action_args.files_in) == len(action_args.files_out)
+    for i in range(len(action_args.files_in)):
+      queue_command([action_args.files_in[i]], [action_args.files_out[i]], action_args)
+
+  # Or dispatch the command as a reduce
+  elif do_reduce:
+    queue_command(action_args.files_in, action_args.files_out, action_args)
 
 ################################################################################
 
 def create_rule(do_map, do_reduce, rule_dict):
-
-  rule_args = ProtoDict(global_args)
-  rule_args.__dict__.update(rule_dict)
-
-  def run_rule(_files_in, _files_out, **kwargs):
-
-    # Take a snapshot of the rule args and patch in our command args
-    action_args = ProtoDict(rule_args)
-    action_args.__dict__.update(kwargs)
-    action_args.files_in  = listify(_files_in)
-    action_args.files_out = listify(_files_out)
-    action_args.deps      = listify(action_args.deps)
-    action_args.rule      = rule_args
-
-    # Clean files if requested
-    if action_args.clean:
-      for file_out in action_args.files_out:
-        file_out = action_args.expand(file_out)
-        if action_args.verbose:
-          print(f"rm -f {file_out}")
-        os.system(f"rm -f {file_out}")
-      return
-
-    # Make sure our output directories exist
-    for file_out in action_args.files_out:
-      if dirname := os.path.dirname(file_out):
-        os.makedirs(dirname, exist_ok = True)
-
-    # Dispatch the command as a map
-    if do_map:
-      assert len(action_args.files_in) == len(action_args.files_out)
-      for i in range(len(action_args.files_in)):
-        command_args = ProtoDict(action_args)
-        command_args.file_in  = action_args.files_in[i]
-        command_args.file_out = action_args.files_out[i]
-        command_args.action   = action_args
-
-        promise = asyncio.create_task(run_command_async(command_args))
-        promise_map[file_out] = promise
-      return
-
-    # Or dispatch the command as a reduce
-    if do_reduce:
-      command_args = ProtoDict(action_args)
-      command_args.file_in  = action_args.files_in[0]
-      command_args.file_out = action_args.files_out[0]
-      command_args.action   = action_args
-      promise = asyncio.create_task(run_command_async(command_args))
-      for file_out in action_args.files_out:
-        promise_map[file_out] = promise
-      return
-
-  #----------
-
-  return run_rule
+  rule_args = ProtoArgs(
+    prototype = global_args,
+    **rule_dict,
+    global_args = global_args,
+  )
+  return partial(eval_rule, do_map, do_reduce, rule_args)
 
 ################################################################################
 
@@ -275,10 +355,12 @@ def reduce(**kwargs):
   return create_rule(do_map = False, do_reduce = True, rule_dict = kwargs)
 
 async def top(build_func):
+  if flags.dotty: print("digraph {")
   build_func()
   await asyncio.gather(*asyncio.all_tasks() - {asyncio.current_task()})
+  if flags.dotty: print("}")
 
-def build(build_func):
+def run(build_func):
   asyncio.run(top(build_func))
 
 ################################################################################
