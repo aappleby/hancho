@@ -6,7 +6,8 @@
     {
       "label": "Test build",
       "type": "shell",
-      "command": "rm -rf bin obj && python3 build.py",
+      "command": "rm -rf bin obj && ./build.py --verbose --debug",
+      //"command": "./build.py --verbose --debug",
       "problemMatcher": [],
       "group": {
         "kind": "build",
