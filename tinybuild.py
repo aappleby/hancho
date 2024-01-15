@@ -126,10 +126,6 @@ class ProtoArgs(object):
 
 def check_mtime(files_in, file_out):
 
-  if not os.path.exists(file_out):
-    if flags.verbose: print(f"Rebuilding {file_out} because it's missing")
-    return True
-
   for file_in in files_in:
     if os.path.getmtime(file_in) > os.path.getmtime(file_out):
       if flags.verbose: print(f"Rebuilding {file_out} because it's older than dependency {file_in}")
@@ -141,27 +137,32 @@ def check_mtime(files_in, file_out):
 
 def needs_rebuild(args):
 
-  if args.force: return True
+  if args.force: return f"File {args.file_out} forced to rebuild"
 
   for file_out in args.files_out:
 
+    if not os.path.exists(file_out):
+      return f"Rebuilding {file_out} because it's missing"
+
     # Check user-specified deps
-    if check_mtime(args.deps, file_out): return True
+    if check_mtime(args.deps, file_out):
+      return f"Rebuilding {file_out} because a dependency has changed"
 
     # Check depfile, if present
     if os.path.exists(file_out + ".d"):
       deplines = open(file_out + ".d").read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
       if check_mtime(deplines, file_out):
-        return True
+        return f"Rebuilding {file_out} because a dependency in {args.file_out}.d has changed"
 
     # Check input files
-    if check_mtime(args.files_in, file_out): return True
+    if check_mtime(args.files_in, file_out):
+      return f"Rebuilding {file_out} because an input has changed"
 
     # All checks passed, don't need to rebuild this output
     if flags.verbose: print(f"File {args.file_out} is up to date")
 
-  return False
+  return ""
 
 ################################################################################
 
@@ -202,6 +203,7 @@ async def run_command_async(args):
       dep_result = await promise
       if dep_result != 0: return dep_result
     if file_in and not os.path.exists(file_in):
+      print(args.expand(args.desc))
       print(f"Input file {file_in} missing!")
       return -1
 
@@ -211,29 +213,38 @@ async def run_command_async(args):
       dep_result = await promise
       if dep_result != 0: return dep_result
     if dep and not os.path.exists(dep):
+      print(args.expand(args.desc))
       print(f"Dependency {dep} missing!")
       return -1
 
-  if not needs_rebuild(args): return 0
-
   async with proc_sem:
+    # Print description
     print(args.expand(args.desc))
 
+    # Check if we need a rebuild
+    reason = needs_rebuild(args)
+    if not reason: return 0
+    if flags.verbose: print(reason)
+
+    # Print debug dump of args if needed
     if flags.debug:
       args.dump()
       print()
 
-    if flags.dry_run:
-      print(f"Dry run: \"{args.command}\"")
-      return 0
-
-    # We expand "command" as late as possible, just in case.
+    # Expand "command" as late as possible, just in case some previous action
+    # changed some arg somehow.
     command = args.expand(args.command)
-
     if not command:
       print(f"Command missing for input {args.file_in}!")
       return -1
 
+    # Early-exit if this is just a dry run
+    if flags.dry_run:
+      print(f"Dry run: \"{command}\"")
+      print()
+      return 0
+
+    # OK, we're ready to start the subprocess
     if flags.verbose: print(f"Command starting: \"{command}\"")
 
     # In serial mode we run the subprocess synchronously.
