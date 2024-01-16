@@ -6,9 +6,8 @@
     {
       "label": "Test build",
       "type": "shell",
-      //"command": "rm -rf bin obj && ./build.py --verbose --debug --serial",
-      "command": "rm -rf bin obj && ./build.py",
-      //"command": "./build.py --verbose --debug",
+      //"command": "rm -rf bin obj && ./build.py --verbose --debug --sdlkfjs",
+      "command": "./tinybuild.py -v",
       "problemMatcher": [],
       "group": {
         "kind": "build",

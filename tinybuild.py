@@ -1,34 +1,33 @@
-# Tinybuild is a minimal build system that focuses only on doing two things:
-# 1 - Only rebuild files that need rebuilding
-# 2 - Make generating build commands simple
+#!/usr/bin/python3
 
-# Build parameters can be specified globally, at rule scope, or at action scope.
+"""
+Tinybuild is a minimal build system that focuses only on doing two things:
+1 - Only rebuild files that need rebuilding
+2 - Make generating build commands simple
+
+Build parameters can be specified globally, at rule scope, or at action scope.
+
+>>> import tempfile
+>>> tmpdirname = tempfile.TemporaryDirectory()
+>>> print(tmpdirname)                                        #doctest: +ELLIPSIS
+<TemporaryDirectory '/tmp/tmp...'>
+>>> os.chdir(tmpdirname.name)
+>>> print(os.getcwd())                                       #doctest: +ELLIPSIS
+/tmp/tmp...
+
+>>> import tinybuild
+>>> print_hello = tinybuild.reduce(command = "echo hello world")
+>>> def my_task():
+...   #print_hello(input_files = ["foo.c"], output_files = ["foo.o"])
+...   pass
+>>> tinybuild.run(my_task)
+"""
 
 import os
 import re
-import argparse
 import asyncio
 import subprocess
 from functools import partial
-
-"""
-Special args
-  desc:      Description of the rule printed every time it runs
-  command:   Command to run for the rule
-  files_in:  Either a single filename or a list of filenames
-  files_out: Either a single filename or a list of filenames
-  deps:      Additional dependencies for the rule
-  force:     Makes the rule always run even if dependencies are up to date
-"""
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
-parser.add_argument('--clean',    default=False, action='store_true', help='Delete intermediate files')
-parser.add_argument('--serial',   default=False, action='store_true', help='Do not parallelize commands')
-parser.add_argument('--dry_run',  default=False, action='store_true', help='Do not run commands')
-parser.add_argument('--debug',    default=False, action='store_true', help='Dump debugging information')
-parser.add_argument('--dotty',    default=False, action='store_true', help='Dump dependency graph as dotty')
-flags = parser.parse_args()
 
 ################################################################################
 # Minimal JSON-style pretty printer for ProtoArgs
@@ -72,30 +71,25 @@ class ProtoArgs(object):
   contain Python expressions in curly braces, which will be evaluated when
   the args are used to "expand" a template string.
 
-  ```
-    args1 = ProtoArgs()
-    args1.foo = "foo_option1"
-    args1.bar = "bar_option77"
-    args1.message = "Foo is {foo}, bar is {bar}, undefined is {undefined}."
-  ```
+    >>> args1 = ProtoArgs()
+    >>> args1.foo = "foo_option1"
+    >>> args1.bar = "bar_option77"
+    >>> args1.message = "Foo is {foo}, bar is {bar}, undefined is {undefined}."
 
   ProtoArgs can use prototype-style inheritance. This "args2" instance will
   appear to contain all the fields of args1, but can override them.
 
-  ```
-    args2 = ProtoArgs(args1)
-    args2.bar = "bar_override"
-  ```
+    >>> args2 = ProtoArgs(prototype = args1)
+    >>> args2.bar = "bar_override"
 
   ProtoArgs can be used to expand a string containing {}s. Variable lookup
   will happen using the arg object itself as a context, with lookup
   proceeding up the prototype chain until a match is found (or "" if there
   was no match).
 
-  Prints "Foo is foo_option1, bar is bar_override, undefined is ."
-  ```
-    print(args2.expand(args2.message))
-  ```
+    >>> print(args2.expand(args2.message))
+    Foo is foo_option1, bar is bar_override, undefined is .
+
   """
 
   def __init__(self, **kwargs):
@@ -123,10 +117,10 @@ class ProtoArgs(object):
 
 ################################################################################
 
-def check_mtime(files_in, file_out):
+def check_mtime(args, files_in, file_out):
   for file_in in files_in:
     if os.path.getmtime(file_in) > os.path.getmtime(file_out):
-      if flags.verbose: print(f"Rebuilding {file_out} because it's older than dependency {file_in}")
+      if args.verbose: print(f"Rebuilding {file_out} because it's older than dependency {file_in}")
       return True
   return False
 
@@ -142,22 +136,22 @@ def needs_rebuild(args):
       return f"Rebuilding {file_out} because it's missing"
 
     # Check user-specified deps.
-    if check_mtime(args.deps, file_out):
+    if check_mtime(args, args.deps, file_out):
       return f"Rebuilding {file_out} because a dependency has changed"
 
     # Check depfile, if present.
     if os.path.exists(file_out + ".d"):
       deplines = open(file_out + ".d").read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
-      if check_mtime(deplines, file_out):
+      if check_mtime(args, deplines, file_out):
         return f"Rebuilding {file_out} because a dependency in {args.file_out}.d has changed"
 
     # Check input files.
-    if check_mtime(args.files_in, file_out):
+    if check_mtime(args, args.files_in, file_out):
       return f"Rebuilding {file_out} because an input has changed"
 
     # All checks passed, so we don't need to rebuild this output.
-    if flags.verbose: print(f"File {args.file_out} is up to date")
+    if args.verbose: print(f"File {args.file_out} is up to date")
 
   # All deps were up-to-date, nothing to do.
   return ""
@@ -165,14 +159,37 @@ def needs_rebuild(args):
 ################################################################################
 
 def swap_ext(name, new_ext):
+  """
+  Swaps the extension of a filename.
+
+    >>> filename = "src/foo.cpp"
+    >>> swap_ext(filename, ".hpp")
+    'src/foo.hpp'
+  """
   return os.path.splitext(name)[0] + new_ext
 
 def join(names, divider = ' '):
+  """
+  Sticks strings together with a space.
+
+     >>> filenames = ["foo.cpp", "bar.cpp", "baz.cpp"]
+     >>> join(filenames)
+     'foo.cpp bar.cpp baz.cpp'
+  """
   if names is None: return ""
   return divider.join(names)
 
-# Wraps scalars in a list, flattens nested lists into a single list.
 def listify(x):
+  """
+  Wraps scalars in a list, flattens nested lists into a single list.
+
+    >>> listify(None)
+    []
+    >>> listify("asdf")
+    ['asdf']
+    >>> listify([[[1]],[[[[2]]]],[[3],[4],[[5]]]])
+    [1, 2, 3, 4, 5]
+  """
   if x is None: return []
   if not type(x) is list: return [x]
   result = []
@@ -181,15 +198,37 @@ def listify(x):
 
 ################################################################################
 
+"""
+Special action args
+  desc:      Description of the rule printed every time it runs
+  command:   Command to run for the rule
+  files_in:  Either a single filename or a list of filenames
+  files_out: Either a single filename or a list of filenames
+  deps:      Additional dependencies for the rule
+  force:     Makes the rule always run even if dependencies are up to date
+"""
+
 global_args = ProtoArgs(
-  swap_ext = swap_ext,
-  join     = join,
-  desc     = "{files_in} -> {files_out}",
+  verbose   = False, # Print verbose build info
+  clean     = False, # Delete intermediate files
+  serial    = False, # Do not parallelize commands
+  dry_run   = False, # Do not run commands
+  debug     = False, # Dump debugging information
+  dotty     = False, # Dump dependency graph as dotty
+
+  desc      = "{files_in} -> {files_out}",
+  command   = "echo You forgot the command for {file_out}",
+  files_in  = [],
+  files_out = [],
+  deps      = [],
+  force     = False,
+  swap_ext  = swap_ext,
+  join      = join,
 )
 
 promise_map = {}
 
-proc_sem = asyncio.Semaphore(1 if flags.serial else os.cpu_count())
+proc_sem = asyncio.Semaphore(1 if global_args.serial else os.cpu_count())
 
 ################################################################################
 
@@ -224,10 +263,10 @@ async def run_command_async(args):
     # Check if we need a rebuild
     reason = needs_rebuild(args)
     if not reason: return 0
-    if flags.verbose: print(reason)
+    if args.verbose: print(reason)
 
     # Print debug dump of args if needed
-    if flags.debug:
+    if args.debug:
       args.dump()
       print()
 
@@ -239,16 +278,16 @@ async def run_command_async(args):
       return -1
 
     # Early-exit if this is just a dry run
-    if flags.dry_run:
+    if args.dry_run:
       print(f"Dry run: \"{command}\"")
       print()
       return 0
 
     # OK, we're ready to start the subprocess
-    if flags.verbose: print(f"Command starting: \"{command}\"")
+    if args.verbose: print(f"Command starting: \"{command}\"")
 
     # In serial mode we run the subprocess synchronously.
-    if flags.serial:
+    if args.serial:
       result = subprocess.run(
         command,
         shell = True,
@@ -273,7 +312,7 @@ async def run_command_async(args):
       print(f"Command failed: \"{command}\"")
       stderr_text = stderr_data.decode()
       if len(stderr_text): print(f"stderr =\n{stderr_text}")
-    elif flags.verbose:
+    elif args.verbose:
       print(f"Command done: \"{command}\"")
       stdout_text = stdout_data.decode()
       if len(stdout_text): print(f"stdout =\n{stdout_text}")
@@ -321,16 +360,16 @@ def eval_rule(
   )
 
   # Print dotty graph if requested
-  if flags.dotty:
+  if global_args.dotty:
     for file_in in action_args.files_in:
       for file_out in action_args.files_out:
         print(f"  \"{file_in}\" -> \"{file_out}\";")
     return
 
   # Clean files if requested
-  if flags.clean:
+  if global_args.clean:
     for file_out in action_args.files_out:
-      if flags.verbose:
+      if global_args.verbose:
         print(f"rm -f {file_out}")
       os.system(f"rm -f {file_out}")
     return
@@ -372,12 +411,17 @@ def reduce(**kwargs):
 ################################################################################
 
 async def top(build_func):
-  if flags.dotty: print("digraph {")
+  if global_args.dotty: print("digraph {")
   build_func()
   await asyncio.gather(*asyncio.all_tasks() - {asyncio.current_task()})
-  if flags.dotty: print("}")
+  if global_args.dotty: print("}")
 
 def run(build_func):
   asyncio.run(top(build_func))
 
 ################################################################################
+
+if __name__ == "__main__":
+    import doctest
+    #doctest.testmod()
+    doctest.testfile("TUTORIAL.md")
