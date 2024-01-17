@@ -1,16 +1,16 @@
->>> import tinybuild
+>>> import hancho
 
 >>> import tempfile
 >>> tmpdirname = tempfile.TemporaryDirectory()
 
->>> blah = tinybuild.ProtoArgs()
+>>> blah = hancho.ProtoArgs()
 >>> print(blah)                                              #doctest: +ELLIPSIS
-<tinybuild.ProtoArgs object at 0x...>
->>> tinybuild.global_args.print = print
->>> print_hello = tinybuild.reduce(command = "echo {print('hello world')}")
+<hancho.ProtoArgs object at 0x...>
+>>> hancho.global_args.print = print
+>>> print_hello = hancho.reduce(command = "echo {print('hello world')}")
 >>> def my_task():
 ...   print_hello(files_in = ["test/foo.c"], files_out = ["obj/foo.o"])
->>> tinybuild.global_args.verbose = True
+>>> hancho.global_args.verbose = True
 
-#>>> tinybuild.run(my_task)
+#>>> hancho.run(my_task)
 #['test/foo.c'] -> ['obj/foo.o']

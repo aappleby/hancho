@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 """
-Tinybuild is a minimal build system that focuses only on doing two things:
+Hancho is a minimal build system that focuses only on doing two things:
 1 - Only rebuild files that need rebuilding
 2 - Make generating build commands simple
 
@@ -15,12 +15,12 @@ Build parameters can be specified globally, at rule scope, or at action scope.
 >>> print(os.getcwd())                                       #doctest: +ELLIPSIS
 /tmp/tmp...
 
->>> import tinybuild
->>> print_hello = tinybuild.reduce(command = "echo hello world")
+>>> import hancho
+>>> print_hello = hancho.rule(command = "echo hello world")
 >>> def my_task():
 ...   #print_hello(input_files = ["foo.c"], output_files = ["foo.o"])
 ...   pass
->>> tinybuild.run(my_task)
+>>> hancho.run(my_task)
 """
 
 import os
@@ -51,7 +51,7 @@ def dump_list(l, depth):
 
 def dump_val(v, depth):
   if   v is None:            print("null")
-  elif type(v) is ProtoArgs: dump_dict(v.__dict__, depth)
+  elif type(v) is Config: dump_dict(v.__dict__, depth)
   elif type(v) is str:       print(f"\"{v}\"", end="")
   elif type(v) is dict:      dump_dict(v, depth + 1)
   elif type(v) is list:      dump_list(v, depth + 1)
@@ -60,7 +60,7 @@ def dump_val(v, depth):
 
 ################################################################################
 
-class ProtoArgs(object):
+class Config(object):
   """
   ProtoArgs is a Javascript-style prototypal-inheritance text-expansion tool.
   It allows you to create objects with trees of attributes (and attribute
@@ -94,7 +94,9 @@ class ProtoArgs(object):
 
   def __init__(self, **kwargs):
     self.prototype = getattr(kwargs, "prototype", None)
-    self.__dict__.update(kwargs)
+    for name in kwargs:
+        setattr(self, name, kwargs[name])
+    #self.__dict__.update(kwargs)
 
   def __getitem__(self, name):
     if name in self.__dict__: return self.__dict__[name]
@@ -208,7 +210,7 @@ Special action args
   force:     Makes the rule always run even if dependencies are up to date
 """
 
-global_args = ProtoArgs(
+config = Config(
   verbose   = False, # Print verbose build info
   clean     = False, # Delete intermediate files
   serial    = False, # Do not parallelize commands
@@ -228,7 +230,7 @@ global_args = ProtoArgs(
 
 promise_map = {}
 
-proc_sem = asyncio.Semaphore(1 if global_args.serial else os.cpu_count())
+proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
 
 ################################################################################
 
@@ -325,11 +327,11 @@ async def run_command_async(args):
 # records its result promise in the global promise map.
 
 def queue_command(files_in, files_out, action_args):
-  command_args = ProtoArgs(
+  command_args = Config(
     prototype   = action_args,
     file_in     = files_in[0],
     file_out    = files_out[0],
-    action_args = action_args,
+    action      = action_args,
   )
 
   coroutine = run_command_async(command_args)
@@ -342,7 +344,6 @@ def queue_command(files_in, files_out, action_args):
 # create_rule(), and the rest are provided at rule invocation.
 
 def eval_rule(
-    dispatch_as_map,
     rule_args,
     files_in = [],
     files_out = [],
@@ -350,26 +351,26 @@ def eval_rule(
     **kwargs):
 
   # Build our per-action args by expanding the templates in rule_args
-  action_args = ProtoArgs(
+  action_args = Config(
     prototype = rule_args,
     files_in  = [rule_args.expand(f) for f in listify(files_in)],
     files_out = [rule_args.expand(f) for f in listify(files_out)],
     deps      = [rule_args.expand(f) for f in listify(deps)],
     **kwargs,
-    rule_args = rule_args,
+    rule      = rule_args,
   )
 
   # Print dotty graph if requested
-  if global_args.dotty:
+  if config.dotty:
     for file_in in action_args.files_in:
       for file_out in action_args.files_out:
         print(f"  \"{file_in}\" -> \"{file_out}\";")
     return
 
   # Clean files if requested
-  if global_args.clean:
+  if config.clean:
     for file_out in action_args.files_out:
-      if global_args.verbose:
+      if config.verbose:
         print(f"rm -f {file_out}")
       os.system(f"rm -f {file_out}")
     return
@@ -379,42 +380,34 @@ def eval_rule(
     if dirname := os.path.dirname(file_out):
       os.makedirs(dirname, exist_ok = True)
 
-  # Dispatch the command as a map
-  if dispatch_as_map:
+  # Dispatch commands in parallel if needed
+  if rule_args.parallel:
     assert len(action_args.files_in) == len(action_args.files_out)
     for i in range(len(action_args.files_in)):
       queue_command([action_args.files_in[i]], [action_args.files_out[i]], action_args)
 
-  # Or dispatch the command as a reduce
+  # Or just dispatch one command
   else:
     queue_command(action_args.files_in, action_args.files_out, action_args)
 
 ################################################################################
 # To create a new rule, we just bind kwargs to the generic eval_rule() above.
 
-def map(**kwargs):
-  rule_args = ProtoArgs(
-    prototype = global_args,
+def rule(**kwargs):
+  rule_args = Config(
+    prototype = config,
     **kwargs,
-    global_args = global_args,
+    config = config,
   )
-  return partial(eval_rule, dispatch_as_map = True, rule_args = rule_args)
-
-def reduce(**kwargs):
-  rule_args = ProtoArgs(
-    prototype = global_args,
-    **kwargs,
-    global_args = global_args,
-  )
-  return partial(eval_rule, dispatch_as_map = False, rule_args = rule_args)
+  return partial(eval_rule, rule_args = rule_args)
 
 ################################################################################
 
 async def top(build_func):
-  if global_args.dotty: print("digraph {")
+  if config.dotty: print("digraph {")
   build_func()
   await asyncio.gather(*asyncio.all_tasks() - {asyncio.current_task()})
-  if global_args.dotty: print("}")
+  if config.dotty: print("}")
 
 def run(build_func):
   asyncio.run(top(build_func))

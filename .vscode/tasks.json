@@ -7,7 +7,7 @@
       "label": "Test build",
       "type": "shell",
       //"command": "rm -rf bin obj && ./build.py --verbose --debug --sdlkfjs",
-      "command": "./tinybuild.py -v",
+      "command": "./hancho.py -v",
       "problemMatcher": [],
       "group": {
         "kind": "build",

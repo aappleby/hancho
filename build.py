@@ -1,12 +1,11 @@
 #!/usr/bin/python3
 
 import argparse
-import tinybuild
-from tinybuild import global_args as globals
+import hancho
 
 parser = argparse.ArgumentParser(
   prog = "Test Build",
-  description = "Test Build for tinybuild",
+  description = "Test Build for Hancho",
   epilog = "Test Build Done!",
 )
 
@@ -18,40 +17,42 @@ parser.add_argument('--debug',    default=False, action='store_true', help='Dump
 parser.add_argument('--dotty',    default=False, action='store_true', help='Dump dependency graph as dotty')
 (flags, unrecognized) = parser.parse_known_args()
 
-globals.toolchain  = "x86_64-linux-gnu"
-globals.build_type = "-g -O0"
-globals.warnings   = "-Wunused-variable -Werror"
-globals.depfile    = "-MMD -MF {file_out}.d"
-globals.defines    = "-DCONFIG_DEBUG"
-globals.cpp_std    = "-std=gnu++2a"
-globals.includes   = "-I. -Isymlinks"
-globals.c_opts     = "{warnings} {depfile} {build_type}"
-globals.cpp_opts   = "{cpp_std} {c_opts}"
-globals.ld_opts    = "{build_type}"
+hancho.config.verbose    = flags.verbose
+hancho.config.clean      = flags.clean
+hancho.config.serial     = flags.serial
+hancho.config.dry_run    = flags.dry_run
+hancho.config.debug      = flags.debug
+hancho.config.dotty      = flags.dotty
 
-globals.verbose    = flags.verbose
-globals.clean      = flags.clean
-globals.serial     = flags.serial
-globals.dry_run    = flags.dry_run
-globals.debug      = flags.debug
-globals.dotty      = flags.dotty
+hancho.config.toolchain  = "x86_64-linux-gnu"
+hancho.config.build_type = "-g -O0"
+hancho.config.warnings   = "-Wunused-variable -Werror"
+hancho.config.depfile    = "-MMD -MF {file_out}.d"
+hancho.config.defines    = "-DCONFIG_DEBUG"
+hancho.config.cpp_std    = "-std=gnu++2a"
+hancho.config.includes   = "-I. -Isymlinks"
+hancho.config.c_opts     = "{warnings} {depfile} {build_type}"
+hancho.config.cpp_opts   = "{cpp_std} {c_opts}"
+hancho.config.ld_opts    = "{build_type}"
 
-compile_cpp = tinybuild.map(
-  desc    = "Compiling C++ {file_in} => {file_out}",
-  command = "{toolchain}-g++ {cpp_opts} {includes} {defines} -c {file_in} -o {file_out}",
+compile_cpp = hancho.rule(
+  desc     = "Compiling C++ {file_in} => {file_out}",
+  command  = "{toolchain}-g++ {cpp_opts} {includes} {defines} -c {file_in} -o {file_out}",
+  parallel = True
 )
 
-compile_c = tinybuild.map(
-  desc    = "Compiling C {file_in} => {file_out}",
-  command = "{toolchain}-gcc {c_opts} {includes} {defines} -c {file_in} -o {file_out}",
+compile_c = hancho.rule(
+  desc     = "Compiling C {file_in} => {file_out}",
+  command  = "{toolchain}-gcc {c_opts} {includes} {defines} -c {file_in} -o {file_out}",
+  parallel = True
 )
 
-link_c_lib = tinybuild.reduce(
+link_c_lib = hancho.rule(
   desc    = "Bundling {file_out}",
   command = "ar rcs {file_out} {join(files_in)}",
 )
 
-link_c_bin = tinybuild.reduce(
+link_c_bin = hancho.rule(
   desc    = "Linking {file_out}",
   command = "{toolchain}-g++ {ld_opts} {join(files_in)} {libraries} -o {file_out}",
 )
@@ -61,7 +62,7 @@ def build_main():
   compile_cpp(files_in = "src/main.cpp", files_out = "obj/main.o")
   link_c_bin(files_in = ["obj/main.o", "obj/test.o"], files_out = "bin/main")
 
-tinybuild.run(build_main)
+hancho.run(build_main)
 
 
 
@@ -69,7 +70,7 @@ tinybuild.run(build_main)
 
 """
 def obj_name(x):
-  return "obj/" + tinybuild.swap_ext(x, ".o")
+  return "obj/" + hancho.swap_ext(x, ".o")
 
 def compile_dir(dir):
   files = glob.glob(dir + "/*.cpp") + glob.glob(dir + "/*.c")
