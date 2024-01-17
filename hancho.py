@@ -30,7 +30,7 @@ import subprocess
 from functools import partial
 
 ################################################################################
-# Minimal JSON-style pretty printer for ProtoArgs
+# Minimal JSON-style pretty printer for Config
 
 def dump_dict(d, depth):
   print("{")
@@ -62,27 +62,27 @@ def dump_val(v, depth):
 
 class Config(object):
   """
-  ProtoArgs is a Javascript-style prototypal-inheritance text-expansion tool.
+  Config is a Javascript-style prototypal-inheritance text-expansion tool.
   It allows you to create objects with trees of attributes (and attribute
   inheritance) and use those trees to repeatedly expand Python strings ala
   f-strings until they no longer contain {}s.
 
-  ProtoArgs instances behave like Javascript objects. String fields can
+  Config instances behave like Javascript objects. String fields can
   contain Python expressions in curly braces, which will be evaluated when
   the args are used to "expand" a template string.
 
-    >>> args1 = ProtoArgs()
+    >>> args1 = Config()
     >>> args1.foo = "foo_option1"
     >>> args1.bar = "bar_option77"
     >>> args1.message = "Foo is {foo}, bar is {bar}, undefined is {undefined}."
 
-  ProtoArgs can use prototype-style inheritance. This "args2" instance will
+  Config can use prototype-style inheritance. This "args2" instance will
   appear to contain all the fields of args1, but can override them.
 
-    >>> args2 = ProtoArgs(prototype = args1)
+    >>> args2 = Config(prototype = args1)
     >>> args2.bar = "bar_override"
 
-  ProtoArgs can be used to expand a string containing {}s. Variable lookup
+  Config can be used to expand a string containing {}s. Variable lookup
   will happen using the arg object itself as a context, with lookup
   proceeding up the prototype chain until a match is found (or "" if there
   was no match).
