@@ -2,6 +2,10 @@
 
 import argparse
 import hancho
+import asyncio
+import atexit
+
+print("================================================================================")
 
 parser = argparse.ArgumentParser(
   prog = "Test Build",
@@ -24,46 +28,42 @@ hancho.config.dry_run    = flags.dry_run
 hancho.config.debug      = flags.debug
 hancho.config.dotty      = flags.dotty
 
-hancho.config.toolchain  = "x86_64-linux-gnu"
-hancho.config.build_type = "-g -O0"
-hancho.config.warnings   = "-Wunused-variable -Werror"
-hancho.config.depfile    = "-MMD -MF {file_out}.d"
-hancho.config.defines    = "-DCONFIG_DEBUG"
-hancho.config.cpp_std    = "-std=gnu++2a"
-hancho.config.includes   = "-I. -Isymlinks"
-hancho.config.c_opts     = "{warnings} {depfile} {build_type}"
-hancho.config.cpp_opts   = "{cpp_std} {c_opts}"
-hancho.config.ld_opts    = "{build_type}"
+#hancho.config.toolchain  = "x86_64-linux-gnu"
+#hancho.config.build_opt  = "-g -O0"
+#hancho.config.warnings   = "-Wunused-variable -Werror"
+#hancho.config.depfile    = "-MMD -MF {file_out}.d"
+#hancho.config.defines    = "-DCONFIG_DEBUG"
+#hancho.config.cpp_std    = "-std=gnu++2a"
+#hancho.config.includes   = "-I. -Isymlinks"
+#hancho.config.c_opts     = "{warnings} {depfile} {build_opt}"
+#hancho.config.cpp_opts   = "{cpp_std} {c_opts}"
+#hancho.config.ld_opts    = "{build_opt}"
 
 compile_cpp = hancho.rule(
-  desc     = "Compiling C++ {file_in} => {file_out}",
+  #desccription = "Compiling C++ {file_in} => {file_out}",
   command  = "{toolchain}-g++ {cpp_opts} {includes} {defines} -c {file_in} -o {file_out}",
   parallel = True
 )
 
 compile_c = hancho.rule(
-  desc     = "Compiling C {file_in} => {file_out}",
+  #desccription = "Compiling C {file_in} => {file_out}",
   command  = "{toolchain}-gcc {c_opts} {includes} {defines} -c {file_in} -o {file_out}",
   parallel = True
 )
 
 link_c_lib = hancho.rule(
-  desc    = "Bundling {file_out}",
+  #desccription = "Bundling {file_out}",
   command = "ar rcs {file_out} {join(files_in)}",
 )
 
 link_c_bin = hancho.rule(
-  desc    = "Linking {file_out}",
+  #desccription = "Linking {file_out}",
   command = "{toolchain}-g++ {ld_opts} {join(files_in)} {libraries} -o {file_out}",
 )
 
-def build_main():
-  compile_cpp(files_in = "src/test.cpp", files_out = "obj/test.o")
-  compile_cpp(files_in = "src/main.cpp", files_out = "obj/main.o")
-  link_c_bin(files_in = ["obj/main.o", "obj/test.o"], files_out = "bin/main")
-
-hancho.run(build_main)
-
+compile_cpp(files_in = "src/test.cpp", files_out = "obj/test.o")
+compile_cpp(files_in = "src/main.cpp", files_out = "obj/main.o")
+link_c_bin(files_in = ["obj/main.o", "obj/test.o"], files_out = "bin/main")
 
 
 
