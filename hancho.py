@@ -420,7 +420,8 @@ class Config(object):
       # Print description
 
       if self.verbose or self.debug:
-        print(f"[{node_visit}/{node_total}] {command}")
+        print(f"[{node_visit}/{node_total}] {self.description}")
+        print(f"{command}")
         print()
       else:
         print("\r", end="")
