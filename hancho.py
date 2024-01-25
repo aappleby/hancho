@@ -27,7 +27,6 @@ import asyncio, os, re, sys, subprocess
 
 hancho_loop  = asyncio.new_event_loop()
 hancho_queue = []
-hancho_abort = False
 
 ################################################################################
 # Minimal JSON-style pretty printer for Config
@@ -171,6 +170,9 @@ class Config(object):
 
   def __repr__(self):
     return repr_val(self, 0)
+
+  def __call__(self, **kwargs):
+    return Config(prototype = self, **kwargs)
 
   #----------------------------------------
 
@@ -344,21 +346,11 @@ class Config(object):
 
       return returncode
 
-  #----------------------------------------
-
-  def __call__(self, **kwargs):
-
-    call_args = Config(
-      prototype = self,
-      name = "call_args",
-      **kwargs)
-
-    queue(call_args)
-
 ################################################################################
 
 def queue(command):
   global promise_map
+  global hancho_queue
 
   # Expand all filenames
   command.files_in  = [expand(file, command, command.debug) for file in listify(command.files_in)]
@@ -368,9 +360,7 @@ def queue(command):
   # Check for duplicate outputs
   for file_out in command.files_out:
     if file_out in promise_map:
-      global hancho_abort
       print(f"####### Multiple rules build {file_out}!")
-      hancho_abort = True
       sys.exit()
 
   # Print dotty graph if requested
@@ -382,7 +372,7 @@ def queue(command):
 
   # OK, we can queue up the rule now.
   hancho_queue.append(command)
-
+  return command.files_out
 
 ################################################################################
 
@@ -411,6 +401,7 @@ config = Config(
   file_out    = "{files_out[0] if len(files_out) else ''}",
   deps        = [],
   force       = False,
+  out_dir     = "build",
 
   join     = join,
   len      = len,
@@ -428,7 +419,6 @@ proc_sem = None
 ################################################################################
 
 def reset():
-  global hancho_abort
   global hancho_queue
   global node_built
   global node_total
@@ -436,7 +426,6 @@ def reset():
   global proc_sem
   global promise_map
 
-  hancho_abort = False
   hancho_queue.clear()
   node_built = 0
   node_total = 0
@@ -447,14 +436,13 @@ def reset():
 ################################################################################
 
 def build():
-  global hancho_abort
   global hancho_queue
   global node_built
   global node_total
   global proc_sem
   global promise_map
 
-  if hancho_abort or not hancho_queue:
+  if not hancho_queue:
     reset()
     return False
 
