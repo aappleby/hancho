@@ -24,6 +24,7 @@ Build parameters can be specified globally, at rule scope, or at action scope.
 """
 
 import asyncio, os, re, sys, subprocess
+from os import path
 
 hancho_loop  = asyncio.new_event_loop()
 hancho_queue = []
@@ -43,7 +44,7 @@ def repr_dict(d, depth):
   return result
 
 def repr_list(l, depth):
-  return str([repr_val(v, depth) for v in l])
+  return "[" + ", ".join([repr_val(v, depth) for v in l]) + "]"
 
 def repr_val(v, depth):
   if v is None:           return "null"
@@ -105,7 +106,7 @@ def expand(text, context, debug = False):
     if debug: print(f"expand \"{text}\"")
     try:
       text = eval("f\"" + text + "\"", None, context)
-    except:
+    except AttributeError as e:
       break
 
   if debug: print(f"result \"{text}\"")
@@ -117,6 +118,7 @@ def resolve(self, name):
   try:
     return object.__getattribute__(self, name)
   except AttributeError:
+    #print(f"got attribute error for {name}")
     if proto := object.__getattribute__(self, "prototype"):
       return resolve(proto, name)
     else:
@@ -163,15 +165,22 @@ class Config(object):
     self.prototype = prototype
 
   def __getitem__(self, name):
+    #print(f"??? __getitem__ {name} ???")
     return resolve(self, name)
 
   def __getattribute__(self, name):
+    #print(f"??? __getattribute__ {name} ???")
     return resolve(self, name)
 
   def __repr__(self):
     return repr_val(self, 0)
 
   def __call__(self, **kwargs):
+    return queue(self.extend(**kwargs))
+
+  #----------------------------------------
+
+  def extend(self, **kwargs):
     return Config(prototype = self, **kwargs)
 
   #----------------------------------------
@@ -186,29 +195,32 @@ class Config(object):
 
   def needs_rebuild(self):
 
-    for file_out in self.files_out:
+    if not self.all_files_out:
+      return "Always rebuild a target with no outputs?"
+
+    for file in self.all_files_out:
       # Check for missing outputs.
-      if not os.path.exists(file_out):
-        return f"Rebuilding {file_out} because it's missing"
+      if not os.path.exists(file):
+        return f"Rebuilding {file} because it's missing"
 
       # Check user-specified deps.
-      if self.check_mtime(self.deps, file_out):
-        return f"Rebuilding {file_out} because a dependency has changed"
+      if self.check_mtime(self.deps, file):
+        return f"Rebuilding {file} because a dependency has changed"
 
       # Check depfile, if present.
-      if os.path.exists(file_out + ".d"):
-        deplines = open(file_out + ".d").read().split()
+      if os.path.exists(file + ".d"):
+        deplines = open(file + ".d").read().split()
         deplines = [d for d in deplines[1:] if d != '\\']
-        if self.check_mtime(deplines, file_out):
-          return f"Rebuilding {file_out} because a dependency in {file_out}.d has changed"
+        if self.check_mtime(deplines, file):
+          return f"Rebuilding {file} because a dependency in {file}.d has changed"
 
       # Check input files.
-      if self.check_mtime(self.files_in, file_out):
-        return f"Rebuilding {file_out} because an input has changed"
+      if self.check_mtime(self.all_files_in, file):
+        return f"Rebuilding {file} because an input has changed"
 
       # All checks passed, so we don't need to rebuild this output.
       if self.debug:
-        print(f"File {self.files_out} is up to date")
+        print(f"File {self.all_files_out} is up to date")
 
     # All deps were up-to-date, nothing to do.
     sys.stdout.flush()
@@ -222,10 +234,11 @@ class Config(object):
       if promise := promise_map.get(file, None):
         dep_result = await promise
         if dep_result != 0: return dep_result
-      if file and not os.path.exists(file):
-        print(f"Dependency {file} missing!")
-        sys.stdout.flush()
-        return -1
+      if not self.dryrun:
+        if file and not os.path.exists(file):
+          print(f"Dependency {file} missing!")
+          sys.stdout.flush()
+          return -1
     pass
 
   #----------------------------------------
@@ -233,7 +246,7 @@ class Config(object):
   async def run_command_async(self):
 
     # Wait on all our dependencies to be updated
-    await self.wait_for_deps(self.files_in)
+    await self.wait_for_deps(self.all_files_in)
     await self.wait_for_deps(self.deps)
 
     # Our dependencies are ready, we can grab a process semaphore slot now.
@@ -252,15 +265,11 @@ class Config(object):
 
       if self.force:
         # Adding "args.force = True" makes the rule always rebuild.
-        reason = f"Files {self.files_out} forced to rebuild"
+        reason = f"Files {self.all_files_out} forced to rebuild"
       else:
         reason = self.needs_rebuild()
 
       if not reason: return 0
-
-      # Add a gap after the last task if verbose
-      if self.verbose or self.debug:
-        print()
 
       # Print description
       description = expand(self.description, self)
@@ -292,10 +301,10 @@ class Config(object):
       sys.stdout.flush()
 
       # Early-exit if this is just a dry run
-      if self.dry_run: return 0
+      if self.dryrun: return 0
 
       # Make sure our output directories exist
-      for file_out in self.files_out:
+      for file_out in self.all_files_out:
         if dirname := os.path.dirname(file_out):
           os.makedirs(dirname, exist_ok = True)
 
@@ -327,14 +336,14 @@ class Config(object):
       # If the command failed, print stdout/stderr and return the error code.
       if returncode != 0:
         if not (self.verbose or self.debug): print()
-        print(f"\x1B[31mFAILED\x1B[0m: {self.files_out}")
+        print(f"\x1B[31mFAILED\x1B[0m: {self.all_files_out}")
         print(command)
         print(stderr, end="")
         print(stdout, end="")
         sys.stdout.flush()
         return returncode
 
-      if self.verbose or not self.quiet:
+      if not self.quiet:
         if stdout or stderr:
           if not self.verbose: print()
           print(stderr, end="")
@@ -348,31 +357,80 @@ class Config(object):
 
 ################################################################################
 
+def expand_files(files, command, prefix = None):
+  result = []
+  for file in listify(files):
+    if prefix:
+      file = path.join(prefix, file)
+    file = expand(file, command, command.debug)
+    result.append(file)
+  return result
+
+################################################################################
+
 def queue(command):
   global promise_map
   global hancho_queue
 
   # Expand all filenames
-  command.files_in  = [expand(file, command, command.debug) for file in listify(command.files_in)]
-  command.files_out = [expand(file, command, command.debug) for file in listify(command.files_out)]
-  command.deps      = [expand(file, command, command.debug) for file in listify(command.deps)]
+  file_in   = getattr(command, "file_in",   None)
+  files_in  = getattr(command, "files_in",  None)
+
+  if files_in != None and file_in != None:
+    print("can only have one of file_in and files_in")
+    sys.exit(-1)
+
+  all_files_in  = []
+
+  if files_in:
+    files_in = [expand(f, command) for f in listify(files_in)]
+    command.files_in = files_in
+    all_files_in = files_in
+  if file_in:
+    file_in = expand(file_in, command)
+    command.file_in = file_in
+    all_files_in = [file_in]
+
+  command.all_files_in = all_files_in
+
+  file_out  = getattr(command, "file_out",  None)
+  files_out = getattr(command, "files_out", None)
+
+  if files_out != None and file_out != None:
+    print("can only have one of file_out and files_out")
+    sys.exit(-1)
+
+  all_files_out = []
+
+  if files_out:
+    files_out = [expand(f, command) for f in listify(files_out)]
+    command.files_out = files_out
+    all_files_out = files_out
+  if file_out:
+    file_out = expand(file_out, command)
+    command.file_out = file_out
+    all_files_out = [file_out]
+
+  command.all_files_out = all_files_out
 
   # Check for duplicate outputs
-  for file_out in command.files_out:
-    if file_out in promise_map:
-      print(f"####### Multiple rules build {file_out}!")
+  for file in all_files_out:
+    if file in promise_map:
+      print(f"####### Multiple rules build {file}!")
       sys.exit()
-
-  # Print dotty graph if requested
-  if command.dotty:
-    for file_in in command.files_in:
-      for file_out in command.files_out:
-        print(f"  \"{file_in}\" -> \"{file_out}\";")
-    return
 
   # OK, we can queue up the rule now.
   hancho_queue.append(command)
-  return command.files_out
+
+  if files_out:
+    return files_out
+  else:
+    return file_out
+
+################################################################################
+
+def queue2(command, **kwargs):
+  return queue(command.extend(**kwargs))
 
 ################################################################################
 
@@ -391,14 +449,12 @@ config = Config(
   verbose   = False, # Print verbose build info
   quiet     = False, # Don't print command results
   serial    = False, # Do not parallelize commands
-  dry_run   = False, # Do not run commands
+  dryrun    = False, # Do not run commands
   debug     = False, # Print debugging information
   dotty     = False, # Print dependency graph as dotty instead of building
 
-  description = "{files_in} -> {files_out}",
-  command     = "echo You forgot the command for {file_out}",
-  file_in     = "{files_in[0]}",
-  file_out    = "{files_out[0] if len(files_out) else ''}",
+  description = "{all_files_in} -> {all_files_out}",
+  command     = "echo You forgot the command for {all_files_out}",
   deps        = [],
   force       = False,
   out_dir     = "build",
@@ -451,7 +507,7 @@ def build():
     coroutine = command.run_command_async()
     promise = hancho_loop.create_task(coroutine)
     hancho_tasks.append(promise)
-    for output in command.files_out:
+    for output in command.all_files_out:
       promise_map[output] = promise
 
   if proc_sem is None:

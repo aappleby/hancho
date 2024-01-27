@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
 parser.add_argument('--serial',   default=False, action='store_true', help='Do not parallelize commands')
-parser.add_argument('--dry_run',  default=False, action='store_true', help='Do not run commands')
+parser.add_argument('--dryrun',   default=False, action='store_true', help='Do not run commands')
 parser.add_argument('--debug',    default=False, action='store_true', help='Dump debugging information')
 parser.add_argument('--dotty',    default=False, action='store_true', help='Dump dependency graph as dotty')
 (flags, unrecognized) = parser.parse_known_args()
@@ -24,7 +24,7 @@ base_config = hancho.Config(
   prototype = hancho.config,
   verbose   = flags.verbose,
   serial    = flags.serial,
-  dry_run   = flags.dry_run,
+  dryrun    = flags.dryrun,
   debug     = flags.debug,
   dotty     = flags.dotty,
   toolchain = "x86_64-linux-gnu",
