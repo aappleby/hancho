@@ -24,10 +24,14 @@ Build parameters can be specified globally, at rule scope, or at action scope.
 """
 
 import asyncio, os, re, sys, subprocess
+import doctest
 from os import path
 
 hancho_loop  = asyncio.new_event_loop()
 hancho_queue = []
+
+hancho_root = os.getcwd()
+print(f"hancho_root {hancho_root}")
 
 ################################################################################
 # Minimal JSON-style pretty printer for Config
@@ -44,13 +48,24 @@ def repr_dict(d, depth):
   return result
 
 def repr_list(l, depth):
-  return "[" + ", ".join([repr_val(v, depth) for v in l]) + "]"
+  if len(l) == 0:
+    result = "[]"
+  elif len(l) == 1:
+    result = "[" + repr_val(l[0], depth + 1) + "]"
+  else:
+    result = "[\n"
+    for v in l:
+      result += "  " * (depth + 1)
+      result += repr_val(v, depth + 1)
+      result += ",\n"
+    result += "  " * depth + "]"
+  return result
 
 def repr_val(v, depth):
   if v is None:           return "null"
   elif type(v) is str:    return '"' + v + '"'
-  elif type(v) is dict:   return repr_dict(v, depth + 1)
-  elif type(v) is list:   return repr_list(v, depth + 1)
+  elif type(v) is dict:   return repr_dict(v, depth)
+  elif type(v) is list:   return repr_list(v, depth)
   elif type(v) is Config: return repr_dict(v.__dict__, depth)
   else:                   return str(v)
 
@@ -64,7 +79,7 @@ def swap_ext(name, new_ext):
     >>> swap_ext(filename, ".hpp")
     'src/foo.hpp'
   """
-  return os.path.splitext(name)[0] + new_ext
+  return path.splitext(name)[0] + new_ext
 
 def join(names, divider = ' '):
   """
@@ -98,6 +113,33 @@ def listify(x):
 
 template_regex = re.compile("{[^}]*}")
 
+def expand_once(template, context):
+  result = ""
+  while s := template_regex.search(template):
+    result += template[0:s.start()]
+    exp = template[s.start():s.end()]
+    try:    result += str(eval(exp[1:-1], None, context))
+    except: result += exp
+    template = template[s.end():]
+  result += template
+  return result
+
+def expand(template, context, debug = False):
+  if type(template) is list:
+    return [expand(t, context, debug) for t in template]
+
+  reps = 0
+  while reps < 100:
+    if debug: print(f"expand \"{template}\"")
+    new_template = expand_once(template, context)
+    if template == new_template: break
+    template = new_template
+    reps = reps + 1
+  if reps == 100:
+    print(f"Expanding '{template[0:20]}...' failed to terminate")
+  return template
+
+"""
 def expand(text, context, debug = False):
   if type(text) is list:
     return [expand(t, context, debug) for t in text]
@@ -111,18 +153,36 @@ def expand(text, context, debug = False):
 
   if debug: print(f"result \"{text}\"")
   return text
+"""
 
 ################################################################################
 
-def resolve(self, name):
+def resolve(self, name, default = None):
   try:
     return object.__getattribute__(self, name)
   except AttributeError:
     #print(f"got attribute error for {name}")
-    if proto := object.__getattribute__(self, "prototype"):
-      return resolve(proto, name)
+    if proto := object.__getattribute__(self, "base"):
+      return resolve(proto, name, default)
+    elif default != None:
+      return default
     else:
       raise AttributeError(f"Could not resolve attribute {name} for {self}")
+
+################################################################################
+
+dir_stack = ["."]
+
+class cwd(object):
+  def __init__(self, d):
+    self.cwd = path.join(dir_stack[-1], d)
+
+  def __enter__(self):
+    dir_stack.append(self.cwd)
+    return self.cwd
+
+  def __exit__(self, *args):
+    dir_stack.pop()
 
 ################################################################################
 
@@ -160,67 +220,85 @@ class Config(object):
 
   #----------------------------------------
 
-  def __init__(self, *, prototype, **kwargs):
+  def __init__(self, **kwargs):
     for name in kwargs: setattr(self, name, kwargs[name])
-    self.prototype = prototype
 
   def __getitem__(self, name):
     #print(f"??? __getitem__ {name} ???")
-    return resolve(self, name)
+    result = resolve(self, name)
+    return result
 
   def __getattribute__(self, name):
     #print(f"??? __getattribute__ {name} ???")
-    return resolve(self, name)
+    result = resolve(self, name)
+    return result
 
   def __repr__(self):
     return repr_val(self, 0)
 
   def __call__(self, **kwargs):
-    return queue(self.extend(**kwargs))
+    new_self = self.extend(**kwargs)
+    print(new_self)
+    return queue(new_self)
 
   #----------------------------------------
 
   def extend(self, **kwargs):
-    return Config(prototype = self, **kwargs)
+    return Config(base = self, **kwargs)
+
+  def resolve(self, name, default = None):
+    return resolve(self, name, default)
+
+
+  def get(self, attrib, default = ""):
+    result = resolve(self, attrib, default)
+    result = expand(result, self)
+    return result
 
   #----------------------------------------
 
-  def check_mtime(self, files_in, file_out):
+  def check_mtime(self, files_in, files_out):
     for file_in in files_in:
-      if os.path.getmtime(file_in) > os.path.getmtime(file_out):
-        return True
+      mtime_in = path.getmtime(file_in)
+      for file_out in files_out:
+        mtime_out = path.getmtime(file_out)
+        if mtime_in > mtime_out: return True
     return False
 
   #----------------------------------------
 
   def needs_rebuild(self):
+    files_in  = self.abs_files_in
+    files_out = self.abs_files_out
 
-    if not self.all_files_out:
+    if not files_out:
       return "Always rebuild a target with no outputs?"
 
-    for file in self.all_files_out:
-      # Check for missing outputs.
-      if not os.path.exists(file):
-        return f"Rebuilding {file} because it's missing"
+    # Check for missing outputs.
+    for file_out in files_out:
+      if not path.exists(file_out):
+        return f"Rebuilding {files_out} because some are missing"
 
-      # Check user-specified deps.
-      if self.check_mtime(self.deps, file):
-        return f"Rebuilding {file} because a dependency has changed"
+    # Check user-specified deps.
+    if self.check_mtime(self.deps, files_out):
+      return f"Rebuilding {files_out} because a manual dependency has changed"
 
-      # Check depfile, if present.
-      if os.path.exists(file + ".d"):
-        deplines = open(file + ".d").read().split()
+    # Check depfile, if present.
+    if self.depfile:
+      depfile_name = expand(self.depfile, self)
+      if path.exists(depfile_name):
+        deplines = open(depfile_name).read().split()
         deplines = [d for d in deplines[1:] if d != '\\']
-        if self.check_mtime(deplines, file):
-          return f"Rebuilding {file} because a dependency in {file}.d has changed"
+        if self.check_mtime(deplines, files_out):
+          return f"Rebuilding {files_out} because a dependency in {depfile_name} has changed"
 
-      # Check input files.
-      if self.check_mtime(self.all_files_in, file):
-        return f"Rebuilding {file} because an input has changed"
+    # Check input files.
+    if self.check_mtime(files_in, files_out):
+      return f"Rebuilding {files_out} because an input has changed"
 
-      # All checks passed, so we don't need to rebuild this output.
-      if self.debug:
-        print(f"File {self.all_files_out} is up to date")
+    # All checks passed, so we don't need to rebuild this output.
+    if self.debug:
+      print(f"Files {files_out} are up to date")
 
     # All deps were up-to-date, nothing to do.
     sys.stdout.flush()
@@ -235,7 +313,7 @@ class Config(object):
         dep_result = await promise
         if dep_result != 0: return dep_result
       if not self.dryrun:
-        if file and not os.path.exists(file):
+        if file and not path.exists(file):
           print(f"Dependency {file} missing!")
           sys.stdout.flush()
           return -1
@@ -246,7 +324,7 @@ class Config(object):
   async def run_command_async(self):
 
     # Wait on all our dependencies to be updated
-    await self.wait_for_deps(self.all_files_in)
+    await self.wait_for_deps(self.abs_files_in)
     await self.wait_for_deps(self.deps)
 
     # Our dependencies are ready, we can grab a process semaphore slot now.
@@ -265,7 +343,7 @@ class Config(object):
 
       if self.force:
         # Adding "args.force = True" makes the rule always rebuild.
-        reason = f"Files {self.all_files_out} forced to rebuild"
+        reason = f"Files {self.abs_files_out} forced to rebuild"
       else:
         reason = self.needs_rebuild()
 
@@ -292,7 +370,7 @@ class Config(object):
       # Print command
       command = expand(self.command, self, self.debug)
       if not command:
-        print(f"Command missing for input {self.file_in}!")
+        print(f"Command missing for input {self.files_in}!")
         sys.stdout.flush()
         return -1
       if self.verbose or self.debug:
@@ -304,8 +382,8 @@ class Config(object):
       if self.dryrun: return 0
 
       # Make sure our output directories exist
-      for file_out in self.all_files_out:
-        if dirname := os.path.dirname(file_out):
+      for file_out in self.abs_files_out:
+        if dirname := path.dirname(file_out):
           os.makedirs(dirname, exist_ok = True)
 
       # OK, we're ready to start the subprocess. In serial mode we run the
@@ -336,7 +414,7 @@ class Config(object):
       # If the command failed, print stdout/stderr and return the error code.
       if returncode != 0:
         if not (self.verbose or self.debug): print()
-        print(f"\x1B[31mFAILED\x1B[0m: {self.all_files_out}")
+        print(f"\x1B[31mFAILED\x1B[0m: {self.abs_files_out}")
         print(command)
         print(stderr, end="")
         print(stdout, end="")
@@ -372,65 +450,71 @@ def queue(command):
   global promise_map
   global hancho_queue
 
+  # Sanity checks
+  if not command.files_in:
+    print("Command {command.command} must have files_in!")
+    sys.exit(-1)
+
+  if not command.files_out:
+    print("Command {command.command} must have files_out!")
+    sys.exit(-1)
+
+  #----------------------------------------
   # Expand all filenames
-  file_in   = getattr(command, "file_in",   None)
-  files_in  = getattr(command, "files_in",  None)
 
-  if files_in != None and file_in != None:
-    print("can only have one of file_in and files_in")
-    sys.exit(-1)
+  src_dir   = path.relpath(os.getcwd(), hancho_root)
+  build_dir = path.join(src_dir, expand(command.build_dir, command))
 
-  all_files_in  = []
+  command.files_in  = [expand(f, command) for f in listify(command.files_in)]
+  command.files_out = [expand(f, command) for f in listify(command.files_out)]
 
-  if files_in:
-    files_in = [expand(f, command) for f in listify(files_in)]
-    command.files_in = files_in
-    all_files_in = files_in
-  if file_in:
-    file_in = expand(file_in, command)
-    command.file_in = file_in
-    all_files_in = [file_in]
+  command.files_in  = [path.join(src_dir,   f) for f in command.files_in]
+  command.files_out = [path.join(build_dir, f) for f in command.files_out]
 
-  command.all_files_in = all_files_in
+  #----------------------------------------
 
-  file_out  = getattr(command, "file_out",  None)
-  files_out = getattr(command, "files_out", None)
+  command.src_dir   = src_dir
+  command.build_dir = build_dir
+  command.deps      = listify(command.deps)
 
-  if files_out != None and file_out != None:
-    print("can only have one of file_out and files_out")
-    sys.exit(-1)
+  #----------------------------------------
+  # Add the absolute paths of all filenames
 
-  all_files_out = []
+  command.abs_files_in  = [path.join(hancho_root, f) for f in command.files_in]
+  command.abs_files_out = [path.join(hancho_root, f) for f in command.files_out]
+  command.abs_src_dir   = os.getcwd()
+  command.abs_build_dir = path.join(hancho_root, command.build_dir)
 
-  if files_out:
-    files_out = [expand(f, command) for f in listify(files_out)]
-    command.files_out = files_out
-    all_files_out = files_out
-  if file_out:
-    file_out = expand(file_out, command)
-    command.file_out = file_out
-    all_files_out = [file_out]
-
-  command.all_files_out = all_files_out
-
+  #----------------------------------------
   # Check for duplicate outputs
-  for file in all_files_out:
+
+  for file in command.abs_files_out:
     if file in promise_map:
       print(f"####### Multiple rules build {file}!")
       sys.exit()
 
+  print(f"----------")
+  print(f"src_dir       {command.src_dir}")
+  print(f"build_dir     {command.build_dir}")
+  print(f"files_in      {command.files_in}")
+  print(f"files_out     {command.files_out}")
+  print()
+  print(f"abs_src_dir   {command.abs_src_dir}")
+  print(f"abs_build_dir {command.abs_build_dir}")
+  print(f"abs_files_in  {command.abs_files_in}")
+  print(f"abs_files_out {command.abs_files_out}")
+  print()
+  print(f"deps          {command.deps}")
+  print(f"----------")
+
+
+  #----------------------------------------
   # OK, we can queue up the rule now.
-  hancho_queue.append(command)
 
-  if files_out:
-    return files_out
-  else:
-    return file_out
+  #hancho_queue.append(command)
+  print(command)
 
-################################################################################
-
-def queue2(command, **kwargs):
-  return queue(command.extend(**kwargs))
+  return command.abs_files_out
 
 ################################################################################
 
@@ -444,7 +528,7 @@ Special action args
 """
 
 config = Config(
-  prototype = None,
+  base      = None,
   name      = "hancho.config",
   verbose   = False, # Print verbose build info
   quiet     = False, # Don't print command results
@@ -453,16 +537,22 @@ config = Config(
   debug     = False, # Print debugging information
   dotty     = False, # Print dependency graph as dotty instead of building
 
-  description = "{all_files_in} -> {all_files_out}",
-  command     = "echo You forgot the command for {all_files_out}",
-  deps        = [],
+  description = "{abs_files_in} -> {abs_files_out}",
+  command     = "echo You forgot the command for {abs_files_out}",
   force       = False,
-  out_dir     = "build",
+  depfile     = "",
 
-  join     = join,
-  len      = len,
-  swap_ext = swap_ext,
-  listify  = listify
+  build_dir = "build",
+  files_in  = [],
+  files_out = [],
+  deps      = [],
+
+  join      = join,
+  len       = len,
+  swap_ext  = swap_ext,
+  listify   = listify,
+  expand    = expand,
+  cmd       = lambda cmd : subprocess.check_output(cmd, shell=True, text=True).strip(),
 )
 
 node_total = 0
@@ -507,7 +597,7 @@ def build():
     coroutine = command.run_command_async()
     promise = hancho_loop.create_task(coroutine)
     hancho_tasks.append(promise)
-    for output in command.all_files_out:
+    for output in command.abs_files_out:
       promise_map[output] = promise
 
   if proc_sem is None:
@@ -528,7 +618,35 @@ def build():
 
 ################################################################################
 
+def dump():
+  for command in hancho_queue:
+    print(command)
+
+################################################################################
+
+def include(filepath):
+  filepath = path.abspath(filepath)
+  if not path.exists(filepath):
+    print(f"Cannot find include file {filepath}!")
+    sys.exit(-1)
+
+  print(f"include filepath {filepath}")
+
+  # Add the current directory to the path so we can use it after changing
+  # directories
+  old_dir = os.getcwd()
+  new_dir = path.split(filepath)[0]
+
+  src = open(filepath, 'rb').read()
+  blob = compile(src, filepath, 'exec')
+
+  os.chdir(new_dir)
+  exec(blob, sys._getframe(1).f_globals)
+  os.chdir(old_dir)
+
+
+################################################################################
+
 if __name__ == "__main__":
-    import doctest
     #doctest.testmod()
     doctest.testfile("TUTORIAL.md")
