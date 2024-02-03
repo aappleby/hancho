@@ -31,7 +31,7 @@ hancho_loop  = asyncio.new_event_loop()
 hancho_queue = []
 
 hancho_root = os.getcwd()
-print(f"hancho_root {hancho_root}")
+#print(f"hancho_root {hancho_root}")
 
 ################################################################################
 # Minimal JSON-style pretty printer for Config
@@ -64,9 +64,10 @@ def repr_list(l, depth):
 def repr_val(v, depth):
   if v is None:           return "null"
   elif type(v) is str:    return '"' + v + '"'
+  elif type(v) is Config: return repr_dict(v.__dict__, depth)
+  elif type(v) is ChainDict: return repr_dict(v, depth)
   elif type(v) is dict:   return repr_dict(v, depth)
   elif type(v) is list:   return repr_list(v, depth)
-  elif type(v) is Config: return repr_dict(v.__dict__, depth)
   else:                   return str(v)
 
 ################################################################################
@@ -139,25 +140,11 @@ def expand(template, context, debug = False):
     print(f"Expanding '{template[0:20]}...' failed to terminate")
   return template
 
-"""
-def expand(text, context, debug = False):
-  if type(text) is list:
-    return [expand(t, context, debug) for t in text]
-
-  while template_regex.search(text):
-    if debug: print(f"expand \"{text}\"")
-    try:
-      text = eval("f\"" + text + "\"", None, context)
-    except AttributeError as e:
-      break
-
-  if debug: print(f"result \"{text}\"")
-  return text
-"""
-
 ################################################################################
 
 def resolve(self, name, default = None):
+  #print(f"??? resolve {name} ???")
+  #print(f"self.name = {object.__getattribute__(self, 'name')}")
   try:
     return object.__getattribute__(self, name)
   except AttributeError:
@@ -183,6 +170,36 @@ class cwd(object):
 
   def __exit__(self, *args):
     dir_stack.pop()
+
+################################################################################
+
+class ChainDict(dict):
+
+  # "base" defaulted because base must always be present, otherwise we
+  # infinite-recurse.
+  def __init__(self, *, base = None, **kwargs):
+    for name in kwargs:
+      self.__setitem__(name, kwargs[name])
+    self.base = base
+
+  def extend(self, **kwargs):
+    return ChainDict(base = self, **kwargs)
+
+  def __missing__(self, key):
+    if self["base"]:
+      return self["base"][key]
+    else:
+      raise KeyError(key)
+
+  def __setattr__(self, key, value):
+    self.__setitem__(key, value)
+
+  def __getattr__(self, key):
+    return self.__getitem__(key)
+
+  def __repr__(self):
+    return repr_val(self, 0)
+
 
 ################################################################################
 
@@ -220,13 +237,18 @@ class Config(object):
 
   #----------------------------------------
 
-  def __init__(self, **kwargs):
-    for name in kwargs: setattr(self, name, kwargs[name])
+  def __init__(self, base = None, **kwargs):
+    for name in kwargs:
+      setattr(self, name, kwargs[name])
+    self.base = base
 
   def __getitem__(self, name):
     #print(f"??? __getitem__ {name} ???")
     result = resolve(self, name)
     return result
+
+  def __setitem__(self, name, value):
+    object.__setattr__(self, name, value)
 
   def __getattribute__(self, name):
     #print(f"??? __getattribute__ {name} ???")
@@ -238,7 +260,7 @@ class Config(object):
 
   def __call__(self, **kwargs):
     new_self = self.extend(**kwargs)
-    print(new_self)
+    #print(new_self)
     return queue(new_self)
 
   #----------------------------------------
@@ -463,7 +485,7 @@ def queue(command):
   # Expand all filenames
 
   src_dir   = path.relpath(os.getcwd(), hancho_root)
-  build_dir = path.join(src_dir, expand(command.build_dir, command))
+  build_dir = path.join(expand(command.build_dir, command), src_dir)
 
   command.files_in  = [expand(f, command) for f in listify(command.files_in)]
   command.files_out = [expand(f, command) for f in listify(command.files_out)]
@@ -493,26 +515,26 @@ def queue(command):
       print(f"####### Multiple rules build {file}!")
       sys.exit()
 
-  print(f"----------")
-  print(f"src_dir       {command.src_dir}")
-  print(f"build_dir     {command.build_dir}")
-  print(f"files_in      {command.files_in}")
-  print(f"files_out     {command.files_out}")
-  print()
-  print(f"abs_src_dir   {command.abs_src_dir}")
-  print(f"abs_build_dir {command.abs_build_dir}")
-  print(f"abs_files_in  {command.abs_files_in}")
-  print(f"abs_files_out {command.abs_files_out}")
-  print()
-  print(f"deps          {command.deps}")
-  print(f"----------")
+  #print(f"----------")
+  #print(f"src_dir       {command.src_dir}")
+  #print(f"build_dir     {command.build_dir}")
+  #print(f"files_in      {command.files_in}")
+  #print(f"files_out     {command.files_out}")
+  #print()
+  #print(f"abs_src_dir   {command.abs_src_dir}")
+  #print(f"abs_build_dir {command.abs_build_dir}")
+  #print(f"abs_files_in  {command.abs_files_in}")
+  #print(f"abs_files_out {command.abs_files_out}")
+  #print()
+  #print(f"deps          {command.deps}")
+  #print(f"----------")
 
 
   #----------------------------------------
   # OK, we can queue up the rule now.
 
-  #hancho_queue.append(command)
-  print(command)
+  hancho_queue.append(command)
+  #print(command)
 
   return command.abs_files_out
 
@@ -554,6 +576,37 @@ config = Config(
   expand    = expand,
   cmd       = lambda cmd : subprocess.check_output(cmd, shell=True, text=True).strip(),
 )
+
+################################################################################
+
+config2 = ChainDict(
+  name      = "hancho.config",
+  verbose   = False, # Print verbose build info
+  quiet     = False, # Don't print command results
+  serial    = False, # Do not parallelize commands
+  dryrun    = False, # Do not run commands
+  debug     = False, # Print debugging information
+  dotty     = False, # Print dependency graph as dotty instead of building
+
+  description = "{abs_files_in} -> {abs_files_out}",
+  command     = "echo You forgot the command for {abs_files_out}",
+  force       = False,
+  depfile     = "",
+
+  build_dir = "build",
+  files_in  = [],
+  files_out = [],
+  deps      = [],
+
+  join      = join,
+  len       = len,
+  swap_ext  = swap_ext,
+  listify   = listify,
+  expand    = expand,
+  cmd       = lambda cmd : subprocess.check_output(cmd, shell=True, text=True).strip(),
+)
+
+################################################################################
 
 node_total = 0
 node_visit = 0
@@ -625,25 +678,64 @@ def dump():
 ################################################################################
 
 def include(filepath):
+  dirpath = path.join(filepath, "hancho")
+  if path.exists(dirpath):
+    filepath = dirpath
+  else:
+    dirpath2 = path.join(filepath, f"{filepath}.hancho")
+    if path.exists(dirpath2):
+      filepath = dirpath2
+
   filepath = path.abspath(filepath)
   if not path.exists(filepath):
     print(f"Cannot find include file {filepath}!")
     sys.exit(-1)
 
-  print(f"include filepath {filepath}")
-
-  # Add the current directory to the path so we can use it after changing
-  # directories
   old_dir = os.getcwd()
   new_dir = path.split(filepath)[0]
 
-  src = open(filepath, 'rb').read()
-  blob = compile(src, filepath, 'exec')
+  src = open(filepath, "rb").read()
+  blob = compile(src, filepath, "exec")
 
   os.chdir(new_dir)
   exec(blob, sys._getframe(1).f_globals)
   os.chdir(old_dir)
 
+################################################################################
+
+def load(filepath, parent):
+  print(f"loading {filepath}")
+  dirpath = path.join(filepath, "hancho")
+  if path.exists(dirpath):
+    filepath = dirpath
+  else:
+    dirpath2 = path.join(filepath, f"{filepath}.hancho")
+    if path.exists(dirpath2):
+      filepath = dirpath2
+
+  filepath = path.abspath(filepath)
+  if not path.exists(filepath):
+    print(f"Cannot find include file {filepath}!")
+    sys.exit(-1)
+
+  old_dir = os.getcwd()
+  new_dir = path.split(filepath)[0]
+
+  src = open(filepath, "rb").read()
+  blob = compile(src, filepath, "exec")
+
+  locals = Config(base = parent, name = filepath)
+  os.chdir(new_dir)
+  #exec(blob, parent, locals)
+
+  # exec() puts a copy of __builtins__ into the global dict, which we don't
+  # want added to parent.__dict__
+  #exec(blob, dict(parent.__dict__), locals)
+  #exec(blob, dict(parent.__dict__), locals)
+  exec(blob, locals, locals)
+  os.chdir(old_dir)
+
+  return locals
 
 ################################################################################
 
