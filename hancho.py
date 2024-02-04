@@ -23,7 +23,7 @@ Build parameters can be specified globally, at rule scope, or at action scope.
 >>> hancho.run(my_task)
 """
 
-import asyncio, os, re, sys, subprocess
+import asyncio, os, re, sys, subprocess, inspect
 import doctest
 from os import path
 
@@ -33,12 +33,66 @@ hancho_queue = []
 hancho_root = os.getcwd()
 #print(f"hancho_root {hancho_root}")
 
+
+################################################################################
+
+hancho_modules = {}
+
+hancho_root = os.getcwd()
+
+def load_module(name, path):
+  path = os.path.abspath(path)
+
+  if name in hancho_modules:
+    return hancho_modules[name]
+
+  import importlib.util
+  import importlib.machinery
+  loader = importlib.machinery.SourceFileLoader(name, path)
+  spec = importlib.util.spec_from_loader(name, loader)
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  sys.modules[name] = module
+  hancho_modules[name] = module
+  return module
+
+def module2(mod_name, mod_dir, mod_file):
+  absname = os.path.abspath(os.path.join(mod_dir, mod_file))
+  if absname in hancho_modules:
+    print(f"module already loaded {mod_name}")
+    return hancho_modules[absname]
+
+  old_dir = os.getcwd()
+  os.chdir(mod_dir)
+  result = load_module(mod_name, mod_file)
+  os.chdir(old_dir)
+  return result
+
+def module(name):
+  tail = name.split('/')[-1]
+
+  mod_name = tail
+  mod_dir  = name
+  mod_file = f"{tail}.hancho"
+  if os.path.exists(os.path.join(mod_dir, mod_file)):
+    return module2(mod_name, mod_dir, mod_file)
+
+  mod_name = tail
+  mod_dir  = os.path.join(hancho_root, name)
+  mod_file = f"{tail}.hancho"
+  if os.path.exists(os.path.join(mod_dir, mod_file)):
+    return module2(mod_name, mod_dir, mod_file)
+
+  print(f"Could not load module {name}")
+  sys.exit(-1)
+
 ################################################################################
 # Minimal JSON-style pretty printer for Config
 
 def repr_dict(d, depth):
   result = "{\n"
   for (k,v) in d.items():
+    if k == "base": continue
     result += "  " * (depth + 1)
     result += repr_val(k, depth + 1)
     result += " : "
@@ -64,7 +118,8 @@ def repr_list(l, depth):
 def repr_val(v, depth):
   if v is None:           return "null"
   elif type(v) is str:    return '"' + v + '"'
-  elif type(v) is Config: return repr_dict(v.__dict__, depth)
+  #elif type(v) is Config: return repr_dict(v.__dict__, depth)
+  elif type(v) is Config: return "<config>"
   elif type(v) is ChainDict: return repr_dict(v, depth)
   elif type(v) is dict:   return repr_dict(v, depth)
   elif type(v) is list:   return repr_list(v, depth)
@@ -703,8 +758,9 @@ def include(filepath):
 
 ################################################################################
 
-def load(filepath, parent):
+def load(filepath, container):
   print(f"loading {filepath}")
+  """
   dirpath = path.join(filepath, "hancho")
   if path.exists(dirpath):
     filepath = dirpath
@@ -717,6 +773,7 @@ def load(filepath, parent):
   if not path.exists(filepath):
     print(f"Cannot find include file {filepath}!")
     sys.exit(-1)
+  """
 
   old_dir = os.getcwd()
   new_dir = path.split(filepath)[0]
@@ -724,18 +781,17 @@ def load(filepath, parent):
   src = open(filepath, "rb").read()
   blob = compile(src, filepath, "exec")
 
-  locals = Config(base = parent, name = filepath)
-  os.chdir(new_dir)
+  #locals = ChainDict(base = parent, name = filepath)
+  if new_dir: os.chdir(new_dir)
   #exec(blob, parent, locals)
 
   # exec() puts a copy of __builtins__ into the global dict, which we don't
   # want added to parent.__dict__
   #exec(blob, dict(parent.__dict__), locals)
   #exec(blob, dict(parent.__dict__), locals)
-  exec(blob, locals, locals)
+  exec(blob, container, container)
+  del container["__builtins__"]
   os.chdir(old_dir)
-
-  return locals
 
 ################################################################################
 
