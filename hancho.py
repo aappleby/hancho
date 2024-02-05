@@ -95,11 +95,11 @@ def load(mod_dir):
   if result := load_module_path(mod_path): return result
 
   # Try to load build.hancho with path relative to current directory
-  mod_path = path.join(dothancho_dir(), mod_dir, f"build.hancho")
+  mod_path = path.join(dothancho_dir(), mod_dir, "build.hancho")
   if result := load_module_path(mod_path): return result
 
   # Try to load build.hancho with path relative to hancho root
-  mod_path = path.join(hancho_root, mod_dir, f"build.hancho")
+  mod_path = path.join(hancho_root, mod_dir, "build.hancho")
   if result := load_module_path(mod_path): return result
 
   print(f"Could not load module {mod_dir}")
