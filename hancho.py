@@ -4,24 +4,8 @@ import asyncio, os, re, sys, subprocess
 import importlib.util
 import importlib.machinery
 import inspect
+import argparse
 from os import path
-
-hancho_root  = os.getcwd()
-hancho_loop  = asyncio.new_event_loop()
-hancho_queue = []
-hancho_mods  = {}
-hancho_outs  = set()
-
-template_regex = re.compile("{[^}]*}")
-
-any_failed = False
-
-promise_map = {}
-
-node_total = 0
-node_visit = 0
-node_built = 0
-proc_sem = None
 
 ################################################################################
 
@@ -66,61 +50,35 @@ class Rule(dict):
     return Rule(base = self, **kwargs)
 
 ################################################################################
-# Hancho's global configuration object
-
-config = Rule(
-  verbose   = False, # Print verbose build info
-  quiet     = False, # Don't print any task output
-  serial    = False, # Do not parallelize tasks
-  dryrun    = False, # Do not actually run tasks
-  debug     = False, # Print debugging information
-  force     = False, # Force all tasks to run
-)
-
-################################################################################
-# Hancho's module loader. Looks for {mod_dir}.hancho in the given directory and
-# changes directory to {mod_dir} while loading the module so that filenames can
-# be relative to {mod_dir}
+# Hancho's module loader. Looks for {mod_dir}.hancho or build.hancho in either
+# the calling .hancho file's directory, or relative to hancho_root
 
 def load(mod_dir):
-  #print(f"Loading module {mod_dir}")
-  mod_name = mod_dir.split('/')[-1]
+  base_dirs    = [dothancho_dir(), hancho_root]
+  hancho_names = [f"{path.split(mod_dir)[1]}.hancho", "build.hancho"]
 
-  # Try to load module with path relative to current directory
-  mod_path = path.join(dothancho_dir(), mod_dir, f"{mod_name}.hancho")
-  if result := load_module_path(mod_path): return result
-
-  # Try to load module with path relative to hancho root
-  mod_path = path.join(hancho_root, mod_dir, f"{mod_name}.hancho")
-  if result := load_module_path(mod_path): return result
-
-  # Try to load build.hancho with path relative to current directory
-  mod_path = path.join(dothancho_dir(), mod_dir, "build.hancho")
-  if result := load_module_path(mod_path): return result
-
-  # Try to load build.hancho with path relative to hancho root
-  mod_path = path.join(hancho_root, mod_dir, "build.hancho")
-  if result := load_module_path(mod_path): return result
+  for base_dir in base_dirs:
+    for hancho_name in hancho_names:
+      full_path = path.abspath(path.join(base_dir, mod_dir, hancho_name))
+      if not path.exists(full_path):
+        continue
+      if full_path in hancho_mods:
+        return hancho_mods[full_path]
+      if result := load_module_path(full_path):
+        hancho_mods[full_path] = result
+        return result
 
   print(f"Could not load module {mod_dir}")
   sys.exit(-1)
 
 def load_module_path(mod_path):
-  mod_path = os.path.abspath(mod_path)
-  mod_dir  = os.path.split(mod_path)[0]
-  mod_name = mod_dir.split('/')[-1]
-
-  if mod_path in hancho_mods:
-    return hancho_mods[mod_path]
-  if not path.exists(mod_path):
-    return None
+  mod_dir  = path.split(mod_path)[0]
+  mod_name = path.split(mod_dir)[1]
 
   loader = importlib.machinery.SourceFileLoader(mod_name, mod_path)
   spec   = importlib.util.spec_from_loader(mod_name, loader)
   module = importlib.util.module_from_spec(spec)
   spec.loader.exec_module(module)
-  hancho_mods[mod_path] = module
-
   return module
 
 ################################################################################
@@ -199,21 +157,6 @@ def swap_ext(name, new_ext):
   return path.splitext(name)[0] + new_ext
 
 ################################################################################
-
-base_rule = Rule(
-  build_dir = "build",
-  root_dir  = hancho_root,
-  quiet     = False, # Don't print this task's output
-  force     = False, # Force this task to run
-  expand    = expand,
-  flatten   = flatten,
-  join      = join,
-  len       = len,
-  run_cmd   = run_cmd,
-  swap_ext  = swap_ext,
-)
-
-################################################################################
 # Checks if a task needs to be re-run, and returns a non-empty reason if so.
 
 def needs_rerun(task):
@@ -278,7 +221,6 @@ async def wait_for_deps(deps):
 # Actually runs a task
 
 async def run_task_async(task):
-
   # Wait on all our dependencies to be fulfilled
   if any_fail := await wait_for_deps(task.abs_files_in): return any_fail
   if any_fail := await wait_for_deps(task.abs_deps): return any_fail
@@ -424,7 +366,6 @@ def queue(task):
 def build():
   global node_built
   global node_total
-  global proc_sem
 
   node_total = len(hancho_queue)
 
@@ -439,9 +380,6 @@ def build():
       # have any outputs so we don't exit the build before it's done.
       promise_map[f"task{id(task)}"] = promise
 
-  if proc_sem is None:
-    proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
-
   async def wait(promise_map):
     global any_failed
     results = await asyncio.gather(*promise_map.values())
@@ -449,6 +387,8 @@ def build():
 
   hancho_loop.run_until_complete(wait(promise_map))
   if node_built and not config.verbose: print()
+  if node_built == 0:
+    print("hancho: no work to do.")
   reset()
   return not any_failed
 
@@ -463,12 +403,10 @@ def reset():
   global node_built
   global node_total
   global node_visit
-  global proc_sem
 
   node_built = 0
   node_total = 0
   node_visit = 0
-  proc_sem = None
 
 ################################################################################
 # Dumps debugging info for all tasks in the queue
@@ -481,6 +419,60 @@ def dump():
 ################################################################################
 
 if __name__ == "__main__":
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
+  parser.add_argument('--serial',   default=False, action='store_true', help='Do not parallelize commands')
+  parser.add_argument('--dryrun',   default=False, action='store_true', help='Do not run commands')
+  parser.add_argument('--debug',    default=False, action='store_true', help='Dump debugging information')
+  parser.add_argument('--force',    default=False, action='store_true', help='Force rebuild of everything')
+  parser.add_argument('--quiet',    default=False, action='store_true', help='Mute command output')
+  (flags, unrecognized) = parser.parse_known_args()
+
+  hancho_root  = os.getcwd()
+
+  base_rule = Rule(
+    build_dir = "build",
+    root_dir  = hancho_root,
+    quiet     = False, # Don't print this task's output
+    force     = False, # Force this task to run
+    expand    = expand,
+    flatten   = flatten,
+    join      = join,
+    len       = len,
+    run_cmd   = run_cmd,
+    swap_ext  = swap_ext,
+  )
+
+  hancho_loop  = asyncio.new_event_loop()
+  hancho_queue = []
+  hancho_mods  = {}
+  hancho_outs  = set()
+
+  template_regex = re.compile("{[^}]*}")
+
+  any_failed = False
+
+  promise_map = {}
+
+  node_total = 0
+  node_visit = 0
+  node_built = 0
+
+  # Hancho's global configuration object
+  config = Rule(
+    verbose   = flags.verbose, # Print verbose build info
+    quiet     = flags.quiet,   # Don't print any task output
+    serial    = flags.serial,  # Do not parallelize tasks
+    dryrun    = flags.dryrun,  # Do not actually run tasks
+    debug     = flags.debug,   # Print debugging information
+    force     = flags.force,   # Force all tasks to run
+  )
+
+  proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
+
+  # Stash a reference to ourself in sys.modules so that build.hancho and
+  # descendants don't try to load a second copy of us.
+  sys.modules["hancho"] = sys.modules["__main__"]
+
   build_path = path.join(hancho_root, "build.hancho")
-  #print(build_path)
   load_module_path(build_path)
