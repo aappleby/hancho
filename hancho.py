@@ -274,7 +274,7 @@ async def run_task_async(task):
 
   # Wait on all our dependencies to be fulfilled
   if any_fail := await wait_for_deps(task.abs_files_in): return any_fail
-  if any_fail := await wait_for_deps(task.deps): return any_fail
+  if any_fail := await wait_for_deps(task.abs_deps): return any_fail
 
   # Our dependencies are ready, we can grab a process semaphore slot now.
   async with proc_sem:
@@ -389,7 +389,7 @@ def queue(task):
   task.files_out = [path.join(build_dir, f) for f in task.files_out]
 
   # Append the absolute paths of all in/out filenames to the task.
-  # If they're already absolute, this does nothing.
+  # If they're already absolute, the filenames do not change
   task.abs_files_in  = [path.abspath(f) for f in task.files_in]
   task.abs_files_out = [path.abspath(f) for f in task.files_out]
   task.abs_deps      = [path.abspath(f) for f in task.deps]
