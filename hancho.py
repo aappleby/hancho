@@ -25,7 +25,7 @@ proc_sem = None
 
 ################################################################################
 
-class Config(dict):
+class Rule(dict):
 
   # "base" defaulted because base must always be present, otherwise we
   # infinite-recurse.
@@ -34,7 +34,7 @@ class Config(dict):
     self.base = base
 
   def __missing__(self, key):
-    return self.base[key]
+    return self.base[key] if self.base else None
 
   def __setattr__(self, key, value):
     self.__setitem__(key, value)
@@ -49,28 +49,18 @@ class Config(dict):
     return queue(self.extend(**kwargs))
 
   def extend(self, **kwargs):
-    return Config(base = self, **kwargs)
+    return Rule(base = self, **kwargs)
 
 ################################################################################
 
-config = Config(
-  base      = None,
+config = Rule(
   name      = "hancho.config",
   verbose   = False, # Print verbose build info
-  quiet     = False, # Don't print command results
-  serial    = False, # Do not parallelize commands
-  dryrun    = False, # Do not actually run commands
+  quiet     = False, # Don't print any task output
+  serial    = False, # Do not parallelize tasks
+  dryrun    = False, # Do not actually run tasks
   debug     = False, # Print debugging information
-
-  description = "{abs_files_in} -> {abs_files_out}",
-  command     = "echo You forgot the command for {abs_files_out}",
-  force       = False,
-  depfile     = "",
-
-  build_dir = "build",
-  files_in  = [],
-  files_out = [],
-  deps      = [],
+  force     = False, # Force all tasks to run
 )
 
 ################################################################################
@@ -118,7 +108,7 @@ def load(name):
   sys.exit(-1)
 
 ################################################################################
-# Minimal JSON-style pretty printer for Config
+# Minimal JSON-style pretty printer for Rule
 
 def repr_dict(d, depth):
   result = "{\n"
@@ -152,10 +142,52 @@ def join(names, divider = ' '):
   return "" if names is None else divider.join(names)
 
 def flatten(x):
+  if x is None: return []
   if not type(x) is list: return [x]
   result = []
   for y in x: result.extend(flatten(y))
   return result
+
+################################################################################
+
+def expand_once(template, context):
+  if template is None: return ""
+  result = ""
+  while s := template_regex.search(template):
+    result += template[0:s.start()]
+    exp = template[s.start():s.end()]
+    try:
+      replacement = eval(exp[1:-1], None, context)
+      if replacement is not None: result += str(replacement)
+    except:
+      result += exp
+    template = template[s.end():]
+  result += template
+  return result
+
+def expand(template, context):
+  for _ in range(100):
+    if config.debug: print(f"expand \"{template}\"")
+    new_template = expand_once(template, context)
+    if template == new_template: return template
+    template = new_template
+
+  print(f"Expanding '{template[0:20]}...' failed to terminate")
+  sys.exit(-1)
+
+################################################################################
+
+base_rule = Rule(
+  build_dir = "build",
+  quiet     = False, # Don't print this task's output
+  force     = False, # Force this task to run
+  join      = join,
+  len       = len,
+  swap_ext  = swap_ext,
+  flatten   = flatten,
+  expand    = expand,
+  cmd       = lambda cmd : subprocess.check_output(cmd, shell=True, text=True).strip(),
+)
 
 ################################################################################
 
@@ -197,7 +229,7 @@ def needs_rebuild(self):
     return f"Rebuilding {files_out} because an input has changed"
 
   # All checks passed, so we don't need to rebuild this output.
-  if self.debug: print(f"Files {files_out} are up to date")
+  if config.debug: print(f"Files {files_out} are up to date")
 
   # All deps were up-to-date, nothing to do.
   return None
@@ -209,7 +241,7 @@ async def wait_for_deps(self, deps):
     if promise := promise_map.get(file, None):
       dep_result = await promise
       if dep_result != 0: return dep_result
-    if not self.dryrun:
+    if not config.dryrun:
       if file and not path.exists(file):
         print(f"Dependency {file} missing!")
         return -1
@@ -217,13 +249,13 @@ async def wait_for_deps(self, deps):
 
 ################################################################################
 
-async def run_command_async(self):
+async def run_task_async(task):
 
   # Wait on all our dependencies to be updated
-  if any_fail := await wait_for_deps(self, self.abs_files_in):
+  if any_fail := await wait_for_deps(task, task.abs_files_in):
     return any_fail
 
-  if any_fail := await wait_for_deps(self, self.deps):
+  if any_fail := await wait_for_deps(task, task.deps):
     return any_fail
 
   # Our dependencies are ready, we can grab a process semaphore slot now.
@@ -235,13 +267,13 @@ async def run_command_async(self):
     node_visit = node_visit + 1
 
     # Check if we need a rebuild
-    reason = needs_rebuild(self)
-    if self.force: reason = f"Files {self.abs_files_out} forced to rebuild"
+    reason = needs_rebuild(task)
+    if config.force or task.force: reason = f"Files {task.abs_files_out} forced to rebuild"
     if not reason: return 0
 
     # Print description
-    description = expand(self.description, self)
-    if self.verbose or self.debug:
+    description = expand(task.description, task)
+    if config.verbose or config.debug:
       print(f"[{node_visit}/{node_total}] {description}")
     else:
       print("\r", end="")
@@ -251,33 +283,33 @@ async def run_command_async(self):
       print("\x1B[K", end="")
 
     # Print rebuild reason
-    if self.debug: print(reason)
+    if config.debug: print(reason)
 
     # Print debug dump of args if needed
-    if self.debug: print(self)
+    if config.debug: print(task)
 
-    # Print command
-    command = expand(self.command, self, self.debug)
+    # Print the tasks' command
+    command = expand(task.command, task)
     if not command:
-      print(f"Command missing for input {self.files_in}!")
+      print(f"Command missing for input {task.files_in}!")
       return -1
-    if self.verbose or self.debug:
+    if config.verbose or config.debug:
       print(f"{command}")
 
-    # Flush before we run command so that the debug output above appears in order
+    # Flush before we run the task so that the debug output above appears in order
     sys.stdout.flush()
 
     # Early-exit if this is just a dry run
-    if self.dryrun: return 0
+    if config.dryrun: return 0
 
     # Make sure our output directories exist
-    for file_out in self.abs_files_out:
+    for file_out in task.abs_files_out:
       if dirname := path.dirname(file_out):
         os.makedirs(dirname, exist_ok = True)
 
     # OK, we're ready to start the subprocess. In serial mode we run the
     # subprocess synchronously.
-    if self.serial:
+    if config.serial:
       result = subprocess.run(
         command,
         shell = True,
@@ -302,12 +334,13 @@ async def run_command_async(self):
 
     # Print command results
     if returncode:
-      if not (self.verbose or self.debug): print()
-      print(f"\x1B[31mFAILED\x1B[0m: {self.abs_files_out}")
+      if not (config.verbose or config.debug): print()
+      print(f"\x1B[31mFAILED\x1B[0m: {task.abs_files_out}")
       print(command)
 
-    if (returncode or not self.quiet) and (stdout or stderr):
-      if not self.verbose: print()
+    show_output = returncode or not (task.quiet or config.quiet)
+    if show_output and (stdout or stderr):
+      if not config.verbose: print()
       print(stderr, end="")
       print(stdout, end="")
 
@@ -317,59 +350,36 @@ async def run_command_async(self):
 
 ################################################################################
 
-def expand_once(template, context):
-  result = ""
-  while s := template_regex.search(template):
-    result += template[0:s.start()]
-    exp = template[s.start():s.end()]
-    try:    result += str(eval(exp[1:-1], None, context))
-    except: result += exp
-    template = template[s.end():]
-  result += template
-  return result
-
-def expand(template, context, debug = False):
-  for _ in range(100):
-    if debug: print(f"expand \"{template}\"")
-    new_template = expand_once(template, context)
-    if template == new_template: return template
-    template = new_template
-
-  print(f"Expanding '{template[0:20]}...' failed to terminate")
-  sys.exit(-1)
-
-################################################################################
-
-def queue(command):
+def queue(task):
   # Expand all filenames
   src_dir   = path.relpath(os.getcwd(), hancho_root)
-  build_dir = path.join(expand(command.build_dir, command), src_dir)
+  build_dir = path.join(expand(task.build_dir, task), src_dir)
 
-  command.src_dir   = src_dir
-  command.build_dir = build_dir
+  task.src_dir   = src_dir
+  task.build_dir = build_dir
 
-  command.files_in  = [expand(f, command) for f in flatten(command.files_in)]
-  command.files_out = [expand(f, command) for f in flatten(command.files_out)]
+  task.files_in  = [expand(f, task) for f in flatten(task.files_in)]
+  task.files_out = [expand(f, task) for f in flatten(task.files_out)]
 
-  command.files_in  = [path.join(src_dir,   f) for f in command.files_in]
-  command.files_out = [path.join(build_dir, f) for f in command.files_out]
+  task.files_in  = [path.join(src_dir,   f) for f in task.files_in]
+  task.files_out = [path.join(build_dir, f) for f in task.files_out]
 
-  command.deps      = flatten(command.deps)
+  task.deps      = flatten(task.deps)
 
   # Add the absolute paths of all filenames
-  command.abs_files_in  = [path.join(hancho_root, f) for f in command.files_in]
-  command.abs_files_out = [path.join(hancho_root, f) for f in command.files_out]
+  task.abs_files_in  = [path.join(hancho_root, f) for f in task.files_in]
+  task.abs_files_out = [path.join(hancho_root, f) for f in task.files_out]
 
   # Check for duplicate outputs
-  for file in command.abs_files_out:
+  for file in task.abs_files_out:
     if file in hancho_outs:
       print(f"Multiple rules build {file}!")
       sys.exit(-1)
     hancho_outs.add(file)
 
   # OK, we can queue up the rule now.
-  hancho_queue.append(command)
-  return command.abs_files_out
+  hancho_queue.append(task)
+  return task.abs_files_out
 
 ################################################################################
 
@@ -397,11 +407,16 @@ def build():
 
   node_total = len(hancho_queue)
 
-  for command in hancho_queue:
-    coroutine = run_command_async(command)
+  for task in hancho_queue:
+    coroutine = run_task_async(task)
     promise = hancho_loop.create_task(coroutine)
-    for output in command.abs_files_out:
-      promise_map[output] = promise
+    if task.abs_files_out:
+      for output in task.abs_files_out:
+        promise_map[output] = promise
+    else:
+      # We need an entry in the promise map for the task even if it doesn't
+      # have any outputs so we don't exit the build before it's done.
+      promise_map[f"task{id(task)}"] = promise
 
   if proc_sem is None:
     proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
@@ -424,13 +439,6 @@ def dump():
     print(hancho_queue[i])
 
 ################################################################################
-
-config.join      = join
-config.len       = len
-config.swap_ext  = swap_ext
-config.flatten   = flatten
-config.expand    = expand
-config.cmd       = lambda cmd : subprocess.check_output(cmd, shell=True, text=True).strip()
 
 if __name__ == "__main__":
     #doctest.testmod()

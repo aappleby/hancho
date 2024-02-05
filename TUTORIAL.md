@@ -13,16 +13,6 @@ Hancho is a minimal build system that focuses only on doing two things:
 1 - Only rebuild files that need rebuilding
 2 - Make generating build commands simple
 
-Build parameters can be specified globally, at rule scope, or at action scope.
-
->>> import tempfile
->>> tmpdirname = tempfile.TemporaryDirectory()
->>> print(tmpdirname)                                        #doctest: +ELLIPSIS
-<TemporaryDirectory '/tmp/tmp...'>
->>> os.chdir(tmpdirname.name)
->>> print(os.getcwd())                                       #doctest: +ELLIPSIS
-/tmp/tmp...
-
 >>> import hancho
 >>> print_hello = hancho.rule(command = "echo hello world")
 >>> def my_task():
@@ -60,27 +50,27 @@ Build parameters can be specified globally, at rule scope, or at action scope.
   """
 
   """
-  Config is a Javascript-style prototypal-inheritance text-expansion tool.
+  Rule is a Javascript-style prototypal-inheritance text-expansion tool.
   It allows you to create objects with trees of attributes (and attribute
   inheritance) and use those trees to repeatedly expand Python strings ala
   f-strings until they no longer contain {}s.
 
-  Config instances behave like Javascript objects. String fields can
+  Rule instances behave like Javascript objects. String fields can
   contain Python expressions in curly braces, which will be evaluated when
   the args are used to "expand" a template string.
 
-    >>> args1 = Config()
+    >>> args1 = Rule()
     >>> args1.foo = "foo_option1"
     >>> args1.bar = "bar_option77"
     >>> args1.message = "Foo is {foo}, bar is {bar}, undefined is {undefined}."
 
-  Config can use prototype-style inheritance. This "args2" instance will
+  Rules can use prototype-style inheritance. This "args2" instance will
   appear to contain all the fields of args1, but can override them.
 
-    >>> args2 = Config(args1)
+    >>> args2 = Rule(args1)
     >>> args2.bar = "bar_override"
 
-  Config can be used to expand a string containing {}s. Variable lookup
+  Rules can be used to expand a string containing {}s. Variable lookup
   will happen using the arg object itself as a context, with lookup
   proceeding up the prototype chain until a match is found (or "" if there
   was no match).
@@ -96,9 +86,9 @@ Build parameters can be specified globally, at rule scope, or at action scope.
 >>> import tempfile
 >>> tmpdirname = tempfile.TemporaryDirectory()
 
->>> blah = hancho.Config()
+>>> blah = hancho.Rule()
 >>> print(blah)                                              #doctest: +ELLIPSIS
-<hancho.Config object at 0x...>
+<hancho.Rule object at 0x...>
 >>> hancho.config.print = print
 >>> print_hello = hancho.rule(command = "echo {print('hello world')}")
 >>> def my_task():
