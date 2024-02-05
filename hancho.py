@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 
 import asyncio, os, re, sys, subprocess
-import doctest
 import importlib.util
 import importlib.machinery
+import inspect
 from os import path
 
 hancho_root  = os.getcwd()
@@ -24,6 +24,20 @@ node_built = 0
 proc_sem = None
 
 ################################################################################
+
+def dothancho_dir():
+  f = inspect.currentframe()
+  while True:
+    if f.f_code.co_filename.endswith(".hancho"):
+      break
+    f = f.f_back
+  absdir = path.split(f.f_code.co_filename)[0]
+  reldir = path.relpath(absdir, hancho_root)
+  return reldir
+
+################################################################################
+# Hancho's Rule object behaves like a Javascript object and implements a basic
+# form of prototypal inheritance via Rule.base
 
 class Rule(dict):
 
@@ -52,9 +66,9 @@ class Rule(dict):
     return Rule(base = self, **kwargs)
 
 ################################################################################
+# Hancho's global configuration object
 
 config = Rule(
-  name      = "hancho.config",
   verbose   = False, # Print verbose build info
   quiet     = False, # Don't print any task output
   serial    = False, # Do not parallelize tasks
@@ -64,56 +78,52 @@ config = Rule(
 )
 
 ################################################################################
+# Hancho's module loader. Looks for {mod_dir}.hancho in the given directory and
+# changes directory to {mod_dir} while loading the module so that filenames can
+# be relative to {mod_dir}
 
-def load_module(name, path):
-  if name in hancho_mods:
-    return hancho_mods[name]
+def load(mod_dir):
+  #print(f"Loading module {mod_dir}")
+  mod_name = mod_dir.split('/')[-1]
 
-  path   = os.path.abspath(path)
-  loader = importlib.machinery.SourceFileLoader(name, path)
-  spec   = importlib.util.spec_from_loader(name, loader)
-  module = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(module)
-  hancho_mods[name] = module
-  return module
+  # Try to load module with path relative to current directory
+  mod_path = path.join(dothancho_dir(), mod_dir, f"{mod_name}.hancho")
+  if result := load_module_path(mod_path): return result
 
-def module2(mod_name, mod_dir, mod_file):
-  absname = os.path.abspath(path.join(mod_dir, mod_file))
-  if absname in hancho_mods:
-    print(f"module already loaded {mod_name}")
-    return hancho_mods[absname]
+  # Try to load module with path relative to hancho root
+  mod_path = path.join(hancho_root, mod_dir, f"{mod_name}.hancho")
+  if result := load_module_path(mod_path): return result
 
-  old_dir = os.getcwd()
-  os.chdir(mod_dir)
-  result = load_module(mod_name, mod_file)
-  os.chdir(old_dir)
-  return result
-
-def load(name):
-  tail = name.split('/')[-1]
-
-  mod_name = tail
-  mod_dir  = name
-  mod_file = f"{tail}.hancho"
-  if path.exists(path.join(mod_dir, mod_file)):
-    return module2(mod_name, mod_dir, mod_file)
-
-  mod_name = tail
-  mod_dir  = path.join(hancho_root, name)
-  mod_file = f"{tail}.hancho"
-  if path.exists(path.join(mod_dir, mod_file)):
-    return module2(mod_name, mod_dir, mod_file)
-
-  print(f"Could not load module {name}")
+  print(f"Could not load module {mod_dir}")
   sys.exit(-1)
 
+def load_module_path(mod_path):
+  mod_path = os.path.abspath(mod_path)
+  mod_dir  = os.path.split(mod_path)[0]
+  mod_file = os.path.split(mod_path)[1]
+  mod_name = mod_file.split('.')[0]
+
+  if mod_path in hancho_mods:
+    return hancho_mods[mod_path]
+  if not path.exists(mod_path):
+    return None
+
+  loader = importlib.machinery.SourceFileLoader(mod_name, mod_path)
+  spec   = importlib.util.spec_from_loader(mod_name, loader)
+  module = importlib.util.module_from_spec(spec)
+  spec.loader.exec_module(module)
+  hancho_mods[mod_path] = module
+
+  return module
+
 ################################################################################
-# Minimal JSON-style pretty printer for Rule
+# Minimal JSON-style pretty printer for Rule, used by --debug
 
 def repr_dict(d, depth):
   result = "{\n"
   for (k,v) in d.items():
-    result += "  " * (depth + 1) + repr_val(k, depth + 1) + " : " + repr_val(v, depth + 1) + ",\n"
+    result += "  " * (depth + 1) + repr_val(k, depth + 1) + " : "
+    result += repr_val(v, depth + 1) + ",\n"
   result += "  " * depth + "}"
   return result
 
@@ -134,12 +144,36 @@ def repr_val(v, depth):
   return str(v)
 
 ################################################################################
+# A trivial templating system that replaces {foo} with the value of rule.foo
+# and keeps going until it can't replace anything.
 
-def swap_ext(name, new_ext):
-  return path.splitext(name)[0] + new_ext
+def expand_once(template, rule):
+  if template is None: return ""
+  result = ""
+  while s := template_regex.search(template):
+    result += template[0:s.start()]
+    exp = template[s.start():s.end()]
+    try:
+      replacement = eval(exp[1:-1], None, rule)
+      if replacement is not None: result += str(replacement)
+    except:
+      result += exp
+    template = template[s.end():]
+  result += template
+  return result
 
-def join(names, divider = ' '):
-  return "" if names is None else divider.join(names)
+def expand(template, rule):
+  for _ in range(100):
+    if config.debug: print(f"expand \"{template}\"")
+    new_template = expand_once(template, rule)
+    if template == new_template: return template
+    template = new_template
+
+  print(f"Expanding '{template[0:20]}...' failed to terminate")
+  sys.exit(-1)
+
+################################################################################
+# Build rule helper methods
 
 def flatten(x):
   if x is None: return []
@@ -148,60 +182,36 @@ def flatten(x):
   for y in x: result.extend(flatten(y))
   return result
 
-################################################################################
+def join(names, divider = ' '):
+  return "" if names is None else divider.join(names)
 
-def expand_once(template, context):
-  if template is None: return ""
-  result = ""
-  while s := template_regex.search(template):
-    result += template[0:s.start()]
-    exp = template[s.start():s.end()]
-    try:
-      replacement = eval(exp[1:-1], None, context)
-      if replacement is not None: result += str(replacement)
-    except:
-      result += exp
-    template = template[s.end():]
-  result += template
-  return result
+def run_cmd(cmd):
+  return subprocess.check_output(cmd, shell=True, text=True).strip()
 
-def expand(template, context):
-  for _ in range(100):
-    if config.debug: print(f"expand \"{template}\"")
-    new_template = expand_once(template, context)
-    if template == new_template: return template
-    template = new_template
-
-  print(f"Expanding '{template[0:20]}...' failed to terminate")
-  sys.exit(-1)
+def swap_ext(name, new_ext):
+  return path.splitext(name)[0] + new_ext
 
 ################################################################################
 
 base_rule = Rule(
   build_dir = "build",
+  root_dir  = hancho_root,
   quiet     = False, # Don't print this task's output
   force     = False, # Force this task to run
+  expand    = expand,
+  flatten   = flatten,
   join      = join,
   len       = len,
+  run_cmd   = run_cmd,
   swap_ext  = swap_ext,
-  flatten   = flatten,
-  expand    = expand,
-  cmd       = lambda cmd : subprocess.check_output(cmd, shell=True, text=True).strip(),
 )
 
 ################################################################################
+# Checks if a task needs to be re-run, and returns a non-empty reason if so.
 
-def check_mtime(files_in, files_out):
-  for file_in in files_in:
-    mtime_in = path.getmtime(file_in)
-    for file_out in files_out:
-      mtime_out = path.getmtime(file_out)
-      if mtime_in > mtime_out: return True
-  return False
-
-def needs_rebuild(self):
-  files_in  = self.abs_files_in
-  files_out = self.abs_files_out
+def needs_rerun(task):
+  files_in  = task.abs_files_in
+  files_out = task.abs_files_out
 
   if not files_out:
     return "Always rebuild a target with no outputs?"
@@ -212,12 +222,12 @@ def needs_rebuild(self):
       return f"Rebuilding {files_out} because some are missing"
 
   # Check user-specified deps.
-  if check_mtime(self.deps, files_out):
+  if check_mtime(task.deps, files_out):
     return f"Rebuilding {files_out} because a manual dependency has changed"
 
   # Check depfile, if present.
-  if self.depfile:
-    depfile_name = expand(self.depfile, self)
+  if task.depfile:
+    depfile_name = expand(task.depfile, task)
     if path.exists(depfile_name):
       deplines = open(depfile_name).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
@@ -234,29 +244,37 @@ def needs_rebuild(self):
   # All deps were up-to-date, nothing to do.
   return None
 
-################################################################################
+def check_mtime(files_in, files_out):
+  for file_in in files_in:
+    mtime_in = path.getmtime(file_in)
+    for file_out in files_out:
+      mtime_out = path.getmtime(file_out)
+      if mtime_in > mtime_out: return True
+  return False
 
-async def wait_for_deps(self, deps):
-  for file in deps:
-    if promise := promise_map.get(file, None):
-      dep_result = await promise
-      if dep_result != 0: return dep_result
-    if not config.dryrun:
-      if file and not path.exists(file):
-        print(f"Dependency {file} missing!")
-        return -1
+################################################################################
+# Waits until all the promises for a list of dependencies have been fulfilled.
+# Returns zero if all dependencies are satisfied, otherwise non-zero.
+
+async def wait_for_deps(deps):
+  for dep in deps:
+    promise = promise_map.get(dep, None)
+    task_result = await promise if promise else 0
+    if task_result != 0:
+      return task_result
+    if not config.dryrun and not path.exists(dep):
+      print(f"Dependency {dep} missing!")
+      return -1
   return 0
 
 ################################################################################
+# Actually runs a task
 
 async def run_task_async(task):
 
-  # Wait on all our dependencies to be updated
-  if any_fail := await wait_for_deps(task, task.abs_files_in):
-    return any_fail
-
-  if any_fail := await wait_for_deps(task, task.deps):
-    return any_fail
+  # Wait on all our dependencies to be fulfilled
+  if any_fail := await wait_for_deps(task.abs_files_in): return any_fail
+  if any_fail := await wait_for_deps(task.deps): return any_fail
 
   # Our dependencies are ready, we can grab a process semaphore slot now.
   async with proc_sem:
@@ -267,7 +285,7 @@ async def run_task_async(task):
     node_visit = node_visit + 1
 
     # Check if we need a rebuild
-    reason = needs_rebuild(task)
+    reason = needs_rerun(task)
     if config.force or task.force: reason = f"Files {task.abs_files_out} forced to rebuild"
     if not reason: return 0
 
@@ -279,8 +297,7 @@ async def run_task_async(task):
       print("\r", end="")
       status = f"[{node_visit}/{node_total}] {description}"
       status = status[:os.get_terminal_size().columns - 1]
-      print(status, end="")
-      print("\x1B[K", end="")
+      print(f"{status}\x1B[K", end="") # Clear text to the end of the line
 
     # Print rebuild reason
     if config.debug: print(reason)
@@ -288,7 +305,7 @@ async def run_task_async(task):
     # Print debug dump of args if needed
     if config.debug: print(task)
 
-    # Print the tasks' command
+    # Print the task's command
     command = expand(task.command, task)
     if not command:
       print(f"Command missing for input {task.files_in}!")
@@ -307,8 +324,8 @@ async def run_task_async(task):
       if dirname := path.dirname(file_out):
         os.makedirs(dirname, exist_ok = True)
 
-    # OK, we're ready to start the subprocess. In serial mode we run the
-    # subprocess synchronously.
+    # OK, we're ready to start the subprocess.
+    # In serial mode we run the subprocess synchronously.
     if config.serial:
       result = subprocess.run(
         command,
@@ -329,16 +346,16 @@ async def run_task_async(task):
       (stdout_data, stderr_data) = await proc.communicate()
       returncode = proc.returncode
 
-    stdout = stdout_data.decode()
-    stderr = stderr_data.decode()
-
-    # Print command results
+    # Print failure message if needed
     if returncode:
       if not (config.verbose or config.debug): print()
       print(f"\x1B[31mFAILED\x1B[0m: {task.abs_files_out}")
       print(command)
 
+    # Print command output if needed
     show_output = returncode or not (task.quiet or config.quiet)
+    stdout = stdout_data.decode()
+    stderr = stderr_data.decode()
     if show_output and (stdout or stderr):
       if not config.verbose: print()
       print(stderr, end="")
@@ -349,28 +366,41 @@ async def run_task_async(task):
     return returncode
 
 ################################################################################
+# Adds a task to the global task queue, expanding filenames and dependencies
+# in the process.
 
 def queue(task):
+
   # Expand all filenames
-  src_dir   = path.relpath(os.getcwd(), hancho_root)
-  build_dir = path.join(expand(task.build_dir, task), src_dir)
+  src_dir   = dothancho_dir()
+  build_dir = expand(task.build_dir, task)
+  build_dir = path.join(build_dir, src_dir)
 
   task.src_dir   = src_dir
   task.build_dir = build_dir
 
   task.files_in  = [expand(f, task) for f in flatten(task.files_in)]
   task.files_out = [expand(f, task) for f in flatten(task.files_out)]
+  task.deps      = [expand(f, task) for f in flatten(task.deps)]
 
+  # Prepend directories to filenames.
+  # If they're already absolute, this does nothing.
   task.files_in  = [path.join(src_dir,   f) for f in task.files_in]
   task.files_out = [path.join(build_dir, f) for f in task.files_out]
 
-  task.deps      = flatten(task.deps)
+  # Append the absolute paths of all in/out filenames to the task.
+  # If they're already absolute, this does nothing.
+  task.abs_files_in  = [path.abspath(f) for f in task.files_in]
+  task.abs_files_out = [path.abspath(f) for f in task.files_out]
+  task.abs_deps      = [path.abspath(f) for f in task.deps]
 
-  # Add the absolute paths of all filenames
-  task.abs_files_in  = [path.join(hancho_root, f) for f in task.files_in]
-  task.abs_files_out = [path.join(hancho_root, f) for f in task.files_out]
+  # And now strip hancho_root off the absolute paths to produce the final
+  # root-relative paths
+  task.files_in  = [path.relpath(f, hancho_root) for f in task.abs_files_in]
+  task.files_out = [path.relpath(f, hancho_root) for f in task.abs_files_out]
+  task.deps      = [path.relpath(f, hancho_root) for f in task.abs_deps]
 
-  # Check for duplicate outputs
+  # Check for duplicate task outputs
   for file in task.abs_files_out:
     if file in hancho_outs:
       print(f"Multiple rules build {file}!")
@@ -382,23 +412,7 @@ def queue(task):
   return task.abs_files_out
 
 ################################################################################
-
-def reset():
-  hancho_queue.clear()
-  promise_map.clear()
-  hancho_outs.clear()
-
-  global node_built
-  global node_total
-  global node_visit
-  global proc_sem
-
-  node_built = 0
-  node_total = 0
-  node_visit = 0
-  proc_sem = None
-
-################################################################################
+# Runs all tasks in the queue and waits for them all to be finished
 
 def build():
   global node_built
@@ -432,6 +446,25 @@ def build():
   return not any_failed
 
 ################################################################################
+# Resets all internal global state
+
+def reset():
+  hancho_queue.clear()
+  promise_map.clear()
+  hancho_outs.clear()
+
+  global node_built
+  global node_total
+  global node_visit
+  global proc_sem
+
+  node_built = 0
+  node_total = 0
+  node_visit = 0
+  proc_sem = None
+
+################################################################################
+# Dumps debugging info for all tasks in the queue
 
 def dump():
   for i in range(len(hancho_queue)):
@@ -441,5 +474,6 @@ def dump():
 ################################################################################
 
 if __name__ == "__main__":
-    #doctest.testmod()
-    doctest.testfile("TUTORIAL.md")
+  build_path = path.join(hancho_root, "build.hancho")
+  #print(build_path)
+  load_module_path(build_path)
