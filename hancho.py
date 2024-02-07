@@ -7,17 +7,88 @@ import inspect
 import argparse
 from os import path
 
+this = sys.modules[__name__]
+hancho_root = os.getcwd()
+hancho_queue = []
+hancho_mods  = {}
+hancho_outs  = set()
+promise_map = {}
+node_total = 0
+node_visit = 0
+node_built = 0
+base_rule = None
+config = None
+proc_sem = None
+
 ################################################################################
 
-def dothancho_dir():
+def init():
+  this.base_rule = Rule(
+    description = "{files_in} -> {files_out}",
+    build_dir = "build",
+    root_dir  = hancho_root,
+    quiet     = False, # Don't print this task's output
+    force     = False, # Force this task to run
+    expand    = expand,
+    flatten   = flatten,
+    join      = join,
+    len       = len,
+    run_cmd   = run_cmd,
+    swap_ext  = swap_ext,
+  )
+
+  # Hancho's global configuration object
+  this.config = Rule(
+    verbose   = False, # Print verbose build info
+    quiet     = False, # Don't print any task output
+    serial    = False, # Do not parallelize tasks
+    dryrun    = False, # Do not actually run tasks
+    debug     = False, # Print debugging information
+    force     = False, # Force all tasks to run
+  )
+
+################################################################################
+
+def main():
+  parser = argparse.ArgumentParser()
+  parser.add_argument('filename',   default="build.hancho", nargs="?")
+  parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
+  parser.add_argument('--serial',   default=False, action='store_true', help='Do not parallelize commands')
+  parser.add_argument('--dryrun',   default=False, action='store_true', help='Do not run commands')
+  parser.add_argument('--debug',    default=False, action='store_true', help='Dump debugging information')
+  parser.add_argument('--force',    default=False, action='store_true', help='Force rebuild of everything')
+  parser.add_argument('--quiet',    default=False, action='store_true', help='Mute command output')
+  (flags, unrecognized) = parser.parse_known_args()
+
+  this.base_rule.quiet = flags.quiet
+  this.base_rule.force = flags.force
+
+  this.config.verbose  = flags.verbose # Print verbose build info
+  this.config.quiet    = flags.quiet   # Don't print any task output
+  this.config.serial   = flags.serial  # Do not parallelize tasks
+  this.config.dryrun   = flags.dryrun  # Do not actually run tasks
+  this.config.debug    = flags.debug   # Print debugging information
+  this.config.force    = flags.force   # Force all tasks to run
+
+  # A reference to this module is already in sys.modules["__main__"].
+  # Stash another reference in sys.modules["hancho"] so that build.hancho and
+  # descendants don't try to load a second copy of us.
+  sys.modules["hancho"] = this
+
+  build_path = path.join(this.hancho_root, flags.filename)
+  mod_name = path.split(flags.filename)[1].split('.')[0]
+  load_module(mod_name, build_path)
+
+################################################################################
+
+def stack_deps():
   f = inspect.currentframe()
-  while True:
-    if f.f_code.co_filename.endswith(".hancho"):
-      break
+  result = set()
+  while f is not None:
+    if f.f_code.co_filename.startswith(this.hancho_root):
+      result.add(f.f_code.co_filename)
     f = f.f_back
-  absdir = path.split(f.f_code.co_filename)[0]
-  reldir = path.relpath(absdir, hancho_root)
-  return reldir
+  return list(result)
 
 ################################################################################
 # Hancho's Rule object behaves like a Javascript object and implements a basic
@@ -44,37 +115,57 @@ class Rule(dict):
     return repr_val(self, 0)
 
   def __call__(self, **kwargs):
-    return queue(self.extend(**kwargs))
+    return queue(self.extend(meta_deps = stack_deps(), **kwargs))
 
   def extend(self, **kwargs):
     return Rule(base = self, **kwargs)
 
 ################################################################################
 # Hancho's module loader. Looks for {mod_dir}.hancho or build.hancho in either
-# the calling .hancho file's directory, or relative to hancho_root
+# the calling .hancho file's directory, or relative to hancho_root. Modules
+# loaded by this method are _not_ added to sys.modules - they're in
+# hancho.hancho_mods
 
-def load(mod_dir):
-  base_dirs    = [dothancho_dir(), hancho_root]
-  hancho_names = [f"{path.split(mod_dir)[1]}.hancho", "build.hancho"]
+def load(mod_path):
+  old_path = mod_path
+  mod_head = path.split(mod_path)[0]
+  mod_tail = path.split(mod_path)[1]
 
-  for base_dir in base_dirs:
-    for hancho_name in hancho_names:
-      full_path = path.abspath(path.join(base_dir, mod_dir, hancho_name))
-      if not path.exists(full_path):
+  search_paths = []
+  search_files = []
+
+  if re.search("\w+\.\w+$", mod_path):
+    search_files.append(mod_tail)
+    search_paths.append(path.join(os.getcwd(), mod_head))
+    search_paths.append(path.join(hancho_root, mod_head))
+  else:
+    search_files.append(f"{mod_tail}.hancho")
+    search_files.append(f"build.hancho")
+    search_paths.append(path.join(os.getcwd(), mod_path))
+    search_paths.append(path.join(hancho_root, mod_path))
+
+  for mod_file in search_files:
+    for mod_path in search_paths:
+      abs_path = path.abspath(path.join(mod_path, mod_file))
+      if not path.exists(abs_path):
         continue
-      if full_path in hancho_mods:
-        return hancho_mods[full_path]
-      if result := load_module_path(full_path):
-        hancho_mods[full_path] = result
-        return result
+      if abs_path in hancho_mods:
+        return hancho_mods[abs_path]
 
-  print(f"Could not load module {mod_dir}")
+      mod_name = mod_file.split(".")[0]
+
+      old_dir = os.getcwd()
+      os.chdir(path.split(abs_path)[0])
+      result = load_module(mod_name, abs_path)
+      os.chdir(old_dir)
+
+      hancho_mods[abs_path] = result
+      return result
+
+  print(f"Could not load module {old_path}")
   sys.exit(-1)
 
-def load_module_path(mod_path):
-  mod_dir  = path.split(mod_path)[0]
-  mod_name = path.split(mod_dir)[1]
-
+def load_module(mod_name, mod_path):
   loader = importlib.machinery.SourceFileLoader(mod_name, mod_path)
   spec   = importlib.util.spec_from_loader(mod_name, loader)
   module = importlib.util.module_from_spec(spec)
@@ -111,6 +202,8 @@ def repr_val(v, depth):
 ################################################################################
 # A trivial templating system that replaces {foo} with the value of rule.foo
 # and keeps going until it can't replace anything.
+
+template_regex = re.compile("{[^}]*}")
 
 def expand_once(template, rule):
   if template is None: return ""
@@ -171,6 +264,10 @@ def needs_rerun(task):
     if not path.exists(file_out):
       return f"Rebuilding {files_out} because some are missing"
 
+  # Check the hancho file that generated the task
+  if check_mtime(task.meta_deps, files_out):
+    return f"Rebuilding {files_out} because its .hancho files have changed"
+
   # Check user-specified deps.
   if check_mtime(task.deps, files_out):
     return f"Rebuilding {files_out} because a manual dependency has changed"
@@ -227,11 +324,7 @@ async def run_task_async(task):
 
   # Our dependencies are ready, we can grab a process semaphore slot now.
   async with proc_sem:
-    global node_visit
-    global node_total
-    global node_built
-
-    node_visit = node_visit + 1
+    this.node_visit = this.node_visit + 1
 
     # Check if we need a rebuild
     reason = needs_rerun(task)
@@ -241,10 +334,10 @@ async def run_task_async(task):
     # Print description
     description = expand(task.description, task)
     if config.verbose or config.debug:
-      print(f"[{node_visit}/{node_total}] {description}")
+      print(f"[{this.node_visit}/{this.node_total}] {description}")
     else:
       print("\r", end="")
-      status = f"[{node_visit}/{node_total}] {description}"
+      status = f"[{this.node_visit}/{this.node_total}] {description}"
       status = status[:os.get_terminal_size().columns - 1]
       print(f"{status}\x1B[K", end="") # Clear text to the end of the line
 
@@ -310,7 +403,7 @@ async def run_task_async(task):
       print(stderr, end="")
       print(stdout, end="")
 
-    node_built = node_built + 1
+    this.node_built = this.node_built + 1
     sys.stdout.flush()
     return returncode
 
@@ -321,7 +414,7 @@ async def run_task_async(task):
 def queue(task):
 
   # Expand all filenames
-  src_dir   = dothancho_dir()
+  src_dir   = path.relpath(os.getcwd(), hancho_root)
   build_dir = expand(task.build_dir, task)
   build_dir = path.join(build_dir, src_dir)
 
@@ -337,11 +430,11 @@ def queue(task):
   task.files_in  = [path.join(src_dir,   f) for f in task.files_in]
   task.files_out = [path.join(build_dir, f) for f in task.files_out]
 
-  # Append the absolute paths of all in/out filenames to the task.
-  # If they're already absolute, the filenames do not change
-  task.abs_files_in  = [path.abspath(f) for f in task.files_in]
-  task.abs_files_out = [path.abspath(f) for f in task.files_out]
-  task.abs_deps      = [path.abspath(f) for f in task.deps]
+  # Append hancho_root to all in/out filenames.
+  # If they're already absolute, this does nothing.
+  task.abs_files_in  = [path.join(hancho_root, f) for f in task.files_in]
+  task.abs_files_out = [path.join(hancho_root, f) for f in task.files_out]
+  task.abs_deps      = [path.join(hancho_root, f) for f in task.deps]
 
   # And now strip hancho_root off the absolute paths to produce the final
   # root-relative paths
@@ -351,43 +444,43 @@ def queue(task):
 
   # Check for duplicate task outputs
   for file in task.abs_files_out:
-    if file in hancho_outs:
+    if file in this.hancho_outs:
       print(f"Multiple rules build {file}!")
       sys.exit(-1)
-    hancho_outs.add(file)
+    this.hancho_outs.add(file)
 
   # OK, we can queue up the rule now.
-  hancho_queue.append(task)
+  this.hancho_queue.append(task)
   return task.abs_files_out
 
 ################################################################################
 # Runs all tasks in the queue and waits for them all to be finished
 
-def build():
-  global node_built
-  global node_total
+# FIXME This has to be global for some reason
+hancho_loop  = asyncio.new_event_loop()
 
-  node_total = len(hancho_queue)
+def build():
+  this.node_total = len(hancho_queue)
+  this.proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
 
   for task in hancho_queue:
     coroutine = run_task_async(task)
     promise = hancho_loop.create_task(coroutine)
     if task.abs_files_out:
       for output in task.abs_files_out:
-        promise_map[output] = promise
+        this.promise_map[output] = promise
     else:
       # We need an entry in the promise map for the task even if it doesn't
       # have any outputs so we don't exit the build before it's done.
-      promise_map[f"task{id(task)}"] = promise
+      this.promise_map[f"task{id(task)}"] = promise
 
   async def wait(promise_map):
-    global any_failed
     results = await asyncio.gather(*promise_map.values())
-    any_failed = any(results)
+    return any(results)
 
-  hancho_loop.run_until_complete(wait(promise_map))
-  if node_built and not config.verbose: print()
-  if node_built == 0:
+  any_failed = hancho_loop.run_until_complete(wait(this.promise_map))
+  if this.node_built and not config.verbose: print()
+  if this.node_built == 0:
     print("hancho: no work to do.")
   reset()
   return not any_failed
@@ -396,83 +489,23 @@ def build():
 # Resets all internal global state
 
 def reset():
-  hancho_queue.clear()
-  promise_map.clear()
-  hancho_outs.clear()
+  this.hancho_queue.clear()
+  this.promise_map.clear()
+  this.hancho_outs.clear()
 
-  global node_built
-  global node_total
-  global node_visit
-
-  node_built = 0
-  node_total = 0
-  node_visit = 0
+  this.node_built = 0
+  this.node_total = 0
+  this.node_visit = 0
 
 ################################################################################
 # Dumps debugging info for all tasks in the queue
 
 def dump():
   for i in range(len(hancho_queue)):
-    print(f"Target [{i}/{len(hancho_queue)}]")
+    print(f"Target [{i+1}/{len(hancho_queue)}]")
     print(hancho_queue[i])
 
 ################################################################################
 
-if __name__ == "__main__":
-  parser = argparse.ArgumentParser()
-  parser.add_argument('--verbose',  default=False, action='store_true', help='Print verbose build info')
-  parser.add_argument('--serial',   default=False, action='store_true', help='Do not parallelize commands')
-  parser.add_argument('--dryrun',   default=False, action='store_true', help='Do not run commands')
-  parser.add_argument('--debug',    default=False, action='store_true', help='Dump debugging information')
-  parser.add_argument('--force',    default=False, action='store_true', help='Force rebuild of everything')
-  parser.add_argument('--quiet',    default=False, action='store_true', help='Mute command output')
-  (flags, unrecognized) = parser.parse_known_args()
-
-  hancho_root  = os.getcwd()
-
-  base_rule = Rule(
-    build_dir = "build",
-    root_dir  = hancho_root,
-    quiet     = False, # Don't print this task's output
-    force     = False, # Force this task to run
-    expand    = expand,
-    flatten   = flatten,
-    join      = join,
-    len       = len,
-    run_cmd   = run_cmd,
-    swap_ext  = swap_ext,
-  )
-
-  hancho_loop  = asyncio.new_event_loop()
-  hancho_queue = []
-  hancho_mods  = {}
-  hancho_outs  = set()
-
-  template_regex = re.compile("{[^}]*}")
-
-  any_failed = False
-
-  promise_map = {}
-
-  node_total = 0
-  node_visit = 0
-  node_built = 0
-
-  # Hancho's global configuration object
-  config = Rule(
-    verbose   = flags.verbose, # Print verbose build info
-    quiet     = flags.quiet,   # Don't print any task output
-    serial    = flags.serial,  # Do not parallelize tasks
-    dryrun    = flags.dryrun,  # Do not actually run tasks
-    debug     = flags.debug,   # Print debugging information
-    force     = flags.force,   # Force all tasks to run
-  )
-
-  proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
-
-  # Stash a reference to ourself in sys.modules so that build.hancho and
-  # descendants don't try to load a second copy of us.
-  sys.modules["hancho"] = sys.modules["__main__"]
-
-  build_path = path.join(hancho_root, "build.hancho")
-  load_module_path(build_path)
+init()
+if __name__ == "__main__": main()
