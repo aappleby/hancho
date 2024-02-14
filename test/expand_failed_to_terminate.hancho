@@ -1,0 +1,6 @@
+import hancho
+
+hancho.Rule(
+  command = "{flarp}",
+  flarp = "asdf {flarp}"
+)()

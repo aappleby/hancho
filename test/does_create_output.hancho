@@ -1,0 +1,8 @@
+import hancho
+import os
+
+hancho.Rule(
+  desc = "Does create its output file",
+  command = "touch {files_out[0]}",
+  files_out = "build/output_created.txt"
+)()

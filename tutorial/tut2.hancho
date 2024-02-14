@@ -1,0 +1,25 @@
+# tut2.hancho
+
+import hancho
+
+rule_compile = hancho.base_rule.extend(
+  desc = "Compile {files_in[0]} -> {files_out[0]}",
+  command   = "g++ -MMD -c {files_in[0]} -o {files_out[0]}",
+  files_out = "{swap_ext(files_in[0], '.o')}",
+  depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
+  print = print
+)
+
+rule_link = hancho.base_rule.extend(
+  desc = "Link {join(files_in)} -> {files_out[0]}",
+  command = "g++ {join(files_in)} -o {files_out[0]}",
+)
+
+main_o = rule_compile(
+  files_in = "src/main.cpp",
+)
+
+rule_link(
+  files_in = main_o,
+  files_out = "app"
+)

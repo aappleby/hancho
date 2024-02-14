@@ -1,0 +1,22 @@
+import hancho
+
+rule_compile = hancho.base_rule.extend(
+  command   = "g++ -c {files_in[0]} -o {files_out[0]}",
+  files_out = "{swap_ext(files_in[0], '.o')}",
+  depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
+)
+
+rule_link = hancho.base_rule.extend(
+  command = "g++ {join(files_in)} -o {files_out[0]}",
+)
+
+def compile(files):
+  objs = []
+  for file in files:
+    objs.append(rule_compile(file_in = file))
+
+def c_binary(name, files):
+  rule_link(
+    files_in = compile(files),
+    files_out = name
+  )

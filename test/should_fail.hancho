@@ -1,0 +1,6 @@
+import hancho
+
+hancho.Rule(
+  desc    = "This task should fail",
+  command = "(exit 255)",
+)()

@@ -1,0 +1,8 @@
+import hancho
+
+rule = hancho.Rule(
+  desc = "Compile src/main.cpp",
+  command = "g++ src/main.cpp",
+)
+
+rule()

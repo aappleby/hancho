@@ -1,0 +1,16 @@
+import hancho
+
+rule1 = hancho.Rule(
+  command = "{thing}",
+  thing = ":"
+)
+
+rule2 = rule1.extend(
+  thing = "{base.thing}"
+)
+
+rule3 = rule2.extend(
+  thing = "{base.thing}"
+)
+
+rule3()

@@ -1,0 +1,129 @@
+import hancho
+import os
+import re
+from functools import partial
+from os import path
+
+hancho.config.serial = True
+#hancho.config.multiline = True
+
+def divider1():
+  hancho.clean_line()
+  print("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
+
+def divider2():
+  hancho.clean_line()
+  print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+  print()
+
+################################################################################
+
+def prep_hancho(task):
+  divider1()
+
+def prep_wipe_outputs(task):
+  hancho.clean_line()
+  for f in task.files_out:
+    if path.exists(f):
+      print(f"Removing {f}")
+      os.remove(f)
+  divider1()
+
+################################################################################
+
+def check_outputs_created(task):
+  missing = False
+  for f in task.files_out:
+    if not path.exists(f):
+      missing = True
+  print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+  print()
+  return -1 if missing else 0
+
+def check_hancho_passed(task):
+  divider2()
+  return task.returncode
+
+def check_hancho_failed(task):
+  divider2()
+  return 0 if task.returncode else -1
+
+def check_stdout_has(regex, task):
+  divider2()
+  found = re.search(regex, task.stdout)
+  return 0 if found else -1
+
+################################################################################
+
+def hancho_should_pass(**kwargs):
+  rule = hancho.Rule(
+    desc = "{hanchofile} should pass",
+    prep = prep_hancho,
+    command = "hancho.py {hanchofile} --verbose",
+    check = check_hancho_passed,
+  )
+  rule.extend(**kwargs)()
+
+def hancho_should_fail(**kwargs):
+   rule = hancho.Rule(
+    desc = "{hanchofile} should fail",
+    prep = prep_hancho,
+    command = "hancho.py {hanchofile} --verbose",
+    check = check_hancho_failed
+   )
+   rule.extend(**kwargs)()
+
+################################################################################
+
+hancho_should_pass(
+  hanchofile = "should_pass.hancho"
+)
+
+hancho_should_fail(
+  hanchofile = "should_fail.hancho"
+)
+
+hancho_should_fail(
+  hanchofile = "command_missing.hancho",
+  check      = partial(check_stdout_has, "Command missing"),
+)
+
+hancho_should_pass(
+  hanchofile = "does_create_output.hancho",
+  files_out  = "build/output_created.txt",
+  prep       = prep_wipe_outputs,
+  check      = check_outputs_created,
+)
+
+hancho_should_fail(
+  hanchofile = "doesnt_create_output.hancho",
+  check      = partial(check_stdout_has, "still needs rerun"),
+)
+
+hancho_should_fail(
+  hanchofile = "garbage_command.hancho",
+  check      = partial(check_stdout_has, "not found"),
+)
+
+hancho_should_pass(
+  hanchofile = "build_dir_works.hancho",
+  files_out  = "build/build_dir_works.txt",
+  prep       = prep_wipe_outputs,
+  check      = check_outputs_created,
+)
+
+hancho_should_fail(
+  hanchofile = "missing_src.hancho",
+)
+
+hancho_should_fail(
+  hanchofile = "expand_failed_to_terminate.hancho",
+  check      = partial(check_stdout_has, "failed to terminate"),
+)
+
+hancho_should_fail(
+  hanchofile = "recursive_base_is_bad.hancho",
+  check      = partial(check_stdout_has, "is stuck in a loop"),
+)
+
+################################################################################

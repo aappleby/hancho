@@ -1,0 +1,7 @@
+import hancho
+
+hancho.Rule(
+  desc     = "This command should fail to run",
+  command  = "aklsjdflksjdlfkjldfk",
+  files_in = "garbage_command.hancho",
+)()

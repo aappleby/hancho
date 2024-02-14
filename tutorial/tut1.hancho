@@ -1,0 +1,21 @@
+import hancho
+
+rule_compile = hancho.Rule(
+  desc = "Compile {files_in} -> {files_out}",
+  command = "g++ -c {files_in[0]} -o {files_out[0]}",
+)
+
+rule_link = hancho.Rule(
+  desc = "Link {files_in} -> {files_out}",
+  command = "g++ {' '.join(files_in)} -o {files_out[0]}",
+)
+
+rule_compile(
+  files_in = "src/main.cpp",
+  files_out = "build/src/main.o",
+)
+
+rule_link(
+  files_in = "build/src/main.o",
+  files_out = "build/app"
+)

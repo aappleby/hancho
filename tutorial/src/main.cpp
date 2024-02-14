@@ -1,8 +1,7 @@
+#include "main.hpp"
 #include <stdio.h>
-#include "test.hpp"
 
 int main(int argc, char** argv) {
-  printf("Hello world\n");
-  test();
+  printf("Hello World\n");
   return 0;
 }

@@ -1,0 +1,13 @@
+# The Hancho build that tests all the tutorials
+
+import hancho
+
+test_build = hancho.Rule(
+  desc = "Running test {files_in[0]}",
+  command = "hancho.py --quiet {files_in[0]} > /dev/null"
+)
+
+test_build(
+  files_in = "tut0.hancho",
+  files_out = "a.out"
+)
