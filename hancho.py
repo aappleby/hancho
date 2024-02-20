@@ -1,18 +1,16 @@
 #!/usr/bin/python3
 
+import ast
+from types import FunctionType
 import asyncio, os, re, sys, subprocess
-import importlib.util
-import importlib.machinery
 import inspect
 import argparse
 from os import path
-import unittest
 
 this = sys.modules[__name__]
 hancho_root = os.getcwd()
 hancho_queue = []
 hancho_mods  = {}
-hancho_outs  = set()
 node_total = 0
 node_visit = 0
 node_built = 0
@@ -96,6 +94,11 @@ def main():
   mod_name = path.split(flags.filename)[1].split('.')[0]
   module = load_module(mod_name, build_path)
 
+  #asyncio.run(module.build())
+
+  sys.exit(0)
+
+  """
   if flags.dump:
     dump()
     sys.exit(0)
@@ -114,7 +117,11 @@ def main():
     #print(hancho_queue)
     build_result = build()
     sys.exit(build_result)
+  """
   print("done")
+
+async def async_main():
+  pass
 
 ################################################################################
 
@@ -209,13 +216,17 @@ def load(mod_path):
   log(f"Could not load module {old_path}")
   sys.exit(-1)
 
-def load_module(mod_name, mod_path):
-  loader = importlib.machinery.SourceFileLoader(mod_name, mod_path)
-  spec   = importlib.util.spec_from_loader(mod_name, loader)
-  module = importlib.util.module_from_spec(spec)
-  module.self = module
-  spec.loader.exec_module(module)
+async def async_load_module(mod_name, mod_path):
+  source = open(mod_path, "r").read()
+  code = compile(source, mod_name, 'exec', dont_inherit=True, flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
+  module = type(sys)(mod_name)
+  module.__file__ = mod_path
+  await FunctionType(code, module.__dict__)()
   return module
+
+def load_module(mod_name, mod_path):
+  async_mod = async_load_module(mod_name, mod_path)
+  return asyncio.run(async_mod)
 
 ################################################################################
 # Minimal JSON-style pretty printer for Rule, used by --debug
@@ -285,9 +296,11 @@ def expand(template, rule):
 ################################################################################
 # Build rule helper methods
 
-def flatten(x):
+async def flatten(x):
   if x is None: return []
-  if not type(x) is list: return [x]
+  if not type(x) is list:
+    if type(x) is asyncio.Task: x = await x
+    return [x]
   result = []
   for y in x: result.extend(flatten(y))
   return result
@@ -375,19 +388,6 @@ async def wait_for_deps(deps, promise_map):
   return 0
 
 ################################################################################
-#
-
-#def pass(task, reason):
-#  reason = expand(reason, task)
-#  log(f"\x1B[32mPASSED\x1B[0m: {reason}")
-
-def fail(task, reason):
-  reason = expand(reason, task)
-  clean_line()
-  log(f"\x1B[31mFAILED\x1B[0m: {reason}")
-
-def prep(task):
-  pass
 
 def check(task):
   if task.returncode:
@@ -399,7 +399,6 @@ def check(task):
     desc = expand(task.desc, task) if task.desc else task.command
     log(f"Task \"{desc}\" still needs rerun after running!")
     return -1
-
 
 ################################################################################
 
@@ -444,6 +443,7 @@ async def dispatch_console_command(task):
 ################################################################################
 
 async def dispatch_task(task):
+  """
   this.node_visit += 1
 
   # Check if we need a rebuild
@@ -505,13 +505,18 @@ async def dispatch_task(task):
   this.node_built += 1
   sys.stdout.flush()
 
-  return result
+  if task.returncode:
+    return None
+  else:
+    return task.files_out
+  """
+  pass
 
 ################################################################################
 # Adds a task to the global task queue, expanding filenames and dependencies
 # in the process.
 
-def queue(task):
+async def queue(task):
 
   # Expand all filenames
   src_dir   = path.relpath(os.getcwd(), hancho_root)
@@ -540,21 +545,22 @@ def queue(task):
   task.deps      = [path.relpath(f, hancho_root) for f in task.abs_deps]
 
   # Check for duplicate task outputs
+  """
   for file in task.abs_files_out:
     if file in this.hancho_outs:
       clean_line()
       log(f"Multiple rules build {file}!")
       sys.exit(-1)
     this.hancho_outs.add(file)
+  """
 
   # OK, we can queue up the rule now.
-  this.hancho_queue.append(task)
-  return task.abs_files_out
+  return dispatch_task(task)
 
 ################################################################################
 # Runs all tasks in the queue and waits for them all to be finished
 
-
+"""
 def build():
   # FIXME - why does this sometimes need to be global?
   hancho_loop  = asyncio.new_event_loop()
@@ -600,13 +606,13 @@ def build():
   reset()
 
   return -1 if any_failed else 0
+"""
 
 ################################################################################
 # Resets all internal global state
 
 def reset():
   this.hancho_queue.clear()
-  this.hancho_outs.clear()
 
   this.node_built = 0
   this.node_total = 0

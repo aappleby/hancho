@@ -1,7 +1,16 @@
+"""
+Some documentation
+"""
+
 import hancho
 
+print("loading hancho/hacks/build.hancho")
 
+async def build():
+  print("inside async def build: hancho/hacks/build.hancho")
+  return 0
 
+print(await build())
 
 """
 base_rule = hancho.base_rule.extend(
@@ -42,4 +51,4 @@ main = link_c_bin(
   files_in = [test_o, main_o],
   file_out = "bin/main"
 )
-'""
+"""
