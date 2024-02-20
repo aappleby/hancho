@@ -1,0 +1,7 @@
+import hancho
+
+hancho.Rule(
+  desc      = "Always rebuild build/always_rebuild_if_no_outputs.txt if the rule has no outputs",
+  command   = "touch build/always_rebuild_if_no_outputs.txt",
+  files_in  = "always_rebuild_if_no_outputs.hancho",
+)()

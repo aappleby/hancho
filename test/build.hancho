@@ -3,6 +3,9 @@ import os
 import re
 from functools import partial
 from os import path
+import sys
+import unittest
+import time
 
 hancho.config.serial = True
 #hancho.config.multiline = True
@@ -29,6 +32,17 @@ def prep_wipe_outputs(task):
       os.remove(f)
   divider1()
 
+def prep_timestamp_outputs(task):
+  if not task.timestamps:
+    task.timestamps = {}
+  for f in task.files_out:
+    task.timestamps[f] = path.getmtime(f)
+  divider1()
+
+def prep_touch_inputs(task):
+  for f in task.files_out:
+    os.system(f"touch {f}")
+
 ################################################################################
 
 def check_outputs_created(task):
@@ -53,6 +67,17 @@ def check_stdout_has(regex, task):
   found = re.search(regex, task.stdout)
   return 0 if found else -1
 
+def check_timestamp_outputs(task):
+  failed = False
+  for f in task.files_out:
+    old_timestamp = task.timestamps[f]
+    new_timestamp = path.getmtime(f)
+    if not new_timestamp > old_timestamp:
+      print(f"Output {f} was not modified")
+      failed = True
+  divider2()
+  return -1 if failed else 0
+
 ################################################################################
 
 def hancho_should_pass(**kwargs):
@@ -75,55 +100,243 @@ def hancho_should_fail(**kwargs):
 
 ################################################################################
 
-hancho_should_pass(
-  hanchofile = "should_pass.hancho"
-)
+#hancho_should_pass(
+#  hanchofile = "should_pass.hancho"
+#)
+#
+#hancho_should_fail(
+#  hanchofile = "should_fail.hancho"
+#)
+#
+#hancho_should_fail(
+#  hanchofile = "command_missing.hancho",
+#  check      = partial(check_stdout_has, "Command missing"),
+#)
+#
+#hancho_should_pass(
+#  hanchofile = "does_create_output.hancho",
+#  files_out  = "build/output_created.txt",
+#  prep       = prep_wipe_outputs,
+#  check      = check_outputs_created,
+#)
+#
+#hancho_should_fail(
+#  hanchofile = "doesnt_create_output.hancho",
+#  check      = partial(check_stdout_has, "still needs rerun"),
+#)
 
-hancho_should_fail(
-  hanchofile = "should_fail.hancho"
-)
-
-hancho_should_fail(
-  hanchofile = "command_missing.hancho",
-  check      = partial(check_stdout_has, "Command missing"),
-)
-
-hancho_should_pass(
-  hanchofile = "does_create_output.hancho",
-  files_out  = "build/output_created.txt",
-  prep       = prep_wipe_outputs,
-  check      = check_outputs_created,
-)
-
-hancho_should_fail(
-  hanchofile = "doesnt_create_output.hancho",
-  check      = partial(check_stdout_has, "still needs rerun"),
-)
-
-hancho_should_fail(
-  hanchofile = "garbage_command.hancho",
-  check      = partial(check_stdout_has, "not found"),
-)
-
-hancho_should_pass(
-  hanchofile = "build_dir_works.hancho",
-  files_out  = "build/build_dir_works.txt",
-  prep       = prep_wipe_outputs,
-  check      = check_outputs_created,
-)
-
-hancho_should_fail(
-  hanchofile = "missing_src.hancho",
-)
-
-hancho_should_fail(
-  hanchofile = "expand_failed_to_terminate.hancho",
-  check      = partial(check_stdout_has, "failed to terminate"),
-)
-
-hancho_should_fail(
-  hanchofile = "recursive_base_is_bad.hancho",
-  check      = partial(check_stdout_has, "is stuck in a loop"),
-)
+#hancho_should_fail(
+#  hanchofile = "garbage_command.hancho",
+#  check      = partial(check_stdout_has, "not found"),
+#)
+#
+#hancho_should_pass(
+#  hanchofile = "build_dir_works.hancho",
+#  files_out  = "build/build_dir_works.txt",
+#  prep       = prep_wipe_outputs,
+#  check      = check_outputs_created,
+#)
+#
+#hancho_should_fail(
+#  hanchofile = "missing_src.hancho",
+#)
+#
+#hancho_should_fail(
+#  hanchofile = "expand_failed_to_terminate.hancho",
+#  check      = partial(check_stdout_has, "failed to terminate"),
+#)
+#
+#hancho_should_fail(
+#  hanchofile = "recursive_base_is_bad.hancho",
+#  check      = partial(check_stdout_has, "is stuck in a loop"),
+#)
 
 ################################################################################
+
+def test_always_rebuild_if_no_inputs():
+  test_name = "always_rebuild_if_no_inputs"
+  print(f"{test_name}:")
+  old_mtime = path.getmtime(f"build/{test_name}.txt")
+  print("----------------------------------------")
+  os.system(f"hancho.py {test_name}.hancho")
+  print("----------------------------------------")
+  new_mtime = path.getmtime(f"build/{test_name}.txt")
+
+  if not new_mtime > old_mtime:
+    print(f"\x1B[31m{test_name} failed!\x1B[0m")
+    return 1
+  os.system(f"touch results/{test_name}.pass")
+  sys.stdout.flush()
+  return 0
+
+################################################################################
+
+#class TestCustomCommands(unittest.TestCase):
+class TestCustomCommands(unittest.TestCase):
+  #def setUp(self):
+    #hancho.flags.silent = True
+    #self.foo = 0
+
+  async def custom_command(self, task):
+    self.foo = 1
+
+  #def test_fail(self):
+  #  self.assertEqual(1, 0)
+  #  pass
+
+  def test_custom_command(self):
+    pass
+    #self.assertEqual(0, 0)
+    #hancho.Rule(
+    #  desc = "Test custom command",
+    #  command = self.custom_command,
+    #)()
+    #self.assertEqual(self.foo, 0)
+    #hancho.build()
+    #self.assertEqual(self.foo, 1)
+
+# print(module.TestCustomCommands)
+# suite = unittest.TestLoader().loadTestsFromTestCase(module.TestCustomCommands)
+# print(suite)
+# unittest.TextTestRunner().run(suite)
+
+async def run_testcase(task):
+  print("run_testcase")
+  suite = unittest.TestLoader().loadTestsFromTestCase(task.test_case)
+  for s in suite:
+    result = unittest.TestResult()
+    print(result)
+    s(result)
+    print(result)
+  print("blah")
+  print(len(result.failures))
+  return len(result.failures)
+
+rule_testsuite = hancho.Rule(
+  command = run_testcase
+)
+
+#rule_testsuite(test_case = TestCustomCommands)
+
+################################################################################
+
+# min delta seems to be 4 msec
+"""
+os.system("touch blahblah.txt")
+old_mtime = path.getmtime("blahblah.txt")
+for _ in range(1000):
+  os.system("touch blahblah.txt")
+  new_mtime = path.getmtime("blahblah.txt")
+  delta = new_mtime - old_mtime
+  if delta: print(delta)
+  old_mtime = new_mtime
+"""
+
+class TestRebuildTriggers(unittest.TestCase):
+
+  def setUp(self):
+    hancho.flags.silent = True
+
+  ##########
+
+  def test_always_rebuild_if_no_inputs(self):
+    test_name = "always_rebuild_if_no_inputs"
+    mtime0 = path.getmtime(f"build/{test_name}.txt")
+
+    rule = hancho.Rule(
+      #desc      = "Always rebuild build/{test_name}.txt if the rule has no files_in",
+      command   = "touch {files_out[0]}",
+      test_name = test_name
+    )
+
+    time.sleep(0.01)
+    rule(files_out = "build/{test_name}.txt")
+    hancho.build()
+    mtime1 = path.getmtime(f"build/{test_name}.txt")
+    self.assertGreater(mtime1, mtime0)
+
+    time.sleep(0.01)
+    rule(files_out = "build/{test_name}.txt")
+    hancho.build()
+    mtime2 = path.getmtime(f"build/{test_name}.txt")
+    self.assertGreater(mtime2, mtime1)
+
+  ##########
+
+  def test_always_rebuild_if_no_outputs(self):
+    test_name = "always_rebuild_if_no_outputs"
+    mtime0 = path.getmtime(f"build/{test_name}.txt")
+
+    rule = hancho.Rule(
+      #desc      = "Always rebuild build/{test_name}.txt if the rule has no files_out",
+      command   = "touch build/{test_name}.txt",
+      test_name = test_name
+    )
+
+    time.sleep(0.01)
+    rule(files_in = "{test_name}.hancho")
+    hancho.build()
+    mtime1 = path.getmtime(f"build/{test_name}.txt")
+    self.assertGreater(mtime1, mtime0)
+
+    time.sleep(0.01)
+    rule(files_in = "{test_name}.hancho")
+    hancho.build()
+    mtime2 = path.getmtime(f"build/{test_name}.txt")
+    self.assertGreater(mtime2, mtime1)
+
+################################################################################
+
+#fails = 0
+#fails += test_always_rebuild_if_no_inputs()
+#fails += test_always_rebuild_if_no_outputs()
+#
+#if fails:
+#  print(f"\x1B[31msome tests failed!\x1B[0m")
+#else:
+#  print(f"\x1B[32mall tests passed!\x1B[0m")
+
+
+#sys.exit(0)
+
+"""
+hancho_should_pass(
+  hanchofile = "always_rebuild_if_no_inputs.hancho",
+  prep       = prep_timestamp_outputs,
+  files_out  = "build/always_rebuild_if_no_inputs.txt",
+  check      = check_timestamp_outputs,
+)
+"""
+
+"""
+hancho_should_pass(
+  hanchofile = "always_rebuild_if_no_outputs.hancho",
+  prep       = prep_timestamp_outputs,
+  files_out  = "build/always_rebuild_if_no_outputs.txt",
+  check      = check_timestamp_outputs,
+)
+"""
+
+################################################################################
+
+
+
+
+
+
+
+
+
+
+
+deps1 = hancho.Rule(
+  desc = "deps1",
+  command = "touch {files_out[0]}",
+  files_out = "build/blep",
+)()
+
+deps2 = hancho.Rule(
+  desc = "deps2",
+  command = "touch {files_in[0]}.bar",
+  files_in = deps1
+)()
