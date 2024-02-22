@@ -198,7 +198,7 @@ g++ -MMD -c src/main.cpp -o build/tut2/src/main.o
 g++ build/tut2/src/main.o -o build/tut2/app
 user@host:~/hancho/tutorial$ ./hancho.py tut2.hancho --verbose
 hancho: no work to do.
-user@host:~/hancho/tutorial$ ./hancho.py touch src/main.hpp
+user@host:~/hancho/tutorial$ touch src/main.hpp
 user@host:~/hancho/tutorial$ ./hancho.py tut2.hancho --verbose
 [   1] Compile ['src/main.cpp'] -> ['build/tut2/src/main.o']
 g++ -MMD -c src/main.cpp -o build/tut2/src/main.o
