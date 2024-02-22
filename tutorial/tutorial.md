@@ -288,30 +288,33 @@ The ```--debug``` flag will print very verbose internal info about the Hancho ru
 user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho --debug
 expand "None"
 expand ""
+expand "src/main.cpp"
+expand "build/tut0/app"
+expand "g++ src/main.cpp -o build/tut0/app"
 expand "Compile src/main.cpp"
-[1/1] Compile src/main.cpp
-Always rebuild a target with no outputs?
+[   1] Compile src/main.cpp
+Rebuild reason: Rebuilding ['/home/aappleby/repos/hancho/tutorial/build/tut0/app'] because some are missing
 {
-  "meta_deps" : ["/home/aappleby/repos/hancho/tutorial/tut0.hancho"],
+  "files_in" : ["src/main.cpp"],
+  "files_out" : ["build/tut0/app"],
   "base" : {
     "desc" : "Compile src/main.cpp",
-    "command" : "g++ src/main.cpp",
+    "command" : "g++ src/main.cpp -o build/tut0/app",
     "base" : null,
   },
-  "files_in" : [],
-  "files_out" : [],
+  "meta_deps" : ["/home/aappleby/repos/hancho/tutorial/tut0.hancho"],
   "deps" : [],
-  "abs_files_in" : [],
-  "abs_files_out" : [],
+  "abs_files_in" : ["/home/aappleby/repos/hancho/tutorial/src/main.cpp"],
+  "abs_files_out" : ["/home/aappleby/repos/hancho/tutorial/build/tut0/app"],
   "abs_deps" : [],
 }
-expand "g++ src/main.cpp"
-g++ src/main.cpp
+g++ src/main.cpp -o build/tut0/app
+Files ['/home/aappleby/repos/hancho/tutorial/build/tut0/app'] are up to date
 ```
 
 The components of the debug output are:
  - "expand ..." messages for all text expansions (explained shortly)
- - The "[N/N] Description" for each rule evaluated
+ - The description for each rule evaluated
  - The reason the rule was (or was not) executed
  - A JSON representation of the rule object
  - The command executed

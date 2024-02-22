@@ -463,7 +463,7 @@ async def dispatch(task, hancho_outs = set()):
       sameline = sys.stdout.isatty() and not config.multiline)
 
   if config.debug:
-    log(reason)
+    log(f"Rebuild reason: {reason}")
 
   if config.debug:
     log(task)
