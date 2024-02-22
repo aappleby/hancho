@@ -13,5 +13,15 @@
       "cwd": "${workspaceFolder}/hacks",
       "justMyCode": false,
     },
+    {
+      "name": "Test Tutorial Build",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "hancho.py",
+      "args": [],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}/tutorial",
+      "justMyCode": false,
+    },
   ]
 }

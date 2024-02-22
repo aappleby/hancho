@@ -1,13 +1,26 @@
 # The Hancho build that tests all the tutorials
 
 import hancho
+import os
+
+hancho.config.serial = True
+hancho.config.verbose = True
+
+async def callback(task):
+  command = task.expand("./hancho.py {files_in[0]} --verbose")
+  hancho.log(command)
+  retcode = os.system(command)
+  #print(retcode)
+  hancho.log()
+  return None if retcode else []
 
 test_build = hancho.Rule(
-  desc = "Running test {files_in[0]}",
-  command = "hancho.py --quiet {files_in[0]} > /dev/null"
+  desc = "Building {files_in[0]}",
+  command = callback,
+  files_out = []
 )
 
-test_build(
-  files_in = "tut0.hancho",
-  files_out = "a.out"
-)
+test_build(files_in = "tut0.hancho")
+test_build(files_in = "tut1.hancho")
+test_build(files_in = "tut2.hancho")
+test_build(files_in = "tut3.hancho")

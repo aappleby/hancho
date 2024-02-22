@@ -1,24 +1,10 @@
+# tutorial/tut5.hancho - Rule Files, Globs, and Helper Functions
 import hancho
+import glob
 
-rule_compile = hancho.base_rule.extend(
-  command   = "g++ -c {files_in[0]} -o {files_out[0]}",
-  files_out = "{swap_ext(files_in[0], '.o')}",
-  depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
-)
+# You can 
+rules = await hancho.load("rules.hancho")
 
-rule_link = hancho.base_rule.extend(
-  command = "g++ {join(files_in)} -o {files_out[0]}",
-)
-
-rule_compile(
-  files_in = "src/main.cpp"
-)
-
-rule_compile(
-  files_in = "src/util.cpp"
-)
-
-rule_link(
-  files_in = ["build/main.o", "build/util.o"],
-  files_out = "build/app"
-)
+# Since c_binary expects a list of filenames, we can use Python's built in
+# glob functionality to compile all .cpp files in src/ into a binary.
+rules.c_binary("app", glob.glob("src/*.cpp"))

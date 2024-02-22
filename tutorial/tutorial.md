@@ -1,6 +1,3 @@
-Tutorials:
-
-----------
 ### Tutorial 0: Running Hancho
 
 Hancho is distributed as a single Python file with no dependencies, just download it to your working directory:
@@ -17,8 +14,8 @@ Let's start off by using Hancho to compile a trivial "Hello World" application:
 
 ``` cpp
 // src/main.cpp
-
 #include <stdio.h>
+#include "main.hpp"
 
 int main(int argc, char** argv) {
   printf("Hello World\n");
@@ -26,36 +23,52 @@ int main(int argc, char** argv) {
 }
 ```
 
-Hancho build files are just Python modules; our starting build file just hardcodes a build rule with a description and a command and then runs it:
+Hancho build files are Python modules that contain Hancho build rules and build invocations. Our starting build file just hardcodes a build rule with a description and a command and then runs it.
 ``` py
 # tutorial/tut0.hancho
-
 import hancho
 
+# All rules must have a command, in this case a console command to run the
+# compiler. Rules can have an optional description that is printed when they
+# run.
 rule = hancho.Rule(
-  desc = "Compile src/main.cpp",
-  command = "g++ src/main.cpp",
+  desc      = "Compile src/main.cpp",
+  command   = "g++ src/main.cpp -o build/tut0/app",
 )
 
-rule()
+# You run the rule by calling it with a list of input files to run it on and a
+# list of output files it should produce. If you only have a single file, you
+# can omit the [].
+# Note that running a rule _requires_ files_in and files_out - these can be
+# empty arrays, but Hancho needs to know what goes into and out of a rule to
+# enable dependency checking:
+rule(
+  files_in  = "src/main.cpp",
+  files_out = "build/tut0/app",
+)
+
+# That's it, "hancho.py tut0.hancho" will compile build/tut0/app when needed.
 ```
 
-You should now be able to compile src/main.cpp via ```./hancho.py tut0.hancho```.
+Let's see if it works. If we run Hancho twice, the first run should compile the app
+and the second run should do nothing.
 
 ```console
 ~/hancho/tutorial$ ./hancho.py tut0.hancho
-[1/1] Compile src/main.cpp
-
-~/hancho/tutorial$ ./a.out
+[   1] Compile src/main.cpp
+~/hancho/tutorial$ build/tut0/app
 Hello World
+~/hancho/tutorial$ ./hancho.py tut0.hancho
+hancho: no work to do.
 ```
 
-To see the commands as they're executed, use the ```--verbose``` flag:
+Seems to work. To see the commands as they're executed, use the ```--verbose``` flag:
 
 ```console
+~/hancho/tutorial$ rm -rf build
 ~/hancho/tutorial$ ./hancho.py tut0.hancho --verbose
-[1/1] Compile src/main.cpp
-g++ src/main.cpp
+[   1] Compile src/main.cpp
+g++ src/main.cpp -o build/tut0/app
 ```
 
 ----------
@@ -68,9 +81,9 @@ Strings in Hancho rules can contain templates - Python expressions contained in 
 
 ```py
 # tutorial/tut1.hancho
-
 import hancho
 
+# Hancho will expand {} templates before running the command.
 rule_compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in[0]} -o {files_out[0]}",
@@ -82,37 +95,50 @@ Some expressions have special meanings in Hancho - for example, "files_in" is al
 Since templates can contain Python expressions, we can join a list of strings into a single string using ```' '.join(files_in)```
 
 ```py
+# Templates can contain Python expressions.
 rule_link = hancho.Rule(
   desc = "Link {files_in} -> {files_out}",
   command = "g++ {' '.join(files_in)} -o {files_out[0]}",
 )
 ```
 
-To use rules we call them as if they are functions. All the arguments to a rule must be named so that they can be used in templates. For convenience, if you pass a single string to files_in and files_out, Hancho will wrap them in a list:
+When we need to pass the outputs of one rule to the inputs of another rule, we can use the return value from invoking the rule. The return value is a _promise_ for the result of invoking the rule, and can be passed to other rules to chain them together.
 
-```
-rule_compile(
+```py
+# Calling rule_compile() here returns a promise that resolves to a list of
+# filenames if it succeeds, or None if it fails.
+main_o = rule_compile(
   files_in = "src/main.cpp",
-  files_out = "build/src/main.o",
+  files_out = "build/tut1/src/main.o",
 )
 
+# By passing that promise into rule_link, we create a dependency between the
+# link task and the compile task.
 rule_link(
-  files_in = "build/src/main.o",
-  files_out = "build/app"
+  files_in = main_o,
+  files_out = "build/tut1/app"
 )
 ```
 
+And let's check the results:
 
 ```console
 ~/hancho/tutorial$ ./hancho.py tut1.hancho --verbose
-[1/2] Compile ['src/main.cpp'] -> ['build/main.o']
-g++ -c src/main.cpp -o build/main.o
-[2/2] Link ['build/main.o'] -> ['build/app']
-g++ build/main.o -o build/app
-
-~/hancho/tutorial$ ls build
-app  main.o
+[   1] Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']
+g++ -c src/main.cpp -o build/tut1/src/main.o
+[   2] Link ['build/tut1/src/main.o'] -> ['build/tut1/app']
+g++ build/tut1/src/main.o -o build/tut1/app
+~/hancho/tutorial$ ./hancho.py tut1.hancho --verbose
+hancho: no work to do.
+~/hancho/tutorial$ ./hancho.py touch src/main.cpp
+~/hancho/tutorial$ ./hancho.py tut1.hancho --verbose
+[   1] Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']
+g++ -c src/main.cpp -o build/tut1/src/main.o
+[   2] Link ['build/tut1/src/main.o'] -> ['build/tut1/app']
+g++ build/tut1/src/main.o -o build/tut1/app
 ```
+
+Dependency checking between the two rules seems to be working - modifying main.cpp causes both the compiler and linker rules to run.
 
 
 ----------
@@ -120,77 +146,81 @@ app  main.o
 
 In the previous example we hardcoded our output directory ```build/``` and the object filename ```build/src/main.o```. Let's make those more generic.
 
-Hancho contains a small number of built-in functions to make common build tasks easier. These are contained in ```hancho.base_rule``` - a Rule object that we can extend with our own commands. Rule objects work much like Javascript objects - each rule can 'inherit' from another rule via Rule.extend(), and inside a template we can use both the parent's and the child's fields.
+Hancho contains a small number of built-in functions to make common build tasks easier. These are contained in ```hancho.base_rule``` - a Rule object that we can extend with our own commands. Rule objects work much like Javascript objects, which use 'prototypical' inheritance - each rule can 'inherit' from another rule via Rule.extend(), and inside a template we can use both the parent's and the child's fields. We can also attach functions to rules and call those functions inside template strings.
 
-Rule fields can also be functions - in this example we're using ```base_rule.join()``` which is just shorthand for ```' '.join()```, and ```base_rule.swap_ext()``` which replaces the extension of a filename.
-
-We'll also take advantage of the special rule field ```depfile```, which tells Hancho where to find a list of dependencies for the rule. The dependency file should be in [GCC format](http://find_a_gcc_format_reference). To make GCC generate a depfile when we compile source code, we pass it the ```-MMD``` option.
-
-The ```hancho.base_rule``` also defines the special field ```build_dir```, which specifies where Hancho should place output files. Since we didn't override this, our outputs will go in ```build/``` by default.
-
-Lastly, we'll make use of our rule's return value. Calling rule_compile() will return a list of the files generated by the rule, and we can then pass that list to rule_link instead of a hardcoded string.
+Hancho's base_rule also defines some special fields such as ```build_dir```, which specifies where Hancho should place output files. The ```depfile``` field tells Hancho where to find a file that contains the list of dependencies for the rule output(s). The dependency file should be in [GCC format](http://find_a_gcc_format_reference). To make GCC generate a depfile when we compile source code, we pass it the ```-MMD``` option.
 
 ```py
-# tut2.hancho
-
+# tutorial/tut2.hancho
 import hancho
 
-rule_compile = hancho.base_rule.extend(
-  desc = "Compile {files_in[0]} -> {files_out[0]}",
-  command = "g++ -MMD -c {files_in[0]} -o {files_out[0]}",
-  files_out = "build/{swap_ext(files_in[0], '.o')}",
-  depfile = "build/{swap_ext(files_in[0], '.d')}",
+# To make all rules in this tutorial use the same build directory, we'll first
+# extend Hancho's built-in generic rule and specify build_dir.
+base_tut2 = hancho.base_rule.extend(
+  build_dir = "build/tut2",
 )
 
-rule_link = hancho.base_rule.extend(
-  desc = "Link {join(files_in)} -> {files_out[0]}",
-  command = "g++ {join(files_in)} -o {files_out[0]}",
+# We can then extend that to produce our compile and link rules.
+# By using the swap_ext built-in, we can make our files_out and depfile
+# parameters generic so we don't have to specify them for each invocation.
+rule_compile = base_tut2.extend(
+  desc      = "Compile {files_in} -> {files_out}",
+  command   = "g++ -MMD -c {files_in[0]} -o {files_out[0]}",
+  files_out = "{swap_ext(files_in[0], '.o')}",
+  depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
 )
 
+# The join() builtin here joins lists of strings with spaces so that lists of
+# filenames, for example, can be plugged into a command.
+rule_link = base_tut2.extend(
+  desc      = "Link {files_in} -> {files_out}",
+  command   = "g++ {join(files_in)} -o {files_out[0]}",
+)
+
+# Now we don't need files_out here, and we'll also automatically pick up the
+# G++ dependency file generated by the -MMD option.
 main_o = rule_compile(
   files_in = "src/main.cpp",
 )
 
 rule_link(
   files_in = main_o,
-  files_out = "build/app"
+  files_out = "app"
 )
+
 ```
 
 ```console
 ~/hancho/tutorial$ ./hancho.py tut2.hancho --verbose
-[1/2] Compile ['src/main.cpp'] -> ['build/src/main.o']
-g++ -c src/main.cpp -o build/src/main.o
-[2/2] Link ['build/src/main.o'] -> ['build/app']
-g++ build/src/main.o -o build/app
-
-~/hancho/tutorial$ tree build
-build
-├── app
-└── src
-    └── main.o
-
-1 directory, 2 files
-```
-
-Now that Hancho knows about all the dependencies of our build, running hancho.py a second time won't do anything as nothing needs to be rebuilt:
-
-```console
+[   1] Compile ['src/main.cpp'] -> ['build/tut2/src/main.o']
+g++ -MMD -c src/main.cpp -o build/tut2/src/main.o
+[   2] Link ['build/tut2/src/main.o'] -> ['build/tut2/app']
+g++ build/tut2/src/main.o -o build/tut2/app
 ~/hancho/tutorial$ ./hancho.py tut2.hancho --verbose
 hancho: no work to do.
+~/hancho/tutorial$ ./hancho.py touch src/main.hpp
+~/hancho/tutorial$ ./hancho.py tut2.hancho --verbose
+[   1] Compile ['src/main.cpp'] -> ['build/tut2/src/main.o']
+g++ -MMD -c src/main.cpp -o build/tut2/src/main.o
+[   2] Link ['build/tut2/src/main.o'] -> ['build/tut2/app']
+g++ build/tut2/src/main.o -o build/tut2/app
 ```
 
-But if we modify src/main.hpp, it will rebuild src/main.cpp:
+Modifying a header file that's not mentioned in the .hancho file now causes a rebuild thanks to the depfile generated by GCC.
 
-```console
-~/hancho/tutorial$ touch src/main.hpp
-~/hancho/tutorial$ hancho.py tut2.hancho --verbose
-[1/2] Compile src/main.cpp -> build/src/main.o
-g++ -MMD -c src/main.cpp -o build/src/main.o
-[2/2] Link build/src/main.o -> build/app
-g++ build/src/main.o -o build/app
+```
+~/hancho/tutorial$ tree build
+build
+└── tut2
+    ├── app
+    └── src
+        ├── main.d
+        └── main.o
+
+2 directories, 3 files
 ```
 
+And the files are all under ```build/tut2``` as they should be.
 
 -----
 [tut3](tutorial/tut3.hancho): Using Hancho builtins

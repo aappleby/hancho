@@ -1,28 +1,51 @@
 #!/usr/bin/python3
 
-import ast
-from types import FunctionType
-import asyncio, os, re, sys, subprocess
-import inspect
 import argparse
+import ast
+import asyncio
+import inspect
+import io
+import os
+import re
+import subprocess
+import sys
+import types
 from os import path
 
 this = sys.modules[__name__]
 hancho_root = os.getcwd()
-hancho_queue = []
 hancho_mods  = {}
-node_total = 0
-node_visit = 0
-node_built = 0
 base_rule = None
 config = None
+proc_sem = None
+node_visit = 0
+flags = None
+any_failed = False
+total_commands = 0
+
+################################################################################
 
 line_dirty = False
 
-def clean_line():
-  global line_dirty
-  if line_dirty: log()
-  line_dirty = False
+def log(*args, sameline = False, **kwargs):
+  if this.flags.silent: return
+
+  output = io.StringIO()
+  if sameline: kwargs["end"] = ""
+  print(*args, file=output, **kwargs)
+
+  output = output.getvalue()
+  if not output: return
+
+  if sameline:
+    sys.stdout.write("\r")
+    sys.stdout.write(output[:os.get_terminal_size().columns - 1])
+    sys.stdout.write("\x1B[K")
+    this.line_dirty = True
+  else:
+    if this.line_dirty: sys.stdout.write("\n")
+    sys.stdout.write(output)
+    this.line_dirty = output[-1] != '\n'
 
 ################################################################################
 
@@ -38,8 +61,7 @@ def init():
     join      = join,
     len       = len,
     run_cmd   = run_cmd,
-    swap_ext  = swap_ext,
-    check     = check,
+    swap_ext  = swap_ext
   )
 
   # Hancho's global configuration object
@@ -53,8 +75,6 @@ def init():
   )
 
 ################################################################################
-
-flags = None
 
 def main():
   parser = argparse.ArgumentParser()
@@ -70,64 +90,51 @@ def main():
   parser.add_argument('--test',      default=False, action='store_true', help='Run .hancho file as a unit test')
   parser.add_argument('--silent',    default=False, action='store_true', help='No output')
 
-  global flags
   parser.add_argument('-D', action='append', type=str)
-  (flags, unrecognized) = parser.parse_known_args()
+  (this.flags, unrecognized) = parser.parse_known_args()
 
-  this.base_rule.quiet = flags.quiet
-  this.base_rule.force = flags.force
+  this.base_rule.quiet = this.flags.quiet
+  this.base_rule.force = this.flags.force
 
-  this.config.verbose   = flags.verbose   # Print verbose build info
-  this.config.quiet     = flags.quiet     # Don't print any task output
-  this.config.serial    = flags.serial    # Do not parallelize tasks
-  this.config.dryrun    = flags.dryrun    # Do not actually run tasks
-  this.config.debug     = flags.debug     # Print debugging information
-  this.config.force     = flags.force     # Force all tasks to run
-  this.config.multiline = flags.multiline # Print multiple lines of output
+  this.config.verbose   = this.flags.verbose   # Print verbose build info
+  this.config.quiet     = this.flags.quiet     # Don't print any task output
+  this.config.serial    = this.flags.serial    # Do not parallelize tasks
+  this.config.dryrun    = this.flags.dryrun    # Do not actually run tasks
+  this.config.debug     = this.flags.debug     # Print debugging information
+  this.config.force     = this.flags.force     # Force all tasks to run
+  this.config.multiline = this.flags.multiline # Print multiple lines of output
+
+  this.proc_sem = asyncio.Semaphore(1 if this.flags.serial else os.cpu_count())
 
   # A reference to this module is already in sys.modules["__main__"].
   # Stash another reference in sys.modules["hancho"] so that build.hancho and
   # descendants don't try to load a second copy of us.
   sys.modules["hancho"] = this
 
-  build_path = path.join(this.hancho_root, flags.filename)
-  mod_name = path.split(flags.filename)[1].split('.')[0]
-  module = load_module(mod_name, build_path)
+  build_path = path.join(this.hancho_root, this.flags.filename)
+  mod_name = path.split(this.flags.filename)[1].split('.')[0]
 
-  #asyncio.run(module.build())
+  async def start():
+    async_mod = async_load_module(mod_name, build_path)
+    await asyncio.create_task(async_mod)
+    while True:
+      pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
+      if not pending_tasks: break
+      await asyncio.wait(pending_tasks)
 
-  sys.exit(0)
+  asyncio.run(start())
 
-  """
-  if flags.dump:
-    dump()
-    sys.exit(0)
+  if total_commands == 0:
+    log("hancho: no work to do.")
 
-  if flags.test:
-    #unittest.main(module = module, defaultTest="TestCustomCommands", argv = ["asdfaf"], exit=False)
-    print(module.TestCustomCommands)
-    suite = unittest.TestLoader().loadTestsFromTestCase(module.TestCustomCommands)
-    print(suite)
-    result = unittest.TextTestRunner().run(suite)
-    print(len(result.failures))
-    print("did it work?")
-    sys.exit(0)
+  #log("", end="")
+  #print()
+  #print()
+  if line_dirty: print()
 
-  if hancho_queue:
-    #print(hancho_queue)
-    build_result = build()
-    sys.exit(build_result)
-  """
-  print("done")
+  sys.exit(-1 if this.any_failed else 0)
 
-async def async_main():
-  pass
-
-################################################################################
-
-def log(*args, **kwargs):
-  if not flags.silent:
-    print(*args, **kwargs)
+  #log("[    ] done")
 
 ################################################################################
 
@@ -136,7 +143,7 @@ def stack_deps():
   result = set()
   while f is not None:
     if f.f_code.co_filename.startswith(this.hancho_root):
-      result.add(f.f_code.co_filename)
+      result.add(path.abspath(f.f_code.co_filename))
     f = f.f_back
   return list(result)
 
@@ -166,10 +173,13 @@ class Rule(dict):
     return repr_val(self, 0)
 
   def __call__(self, **kwargs):
-    return queue(self.extend(meta_deps = stack_deps(), **kwargs))
+    return queue2(self.extend(**kwargs))
 
   def extend(self, **kwargs):
     return Rule(base = self, **kwargs)
+
+  def expand(self, template):
+    return expand(template, self)
 
 ################################################################################
 # Hancho's module loader. Looks for {mod_dir}.hancho or build.hancho in either
@@ -177,7 +187,7 @@ class Rule(dict):
 # loaded by this method are _not_ added to sys.modules - they're in
 # hancho.hancho_mods
 
-def load(mod_path):
+async def load(mod_path):
   old_path = mod_path
   mod_head = path.split(mod_path)[0]
   mod_tail = path.split(mod_path)[1]
@@ -203,11 +213,15 @@ def load(mod_path):
       if abs_path in hancho_mods:
         return hancho_mods[abs_path]
 
+      print(abs_path)
+
       mod_name = mod_file.split(".")[0]
 
+      # FIXME we may not always be in the right directory if we're doing async
+      # stuff and we load multiple modules...
       old_dir = os.getcwd()
       os.chdir(path.split(abs_path)[0])
-      result = load_module(mod_name, abs_path)
+      result = await async_load_module(mod_name, abs_path)
       os.chdir(old_dir)
 
       hancho_mods[abs_path] = result
@@ -216,17 +230,21 @@ def load(mod_path):
   log(f"Could not load module {old_path}")
   sys.exit(-1)
 
+################################################################################
+# Python voodoo to manually load a module from a file, compile it with
+# PyCF_ALLOW_TOP_LEVEL_AWAIT set, call its code asynchronously, and then return
+# a promise for the loaded module.
+
 async def async_load_module(mod_name, mod_path):
   source = open(mod_path, "r").read()
-  code = compile(source, mod_name, 'exec', dont_inherit=True, flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
+  code = compile(source, mod_path, 'exec', dont_inherit=True, flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
   module = type(sys)(mod_name)
   module.__file__ = mod_path
-  await FunctionType(code, module.__dict__)()
+  import builtins
+  module.__builtins__ = builtins
+  func = types.FunctionType(code, module.__dict__)()
+  if inspect.isawaitable(func): await func
   return module
-
-def load_module(mod_name, mod_path):
-  async_mod = async_load_module(mod_name, mod_path)
-  return asyncio.run(async_mod)
 
 ################################################################################
 # Minimal JSON-style pretty printer for Rule, used by --debug
@@ -263,7 +281,6 @@ template_regex = re.compile("{[^}]*}")
 
 def expand_once(template, rule):
   if template is None: return ""
-  #log(rule)
   result = ""
   while s := template_regex.search(template):
     result += template[0:s.start()]
@@ -279,8 +296,7 @@ def expand_once(template, rule):
   return result
 
 def expand(template, rule):
-  for expand_pass in range(100):
-    #log(f"expand pass {expand_pass}")
+  for _ in range(100):
     if config.debug: log(f"expand \"{template}\"")
     new_template = expand_once(template, rule)
     if template == new_template:
@@ -296,15 +312,6 @@ def expand(template, rule):
 ################################################################################
 # Build rule helper methods
 
-async def flatten(x):
-  if x is None: return []
-  if not type(x) is list:
-    if type(x) is asyncio.Task: x = await x
-    return [x]
-  result = []
-  for y in x: result.extend(flatten(y))
-  return result
-
 def join(names, divider = ' '):
   return "" if names is None else divider.join(names)
 
@@ -313,6 +320,17 @@ def run_cmd(cmd):
 
 def swap_ext(name, new_ext):
   return path.splitext(name)[0] + new_ext
+
+################################################################################
+# Returns true if any file in files_in is newer than any file in files_out.
+
+def check_mtime(files_in, files_out):
+  for file_in in files_in:
+    mtime_in = path.getmtime(file_in)
+    for file_out in files_out:
+      mtime_out = path.getmtime(file_out)
+      if mtime_in > mtime_out: return True
+  return False
 
 ################################################################################
 # Checks if a task needs to be re-run, and returns a non-empty reason if so.
@@ -332,7 +350,7 @@ def needs_rerun(task):
     if not path.exists(file_out):
       return f"Rebuilding {files_out} because some are missing"
 
-  # Check the hancho file that generated the task
+  # Check the hancho file(s) that generated the task
   if check_mtime(task.meta_deps, files_out):
     return f"Rebuilding {files_out} because its .hancho files have changed"
 
@@ -340,16 +358,12 @@ def needs_rerun(task):
   if check_mtime(task.deps, files_out):
     return f"Rebuilding {files_out} because a manual dependency has changed"
 
-  # Check depfile, if present.
-  #log("DEPFILE")
-  #log(task.depfile)
+  # Check GCC-format depfile, if present.
   if task.depfile:
     depfile_name = expand(task.depfile, task)
-    #log(depfile_name)
     if path.exists(depfile_name):
       deplines = open(depfile_name).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
-      #log(deplines)
       if check_mtime(deplines, files_out):
         return f"Rebuilding {files_out} because a dependency in {depfile_name} has changed"
 
@@ -363,168 +377,43 @@ def needs_rerun(task):
   # All deps were up-to-date, nothing to do.
   return None
 
-def check_mtime(files_in, files_out):
-  for file_in in files_in:
-    mtime_in = path.getmtime(file_in)
-    for file_out in files_out:
-      mtime_out = path.getmtime(file_out)
-      if mtime_in > mtime_out: return True
-  return False
-
 ################################################################################
-# Waits until all the promises for a list of dependencies have been fulfilled.
-# Returns zero if all dependencies are satisfied, otherwise non-zero.
+# Slightly weird method that flattens out an arbitrarily-nested list of strings
+# and promises-for-strings into a flat array of actual strings.
 
-async def wait_for_deps(deps, promise_map):
-  for dep in deps:
-    promise = promise_map.get(dep, None)
-    task_result = await promise if promise else 0
-    if task_result != 0:
-      return task_result
-    if not config.dryrun and not path.exists(dep):
-      clean_line()
-      log(f"Dependency {dep} missing!")
-      return -1
-  return 0
+async def flatten(x):
+  if x is None: return []
+  if inspect.iscoroutine(x):
+    log("Can't flatten a raw coroutine!")
+    sys.exit(-1)
+  if type(x) is asyncio.Task:
+    x = await x
+  if not type(x) is list:
+    return [x]
+  result = []
+  for y in x: result.extend(await flatten(y))
+  return result
 
 ################################################################################
 
-def check(task):
-  if task.returncode:
-    clean_line()
-    log(f"\x1B[31mFAILED\x1B[0m: {task.command}")
-
-  if task.files_in and task.files_out and needs_rerun(task):
-    clean_line()
-    desc = expand(task.desc, task) if task.desc else task.command
-    log(f"Task \"{desc}\" still needs rerun after running!")
-    return -1
-
-################################################################################
-
-async def dispatch_console_command(task):
-  quiet = (config.quiet or task.quiet) and not (config.verbose or config.debug)
-  command = expand(task.command, task)
-  if config.verbose or config.debug:
-    clean_line()
-    log(f"{command}")
-
-  # OK, we're ready to start the subprocess.
-  # In serial mode we run the subprocess synchronously.
-  if config.serial:
-    result = subprocess.run(
-      command,
-      shell = True,
-      stdout = subprocess.PIPE,
-      stderr = subprocess.PIPE)
-    task.stdout = result.stdout.decode()
-    task.stderr = result.stderr.decode()
-    task.returncode = result.returncode
-
-  # In parallel mode we dispatch the subprocess via asyncio and then await
-  # the result.
-  else:
-    proc = await asyncio.create_subprocess_shell(
-      command,
-      stdout = asyncio.subprocess.PIPE,
-      stderr = asyncio.subprocess.PIPE)
-    (stdout_data, stderr_data) = await proc.communicate()
-    task.stdout = stdout_data.decode()
-    task.stderr = stderr_data.decode()
-    task.returncode = proc.returncode
-
-  # Print command output if needed
-  if not quiet and (task.stdout or task.stderr):
-    clean_line()
-    if task.stderr: log(task.stderr, end="")
-    if task.stdout: log(task.stdout, end="")
-  pass
-
-################################################################################
-
-async def dispatch_task(task):
-  """
-  this.node_visit += 1
-
-  # Check if we need a rebuild
-  reason = needs_rerun(task)
-  if config.force or task.force: reason = f"Files {task.abs_files_out} forced to rebuild"
-  if not reason: return 0
-
-  # Print description
-  desc = expand(task.desc, task)
-
-  quiet = (config.quiet or task.quiet) and not (config.verbose or config.debug)
-
-  if config.multiline:
-    log(f"[{this.node_visit}/{this.node_total}] {desc}")
-  else:
-    log("\r", end="")
-    status = f"[{this.node_visit}/{this.node_total}] {desc}"
-    if sys.stdout.isatty():
-      status = status[:os.get_terminal_size().columns - 1]
-      log(f"{status}\x1B[K", end="") # Clear text to the end of the line
-      global line_dirty
-      line_dirty = True
-    else:
-      log(status)
-
-  # Print rebuild reason
-  if config.debug: log(reason)
-
-  # Print debug dump of args if needed
-  if config.debug: log(task)
-
-  # Make sure our output directories exist
-  for file_out in task.abs_files_out:
-    if dirname := path.dirname(file_out):
-      os.makedirs(dirname, exist_ok = True)
-
-  # Print the task's command
-  if not task.command:
-    clean_line()
-    log(f"Command missing for input {task.files_in}!")
-    return -1
-
-  # Flush before we run the task so that the debug output above appears in order
-  sys.stdout.flush()
-
-  # Early-exit if this is just a dry run
-  if config.dryrun:
-    this.node_built = this.node_built + 1
-    sys.stdout.flush()
-    return 0
-
-  if type(task.command) is str:
-    await dispatch_console_command(task)
-  elif callable(task.command):
-    await task.command(task)
-
-  result = task.returncode
-
-  this.node_built += 1
-  sys.stdout.flush()
-
-  if task.returncode:
-    return None
-  else:
-    return task.files_out
-  """
-  pass
-
-################################################################################
-# Adds a task to the global task queue, expanding filenames and dependencies
-# in the process.
-
-async def queue(task):
-
-  # Expand all filenames
+async def dispatch(task, hancho_outs = set()):
+  # Expand our build paths
   src_dir   = path.relpath(os.getcwd(), hancho_root)
   build_dir = path.join(expand(task.build_dir, task), src_dir)
 
-  task.files_in  = [expand(f, task) for f in flatten(task.files_in)]
-  task.files_out = [expand(f, task) for f in flatten(task.files_out)]
-  task.deps      = [expand(f, task) for f in flatten(task.deps)]
+  # Flatten will await all filename promises in any of these arrays.
+  task.files_in  = await flatten(task.files_in)
+  task.files_out = await flatten(task.files_out)
+  task.deps      = await flatten(task.deps)
+
+  # Early-out with no result if any of our inputs or outputs are None (failed)
+  if None in task.files_in:  return None
+  if None in task.files_out: return None
+  if None in task.deps:      return None
+
+  task.files_in  = [expand(f, task) for f in task.files_in]
+  task.files_out = [expand(f, task) for f in task.files_out]
+  task.deps      = [expand(f, task) for f in task.deps]
 
   # Prepend directories to filenames.
   # If they're already absolute, this does nothing.
@@ -534,9 +423,9 @@ async def queue(task):
 
   # Append hancho_root to all in/out filenames.
   # If they're already absolute, this does nothing.
-  task.abs_files_in  = [path.join(hancho_root, f) for f in task.files_in]
-  task.abs_files_out = [path.join(hancho_root, f) for f in task.files_out]
-  task.abs_deps      = [path.join(hancho_root, f) for f in task.deps]
+  task.abs_files_in  = [path.abspath(path.join(hancho_root, f)) for f in task.files_in]
+  task.abs_files_out = [path.abspath(path.join(hancho_root, f)) for f in task.files_out]
+  task.abs_deps      = [path.abspath(path.join(hancho_root, f)) for f in task.deps]
 
   # And now strip hancho_root off the absolute paths to produce the final
   # root-relative paths
@@ -545,86 +434,131 @@ async def queue(task):
   task.deps      = [path.relpath(f, hancho_root) for f in task.abs_deps]
 
   # Check for duplicate task outputs
-  """
   for file in task.abs_files_out:
-    if file in this.hancho_outs:
-      clean_line()
+    if file in hancho_outs:
       log(f"Multiple rules build {file}!")
-      sys.exit(-1)
-    this.hancho_outs.add(file)
-  """
+      return None
+    hancho_outs.add(file)
 
-  # OK, we can queue up the rule now.
-  return dispatch_task(task)
+  # Check for valid command
+  if not task.command:
+    log(f"Command missing for input {task.files_in}!")
+    return None
 
-################################################################################
-# Runs all tasks in the queue and waits for them all to be finished
+  # Check if we need a rebuild
+  reason = needs_rerun(task)
+  if config.force or task.force: reason = f"Files {task.abs_files_out} forced to rebuild"
+  if not reason: return task.abs_files_out
 
-"""
-def build():
-  # FIXME - why does this sometimes need to be global?
-  hancho_loop  = asyncio.new_event_loop()
+  # Print the status line
+  this.node_visit += 1
+  complete = this.node_visit
+  pending = len(asyncio.all_tasks()) - 1
+  command = expand(task.command, task) if type(task.command) is str else "<callback>"
+  desc    = expand(task.desc, task) if task.desc else command
+  quiet   = (config.quiet or task.quiet) and not (config.verbose or config.debug)
 
-  this.node_total = len(hancho_queue)
-  proc_sem = asyncio.Semaphore(1 if config.serial else os.cpu_count())
+  #log(f"[{complete:4}:{pending:4}] {desc}",
+  log(f"[{complete:4}] {desc}",
+      sameline = sys.stdout.isatty() and not config.multiline)
 
-  promise_map = {}
+  if config.debug:
+    log(reason)
 
-  async def run_task_async(task):
-    # Wait on all our dependencies to be fulfilled
-    if any_fail := await wait_for_deps(task.abs_files_in, promise_map): return any_fail
-    if any_fail := await wait_for_deps(task.abs_deps, promise_map): return any_fail
+  if config.debug:
+    log(task)
 
-    # Our dependencies are ready, we can grab a process semaphore slot and kick
-    # off the task now.
-    async with proc_sem:
-      return await dispatch_task(task)
+  # Make sure our output directories exist
+  for file_out in task.abs_files_out:
+    if dirname := path.dirname(file_out):
+      os.makedirs(dirname, exist_ok = True)
 
-  for task in hancho_queue:
-    coroutine = run_task_async(task)
-    promise = hancho_loop.create_task(coroutine)
-    if task.abs_files_out:
-      for output in task.abs_files_out:
-        promise_map[output] = promise
+  # Flush before we run the task so that the debug output above appears in order
+  sys.stdout.flush()
+
+  # Early-exit if this is just a dry run
+  if config.dryrun:
+    sys.stdout.flush()
+    return task.abs_files_out
+
+  # OK, we're ready to start the task. Grab a semaphore so we don't run too
+  # many at once.
+  async with proc_sem:
+    global total_commands
+    total_commands += 1
+    if type(task.command) is str:
+      quiet = (config.quiet or task.quiet) and not (config.verbose or config.debug)
+      if config.verbose or config.debug:
+        log(f"{command}")
+
+      # In serial mode we run the subprocess synchronously.
+      if config.serial:
+        result = subprocess.run(
+          command,
+          shell = True,
+          stdout = subprocess.PIPE,
+          stderr = subprocess.PIPE)
+        task.stdout = result.stdout.decode()
+        task.stderr = result.stderr.decode()
+        task.returncode = result.returncode
+
+      # In parallel mode we dispatch the subprocess via asyncio and then await
+      # the result.
+      else:
+        proc = await asyncio.create_subprocess_shell(
+          command,
+          stdout = asyncio.subprocess.PIPE,
+          stderr = asyncio.subprocess.PIPE)
+        (stdout_data, stderr_data) = await proc.communicate()
+        task.stdout = stdout_data.decode()
+        task.stderr = stderr_data.decode()
+        task.returncode = proc.returncode
+
+      # Print command output if needed
+      if not quiet and (task.stdout or task.stderr):
+        if task.stderr: log(task.stderr, end="")
+        if task.stdout: log(task.stdout, end="")
+
+    elif callable(task.command):
+      await task.command(task)
     else:
-      # We need an entry in the promise map for the task even if it doesn't
-      # have any outputs so we don't exit the build before it's done.
-      promise_map[f"task{id(task)}"] = promise
+      log(f"Don't know what to do with {task.command}")
+      sys.exit(-1)
 
-  async def wait(promise_map):
-    results = await asyncio.gather(*promise_map.values())
-    return any(results)
+  # Task complete. Check return code and return abs_files_out if we succeeded,
+  # which will resolve the task's promise.
+  if task.returncode:
+    log(f"\x1B[31mFAILED\x1B[0m: {command}")
+    sys.stdout.flush()
+    this.any_failed = True
+    return None
 
-  any_failed = hancho_loop.run_until_complete(wait(promise_map))
-  clean_line()
+  if task.files_in and task.files_out:
+    reason = needs_rerun(task)
+    if reason:
+      log(f"Task \"{desc}\" still needs rerun after running! - {reason}")
+      sys.stdout.flush()
+      this.any_failed = True
+      return None
 
-  if any_failed:
-    log(f"\x1B[31mSome tasks failed!\x1B[0m")
-  else:
-    if this.node_built == 0:
-      log("hancho: no work to do.")
-  reset()
-
-  return -1 if any_failed else 0
-"""
-
-################################################################################
-# Resets all internal global state
-
-def reset():
-  this.hancho_queue.clear()
-
-  this.node_built = 0
-  this.node_total = 0
-  this.node_visit = 0
+  sys.stdout.flush()
+  return task.abs_files_out
 
 ################################################################################
-# Dumps debugging info for all tasks in the queue
 
-def dump():
-  for i in range(len(hancho_queue)):
-    log(f"Target [{i+1}/{len(hancho_queue)}]")
-    log(hancho_queue[i])
+def queue2(task):
+  if task.files_in is None:
+    print ("no files_in")
+    print(task)
+    sys.exit(-1)
+  if task.files_out is None:
+    print ("no files_out")
+    print(task)
+    sys.exit(-1)
+
+  task.meta_deps = stack_deps()
+  promise = dispatch(task)
+  return asyncio.create_task(promise)
 
 ################################################################################
 

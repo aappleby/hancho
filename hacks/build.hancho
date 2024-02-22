@@ -1,18 +1,5 @@
-"""
-Some documentation
-"""
-
 import hancho
 
-print("loading hancho/hacks/build.hancho")
-
-async def build():
-  print("inside async def build: hancho/hacks/build.hancho")
-  return 0
-
-print(await build())
-
-"""
 base_rule = hancho.base_rule.extend(
   name        = "base_config",
   toolchain   = "x86_64-linux-gnu",
@@ -23,32 +10,31 @@ base_rule = hancho.base_rule.extend(
 )
 
 compile_cpp = base_rule.extend(
-  description = "Compiling {file_in} -> {file_out} ({build_type})",
-  command     = "{toolchain}-g++ {cpp_std} {gcc_opt} {warnings} {includes} {defines} -c {file_in} -o {file_out}",
+  desc        = "Compiling {files_in[0]} -> {files_out[0]} ({build_type})",
+  command     = "{toolchain}-g++ {cpp_std} {gcc_opt} {warnings} {includes} {defines} -c {files_in[0]} -o {files_out[0]}",
   includes    = "-I.",
   defines     = "",
-  file_out    = "{swap_ext(file_in, '.o')}",
-  depfile     = "{swap_ext(file_in, '.d')}",
+  files_out   = "{swap_ext(files_in[0], '.o')}",
+  depfile     = "{swap_ext(files_in[0], '.d')}",
 )
 
 link_c_bin = base_rule.extend(
-  description = "Linking {file_out}",
-  command     = "{toolchain}-g++ {gcc_opt} {warnings} {join(files_in)} {join(deps)} {sys_libs} -o {file_out}",
+  desc        = "Linking {files_out[0]}",
+  command     = "{toolchain}-g++ {gcc_opt} {warnings} {join(files_in)} {join(deps)} {sys_libs} -o {files_out[0]}",
   sys_libs    = "",
 )
 
 test_o = compile_cpp(
-  file_in  = "src/test.cpp",
-  file_out = "obj/test.o"
+  files_in  = "src/test.cpp",
+  files_out = "obj/test.o"
 )
 
 main_o = compile_cpp(
-  file_in  = "src/main.cpp",
-  file_out = "obj/main.o"
+  files_in  = "src/main.cpp",
+  files_out = "obj/main.o"
 )
 
-main = link_c_bin(
+main_bin = link_c_bin(
   files_in = [test_o, main_o],
-  file_out = "bin/main"
+  files_out = "bin/main"
 )
-"""

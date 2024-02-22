@@ -3,5 +3,6 @@ import hancho
 hancho.Rule(
   desc      = "Always rebuild {files_out[0]} if the rule has no inputs",
   command   = "touch {files_out[0]}",
+  files_in  = [],
   files_out = "build/always_rebuild_if_no_inputs.txt"
 )()

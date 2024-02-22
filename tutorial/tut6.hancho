@@ -1,6 +1,0 @@
-import hancho
-import glob
-
-rules = hancho.load("rules6.hancho")
-
-rules.c_binary("app", glob.glob("*.cpp"))

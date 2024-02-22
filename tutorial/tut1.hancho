@@ -1,21 +1,28 @@
+# tutorial/tut1.hancho - Compiling a C Binary
 import hancho
 
+# Hancho will expand {} templates before running the command.
 rule_compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in[0]} -o {files_out[0]}",
 )
 
+# Templates can contain Python expressions.
 rule_link = hancho.Rule(
   desc = "Link {files_in} -> {files_out}",
   command = "g++ {' '.join(files_in)} -o {files_out[0]}",
 )
 
-rule_compile(
+# Calling rule_compile() here returns a promise that resolves to a list of
+# filenames if it succeeds, or None if it fails.
+main_o = rule_compile(
   files_in = "src/main.cpp",
-  files_out = "build/src/main.o",
+  files_out = "build/tut1/src/main.o",
 )
 
+# By passing that promise into rule_link, we create a dependency between the
+# link task and the compile task.
 rule_link(
-  files_in = "build/src/main.o",
-  files_out = "build/app"
+  files_in = main_o,
+  files_out = "build/tut1/app"
 )
