@@ -2,7 +2,8 @@
 import hancho
 import glob
 
-# You can 
+# You can load additional Hancho build files as needed, though be sure to
+# await them before using (darn asynchrony...)
 rules = await hancho.load("rules.hancho")
 
 # Since c_binary expects a list of filenames, we can use Python's built in

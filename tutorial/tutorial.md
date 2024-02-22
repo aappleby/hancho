@@ -223,19 +223,64 @@ build
 And the files are all under ```build/tut2``` as they should be.
 
 -----
-[tut3](tutorial/tut3.hancho): Using Hancho builtins
+### Tutorial 3 - Rule Files, Globs, and Helper Functions
+
+We can move the boilerplate stuff that we'll be using in multiple .hancho files
+into its own file for easier reuse.
+
+```py
+# tutorial/tut5.hancho - Rule Files, Globs, and Helper Functions
+import hancho
+import glob
+
+# You can load additional Hancho build files as needed, though be sure to
+# await them before using (darn asynchrony...)
+rules = await hancho.load("rules.hancho")
+
+# Since c_binary expects a list of filenames, we can use Python's built in
+# glob functionality to compile all .cpp files in src/ into a binary.
+rules.c_binary("app", glob.glob("src/*.cpp"))
+```
+
+Here's the rules file:
+```py
+import hancho
+
+# We extend base_rule just like the previous example
+base_tut6 = hancho.base_rule.extend(
+  build_dir = "build/tut6"
+)
+
+# And these rules are the same as the previous example
+rule_compile = base_tut6.extend(
+  desc      = "Compile {files_in} -> {files_out}",
+  command   = "g++ -c {files_in[0]} -o {files_out[0]}",
+  files_out = "{swap_ext(files_in[0], '.o')}",
+  depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
+)
+
+rule_link = base_tut6.extend(
+  desc      = "Link {files_in} -> {files_out}",
+  command   = "g++ {join(files_in)} -o {files_out[0]}",
+)
+
+# But since we're in Python, we can make helper functions to call rules for us
+def compile(files):
+  objs = []
+  for file in files:
+    objs.append(rule_compile(files_in = file))
+  return objs
+
+# And now compiling a bunch of files into a binary is just one call.
+def c_binary(name, files):
+  rule_link(
+    files_in = compile(files),
+    files_out = name
+  )
+```
 
 -----
-[tut4](tutorial/tut4.hancho): Rule outputs
-
------
-[tut5](tutorial/tut5.hancho): Helper functions
-
------
-[tut6](tutorial/tut6.hancho): Loading .hancho files
-
------
-[tut7](tutorial/tut7.hancho): Debugging Hancho
+### Addendum - Debugging Hancho
 
 The ```--debug``` flag will print very verbose internal info about the Hancho rules:
 
