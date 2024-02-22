@@ -130,7 +130,7 @@ g++ -c src/main.cpp -o build/tut1/src/main.o
 g++ build/tut1/src/main.o -o build/tut1/app
 ~/hancho/tutorial$ ./hancho.py tut1.hancho --verbose
 hancho: no work to do.
-~/hancho/tutorial$ ./hancho.py touch src/main.cpp
+~/hancho/tutorial$ touch src/main.cpp
 ~/hancho/tutorial$ ./hancho.py tut1.hancho --verbose
 [   1] Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']
 g++ -c src/main.cpp -o build/tut1/src/main.o
