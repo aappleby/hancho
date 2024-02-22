@@ -293,7 +293,7 @@ expand "build/tut0/app"
 expand "g++ src/main.cpp -o build/tut0/app"
 expand "Compile src/main.cpp"
 [   1] Compile src/main.cpp
-Rebuild reason: Rebuilding ['/home/aappleby/repos/hancho/tutorial/build/tut0/app'] because some are missing
+Rebuild reason: Rebuilding ['/home/user/hancho/tutorial/build/tut0/app'] because some are missing
 {
   "files_in" : ["src/main.cpp"],
   "files_out" : ["build/tut0/app"],
@@ -302,14 +302,14 @@ Rebuild reason: Rebuilding ['/home/aappleby/repos/hancho/tutorial/build/tut0/app
     "command" : "g++ src/main.cpp -o build/tut0/app",
     "base" : null,
   },
-  "meta_deps" : ["/home/aappleby/repos/hancho/tutorial/tut0.hancho"],
+  "meta_deps" : ["/home/user/hancho/tutorial/tut0.hancho"],
   "deps" : [],
-  "abs_files_in" : ["/home/aappleby/repos/hancho/tutorial/src/main.cpp"],
-  "abs_files_out" : ["/home/aappleby/repos/hancho/tutorial/build/tut0/app"],
+  "abs_files_in" : ["/home/user/hancho/tutorial/src/main.cpp"],
+  "abs_files_out" : ["/home/user/hancho/tutorial/build/tut0/app"],
   "abs_deps" : [],
 }
 g++ src/main.cpp -o build/tut0/app
-Files ['/home/aappleby/repos/hancho/tutorial/build/tut0/app'] are up to date
+Files ['/home/user/hancho/tutorial/build/tut0/app'] are up to date
 ```
 
 The components of the debug output are:
