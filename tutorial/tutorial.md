@@ -1,4 +1,5 @@
 ### Tutorial 0: Running Hancho
+---
 
 Hancho is distributed as a single Python file with no dependencies, just download it to your working directory:
 
@@ -25,7 +26,7 @@ int main(int argc, char** argv) {
 
 Hancho build files are Python modules that contain Hancho build rules and build invocations. Our starting build file just hardcodes a build rule with a description and a command and then runs it.
 ``` py
-# tutorial/tut0.hancho
+# tutorial/tut0.hancho - Running Hancho
 import hancho
 
 # All rules must have a command, in this case a console command to run the
@@ -38,10 +39,15 @@ rule = hancho.Rule(
 
 # You run the rule by calling it with a list of input files to run it on and a
 # list of output files it should produce. If you only have a single file, you
-# can omit the [].
-# Note that running a rule _requires_ files_in and files_out - these can be
-# empty arrays, but Hancho needs to know what goes into and out of a rule to
-# enable dependency checking:
+# can omit the []. Hancho will create any directories required by files_out
+# before running the command.
+
+# Note that Hancho resolves filenames relative to the directory the .hancho
+# file is in.
+
+# Running a rule _requires_ files_in and files_out - these can be empty arrays,
+# but Hancho needs to know what goes into and out of a rule to enable
+# dependency checking:
 rule(
   files_in  = "src/main.cpp",
   files_out = "build/tut0/app",
@@ -71,7 +77,7 @@ user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho --verbose
 g++ src/main.cpp -o build/tut0/app
 ```
 
-----------
+---
 ### Tutorial 1: Compiling a C binary
 
 Hardcoded build commands aren't terribly useful. Let's walk through tut1.hancho and see how we can make some reusable rules.
@@ -80,7 +86,7 @@ Strings in Hancho rules can contain templates - Python expressions contained in 
 
 
 ```py
-# tutorial/tut1.hancho
+# tutorial/tut1.hancho - Compiling a C Binary
 import hancho
 
 # Hancho will expand {} templates before running the command.
@@ -140,8 +146,7 @@ g++ build/tut1/src/main.o -o build/tut1/app
 
 Dependency checking between the two rules seems to be working - modifying main.cpp causes both the compiler and linker rules to run.
 
-
-----------
+---
 ### Tutorial 2: Hancho builtins
 
 In the previous example we hardcoded our output directory ```build/``` and the object filename ```build/src/main.o```. Let's make those more generic.
@@ -151,7 +156,7 @@ Hancho contains a small number of built-in functions to make common build tasks 
 Hancho's base_rule also defines some special fields such as ```build_dir```, which specifies where Hancho should place output files. The ```depfile``` field tells Hancho where to find a file that contains the list of dependencies for the rule output(s). The dependency file should be in [GCC format](http://find_a_gcc_format_reference). To make GCC generate a depfile when we compile source code, we pass it the ```-MMD``` option.
 
 ```py
-# tutorial/tut2.hancho
+# tutorial/tut2.hancho - Extending base_rule & calling builtin functions
 import hancho
 
 # To make all rules in this tutorial use the same build directory, we'll first
@@ -183,11 +188,16 @@ main_o = rule_compile(
   files_in = "src/main.cpp",
 )
 
-rule_link(
-  files_in = main_o,
-  files_out = "app"
+# Same here, Hancho will automatically look for util.d
+util_o = rule_compile(
+  files_in = "src/util.cpp"
 )
 
+# And we can pass both the compiled .o files to our linker
+rule_link(
+  files_in = [main_o, util_o],
+  files_out = "app"
+)
 ```
 
 ```shell
@@ -222,44 +232,29 @@ build
 
 And the files are all under ```build/tut2``` as they should be.
 
------
+---
 ### Tutorial 3 - Rule Files, Globs, and Helper Functions
 
-We can move the boilerplate stuff that we'll be using in multiple .hancho files
-into its own file for easier reuse.
+We can move the boilerplate stuff that we'll be using in multiple builds into its own rules.hancho file for easier reuse:
 
 ```py
-# tutorial/tut5.hancho - Rule Files, Globs, and Helper Functions
-import hancho
-import glob
-
-# You can load additional Hancho build files as needed, though be sure to
-# await them before using (darn asynchrony...)
-rules = await hancho.load("rules.hancho")
-
-# Since c_binary expects a list of filenames, we can use Python's built in
-# glob functionality to compile all .cpp files in src/ into a binary.
-rules.c_binary("app", glob.glob("src/*.cpp"))
-```
-
-Here's the rules file:
-```py
+# tutorial/rules.hancho - Reusable rules for tutorial 3
 import hancho
 
 # We extend base_rule just like the previous example
-base_tut6 = hancho.base_rule.extend(
+base_tut3 = hancho.base_rule.extend(
   build_dir = "build/tut6"
 )
 
 # And these rules are the same as the previous example
-rule_compile = base_tut6.extend(
+rule_compile = base_tut3.extend(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -c {files_in[0]} -o {files_out[0]}",
   files_out = "{swap_ext(files_in[0], '.o')}",
   depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
 )
 
-rule_link = base_tut6.extend(
+rule_link = base_tut3.extend(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {join(files_in)} -o {files_out[0]}",
 )
@@ -279,42 +274,166 @@ def c_binary(name, files):
   )
 ```
 
------
-### Addendum - Debugging Hancho
+And here's how we use rules.hancho:
 
-The ```--debug``` flag will print very verbose internal info about the Hancho rules:
+```py
+# tutorial/tut3.hancho - Rule Files, Globs, and Helper Functions
+import hancho
+import glob
 
-```shell
-user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho --debug
-expand "None"
-expand ""
-expand "src/main.cpp"
-expand "build/tut0/app"
-expand "g++ src/main.cpp -o build/tut0/app"
-expand "Compile src/main.cpp"
-[   1] Compile src/main.cpp
-Rebuild reason: Rebuilding ['/home/user/hancho/tutorial/build/tut0/app'] because some are missing
-{
-  "files_in" : ["src/main.cpp"],
-  "files_out" : ["build/tut0/app"],
-  "base" : {
-    "desc" : "Compile src/main.cpp",
-    "command" : "g++ src/main.cpp -o build/tut0/app",
-    "base" : null,
-  },
-  "meta_deps" : ["/home/user/hancho/tutorial/tut0.hancho"],
-  "deps" : [],
-  "abs_files_in" : ["/home/user/hancho/tutorial/src/main.cpp"],
-  "abs_files_out" : ["/home/user/hancho/tutorial/build/tut0/app"],
-  "abs_deps" : [],
-}
-g++ src/main.cpp -o build/tut0/app
-Files ['/home/user/hancho/tutorial/build/tut0/app'] are up to date
+# You can load additional Hancho build files as needed, though be sure to
+# await them before using (darn asynchrony...)
+rules = await hancho.load("rules.hancho")
+
+# Since c_binary expects a list of filenames, we can use Python's built in
+# glob functionality to compile all .cpp files in src/ into a binary.
+rules.c_binary("app", glob.glob("src/*.cpp"))
 ```
 
+---
+### Tutorial 4 - Async/await and custom commands
+
+Hancho loads .hancho files in an asynchronous context, which means it's perfectly valid (though perhaps not recommended) to do stuff like this:
+
+```py
+# tutorial/tut4.hancho -  Async/await and custom commands
+import asyncio
+import hancho
+import os
+
+# Calling asynchronous functions in a .hancho file is OK
+async def do_slow_thing():
+  await asyncio.sleep(1)
+  return ["some_filename"]
+
+hancho.log("Doing a slow asynchronous thing")
+result = do_slow_thing()
+
+# However, top-level awaits will block the rest of the build tasks in this file
+hancho.log("Waiting on a slow asynchronous thing")
+await result
+hancho.log("Waiting done")
+```
+
+The "command" field in a Hancho rule can be an asynchronous callback instead of a command line. The callback should accept a fully-expanded Rule object as a parameter and should return a list of filenames generated by the command.
+
+``` py
+# Simple example of a custom command
+async def custom_command(task):
+  for f in task.files_out:
+    hancho.log(f"Touching {f}")
+    os.system(f"touch {f}")
+  return task.files_out
+
+custom_rule = hancho.Rule(
+  desc    = "Custom rule: {files_in} -> {files_out}",
+  command = custom_command
+)
+
+custom_result = custom_rule(
+  files_in  = ["src/main.cpp"],
+  files_out = ["build/tut4/custom1", "build/tut4/custom2"]
+)
+
+print(await custom_result)
+```
+
+Custom async/await stuff and custom rules should work:
+
+```shell
+user@host:~/hancho/tutorial$ ./hancho.py tut4.hancho
+Doing a slow asynchronous thing
+Waiting on a slow asynchronous thing
+Waiting done
+[   1] Custom rule: ['src/main.cpp'] -> ['build/tut4/custom1', 'build/tut4/custom2']
+Touching build/tut4/custom1
+Touching build/tut4/custom2
+['/home/user/hancho/tutorial/build/tut4/custom1', '/home/user/hancho/tutorial/build/tut4/custom2']
+```
+
+But note that custom async/await bypasses all dependency checking, so running this build a second time will still call asyncio.sleep(1).
+
+```shell
+user@host:~/hancho/tutorial$ ./hancho.py tut4.hancho
+Doing a slow asynchronous thing
+Waiting on a slow asynchronous thing
+Waiting done
+['/home/user/hancho/tutorial/build/tut4/custom1', '/home/user/hancho/tutorial/build/tut4/custom2']
+hancho: no work to do.
+```
+
+
+---
+### Addendum - Debugging Hancho
+
+The ```--debug``` flag will print very verbose internal info about the Hancho rules. The debug dumps are very verbose but should be sufficient to track down template problems and incorrect command lines.
+
 The components of the debug output are:
- - "expand ..." messages for all text expansions (explained shortly)
+ - "expand ..." messages for all templates
  - The description for each rule evaluated
  - The reason the rule was (or was not) executed
  - A JSON representation of the rule object
  - The command executed
+
+
+```shell
+user@host:~/hancho/tutorial$ ./hancho.py tut1.hancho --debug
+expand "None"
+expand ""
+expand "src/main.cpp"
+expand "build/tut1/src/main.o"
+expand "g++ -c {files_in[0]} -o {files_out[0]}"
+expand "g++ -c src/main.cpp -o build/tut1/src/main.o"
+expand "Compile {files_in} -> {files_out}"
+expand "Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']"
+[   1] Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']
+Rebuild reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/src/main.o'] because some are missing
+{
+  "files_in" : ["src/main.cpp"],
+  "files_out" : ["build/tut1/src/main.o"],
+  "base" : {
+    "desc" : "Compile {files_in} -> {files_out}",
+    "command" : "g++ -c {files_in[0]} -o {files_out[0]}",
+    "base" : null,
+  },
+  "meta_deps" : [
+    "/home/user/hancho/tutorial/tut1.hancho",
+    "/home/user/hancho/tutorial/hancho.py",
+  ],
+  "deps" : [],
+  "abs_files_in" : ["/home/user/hancho/tutorial/src/main.cpp"],
+  "abs_files_out" : ["/home/user/hancho/tutorial/build/tut1/src/main.o"],
+  "abs_deps" : [],
+}
+g++ -c src/main.cpp -o build/tut1/src/main.o
+expand "None"
+expand ""
+Files ['/home/user/hancho/tutorial/build/tut1/src/main.o'] are up to date
+expand "/home/user/hancho/tutorial/build/tut1/src/main.o"
+expand "build/tut1/app"
+expand "g++ {' '.join(files_in)} -o {files_out[0]}"
+expand "g++ build/tut1/src/main.o -o build/tut1/app"
+expand "Link {files_in} -> {files_out}"
+expand "Link ['build/tut1/src/main.o'] -> ['build/tut1/app']"
+[   2] Link ['build/tut1/src/main.o'] -> ['build/tut1/app']
+Rebuild reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/app'] because some are missing
+{
+  "files_in" : ["build/tut1/src/main.o"],
+  "files_out" : ["build/tut1/app"],
+  "base" : {
+    "desc" : "Link {files_in} -> {files_out}",
+    "command" : "g++ {' '.join(files_in)} -o {files_out[0]}",
+    "base" : null,
+  },
+  "meta_deps" : [
+    "/home/user/hancho/tutorial/tut1.hancho",
+    "/home/user/hancho/tutorial/hancho.py",
+  ],
+  "deps" : [],
+  "abs_files_in" : ["/home/user/hancho/tutorial/build/tut1/src/main.o"],
+  "abs_files_out" : ["/home/user/hancho/tutorial/build/tut1/app"],
+  "abs_deps" : [],
+}
+g++ build/tut1/src/main.o -o build/tut1/app
+Files ['/home/user/hancho/tutorial/build/tut1/app'] are up to date
+```

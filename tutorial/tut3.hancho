@@ -1,4 +1,4 @@
-# tutorial/tut5.hancho - Rule Files, Globs, and Helper Functions
+# tutorial/tut3.hancho - Rule Files, Globs, and Helper Functions
 import hancho
 import glob
 

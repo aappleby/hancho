@@ -28,24 +28,29 @@ total_commands = 0
 line_dirty = False
 
 def log(*args, sameline = False, **kwargs):
+  global line_dirty
   if this.flags.silent: return
 
   output = io.StringIO()
   if sameline: kwargs["end"] = ""
   print(*args, file=output, **kwargs)
-
   output = output.getvalue()
+
+  if not sameline and line_dirty:
+    sys.stdout.write("\n")
+    line_dirty = False
+
   if not output: return
 
   if sameline:
     sys.stdout.write("\r")
-    sys.stdout.write(output[:os.get_terminal_size().columns - 1])
-    sys.stdout.write("\x1B[K")
-    this.line_dirty = True
-  else:
-    if this.line_dirty: sys.stdout.write("\n")
+    output = output[:os.get_terminal_size().columns - 1]
     sys.stdout.write(output)
-    this.line_dirty = output[-1] != '\n'
+    sys.stdout.write("\x1B[K")
+  else:
+    sys.stdout.write(output)
+
+  line_dirty = output[-1] != '\n'
 
 ################################################################################
 
@@ -213,7 +218,7 @@ async def load(mod_path):
       if abs_path in hancho_mods:
         return hancho_mods[abs_path]
 
-      print(abs_path)
+      #print(abs_path)
 
       mod_name = mod_file.split(".")[0]
 
@@ -536,7 +541,8 @@ async def dispatch(task, hancho_outs = set()):
   if task.files_in and task.files_out:
     reason = needs_rerun(task)
     if reason:
-      log(f"Task \"{desc}\" still needs rerun after running! - {reason}")
+      log(f"\x1B[33mTask \"{desc}\" still needs rerun after running!\x1B[0m")
+      log(f"Reason: {reason}")
       sys.stdout.flush()
       this.any_failed = True
       return None
