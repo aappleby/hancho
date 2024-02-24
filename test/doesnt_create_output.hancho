@@ -8,7 +8,7 @@ import sys
 #print(a)
 
 
-doesnt_create_output = hancho.base_rule.extend(
+doesnt_create_output = hancho.Rule(
   desc = "Doesn't create {files_out[0]}",
   command = ":",
   files_in  = "doesnt_create_output.hancho",

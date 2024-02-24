@@ -3,19 +3,19 @@ import hancho
 import os
 
 # We extend base_rule just like the previous example
-base_tut3 = hancho.base_rule.extend(
+hancho.config.set(
   build_dir = "build/tut3"
 )
 
 # And these rules are the same as the previous example
-rule_compile = base_tut3.extend(
+rule_compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -c {files_in[0]} -o {files_out[0]}",
   files_out = "{swap_ext(files_in[0], '.o')}",
   depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
 )
 
-rule_link = base_tut3.extend(
+rule_link = hancho.Rule(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {join(files_in)} -o {files_out[0]}",
 )

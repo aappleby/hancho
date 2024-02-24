@@ -1,5 +1,5 @@
 import hancho
 
-hancho.base_rule.extend(
+hancho.Rule(
   desc = "Command is missing",
 )()

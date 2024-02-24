@@ -1,8 +1,4 @@
 # tutorial/tut3.hancho - Rule Files, Globs, and Helper Functions
 import hancho
-import sys
-import os
-
-#sys.path.append(os.path.abspath("."))
 
 hancho.load("src/src.hancho")

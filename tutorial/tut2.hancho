@@ -3,14 +3,12 @@ import hancho
 
 # To make all rules in this tutorial use the same build directory, we'll first
 # extend Hancho's built-in generic rule and specify build_dir.
-base_tut2 = hancho.base_rule.extend(
-  build_dir = "build/tut2",
-)
+hancho.config.set(build_dir = "build/tut2")
 
 # We can then extend that to produce our compile and link rules.
 # By using the swap_ext built-in, we can make our files_out and depfile
 # parameters generic so we don't have to specify them for each invocation.
-rule_compile = base_tut2.extend(
+rule_compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -MMD -c {files_in[0]} -o {files_out[0]}",
   files_out = "{swap_ext(files_in[0], '.o')}",
@@ -19,7 +17,7 @@ rule_compile = base_tut2.extend(
 
 # The join() builtin here joins lists of strings with spaces so that lists of
 # filenames, for example, can be plugged into a command.
-rule_link = base_tut2.extend(
+rule_link = hancho.Rule(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {join(files_in)} -o {files_out[0]}",
 )

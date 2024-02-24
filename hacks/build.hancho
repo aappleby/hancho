@@ -1,6 +1,6 @@
 import hancho
 
-base_rule = hancho.base_rule.extend(
+base_rule = hancho.Rule(
   name        = "base_config",
   toolchain   = "x86_64-linux-gnu",
   cpp_std     = "-std=c++20",

@@ -153,7 +153,7 @@ Dependency checking between the two rules seems to be working - modifying main.c
 
 In the previous example we hardcoded our output directory ```build/``` and the object filename ```build/src/main.o```. Let's make those more generic.
 
-Hancho contains a small number of built-in functions to make common build tasks easier. These are contained in ```hancho.base_rule``` - a Rule object that we can extend with our own commands. Rule objects work much like Javascript objects, which use 'prototypical' inheritance - each rule can 'inherit' from another rule via Rule.extend(), and inside a template we can use both the parent's and the child's fields. We can also attach functions to rules and call those functions inside template strings.
+Hancho contains a small number of built-in functions to make common build tasks easier. These are contained in ```hancho.config```, which is also a Rule object. Rule objects work much like Javascript objects, which use 'prototypical' inheritance - each rule can 'inherit' from another rule via Rule.extend(), and inside a template we can use both the parent's and the child's fields. We can also attach functions to rules and call those functions inside template strings.
 
 Hancho's base_rule also defines some special fields such as ```build_dir```, which specifies where Hancho should place output files. The ```depfile``` field tells Hancho where to find a file that contains the list of dependencies for the rule output(s). The dependency file should be in [GCC format](http://find_a_gcc_format_reference). To make GCC generate a depfile when we compile source code, we pass it the ```-MMD``` option.
 
@@ -163,7 +163,7 @@ import hancho
 
 # To make all rules in this tutorial use the same build directory, we'll first
 # extend Hancho's built-in generic rule and specify build_dir.
-base_tut2 = hancho.base_rule.extend(
+base_tut2 = hancho.Rule(
   build_dir = "build/tut2",
 )
 
@@ -244,7 +244,7 @@ We can move the boilerplate stuff that we'll be using in multiple builds into it
 import hancho
 
 # We extend base_rule just like the previous example
-base_tut3 = hancho.base_rule.extend(
+base_tut3 = hancho.Rule(
   build_dir = "build/tut6"
 )
 

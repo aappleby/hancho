@@ -1,6 +1,6 @@
 import hancho
 
-dummy_rule = hancho.base_rule.extend(
+dummy_rule = hancho.Rule(
   command = "echo files_in[0] = {files_in[0]}"
 )
 
