@@ -47,21 +47,17 @@ def log(*args, sameline = False, **kwargs):
   sys.stdout.flush()
   line_dirty = output[-1] != '\n'
 
+def err(*args, **kwargs):
+  log(*args, **kwargs)
+  sys.exit(-1)
+
 ################################################################################
 
 async def async_main():
 
-  this.hancho_root = os.getcwd()
-  this.hancho_mods  = {}
-  this.config = None
-  this.proc_sem = None
-
-  this.mod_stack = []
-
-  this.hancho_outs = set()
-
   # Hancho's global configuration object
   #this.config = None
+  this.config = None # so this.config.base gets sets to None
   this.config = Rule(
     verbose   = False, # Print verbose build info
     quiet     = False, # Don't print any task output
@@ -88,11 +84,15 @@ async def async_main():
   this.config.force     = this.flags.force     # Force all tasks to run
   this.config.multiline = this.flags.multiline # Print multiple lines of output
 
+  this.hancho_root = os.getcwd()
+  this.hancho_mods  = {}
+  this.proc_sem = None
+  this.mod_stack = []
+  this.hancho_outs = set()
   this.tasks_total = 0
   this.tasks_index = 0
   this.tasks_pass  = 0
   this.tasks_fail  = 0
-
   this.proc_sem = asyncio.Semaphore(1 if this.flags.serial else os.cpu_count())
 
   top_module = load(this.flags.filename)
@@ -136,9 +136,6 @@ def main():
 
   retcode = asyncio.run(async_main())
 
-  #this.config.debug = False
-  #retcode = asyncio.run(async_main())
-
   sys.exit(retcode)
   pass
 
@@ -154,8 +151,7 @@ def load(mod_path):
     return this.hancho_mods[abs_path]
 
   if not os.path.exists(abs_path):
-    log(f"Could not load module {mod_path}")
-    sys.exit(-1)
+    err(f"Could not load module {mod_path}")
 
   mod_dir  = path.split(abs_path)[0]
   mod_file = path.split(abs_path)[1]
@@ -209,14 +205,23 @@ class Rule(dict):
             return "<function>" if callable(obj) else super().default(obj)
     return json.dumps(self, indent = 2, cls=Encoder)
 
-  def __call__(self, **kwargs):
-    return queue2(self.extend(**kwargs))
-
   def extend(self, **kwargs):
     return Rule(base = self, **kwargs)
 
   def expand(self, template):
     return expand(self, template)
+
+  def __call__(self, **kwargs):
+    task = self.extend(**kwargs)
+    if task.files_in is None:
+      err("no files_in")
+    if task.files_out is None:
+      err("no files_out")
+    this.tasks_total += 1
+    task.meta_deps = list(this.mod_stack)
+    task.cwd = path.split(this.mod_stack[-1])[0]
+    promise = dispatch(task)
+    return asyncio.create_task(promise)
 
 ################################################################################
 # A trivial templating system that replaces {foo} with the value of rule.foo
@@ -241,17 +246,15 @@ def expand_once(self, template):
 
 def expand(self, template):
   for _ in range(100):
-    if this.config.debug: log(f"expand \"{template}\"")
+    if self.debug: log(f"expand \"{template}\"")
     new_template = expand_once(self, template)
     if template == new_template:
       if template_regex.search(template):
-        log(f"Expanding '{template[0:20]}' is stuck in a loop")
-        sys.exit(-1)
+        err(f"Expanding '{template[0:20]}' is stuck in a loop")
       return template
     template = new_template
 
-  log(f"Expanding '{template[0:20]}...' failed to terminate")
-  sys.exit(-1)
+  err(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
 # Returns true if any file in files_in is newer than any file in files_out.
@@ -304,7 +307,7 @@ def needs_rerun(task):
     return f"Rebuilding {files_out} because an input has changed"
 
   # All checks passed, so we don't need to rebuild this output.
-  if this.config.debug: log(f"Files {files_out} are up to date")
+  if task.debug: log(f"Files {files_out} are up to date")
 
   # All deps were up-to-date, nothing to do.
   return None
@@ -316,8 +319,7 @@ def needs_rerun(task):
 async def flatten(x):
   if x is None: return []
   if inspect.iscoroutine(x):
-    log("Can't flatten a raw coroutine!")
-    sys.exit(-1)
+    err("Can't flatten a raw coroutine!")
   if type(x) is asyncio.Task:
     x = await x
   if not type(x) is list:
@@ -335,8 +337,7 @@ async def run_command(task):
     return
 
   if not type(task.command) is str:
-    log(f"Don't know what to do with {task.command}")
-    sys.exit(-1)
+    err(f"Don't know what to do with {task.command}")
 
   command = task.expand(task.command)
 
@@ -381,15 +382,13 @@ async def run_command(task):
 async def dispatch(task):
 
   # Expand our build paths
-  src_dir   = path.relpath(task.cwd, hancho_root)
+  src_dir   = path.relpath(task.cwd, this.hancho_root)
   build_dir = path.join(task.expand(task.build_dir), src_dir)
 
   # Flatten will await all filename promises in any of these arrays.
   task.files_in  = await flatten(task.files_in)
   task.files_out = await flatten(task.files_out)
   task.deps      = await flatten(task.deps)
-
-  #print(task.cwd)
 
   # Early-out with no result if any of our inputs or outputs are None (failed)
   if None in task.files_in:  return None
@@ -408,15 +407,15 @@ async def dispatch(task):
 
   # Append hancho_root to all in/out filenames.
   # If they're already absolute, this does nothing.
-  task.abs_files_in  = [path.abspath(path.join(hancho_root, f)) for f in task.files_in]
-  task.abs_files_out = [path.abspath(path.join(hancho_root, f)) for f in task.files_out]
-  task.abs_deps      = [path.abspath(path.join(hancho_root, f)) for f in task.deps]
+  task.abs_files_in  = [path.abspath(path.join(this.hancho_root, f)) for f in task.files_in]
+  task.abs_files_out = [path.abspath(path.join(this.hancho_root, f)) for f in task.files_out]
+  task.abs_deps      = [path.abspath(path.join(this.hancho_root, f)) for f in task.deps]
 
   # And now strip hancho_root off the absolute paths to produce the final
   # root-relative paths
-  task.files_in  = [path.relpath(f, hancho_root) for f in task.abs_files_in]
-  task.files_out = [path.relpath(f, hancho_root) for f in task.abs_files_out]
-  task.deps      = [path.relpath(f, hancho_root) for f in task.abs_deps]
+  task.files_in  = [path.relpath(f, this.hancho_root) for f in task.abs_files_in]
+  task.files_out = [path.relpath(f, this.hancho_root) for f in task.abs_files_out]
+  task.deps      = [path.relpath(f, this.hancho_root) for f in task.abs_deps]
 
   # Check for duplicate task outputs
   for file in task.abs_files_out:
@@ -432,7 +431,7 @@ async def dispatch(task):
 
   # Check if we need a rebuild
   reason = needs_rerun(task)
-  if config.force or task.force: reason = f"Files {task.abs_files_out} forced to rebuild"
+  if task.force or task.force: reason = f"Files {task.abs_files_out} forced to rebuild"
   if not reason: return task.abs_files_out
 
   # Print the status line
@@ -467,7 +466,7 @@ async def dispatch(task):
     this.tasks_fail += 1
     return None
 
-  if task.files_in and task.files_out and not config.dryrun:
+  if task.files_in and task.files_out and not task.dryrun:
     if reason := needs_rerun(task):
       log(f"\x1B[33mFAILED\x1B[0m: Task \"{desc}\" still needs rerun after running!")
       log(f"Reason: {reason}")
@@ -476,23 +475,6 @@ async def dispatch(task):
 
   this.tasks_pass += 1
   return task.abs_files_out
-
-################################################################################
-
-def queue2(task):
-  if task.files_in is None:
-    log("no files_in")
-    sys.exit(-1)
-  if task.files_out is None:
-    log("no files_out")
-    sys.exit(-1)
-
-  this.tasks_total += 1
-
-  task.meta_deps = list(this.mod_stack)
-  task.cwd = path.split(this.mod_stack[-1])[0]
-  promise = dispatch(task)
-  return asyncio.create_task(promise)
 
 ################################################################################
 
