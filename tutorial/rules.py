@@ -1,9 +1,10 @@
 # tutorial/rules.hancho - Reusable rules for tutorial 3
 import hancho
+import os
 
 # We extend base_rule just like the previous example
 base_tut3 = hancho.base_rule.extend(
-  build_dir = "build/tut6"
+  build_dir = "build/tut3"
 )
 
 # And these rules are the same as the previous example
@@ -28,7 +29,7 @@ def compile(files):
 
 # And now compiling a bunch of files into a binary is just one call.
 def c_binary(name, files):
-  rule_link(
+  return rule_link(
     files_in = compile(files),
     files_out = name
   )

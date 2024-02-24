@@ -24,30 +24,32 @@ int main(int argc, char** argv) {
 }
 ```
 
-Hancho build files are Python modules that contain Hancho build rules and build invocations. Our starting build file just hardcodes a build rule with a description and a command and then runs it.
+Hancho build files are Python modules that contain Hancho build rules and build rule invocations.
+
+Rule objects accept whatever key-value pairs you want to pass into the constructor. There is only one mandatory parameter - "command", which tells Hancho what to do when the build run. The "desc" parameter is an optional description that is printed when the rule runs.
+
 ``` py
 # tutorial/tut0.hancho - Running Hancho
 import hancho
 
-# All rules must have a command, in this case a console command to run the
-# compiler. Rules can have an optional description that is printed when they
-# run.
+# Trivial rule hardcoded to compile main.cpp
 rule = hancho.Rule(
-  desc      = "Compile src/main.cpp",
-  command   = "g++ src/main.cpp -o build/tut0/app",
+  desc    = "Compile src/main.cpp",
+  command = "g++ src/main.cpp -o build/tut0/app",
 )
+```
+You 'invoke' a rule by calling it with a list of input files to run it on and a
+list of output files it should produce. If you only have a single file, you
+can omit the []. The files_in and files_out parameters are ***mandatory*** - these can be empty arrays,
+but Hancho needs to know what goes into and out of a rule to enable
+dependency checking.
 
-# You run the rule by calling it with a list of input files to run it on and a
-# list of output files it should produce. If you only have a single file, you
-# can omit the []. Hancho will create any directories required by files_out
-# before running the command.
+Note that Hancho resolves filenames ***relative to the directory the .hancho file is in.***, not the directory that Hancho was started in.
 
-# Note that Hancho resolves filenames relative to the directory the .hancho
-# file is in.
+Hancho will also create any directories required by files_out before running the command.
 
-# Running a rule _requires_ files_in and files_out - these can be empty arrays,
-# but Hancho needs to know what goes into and out of a rule to enable
-# dependency checking:
+
+```py
 rule(
   files_in  = "src/main.cpp",
   files_out = "build/tut0/app",

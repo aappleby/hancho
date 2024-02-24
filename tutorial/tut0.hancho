@@ -5,14 +5,17 @@ import hancho
 # compiler. Rules can have an optional description that is printed when they
 # run.
 rule = hancho.Rule(
-  desc      = "Compile src/main.cpp",
-  command   = "g++ src/main.cpp -o build/tut0/app",
+  desc    = "Compile src/main.cpp",
+  command = "g++ src/main.cpp -o build/tut0/app",
 )
 
 # You run the rule by calling it with a list of input files to run it on and a
 # list of output files it should produce. If you only have a single file, you
-# can omit the []. Note that Hancho resolves filenames relative to the
-# directory the .hancho file is in.
+# can omit the []. Hancho will create any directories required by files_out
+# before running the command.
+
+# Note that Hancho resolves filenames relative to the directory the .hancho
+# file is in.
 
 # Running a rule _requires_ files_in and files_out - these can be empty arrays,
 # but Hancho needs to know what goes into and out of a rule to enable

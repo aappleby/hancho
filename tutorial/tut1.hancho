@@ -20,9 +20,14 @@ main_o = rule_compile(
   files_out = "build/tut1/src/main.o",
 )
 
+util_o = rule_compile(
+  files_in = "src/util.cpp",
+  files_out = "build/tut1/src/util.o",
+)
+
 # By passing that promise into rule_link, we create a dependency between the
 # link task and the compile task.
 rule_link(
-  files_in = main_o,
+  files_in = [main_o, util_o],
   files_out = "build/tut1/app"
 )

@@ -1,0 +1,14 @@
+import hancho
+import glob
+import os
+import sys
+
+import rules
+
+# You can load additional Hancho build files as needed, though be sure to
+# await them before using (darn asynchrony...)
+#rules = hancho.load("rules.hancho")
+
+# Since c_binary expects a list of filenames, we can use Python's built in
+# glob functionality to compile all .cpp files in src/ into a binary.
+rules.c_binary("app", glob.glob("*.cpp"))

@@ -1,11 +1,8 @@
 # tutorial/tut3.hancho - Rule Files, Globs, and Helper Functions
 import hancho
-import glob
+import sys
+import os
 
-# You can load additional Hancho build files as needed, though be sure to
-# await them before using (darn asynchrony...)
-rules = await hancho.load("rules.hancho")
+#sys.path.append(os.path.abspath("."))
 
-# Since c_binary expects a list of filenames, we can use Python's built in
-# glob functionality to compile all .cpp files in src/ into a binary.
-rules.c_binary("app", glob.glob("src/*.cpp"))
+hancho.load("src/src.hancho")
