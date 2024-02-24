@@ -6,18 +6,6 @@ from os import path
 this = sys.modules[__name__]
 
 ################################################################################
-# Build rule helper methods
-
-def join(names, divider = ' '):
-  return "" if names is None else divider.join(names)
-
-def run_cmd(cmd):
-  return subprocess.check_output(cmd, shell=True, text=True).strip()
-
-def swap_ext(name, new_ext):
-  return path.splitext(name)[0] + new_ext
-
-################################################################################
 
 line_dirty = False
 
@@ -53,18 +41,54 @@ def err(*args, **kwargs):
 
 ################################################################################
 
+def main():
+  # A reference to this module is already in sys.modules["__main__"].
+  # Stash another reference in sys.modules["hancho"] so that build.hancho and
+  # descendants don't try to load a second copy of us.
+  sys.modules["hancho"] = this
+
+  parser = argparse.ArgumentParser()
+  parser.add_argument('filename',    default="build.hancho", nargs="?")
+  parser.add_argument('--verbose',   default=False, action='store_true', help='Print verbose build info')
+  parser.add_argument('--serial',    default=False, action='store_true', help='Do not parallelize commands')
+  parser.add_argument('--dryrun',    default=False, action='store_true', help='Do not run commands')
+  parser.add_argument('--debug',     default=False, action='store_true', help='Dump debugging information')
+  parser.add_argument('--force',     default=False, action='store_true', help='Force rebuild of everything')
+  parser.add_argument('--quiet',     default=False, action='store_true', help='Mute command output')
+  parser.add_argument('--dump',      default=False, action='store_true', help='Dump debugging info for all tasks')
+  parser.add_argument('--multiline', default=False, action='store_true', help='Print multiple lines of output')
+  parser.add_argument('--test',      default=False, action='store_true', help='Run .hancho file as a unit test')
+  parser.add_argument('--silent',    default=False, action='store_true', help='No output')
+
+  parser.add_argument('-D', action='append', type=str)
+  (this.flags, unrecognized) = parser.parse_known_args()
+
+  sys.exit(asyncio.run(async_main()))
+
+################################################################################
+
 async def async_main():
 
+  # Build rule helper methods
+  def join(names, divider = ' '):
+    return "" if names is None else divider.join(names)
+
+  def run_cmd(cmd):
+    return subprocess.check_output(cmd, shell=True, text=True).strip()
+
+  def swap_ext(name, new_ext):
+    return path.splitext(name)[0] + new_ext
+
   # Hancho's global configuration object
-  #this.config = None
   this.config = None # so this.config.base gets sets to None
   this.config = Rule(
-    verbose   = False, # Print verbose build info
-    quiet     = False, # Don't print any task output
-    serial    = False, # Do not parallelize tasks
-    dryrun    = False, # Do not actually run tasks
-    debug     = False, # Print debugging information
-    force     = False, # Force all tasks to run
+    debug     = this.flags.debug,     # Print debugging information
+    dryrun    = this.flags.dryrun,    # Do not actually run tasks
+    force     = this.flags.force,     # Force all tasks to run
+    multiline = this.flags.multiline, # Print multiple lines of output
+    quiet     = this.flags.quiet,     # Don't print any task output
+    serial    = this.flags.serial,    # Do not parallelize tasks
+    verbose   = this.flags.verbose,   # Print verbose build info
     desc      = "{files_in} -> {files_out}",
     build_dir = None,
     expand    = expand,
@@ -75,27 +99,17 @@ async def async_main():
     swap_ext  = swap_ext
   )
 
-  this.config.force     = this.flags.force
-  this.config.verbose   = this.flags.verbose   # Print verbose build info
-  this.config.quiet     = this.flags.quiet     # Don't print any task output
-  this.config.serial    = this.flags.serial    # Do not parallelize tasks
-  this.config.dryrun    = this.flags.dryrun    # Do not actually run tasks
-  this.config.debug     = this.flags.debug     # Print debugging information
-  this.config.force     = this.flags.force     # Force all tasks to run
-  this.config.multiline = this.flags.multiline # Print multiple lines of output
-
-  this.hancho_root = os.getcwd()
-  this.hancho_mods  = {}
-  this.proc_sem = None
-  this.mod_stack = []
+  this.hancho_mods = {}
   this.hancho_outs = set()
-  this.tasks_total = 0
+  this.hancho_root = os.getcwd()
+  this.mod_stack = []
+  this.proc_sem = asyncio.Semaphore(1 if this.flags.serial else os.cpu_count())
+  this.tasks_fail  = 0
   this.tasks_index = 0
   this.tasks_pass  = 0
-  this.tasks_fail  = 0
-  this.proc_sem = asyncio.Semaphore(1 if this.flags.serial else os.cpu_count())
+  this.tasks_total = 0
 
-  top_module = load(this.flags.filename)
+  top_module = load2(this.flags.filename)
   while True:
     pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
     if not pending_tasks: break
@@ -111,47 +125,19 @@ async def async_main():
   return -1 if this.tasks_fail else 0
 
 ################################################################################
-
-def main():
-  # A reference to this module is already in sys.modules["__main__"].
-  # Stash another reference in sys.modules["hancho"] so that build.hancho and
-  # descendants don't try to load a second copy of us.
-  sys.modules["hancho"] = this
-
-  parser = argparse.ArgumentParser()
-  parser.add_argument('filename',   default="build.hancho", nargs="?")
-  parser.add_argument('--verbose',   default=False, action='store_true', help='Print verbose build info')
-  parser.add_argument('--serial',    default=False, action='store_true', help='Do not parallelize commands')
-  parser.add_argument('--dryrun',    default=False, action='store_true', help='Do not run commands')
-  parser.add_argument('--debug',     default=False, action='store_true', help='Dump debugging information')
-  parser.add_argument('--force',     default=False, action='store_true', help='Force rebuild of everything')
-  parser.add_argument('--quiet',     default=False, action='store_true', help='Mute command output')
-  parser.add_argument('--dump',      default=False, action='store_true', help='Dump debugging info for all tasks')
-  parser.add_argument('--multiline', default=False, action='store_true', help='Print multiple lines of output')
-  parser.add_argument('--test',      default=False, action='store_true', help='Run .hancho file as a unit test')
-  parser.add_argument('--silent',    default=False, action='store_true', help='No output')
-
-  parser.add_argument('-D', action='append', type=str)
-  (this.flags, unrecognized) = parser.parse_known_args()
-
-  retcode = asyncio.run(async_main())
-
-  sys.exit(retcode)
-  pass
-
-################################################################################
 # The .hancho file loader does a small amount of work to keep track of the
-# stack of .hancho files that have been loaded, and chdir()s into the .hancho
-# file directory before running it so that glob() can resolve files relative
-# to the .hancho file itself.
+# stack of .hancho files that have been loaded.
 
 def load(mod_path):
+  for parent_mod in this.mod_stack:
+    abs_path = path.abspath(path.join(path.split(parent_mod)[0], mod_path))
+    if os.path.exists(abs_path): return load2(abs_path)
+  err(f"Could not load module {mod_path}")
+
+def load2(mod_path):
   abs_path = path.abspath(mod_path)
   if abs_path in this.hancho_mods:
     return this.hancho_mods[abs_path]
-
-  if not os.path.exists(abs_path):
-    err(f"Could not load module {mod_path}")
 
   mod_dir  = path.split(abs_path)[0]
   mod_file = path.split(abs_path)[1]
@@ -167,6 +153,8 @@ def load(mod_path):
   sys.path.insert(0, mod_dir)
   old_dir = os.getcwd()
 
+  # We must chdir()s into the .hancho file directory before running it so that
+  # glob() can resolve files relative to the .hancho file itself.
   this.mod_stack.append(abs_path)
   os.chdir(mod_dir)
   types.FunctionType(code, module.__dict__)()
@@ -212,12 +200,8 @@ class Rule(dict):
     return expand(self, template)
 
   def __call__(self, **kwargs):
-    task = self.extend(**kwargs)
-    if task.files_in is None:
-      err("no files_in")
-    if task.files_out is None:
-      err("no files_out")
     this.tasks_total += 1
+    task = self.extend(**kwargs)
     task.meta_deps = list(this.mod_stack)
     task.cwd = path.split(this.mod_stack[-1])[0]
     promise = dispatch(task)
@@ -238,7 +222,7 @@ def expand_once(self, template):
     try:
       replacement = eval(exp[1:-1], globals(), self)
       if replacement is not None: result += str(replacement)
-    except Exception as foo:
+    except Exception:
       result += exp
     template = template[s.end():]
   result += template
@@ -253,7 +237,6 @@ def expand(self, template):
         err(f"Expanding '{template[0:20]}' is stuck in a loop")
       return template
     template = new_template
-
   err(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
@@ -318,9 +301,7 @@ def needs_rerun(task):
 
 async def flatten(x):
   if x is None: return []
-  if inspect.iscoroutine(x):
-    err("Can't flatten a raw coroutine!")
-  if type(x) is asyncio.Task:
+  if inspect.isawaitable(x):
     x = await x
   if not type(x) is list:
     return [x]
@@ -329,6 +310,7 @@ async def flatten(x):
   return result
 
 ################################################################################
+# Actually runs the command, either by calling it or running it in a subprocess
 
 async def run_command(task):
 
@@ -378,8 +360,13 @@ async def run_command(task):
     if task.stdout: log(task.stdout, end="")
 
 ################################################################################
+# Does all the bookkeeping and depedency checking, then runs the command if
+# needed.
 
 async def dispatch(task):
+
+  if task.files_in is None:  err("no files_in")
+  if task.files_out is None: err("no files_out")
 
   # Expand our build paths
   src_dir   = path.relpath(task.cwd, this.hancho_root)

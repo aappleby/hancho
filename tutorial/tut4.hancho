@@ -3,20 +3,21 @@ import asyncio
 import hancho
 import os
 
-# Calling asynchronous functions in a .hancho file is OK
+# You can use promises that return arrays of filenames in place of actual
+# filenames in rules.
 async def do_slow_thing():
-  await asyncio.sleep(1)
-  return ["some_filename"]
+  await asyncio.sleep(0.1)
+  return ["src/main.cpp"]
 
-hancho.log("Doing a slow asynchronous thing")
-result = do_slow_thing()
+hancho.Rule(
+  desc = "Consuming a promise as files_in",
+  command = "echo {files_in[0]}",
+)(
+  files_in = do_slow_thing(),
+  files_out = []
+)
 
-# However, top-level awaits will block the rest of the build tasks in this file
-hancho.log("Waiting on a slow asynchronous thing")
-await result
-hancho.log("Waiting done")
-
-# Simple example of a custom command
+# You can also use them in the command field.
 async def custom_command(task):
   for f in task.files_out:
     hancho.log(f"Touching {f}")
@@ -28,9 +29,7 @@ custom_rule = hancho.Rule(
   command = custom_command
 )
 
-custom_result = custom_rule(
+custom_rule(
   files_in  = ["src/main.cpp"],
   files_out = ["build/tut4/custom1", "build/tut4/custom2"]
 )
-
-print(await custom_result)

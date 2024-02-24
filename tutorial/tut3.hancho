@@ -1,4 +1,5 @@
 # tutorial/tut3.hancho - Rule Files, Globs, and Helper Functions
 import hancho
 
+# Build file moved to src/
 hancho.load("src/src.hancho")
