@@ -3,13 +3,13 @@
 import hancho
 import os
 
-hancho.config.serial = True
+hancho.config.jobs = 1
 hancho.config.verbose = True
 
 test_build = hancho.Rule(
-  desc = "Testing tutorial build '{files_in[0]}'",
+  desc = "{color(200, 200, 100)}Testing tutorial build '{files_in[0]}'{color()}",
   command = "./hancho.py --verbose {files_in[0]} && echo",
-  files_out = []
+  files_out = [],
 )
 
 test_build(files_in = "tut0.hancho")

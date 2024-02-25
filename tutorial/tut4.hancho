@@ -6,7 +6,9 @@ import os
 # You can use promises that return arrays of filenames in place of actual
 # filenames in rules.
 async def do_slow_thing():
+  print("Doing slow thing")
   await asyncio.sleep(0.1)
+  print("Slow thing done")
   return ["src/main.cpp"]
 
 hancho.Rule(
@@ -24,12 +26,10 @@ async def custom_command(task):
     os.system(f"touch {f}")
   return task.files_out
 
-custom_rule = hancho.Rule(
+hancho.Rule(
   desc    = "Custom rule: {files_in} -> {files_out}",
   command = custom_command
-)
-
-custom_rule(
+)(
   files_in  = ["src/main.cpp"],
   files_out = ["build/tut4/custom1", "build/tut4/custom2"]
 )

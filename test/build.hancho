@@ -7,8 +7,8 @@ import sys
 import unittest
 import time
 
-#hancho.config.serial = True
-#hancho.config.multiline = True
+hancho.config.serial = True
+hancho.config.multiline = True
 
 def divider1():
   hancho.log("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")

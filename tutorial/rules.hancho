@@ -9,14 +9,14 @@ hancho.config.set(
 
 # And these rules are the same as the previous example
 rule_compile = hancho.Rule(
-  desc      = "Compile {files_in} -> {files_out}",
+  desc      = "{color(100,200,100)}Compile {files_in} -> {files_out}{color()}",
   command   = "g++ -c {files_in[0]} -o {files_out[0]}",
   files_out = "{swap_ext(files_in[0], '.o')}",
   depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
 )
 
 rule_link = hancho.Rule(
-  desc      = "Link {files_in} -> {files_out}",
+  desc      = "{color(100,100,200)}Link {files_in} -> {files_out}{color()}",
   command   = "g++ {join(files_in)} -o {files_out[0]}",
 )
 
