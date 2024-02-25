@@ -67,11 +67,11 @@ def main():
 
 async def async_main(flags):
 
+  # Build rule helper methods
   def color(r = None, g = None, b = None):
     if r is None: return "\x1B[0m"
     return f"\x1B[38;2;{r};{g};{b}m"
 
-  # Build rule helper methods
   def join(names, divider = ' '):
     return "" if names is None else divider.join(names)
 
@@ -454,7 +454,7 @@ async def dispatch(task):
 
   # Check if we need a rebuild
   task.reason = needs_rerun(task)
-  if task.force or task.force: task.reason = f"Files {task.abs_files_out} forced to rebuild"
+  if task.force: task.reason = f"Files {task.abs_files_out} forced to rebuild"
   if not task.reason:
     this.tasks_skip += 1
     return task.abs_files_out
