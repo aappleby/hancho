@@ -1,35 +1,60 @@
 # Hancho
 
-"班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)
-Probably entered English during World War II: many apocryphal stories describe American soldiers hearing Japanese prisoners-of-war refer to their lieutenants as hanchō."
+"班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
 Hancho is the smallest build system I can make that fits my needs.
-It focuses on a small set of features:
+It focuses on these features:
 
-1. Easy construction of commands via Python f-strings
+1. Easy construction of commands via text templates.
 2. Minimal, parallel, fast rebuilds.
-3. Zero "magic spells" - everything is completely explicit.
+3. Zero "magic" - you control every command run.
+4. Single file, no dependencies outside python3 - copy-paste installation.
 
 Hancho should suffice for small to medium sized projects.
 
+```py
+# examples/hello_world/build.hancho
+import hancho
 
+hancho.config.set(build_dir = "build")
 
-Hancho Rules
+compile = hancho.Rule(
+  desc = "Compile {files_in} -> {files_out}",
+  command = "g++ -c {files_in[0]} -o {files_out[0]}",
+  files_out = "{swap_ext(files_in[0], '.o')}",
+  depfile = "{build_dir}/{swap_ext(files_in[0], '.d')}",
+)
 
-Hancho Files
+link = hancho.Rule(
+  desc = "Link {files_in} -> {files_out}",
+  command = "g++ {join(files_in)} -o {files_out[0]}",
+)
 
-Hancho modules are just Python modules with a .hancho suffix. There are a few minor differences to be aware of:
+main_o = compile(files_in = "main.cpp")
 
-1. Hancho modules are loaded via "module = hancho.load('{filename}')", where {filename} can be
-a. A filename, relative to the Hancho root or the current directory
-b. A directory name
-Given a filename string, Hancho will try and load
-a. The file with that name, if it exists.
-b. If 'path' is a directory like 'src/stuff', it will look for 'src/stuff/stuff.hancho'
-b. If 'path' is a directory like 'src/stuff', it will look for 'src/stuff/build.hancho'
+main_app = link(files_in = main_o, files_out = "app")
+```
+```cpp
+// examples/hello_world/main.cpp
+#include <stdio.h>
 
-1. Hancho changes the working directory to the directory holding the .hancho file before loading it. This means that calling things like 'glob.glob("*.cpp")' in the .hancho file will search for .cpp files in the same directory as the .hancho file.
+int main(int argc, char** argv) {
+  printf("Hello World\n");
+  return 0;
+}
+```
 
-2. Hancho modules aren't added to sys.modules.
-
-Hancho Templates
+```sh
+user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
+[1/2] Compile ['main.cpp'] -> ['build/main.o']
+Rebuild reason: Rebuilding ['build/main.o'] because some are missing
+g++ -c main.cpp -o build/main.o
+[2/2] Link ['build/main.o'] -> ['build/app']
+Rebuild reason: Rebuilding ['build/app'] because some are missing
+g++ build/main.o -o build/app
+user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
+hancho: no work to do.
+user@host:~/hancho/examples/hello_world$ build/app
+Hello World
+user@host:~/hancho/examples/hello_world$
+```

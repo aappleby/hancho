@@ -295,15 +295,15 @@ def needs_rerun(task):
   # Check for missing outputs.
   for file_out in files_out:
     if not path.exists(file_out):
-      return f"Rebuilding {files_out} because some are missing"
+      return f"Rebuilding {task.files_out} because some are missing"
 
   # Check the hancho file(s) that generated the task
   if check_mtime(task.meta_deps, files_out):
-    return f"Rebuilding {files_out} because its .hancho files have changed"
+    return f"Rebuilding {task.files_out} because its .hancho files have changed"
 
   # Check user-specified deps.
   if check_mtime(task.deps, files_out):
-    return f"Rebuilding {files_out} because a manual dependency has changed"
+    return f"Rebuilding {task.files_out} because a manual dependency has changed"
 
   # Check GCC-format depfile, if present.
   if task.depfile:
@@ -312,14 +312,14 @@ def needs_rerun(task):
       deplines = open(depfile_name).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
       if check_mtime(deplines, files_out):
-        return f"Rebuilding {files_out} because a dependency in {depfile_name} has changed"
+        return f"Rebuilding {task.files_out} because a dependency in {depfile_name} has changed"
 
   # Check input files.
   if check_mtime(files_in, files_out):
-    return f"Rebuilding {files_out} because an input has changed"
+    return f"Rebuilding {task.files_out} because an input has changed"
 
   # All checks passed, so we don't need to rebuild this output.
-  if task.debug: log(f"Files {files_out} are up to date")
+  if task.debug: log(f"Files {task.files_out} are up to date")
 
   # All deps were up-to-date, nothing to do.
   return None
