@@ -8,7 +8,7 @@ hancho.config.verbose = True
 
 test_build = hancho.Rule(
   desc = "{color(200, 200, 100)}Testing tutorial build '{files_in[0]}'{color()}",
-  command = "./hancho.py --verbose {files_in[0]} && echo",
+  command = "../hancho.py --verbose {files_in[0]} && echo",
   files_out = [],
 )
 
