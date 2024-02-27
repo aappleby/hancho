@@ -24,32 +24,34 @@ int main(int argc, char** argv) {
 }
 ```
 
-Hancho build files are Python modules that contain Hancho build rules and build rule invocations.
-
-Rule objects accept whatever key-value pairs you want to pass into the constructor. There is only one mandatory parameter - "command", which tells Hancho what to do when the build run. The "desc" parameter is an optional description that is printed when the rule runs.
+Hancho build files are Python modules that contain Hancho build rules and build rule invocations. Here's a trivial .hancho file to compile the above source, with comments:
 
 ``` py
 # tutorial/tut0.hancho - Running Hancho
 import hancho
 
-# Trivial rule hardcoded to compile main.cpp
+# Hancho build tasks are described using Rule objects, which are basically
+# Python dicts with some tweaks that we'll get into later. Rule objects accept
+# whatever key-value pairs you want to pass into the constructor. All rules
+# must have a command, in this case a console command to run the compiler.
+# Rules can have an optional description that is printed when they run.
 rule = hancho.Rule(
   desc    = "Compile src/main.cpp",
   command = "g++ src/main.cpp -o build/tut0/app",
 )
-```
-You 'invoke' a rule by calling it with a list of input files to run it on and a
-list of output files it should produce. If you only have a single file, you
-can omit the []. The files_in and files_out parameters are ***mandatory*** - these can be empty arrays,
-but Hancho needs to know what goes into and out of a rule to enable
-dependency checking.
 
-Note that Hancho resolves filenames ***relative to the directory the .hancho file is in.***, not the directory that Hancho was started in.
+# You run the rule by calling it with a list of input files to run it on and a
+# list of output files it should produce. If you only have a single file, you
+# can omit the [].
 
-Hancho will also create any directories required by files_out before running the command.
+# Note that Hancho resolves filenames ***relative to the directory the .hancho
+# file is in***, not the directory that Hancho was started in. Hancho will also
+# create any directories required by files_out before running the command.
 
+# The files_in and files_out parameters are ***mandatory*** - these can be
+# empty arrays, but Hancho needs to know what goes into and out of a rule to
+# enable dependency checking.
 
-```py
 rule(
   files_in  = "src/main.cpp",
   files_out = "build/tut0/app",
@@ -63,7 +65,7 @@ and the second run should do nothing.
 
 ```shell
 user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho
-[   1] Compile src/main.cpp
+[1/1] Compile src/main.cpp
 user@host:~/hancho/tutorial$ build/tut0/app
 Hello World
 user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho
@@ -75,7 +77,8 @@ Seems to work. To see the commands as they're executed, use the ```--verbose``` 
 ```shell
 user@host:~/hancho/tutorial$ rm -rf build
 user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho --verbose
-[   1] Compile src/main.cpp
+[1/1] Compile src/main.cpp
+Rebuild reason: Rebuilding ['~/hancho/tutorial/build/tut0/app'] because some are missing
 g++ src/main.cpp -o build/tut0/app
 ```
 
@@ -155,7 +158,7 @@ In the previous example we hardcoded our output directory ```build/``` and the o
 
 Hancho contains a small number of built-in functions to make common build tasks easier. These are contained in ```hancho.config```, which is also a Rule object. Rule objects work much like Javascript objects, which use 'prototypical' inheritance - each rule can 'inherit' from another rule via Rule.extend(), and inside a template we can use both the parent's and the child's fields. We can also attach functions to rules and call those functions inside template strings.
 
-Hancho's base_rule also defines some special fields such as ```build_dir```, which specifies where Hancho should place output files. The ```depfile``` field tells Hancho where to find a file that contains the list of dependencies for the rule output(s). The dependency file should be in [GCC format](http://find_a_gcc_format_reference). To make GCC generate a depfile when we compile source code, we pass it the ```-MMD``` option.
+Hancho's base_rule also defines some special fields such as ```build_dir```, which specifies where Hancho should place output files. The ```depfile``` field tells Hancho where to find a file that contains the list of dependencies for the rule output(s). The dependency file should be in [GCC format](http://www.google.com/search?q=gcc+dependency+file+format). To make GCC generate a depfile when we compile source code, we pass it the ```-MMD``` option.
 
 ```py
 # tutorial/tut2.hancho - Extending base_rule & calling builtin functions

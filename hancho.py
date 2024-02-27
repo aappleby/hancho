@@ -6,6 +6,21 @@ from os import path
 this = sys.modules[__name__]
 
 ################################################################################
+# Build rule helper methods
+def color(r = None, g = None, b = None):
+  if r is None: return "\x1B[0m"
+  return f"\x1B[38;2;{r};{g};{b}m"
+
+def join(names, divider = ' '):
+  return "" if names is None else divider.join(names)
+
+def run_cmd(cmd):
+  return subprocess.check_output(cmd, shell=True, text=True).strip()
+
+def swap_ext(name, new_ext):
+  return path.splitext(name)[0] + new_ext
+
+################################################################################
 
 line_dirty = False
 
@@ -38,7 +53,9 @@ def log(*args, sameline = False, **kwargs):
   line_dirty = output[-1] != '\n'
 
 def err(*args, **kwargs):
+  print(color(255, 128, 128), end="")
   log(*args, **kwargs)
+  print(color(), end="")
   sys.exit(-1)
 
 ################################################################################
@@ -67,20 +84,6 @@ def main():
 
 async def async_main(flags):
 
-  # Build rule helper methods
-  def color(r = None, g = None, b = None):
-    if r is None: return "\x1B[0m"
-    return f"\x1B[38;2;{r};{g};{b}m"
-
-  def join(names, divider = ' '):
-    return "" if names is None else divider.join(names)
-
-  def run_cmd(cmd):
-    return subprocess.check_output(cmd, shell=True, text=True).strip()
-
-  def swap_ext(name, new_ext):
-    return path.splitext(name)[0] + new_ext
-
   # Initialize Hancho's global configuration object
   this.config = None # so this.config.base gets sets to None in the next line
   this.config = Rule(
@@ -91,9 +94,10 @@ async def async_main(flags):
     debug     = flags.debug,
     force     = flags.force,
     desc      = "{files_in} -> {files_out}",
-    build_dir = None,
+    #files_in  = None,
+    #files_out = None,
+    #build_dir = None,
     expand    = expand,
-    flatten   = flatten,
     join      = join,
     len       = len,
     run_cmd   = run_cmd,
@@ -113,6 +117,9 @@ async def async_main(flags):
   this.tasks_skip  = 0
 
   # Change directory and load top module(s).
+  if not path.exists(flags.filename):
+    err(f"Could not find {flags.filename}")
+
   if flags.chdir: os.chdir(flags.chdir)
   top_module = load2(flags.filename)
 
