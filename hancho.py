@@ -350,7 +350,7 @@ async def run_command(task):
     log(f"[{this.tasks_index}/{this.tasks_total - this.tasks_skip}] {task.expand(task.desc)}",
         sameline = not task.verbose)
     if task.verbose or task.debug:
-      log(f"Rebuild reason: {task.reason}")
+      log(f"Reason: {task.reason}")
       if type(task.command) is str:
         log(f"{task.expand(task.command)}")
       if task.debug:

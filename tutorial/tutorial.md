@@ -78,7 +78,7 @@ Seems to work. To see the commands as they're executed, use the ```--verbose``` 
 user@host:~/hancho/tutorial$ rm -rf build
 user@host:~/hancho/tutorial$ ./hancho.py tut0.hancho --verbose
 [1/1] Compile src/main.cpp
-Rebuild reason: Rebuilding ['~/hancho/tutorial/build/tut0/app'] because some are missing
+Reason: Rebuilding ['~/hancho/tutorial/build/tut0/app'] because some are missing
 g++ src/main.cpp -o build/tut0/app
 ```
 
@@ -392,7 +392,7 @@ expand "g++ -c src/main.cpp -o build/tut1/src/main.o"
 expand "Compile {files_in} -> {files_out}"
 expand "Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']"
 [   1] Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']
-Rebuild reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/src/main.o'] because some are missing
+Reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/src/main.o'] because some are missing
 {
   "files_in" : ["src/main.cpp"],
   "files_out" : ["build/tut1/src/main.o"],
@@ -421,7 +421,7 @@ expand "g++ build/tut1/src/main.o -o build/tut1/app"
 expand "Link {files_in} -> {files_out}"
 expand "Link ['build/tut1/src/main.o'] -> ['build/tut1/app']"
 [   2] Link ['build/tut1/src/main.o'] -> ['build/tut1/app']
-Rebuild reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/app'] because some are missing
+Reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/app'] because some are missing
 {
   "files_in" : ["build/tut1/src/main.o"],
   "files_out" : ["build/tut1/app"],

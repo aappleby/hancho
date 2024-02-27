@@ -47,10 +47,10 @@ int main(int argc, char** argv) {
 ```sh
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
 [1/2] Compile ['main.cpp'] -> ['build/main.o']
-Rebuild reason: Rebuilding ['build/main.o'] because some are missing
+Reason: Rebuilding ['build/main.o'] because some are missing
 g++ -c main.cpp -o build/main.o
 [2/2] Link ['build/main.o'] -> ['build/app']
-Rebuild reason: Rebuilding ['build/app'] because some are missing
+Reason: Rebuilding ['build/app'] because some are missing
 g++ build/main.o -o build/app
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
 hancho: no work to do.
