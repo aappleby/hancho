@@ -3,7 +3,7 @@ import os
 
 hancho.Rule(
   desc = "Should put a file in build/",
-  command = "touch {files_out[0]}",
+  command = "touch {files_out}",
   build_dir = "build",
   files_out = "build_dir_works.txt"
 )()

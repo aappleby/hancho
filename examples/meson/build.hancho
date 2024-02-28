@@ -2,92 +2,34 @@
 
 import hancho
 
-"""
-pkg-config gtk+-3.0
-
---cflags-only-I
-  -I/usr/include/gtk-3.0
-  -I/usr/include/at-spi2-atk/2.0
-  -I/usr/include/at-spi-2.0
-  -I/usr/include/dbus-1.0
-  -I/usr/lib/x86_64-linux-gnu/dbus-1.0/include
-  -I/usr/include/gtk-3.0
-  -I/usr/include/gio-unix-2.0
-  -I/usr/include/cairo
-  -I/usr/include/pango-1.0
-  -I/usr/include/harfbuzz
-  -I/usr/include/pango-1.0
-  -I/usr/include/fribidi
-  -I/usr/include/harfbuzz
-  -I/usr/include/atk-1.0
-  -I/usr/include/cairo
-  -I/usr/include/pixman-1
-  -I/usr/include/uuid
-  -I/usr/include/freetype2
-  -I/usr/include/gdk-pixbuf-2.0
-  -I/usr/include/libpng16
-  -I/usr/include/x86_64-linux-gnu
-  -I/usr/include/libmount
-  -I/usr/include/blkid
-  -I/usr/include/glib-2.0
-  -I/usr/lib/x86_64-linux-gnu/glib-2.0/include
---cflags-only-other
-  -pthread
-
---libs-only-L
-  (none)
---libs-only-l
-  -lgtk-3
-  -lgdk-3
-  -lpangocairo-1.0
-  -lpango-1.0
-  -lharfbuzz
-  -latk-1.0
-  -lcairo-gobject
-  -lcairo
-  -lgdk_pixbuf-2.0
-  -lgio-2.0
-  -lgobject-2.0
-  -lglib-2.0
---libs-only-other
-  (none)
-"""
-
 hancho.config.set(
-  name        = "base_config",
-  toolchain   = "x86_64-linux-gnu",
-  cpp_std     = "-std=c++20",
-  gcc_opt     = "{'-O3' if build_type == 'release' else '-g -O0'} -MMD",
-  warnings    = "-Wall -Werror -Wno-unused-variable -Wno-unused-local-typedefs -Wno-unused-but-set-variable",
-  build_type  = "debug",
+  name       = "base_config",
+  toolchain  = "x86_64-linux-gnu",
+  gcc_opt    = "{'-O3' if build_type == 'release' else '-g -O0'} -MMD",
+  build_type = "debug",
+  build_dir  = "build/{build_type}",
 )
 
-compile_cpp = hancho.Rule(
-  description = "Compiling {files_in} -> {files_out} ({build_type})",
-  command     = "{toolchain}-g++ {cpp_std} {gcc_opt} {warnings} {includes} {defines} -c {files_in[0]} -o {file_out}",
-  includes    = "-I.",
-  defines     = "",
-  file_out    = "{swap_ext(files_in[0], '.o')}",
-  depfile     = "{swap_ext(files_in[0], '.d')}",
+compile = hancho.Rule(
+  desc      = "Compiling {files_in} -> {files_out} ({build_type})",
+  command   = "{toolchain}-gcc {gcc_opt} {warnings} {includes} {defines} -c {files_in} -o {files_out}",
+  files_out = "{swap_ext(files_in, '.o')}",
+  depfile   = "{build_dir}/{swap_ext(files_in, '.d')}",
 )
 
-link_c_bin = hancho.Rule(
-  description = "Linking {file_out}",
-  command     = "{toolchain}-g++ {gcc_opt} {warnings} {join(files_in)} {join(deps)} {sys_libs} -o {file_out}",
-  sys_libs    = "",
+link = hancho.Rule(
+  desc    = "Linking {files_out}",
+  command = "{toolchain}-g++ {gcc_opt} {warnings} {files_in} {libs} -o {files_out}",
 )
 
-test_o = compile_cpp(
-  files_in  = "src/test.cpp",
-  files_out = "obj/test.o"
+main_o = compile(
+  "main.c",
+  includes  = [compile.includes, hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')],
+  gcc_opt   = [compile.gcc_opt, hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')],
 )
 
-main_o = compile_cpp(
-  files_in  = "src/main.cpp",
-  files_out = "obj/main.o"
-)
-
-main = link_c_bin(
-  files_in = [test_o, main_o],
-  files_out = "bin/main"
+main = link(
+  main_o,
+  files_out = "demo",
+  libs = [link.libs, hancho.run_cmd('pkg-config gtk+-3.0 --libs')],
 )

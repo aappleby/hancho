@@ -4,13 +4,12 @@ import hancho
 # Hancho will expand {} templates before running the command.
 rule_compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
-  command = "g++ -c {files_in[0]} -o {files_out[0]}",
+  command = "g++ -c {files_in} -o {files_out}",
 )
 
-# Templates can contain Python expressions.
 rule_link = hancho.Rule(
   desc = "Link {files_in} -> {files_out}",
-  command = "g++ {' '.join(files_in)} -o {files_out[0]}",
+  command = "g++ {files_in} -o {files_out}",
 )
 
 # Calling rule_compile() here returns a promise that resolves to a list of

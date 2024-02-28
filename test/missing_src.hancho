@@ -3,7 +3,7 @@ import os
 
 hancho.Rule(
   desc      = "Does create its output file",
-  command   = "touch {files_out[0]}",
+  command   = "touch {files_out}",
   files_in  = "src/does_not_exist.txt",
   files_out = "build/missing_src.txt"
 )()

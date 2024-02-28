@@ -7,13 +7,13 @@ hancho.config.jobs = 1
 hancho.config.verbose = True
 
 test_build = hancho.Rule(
-  desc = "{color(200, 200, 100)}Testing tutorial build '{files_in[0]}'{color()}",
-  command = "../hancho.py --verbose {files_in[0]} && echo",
+  desc = "{color(200, 200, 100)}Testing tutorial build '{files_in}'{color()}",
+  command = "./hancho.py --verbose {files_in} && echo",
   files_out = [],
 )
 
-test_build(files_in = "tut0.hancho")
-test_build(files_in = "tut1.hancho")
-test_build(files_in = "tut2.hancho")
-test_build(files_in = "tut3.hancho")
-test_build(files_in = "tut4.hancho")
+test_build("tut0.hancho")
+test_build("tut1.hancho")
+test_build("tut2.hancho")
+test_build("tut3.hancho")
+test_build("tut4.hancho")

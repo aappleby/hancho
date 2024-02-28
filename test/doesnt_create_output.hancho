@@ -9,7 +9,7 @@ import sys
 
 
 doesnt_create_output = hancho.Rule(
-  desc = "Doesn't create {files_out[0]}",
+  desc = "Doesn't create {files_out}",
   command = ":",
   files_in  = "doesnt_create_output.hancho",
   files_out = "not_created.txt",

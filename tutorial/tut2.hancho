@@ -9,16 +9,14 @@ hancho.config.set(build_dir = "build/tut2")
 # parameters generic so we don't have to specify them for each invocation.
 rule_compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -MMD -c {files_in[0]} -o {files_out[0]}",
-  files_out = "{swap_ext(files_in[0], '.o')}",
-  depfile   = "{build_dir}/{swap_ext(files_in[0], '.d')}",
+  command   = "g++ -MMD -c {files_in} -o {files_out}",
+  files_out = "{swap_ext(files_in, '.o')}",
+  depfile   = "{build_dir}/{swap_ext(files_in, '.d')}",
 )
 
-# The join() builtin here joins lists of strings with spaces so that lists of
-# filenames, for example, can be plugged into a command.
 rule_link = hancho.Rule(
   desc      = "Link {files_in} -> {files_out}",
-  command   = "g++ {join(files_in)} -o {files_out[0]}",
+  command   = "g++ {files_in} -o {files_out}",
 )
 
 # Now we don't need files_out here, and we'll also automatically pick up the

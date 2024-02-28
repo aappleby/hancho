@@ -13,7 +13,7 @@ async def do_slow_thing():
 
 hancho.Rule(
   desc = "Consuming a promise as files_in",
-  command = "echo {files_in[0]}",
+  command = "echo {files_in}",
 )(
   files_in = do_slow_thing(),
   files_out = []

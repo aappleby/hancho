@@ -18,7 +18,27 @@ def run_cmd(cmd):
   return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 def swap_ext(name, new_ext):
+  if type(name) is list:
+    return [swap_ext(n, new_ext) for n in name]
   return path.splitext(name)[0] + new_ext
+
+################################################################################
+
+def join2(x, delim = ' '):
+  if x is None: return None
+  if type(x) is list:
+    result = ""
+    for y in x:
+      next = join2(y, delim)
+      if next is not None:
+        if result: result += delim
+        result += next
+    return result
+  return str(x)
+
+def join3(x, delim = ' '):
+  if x is None: return ""
+  return join2(x, delim)
 
 ################################################################################
 
@@ -61,6 +81,7 @@ def err(*args, **kwargs):
 ################################################################################
 
 def main():
+
   # A reference to this module is already in sys.modules["__main__"].
   # Stash another reference in sys.modules["hancho"] so that build.hancho and
   # descendants don't try to load a second copy of us.
@@ -78,7 +99,9 @@ def main():
 
   (flags, unrecognized) = parser.parse_known_args()
 
-  sys.exit(asyncio.run(async_main(flags)))
+  result = asyncio.run(async_main(flags))
+  #print(total_mtimes)
+  sys.exit(result)
 
 ################################################################################
 
@@ -109,6 +132,8 @@ async def async_main(flags):
   this.hancho_mods = {}
   this.hancho_outs = set()
   this.hancho_root = os.getcwd()
+
+  # FIXME this needs to include rules.hancho and such after it's loaded - needs to have all hanchos in scope
   this.mod_stack = []
   this.tasks_total = 0
   this.tasks_index = 0
@@ -227,11 +252,13 @@ class Rule(dict):
   def expand(self, template):
     return expand(self, template)
 
-  def __call__(self, **kwargs):
+  def __call__(self, files_in, **kwargs):
     this.tasks_total += 1
-    task = self.extend(**kwargs)
+    task = self.extend()
+    task.files_in = files_in
     task.meta_deps = list(this.mod_stack)
     task.cwd = path.split(this.mod_stack[-1])[0]
+    task.set(**kwargs)
     promise = dispatch(task)
     return asyncio.create_task(promise)
 
@@ -250,7 +277,7 @@ def expand_once(self, template):
     exp = template[s.start():s.end()]
     try:
       replacement = eval(exp[1:-1], globals(), self)
-      if replacement is not None: result += str(replacement)
+      if replacement is not None: result += join3(replacement)
     except Exception:
       result += exp
     template = template[s.end():]
@@ -263,6 +290,7 @@ def expand(self, template):
     new_template = expand_once(self, template)
     if template == new_template:
       if template_regex.search(template):
+        print(template)
         err(f"Expanding '{template[0:20]}' is stuck in a loop")
       return template
     template = new_template
@@ -271,11 +299,16 @@ def expand(self, template):
 ################################################################################
 # Returns true if any file in files_in is newer than any file in files_out.
 
+total_mtimes = 0
+
 def check_mtime(files_in, files_out):
+  global total_mtimes
   for file_in in files_in:
     mtime_in = path.getmtime(file_in)
+    total_mtimes += 1
     for file_out in files_out:
       mtime_out = path.getmtime(file_out)
+      total_mtimes += 1
       if mtime_in > mtime_out: return True
   return False
 

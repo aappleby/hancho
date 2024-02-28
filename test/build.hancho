@@ -244,7 +244,7 @@ class TestRebuildTriggers(unittest.TestCase):
 
     rule = hancho.Rule(
       #desc      = "Always rebuild build/{test_name}.txt if the rule has no files_in",
-      command   = "touch {files_out[0]}",
+      command   = "touch {files_out}",
       test_name = test_name
     )
 
@@ -316,13 +316,13 @@ class TestRebuildTriggers(unittest.TestCase):
 
 deps1 = hancho.Rule(
   desc = "deps1",
-  command = "touch {files_out[0]}",
+  command = "touch {files_out}",
   files_out = "build/blep",
 )()
 
 deps2 = hancho.Rule(
   desc = "deps2",
-  command = "touch {files_in[0]}.bar",
+  command = "touch {files_in}.bar",
   files_in = deps1
 )()
 """

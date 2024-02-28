@@ -3,6 +3,6 @@ import os
 
 hancho.Rule(
   desc = "Does create its output file",
-  command = "touch {files_out[0]}",
+  command = "touch {files_out}",
   files_out = "build/output_created.txt"
 )()

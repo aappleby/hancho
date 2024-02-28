@@ -8,14 +8,14 @@ hancho.config.set(build_dir = "build")
 
 rule_compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
-  command = "g++ -c {files_in[0]} -o {files_out[0]}",
-  files_out = "{swap_ext(files_in[0], '.o')}",
-  depfile = "{build_dir}/{swap_ext(files_in[0], '.d')}",
+  command = "g++ -c {files_in} -o {files_out}",
+  files_out = "{swap_ext(files_in, '.o')}",
+  depfile = "{build_dir}/{swap_ext(files_in, '.d')}",
 )
 
 rule_link = hancho.Rule(
   desc = "Link {files_in} -> {files_out}",
-  command = "g++ {join(files_in)} -o {files_out[0]}",
+  command = "g++ {files_in} -o {files_out}",
 )
 
 main_o = rule_compile(
