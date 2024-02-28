@@ -213,11 +213,11 @@ async def run_testcase(task):
   hancho.log(len(result.failures))
   return len(result.failures)
 
-rule_testsuite = hancho.Rule(
+testsuite = hancho.Rule(
   command = run_testcase
 )
 
-#rule_testsuite(test_case = TestCustomCommands)
+#testsuite(test_case = TestCustomCommands)
 
 ################################################################################
 
@@ -273,13 +273,13 @@ class TestRebuildTriggers(unittest.TestCase):
     )
 
     time.sleep(0.01)
-    rule(files_in = "{test_name}.hancho")
+    rule("{test_name}.hancho")
     hancho.build()
     mtime1 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime1, mtime0)
 
     time.sleep(0.01)
-    rule(files_in = "{test_name}.hancho")
+    rule("{test_name}.hancho")
     hancho.build()
     mtime2 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime2, mtime1)
@@ -323,6 +323,5 @@ deps1 = hancho.Rule(
 deps2 = hancho.Rule(
   desc = "deps2",
   command = "touch {files_in}.bar",
-  files_in = deps1
-)()
+)(deps1)
 """

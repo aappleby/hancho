@@ -1,8 +1,9 @@
 // src/main.cpp
-#include <stdio.h>
 #include "main.hpp"
+#include "util.hpp"
+#include <stdio.h>
 
 int main(int argc, char** argv) {
-  printf("Hello World\n");
+  printf("Hello World %d\n", get_value());
   return 0;
 }

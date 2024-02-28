@@ -11,13 +11,11 @@ async def do_slow_thing():
   print("Slow thing done")
   return ["src/main.cpp"]
 
-hancho.Rule(
+echo = hancho.Rule(
   desc = "Consuming a promise as files_in",
   command = "echo {files_in}",
-)(
-  files_in = do_slow_thing(),
-  files_out = []
 )
+echo(do_slow_thing(), [])
 
 # You can also use them in the command field.
 async def custom_command(task):
@@ -26,10 +24,9 @@ async def custom_command(task):
     os.system(f"touch {f}")
   return task.files_out
 
-hancho.Rule(
+custom_rule = hancho.Rule(
   desc    = "Custom rule: {files_in} -> {files_out}",
   command = custom_command
-)(
-  files_in  = ["src/main.cpp"],
-  files_out = ["build/tut4/custom1", "build/tut4/custom2"]
 )
+
+custom_rule("src/main.cpp", ["build/tut4/custom1", "build/tut4/custom2"])

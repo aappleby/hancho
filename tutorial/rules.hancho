@@ -1,35 +1,22 @@
-# tutorial/rules.hancho - Reusable rules for tutorial 3
+# tutorial/rules.hancho - Rule Files, Globs, and Helper Functions
 import hancho
 import os
 
-# We extend base_rule just like the previous example
-hancho.config.set(
-  build_dir = "build/tut3"
-)
-
-# And these rules are the same as the previous example
-rule_compile = hancho.Rule(
-  desc      = "{color(100,200,100)}Compile {files_in} -> {files_out}{color()}",
+# These rules are the same as the previous example
+compile = hancho.Rule(
+  desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{build_dir}/{swap_ext(files_in, '.d')}",
 )
 
-rule_link = hancho.Rule(
-  desc      = "{color(100,100,200)}Link {files_in} -> {files_out}{color()}",
+link = hancho.Rule(
+  desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {files_in} -o {files_out}",
 )
 
-# But since we're in Python, we can make helper functions to call rules for us
-def compile(files):
-  objs = []
-  for file in files:
-    objs.append(rule_compile(files_in = file))
-  return objs
-
-# And now compiling a bunch of files into a binary is just one call.
+# But since we're in Python, we can make helper functions to call rules for us.
+# Now compiling a bunch of files into a binary is just one call.
 def c_binary(name, files):
-  return rule_link(
-    files_in = compile(files),
-    files_out = name
-  )
+  objs = [compile(file) for file in files]
+  return link(objs, name)

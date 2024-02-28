@@ -24,21 +24,17 @@ def swap_ext(name, new_ext):
 
 ################################################################################
 
-def join2(x, delim = ' '):
-  if x is None: return None
-  if type(x) is list:
-    result = ""
-    for y in x:
-      next = join2(y, delim)
-      if next is not None:
-        if result: result += delim
-        result += next
-    return result
-  return str(x)
+def flatten2(x):
+  if not type(x) is list:
+    return [x]
+  result = []
+  for y in x: result.extend(flatten2(y))
+  return result
 
 def join3(x, delim = ' '):
-  if x is None: return ""
-  return join2(x, delim)
+  x = flatten2(x)
+  x = [str(y) for y in x if y is not None]
+  return delim.join(x)
 
 ################################################################################
 
@@ -117,9 +113,7 @@ async def async_main(flags):
     debug     = flags.debug,
     force     = flags.force,
     desc      = "{files_in} -> {files_out}",
-    #files_in  = None,
-    #files_out = None,
-    #build_dir = None,
+    files_out = [],
     expand    = expand,
     join      = join,
     len       = len,
@@ -252,10 +246,11 @@ class Rule(dict):
   def expand(self, template):
     return expand(self, template)
 
-  def __call__(self, files_in, **kwargs):
+  def __call__(self, files_in, files_out = None, **kwargs):
     this.tasks_total += 1
     task = self.extend()
     task.files_in = files_in
+    if files_out is not None: task.files_out = files_out
     task.meta_deps = list(this.mod_stack)
     task.cwd = path.split(this.mod_stack[-1])[0]
     task.set(**kwargs)

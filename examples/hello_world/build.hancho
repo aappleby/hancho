@@ -3,23 +3,17 @@ import hancho
 
 hancho.config.set(build_dir = "build")
 
-rule_compile = hancho.Rule(
+compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile = "{build_dir}/{swap_ext(files_in, '.d')}",
 )
 
-rule_link = hancho.Rule(
+link = hancho.Rule(
   desc = "Link {files_in} -> {files_out}",
   command = "g++ {files_in} -o {files_out}",
 )
 
-main_o = rule_compile(
-  files_in = "main.cpp",
-)
-
-main_app = rule_link(
-  files_in = main_o,
-  files_out = "app"
-)
+main_o = compile("main.cpp")
+main_app = link(main_o, "app")
