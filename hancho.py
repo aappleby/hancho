@@ -7,34 +7,29 @@ this = sys.modules[__name__]
 
 ################################################################################
 # Build rule helper methods
+
 def color(r = None, g = None, b = None):
   if r is None: return "\x1B[0m"
   return f"\x1B[38;2;{r};{g};{b}m"
 
-def join(names, divider = ' '):
-  return "" if names is None else divider.join(names)
+def is_atom(x):
+  return type(x) is str or not hasattr(x, "__iter__")
+
+def flatten(x):
+  if is_atom(x): return [x]
+  result = []
+  for y in x: result.extend(flatten(y))
+  return result
+
+def join(x, delim = ' '):
+  return delim.join([str(y) for y in flatten(x) if y is not None])
 
 def run_cmd(cmd):
   return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 def swap_ext(name, new_ext):
-  if type(name) is list:
-    return [swap_ext(n, new_ext) for n in name]
-  return path.splitext(name)[0] + new_ext
-
-################################################################################
-
-def flatten2(x):
-  if not type(x) is list:
-    return [x]
-  result = []
-  for y in x: result.extend(flatten2(y))
-  return result
-
-def join3(x, delim = ' '):
-  x = flatten2(x)
-  x = [str(y) for y in x if y is not None]
-  return delim.join(x)
+  if is_atom(name): return path.splitext(name)[0] + new_ext
+  return [swap_ext(n, new_ext) for n in flatten(name)]
 
 ################################################################################
 
@@ -236,8 +231,10 @@ class Rule(dict):
 
   def __repr__(self):
     class Encoder(json.JSONEncoder):
-        def default(self, obj):
-            return "<function>" if callable(obj) else super().default(obj)
+      def default(self, obj):
+        if callable(obj): return "<function>"
+        if type(obj) is asyncio.Task: return "<task>"
+        return super().default(obj)
     return json.dumps(self, indent = 2, cls=Encoder)
 
   def extend(self, **kwargs):
@@ -272,7 +269,7 @@ def expand_once(self, template):
     exp = template[s.start():s.end()]
     try:
       replacement = eval(exp[1:-1], globals(), self)
-      if replacement is not None: result += join3(replacement)
+      if replacement is not None: result += join(replacement)
     except Exception:
       result += exp
     template = template[s.end():]
@@ -356,14 +353,12 @@ def needs_rerun(task):
 # Slightly weird method that flattens out an arbitrarily-nested list of strings
 # and promises-for-strings into a flat array of actual strings.
 
-async def flatten(x):
+async def flatten_async(x):
   if x is None: return []
-  if inspect.isawaitable(x):
-    x = await x
-  if not type(x) is list:
-    return [x]
+  if inspect.isawaitable(x): x = await x
+  if is_atom(x): return [x]
   result = []
-  for y in x: result.extend(await flatten(y))
+  for y in x: result.extend(await flatten_async(y))
   return result
 
 ################################################################################
@@ -445,11 +440,12 @@ async def dispatch(task):
   # Flatten all filename promises in any of the input filename arrays.
   if task.files_in is None:  err("Task missing files_in")
   if task.files_out is None: err("Task missing files_out")
-  task.files_in  = await flatten(task.files_in)
-  task.files_out = await flatten(task.files_out)
-  task.deps      = await flatten(task.deps)
+  task.files_in  = await flatten_async(task.files_in)
+  task.files_out = await flatten_async(task.files_out)
+  task.deps      = await flatten_async(task.deps)
 
   # Early-out with no result if any of our inputs or outputs are None (failed)
+
   if None in task.files_in:  return None
   if None in task.files_out: return None
   if None in task.deps:      return None

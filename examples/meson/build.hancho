@@ -5,7 +5,10 @@ import hancho
 hancho.config.set(
   name       = "base_config",
   toolchain  = "x86_64-linux-gnu",
-  gcc_opt    = "{'-O3' if build_type == 'release' else '-g -O0'} -MMD",
+  gcc_opt    = [
+    "{'-O3' if build_type == 'release' else '-g -O0'}",
+    "-MMD"
+  ],
   build_type = "debug",
   build_dir  = "build/{build_type}",
 )
