@@ -1,14 +1,6 @@
 ### Tutorial 0: Running Hancho
 ---
 
-Hancho is distributed as a single Python file with no dependencies, just download it to your working directory:
-
-``` bash
-wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
-chmod +x hancho.py
-./hancho.py
-```
-
 To start the tutorial, clone the Hancho repo and cd into hancho/tutorial:
 
 ```shell
@@ -74,7 +66,7 @@ Hancho build files are just Python modules ending in .hancho, with minor modific
 
 ```shell
 user@host:~/hancho/tutorial$ rm -rf build
-user@host:~/hancho/tutorial$ hancho tut0.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
 [1/1] src/main.cpp src/util.cpp -> build/tut0/app
 Reason: Rebuilding ['build/tut0/app'] because some are missing
 g++ src/main.cpp src/util.cpp -o build/tut0/app
@@ -87,7 +79,7 @@ Hello World 42
 If we run Hancho a second time, nothing will happen because nothing in ```files_in``` has changed.
 
 ```shell
-user@host:~/hancho/tutorial$ hancho tut0.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
 hancho: no work to do.
 ```
 
@@ -95,7 +87,7 @@ If we change a source file and run Hancho again, it will do a rebuild.
 
 ```shell
 user@host:~/hancho/tutorial$ touch src/main.cpp
-user@host:~/hancho/tutorial$ hancho tut0.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
 [1/1] src/main.cpp src/util.cpp -> build/tut0/app
 Reason: Rebuilding ['build/tut0/app'] because an input has changed
 g++ src/main.cpp src/util.cpp -o build/tut0/app
@@ -131,7 +123,7 @@ link([main_o, util_o], "build/tut1/app")
 If we run that, we'll see three commands instead of just one:
 
 ```shell
-user@host:~/hancho/tutorial$ hancho tut1.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 [1/3] Compile src/main.cpp -> build/tut1/src/main.o
 Reason: Rebuilding ['build/tut1/src/main.o'] because some are missing
 g++ -c src/main.cpp -o build/tut1/src/main.o
@@ -147,7 +139,7 @@ user@host:~/hancho/tutorial$
 And if we modify the source file ```utils.cpp```, we should see that ```utils.cpp``` is recompiled and ```build/tut1/app``` is relinked, but ```main.cpp``` is _not_ recompiled:
 ```shell
 user@host:~/hancho/tutorial$ touch src/util.cpp
-user@host:~/hancho/tutorial$ hancho tut1.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 [1/2] Compile src/util.cpp -> build/tut1/src/util.o
 Reason: Rebuilding ['build/tut1/src/util.o'] because an input has changed
 g++ -c src/util.cpp -o build/tut1/src/util.o
@@ -161,7 +153,7 @@ However, if we modify the header file ```util.hpp``` the build is ***not*** upda
 
 ```
 user@host:~/hancho/tutorial$ touch src/util.hpp
-user@host:~/hancho/tutorial$ hancho tut1.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 hancho: no work to do.
 ```
 
@@ -367,7 +359,7 @@ link([main_o, util_o], "app")
 The build still works as expected
 
 ```shell
-user@host:~/hancho/tutorial$ hancho tut2.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut2.hancho --verbose
 [1/3] Compile src/main.cpp -> build/tut2/src/main.o
 Reason: Rebuilding ['build/tut2/src/main.o'] because some are missing
 g++ -MMD -c src/main.cpp -o build/tut2/src/main.o
@@ -382,14 +374,14 @@ g++ build/tut2/src/main.o build/tut2/src/util.o -o build/tut2/app
 and rerunning the build does nothing as expected
 
 ```shell
-user@host:~/hancho/tutorial$ hancho tut2.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut2.hancho --verbose
 hancho: no work to do.
 ```
 
 but now modifying a header file _does_ cause a rebuild:
 
 ```shell
-user@host:~/hancho/tutorial$ hancho tut2.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py tut2.hancho --verbose
 [1/3] Compile src/main.cpp -> build/tut2/src/main.o
 Reason: Rebuilding ['build/tut2/src/main.o'] because a dependency in build/tut2/src/main.d has changed
 g++ -MMD -c src/main.cpp -o build/tut2/src/main.o

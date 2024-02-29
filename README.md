@@ -9,11 +9,21 @@ It focuses on these features:
 1. Easy construction of commands via text templates, similar to Python f-strings.
 2. Minimal, parallel, fast rebuilds.
 3. Zero "magic" - you control every command run.
-4. Single file with no dependencies outside python3 - just copy-paste it into your repo.
+4. Single file with no dependencies outside python3 - just copy-paste it into your repo:
 
 The resulting ```hancho.py``` is under 500 lines of code and should suffice for
 small to medium sized projects.
 
+
+## Installation
+
+``` bash
+wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
+chmod +x hancho.py
+./hancho.py
+```
+
+## Simple Example
 ```py
 # examples/hello_world/build.hancho
 import hancho
@@ -28,8 +38,8 @@ compile = hancho.Rule(
 )
 
 link = hancho.Rule(
-  desc    = "Link {files_in} -> {files_out}",
-  command = "g++ {files_in} -o {files_out}",
+  desc      = "Link {files_in} -> {files_out}",
+  command   = "g++ {files_in} -o {files_out}",
 )
 
 main_o = compile("main.cpp")
