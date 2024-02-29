@@ -558,68 +558,72 @@ The components of the debug output are:
  - "expand ..." messages for all templates
  - The description for each rule evaluated
  - The reason the rule was (or was not) executed
- - A JSON representation of the rule object
  - The command executed
-
+ - A JSON representation of the rule object
 
 ```shell
-user@host:~/hancho/tutorial$ ./hancho.py tut1.hancho --debug
+user@host:~/hancho/tutorial$ rm -rf build
+user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --debug
 expand "None"
 expand ""
 expand "src/main.cpp"
-expand "build/tut1/src/main.o"
-expand "g++ -c {files_in} -o {files_out}"
-expand "g++ -c src/main.cpp -o build/tut1/src/main.o"
-expand "Compile {files_in} -> {files_out}"
-expand "Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']"
-[   1] Compile ['src/main.cpp'] -> ['build/tut1/src/main.o']
-Reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/src/main.o'] because some are missing
+expand "src/util.cpp"
+expand "build/tut0/app"
+expand "{files_in} -> {files_out}"
+expand "src/main.cpp src/util.cpp -> build/tut0/app"
+[1/1] src/main.cpp src/util.cpp -> build/tut0/app
+Reason: Rebuilding ['build/tut0/app'] because some are missing
+expand "g++ {files_in} -o {files_out}"
+expand "g++ src/main.cpp src/util.cpp -o build/tut0/app"
+g++ src/main.cpp src/util.cpp -o build/tut0/app
 {
-  "files_in" : ["src/main.cpp"],
-  "files_out" : ["build/tut1/src/main.o"],
-  "base" : {
-    "desc" : "Compile {files_in} -> {files_out}",
-    "command" : "g++ -c {files_in} -o {files_out}",
-    "base" : null,
+  "base": {
+    "command": "g++ {files_in} -o {files_out}",
+    "base": {
+      "jobs": 16,
+      "verbose": false,
+      "quiet": false,
+      "dryrun": false,
+      "debug": true,
+      "force": false,
+      "desc": "{files_in} -> {files_out}",
+      "files_out": [],
+      "expand": "<function>",
+      "join": "<function>",
+      "len": "<function>",
+      "run_cmd": "<function>",
+      "swap_ext": "<function>",
+      "color": "<function>",
+      "base": null
+    }
   },
-  "meta_deps" : [
-    "/home/user/hancho/tutorial/tut1.hancho",
-    "/home/user/hancho/tutorial/hancho.py",
+  "files_in": [
+    "src/main.cpp",
+    "src/util.cpp"
   ],
-  "deps" : [],
-  "abs_files_in" : ["/home/user/hancho/tutorial/src/main.cpp"],
-  "abs_files_out" : ["/home/user/hancho/tutorial/build/tut1/src/main.o"],
-  "abs_deps" : [],
-}
-g++ -c src/main.cpp -o build/tut1/src/main.o
-expand "None"
-expand ""
-Files ['/home/user/hancho/tutorial/build/tut1/src/main.o'] are up to date
-expand "/home/user/hancho/tutorial/build/tut1/src/main.o"
-expand "build/tut1/app"
-expand "g++ {' '.join(files_in)} -o {files_out}"
-expand "g++ build/tut1/src/main.o -o build/tut1/app"
-expand "Link {files_in} -> {files_out}"
-expand "Link ['build/tut1/src/main.o'] -> ['build/tut1/app']"
-[   2] Link ['build/tut1/src/main.o'] -> ['build/tut1/app']
-Reason: Rebuilding ['/home/user/hancho/tutorial/build/tut1/app'] because some are missing
-{
-  "files_in" : ["build/tut1/src/main.o"],
-  "files_out" : ["build/tut1/app"],
-  "base" : {
-    "desc" : "Link {files_in} -> {files_out}",
-    "command" : "g++ {' '.join(files_in)} -o {files_out}",
-    "base" : null,
-  },
-  "meta_deps" : [
-    "/home/user/hancho/tutorial/tut1.hancho",
-    "/home/user/hancho/tutorial/hancho.py",
+  "files_out": [
+    "build/tut0/app"
   ],
-  "deps" : [],
-  "abs_files_in" : ["/home/user/hancho/tutorial/build/tut1/src/main.o"],
-  "abs_files_out" : ["/home/user/hancho/tutorial/build/tut1/app"],
-  "abs_deps" : [],
+  "meta_deps": [
+    "/home/aappleby/hancho/tutorial/tut0.hancho"
+  ],
+  "cwd": "/home/aappleby/hancho/tutorial",
+  "deps": [],
+  "abs_files_in": [
+    "/home/aappleby/hancho/tutorial/src/main.cpp",
+    "/home/aappleby/hancho/tutorial/src/util.cpp"
+  ],
+  "abs_files_out": [
+    "/home/aappleby/hancho/tutorial/build/tut0/app"
+  ],
+  "abs_deps": [],
+  "reason": "Rebuilding ['build/tut0/app'] because some are missing"
 }
-g++ build/tut1/src/main.o -o build/tut1/app
-Files ['/home/user/hancho/tutorial/build/tut1/app'] are up to date
+expand "g++ {files_in} -o {files_out}"
+expand "g++ src/main.cpp src/util.cpp -o build/tut0/app"
+Files ['build/tut0/app'] are up to date
+tasks total:   1
+tasks skipped: 0
+tasks passed:  1
+tasks failed:  0
 ```
