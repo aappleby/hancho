@@ -12,7 +12,8 @@ user@host:~$ cd hancho/tutorial
 user@host:~/hancho/tutorial$
 ```
 
-Inside the tutorial folder there's a ```src``` folder with a trivial "Hello World" application consisting of two files, ```main.cpp``` and ```util.cpp```:
+Inside the tutorial folder there's a ```src``` folder with a trivial "Hello
+World" application consisting of two files, ```main.cpp``` and ```util.cpp```:
 
 ``` cpp
 // src/main.cpp
@@ -34,7 +35,8 @@ int32_t get_value() {
 }
 ```
 
-Assuming we have GCC installed, compiling it from the command line is straightforward:
+Assuming we have GCC installed, compiling it from the command line is
+straightforward:
 
 ```shell
 user@host:~/hancho/tutorial$ mkdir -p build/tut0
@@ -58,11 +60,17 @@ rule(
   files_out = "build/tut0/app"
 )
 
-# The files_in and files_out keywords are optional: this is also valid
+# Note: The files_in and files_out keywords are optional, this also works:
 # rule(["src/main.cpp", "src/util.cpp"], "build/tut0/app")
 ```
 
-Hancho build files are just Python modules ending in .hancho, with minor modifications. In this build file we define a ```Rule``` that contains a ```command``` with two template variables ```files_in``` and ```files_out```, and then we call the rule and give it our source files and our output filename. Hancho then does the fill-in-the-blanks for us and runs the command, which we can see with the ```--verbose``` flag:
+Hancho build files are just Python modules ending in .hancho, with minor
+modifications. In this build file we define a ```Rule``` that contains a
+```command``` with two template variables ```files_in``` and ```files_out```,
+and then we call the rule and give it our source files and our output filename.
+
+Hancho then does the fill-in-the-blanks for us and runs the command, which we
+can see with the ```--verbose``` flag:
 
 ```shell
 user@host:~/hancho/tutorial$ rm -rf build
@@ -75,9 +83,8 @@ user@host:~/hancho/tutorial$ build/tut0/app
 Hello World 42
 ```
 
-
-
-If we run Hancho a second time, nothing will happen because nothing in ```files_in``` has changed.
+If we run Hancho a second time, nothing will happen because nothing in
+```files_in``` has changed.
 
 ```shell
 user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
@@ -95,13 +102,25 @@ Reason: Rebuilding ['build/tut0/app'] because an input has changed
 g++ src/main.cpp src/util.cpp -o build/tut0/app
 ```
 
-The above example is not a particularly useful way to use Hancho, but it should check that your installation is working.
+The above example is not a particularly useful way to use Hancho, but it should
+check that your installation is working.
+
+
+
+
+
+
+
 
 ---
 ### Tutorial 1: Compiling a C binary
 
+Now to build the same C binary the right-er way. Instead of running a single
+command to do both the compile and link steps, we can split that up into one
+compile command per source file and one final link command.
 
-Now to build the same C binary the right-er way. Instead of running a single command to do both the compile and link steps, we can split that up into one compile command per source file and one final link command. We'll also add a description to each rule so we get a bit nicer feedback when running a build.
+We'll also add a description to each rule so we get a bit nicer feedback when
+running a build.
 
 ``` py
 # tutorial/tut1.hancho
@@ -137,7 +156,10 @@ Reason: Rebuilding ['build/tut1/app'] because some are missing
 g++ build/tut1/src/main.o build/tut1/src/util.o -o build/tut1/app
 ```
 
-And if we modify the source file ```utils.cpp```, we should see that ```utils.cpp``` is recompiled and ```build/tut1/app``` is relinked, but ```main.cpp``` is _not_ recompiled:
+And if we modify the source file ```utils.cpp```, we should see that
+```utils.cpp``` is recompiled and ```build/tut1/app``` is relinked, but
+```main.cpp``` is _not_ recompiled:
+
 ```shell
 user@host:~/hancho/tutorial$ touch src/util.cpp
 
@@ -150,7 +172,9 @@ Reason: Rebuilding ['build/tut1/app'] because an input has changed
 g++ build/tut1/src/main.o build/tut1/src/util.o -o build/tut1/app
 ```
 
-However, if we modify the header file ```util.hpp``` the build is ***not*** updated, as Hancho is only checking the dependencies declared by ```files_in``` and ```files_out```. We'll fix that in a minute.
+However, if we modify the header file ```util.hpp``` the build is ***not***
+updated, as Hancho is only checking the dependencies declared by ```files_in```
+and ```files_out```. We'll fix that in a minute.
 
 ```shell
 user@host:~/hancho/tutorial$ touch src/util.hpp
@@ -159,43 +183,30 @@ user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 hancho: no work to do.
 ```
 
-So what exactly are ```main_o``` and ```util_o```? They are ***promises*** (well, technically they are ```asyncio.Task```s) that resolve to either a list of filenames that the rule generated, or None if the rule failed for some reason. Hancho will ```await``` all promises that are passed to ```files_in``` before running the rule. Hancho will also skip running a rule if everything in the rule's ```files_out``` is newer than the rule's ```files_in```.
+So what exactly are ```main_o``` and ```util_o```? They are ***promises***
+(well, technically they are ```asyncio.Task```s) that resolve to either a list
+of filenames that the rule generated, or None if the rule failed for some
+reason.
 
-You might have noticed that we seem to be inconsistent about whether ```files_in``` and ```files_out``` are single strings, arrays of strings, nested arrays of promises, or whatnot. Hancho doesn't actually care - it will ```await``` anything that needs awaiting and will flatten out nested lists or wrap single strings in ```[]```s as needed. By the time the rule runs everything will be a flat array of strings. Using that array in a ```{template}``` will do the equivalent of ```' '.join(array)```.
+Hancho will ```await``` all promises that are passed to ```files_in``` before
+running the rule.
 
-This works, but we're still missing some steps: we need to generate and handle GCC's dependency files so we can catch modified header files, and we need a better way to define our build directory - hardcoding it in ```files_out``` isn't going to work for larger projects.
+Hancho will also skip running a rule if everything in the rule's ```files_out```
+is newer than the rule's ```files_in```.
 
+You might have noticed that we seem to be inconsistent about whether
+```files_in``` and ```files_out``` are single strings, arrays of strings,
+nested arrays of promises, or whatnot. Hancho doesn't actually care - it will
+```await``` anything that needs awaiting and will flatten out nested lists or
+wrap single strings in ```[]```s as needed. By the time the rule runs,
+everything will be a flat array of strings. Using that array in a
+```{template}``` will do the equivalent of ```' '.join(array)```.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+At this point our build works, but we're still missing some steps we need to use
+this for real: we need to generate and handle GCC's dependency files so we can
+catch modified header files, and we need a better way to define our build
+directory - hardcoding it in ```files_out``` isn't going to work for larger
+projects.
 
 
 
@@ -206,11 +217,14 @@ This works, but we're still missing some steps: we need to generate and handle G
 ---
 ### Aside: Hancho ```Rule``` objects
 
-Before we go into more detail with our toy app, we should probably explain what exactly a ```Rule``` is.
+Before we go into more detail with our toy app, we should probably explain what
+exactly a ```Rule``` is.
 
-Hancho's ```Rule``` is basically just a Python ```dict``` with a text templating system tacked on.
+Hancho's ```Rule``` is basically just a Python ```dict``` with a text templating
+system tacked on.
 
-We can put whatever key-value pairs we like inside a ```Rule``` and then use it to expand whatever text template we like:
+We can put whatever key-value pairs we like inside a ```Rule``` and then use it
+to expand whatever text template we like:
 ```py
 >>> import hancho
 >>> rule = hancho.Rule(foo = "{bar}", bar = "{baz}", baz = "Hancho")
@@ -250,7 +264,8 @@ Expanding '{print(4)}' is stuck in a loop
 ''
 ```
 
-Arbitrarily-nested arrays of strings will be flattened out and joined with spaces:
+Arbitrarily-nested arrays of strings will be flattened out and joined with
+spaces:
 ```py
 >>> rule = hancho.Rule(foo = [1,2,3,[4,5],[[[6,7]]]])
 >>> rule.expand("{foo}")
@@ -264,7 +279,8 @@ Fields that are never defined will turn into empty strings:
 '??'
 ```
 
-Fields that are used globally in multiple rules can be set on ```hancho.config```, which will make them visible in _every_ rule:
+Fields that are used globally in multiple rules can be set on
+```hancho.config```, which will make them visible in _every_ rule:
 ```py
 >>> hancho.config.set(bar = "Hancho")
 >>> rule = hancho.Rule(foo = "{bar}")
@@ -272,7 +288,8 @@ Fields that are used globally in multiple rules can be set on ```hancho.config``
 'Hancho'
 ```
 
-Rules can also 'inherit' fields from other rules via ```rule.extend()```, which is a better option for common fields that shouldn't be globally visible:
+Rules can also 'inherit' fields from other rules via ```rule.extend()```, which
+is a better option for common fields that shouldn't be globally visible:
 
 ```py
 >>> base_rule = hancho.Rule(bar = "Hancho")
@@ -294,12 +311,6 @@ as will templates that create infinitely-long strings:
 >>> rule.expand("{foo}")
 Expanding '!!!!!!!!!!!!!!!!!!!!...' failed to terminate
 ```
-
-
-
-
-
-
 
 
 
@@ -417,14 +428,6 @@ build
 
 
 
-
-
-
-
-
-
-
-
 ---
 ### Tutorial 3 - Rule Files, Globs, and Helper Functions
 
@@ -457,8 +460,14 @@ rules.c_binary("app", glob.glob("*.cpp"))
 Some things to note here -
 
 1. We've moved the actual build rules to ```rules.hancho```
-2. We're compiling all .cpp files in src/ by passing the result of ```glob.glob("*.cpp")``` to the ```c_binary``` function we got from ```rules.hancho```.
-2. We're globbing ```*.cpp``` in the ```tutorial/src``` directory, ***not*** the ```tutorial``` directory. This is ***not*** how Python module loading works by default - Hancho ```chdir()```s into the build script's directory before running it so that file matching patterns like this work regardless of where Hancho was launched from.
+2. We're compiling all .cpp files in src/ by passing the result of
+  ```glob.glob("*.cpp")``` to the ```c_binary``` function we got from
+  ```rules.hancho```.
+3. We're globbing ```*.cpp``` in the ```tutorial/src``` directory, ***not***
+  the ```tutorial``` directory. This is ***not*** how Python module loading
+  works by default - Hancho ```chdir()```s into the build script's directory
+  before running it so that file matching patterns like this work regardless of
+  where Hancho was launched from.
 
 But what is ```rules.c_binary```? It's a helper function in ```rules.hancho```:
 
@@ -484,15 +493,16 @@ def c_binary(name, files):
   return link(objs, name)
 ```
 
-So overall we have the same rules and commands as before, but now they're split up into
-1. A top-level build file ```tut3.hancho``` that loads build files for its sub-components
+So overall we have the same rules and commands as before, but now they're split
+up into
+1. A top-level build file ```tut3.hancho``` that loads build files for its
+  sub-components
 2. A ```src.hancho``` sub-component build file that actually compiles stuff
-3. A ```rules.hancho``` file that contains our reusable rules and helper functions
+3. A ```rules.hancho``` file that contains our reusable rules and helper
+  functions
 
-This basic setup (top-level build, component-level build, and rules file) works well for most small to medium size projects.
-
-
-
+This basic setup (top-level build, component-level build, and rules file) works
+well for most small to medium size projects.
 
 
 
