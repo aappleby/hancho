@@ -1,15 +1,6 @@
-# tutorial/tut1.hancho - Compiling a C Binary
+# tutorial/tut1.hancho
 import hancho
 
-# Hancho build tasks are described using Rule objects, which are basically
-# Python dicts with some tweaks that we'll get into later. Rule objects accept
-# whatever key-value pairs you want to pass into the constructor. All rules
-# must have a command, in this case a console command to run the compiler.
-# Rules can have an optional description that is printed when they run.
-
-# Hancho will expand {} templates before running the command.
-# During expansion, lists will be flattened and their elements stringified and
-# joined with spaces.
 compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in} -o {files_out}",
@@ -20,20 +11,6 @@ link = hancho.Rule(
   command = "g++ {files_in} -o {files_out}",
 )
 
-# You run the rule by calling it with at least two args - a list of input files
-# to run it on and a list of output files it should produce. If you only have a
-# single item for those lists you can omit the []. You can then pass whatever
-# additional key-value pairs you like, they will override keys in the rule.
-
-# Note that Hancho resolves filenames ***relative to the directory the .hancho
-# file is in***, not the directory that Hancho was started in. Hancho will also
-# create any directories required by files_out before running the command.
-
-# Calling compile() here returns a promise that resolves to a list of
-# filenames if it succeeds, or None if it fails.
 main_o = compile("src/main.cpp", "build/tut1/src/main.o")
 util_o = compile("src/util.cpp", "build/tut1/src/util.o")
-
-# By passing that promise into link, we create a dependency between the link
-# task and the compile task.
 link([main_o, util_o], "build/tut1/app")

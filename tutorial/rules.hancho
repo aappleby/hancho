@@ -1,13 +1,12 @@
-# tutorial/rules.hancho - Rule Files, Globs, and Helper Functions
+# tutorial/rules.hancho
 import hancho
 import os
 
-# These rules are the same as the previous example
 compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -c {files_in} -o {files_out}",
+  command   = "g++ -MMD -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{build_dir}/{swap_ext(files_in, '.d')}",
+  depfile   = "{swap_ext(files_in, '.d')}",
 )
 
 link = hancho.Rule(
@@ -15,8 +14,6 @@ link = hancho.Rule(
   command   = "g++ {files_in} -o {files_out}",
 )
 
-# But since we're in Python, we can make helper functions to call rules for us.
-# Now compiling a bunch of files into a binary is just one call.
 def c_binary(name, files):
   objs = [compile(file) for file in files]
   return link(objs, name)

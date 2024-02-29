@@ -71,6 +71,28 @@ def err(*args, **kwargs):
 
 ################################################################################
 
+def init():
+  # Initialize Hancho's global configuration object
+  this.config = None # so this.config.base gets sets to None in the next line
+  this.config = Rule(
+    jobs      = os.cpu_count(),
+    verbose   = False,
+    quiet     = False,
+    dryrun    = False,
+    debug     = False,
+    force     = False,
+    desc      = "{files_in} -> {files_out}",
+    files_out = [],
+    expand    = expand,
+    join      = join,
+    len       = len,
+    run_cmd   = run_cmd,
+    swap_ext  = swap_ext,
+    color     = color,
+  )
+
+################################################################################
+
 def main():
 
   # A reference to this module is already in sys.modules["__main__"].
@@ -98,24 +120,12 @@ def main():
 
 async def async_main(flags):
 
-  # Initialize Hancho's global configuration object
-  this.config = None # so this.config.base gets sets to None in the next line
-  this.config = Rule(
-    jobs      = flags.jobs,
-    verbose   = flags.verbose,
-    quiet     = flags.quiet,
-    dryrun    = flags.dryrun,
-    debug     = flags.debug,
-    force     = flags.force,
-    desc      = "{files_in} -> {files_out}",
-    files_out = [],
-    expand    = expand,
-    join      = join,
-    len       = len,
-    run_cmd   = run_cmd,
-    swap_ext  = swap_ext,
-    color     = color,
-  )
+  this.config.jobs    = flags.jobs
+  this.config.verbose = flags.verbose
+  this.config.quiet   = flags.quiet
+  this.config.dryrun  = flags.dryrun
+  this.config.debug   = flags.debug
+  this.config.force   = flags.force
 
   # Reset all global state
   this.hancho_mods = {}
@@ -332,8 +342,12 @@ def needs_rerun(task):
 
   # Check GCC-format depfile, if present.
   if task.depfile:
-    depfile_name = task.expand(task.depfile)
+    depfile_name = path.join(
+      task.expand(task.build_dir),
+      task.expand(task.depfile)
+    )
     if path.exists(depfile_name):
+      #print(f"got deps! {depfile_name}")
       deplines = open(depfile_name).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
       if check_mtime(deplines, files_out):
@@ -502,4 +516,5 @@ async def dispatch(task):
 
 ################################################################################
 
+init()
 if __name__ == "__main__": main()

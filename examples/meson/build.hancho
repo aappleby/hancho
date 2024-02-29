@@ -1,38 +1,57 @@
-#!/usr/bin/python3
-
 import hancho
 
 hancho.config.set(
-  name       = "base_config",
   toolchain  = "x86_64-linux-gnu",
-  gcc_opt    = [
-    "{'-O3' if build_type == 'release' else '-g -O0'}",
-    "-MMD"
-  ],
   build_type = "debug",
   build_dir  = "build/{build_type}",
 )
 
 compile = hancho.Rule(
   desc      = "Compiling {files_in} -> {files_out} ({build_type})",
-  command   = "{toolchain}-gcc {gcc_opt} {warnings} {includes} {defines} -c {files_in} -o {files_out}",
+  command   = "{toolchain}-gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
+  includes  = [
+    "-I."
+  ],
+  gcc_opts  = [
+    "{'-O3' if build_type == 'release' else '-g -O0'}",
+    "-MMD",
+    "-fdiagnostics-color=always"
+  ],
+  defines   = [
+    "-D_FILE_OFFSET_BITS=64"
+  ],
+  warnings  = [
+    "-Wall",
+    "-Winvalid-pch"
+  ],
   files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{build_dir}/{swap_ext(files_in, '.d')}",
+  depfile   = "{swap_ext(files_in, '.d')}",
 )
 
 link = hancho.Rule(
-  desc    = "Linking {files_out}",
-  command = "{toolchain}-g++ {gcc_opt} {warnings} {files_in} {libs} -o {files_out}",
+  desc      = "Linking {files_out}",
+  command   = "{toolchain}-g++ {files_in} -o {files_out} {link_opts}",
+  link_opts = [
+    "-Wl,--as-needed",
+    "-Wl,--no-undefined",
+    "-Wl,--start-group",
+    "{libs}",
+    "-Wl,--end-group",
+  ]
 )
 
 main_o = compile(
   "main.c",
-  includes  = [compile.includes, hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')],
-  gcc_opt   = [compile.gcc_opt, hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')],
+  includes = [
+    compile.includes,
+    hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+  ],
+  gcc_opts = [
+    compile.gcc_opts,
+    hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+  ],
 )
 
-main = link(
-  main_o,
-  files_out = "demo",
+main = link(main_o, "demo",
   libs = [link.libs, hancho.run_cmd('pkg-config gtk+-3.0 --libs')],
 )

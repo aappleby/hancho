@@ -22,7 +22,7 @@ compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
-  depfile = "{build_dir}/{swap_ext(files_in, '.d')}",
+  depfile = "{swap_ext(files_in, '.d')}",
 )
 
 link = hancho.Rule(

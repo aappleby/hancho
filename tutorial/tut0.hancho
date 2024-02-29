@@ -1,0 +1,7 @@
+import hancho
+
+rule = hancho.Rule(
+  command = "g++ {files_in} -o {files_out}",
+)
+
+rule(["src/main.cpp", "src/util.cpp"], "build/tut0/app")

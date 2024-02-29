@@ -1,5 +1,6 @@
-# tutorial/tut3.hancho - Rule Files, Globs, and Helper Functions
+# tutorial/tut3.hancho
 import hancho
 
-# Build file moved to src/
+hancho.config.set(build_dir = "build/tut3")
+
 hancho.load("src/src.hancho")

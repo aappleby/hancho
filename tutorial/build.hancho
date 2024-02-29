@@ -12,7 +12,6 @@ test_build = hancho.Rule(
   files_out = [],
 )
 
-test_build("tut0.hancho")
 test_build("tut1.hancho")
 test_build("tut2.hancho")
 test_build("tut3.hancho")
