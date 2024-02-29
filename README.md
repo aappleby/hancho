@@ -14,6 +14,9 @@ It focuses on these features:
 The resulting ```hancho.py``` is under 500 lines of code and should suffice for
 small to medium sized projects.
 
+[Tutorial Here](tutorial)
+
+[Some Additional Documentation Here](docs)
 
 ## Installation
 
