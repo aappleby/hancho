@@ -70,6 +70,7 @@ user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
 [1/1] src/main.cpp src/util.cpp -> build/tut0/app
 Reason: Rebuilding ['build/tut0/app'] because some are missing
 g++ src/main.cpp src/util.cpp -o build/tut0/app
+
 user@host:~/hancho/tutorial$ build/tut0/app
 Hello World 42
 ```
@@ -87,6 +88,7 @@ If we change a source file and run Hancho again, it will do a rebuild.
 
 ```shell
 user@host:~/hancho/tutorial$ touch src/main.cpp
+
 user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
 [1/1] src/main.cpp src/util.cpp -> build/tut0/app
 Reason: Rebuilding ['build/tut0/app'] because an input has changed
@@ -133,12 +135,12 @@ g++ -c src/util.cpp -o build/tut1/src/util.o
 [3/3] Link build/tut1/src/main.o build/tut1/src/util.o -> build/tut1/app
 Reason: Rebuilding ['build/tut1/app'] because some are missing
 g++ build/tut1/src/main.o build/tut1/src/util.o -o build/tut1/app
-user@host:~/hancho/tutorial$
 ```
 
 And if we modify the source file ```utils.cpp```, we should see that ```utils.cpp``` is recompiled and ```build/tut1/app``` is relinked, but ```main.cpp``` is _not_ recompiled:
 ```shell
 user@host:~/hancho/tutorial$ touch src/util.cpp
+
 user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 [1/2] Compile src/util.cpp -> build/tut1/src/util.o
 Reason: Rebuilding ['build/tut1/src/util.o'] because an input has changed
@@ -146,13 +148,13 @@ g++ -c src/util.cpp -o build/tut1/src/util.o
 [2/2] Link build/tut1/src/main.o build/tut1/src/util.o -> build/tut1/app
 Reason: Rebuilding ['build/tut1/app'] because an input has changed
 g++ build/tut1/src/main.o build/tut1/src/util.o -o build/tut1/app
-user@host:~/hancho/tutorial$
 ```
 
 However, if we modify the header file ```util.hpp``` the build is ***not*** updated, as Hancho is only checking the dependencies declared by ```files_in``` and ```files_out```. We'll fix that in a minute.
 
-```
+```shell
 user@host:~/hancho/tutorial$ touch src/util.hpp
+
 user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 hancho: no work to do.
 ```
@@ -490,6 +492,12 @@ So overall we have the same rules and commands as before, but now they're split 
 This basic setup (top-level build, component-level build, and rules file) works well for most small to medium size projects.
 
 
+
+
+
+
+
+
 ---
 ### Tutorial 4 - Async functions and custom commands
 
@@ -555,6 +563,7 @@ The components of the debug output are:
 
 ```shell
 user@host:~/hancho/tutorial$ rm -rf build
+
 user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --debug
 expand "None"
 expand ""
