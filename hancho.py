@@ -113,13 +113,11 @@ def main():
   (flags, unrecognized) = parser.parse_known_args()
 
   result = asyncio.run(async_main(flags))
-  #print(total_mtimes)
   sys.exit(result)
 
 ################################################################################
 
 async def async_main(flags):
-
   this.config.jobs    = flags.jobs
   this.config.verbose = flags.verbose
   this.config.quiet   = flags.quiet
@@ -301,16 +299,11 @@ def expand(self, template):
 ################################################################################
 # Returns true if any file in files_in is newer than any file in files_out.
 
-total_mtimes = 0
-
 def check_mtime(files_in, files_out):
-  global total_mtimes
   for file_in in files_in:
     mtime_in = path.getmtime(file_in)
-    total_mtimes += 1
     for file_out in files_out:
       mtime_out = path.getmtime(file_out)
-      total_mtimes += 1
       if mtime_in > mtime_out: return True
   return False
 

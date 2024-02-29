@@ -3,6 +3,7 @@
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
 Hancho is the smallest build system I can make that fits my needs.
+
 It focuses on these features:
 
 1. Easy construction of commands via text templates, similar to Python f-strings.
@@ -10,7 +11,8 @@ It focuses on these features:
 3. Zero "magic" - you control every command run.
 4. Single file, no dependencies outside python3 - copy-paste installation.
 
-Hancho should suffice for small to medium sized projects.
+The resulting ```hancho.py``` is under 500 lines of code and should suffice for
+small to medium sized projects.
 
 ```py
 # examples/hello_world/build.hancho
