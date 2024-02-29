@@ -9,7 +9,7 @@ It focuses on these features:
 1. Easy construction of commands via text templates, similar to Python f-strings.
 2. Minimal, parallel, fast rebuilds.
 3. Zero "magic" - you control every command run.
-4. Single file with no dependencies outside python3 - just copy-paste it into your repo:
+4. Single file with no dependencies outside python3 - just copy-paste it into your repo.
 
 The resulting ```hancho.py``` is under 500 lines of code and should suffice for
 small to medium sized projects.
