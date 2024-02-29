@@ -5,7 +5,7 @@
 Hancho is the smallest build system I can make that fits my needs.
 It focuses on these features:
 
-1. Easy construction of commands via text templates.
+1. Easy construction of commands via text templates, similar to Python f-strings.
 2. Minimal, parallel, fast rebuilds.
 3. Zero "magic" - you control every command run.
 4. Single file, no dependencies outside python3 - copy-paste installation.
@@ -19,19 +19,18 @@ import hancho
 hancho.config.set(build_dir = "build")
 
 compile = hancho.Rule(
-  desc = "Compile {files_in} -> {files_out}",
-  command = "g++ -c {files_in} -o {files_out}",
+  desc      = "Compile {files_in} -> {files_out}",
+  command   = "g++ -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
-  depfile = "{swap_ext(files_in, '.d')}",
+  depfile   = "{swap_ext(files_in, '.d')}",
 )
 
 link = hancho.Rule(
-  desc = "Link {files_in} -> {files_out}",
+  desc    = "Link {files_in} -> {files_out}",
   command = "g++ {files_in} -o {files_out}",
 )
 
 main_o = compile("main.cpp")
-
 main_app = link(main_o, "app")
 ```
 ```cpp
@@ -43,7 +42,6 @@ int main(int argc, char** argv) {
   return 0;
 }
 ```
-
 ```sh
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
 [1/2] Compile ['main.cpp'] -> ['build/main.o']
@@ -52,9 +50,10 @@ g++ -c main.cpp -o build/main.o
 [2/2] Link ['build/main.o'] -> ['build/app']
 Reason: Rebuilding ['build/app'] because some are missing
 g++ build/main.o -o build/app
-user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
-hancho: no work to do.
+
 user@host:~/hancho/examples/hello_world$ build/app
 Hello World
-user@host:~/hancho/examples/hello_world$
+
+user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
+hancho: no work to do.
 ```
