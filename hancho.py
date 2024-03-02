@@ -104,6 +104,7 @@ async def async_main():
   this.tasks_pass  = 0
   this.tasks_skip  = 0
   this.mtime_calls = 0
+  this.all_rebuilt = set()
 
   # Change directory and load top module(s).
   if not path.exists(this.config.filename):
@@ -111,8 +112,6 @@ async def async_main():
 
   if this.config.chdir: os.chdir(this.config.chdir)
   top_module = load2(this.config.filename)
-
-  this.module_max_mtime = max(mtime(f) for f in this.hancho_mods.keys())
 
   # Top module(s) loaded. Configure our job semaphore and run all tasks in the
   # queue until we run out.
@@ -280,11 +279,23 @@ def needs_rerun(task):
   files_in  = task.abs_files_in
   files_out = task.abs_files_out
 
-  if not files_in:  return "Always rebuild a target with no inputs"
-  if not files_out: return "Always rebuild a target with no outputs"
-  if task.force:    return f"Files {task.files_out} forced to rebuild"
+  # Forced tasks always run.
+  if task.force:
+    return f"Files {task.files_out} forced to rebuild"
 
-  # Check for missing outputs.
+  # Tasks with no inputs (generators?) always run.
+  if not files_in:
+    return "Always rebuild a target with no inputs"
+
+  # Tasks with no outputs run if any of their inputs were rebuilt.
+  if not files_out:
+    for file in files_in:
+      if file in this.all_rebuilt:
+        return f"Rerunning {task.command} because some inputs were rebuilt"
+    if task.debug: log(f"None of {task.files_in} changed")
+    return None
+
+  # Tasks with missing outputs always run.
   for file_out in files_out:
     if not path.exists(file_out):
       return f"Rebuilding {task.files_out} because some are missing"
@@ -292,7 +303,7 @@ def needs_rerun(task):
   min_out = min(mtime(f) for f in files_out)
 
   # Check the hancho file(s) that generated the task
-  if this.module_max_mtime >= min_out:
+  if max(mtime(f) for f in this.hancho_mods.keys()) >= min_out:
     return f"Rebuilding {task.files_out} because its .hancho files have changed"
 
   # Check user-specified deps.
@@ -343,14 +354,14 @@ async def run_command(task):
   if task.dryrun:
     return task.abs_files_out
 
-  # Custom commands just get await'ed and then early-out.
+  # Custom commands just get await'ed and then early-out'ed.
   if callable(task.command):
     result = await task.command(task)
     if result is None:
       log(f"\x1B[31mFAILED\x1B[0m: {task.expand(task.desc)}")
     return result
 
-  # Non-string non-function commands are not valid
+  # Non-string non-callable commands are not valid
   if not type(task.command) is str:
     err(f"Don't know what to do with {task.command}")
 
@@ -384,6 +395,7 @@ async def run_command(task):
       return None
 
   # Task passed, return the output file list
+  this.all_rebuilt.update(task.abs_files_out)
   this.tasks_pass += 1
   return task.abs_files_out
 
@@ -392,14 +404,12 @@ async def run_command(task):
 # needed.
 
 async def dispatch(task):
-  # Expand our build paths
-  src_dir   = path.relpath(task.abs_cwd, this.hancho_root)
-  build_dir = path.join(task.expand(task.build_dir), src_dir)
-
-  # Flatten all filename promises in any of the input filename arrays.
+  # Check for missing fields
+  if not task.command:       err(f"Command missing for input {task.files_in}!")
   if task.files_in is None:  err("Task missing files_in")
   if task.files_out is None: err("Task missing files_out")
 
+  # Flatten all filename promises in any of the input filename arrays.
   task.files_in  = await flatten_async(task.files_in)
   task.files_out = await flatten_async(task.files_out)
   task.deps      = await flatten_async(task.deps)
@@ -416,6 +426,9 @@ async def dispatch(task):
 
   # Prepend directories to filenames and then normalize + absolute them.
   # If they're already absolute, this does nothing.
+  src_dir   = path.relpath(task.abs_cwd, this.hancho_root)
+  build_dir = path.join(task.expand(task.build_dir), src_dir)
+
   task.abs_files_in  = [path.abspath(path.join(this.hancho_root, src_dir,   f)) for f in task.files_in]
   task.abs_files_out = [path.abspath(path.join(this.hancho_root, build_dir, f)) for f in task.files_out]
   task.abs_deps      = [path.abspath(path.join(this.hancho_root, src_dir,   f)) for f in task.deps]
@@ -430,10 +443,6 @@ async def dispatch(task):
     if file in this.hancho_outs:
       err(f"Multiple rules build {file}!")
     this.hancho_outs.add(file)
-
-  # Check for valid command
-  if not task.command:
-    err(f"Command missing for input {task.files_in}!")
 
   # Check if we need a rebuild
   task.reason = needs_rerun(task)
