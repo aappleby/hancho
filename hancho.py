@@ -3,7 +3,19 @@
 import argparse, asyncio, builtins, inspect, io, json, os, re, subprocess, sys, types
 from os import path
 
+# If we were launched directly, a reference to this module is already in
+# sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
+# that build.hancho and descendants don't try to load a second copy of Hancho.
+
 this = sys.modules[__name__]
+sys.modules["hancho"] = this
+
+tasks_total = 0
+tasks_index = 0
+tasks_fail  = 0
+tasks_pass  = 0
+tasks_skip  = 0
+total_mtimes = 0
 
 ################################################################################
 # Build rule helper methods
@@ -31,7 +43,19 @@ def swap_ext(name, new_ext):
   if is_atom(name): return path.splitext(name)[0] + new_ext
   return [swap_ext(n, new_ext) for n in flatten(name)]
 
+# Slightly weird method that flattens out an arbitrarily-nested list of strings
+# and promises-for-strings into a flat array of actual strings.
+
+async def flatten_async(x):
+  if x is None: return []
+  if inspect.isawaitable(x): x = await x
+  if is_atom(x): return [x]
+  result = []
+  for y in x: result.extend(await flatten_async(y))
+  return result
+
 ################################################################################
+# Simple logger that can do same-line log messages like Ninja
 
 line_dirty = False
 
@@ -71,78 +95,25 @@ def err(*args, **kwargs):
 
 ################################################################################
 
-def init():
-  # Initialize Hancho's global configuration object
-  this.config = None # so this.config.base gets sets to None in the next line
-  this.config = Rule(
-    jobs      = os.cpu_count(),
-    verbose   = False,
-    quiet     = False,
-    dryrun    = False,
-    debug     = False,
-    force     = False,
-    desc      = "{files_in} -> {files_out}",
-    files_out = [],
-    expand    = expand,
-    join      = join,
-    len       = len,
-    run_cmd   = run_cmd,
-    swap_ext  = swap_ext,
-    color     = color,
-  )
-
-################################################################################
-
 def main():
-
-  # A reference to this module is already in sys.modules["__main__"].
-  # Stash another reference in sys.modules["hancho"] so that build.hancho and
-  # descendants don't try to load a second copy of us.
-  sys.modules["hancho"] = this
-
-  parser = argparse.ArgumentParser()
-  parser.add_argument('filename',    default="build.hancho", nargs="?")
-  parser.add_argument('-C', '--chdir',     default="",             type=str,   help='Change directory first')
-  parser.add_argument('-j', '--jobs',      default=os.cpu_count(), type=int,   help='Run N jobs in parallel (default = cpu_count, 0 = infinity)')
-  parser.add_argument('-v', '--verbose',   default=False, action='store_true', help='Print verbose build info')
-  parser.add_argument('-q', '--quiet',     default=False, action='store_true', help='Mute command output')
-  parser.add_argument('-n', '--dryrun',    default=False, action='store_true', help='Do not run commands')
-  parser.add_argument('-d', '--debug',     default=False, action='store_true', help='Print debugging information')
-  parser.add_argument('-f', '--force',     default=False, action='store_true', help='Force rebuild of everything')
-
-  (flags, unrecognized) = parser.parse_known_args()
-
-  result = asyncio.run(async_main(flags))
-  sys.exit(result)
+  return asyncio.run(async_main())
 
 ################################################################################
 
-tasks_total = 0
-tasks_index = 0
-tasks_fail  = 0
-tasks_pass  = 0
-tasks_skip  = 0
-
-async def async_main(flags):
-  this.config.jobs    = flags.jobs
-  this.config.verbose = flags.verbose
-  this.config.quiet   = flags.quiet
-  this.config.dryrun  = flags.dryrun
-  this.config.debug   = flags.debug
-  this.config.force   = flags.force
+async def async_main():
 
   # Reset all global state
   this.hancho_mods = {}
   this.hancho_outs = set()
   this.hancho_root = os.getcwd()
-  this.mod_stack = []
+  this.mod_stack   = []
 
   # Change directory and load top module(s).
-  if not path.exists(flags.filename):
-    err(f"Could not find {flags.filename}")
+  if not path.exists(this.config.filename):
+    err(f"Could not find {this.config.filename}")
 
-  if flags.chdir: os.chdir(flags.chdir)
-  top_module = load2(flags.filename)
+  if this.config.chdir: os.chdir(this.config.chdir)
+  top_module = load2(this.config.filename)
 
   this.module_max_mtime = max(mtime(f) for f in this.hancho_mods.keys())
 
@@ -162,6 +133,7 @@ async def async_main(flags):
     log(f"tasks skipped: {this.tasks_skip}")
     log(f"tasks passed:  {this.tasks_pass}")
     log(f"tasks failed:  {this.tasks_fail}")
+    log(f"mtime calls:   {this.total_mtimes}")
 
   if this.tasks_fail != 0:
     log("hancho: some tasks failed!")
@@ -170,7 +142,7 @@ async def async_main(flags):
   else:
     log("", end="")
 
-  if flags.chdir: os.chdir(this.hancho_root)
+  if this.config.chdir: os.chdir(this.hancho_root)
 
   return -1 if this.tasks_fail else 0
 
@@ -186,7 +158,6 @@ def load(mod_path):
   err(f"Could not load module {mod_path}")
 
 def load2(mod_path):
-  #print(mod_path)
   abs_path = path.abspath(mod_path)
 
   if abs_path in this.hancho_mods:
@@ -202,11 +173,7 @@ def load2(mod_path):
   module = type(sys)(mod_name)
   module.__file__ = abs_path
   module.__builtins__ = builtins
-
   this.hancho_mods[abs_path] = module
-
-  # The new module and all the modules loaded before it have an implicit
-  # 000dependency on the file we just loaded.
 
   sys.path.insert(0, mod_dir)
   old_dir = os.getcwd()
@@ -266,7 +233,7 @@ class Rule(dict):
     task.files_in = files_in
     if files_out is not None: task.files_out = files_out
     top_module = this.mod_stack[-1]
-    task.cwd = path.split(top_module.__file__)[0]
+    task.abs_cwd = path.split(top_module.__file__)[0]
     task.set(**kwargs)
     promise = dispatch(task)
     return asyncio.create_task(promise)
@@ -278,14 +245,14 @@ class Rule(dict):
 
 template_regex = re.compile("{[^}]*}")
 
-def expand_once(self, template):
+def expand_once(rule, template):
   if template is None: return ""
   result = ""
   while s := template_regex.search(template):
     result += template[0:s.start()]
     exp = template[s.start():s.end()]
     try:
-      replacement = eval(exp[1:-1], globals(), self)
+      replacement = eval(exp[1:-1], globals(), rule)
       if replacement is not None: result += join(replacement)
     except Exception:
       result += exp
@@ -293,13 +260,14 @@ def expand_once(self, template):
   result += template
   return result
 
-def expand(self, template):
+def expand(rule, template):
+  if type(template) is list: return [expand(rule, t) for t in template]
+
   for _ in range(100):
-    if self.debug: log(f"expand \"{template}\"")
-    new_template = expand_once(self, template)
+    if rule.debug: log(f"expand \"{template}\"")
+    new_template = expand_once(rule, template)
     if template == new_template:
       if template_regex.search(template):
-        print(template)
         err(f"Expanding '{template[0:20]}' is stuck in a loop")
       return template
     template = new_template
@@ -308,7 +276,6 @@ def expand(self, template):
 ################################################################################
 # Checks if a task needs to be re-run, and returns a non-empty reason if so.
 
-total_mtimes = 0
 def mtime(filename):
   global total_mtimes
   total_mtimes += 1
@@ -318,12 +285,8 @@ def needs_rerun(task):
   files_in  = task.abs_files_in
   files_out = task.abs_files_out
 
-
-  if not files_in:
-    return "Always rebuild a target with no inputs"
-
-  if not files_out:
-    return "Always rebuild a target with no outputs"
+  if not files_in:  return "Always rebuild a target with no inputs"
+  if not files_out: return "Always rebuild a target with no outputs"
 
   # Check for missing outputs.
   for file_out in files_out:
@@ -347,7 +310,7 @@ def needs_rerun(task):
       task.expand(task.depfile)
     )
     if path.exists(depfile_name):
-      #print(f"got deps! {depfile_name}")
+      if task.debug: log(f"Found depfile {depfile_name}")
       deplines = open(depfile_name).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
       if deplines and max(mtime(f) for f in deplines) >= min_out:
@@ -364,34 +327,20 @@ def needs_rerun(task):
   return None
 
 ################################################################################
-# Slightly weird method that flattens out an arbitrarily-nested list of strings
-# and promises-for-strings into a flat array of actual strings.
-
-async def flatten_async(x):
-  if x is None: return []
-  if inspect.isawaitable(x): x = await x
-  if is_atom(x): return [x]
-  result = []
-  for y in x: result.extend(await flatten_async(y))
-  return result
-
-################################################################################
 # Actually runs the command, either by calling it or running it in a subprocess
 
 async def run_command(task):
 
-  this.tasks_index += 1
-
   # Print the status line and debug information
-  if not task.quiet:
-    log(f"[{this.tasks_index}/{this.tasks_total - this.tasks_skip}] {task.expand(task.desc)}",
-        sameline = not task.verbose)
-    if task.verbose or task.debug:
-      log(f"Reason: {task.reason}")
-      if type(task.command) is str:
-        log(f"{task.expand(task.command)}")
-      if task.debug:
-        log(task)
+  this.tasks_index += 1
+  log(f"[{this.tasks_index}/{this.tasks_total - this.tasks_skip}] {task.expand(task.desc)}",
+      sameline = not task.verbose)
+  if task.verbose or task.debug:
+    log(f"Reason: {task.reason}")
+    if type(task.command) is str:
+      log(f"{task.expand(task.command)}")
+    if task.debug:
+      log(task)
 
   # Early exit if this is just a dry run
   if task.dryrun:
@@ -419,7 +368,7 @@ async def run_command(task):
   task.returncode = proc.returncode
 
   # Print command output if needed
-  if not task.quiet and (task.stdout or task.stderr):
+  if (task.stdout or task.stderr):
     if task.stderr: log(task.stderr, end="")
     if task.stdout: log(task.stdout, end="")
 
@@ -446,9 +395,8 @@ async def run_command(task):
 # needed.
 
 async def dispatch(task):
-
   # Expand our build paths
-  src_dir   = path.relpath(task.cwd, this.hancho_root)
+  src_dir   = path.relpath(task.abs_cwd, this.hancho_root)
   build_dir = path.join(task.expand(task.build_dir), src_dir)
 
   # Flatten all filename promises in any of the input filename arrays.
@@ -465,9 +413,9 @@ async def dispatch(task):
   if None in task.deps:      return None
 
   # Do the actual template expansion to produce real filename lists
-  task.files_in  = [task.expand(f) for f in task.files_in]
-  task.files_out = [task.expand(f) for f in task.files_out]
-  task.deps      = [task.expand(f) for f in task.deps]
+  task.files_in  = task.expand(task.files_in)
+  task.files_out = task.expand(task.files_out)
+  task.deps      = task.expand(task.deps)
 
   # Prepend directories to filenames.
   # If they're already absolute, this does nothing.
@@ -516,5 +464,50 @@ async def dispatch(task):
 
 ################################################################################
 
-init()
-if __name__ == "__main__": main()
+# We set this to None first so that this.config.base gets sets to None in the
+# next line.
+this.config = None
+
+this.config = Rule(
+  filename  = "build.hancho",
+  chdir     = None,
+  jobs      = os.cpu_count(),
+  verbose   = False,
+  quiet     = False,
+  dryrun    = False,
+  debug     = False,
+  force     = False,
+  desc      = "{files_in} -> {files_out}",
+  files_out = [],
+  expand    = expand,
+  join      = join,
+  len       = len,
+  run_cmd   = run_cmd,
+  swap_ext  = swap_ext,
+  color     = color,
+)
+
+if __name__ == "__main__":
+  parser = argparse.ArgumentParser()
+  parser.add_argument('filename',          default="build.hancho", nargs="?")
+  parser.add_argument('-C', '--chdir',     default="",             type=str,   help='Change directory first')
+  parser.add_argument('-j', '--jobs',      default=os.cpu_count(), type=int,   help='Run N jobs in parallel (default = cpu_count, 0 = infinity)')
+  parser.add_argument('-v', '--verbose',   default=False, action='store_true', help='Print verbose build info')
+  parser.add_argument('-q', '--quiet',     default=False, action='store_true', help='Mute command output')
+  parser.add_argument('-n', '--dryrun',    default=False, action='store_true', help='Do not run commands')
+  parser.add_argument('-d', '--debug',     default=False, action='store_true', help='Print debugging information')
+  parser.add_argument('-f', '--force',     default=False, action='store_true', help='Force rebuild of everything')
+
+  (flags, unrecognized) = parser.parse_known_args()
+
+  this.config.filename = flags.filename
+  this.config.chdir    = flags.chdir
+  this.config.jobs     = flags.jobs
+  this.config.verbose  = flags.verbose
+  this.config.quiet    = flags.quiet
+  this.config.dryrun   = flags.dryrun
+  this.config.debug    = flags.debug
+  this.config.force    = flags.force
+
+  result = main()
+  sys.exit(result)
