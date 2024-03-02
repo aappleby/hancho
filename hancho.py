@@ -10,13 +10,6 @@ from os import path
 this = sys.modules[__name__]
 sys.modules["hancho"] = this
 
-tasks_total = 0
-tasks_index = 0
-tasks_fail  = 0
-tasks_pass  = 0
-tasks_skip  = 0
-total_mtimes = 0
-
 ################################################################################
 # Build rule helper methods
 
@@ -26,12 +19,6 @@ def color(r = None, g = None, b = None):
 
 def is_atom(x):
   return type(x) is str or not hasattr(x, "__iter__")
-
-def flatten(x):
-  if is_atom(x): return [x]
-  result = []
-  for y in x: result.extend(flatten(y))
-  return result
 
 def join(x, delim = ' '):
   return delim.join([str(y) for y in flatten(x) if y is not None])
@@ -43,11 +30,14 @@ def swap_ext(name, new_ext):
   if is_atom(name): return path.splitext(name)[0] + new_ext
   return [swap_ext(n, new_ext) for n in flatten(name)]
 
-# Slightly weird method that flattens out an arbitrarily-nested list of strings
-# and promises-for-strings into a flat array of actual strings.
+def flatten(x):
+  if is_atom(x): return [x]
+  result = []
+  for y in x: result.extend(flatten(y))
+  return result
 
+# Same as flatten(), except it awaits anything that needs awaiting.
 async def flatten_async(x):
-  if x is None: return []
   if inspect.isawaitable(x): x = await x
   if is_atom(x): return [x]
   result = []
@@ -91,6 +81,7 @@ def err(*args, **kwargs):
   print(color(255, 128, 128), end="")
   log(*args, **kwargs)
   print(color(), end="")
+  print("(Hancho exiting due to error)")
   sys.exit(-1)
 
 ################################################################################
@@ -103,10 +94,16 @@ def main():
 async def async_main():
 
   # Reset all global state
-  this.hancho_mods = {}
-  this.hancho_outs = set()
   this.hancho_root = os.getcwd()
+  this.hancho_mods = {}
   this.mod_stack   = []
+  this.hancho_outs = set()
+  this.tasks_total = 0
+  this.tasks_index = 0
+  this.tasks_fail  = 0
+  this.tasks_pass  = 0
+  this.tasks_skip  = 0
+  this.mtime_calls = 0
 
   # Change directory and load top module(s).
   if not path.exists(this.config.filename):
@@ -133,7 +130,7 @@ async def async_main():
     log(f"tasks skipped: {this.tasks_skip}")
     log(f"tasks passed:  {this.tasks_pass}")
     log(f"tasks failed:  {this.tasks_fail}")
-    log(f"mtime calls:   {this.total_mtimes}")
+    log(f"mtime calls:   {this.mtime_calls}")
 
   if this.tasks_fail != 0:
     log("hancho: some tasks failed!")
@@ -227,13 +224,11 @@ class Rule(dict):
     return expand(self, template)
 
   def __call__(self, files_in, files_out = None, **kwargs):
-    global tasks_total
-    tasks_total += 1
+    this.tasks_total += 1
     task = self.extend()
     task.files_in = files_in
     if files_out is not None: task.files_out = files_out
-    top_module = this.mod_stack[-1]
-    task.abs_cwd = path.split(top_module.__file__)[0]
+    task.abs_cwd = path.split(this.mod_stack[-1].__file__)[0]
     task.set(**kwargs)
     promise = dispatch(task)
     return asyncio.create_task(promise)
@@ -277,8 +272,8 @@ def expand(rule, template):
 # Checks if a task needs to be re-run, and returns a non-empty reason if so.
 
 def mtime(filename):
-  global total_mtimes
-  total_mtimes += 1
+  global mtime_calls
+  this.mtime_calls += 1
   return path.getmtime(filename)
 
 def needs_rerun(task):
@@ -287,6 +282,7 @@ def needs_rerun(task):
 
   if not files_in:  return "Always rebuild a target with no inputs"
   if not files_out: return "Always rebuild a target with no outputs"
+  if task.force:    return f"Files {task.files_out} forced to rebuild"
 
   # Check for missing outputs.
   for file_out in files_out:
@@ -305,16 +301,17 @@ def needs_rerun(task):
 
   # Check GCC-format depfile, if present.
   if task.depfile:
-    depfile_name = path.join(
+    abs_depfile = path.abspath(path.join(
+      this.hancho_root,
       task.expand(task.build_dir),
       task.expand(task.depfile)
-    )
-    if path.exists(depfile_name):
-      if task.debug: log(f"Found depfile {depfile_name}")
-      deplines = open(depfile_name).read().split()
+    ))
+    if path.exists(abs_depfile):
+      if task.debug: log(f"Found depfile {abs_depfile}")
+      deplines = open(abs_depfile).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
       if deplines and max(mtime(f) for f in deplines) >= min_out:
-        return f"Rebuilding {task.files_out} because a dependency in {depfile_name} has changed"
+        return f"Rebuilding {task.files_out} because a dependency in {abs_depfile} has changed"
 
   # Check input files.
   if files_in and max(mtime(f) for f in files_in) >= min_out:
@@ -402,35 +399,28 @@ async def dispatch(task):
   # Flatten all filename promises in any of the input filename arrays.
   if task.files_in is None:  err("Task missing files_in")
   if task.files_out is None: err("Task missing files_out")
+
   task.files_in  = await flatten_async(task.files_in)
   task.files_out = await flatten_async(task.files_out)
   task.deps      = await flatten_async(task.deps)
 
   # Early-out with no result if any of our inputs or outputs are None (failed)
-
-  if None in task.files_in:  return None
+  if None in task.files_in: return None
   if None in task.files_out: return None
-  if None in task.deps:      return None
+  if None in task.deps: return None
 
   # Do the actual template expansion to produce real filename lists
   task.files_in  = task.expand(task.files_in)
   task.files_out = task.expand(task.files_out)
   task.deps      = task.expand(task.deps)
 
-  # Prepend directories to filenames.
+  # Prepend directories to filenames and then normalize + absolute them.
   # If they're already absolute, this does nothing.
-  task.files_in  = [path.join(src_dir,f)    for f in task.files_in]
-  task.files_out = [path.join(build_dir, f) for f in task.files_out]
-  task.deps      = [path.join(src_dir, f)   for f in task.deps]
+  task.abs_files_in  = [path.abspath(path.join(this.hancho_root, src_dir,   f)) for f in task.files_in]
+  task.abs_files_out = [path.abspath(path.join(this.hancho_root, build_dir, f)) for f in task.files_out]
+  task.abs_deps      = [path.abspath(path.join(this.hancho_root, src_dir,   f)) for f in task.deps]
 
-  # Append hancho_root to all in/out filenames.
-  # If they're already absolute, this does nothing.
-  task.abs_files_in  = [path.abspath(path.join(this.hancho_root, f)) for f in task.files_in]
-  task.abs_files_out = [path.abspath(path.join(this.hancho_root, f)) for f in task.files_out]
-  task.abs_deps      = [path.abspath(path.join(this.hancho_root, f)) for f in task.deps]
-
-  # And now strip hancho_root off the absolute paths to produce the final
-  # root-relative paths
+  # Strip hancho_root off the absolute paths to produce root-relative paths
   task.files_in  = [path.relpath(f, this.hancho_root) for f in task.abs_files_in]
   task.files_out = [path.relpath(f, this.hancho_root) for f in task.abs_files_out]
   task.deps      = [path.relpath(f, this.hancho_root) for f in task.abs_deps]
@@ -447,7 +437,6 @@ async def dispatch(task):
 
   # Check if we need a rebuild
   task.reason = needs_rerun(task)
-  if task.force: task.reason = f"Files {task.abs_files_out} forced to rebuild"
   if not task.reason:
     this.tasks_skip += 1
     return task.abs_files_out
@@ -479,6 +468,7 @@ this.config = Rule(
   force     = False,
   desc      = "{files_in} -> {files_out}",
   files_out = [],
+  deps      = [],
   expand    = expand,
   join      = join,
   len       = len,
