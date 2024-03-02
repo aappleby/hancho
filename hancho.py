@@ -117,6 +117,12 @@ def main():
 
 ################################################################################
 
+tasks_total = 0
+tasks_index = 0
+tasks_fail  = 0
+tasks_pass  = 0
+tasks_skip  = 0
+
 async def async_main(flags):
   this.config.jobs    = flags.jobs
   this.config.verbose = flags.verbose
@@ -129,14 +135,7 @@ async def async_main(flags):
   this.hancho_mods = {}
   this.hancho_outs = set()
   this.hancho_root = os.getcwd()
-
-  # FIXME this needs to include rules.hancho and such after it's loaded - needs to have all hanchos in scope
   this.mod_stack = []
-  this.tasks_total = 0
-  this.tasks_index = 0
-  this.tasks_fail  = 0
-  this.tasks_pass  = 0
-  this.tasks_skip  = 0
 
   # Change directory and load top module(s).
   if not path.exists(flags.filename):
@@ -144,6 +143,8 @@ async def async_main(flags):
 
   if flags.chdir: os.chdir(flags.chdir)
   top_module = load2(flags.filename)
+
+  this.module_max_mtime = max(mtime(f) for f in this.hancho_mods.keys())
 
   # Top module(s) loaded. Configure our job semaphore and run all tasks in the
   # queue until we run out.
@@ -178,14 +179,16 @@ async def async_main(flags):
 # stack of .hancho files that have been loaded.
 
 def load(mod_path):
-  for parent_mod in this.mod_stack:
-    abs_path = path.abspath(path.join(path.split(parent_mod)[0], mod_path))
+  for parent_mod in reversed(this.mod_stack):
+    abs_path = path.abspath(path.join(path.split(parent_mod.__file__)[0], mod_path))
     if os.path.exists(abs_path):
       return load2(abs_path)
   err(f"Could not load module {mod_path}")
 
 def load2(mod_path):
+  #print(mod_path)
   abs_path = path.abspath(mod_path)
+
   if abs_path in this.hancho_mods:
     return this.hancho_mods[abs_path]
 
@@ -200,12 +203,17 @@ def load2(mod_path):
   module.__file__ = abs_path
   module.__builtins__ = builtins
 
+  this.hancho_mods[abs_path] = module
+
+  # The new module and all the modules loaded before it have an implicit
+  # 000dependency on the file we just loaded.
+
   sys.path.insert(0, mod_dir)
   old_dir = os.getcwd()
 
   # We must chdir()s into the .hancho file directory before running it so that
   # glob() can resolve files relative to the .hancho file itself.
-  this.mod_stack.append(abs_path)
+  this.mod_stack.append(module)
   os.chdir(mod_dir)
   types.FunctionType(code, module.__dict__)()
   os.chdir(old_dir)
@@ -252,12 +260,13 @@ class Rule(dict):
     return expand(self, template)
 
   def __call__(self, files_in, files_out = None, **kwargs):
-    this.tasks_total += 1
+    global tasks_total
+    tasks_total += 1
     task = self.extend()
     task.files_in = files_in
     if files_out is not None: task.files_out = files_out
-    task.meta_deps = list(this.mod_stack)
-    task.cwd = path.split(this.mod_stack[-1])[0]
+    top_module = this.mod_stack[-1]
+    task.cwd = path.split(top_module.__file__)[0]
     task.set(**kwargs)
     promise = dispatch(task)
     return asyncio.create_task(promise)
@@ -297,22 +306,18 @@ def expand(self, template):
   err(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
-# Returns true if any file in files_in is newer than any file in files_out.
-
-def check_mtime(files_in, files_out):
-  for file_in in files_in:
-    mtime_in = path.getmtime(file_in)
-    for file_out in files_out:
-      mtime_out = path.getmtime(file_out)
-      if mtime_in > mtime_out: return True
-  return False
-
-################################################################################
 # Checks if a task needs to be re-run, and returns a non-empty reason if so.
+
+total_mtimes = 0
+def mtime(filename):
+  global total_mtimes
+  total_mtimes += 1
+  return path.getmtime(filename)
 
 def needs_rerun(task):
   files_in  = task.abs_files_in
   files_out = task.abs_files_out
+
 
   if not files_in:
     return "Always rebuild a target with no inputs"
@@ -325,12 +330,14 @@ def needs_rerun(task):
     if not path.exists(file_out):
       return f"Rebuilding {task.files_out} because some are missing"
 
+  min_out = min(mtime(f) for f in files_out)
+
   # Check the hancho file(s) that generated the task
-  if check_mtime(task.meta_deps, files_out):
+  if this.module_max_mtime >= min_out:
     return f"Rebuilding {task.files_out} because its .hancho files have changed"
 
   # Check user-specified deps.
-  if check_mtime(task.deps, files_out):
+  if task.deps and max(mtime(f) for f in task.deps) >= min_out:
     return f"Rebuilding {task.files_out} because a manual dependency has changed"
 
   # Check GCC-format depfile, if present.
@@ -343,11 +350,11 @@ def needs_rerun(task):
       #print(f"got deps! {depfile_name}")
       deplines = open(depfile_name).read().split()
       deplines = [d for d in deplines[1:] if d != '\\']
-      if check_mtime(deplines, files_out):
+      if deplines and max(mtime(f) for f in deplines) >= min_out:
         return f"Rebuilding {task.files_out} because a dependency in {depfile_name} has changed"
 
   # Check input files.
-  if check_mtime(files_in, files_out):
+  if files_in and max(mtime(f) for f in files_in) >= min_out:
     return f"Rebuilding {task.files_out} because an input has changed"
 
   # All checks passed, so we don't need to rebuild this output.
