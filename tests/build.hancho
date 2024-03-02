@@ -10,6 +10,7 @@ import time
 hancho.config.serial = True
 hancho.config.multiline = True
 
+"""
 def divider1():
   hancho.log("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
 
@@ -39,6 +40,7 @@ def prep_timestamp_outputs(task):
 def prep_touch_inputs(task):
   for f in task.files_out:
     os.system(f"touch {f}")
+"""
 
 ################################################################################
 

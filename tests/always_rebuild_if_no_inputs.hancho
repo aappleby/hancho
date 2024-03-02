@@ -1,8 +1,14 @@
 import hancho
 
+print(__name__)
+print(__file__.split(".")[0])
+
+"""
 hancho.Rule(
   desc      = "Always rebuild {files_out} if the rule has no inputs",
   command   = "touch {files_out}",
   files_in  = [],
-  files_out = "build/always_rebuild_if_no_inputs.txt"
+  files_out = "always_rebuild_if_no_inputs.txt",
+  #build_dir = __file__.split(".")[0]
 )()
+"""
