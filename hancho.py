@@ -131,12 +131,12 @@ async def async_main():
     log(f"tasks failed:  {this.tasks_fail}")
     log(f"mtime calls:   {this.mtime_calls}")
 
-  if this.tasks_fail != 0:
-    log("hancho: some tasks failed!")
-  elif this.tasks_pass == 0:
-    log("hancho: no work to do.")
+  if this.tasks_fail:
+    log(f"hancho: \x1B[31mBUILD FAILED\x1B[0m")
+  elif this.tasks_pass:
+    log(f"hancho: \x1B[32mBUILD PASSED\x1B[0m")
   else:
-    log("", end="")
+    log(f"hancho: \x1B[33mBUILD CLEAN\x1B[0m")
 
   if this.config.chdir: os.chdir(this.hancho_root)
 
@@ -145,6 +145,7 @@ async def async_main():
 ################################################################################
 # The .hancho file loader does a small amount of work to keep track of the
 # stack of .hancho files that have been loaded.
+
 
 def load(mod_path):
   for parent_mod in reversed(this.mod_stack):
@@ -163,7 +164,8 @@ def load2(mod_path):
   mod_file = path.split(abs_path)[1]
   mod_name = mod_file.split(".")[0]
 
-  source = open(abs_path, "r").read()
+  header = "import hancho\n"
+  source = header + open(abs_path, "r").read()
   code = compile(source, abs_path, 'exec', dont_inherit=True)
 
   module = type(sys)(mod_name)
@@ -359,6 +361,7 @@ async def run_command(task):
     result = await task.command(task)
     if result is None:
       log(f"\x1B[31mFAILED\x1B[0m: {task.expand(task.desc)}")
+    this.tasks_pass += 1
     return result
 
   # Non-string non-callable commands are not valid
@@ -382,14 +385,14 @@ async def run_command(task):
 
   # Task complete, check the task return code
   if task.returncode:
-    log(f"\x1B[31mFAILED\x1B[0m: {task.desc}")
+    log(f"\x1B[31mFAILED\x1B[0m: {task.expand(task.desc)}")
     this.tasks_fail += 1
     return None
 
   # Task complete, check if it actually updated all the output files
   if task.files_in and task.files_out:
     if second_reason := needs_rerun(task):
-      log(f"\x1B[33mFAILED\x1B[0m: Task \"{desc}\" still needs rerun after running!")
+      log(f"\x1B[33mFAILED\x1B[0m: Task \"{task.expand(task.desc)}\" still needs rerun after running!")
       log(f"Reason: {second_reason}")
       this.tasks_fail += 1
       return None

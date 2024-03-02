@@ -1,11 +1,8 @@
-import hancho
+# tests/build.hancho
+
 import os
-import re
-from functools import partial
 from os import path
 import sys
-import unittest
-import time
 
 hancho.config.serial = True
 hancho.config.multiline = True

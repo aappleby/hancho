@@ -1,9 +1,8 @@
-import hancho
-import os
+# tests/build_dir_works.hancho
 
 hancho.Rule(
-  desc = "Should put a file in build/",
+  desc = "Should put a file in build_dir_works/",
   command = "touch {files_out}",
-  build_dir = "build",
+  build_dir = __name__,
   files_out = "build_dir_works.txt"
 )()

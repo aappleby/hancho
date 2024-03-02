@@ -1,4 +1,4 @@
-import hancho
+# examples/meson/build.hancho
 
 hancho.config.set(
   toolchain  = "x86_64-linux-gnu",

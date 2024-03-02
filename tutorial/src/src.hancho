@@ -1,6 +1,5 @@
 # tutorial/src/src.hancho
 import glob
-import hancho
 
 rules = hancho.load("rules.hancho")
 

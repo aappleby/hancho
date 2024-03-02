@@ -1,5 +1,6 @@
-import hancho
+# tests/command_missing.hancho
 
 hancho.Rule(
   desc = "Command is missing",
+  build_dir = __name__,
 )()

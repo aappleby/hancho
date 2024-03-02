@@ -1,11 +1,10 @@
-import hancho
+# tests/should_pass.hancho
+
+hancho.config.build_dir = __name__
 
 should_pass = hancho.Rule(
   desc = "This task should pass",
   command = "(exit 0)",
-  files_in  = "should_pass.hancho",
-  files_out = "not_created.txt",
-  should_fail = True,
 )
 
-should_pass()
+should_pass("should_pass.hancho")

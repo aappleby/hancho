@@ -1,6 +1,5 @@
 # tutorial/tut4.hancho - Async/await and custom commands
 import asyncio
-import hancho
 import os
 
 # You can use promises that return arrays of filenames in place of actual

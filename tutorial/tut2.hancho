@@ -1,7 +1,6 @@
 # tutorial/tut2.hancho
-import hancho
 
-hancho.config.set(build_dir = "build/tut2")
+hancho.config.build_dir = "build/tut2"
 
 compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",

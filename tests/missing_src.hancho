@@ -1,9 +1,12 @@
-import hancho
-import os
+# tests/missing_src.hancho
 
-hancho.Rule(
-  desc      = "Does create its output file",
+hancho.config.build_dir = __name__
+
+missing_src = hancho.Rule(
+  desc      = "We should fail if a source file is missing",
   command   = "touch {files_out}",
   files_in  = "src/does_not_exist.txt",
   files_out = "build/missing_src.txt"
-)()
+)
+
+missing_src()

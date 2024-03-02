@@ -1,10 +1,7 @@
-# The Hancho build that tests all the tutorials
-
-import hancho
-import os
+# hancho/tutorial/build.hancho - Tests all the tutorials
 
 hancho.config.jobs = 1
-hancho.config.verbose = True
+#hancho.config.verbose = True
 
 test_build = hancho.Rule(
   desc      = "{color(200, 200, 100)}Testing tutorial build '{files_in}'{color()}",

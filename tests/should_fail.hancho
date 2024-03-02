@@ -1,6 +1,10 @@
-import hancho
+# tests/should_fail.hancho
 
-hancho.Rule(
+hancho.config.build_dir = __name__
+
+should_fail = hancho.Rule(
   desc    = "This task should fail",
   command = "(exit 255)",
-)()
+)
+
+should_fail()

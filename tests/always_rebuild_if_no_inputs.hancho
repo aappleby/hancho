@@ -1,4 +1,4 @@
-import hancho
+# test/always_rebuild_if_no_inputs.hancho
 
 print(__name__)
 print(__file__.split(".")[0])

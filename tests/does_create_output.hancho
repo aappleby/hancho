@@ -1,8 +1,10 @@
-import hancho
+# tests/does_create_output
+
 import os
 
 hancho.Rule(
   desc = "Does create its output file",
   command = "touch {files_out}",
-  files_out = "build/output_created.txt"
+  files_out = "output_created.txt",
+  build_dir = __name__,
 )()

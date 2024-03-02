@@ -1,4 +1,6 @@
-import hancho
+# tests/recursive_base_is_bad.hancho
+
+hancho.config.build_dir = __name__
 
 rule1 = hancho.Rule(
   command = "{thing}",

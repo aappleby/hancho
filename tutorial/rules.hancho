@@ -1,6 +1,4 @@
 # tutorial/rules.hancho
-import hancho
-import os
 
 compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",

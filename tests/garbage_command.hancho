@@ -1,6 +1,10 @@
-import hancho
+# tests/garbage_command.hancho
 
-hancho.Rule(
+hancho.config.build_dir = __name__
+
+garbage_command = hancho.Rule(
   desc     = "This command should fail to run",
   command  = "aklsjdflksjdlfkjldfk",
-)("garbage_command.hancho")
+)
+
+garbage_command(__file__)
