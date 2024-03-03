@@ -7,4 +7,4 @@ should_pass = Rule(
   command = "(exit 0)",
 )
 
-should_pass("should_pass.hancho")
+should_pass(__file__)

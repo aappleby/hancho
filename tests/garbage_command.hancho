@@ -1,10 +1,10 @@
 # tests/garbage_command.hancho
 
-config.build_dir = "build/" + __name__
+config.build_dir = "build"
 
 garbage_command = Rule(
   desc     = "This command should fail to run",
   command  = "aklsjdflksjdlfkjldfk",
 )
 
-garbage_command(__file__)
+garbage_command(__file__, "result.txt")

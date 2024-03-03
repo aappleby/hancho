@@ -38,6 +38,17 @@ class TestHancho(unittest.TestCase):
     os.system("rm -rf build")
     os.system("mkdir build")
 
+  def test_simple(self):
+    self.assertEqual(0, run_hancho("should_pass"))
+
+    self.assertNotEqual(0, run_hancho("check_output"))
+    self.assertNotEqual(0, run_hancho("missing_src"))
+    self.assertNotEqual(0, run_hancho("recursive_base_is_bad"))
+    self.assertNotEqual(0, run_hancho("should_fail"))
+    self.assertNotEqual(0, run_hancho("command_missing"))
+    self.assertNotEqual(0, run_hancho("expand_failed_to_terminate"))
+    self.assertNotEqual(0, run_hancho("garbage_command"))
+
   def test_always_rebuild_if_no_inputs(self):
     run_hancho("always_rebuild_if_no_inputs")
     mtime1 = mtime(f"build/result.txt")
@@ -53,14 +64,6 @@ class TestHancho(unittest.TestCase):
   def test_build_dir_works(self):
     run_hancho("build_dir_works")
     self.assertTrue(path.exists("build/build_dir_works/result.txt"))
-
-  def test_check_output(self):
-    result = run_hancho("check_output")
-    self.assertNotEqual(result, 0)
-
-  def test_command_missing(self):
-    result = run_hancho("command_missing")
-    self.assertNotEqual(result, 0)
 
   def test_dep_changed(self):
     touch("build/dummy.txt")
@@ -84,9 +87,6 @@ class TestHancho(unittest.TestCase):
     run_hancho("doesnt_create_output")
     self.assertFalse(path.exists("build/result.txt"))
 
-  def test_expand_failed_to_terminate(self):
-    self.assertNotEqual(0, run_hancho("expand_failed_to_terminate"))
-
   def test_header_changed(self):
     run_hancho("header_changed")
     mtime1 = mtime(f"build/src/test.o")
@@ -96,6 +96,19 @@ class TestHancho(unittest.TestCase):
 
     os.system("touch src/test.hpp")
     run_hancho("header_changed")
+    mtime3 = mtime(f"build/src/test.o")
+    self.assertEqual(mtime1, mtime2)
+    self.assertLess(mtime2, mtime3)
+
+  def test_input_changed(self):
+    run_hancho("input_changed")
+    mtime1 = mtime(f"build/src/test.o")
+
+    run_hancho("input_changed")
+    mtime2 = mtime(f"build/src/test.o")
+
+    os.system("touch src/test.cpp")
+    run_hancho("input_changed")
     mtime3 = mtime(f"build/src/test.o")
     self.assertEqual(mtime1, mtime2)
     self.assertLess(mtime2, mtime3)

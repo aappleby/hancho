@@ -7,4 +7,4 @@ should_fail = Rule(
   command = "(exit 255)",
 )
 
-should_fail()
+should_fail(__file__, "result.txt")
