@@ -1,4 +1,6 @@
-# Hancho
+# ![Logo](hancho_small.png) Hancho
+
+
 
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
