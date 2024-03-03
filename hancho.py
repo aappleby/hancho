@@ -167,7 +167,7 @@ def load2(mod_path):
   mod_name = mod_file.split(".")[0]
 
   header = """
-from hancho import config, load, Rule
+from hancho import config, flatten, load, Rule
 """
   source = header + open(abs_path, "r").read()
   code = compile(source, abs_path, 'exec', dont_inherit=True)
