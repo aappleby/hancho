@@ -1,10 +1,10 @@
 # tests/does_create_output
 
-import os
+config.build_dir = "build/" + __name__
 
-Rule(
+does_create_output = Rule(
   desc = "Does create its output file",
   command = "touch {files_out}",
-  files_out = "output_created.txt",
-  build_dir = __name__,
-)()
+)
+
+does_create_output([], files_out = "result.txt")

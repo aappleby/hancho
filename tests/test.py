@@ -1,13 +1,10 @@
-# tests/build.hancho
+#!/usr/bin/python3
 
 import os
 from os import path
 import sys
 import subprocess
-
-config.serial = True
-config.multiline = True
-
+import unittest
 
 # min delta seems to be 4 msec
 #os.system("touch blahblah.txt")
@@ -28,115 +25,72 @@ def mtime(file):
 def run(cmd):
   return subprocess.check_output(cmd, shell=True, text=True).strip()
 
-def check(result):
-  if result:
-    print("\x1B[32mPASS\x1B[0m")
-  else:
-    print("\x1B[31mFAIL\x1B[0m")
+class TestHancho(unittest.TestCase):
+
+  def test_always_rebuild_if_no_inputs(self):
+    os.system("rm -rf build")
+    os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
+    old_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
+    os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
+    new_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
+    self.assertGreater(new_mtime, old_mtime)
+
+  def test_build_dir_works(self):
+    os.system("rm -rf build")
+    os.system("../hancho.py --quiet build_dir_works.hancho")
+    self.assertTrue(path.exists("build/build_dir_works/result.txt"))
+
+  def test_check_output(self):
+    os.system("rm -rf build")
+    result = os.system("../hancho.py --quiet check_output.hancho")
+    self.assertNotEqual(result, 0)
+
+  def test_command_missing(self):
+    os.system("rm -rf build")
+    result = os.system("../hancho.py --quiet command_missing.hancho")
+    self.assertNotEqual(result, 0)
+
+  def test_dep_changed(self):
+    os.system("rm -rf build")
+    os.system("mkdir build")
+
+    os.system("touch build/dummy.txt")
+    os.system("../hancho.py --quiet dep_changed.hancho")
+    mtime1 = mtime(f"build/dep_changed/result.txt")
+
+    os.system("../hancho.py --quiet dep_changed.hancho")
+    mtime2 = mtime(f"build/dep_changed/result.txt")
+    self.assertEqual(mtime1, mtime2)
+
+    os.system("touch build/dummy.txt")
+    os.system("../hancho.py --quiet dep_changed.hancho")
+    mtime3 = mtime(f"build/dep_changed/result.txt")
+    self.assertLess(mtime2, mtime3)
+
+  def test_does_create_output(self):
+    os.system("rm -rf build")
+    os.system("../hancho.py --quiet does_create_output.hancho")
+    self.assertTrue(path.exists("build/does_create_output/result.txt"))
+
+  def test_header_changed(self):
+    os.system("rm -rf build")
+
+    os.system("../hancho.py --quiet header_changed.hancho")
+    old_mtime = mtime(f"build/header_changed/src/test.o")
+
+    os.system("touch src/test.hpp")
+    os.system("../hancho.py --quiet header_changed.hancho")
+    new_mtime = mtime(f"build/header_changed/src/test.o")
+    self.assertGreater(new_mtime, old_mtime)
 
 ################################################################################
 
-def test_always_rebuild_if_no_inputs():
-  print("test_always_rebuild_if_no_inputs: ", end="")
-  run("rm -rf build")
-  run("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
-  old_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
-  run("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
-  new_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
-  check(new_mtime > old_mtime)
-
-################################################################################
-
-def test_build_dir_works():
-  print("test_build_dir_works: ", end="")
-  run("rm -rf build")
-  run("../hancho.py --quiet build_dir_works.hancho")
-  check(path.exists("build/build_dir_works/result.txt"))
-
-
-################################################################################
-
-def test_check_output():
-  print("test_check_output: ", end="")
-  run("rm -rf build")
-  result = os.system("../hancho.py --quiet check_output.hancho")
-  check(result != 0)
-  pass
-
-################################################################################
-
-def test_command_missing():
-  print("test_command_missing: ", end="")
-  run("rm -rf build")
-  result = os.system("../hancho.py --quiet command_missing.hancho")
-  check(result != 0)
-  pass
-
-################################################################################
-
-def test_dep_changed():
-  fail = 0
-
-  print("test_dep_changed: ", end="")
-  run("rm -rf build")
-
-  run("mkdir build")
-  run("touch build/dummy.txt")
-  run("../hancho.py --quiet dep_changed.hancho")
-  mtime1 = mtime(f"build/dep_changed/result.txt")
-
-  run("../hancho.py --quiet dep_changed.hancho")
-  mtime2 = mtime(f"build/dep_changed/result.txt")
-
-  if mtime2 != mtime1: fail += 1
-
-  run("touch build/dummy.txt")
-  run("../hancho.py --quiet dep_changed.hancho")
-  mtime3 = mtime(f"build/dep_changed/result.txt")
-
-  if mtime3 <= mtime2: fail += 1
-
-  check(not fail)
-  return fail
-
-
-################################################################################
-
-def test_header_changed():
-  print("test_header_changed: ", end="")
-  run("rm -rf build")
-
-  run("../hancho.py --quiet header_changed.hancho")
-  old_mtime = mtime(f"build/header_changed/src/test.o")
-
-  run("touch src/test.hpp")
-  run("../hancho.py --quiet header_changed.hancho")
-  new_mtime = mtime(f"build/header_changed/src/test.o")
-
-  check(new_mtime > old_mtime)
-
-################################################################################
-
-def run_tests():
-  test_always_rebuild_if_no_inputs()
-  test_build_dir_works()
-  test_check_output()
-  test_command_missing()
-  test_dep_changed()
-  test_header_changed()
-
-run_tests()
+if __name__ == '__main__':
+    unittest.main()
 
 ################################################################################
 
 """
-def divider1():
-  log("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
-
-def divider2():
-  log("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
-  log()
-
 ################################################################################
 
 def prep_hancho(task):
@@ -287,7 +241,7 @@ class TestCustomCommands(unittest.TestCase):
 # log(module.TestCustomCommands)
 # suite = unittest.TestLoader().loadTestsFromTestCase(module.TestCustomCommands)
 # log(suite)
-# unittest.TextTestRunner().run(suite)
+# unittest.TextTestRunner().os.system(suite)
 
 async def run_testcase(task):
   log("run_testcase")
