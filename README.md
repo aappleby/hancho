@@ -1,14 +1,12 @@
 # ![Logo](hancho_small.png) Hancho
 
-
-
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
 Hancho is a simple, pleasant build system with few moving parts.
 
 Hancho fits comfortably in 500 lines of Python and requires no installation, just copy-paste it into your source tree.
 
-Hancho is inspired by Ninja and Bazel.
+Hancho is inspired by Ninja (for speed and simplicity) and Bazel (for syntax and extensibility).
 
 Like Ninja, it knows nothing about your build tools and is only trying to assemble and run commands as fast as possible.
 
@@ -24,12 +22,16 @@ Hancho should suffice for small to medium sized projects.
 
 [Some Additional Documentation Here](docs)
 
+## Updates
+
+ - 2024-03-02 - Initial release. Some test cases yet to be written.
+
 ## Installation
 
 ``` bash
 wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
 chmod +x hancho.py
-./hancho.py
+./hancho.py --help
 ```
 
 ## Simple Example
