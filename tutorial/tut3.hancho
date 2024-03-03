@@ -1,5 +1,5 @@
 # tutorial/tut3.hancho
 
-hancho.config.build_dir = "build/tut3"
+config.build_dir = "build/tut3"
 
-hancho.load("src/src.hancho")
+load("src/src.hancho")

@@ -2,7 +2,7 @@
 
 import os
 
-hancho.Rule(
+Rule(
   desc = "Does create its output file",
   command = "touch {files_out}",
   files_out = "output_created.txt",

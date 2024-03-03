@@ -1,12 +1,12 @@
 # examples/meson/build.hancho
 
-hancho.config.set(
+config.set(
   toolchain  = "x86_64-linux-gnu",
   build_type = "debug",
   build_dir  = "build/{build_type}",
 )
 
-compile = hancho.Rule(
+compile = Rule(
   desc      = "Compiling {files_in} -> {files_out} ({build_type})",
   command   = "{toolchain}-gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
   includes  = [
@@ -28,7 +28,7 @@ compile = hancho.Rule(
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = hancho.Rule(
+link = Rule(
   desc      = "Linking {files_out}",
   command   = "{toolchain}-g++ {files_in} -o {files_out} {link_opts}",
   link_opts = [
@@ -44,14 +44,17 @@ main_o = compile(
   "main.c",
   includes = [
     compile.includes,
-    hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+    "{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}",
   ],
   gcc_opts = [
     compile.gcc_opts,
-    hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+    "{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}",
   ],
 )
 
 main = link(main_o, "demo",
-  libs = [link.libs, hancho.run_cmd('pkg-config gtk+-3.0 --libs')],
+  libs = [
+    link.libs,
+    "{run_cmd('pkg-config gtk+-3.0 --libs')}"
+  ],
 )

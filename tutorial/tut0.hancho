@@ -1,6 +1,6 @@
 # tutorial/tut0.hancho
 
-rule = hancho.Rule(
+rule = Rule(
   command = "g++ {files_in} -o {files_out}",
 )
 

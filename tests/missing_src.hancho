@@ -1,8 +1,8 @@
 # tests/missing_src.hancho
 
-hancho.config.build_dir = "build/" + __name__
+config.build_dir = "build/" + __name__
 
-missing_src = hancho.Rule(
+missing_src = Rule(
   desc      = "We should fail if a source file is missing",
   command   = "touch {files_out}",
   files_in  = "src/does_not_exist.txt",

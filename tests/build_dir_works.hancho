@@ -1,8 +1,8 @@
 # tests/build_dir_works.hancho
 
-hancho.config.build_dir = "build/build_dir_works"
+config.build_dir = "build/build_dir_works"
 
-build_dir_works = hancho.Rule(
+build_dir_works = Rule(
   desc = "Should put a file in build/build_dir_works",
   command = "touch {files_out}",
 )

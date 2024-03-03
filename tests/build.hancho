@@ -5,8 +5,8 @@ from os import path
 import sys
 import subprocess
 
-hancho.config.serial = True
-hancho.config.multiline = True
+config.serial = True
+config.multiline = True
 
 
 # min delta seems to be 4 msec
@@ -18,7 +18,7 @@ hancho.config.multiline = True
 #  new_mtime = path.getmtime("blahblah.txt")
 #  delta = new_mtime - old_mtime
 #  if delta and delta < min_delta:
-#    hancho.log(str(delta))
+#    log(str(delta))
 #    min_delta = delta
 #  old_mtime = new_mtime
 
@@ -45,8 +45,6 @@ def test_always_rebuild_if_no_inputs():
   new_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
   check(new_mtime > old_mtime)
 
-test_always_rebuild_if_no_inputs()
-
 ################################################################################
 
 def test_build_dir_works():
@@ -55,7 +53,6 @@ def test_build_dir_works():
   run("../hancho.py --quiet build_dir_works.hancho")
   check(path.exists("build/build_dir_works/result.txt"))
 
-test_build_dir_works()
 
 ################################################################################
 
@@ -66,8 +63,6 @@ def test_check_output():
   check(result != 0)
   pass
 
-test_check_output()
-
 ################################################################################
 
 def test_command_missing():
@@ -77,26 +72,33 @@ def test_command_missing():
   check(result != 0)
   pass
 
-test_command_missing()
-
 ################################################################################
 
 def test_dep_changed():
+  fail = 0
+
   print("test_dep_changed: ", end="")
   run("rm -rf build")
 
   run("mkdir build")
   run("touch build/dummy.txt")
   run("../hancho.py --quiet dep_changed.hancho")
-  old_mtime = mtime(f"build/dep_changed/result.txt")
+  mtime1 = mtime(f"build/dep_changed/result.txt")
+
+  run("../hancho.py --quiet dep_changed.hancho")
+  mtime2 = mtime(f"build/dep_changed/result.txt")
+
+  if mtime2 != mtime1: fail += 1
 
   run("touch build/dummy.txt")
   run("../hancho.py --quiet dep_changed.hancho")
-  new_mtime = mtime(f"build/dep_changed/result.txt")
+  mtime3 = mtime(f"build/dep_changed/result.txt")
 
-  check(new_mtime > old_mtime)
+  if mtime3 <= mtime2: fail += 1
 
-test_dep_changed()
+  check(not fail)
+  return fail
+
 
 ################################################################################
 
@@ -113,17 +115,27 @@ def test_header_changed():
 
   check(new_mtime > old_mtime)
 
-test_header_changed()
+################################################################################
+
+def run_tests():
+  test_always_rebuild_if_no_inputs()
+  test_build_dir_works()
+  test_check_output()
+  test_command_missing()
+  test_dep_changed()
+  test_header_changed()
+
+run_tests()
 
 ################################################################################
 
 """
 def divider1():
-  hancho.log("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
+  log("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
 
 def divider2():
-  hancho.log("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
-  hancho.log()
+  log("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+  log()
 
 ################################################################################
 
@@ -133,7 +145,7 @@ def prep_hancho(task):
 def prep_wipe_outputs(task):
   for f in task.files_out:
     if path.exists(f):
-      hancho.log(f"Removing {f}")
+      log(f"Removing {f}")
       os.remove(f)
   divider1()
 
@@ -153,7 +165,7 @@ def check_outputs_created(task):
   for f in task.files_out:
     if not path.exists(f):
       missing = True
-  hancho.log("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+  log("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
   return -1 if missing else 0
 
 def check_hancho_passed(task):
@@ -175,13 +187,13 @@ def check_timestamp_outputs(task):
     old_timestamp = task.timestamps[f]
     new_timestamp = path.getmtime(f)
     if not new_timestamp > old_timestamp:
-      hancho.log(f"Output {f} was not modified")
+      log(f"Output {f} was not modified")
       failed = True
   divider2()
   return -1 if failed else 0
 
 def hancho_should_pass(**kwargs):
-  rule = hancho.Rule(
+  rule = Rule(
     desc = "{hanchofile} should pass",
     prep = prep_hancho,
     command = "hancho.py {hanchofile} --verbose",
@@ -190,7 +202,7 @@ def hancho_should_pass(**kwargs):
   rule.extend(**kwargs)()
 
 def hancho_should_fail(**kwargs):
-   rule = hancho.Rule(
+   rule = Rule(
     desc = "{hanchofile} should fail",
     prep = prep_hancho,
     command = "hancho.py {hanchofile} --verbose",
@@ -252,7 +264,7 @@ def hancho_should_fail(**kwargs):
 #class TestCustomCommands(unittest.TestCase):
 class TestCustomCommands(unittest.TestCase):
   #def setUp(self):
-    #hancho.flags.silent = True
+    #flags.silent = True
     #self.foo = 0
 
   async def custom_command(self, task):
@@ -265,32 +277,31 @@ class TestCustomCommands(unittest.TestCase):
   def test_custom_command(self):
     pass
     #self.assertEqual(0, 0)
-    #hancho.Rule(
+    #Rule(
     #  desc = "Test custom command",
     #  command = self.custom_command,
     #)()
     #self.assertEqual(self.foo, 0)
-    #hancho.build()
     #self.assertEqual(self.foo, 1)
 
-# hancho.log(module.TestCustomCommands)
+# log(module.TestCustomCommands)
 # suite = unittest.TestLoader().loadTestsFromTestCase(module.TestCustomCommands)
-# hancho.log(suite)
+# log(suite)
 # unittest.TextTestRunner().run(suite)
 
 async def run_testcase(task):
-  hancho.log("run_testcase")
+  log("run_testcase")
   suite = unittest.TestLoader().loadTestsFromTestCase(task.test_case)
   for s in suite:
     result = unittest.TestResult()
-    hancho.log(result)
+    log(result)
     s(result)
-    hancho.log(result)
-  hancho.log("blah")
-  hancho.log(len(result.failures))
+    log(result)
+  log("blah")
+  log(len(result.failures))
   return len(result.failures)
 
-testsuite = hancho.Rule(
+testsuite = Rule(
   command = run_testcase
 )
 
@@ -299,7 +310,7 @@ testsuite = hancho.Rule(
 class TestRebuildTriggers(unittest.TestCase):
 
   def setUp(self):
-    hancho.flags.silent = True
+    flags.silent = True
 
   ##########
 
@@ -307,7 +318,7 @@ class TestRebuildTriggers(unittest.TestCase):
     test_name = "always_rebuild_if_no_inputs"
     mtime0 = path.getmtime(f"build/{test_name}.txt")
 
-    rule = hancho.Rule(
+    rule = Rule(
       #desc      = "Always rebuild build/{test_name}.txt if the rule has no files_in",
       command   = "touch {files_out}",
       test_name = test_name
@@ -315,13 +326,12 @@ class TestRebuildTriggers(unittest.TestCase):
 
     time.sleep(0.01)
     rule(files_out = "build/{test_name}.txt")
-    hancho.build()
+    build()
     mtime1 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime1, mtime0)
 
     time.sleep(0.01)
     rule(files_out = "build/{test_name}.txt")
-    hancho.build()
     mtime2 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime2, mtime1)
 
@@ -331,7 +341,7 @@ class TestRebuildTriggers(unittest.TestCase):
     test_name = "always_rebuild_if_no_outputs"
     mtime0 = path.getmtime(f"build/{test_name}.txt")
 
-    rule = hancho.Rule(
+    rule = Rule(
       #desc      = "Always rebuild build/{test_name}.txt if the rule has no files_out",
       command   = "touch build/{test_name}.txt",
       test_name = test_name
@@ -339,13 +349,11 @@ class TestRebuildTriggers(unittest.TestCase):
 
     time.sleep(0.01)
     rule("{test_name}.hancho")
-    hancho.build()
     mtime1 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime1, mtime0)
 
     time.sleep(0.01)
     rule("{test_name}.hancho")
-    hancho.build()
     mtime2 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime2, mtime1)
 
@@ -354,9 +362,9 @@ class TestRebuildTriggers(unittest.TestCase):
 #fails += test_always_rebuild_if_no_outputs()
 #
 #if fails:
-#  hancho.log(f"\x1B[31msome tests failed!\x1B[0m")
+#  log(f"\x1B[31msome tests failed!\x1B[0m")
 #else:
-#  hancho.log(f"\x1B[32mall tests passed!\x1B[0m")
+#  log(f"\x1B[32mall tests passed!\x1B[0m")
 
 
 #sys.exit(0)
@@ -375,13 +383,13 @@ class TestRebuildTriggers(unittest.TestCase):
 #  check      = check_timestamp_outputs,
 #)
 
-deps1 = hancho.Rule(
+deps1 = Rule(
   desc = "deps1",
   command = "touch {files_out}",
   files_out = "build/blep",
 )()
 
-deps2 = hancho.Rule(
+deps2 = Rule(
   desc = "deps2",
   command = "touch {files_in}.bar",
 )(deps1)

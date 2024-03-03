@@ -1,11 +1,11 @@
 # tutorial/tut1.hancho
 
-compile = hancho.Rule(
+compile = Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in} -o {files_out}",
 )
 
-link = hancho.Rule(
+link = Rule(
   desc = "Link {files_in} -> {files_out}",
   command = "g++ {files_in} -o {files_out}",
 )

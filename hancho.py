@@ -166,7 +166,9 @@ def load2(mod_path):
   mod_file = path.split(abs_path)[1]
   mod_name = mod_file.split(".")[0]
 
-  header = "import hancho\n"
+  header = """
+from hancho import config, load, Rule
+"""
   source = header + open(abs_path, "r").read()
   code = compile(source, abs_path, 'exec', dont_inherit=True)
 

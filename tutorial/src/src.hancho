@@ -1,6 +1,6 @@
 # tutorial/src/src.hancho
 import glob
 
-rules = hancho.load("rules.hancho")
+rules = load("rules.hancho")
 
 rules.c_binary(glob.glob("*.cpp"), "app")

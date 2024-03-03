@@ -50,7 +50,7 @@ Here's how we run the same command in Hancho:
 ```py
 # tutorial/tut0.hancho
 
-rule = hancho.Rule(
+rule = Rule(
   command = "g++ {files_in} -o {files_out}",
 )
 
@@ -124,12 +124,12 @@ running a build.
 ``` py
 # tutorial/tut1.hancho
 
-compile = hancho.Rule(
+compile = Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -c {files_in} -o {files_out}",
 )
 
-link = hancho.Rule(
+link = Rule(
   desc = "Link {files_in} -> {files_out}",
   command = "g++ {files_in} -o {files_out}",
 )
@@ -224,22 +224,22 @@ system tacked on.
 We can put whatever key-value pairs we like inside a ```Rule``` and then use it
 to expand whatever text template we like:
 ```py
->>> import hancho
->>> rule = hancho.Rule(foo = "{bar}", bar = "{baz}", baz = "Hancho")
+>>> from hancho import config, Rule
+>>> rule = Rule(foo = "{bar}", bar = "{baz}", baz = "Hancho")
 >>> rule.expand("One Hancho: {foo}")
 'One Hancho: Hancho'
 ```
 
 Basic expressions work inside templates as well:
 ```py
->>> rule = hancho.Rule(foo = "{bar*3}", bar = "{baz*3}", baz = "Hancho")
+>>> rule = Rule(foo = "{bar*3}", bar = "{baz*3}", baz = "Hancho")
 >>> rule.expand("Nine Hanchos: {foo}")
 'Nine Hanchos: HanchoHanchoHanchoHanchoHanchoHanchoHanchoHanchoHancho'
 ```
 
 Rule fields can also be functions or lambdas:
 ```py
->>> rule = hancho.Rule(foo = lambda x: "Hancho" * x)
+>>> rule = Rule(foo = lambda x: "Hancho" * x)
 >>> rule.expand("{foo(4)}")
 'HanchoHanchoHanchoHancho'
 ```
@@ -247,7 +247,7 @@ Rule fields can also be functions or lambdas:
 but note that you do _not_ have access to any Python globals or builtins,
 
 ```py
->>> rule = hancho.Rule(foo = "{print(4)}")
+>>> rule = Rule(foo = "{print(4)}")
 >>> rule.expand("{foo}")
 {print(4)}
 Expanding '{print(4)}' is stuck in a loop
@@ -256,7 +256,7 @@ Expanding '{print(4)}' is stuck in a loop
 ...unless you put them somewhere the rule has access to:
 
 ```py
->>> rule = hancho.Rule(foo = "{print(4)}", print = print)
+>>> rule = Rule(foo = "{print(4)}", print = print)
 >>> rule.expand("{foo}")
 4
 ''
@@ -265,23 +265,23 @@ Expanding '{print(4)}' is stuck in a loop
 Arbitrarily-nested arrays of strings will be flattened out and joined with
 spaces:
 ```py
->>> rule = hancho.Rule(foo = [1,2,3,[4,5],[[[6,7]]]])
+>>> rule = Rule(foo = [1,2,3,[4,5],[[[6,7]]]])
 >>> rule.expand("{foo}")
 '1 2 3 4 5 6 7'
 ```
 
 Fields that are never defined will turn into empty strings:
 ```py
->>> rule = hancho.Rule(foo = "{missing}")
+>>> rule = Rule(foo = "{missing}")
 >>> rule.expand("?{foo}?")
 '??'
 ```
 
 Fields that are used globally in multiple rules can be set on
-```hancho.config```, which will make them visible in _every_ rule:
+```config```, which will make them visible in _every_ rule:
 ```py
->>> hancho.config.set(bar = "Hancho")
->>> rule = hancho.Rule(foo = "{bar}")
+>>> config.set(bar = "Hancho")
+>>> rule = Rule(foo = "{bar}")
 >>> rule.expand("{foo}")
 'Hancho'
 ```
@@ -290,7 +290,7 @@ Rules can also 'inherit' fields from other rules via ```rule.extend()```, which
 is a better option for common fields that shouldn't be globally visible:
 
 ```py
->>> base_rule = hancho.Rule(bar = "Hancho")
+>>> base_rule = Rule(bar = "Hancho")
 >>> rule = base_rule.extend(foo = "{bar}")
 >>> rule.expand("{foo}")
 'Hancho'
@@ -298,14 +298,14 @@ is a better option for common fields that shouldn't be globally visible:
 
 Text templates that cause infinite loops will fail:
 ```py
->>> rule = hancho.Rule(foo = "{bar}", bar = "{foo}")
+>>> rule = Rule(foo = "{bar}", bar = "{foo}")
 >>> rule.expand("{foo}")
 Expanding '{foo}...' failed to terminate
 ```
 
 as will templates that create infinitely-long strings:
 ```py
->>> rule = hancho.Rule(foo = "!{foo}!")
+>>> rule = Rule(foo = "!{foo}!")
 >>> rule.expand("{foo}")
 Expanding '!!!!!!!!!!!!!!!!!!!!...' failed to terminate
 ```
@@ -325,8 +325,7 @@ First things first - we want all our build output to go into a separate
 directory so we don't clutter up our source tree and so we don't have to specify
 it in every ```files_out```. Hancho defines a special rule field ```build_dir```
 that is prepended to all output filenames if present. To specify ```build_dir```
-for all rules in our build, we can set it on the global ```hancho.config```
-object.
+for all rules in our build, we can set it on the global ```config``` object.
 
 Next up, dependency files. If we pass GCC the ```-MMD``` flag, it will produce a
 dependency file ```main.d``` alongside the compiled ```main.o``` that contains a
@@ -347,16 +346,16 @@ builtin to generically define ```files_out``` and ```depfile``` in the
 ```py
 # tutorial/tut2.hancho
 
-hancho.config.set(build_dir = "build/tut2")
+config.set(build_dir = "build/tut2")
 
-compile = hancho.Rule(
+compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -MMD -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = hancho.Rule(
+link = Rule(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {files_in} -o {files_out}",
 )
@@ -435,9 +434,9 @@ You'll notice that tut3.hancho is mostly empty now:
 ```py
 # tutorial/tut3.hancho
 
-hancho.config.set(build_dir = "build/tut3")
+config.set(build_dir = "build/tut3")
 
-hancho.load("src/src.hancho")
+load("src/src.hancho")
 ```
 
 That's because the actual build has moved to ```src/src.hancho``` so it can live alongside its source code.
@@ -447,7 +446,7 @@ That's because the actual build has moved to ```src/src.hancho``` so it can live
 # tutorial/src/src.hancho
 import glob
 
-rules = hancho.load("rules.hancho")
+rules = load("rules.hancho")
 
 rules.c_binary(glob.glob("*.cpp"), "app")
 ```
@@ -469,14 +468,14 @@ But what is ```rules.c_binary```? It's a helper function in ```rules.hancho```:
 ```py
 # tutorial/rules.hancho
 
-compile = hancho.Rule(
+compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -MMD -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = hancho.Rule(
+link = Rule(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {files_in} -o {files_out}",
 )
@@ -521,7 +520,7 @@ async def do_slow_thing():
   print("Slow thing done")
   return ["src/main.cpp"]
 
-echo = hancho.Rule(
+echo = Rule(
   desc = "Consuming a promise as files_in",
   command = "echo {files_in}",
 )
@@ -534,11 +533,11 @@ command line to run arbitrary Python code as part of the build graph:
 ```py
 async def custom_command(task):
   for f in task.files_out:
-    hancho.log(f"Touching {f}")
+    print(f"Touching {f}")
     os.system(f"touch {f}")
   return task.files_out
 
-custom_rule = hancho.Rule(
+custom_rule = Rule(
   desc    = "Custom rule: {files_in} -> {files_out}",
   command = custom_command
 )

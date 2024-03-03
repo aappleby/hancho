@@ -30,16 +30,16 @@ chmod +x hancho.py
 ```py
 # examples/hello_world/build.hancho
 
-hancho.config.set(build_dir = "build")
+config.set(build_dir = "build")
 
-compile = hancho.Rule(
+compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -MMD -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = hancho.Rule(
+link = Rule(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {files_in} -o {files_out}",
 )

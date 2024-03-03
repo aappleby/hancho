@@ -1,8 +1,8 @@
 # tests/recursive_base_is_bad.hancho
 
-hancho.config.build_dir = "build/" + __name__
+config.build_dir = "build/" + __name__
 
-rule1 = hancho.Rule(
+rule1 = Rule(
   command = "{thing}",
   thing = ":"
 )

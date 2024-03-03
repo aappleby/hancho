@@ -1,7 +1,7 @@
 
-hancho.config.build_dir = "build/" + __name__
+config.build_dir = "build/" + __name__
 
-dep_changed = hancho.Rule(
+dep_changed = Rule(
   desc = "Changing a file in deps[] should trigger a rebuild",
   command = "touch {files_out}",
 )

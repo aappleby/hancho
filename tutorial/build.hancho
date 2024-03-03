@@ -1,9 +1,9 @@
 # hancho/tutorial/build.hancho - Tests all the tutorials
 
-hancho.config.jobs = 1
-#hancho.config.verbose = True
+config.jobs = 1
+#config.verbose = True
 
-test_build = hancho.Rule(
+test_build = Rule(
   desc      = "{color(200, 200, 100)}Testing tutorial build '{files_in}'{color()}",
   command   = "../hancho.py --verbose {files_in} && touch {files_out} && echo",
   files_out = "{files_in[0] + '.pass'}",

@@ -1,8 +1,8 @@
 # tests/check_output.hancho
 
-hancho.config.build_dir = "build/" + __name__
+config.build_dir = "build/" + __name__
 
-check_output = hancho.Rule(
+check_output = Rule(
   desc = "A build rule that doesn't update one of its outputs should fail",
   command = "touch {files_out[0]}",
 )
