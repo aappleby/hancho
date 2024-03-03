@@ -1,0 +1,11 @@
+
+hancho.config.build_dir = "build/" + __name__
+
+header_changed = hancho.Rule(
+  desc = "Changing a header file tracked in the GCC depfile should trigger a rebuild",
+  command = "gcc -MMD -c {files_in} -o {files_out}",
+  files_out = "{swap_ext(files_in, '.o')}",
+  depfile   = "{swap_ext(files_out, '.d')}",
+)
+
+header_changed("src/test.cpp")

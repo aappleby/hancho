@@ -318,7 +318,6 @@ def needs_rerun(task):
   if task.depfile:
     abs_depfile = path.abspath(path.join(
       this.hancho_root,
-      task.expand(task.build_dir),
       task.expand(task.depfile)
     ))
     if path.exists(abs_depfile):
@@ -410,9 +409,20 @@ async def run_command(task):
 
 async def dispatch(task):
   # Check for missing fields
-  if not task.command:       err(f"Command missing for input {task.files_in}!")
-  if task.files_in is None:  err("Task missing files_in")
-  if task.files_out is None: err("Task missing files_out")
+  if not task.command:
+    log(f"Command missing for input {task.files_in}!")
+    this.tasks_fail += 1
+    return None
+
+  if task.files_in is None:
+    log("Task missing files_in")
+    this.tasks_fail += 1
+    return None
+
+  if task.files_out is None:
+    err("Task missing files_out")
+    this.tasks_fail += 1
+    return None
 
   # Flatten all filename promises in any of the input filename arrays.
   task.files_in  = await flatten_async(task.files_in)
@@ -420,9 +430,15 @@ async def dispatch(task):
   task.deps      = await flatten_async(task.deps)
 
   # Early-out with no result if any of our inputs or outputs are None (failed)
-  if None in task.files_in: return None
-  if None in task.files_out: return None
-  if None in task.deps: return None
+  if None in task.files_in:
+    this.tasks_fail += 1
+    return None
+  if None in task.files_out:
+    this.tasks_fail += 1
+    return None
+  if None in task.deps:
+    this.tasks_fail += 1
+    return None
 
   # Do the actual template expansion to produce real filename lists
   task.files_in  = task.expand(task.files_in)

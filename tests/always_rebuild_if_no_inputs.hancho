@@ -1,6 +1,5 @@
 # test/always_rebuild_if_no_inputs.hancho
 
-
 hancho.config.build_dir = "build/" + __name__
 
 always_rebuilt = hancho.Rule(

@@ -28,18 +28,22 @@ def mtime(file):
 def run(cmd):
   return subprocess.check_output(cmd, shell=True, text=True).strip()
 
+def check(result):
+  if result:
+    print("\x1B[32mPASS\x1B[0m")
+  else:
+    print("\x1B[31mFAIL\x1B[0m")
+
 ################################################################################
 
 def test_always_rebuild_if_no_inputs():
   print("test_always_rebuild_if_no_inputs: ", end="")
-  os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
+  run("rm -rf build")
+  run("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
   old_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
-  os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
+  run("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
   new_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
-  if new_mtime == old_mtime:
-    print("\x1B[31mFAIL\x1B[0m")
-  else:
-    print("\x1B[32mPASS\x1B[0m")
+  check(new_mtime > old_mtime)
 
 test_always_rebuild_if_no_inputs()
 
@@ -47,22 +51,69 @@ test_always_rebuild_if_no_inputs()
 
 def test_build_dir_works():
   print("test_build_dir_works: ", end="")
-  if path.exists("build/build_dir_works/result.txt"):
-    os.remove("build/build_dir_works/result.txt")
-  os.system("../hancho.py --quiet build_dir_works.hancho")
-  if not path.exists("build/build_dir_works/result.txt"):
-    print("\x1B[31mFAIL\x1B[0m")
-  else:
-    print("\x1B[32mPASS\x1B[0m")
+  run("rm -rf build")
+  run("../hancho.py --quiet build_dir_works.hancho")
+  check(path.exists("build/build_dir_works/result.txt"))
 
 test_build_dir_works()
 
 ################################################################################
 
 def test_check_output():
+  print("test_check_output: ", end="")
+  run("rm -rf build")
+  result = os.system("../hancho.py --quiet check_output.hancho")
+  check(result != 0)
   pass
 
 test_check_output()
+
+################################################################################
+
+def test_command_missing():
+  print("test_command_missing: ", end="")
+  run("rm -rf build")
+  result = os.system("../hancho.py --quiet command_missing.hancho")
+  check(result != 0)
+  pass
+
+test_command_missing()
+
+################################################################################
+
+def test_dep_changed():
+  print("test_dep_changed: ", end="")
+  run("rm -rf build")
+
+  run("mkdir build")
+  run("touch build/dummy.txt")
+  run("../hancho.py --quiet dep_changed.hancho")
+  old_mtime = mtime(f"build/dep_changed/result.txt")
+
+  run("touch build/dummy.txt")
+  run("../hancho.py --quiet dep_changed.hancho")
+  new_mtime = mtime(f"build/dep_changed/result.txt")
+
+  check(new_mtime > old_mtime)
+
+test_dep_changed()
+
+################################################################################
+
+def test_header_changed():
+  print("test_header_changed: ", end="")
+  run("rm -rf build")
+
+  run("../hancho.py --quiet header_changed.hancho")
+  old_mtime = mtime(f"build/header_changed/src/test.o")
+
+  run("touch src/test.hpp")
+  run("../hancho.py --quiet header_changed.hancho")
+  new_mtime = mtime(f"build/header_changed/src/test.o")
+
+  check(new_mtime > old_mtime)
+
+test_header_changed()
 
 ################################################################################
 
