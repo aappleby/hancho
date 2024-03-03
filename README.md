@@ -58,16 +58,17 @@ int main(int argc, char** argv) {
 ```
 ```sh
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
-[1/2] Compile ['main.cpp'] -> ['build/main.o']
+[1/2] Compile main.cpp -> build/main.o
 Reason: Rebuilding ['build/main.o'] because some are missing
-g++ -c main.cpp -o build/main.o
-[2/2] Link ['build/main.o'] -> ['build/app']
+g++ -MMD -c main.cpp -o build/main.o
+[2/2] Link build/main.o -> build/app
 Reason: Rebuilding ['build/app'] because some are missing
 g++ build/main.o -o build/app
+hancho: BUILD PASSED
 
 user@host:~/hancho/examples/hello_world$ build/app
 Hello World
 
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
-hancho: no work to do.
+hancho: BUILD CLEAN
 ```
