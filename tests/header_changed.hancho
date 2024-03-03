@@ -1,5 +1,5 @@
 
-config.build_dir = "build/" + __name__
+config.build_dir = "build"
 
 header_changed = Rule(
   desc = "Changing a header file tracked in the GCC depfile should trigger a rebuild",

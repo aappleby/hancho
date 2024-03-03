@@ -1,6 +1,6 @@
 # test/always_rebuild_if_no_inputs.hancho
 
-config.build_dir = "build/" + __name__
+config.build_dir = "build"
 
 always_rebuilt = Rule(
   desc      = "Always rebuild {files_out} if the rule has no inputs",

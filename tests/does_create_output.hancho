@@ -1,6 +1,6 @@
 # tests/does_create_output
 
-config.build_dir = "build/" + __name__
+config.build_dir = "build"
 
 does_create_output = Rule(
   desc = "Does create its output file",

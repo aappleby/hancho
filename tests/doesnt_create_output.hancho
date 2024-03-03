@@ -1,11 +1,10 @@
 # tests/doesnt_create_output.hancho
 
+config.build_dir = "build"
+
 doesnt_create_output = Rule(
   desc = "Doesn't create {files_out}",
   command = ":",
-  files_in  = "doesnt_create_output.hancho",
-  files_out = "not_created.txt",
-  build_dir = __name__,
 )
 
-doesnt_create_output()
+doesnt_create_output(__file__, "result.txt")

@@ -25,63 +25,80 @@ def mtime(file):
 def run(cmd):
   return subprocess.check_output(cmd, shell=True, text=True).strip()
 
+def run_hancho(name):
+  return os.system(f"../hancho.py --quiet {name}.hancho")
+
+def touch(name):
+  os.system(f"touch {name}")
+
+
 class TestHancho(unittest.TestCase):
 
-  def test_always_rebuild_if_no_inputs(self):
-    os.system("rm -rf build")
-    os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
-    old_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
-    os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
-    new_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
-    self.assertGreater(new_mtime, old_mtime)
-
-  def test_build_dir_works(self):
-    os.system("rm -rf build")
-    os.system("../hancho.py --quiet build_dir_works.hancho")
-    self.assertTrue(path.exists("build/build_dir_works/result.txt"))
-
-  def test_check_output(self):
-    os.system("rm -rf build")
-    result = os.system("../hancho.py --quiet check_output.hancho")
-    self.assertNotEqual(result, 0)
-
-  def test_command_missing(self):
-    os.system("rm -rf build")
-    result = os.system("../hancho.py --quiet command_missing.hancho")
-    self.assertNotEqual(result, 0)
-
-  def test_dep_changed(self):
+  def setUp(self):
     os.system("rm -rf build")
     os.system("mkdir build")
 
-    os.system("touch build/dummy.txt")
-    os.system("../hancho.py --quiet dep_changed.hancho")
-    mtime1 = mtime(f"build/dep_changed/result.txt")
+  def test_always_rebuild_if_no_inputs(self):
+    run_hancho("always_rebuild_if_no_inputs")
+    mtime1 = mtime(f"build/result.txt")
 
-    os.system("../hancho.py --quiet dep_changed.hancho")
-    mtime2 = mtime(f"build/dep_changed/result.txt")
+    run_hancho("always_rebuild_if_no_inputs")
+    mtime2 = mtime(f"build/result.txt")
+
+    run_hancho("always_rebuild_if_no_inputs")
+    mtime3 = mtime(f"build/result.txt")
+    self.assertLess(mtime1, mtime2)
+    self.assertLess(mtime2, mtime3)
+
+  def test_build_dir_works(self):
+    run_hancho("build_dir_works")
+    self.assertTrue(path.exists("build/build_dir_works/result.txt"))
+
+  def test_check_output(self):
+    result = run_hancho("check_output")
+    self.assertNotEqual(result, 0)
+
+  def test_command_missing(self):
+    result = run_hancho("command_missing")
+    self.assertNotEqual(result, 0)
+
+  def test_dep_changed(self):
+    touch("build/dummy.txt")
+    run_hancho("dep_changed")
+    mtime1 = mtime(f"build/result.txt")
+
+    run_hancho("dep_changed")
+    mtime2 = mtime(f"build/result.txt")
+
+    touch("build/dummy.txt")
+    run_hancho("dep_changed")
+    mtime3 = mtime(f"build/result.txt")
     self.assertEqual(mtime1, mtime2)
-
-    os.system("touch build/dummy.txt")
-    os.system("../hancho.py --quiet dep_changed.hancho")
-    mtime3 = mtime(f"build/dep_changed/result.txt")
     self.assertLess(mtime2, mtime3)
 
   def test_does_create_output(self):
-    os.system("rm -rf build")
-    os.system("../hancho.py --quiet does_create_output.hancho")
-    self.assertTrue(path.exists("build/does_create_output/result.txt"))
+    run_hancho("does_create_output")
+    self.assertTrue(path.exists("build/result.txt"))
+
+  def test_doesnt_create_output(self):
+    run_hancho("doesnt_create_output")
+    self.assertFalse(path.exists("build/result.txt"))
+
+  def test_expand_failed_to_terminate(self):
+    self.assertNotEqual(0, run_hancho("expand_failed_to_terminate"))
 
   def test_header_changed(self):
-    os.system("rm -rf build")
+    run_hancho("header_changed")
+    mtime1 = mtime(f"build/src/test.o")
 
-    os.system("../hancho.py --quiet header_changed.hancho")
-    old_mtime = mtime(f"build/header_changed/src/test.o")
+    run_hancho("header_changed")
+    mtime2 = mtime(f"build/src/test.o")
 
     os.system("touch src/test.hpp")
-    os.system("../hancho.py --quiet header_changed.hancho")
-    new_mtime = mtime(f"build/header_changed/src/test.o")
-    self.assertGreater(new_mtime, old_mtime)
+    run_hancho("header_changed")
+    mtime3 = mtime(f"build/src/test.o")
+    self.assertEqual(mtime1, mtime2)
+    self.assertLess(mtime2, mtime3)
 
 ################################################################################
 

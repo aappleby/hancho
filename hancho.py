@@ -84,7 +84,6 @@ def err(*args, **kwargs):
   log(*args, **kwargs)
   print("(Hancho exiting due to error)")
   print(color(), end="")
-  sys.exit(-1)
 
 ################################################################################
 
@@ -110,7 +109,7 @@ async def async_main():
 
   # Change directory and load top module(s).
   if not path.exists(this.config.filename):
-    err(f"Could not find {this.config.filename}")
+    raise ValueError(f"Could not find {this.config.filename}")
 
   if this.config.chdir: os.chdir(this.config.chdir)
   top_module = load2(this.config.filename)
@@ -154,7 +153,7 @@ def load(mod_path):
     abs_path = path.abspath(path.join(path.split(parent_mod.__file__)[0], mod_path))
     if os.path.exists(abs_path):
       return load2(abs_path)
-  err(f"Could not load module {mod_path}")
+  raise ValueError(f"Could not load module {mod_path}")
 
 def load2(mod_path):
   abs_path = path.abspath(mod_path)
@@ -268,10 +267,10 @@ def expand(rule, template):
     new_template = expand_once(rule, template)
     if template == new_template:
       if template_regex.search(template):
-        err(f"Expanding '{template[0:20]}' is stuck in a loop")
+        raise ValueError(f"Expanding '{template[0:20]}' is stuck in a loop")
       return template
     template = new_template
-  err(f"Expanding '{template[0:20]}...' failed to terminate")
+  raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
 # Checks if a task needs to be re-run, and returns a non-empty reason if so.
@@ -364,12 +363,11 @@ async def run_command(task):
     result = await task.command(task)
     if result is None:
       log(f"\x1B[31mFAILED\x1B[0m: {task.expand(task.desc)}")
-    this.tasks_pass += 1
     return result
 
   # Non-string non-callable commands are not valid
   if not type(task.command) is str:
-    err(f"Don't know what to do with {task.command}")
+    raise ValueError(f"Don't know what to do with {task.command}")
 
   # Dispatch the subprocess via asyncio and then await the result.
   proc = await asyncio.create_subprocess_shell(
@@ -388,43 +386,26 @@ async def run_command(task):
 
   # Task complete, check the task return code
   if task.returncode:
-    log(f"\x1B[31mFAILED\x1B[0m: {task.expand(task.desc)}")
-    this.tasks_fail += 1
-    return None
+    raise ValueError(f"\x1B[31mFAILED\x1B[0m: {task.expand(task.desc)}")
 
   # Task complete, check if it actually updated all the output files
   if task.files_in and task.files_out:
     if second_reason := needs_rerun(task):
-      log(f"\x1B[33mFAILED\x1B[0m: Task \"{task.expand(task.desc)}\" still needs rerun after running!")
-      log(f"Reason: {second_reason}")
-      this.tasks_fail += 1
-      return None
+      raise ValueError(f"\x1B[33mFAILED\x1B[0m: Task \"{task.expand(task.desc)}\" still needs rerun after running!\nReason: {second_reason}")
 
   # Task passed, return the output file list
   this.all_rebuilt.update(task.abs_files_out)
-  this.tasks_pass += 1
   return task.abs_files_out
 
 ################################################################################
 # Does all the bookkeeping and depedency checking, then runs the command if
 # needed.
 
-async def dispatch(task):
+async def prepare(task):
   # Check for missing fields
-  if not task.command:
-    log(f"Command missing for input {task.files_in}!")
-    this.tasks_fail += 1
-    return None
-
-  if task.files_in is None:
-    log("Task missing files_in")
-    this.tasks_fail += 1
-    return None
-
-  if task.files_out is None:
-    err("Task missing files_out")
-    this.tasks_fail += 1
-    return None
+  if not task.command: raise ValueError(f"Command missing for input {task.files_in}!")
+  if task.files_in is None: raise ValueError("Task missing files_in")
+  if task.files_out is None: raise ValueError("Task missing files_out")
 
   # Flatten all filename promises in any of the input filename arrays.
   task.files_in  = await flatten_async(task.files_in)
@@ -432,15 +413,9 @@ async def dispatch(task):
   task.deps      = await flatten_async(task.deps)
 
   # Early-out with no result if any of our inputs or outputs are None (failed)
-  if None in task.files_in:
-    this.tasks_fail += 1
-    return None
-  if None in task.files_out:
-    this.tasks_fail += 1
-    return None
-  if None in task.deps:
-    this.tasks_fail += 1
-    return None
+  if None in task.files_in:  raise ValueError
+  if None in task.files_out: raise ValueError
+  if None in task.deps:      raise ValueError
 
   # Do the actual template expansion to produce real filename lists
   task.files_in  = task.expand(task.files_in)
@@ -463,8 +438,7 @@ async def dispatch(task):
 
   # Check for duplicate task outputs
   for file in task.abs_files_out:
-    if file in this.hancho_outs:
-      err(f"Multiple rules build {file}!")
+    if file in this.hancho_outs: raise ValueError(f"Multiple rules build {file}!")
     this.hancho_outs.add(file)
 
   # Check if we need a rebuild
@@ -482,6 +456,18 @@ async def dispatch(task):
   # don't run too many tasks at once.
   async with this.semaphore:
     return await run_command(task)
+
+################################################################################
+
+async def dispatch(task):
+  try:
+    result = await prepare(task)
+    this.tasks_pass += 1
+    return result
+  except Exception as err:
+    log(str(err))
+    this.tasks_fail += 1
+    return None
 
 ################################################################################
 
