@@ -3,9 +3,68 @@
 import os
 from os import path
 import sys
+import subprocess
 
 hancho.config.serial = True
 hancho.config.multiline = True
+
+
+# min delta seems to be 4 msec
+#os.system("touch blahblah.txt")
+#old_mtime = path.getmtime("blahblah.txt")
+#min_delta = 1000000
+#for _ in range(1000):
+#  os.system("touch blahblah.txt")
+#  new_mtime = path.getmtime("blahblah.txt")
+#  delta = new_mtime - old_mtime
+#  if delta and delta < min_delta:
+#    hancho.log(str(delta))
+#    min_delta = delta
+#  old_mtime = new_mtime
+
+def mtime(file):
+  return os.path.getmtime(file)
+
+def run(cmd):
+  return subprocess.check_output(cmd, shell=True, text=True).strip()
+
+################################################################################
+
+def test_always_rebuild_if_no_inputs():
+  print("test_always_rebuild_if_no_inputs: ", end="")
+  os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
+  old_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
+  os.system("../hancho.py --quiet always_rebuild_if_no_inputs.hancho")
+  new_mtime = mtime(f"build/always_rebuild_if_no_inputs/result.txt")
+  if new_mtime == old_mtime:
+    print("\x1B[31mFAIL\x1B[0m")
+  else:
+    print("\x1B[32mPASS\x1B[0m")
+
+test_always_rebuild_if_no_inputs()
+
+################################################################################
+
+def test_build_dir_works():
+  print("test_build_dir_works: ", end="")
+  if path.exists("build/build_dir_works/result.txt"):
+    os.remove("build/build_dir_works/result.txt")
+  os.system("../hancho.py --quiet build_dir_works.hancho")
+  if not path.exists("build/build_dir_works/result.txt"):
+    print("\x1B[31mFAIL\x1B[0m")
+  else:
+    print("\x1B[32mPASS\x1B[0m")
+
+test_build_dir_works()
+
+################################################################################
+
+def test_check_output():
+  pass
+
+test_check_output()
+
+################################################################################
 
 """
 def divider1():
@@ -37,30 +96,6 @@ def prep_timestamp_outputs(task):
 def prep_touch_inputs(task):
   for f in task.files_out:
     os.system(f"touch {f}")
-"""
-
-################################################################################
-
-def test_always_rebuild_if_no_inputs():
-  test_name = "always_rebuild_if_no_inputs"
-  hancho.log(f"{test_name}:")
-  old_mtime = path.getmtime(f"build/{test_name}.txt")
-  hancho.log("----------------------------------------")
-  os.system(f"hancho.py {test_name}.hancho")
-  hancho.log("----------------------------------------")
-  new_mtime = path.getmtime(f"build/{test_name}.txt")
-
-  if not new_mtime > old_mtime:
-    hancho.log(f"\x1B[31m{test_name} failed!\x1B[0m")
-    return 1
-  os.system(f"touch results/{test_name}.pass")
-  sys.stdout.flush()
-  return 0
-
-test_always_rebuild_if_no_inputs()
-
-################################################################################
-"""
 
 def check_outputs_created(task):
   missing = False
@@ -94,8 +129,6 @@ def check_timestamp_outputs(task):
   divider2()
   return -1 if failed else 0
 
-################################################################################
-
 def hancho_should_pass(**kwargs):
   rule = hancho.Rule(
     desc = "{hanchofile} should pass",
@@ -113,8 +146,6 @@ def hancho_should_fail(**kwargs):
     check = check_hancho_failed
    )
    rule.extend(**kwargs)()
-
-################################################################################
 
 #hancho_should_pass(
 #  hanchofile = "should_pass.hancho"
@@ -167,10 +198,6 @@ def hancho_should_fail(**kwargs):
 #  check      = partial(check_stdout_has, "is stuck in a loop"),
 #)
 
-################################################################################
-
-################################################################################
-
 #class TestCustomCommands(unittest.TestCase):
 class TestCustomCommands(unittest.TestCase):
   #def setUp(self):
@@ -217,18 +244,6 @@ testsuite = hancho.Rule(
 )
 
 #testsuite(test_case = TestCustomCommands)
-
-################################################################################
-
-# min delta seems to be 4 msec
-#os.system("touch blahblah.txt")
-#old_mtime = path.getmtime("blahblah.txt")
-#for _ in range(1000):
-#  os.system("touch blahblah.txt")
-#  new_mtime = path.getmtime("blahblah.txt")
-#  delta = new_mtime - old_mtime
-#  if delta: hancho.log(delta)
-#  old_mtime = new_mtime
 
 class TestRebuildTriggers(unittest.TestCase):
 
@@ -283,8 +298,6 @@ class TestRebuildTriggers(unittest.TestCase):
     mtime2 = path.getmtime(f"build/{test_name}.txt")
     self.assertGreater(mtime2, mtime1)
 
-################################################################################
-
 #fails = 0
 #fails += test_always_rebuild_if_no_inputs()
 #fails += test_always_rebuild_if_no_outputs()
@@ -310,8 +323,6 @@ class TestRebuildTriggers(unittest.TestCase):
 #  files_out  = "build/always_rebuild_if_no_outputs.txt",
 #  check      = check_timestamp_outputs,
 #)
-
-################################################################################
 
 deps1 = hancho.Rule(
   desc = "deps1",

@@ -1,6 +1,6 @@
 # tests/expand_failed_to_terminate.hancho
 
-hancho.config.build_dir = __name__
+hancho.config.build_dir = "build/" + __name__
 
 hancho.Rule(
   command = "{flarp}",

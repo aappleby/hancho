@@ -1,8 +1,10 @@
 # tests/build_dir_works.hancho
 
-hancho.Rule(
-  desc = "Should put a file in build_dir_works/",
+hancho.config.build_dir = "build/build_dir_works"
+
+build_dir_works = hancho.Rule(
+  desc = "Should put a file in build/build_dir_works",
   command = "touch {files_out}",
-  build_dir = __name__,
-  files_out = "build_dir_works.txt"
-)()
+)
+
+build_dir_works([], "result.txt")

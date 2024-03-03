@@ -1,6 +1,6 @@
 # tests/missing_src.hancho
 
-hancho.config.build_dir = __name__
+hancho.config.build_dir = "build/" + __name__
 
 missing_src = hancho.Rule(
   desc      = "We should fail if a source file is missing",

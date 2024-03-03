@@ -1,14 +1,11 @@
 # test/always_rebuild_if_no_inputs.hancho
 
-print(__name__)
-print(__file__.split(".")[0])
 
-"""
-hancho.Rule(
+hancho.config.build_dir = "build/" + __name__
+
+always_rebuilt = hancho.Rule(
   desc      = "Always rebuild {files_out} if the rule has no inputs",
   command   = "touch {files_out}",
-  files_in  = [],
-  files_out = "always_rebuild_if_no_inputs.txt",
-  #build_dir = __file__.split(".")[0]
-)()
-"""
+)
+
+always_rebuilt([], "result.txt")

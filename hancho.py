@@ -49,7 +49,7 @@ async def flatten_async(x):
 
 line_dirty = False
 
-def log(*args, sameline = False, **kwargs):
+def log(message, *args, task = None, expand = False, sameline = False, **kwargs):
   global line_dirty
   if this.config.quiet: return
 
@@ -57,7 +57,9 @@ def log(*args, sameline = False, **kwargs):
 
   output = io.StringIO()
   if sameline: kwargs["end"] = ""
-  print(*args, file=output, **kwargs)
+  if task and expand:
+    message = task.expand(message)
+  print(message, *args, file=output, **kwargs)
   output = output.getvalue()
 
   if not sameline and line_dirty:
@@ -80,8 +82,8 @@ def log(*args, sameline = False, **kwargs):
 def err(*args, **kwargs):
   print(color(255, 128, 128), end="")
   log(*args, **kwargs)
-  print(color(), end="")
   print("(Hancho exiting due to error)")
+  print(color(), end="")
   sys.exit(-1)
 
 ################################################################################
@@ -379,7 +381,7 @@ async def run_command(task):
   task.returncode = proc.returncode
 
   # Print command output if needed
-  if (task.stdout or task.stderr):
+  if not task.quiet and (task.stdout or task.stderr):
     if task.stderr: log(task.stderr, end="")
     if task.stdout: log(task.stdout, end="")
 

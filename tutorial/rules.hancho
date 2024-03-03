@@ -12,6 +12,6 @@ link = hancho.Rule(
   command   = "g++ {files_in} -o {files_out}",
 )
 
-def c_binary(name, files):
-  objs = [compile(file) for file in files]
-  return link(objs, name)
+def c_binary(files_in, files_out, **kwargs):
+  objs = [compile(file, **kwargs) for file in files_in]
+  return link(objs, files_out, **kwargs)

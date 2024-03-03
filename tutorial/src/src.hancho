@@ -3,4 +3,4 @@ import glob
 
 rules = hancho.load("rules.hancho")
 
-rules.c_binary("app", glob.glob("*.cpp"))
+rules.c_binary(glob.glob("*.cpp"), "app")

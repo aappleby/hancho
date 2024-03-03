@@ -2,7 +2,6 @@
 
 ```py
 # examples/hello_world/build.hancho
-import hancho
 
 hancho.config.set(build_dir = "build")
 

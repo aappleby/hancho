@@ -49,7 +49,6 @@ Here's how we run the same command in Hancho:
 
 ```py
 # tutorial/tut0.hancho
-import hancho
 
 rule = hancho.Rule(
   command = "g++ {files_in} -o {files_out}",
@@ -124,7 +123,6 @@ running a build.
 
 ``` py
 # tutorial/tut1.hancho
-import hancho
 
 compile = hancho.Rule(
   desc = "Compile {files_in} -> {files_out}",
@@ -348,7 +346,6 @@ builtin to generically define ```files_out``` and ```depfile``` in the
 
 ```py
 # tutorial/tut2.hancho
-import hancho
 
 hancho.config.set(build_dir = "build/tut2")
 
@@ -437,7 +434,6 @@ You'll notice that tut3.hancho is mostly empty now:
 
 ```py
 # tutorial/tut3.hancho
-import hancho
 
 hancho.config.set(build_dir = "build/tut3")
 
@@ -450,11 +446,10 @@ That's because the actual build has moved to ```src/src.hancho``` so it can live
 ```py
 # tutorial/src/src.hancho
 import glob
-import hancho
 
 rules = hancho.load("rules.hancho")
 
-rules.c_binary("app", glob.glob("*.cpp"))
+rules.c_binary(glob.glob("*.cpp"), "app")
 ```
 
 Some things to note here -
@@ -473,8 +468,6 @@ But what is ```rules.c_binary```? It's a helper function in ```rules.hancho```:
 
 ```py
 # tutorial/rules.hancho
-import hancho
-import os
 
 compile = hancho.Rule(
   desc      = "Compile {files_in} -> {files_out}",
@@ -488,9 +481,9 @@ link = hancho.Rule(
   command   = "g++ {files_in} -o {files_out}",
 )
 
-def c_binary(name, files):
-  objs = [compile(file) for file in files]
-  return link(objs, name)
+def c_binary(files_in, files_out, **kwargs):
+  objs = [compile(file, **kwargs) for file in files_in]
+  return link(objs, files_out, **kwargs)
 ```
 
 So overall we have the same rules and commands as before, but now they're split
@@ -520,7 +513,6 @@ For example, you can call asynchronous functions and pass their return values to
 ```py
 # tutorial/tut4.hancho - Async/await and custom commands
 import asyncio
-import hancho
 import os
 
 async def do_slow_thing():
