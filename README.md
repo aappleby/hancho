@@ -2,17 +2,21 @@
 
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
-Hancho is the smallest build system I can make that fits my needs.
+Hancho is a simple, pleasant build system with few moving parts.
 
-It focuses on these features:
+Hancho fits comfortably in 500 lines of Python and requires no installation, just copy-paste it into your source tree.
 
-1. Easy construction of commands via text templates, similar to Python f-strings.
-2. Minimal, parallel, fast rebuilds.
-3. Zero "magic" - you control every command run.
-4. Single file with no dependencies outside python3 - just copy-paste it into your repo.
+Hancho is inspired by Ninja and Bazel.
 
-The resulting ```hancho.py``` is under 500 lines of code and should suffice for
-small to medium sized projects.
+Like Ninja, it knows nothing about your build tools and is only trying to assemble and run commands as fast as possible.
+
+Unlike Ninja, you don't need a separate build rule invocation for every single output file.
+
+Like Bazel, you invoke build rules by calling them as if they were functions with keyword arguments.
+
+Unlike Bazel, you can create build rules that call arbitary Python code (for better or worse).
+
+Hancho should suffice for small to medium sized projects.
 
 [Tutorial Here](tutorial)
 
