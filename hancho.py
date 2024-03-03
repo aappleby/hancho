@@ -104,9 +104,10 @@ async def async_main():
   this.hancho_outs = set()
   this.tasks_total = 0
   this.tasks_index = 0
+  this.tasks_pass  = 0
   this.tasks_fail  = 0
+  this.tasks_skip  = 0
   this.mtime_calls = 0
-  this.all_rebuilt = set()
 
   # Change directory and load top module(s).
   if not path.exists(this.config.filename):
@@ -128,12 +129,14 @@ async def async_main():
   # Done, print status info if needed
   if this.config.debug:
     log(f"tasks total:   {this.tasks_total}")
+    log(f"tasks passed:  {this.tasks_pass}")
     log(f"tasks failed:  {this.tasks_fail}")
+    log(f"tasks skipped: {this.tasks_skip}")
     log(f"mtime calls:   {this.mtime_calls}")
 
   if this.tasks_fail:
     log(f"hancho: \x1B[31mBUILD FAILED\x1B[0m")
-  elif this.all_rebuilt:
+  elif this.tasks_pass:
     log(f"hancho: \x1B[32mBUILD PASSED\x1B[0m")
   else:
     log(f"hancho: \x1B[33mBUILD CLEAN\x1B[0m")
@@ -300,6 +303,7 @@ class Rule(dict):
     # Check if we need a rebuild
     self.reason = self.needs_rerun()
     if not self.reason:
+      this.tasks_skip += 1
       return self.abs_files_out
 
     # Make sure our output directories exist
@@ -308,16 +312,17 @@ class Rule(dict):
         os.makedirs(dirname, exist_ok = True)
 
     # OK, we're ready to start the task.
-    this.tasks_index += 1
-    self.print_status()
-    result = await self.run_command()
-    this.all_rebuilt.update(result)
+    async with this.semaphore:
+      this.tasks_index += 1
+      self.print_status()
+      result = await self.run_command()
 
     # Task complete, check if it actually updated all the output files
     if self.files_in and self.files_out:
       if second_reason := self.needs_rerun():
         raise Exception(f"Task '{self.expand(self.desc)}' still needs rerun after running!\nReason: {second_reason}")
 
+    this.tasks_pass += 1
     return result
 
   ########################################
@@ -386,12 +391,11 @@ class Rule(dict):
       raise ValueError(f"Don't know what to do with {self.command}")
 
     # Create the subprocess via asyncio and then await the result.
-    async with this.semaphore:
-      proc = await asyncio.create_subprocess_shell(
-        self.expand(self.command),
-        stdout = asyncio.subprocess.PIPE,
-        stderr = asyncio.subprocess.PIPE)
-      (stdout_data, stderr_data) = await proc.communicate()
+    proc = await asyncio.create_subprocess_shell(
+      self.expand(self.command),
+      stdout = asyncio.subprocess.PIPE,
+      stderr = asyncio.subprocess.PIPE)
+    (stdout_data, stderr_data) = await proc.communicate()
 
     self.stdout = stdout_data.decode()
     self.stderr = stderr_data.decode()
@@ -416,21 +420,9 @@ class Rule(dict):
     files_in  = self.abs_files_in
     files_out = self.abs_files_out
 
-    # Forced tasks always run.
-    if self.force:
-      return f"Files {self.files_out} forced to rebuild"
-
-    # Tasks with no inputs (generators?) always run.
-    if not files_in:
-      return "Always rebuild a target with no inputs"
-
-    # Tasks with no outputs run if any of their inputs were rebuilt.
-    if not files_out:
-      for file in files_in:
-        if file in this.all_rebuilt:
-          return f"Rerunning {self.command} because some inputs were rebuilt"
-      if self.debug: log(f"None of {self.files_in} changed")
-      return None
+    if self.force:    return f"Files {self.files_out} forced to rebuild"
+    if not files_in:  return "Always rebuild a target with no inputs"
+    if not files_out: return "Always rebuild a target with no outputs"
 
     # Tasks with missing outputs always run.
     for file_out in files_out:
