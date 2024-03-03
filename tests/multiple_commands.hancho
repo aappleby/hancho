@@ -1,0 +1,9 @@
+multiple_commands = Rule(
+  command = [
+    "touch {files_out[0]}",
+    "touch {files_out[1]}",
+    "touch {files_out[2]}"
+  ]
+)
+
+multiple_commands(__file__, ["foo.txt", "bar.txt", "baz.txt"])

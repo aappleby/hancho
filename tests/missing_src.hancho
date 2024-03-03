@@ -1,7 +1,5 @@
 # tests/missing_src.hancho
 
-config.build_dir = "build"
-
 missing_src = Rule(
   desc      = "We should fail if a source file is missing",
   command   = "touch {files_out}",

@@ -1,7 +1,5 @@
 # tests/should_pass.hancho
 
-config.build_dir = "build/" + __name__
-
 should_pass = Rule(
   desc = "This task should pass",
   command = "(exit 0)",

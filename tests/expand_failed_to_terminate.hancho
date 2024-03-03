@@ -1,7 +1,5 @@
 # tests/expand_failed_to_terminate.hancho
 
-config.build_dir = "build"
-
 expand_failed_to_terminate = Rule(
   desc = "A recursive text template should cause an 'expand failed to terminate' error.",
   command = "{flarp}",

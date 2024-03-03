@@ -1,10 +1,8 @@
 # examples/meson/build.hancho
 
-config.set(
-  toolchain  = "x86_64-linux-gnu",
-  build_type = "debug",
-  build_dir  = "build/{build_type}",
-)
+config.toolchain  = "x86_64-linux-gnu"
+config.build_type = "debug"
+config.build_dir  = "build/{build_type}"
 
 compile = Rule(
   desc      = "Compiling {files_in} -> {files_out} ({build_type})",

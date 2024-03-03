@@ -7,7 +7,6 @@ test_build = Rule(
   desc      = "{color(200, 200, 100)}Testing tutorial build '{files_in}'{color()}",
   command   = "../hancho.py --verbose {files_in} && touch {files_out} && echo",
   files_out = "{files_in[0] + '.pass'}",
-  build_dir = "build"
 )
 
 test_build("tut0.hancho")

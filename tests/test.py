@@ -38,15 +38,28 @@ class TestHancho(unittest.TestCase):
     os.system("rm -rf build")
     os.system("mkdir build")
 
-  def test_simple(self):
+  def test_should_pass(self):
     self.assertEqual(0, run_hancho("should_pass"))
 
+  def test_check_output(self):
     self.assertNotEqual(0, run_hancho("check_output"))
+
+  def test_check_missing_src(self):
     self.assertNotEqual(0, run_hancho("missing_src"))
+
+  def test_recursive_base_is_bad(self):
     self.assertNotEqual(0, run_hancho("recursive_base_is_bad"))
+
+  def test_should_fail(self):
     self.assertNotEqual(0, run_hancho("should_fail"))
+
+  def test_command_missing(self):
     self.assertNotEqual(0, run_hancho("command_missing"))
+
+  def test_expand_failed_to_terminate(self):
     self.assertNotEqual(0, run_hancho("expand_failed_to_terminate"))
+
+  def test_garbage_command(self):
     self.assertNotEqual(0, run_hancho("garbage_command"))
 
   def test_always_rebuild_if_no_inputs(self):
@@ -112,6 +125,12 @@ class TestHancho(unittest.TestCase):
     mtime3 = mtime(f"build/src/test.o")
     self.assertEqual(mtime1, mtime2)
     self.assertLess(mtime2, mtime3)
+
+  def test_multiple_commands(self):
+    run_hancho("multiple_commands")
+    self.assertTrue(path.exists("build/foo.txt"))
+    self.assertTrue(path.exists("build/bar.txt"))
+    self.assertTrue(path.exists("build/baz.txt"))
 
 ################################################################################
 

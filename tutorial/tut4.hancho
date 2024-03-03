@@ -2,6 +2,8 @@
 import asyncio
 import os
 
+config.build_dir = "build/tut4"
+
 # You can use promises that return arrays of filenames in place of actual
 # filenames in rules.
 async def do_slow_thing():
@@ -28,4 +30,4 @@ custom_rule = Rule(
   command = custom_command
 )
 
-custom_rule("src/main.cpp", ["build/tut4/custom1", "build/tut4/custom2"])
+custom_rule("src/main.cpp", ["tut4/custom1", "tut4/custom2"])

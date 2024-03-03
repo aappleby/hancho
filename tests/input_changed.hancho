@@ -1,6 +1,4 @@
 
-config.build_dir = "build"
-
 input_changed = Rule(
   desc = "Changing a source file should trigger a rebuild",
   command = "gcc -MMD -c {files_in} -o {files_out}",

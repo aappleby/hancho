@@ -10,6 +10,6 @@ link = Rule(
   command = "g++ {files_in} -o {files_out}",
 )
 
-main_o = compile("src/main.cpp", "build/tut1/src/main.o")
-util_o = compile("src/util.cpp", "build/tut1/src/util.o")
-link([main_o, util_o], "build/tut1/app")
+main_o = compile("src/main.cpp", "tut1/src/main.o")
+util_o = compile("src/util.cpp", "tut1/src/util.o")
+link([main_o, util_o], "tut1/app")

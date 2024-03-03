@@ -1,6 +1,4 @@
 
-config.build_dir = "build"
-
 dep_changed = Rule(
   desc = "Changing a file in deps[] should trigger a rebuild",
   command = "touch {files_out}",
@@ -9,7 +7,5 @@ dep_changed = Rule(
 dep_changed(
   "src/test.cpp",
   "result.txt",
-  deps = [
-    "build/dummy.txt"
-  ]
+  deps = ["build/dummy.txt"]
 )

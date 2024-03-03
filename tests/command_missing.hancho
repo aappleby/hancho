@@ -1,7 +1,5 @@
 # tests/command_missing.hancho
 
-config.build_dir = "build/" + __name__
-
 command_missing = Rule(
   desc = "Command is missing",
 )

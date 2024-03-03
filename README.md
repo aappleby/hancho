@@ -38,8 +38,6 @@ chmod +x hancho.py
 ```py
 # examples/hello_world/build.hancho
 
-config.set(build_dir = "build")
-
 compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -MMD -c {files_in} -o {files_out}",

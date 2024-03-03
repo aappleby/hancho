@@ -103,10 +103,10 @@ async def async_main():
   this.mod_stack   = []
   this.hancho_outs = set()
   this.tasks_total = 0
-  this.tasks_index = 0
   this.tasks_pass  = 0
   this.tasks_fail  = 0
   this.tasks_skip  = 0
+  this.task_counter = 0
   this.mtime_calls = 0
 
   # Change directory and load top module(s).
@@ -229,16 +229,13 @@ class Rule(dict):
   """
 
   def __init__(self, *, base = None, **kwargs):
-    self.set(**kwargs)
+    self |= kwargs
     self.base = this.config if base is None else base
 
   def __missing__(self, key):
     if self.base:
       return self.base[key]
     return None
-
-  def set(self, **kwargs):
-    self |= kwargs
 
   def __setattr__(self, key, value):
     self.__setitem__(key, value)
@@ -266,7 +263,7 @@ class Rule(dict):
     task.files_in = files_in
     if files_out is not None: task.files_out = files_out
     task.abs_cwd = path.split(this.mod_stack[-1].__file__)[0]
-    task.set(**kwargs)
+    task |= kwargs
     promise = task.async_call()
     return asyncio.create_task(promise)
 
@@ -295,6 +292,10 @@ class Rule(dict):
     # Wait for all our deps
     await self.await_paths()
 
+    # Deps fulfilled, we are now runnable so grab a task index.
+    this.task_counter += 1
+    self.task_index = this.task_counter
+
     # Check for duplicate task outputs
     for file in self.abs_files_out:
       if file in this.hancho_outs: raise Exception(f"Multiple rules build {file}!")
@@ -313,9 +314,10 @@ class Rule(dict):
 
     # OK, we're ready to start the task.
     async with this.semaphore:
-      this.tasks_index += 1
       self.print_status()
-      result = await self.run_command()
+      result = []
+      for command in flatten(self.command):
+        result = await self.run_command(command)
 
     # Task complete, check if it actually updated all the output files
     if self.files_in and self.files_out:
@@ -363,36 +365,37 @@ class Rule(dict):
 
   def print_status(self):
     """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
-    log(f"[{this.tasks_index}/{this.tasks_total}] {self.expand(self.desc)}",
+    log(f"[{self.task_index}/{this.tasks_total}] {self.expand(self.desc)}",
         sameline = not self.verbose)
     if self.verbose or self.debug:
       log(f"Reason: {self.reason}")
-      if type(self.command) is str:
-        log(f"{self.expand(self.command)}")
+      for command in flatten(self.command):
+        if type(command) is str:
+          log(f"{self.expand(command)}")
       if self.debug:
         log(self)
 
   ########################################
 
-  async def run_command(self):
-    """Actually runs the command, either by calling it or running it in a subprocess"""
+  async def run_command(self, command):
+    """Actually runs a command, either by calling it or running it in a subprocess"""
 
     # Early exit if this is just a dry run
     if self.dryrun: return self.abs_files_out
 
     # Custom commands just get await'ed and then early-out'ed.
-    if callable(self.command):
-      result = await self.command(self)
-      if result is None: raise Exception(f"{self.command} returned None")
+    if callable(command):
+      result = await command(self)
+      if result is None: raise Exception(f"{command} returned None")
       return result
 
     # Non-string non-callable commands are not valid
-    if not type(self.command) is str:
-      raise ValueError(f"Don't know what to do with {self.command}")
+    if not type(command) is str:
+      raise ValueError(f"Don't know what to do with {command}")
 
     # Create the subprocess via asyncio and then await the result.
     proc = await asyncio.create_subprocess_shell(
-      self.expand(self.command),
+      self.expand(command),
       stdout = asyncio.subprocess.PIPE,
       stderr = asyncio.subprocess.PIPE)
     (stdout_data, stderr_data) = await proc.communicate()
@@ -408,7 +411,7 @@ class Rule(dict):
 
     # Task complete, check the task return code
     if self.returncode:
-      raise Exception(f"{self.command} exited with return code {self.returncode}")
+      raise Exception(f"{command} exited with return code {self.returncode}")
 
     # Task passed, return the output file list
     return self.abs_files_out
@@ -478,6 +481,7 @@ this.config = Rule(
   debug     = False,
   force     = False,
   desc      = "{files_in} -> {files_out}",
+  build_dir = "build",
   files_out = [],
   deps      = [],
   expand    = expand,

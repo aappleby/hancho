@@ -56,11 +56,11 @@ rule = Rule(
 
 rule(
   files_in = ["src/main.cpp", "src/util.cpp"],
-  files_out = "build/tut0/app"
+  files_out = "tut0/app"
 )
 
 # Note: The files_in and files_out keywords are optional, this also works:
-# rule(["src/main.cpp", "src/util.cpp"], "build/tut0/app")
+# rule(["src/main.cpp", "src/util.cpp"], "tut0/app")
 ```
 
 Hancho build files are just Python modules ending in .hancho, with minor
@@ -134,9 +134,9 @@ link = Rule(
   command = "g++ {files_in} -o {files_out}",
 )
 
-main_o = compile("src/main.cpp", "build/tut1/src/main.o")
-util_o = compile("src/util.cpp", "build/tut1/src/util.o")
-link([main_o, util_o], "build/tut1/app")
+main_o = compile("src/main.cpp", "tut1/src/main.o")
+util_o = compile("src/util.cpp", "tut1/src/util.o")
+link([main_o, util_o], "tut1/app")
 ```
 
 If we run that, we'll see three commands instead of just one:
@@ -280,7 +280,7 @@ Fields that are never defined will turn into empty strings:
 Fields that are used globally in multiple rules can be set on
 ```config```, which will make them visible in _every_ rule:
 ```py
->>> config.set(bar = "Hancho")
+>>> config.bar = "Hancho"
 >>> rule = Rule(foo = "{bar}")
 >>> rule.expand("{foo}")
 'Hancho'
@@ -321,11 +321,12 @@ Expanding '!!!!!!!!!!!!!!!!!!!!...' failed to terminate
 Now that ```Rule``` is a bit less mysterious, we can use its powers to improve
 our build further.
 
-First things first - we want all our build output to go into a separate
-directory so we don't clutter up our source tree and so we don't have to specify
-it in every ```files_out```. Hancho defines a special rule field ```build_dir```
-that is prepended to all output filenames if present. To specify ```build_dir```
-for all rules in our build, we can set it on the global ```config``` object.
+First things first - we want all our build output for each tutorial to go into a
+separate directory so the output of each tutorial doesn't collide and we don't have
+to specify it in every ```files_out```. Hancho defines a special rule field
+ ```build_dir``` that is prepended to all output filenames if present and
+ defaults to ```build```. To specify a custom ```build_dir``` for all rules in
+ our build, we can set it on the global ```config``` object.
 
 Next up, dependency files. If we pass GCC the ```-MMD``` flag, it will produce a
 dependency file ```main.d``` alongside the compiled ```main.o``` that contains a
@@ -346,7 +347,7 @@ builtin to generically define ```files_out``` and ```depfile``` in the
 ```py
 # tutorial/tut2.hancho
 
-config.set(build_dir = "build/tut2")
+config.build_dir = "build/tut2"
 
 compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
@@ -434,7 +435,7 @@ You'll notice that tut3.hancho is mostly empty now:
 ```py
 # tutorial/tut3.hancho
 
-config.set(build_dir = "build/tut3")
+config.build_dir = "build/tut3"
 
 load("src/src.hancho")
 ```
@@ -542,7 +543,7 @@ custom_rule = Rule(
   command = custom_command
 )
 
-custom_rule("src/main.cpp", ["build/tut4/custom1", "build/tut4/custom2"])
+custom_rule("src/main.cpp", ["tut4/custom1", "tut4/custom2"])
 ```
 
 Whether these features are useful or not is yet to be determined. I think they

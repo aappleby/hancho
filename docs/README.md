@@ -3,8 +3,6 @@
 ```py
 # examples/hello_world/build.hancho
 
-config.set(build_dir = "build")
-
 compile = Rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -MMD -c {files_in} -o {files_out}",
@@ -25,7 +23,7 @@ main_app = link(main_o, "app")
 
 - ```base``` (Default: ```hancho.config```)
     - The rule this rule inherits from. Reading missing fields from a ```rule``` will check ```rule.base``` for the field if there is one, otherwise the missing field will read as ```None```
-- ```build_dir``` (Default: ```None```)
+- ```build_dir``` (Default: ```build```)
     - The directory to put output files in.
 - ```command``` (Default: ```None```)
     - The console command this rule should run, or

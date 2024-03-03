@@ -1,7 +1,5 @@
 # tests/recursive_base_is_bad.hancho
 
-config.build_dir = "build"
-
 rule1 = Rule(
   command = "{thing}",
   thing = ":"
