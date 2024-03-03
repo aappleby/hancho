@@ -25,7 +25,7 @@ compile = hancho.Rule(
     "-Winvalid-pch"
   ],
   files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_in, '.d')}",
+  depfile   = "{swap_ext(files_out, '.d')}",
 )
 
 link = hancho.Rule(
