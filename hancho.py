@@ -87,9 +87,13 @@ def log(message, *args, task = None, expand = False, sameline = False, **kwargs)
 ################################################################################
 
 def main():
-  return asyncio.run(async_main())
+  try:
+    return asyncio.run(async_main())
+  except Exception as err:
+    print(err)
+    return -1
 
-##########
+################################################################################
 
 async def async_main():
 
@@ -106,10 +110,10 @@ async def async_main():
 
   # Change directory and load top module(s).
   if not path.exists(this.config.filename):
-    raise ValueError(f"Could not find {this.config.filename}")
+    raise FileNotFoundError(f"Could not find {this.config.filename}")
 
   if this.config.chdir: os.chdir(this.config.chdir)
-  top_module = load2(this.config.filename)
+  top_module = load_abs(path.abspath(this.config.filename))
 
   # Top module(s) loaded. Configure our job semaphore and run all tasks in the
   # queue until we run out.
@@ -135,7 +139,6 @@ async def async_main():
     log(f"hancho: \x1B[33mBUILD CLEAN\x1B[0m")
 
   if this.config.chdir: os.chdir(this.hancho_root)
-
   return -1 if this.tasks_fail else 0
 
 ################################################################################
@@ -146,12 +149,10 @@ def load(mod_path):
   for parent_mod in reversed(this.mod_stack):
     abs_path = path.abspath(path.join(path.split(parent_mod.__file__)[0], mod_path))
     if os.path.exists(abs_path):
-      return load2(abs_path)
-  raise ValueError(f"Could not load module {mod_path}")
+      return load_abs(abs_path)
+  raise FileNotFoundError(f"Could not load module {mod_path}")
 
-def load2(mod_path):
-  abs_path = path.abspath(mod_path)
-
+def load_abs(abs_path):
   if abs_path in this.hancho_mods:
     return this.hancho_mods[abs_path]
 
@@ -217,10 +218,12 @@ def expand(rule, template):
   raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
-# Hancho's Rule object behaves like a Javascript object and implements a basic
-# form of prototypal inheritance via Rule.base
 
 class Rule(dict):
+  """
+  Hancho's Rule object behaves like a Javascript object and implements a basic
+  form of prototypal inheritance via Rule.base
+  """
 
   def __init__(self, *, base = None, **kwargs):
     self.set(**kwargs)
@@ -265,9 +268,9 @@ class Rule(dict):
     return asyncio.create_task(promise)
 
   ########################################
-  # Entry point for async task stuff.
 
   async def async_call(self):
+    """Entry point for async task stuff."""
     try:
       result = await self.dispatch()
       return result
@@ -278,10 +281,9 @@ class Rule(dict):
       return None
 
   ########################################
-  # Does all the bookkeeping and depedency checking, then runs the command if
-  # needed.
 
   async def dispatch(self):
+    """Does all the bookkeeping and depedency checking, then runs the command if needed."""
     # Check for missing fields
     if not self.command:       raise ValueError(f"Command missing for input {self.files_in}!")
     if self.files_in is None:  raise ValueError(f"Task {task.desc} missing files_in")
@@ -292,7 +294,7 @@ class Rule(dict):
 
     # Check for duplicate task outputs
     for file in self.abs_files_out:
-      if file in this.hancho_outs: raise ValueError(f"Multiple rules build {file}!")
+      if file in this.hancho_outs: raise Exception(f"Multiple rules build {file}!")
       this.hancho_outs.add(file)
 
     # Check if we need a rebuild
@@ -314,23 +316,24 @@ class Rule(dict):
     # Task complete, check if it actually updated all the output files
     if self.files_in and self.files_out:
       if second_reason := self.needs_rerun():
-        raise ValueError(f"\x1B[33mFAILED\x1B[0m: Task \"{self.expand(self.desc)}\" still needs rerun after running!\nReason: {second_reason}")
+        raise Exception(f"Task '{self.expand(self.desc)}' still needs rerun after running!\nReason: {second_reason}")
 
     return result
 
   ########################################
-  # Awaits, expands, and normalizes all paths in this task
 
   async def await_paths(self):
+    """Awaits, expands, and normalizes all paths in this task"""
+
     # Flatten all filename promises in any of the input filename arrays.
     self.files_in  = await flatten_async(self.files_in)
     self.files_out = await flatten_async(self.files_out)
     self.deps      = await flatten_async(self.deps)
 
     # Early-out if any of our inputs or outputs are None (failed)
-    if None in self.files_in:  raise ValueError
-    if None in self.files_out: raise ValueError
-    if None in self.deps:      raise ValueError
+    if None in self.files_in:  raise Exception("One of our inputs failed")
+    if None in self.files_out: raise Exception("Somehow we have a None in our outputs")
+    if None in self.deps:      raise Exception("One of our deps failed")
 
     # Do the actual template expansion to produce real filename lists
     self.files_in  = self.expand(self.files_in)
@@ -352,9 +355,9 @@ class Rule(dict):
     self.deps      = [path.relpath(f, this.hancho_root) for f in self.abs_deps]
 
   ########################################
-  # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
 
   def print_status(self):
+    """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
     log(f"[{this.tasks_index}/{this.tasks_total}] {self.expand(self.desc)}",
         sameline = not self.verbose)
     if self.verbose or self.debug:
@@ -365,9 +368,9 @@ class Rule(dict):
         log(self)
 
   ########################################
-  # Actually runs the command, either by calling it or running it in a subprocess
 
   async def run_command(self):
+    """Actually runs the command, either by calling it or running it in a subprocess"""
 
     # Early exit if this is just a dry run
     if self.dryrun: return self.abs_files_out
@@ -375,7 +378,7 @@ class Rule(dict):
     # Custom commands just get await'ed and then early-out'ed.
     if callable(self.command):
       result = await self.command(self)
-      if result is None: raise ValueError(f"{self.command} returned None")
+      if result is None: raise Exception(f"{self.command} returned None")
       return result
 
     # Non-string non-callable commands are not valid
@@ -401,15 +404,15 @@ class Rule(dict):
 
     # Task complete, check the task return code
     if self.returncode:
-      raise ValueError(f"{self.command} exited with return code {self.returncode}")
+      raise Exception(f"{self.command} exited with return code {self.returncode}")
 
     # Task passed, return the output file list
     return self.abs_files_out
 
   ########################################
-  # Checks if a task needs to be re-run, and returns a non-empty reason if so.
 
   def needs_rerun(self):
+    """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
     files_in  = self.abs_files_in
     files_out = self.abs_files_out
 
@@ -495,25 +498,17 @@ this.config = Rule(
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
-  parser.add_argument('filename',          default="build.hancho", nargs="?")
-  parser.add_argument('-C', '--chdir',     default="",             type=str,   help='Change directory first')
-  parser.add_argument('-j', '--jobs',      default=os.cpu_count(), type=int,   help='Run N jobs in parallel (default = cpu_count, 0 = infinity)')
-  parser.add_argument('-v', '--verbose',   default=False, action='store_true', help='Print verbose build info')
-  parser.add_argument('-q', '--quiet',     default=False, action='store_true', help='Mute command output')
-  parser.add_argument('-n', '--dryrun',    default=False, action='store_true', help='Do not run commands')
-  parser.add_argument('-d', '--debug',     default=False, action='store_true', help='Print debugging information')
-  parser.add_argument('-f', '--force',     default=False, action='store_true', help='Force rebuild of everything')
+  parser.add_argument('filename',          default="build.hancho", type=str, nargs="?",   help='The name of the .hancho file to build')
+  parser.add_argument('-C', '--chdir',     default="",             type=str,              help='Change directory first')
+  parser.add_argument('-j', '--jobs',      default=os.cpu_count(), type=int,              help='Run N jobs in parallel (default = cpu_count, 0 = infinity)')
+  parser.add_argument('-v', '--verbose',   default=False,          action="store_true",   help='Print verbose build info')
+  parser.add_argument('-q', '--quiet',     default=False,          action="store_true",   help='Mute all output')
+  parser.add_argument('-n', '--dryrun',    default=False,          action="store_true",   help='Do not run commands')
+  parser.add_argument('-d', '--debug',     default=False,          action="store_true",   help='Print debugging information')
+  parser.add_argument('-f', '--force',     default=False,          action="store_true",   help='Force rebuild of everything')
 
   (flags, unrecognized) = parser.parse_known_args()
-
-  this.config.filename = flags.filename
-  this.config.chdir    = flags.chdir
-  this.config.jobs     = flags.jobs
-  this.config.verbose  = flags.verbose
-  this.config.quiet    = flags.quiet
-  this.config.dryrun   = flags.dryrun
-  this.config.debug    = flags.debug
-  this.config.force    = flags.force
+  this.config |= flags.__dict__
 
   result = main()
   sys.exit(result)
