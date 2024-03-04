@@ -24,7 +24,7 @@ Hancho should suffice for small to medium sized projects.
 
 ## Updates
 
- - 2024-03-04 - Unrecognized command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
+ - 2024-03-04 - Unrecognized '--key=value' command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
  - 2024-03-02 - Initial release. Some test cases yet to be written.
 
 ## Installation
