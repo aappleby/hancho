@@ -49,6 +49,17 @@ async def flatten_async(x):
   for y in x: result.extend(await flatten_async(y))
   return result
 
+# Tries to convert a string to an int, then a float, then gives up. Used for
+# ingesting unrecognized flag values.
+def maybe_as_number(x):
+  try:
+    return int(x)
+  except:
+    try:
+      return float(x)
+    except:
+      return x
+
 ################################################################################
 # Simple logger that can do same-line log messages like Ninja
 
@@ -504,7 +515,15 @@ if __name__ == "__main__":
   parser.add_argument('-f', '--force',     default=False,          action="store_true",   help='Force rebuild of everything')
 
   (flags, unrecognized) = parser.parse_known_args()
+
   this.config |= flags.__dict__
+
+  # Unrecognized flags become global config fields.
+  for span in unrecognized:
+    if m2 := re.match("-+([^=\s]+)(?:=(\S+))?", span):
+      this.config[m2.group(1)] = maybe_as_number(m2.group(2)) if m2.group(2) is not None else True
+
+  print(this.config)
 
   result = main()
   sys.exit(result)
