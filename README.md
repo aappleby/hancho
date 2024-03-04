@@ -30,9 +30,24 @@ Hancho should suffice for small to medium sized projects.
 ## Installation
 
 ``` bash
-wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
-chmod +x hancho.py
-./hancho.py --help
+user@host:~$ wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
+user@host:~$ chmod +x hancho.py
+user@host:~$ ./hancho.py --help
+usage: hancho.py [-h] [-C CHDIR] [-j JOBS] [-v] [-q] [-n] [-d] [-f] [filename]
+
+positional arguments:
+  filename              The name of the .hancho file to build
+
+options:
+  -h, --help            show this help message and exit
+  -C CHDIR, --chdir CHDIR
+                        Change directory first
+  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count, 0 = infinity)
+  -v, --verbose         Print verbose build info
+  -q, --quiet           Mute all output
+  -n, --dryrun          Do not run commands
+  -d, --debug           Print debugging information
+  -f, --force           Force rebuild of everything
 ```
 
 ## Simple Example
