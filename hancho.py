@@ -523,7 +523,5 @@ if __name__ == "__main__":
     if m2 := re.match("-+([^=\s]+)(?:=(\S+))?", span):
       this.config[m2.group(1)] = maybe_as_number(m2.group(2)) if m2.group(2) is not None else True
 
-  print(this.config)
-
   result = main()
   sys.exit(result)
