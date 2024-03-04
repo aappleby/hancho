@@ -132,6 +132,10 @@ class TestHancho(unittest.TestCase):
     self.assertTrue(path.exists("build/bar.txt"))
     self.assertTrue(path.exists("build/baz.txt"))
 
+  def test_arbitrary_flags(self):
+    os.system(f"../hancho.py --build_dir=build/some/other/dir --quiet does_create_output.hancho")
+    self.assertTrue(path.exists("build/some/other/dir/result.txt"))
+
 ################################################################################
 
 if __name__ == '__main__':
