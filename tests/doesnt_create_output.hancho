@@ -1,7 +1,6 @@
 # tests/doesnt_create_output.hancho
 
 doesnt_create_output = Rule(
-  desc = "Doesn't create {files_out}",
   command = ":",
 )
 

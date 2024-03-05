@@ -3,7 +3,6 @@
 config.build_dir = "build/build_dir_works"
 
 build_dir_works = Rule(
-  desc = "Should put a file in build/build_dir_works",
   command = "touch {files_out}",
 )
 

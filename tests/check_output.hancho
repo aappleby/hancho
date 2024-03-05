@@ -1,7 +1,6 @@
 # tests/check_output.hancho
 
 check_output = Rule(
-  desc = "A build rule that doesn't update one of its outputs should fail",
   command = "touch {files_out[0]}",
 )
 

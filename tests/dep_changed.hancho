@@ -1,6 +1,5 @@
 
 dep_changed = Rule(
-  desc = "Changing a file in deps[] should trigger a rebuild",
   command = "touch {files_out}",
 )
 

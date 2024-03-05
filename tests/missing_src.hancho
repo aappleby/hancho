@@ -1,7 +1,6 @@
 # tests/missing_src.hancho
 
 missing_src = Rule(
-  desc      = "We should fail if a source file is missing",
   command   = "touch {files_out}",
 )
 

@@ -1,7 +1,6 @@
 # test/always_rebuild_if_no_inputs.hancho
 
 always_rebuilt = Rule(
-  desc      = "Always rebuild {files_out} if the rule has no inputs",
   command   = "touch {files_out}",
 )
 

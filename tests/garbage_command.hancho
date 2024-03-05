@@ -1,7 +1,6 @@
 # tests/garbage_command.hancho
 
 garbage_command = Rule(
-  desc     = "This command should fail to run",
   command  = "aklsjdflksjdlfkjldfk",
 )
 

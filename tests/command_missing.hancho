@@ -1,7 +1,6 @@
 # tests/command_missing.hancho
 
 command_missing = Rule(
-  desc = "Command is missing",
 )
 
 command_missing(__file__)

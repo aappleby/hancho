@@ -1,7 +1,6 @@
 # tests/expand_failed_to_terminate.hancho
 
 expand_failed_to_terminate = Rule(
-  desc = "A recursive text template should cause an 'expand failed to terminate' error.",
   command = "{flarp}",
   flarp = "asdf {flarp}"
 )

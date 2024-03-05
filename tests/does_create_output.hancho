@@ -1,7 +1,6 @@
 # tests/does_create_output
 
 does_create_output = Rule(
-  desc = "Does create its output file",
   command = "touch {files_out}",
 )
 
