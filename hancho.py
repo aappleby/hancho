@@ -374,6 +374,7 @@ def expand(rule, template):
 # instance's version of that attribute.
 # pylint: disable=attribute-defined-outside-init
 
+
 class Rule(dict):
     """
     Hancho's Rule object behaves like a Javascript object and implements a basic
@@ -468,7 +469,7 @@ class Rule(dict):
         # Check for duplicate task outputs
         for file in self.abs_files_out:
             if file in this.hancho_outs:
-                raise Exception(f"Multiple rules build {file}!")
+                raise NameError(f"Multiple rules build {file}!")
             this.hancho_outs.add(file)
 
         # Check if we need a rebuild
@@ -492,7 +493,7 @@ class Rule(dict):
         # Task complete, check if it actually updated all the output files
         if self.files_in and self.files_out:
             if second_reason := self.needs_rerun():
-                raise Exception(
+                raise ValueError(
                     f"Task '{self.expand(self.desc)}' still needs rerun after running!\n"
                     + f"Reason: {second_reason}"
                 )
@@ -512,11 +513,11 @@ class Rule(dict):
 
         # Early-out if any of our inputs or outputs are None (failed)
         if None in self.files_in:
-            raise Exception("One of our inputs failed")
+            raise ValueError("One of our inputs failed")
         if None in self.files_out:
-            raise Exception("Somehow we have a None in our outputs")
+            raise ValueError("Somehow we have a None in our outputs")
         if None in self.deps:
-            raise Exception("One of our deps failed")
+            raise ValueError("One of our deps failed")
 
         # Do the actual template expansion to produce real filename lists
         self.files_in = self.expand(self.files_in)
@@ -573,7 +574,7 @@ class Rule(dict):
         if callable(command):
             result = await command(self)
             if result is None:
-                raise Exception(f"{command} returned None")
+                raise ValueError(f"Command {command} returned None")
             return result
 
         # Non-string non-callable commands are not valid
@@ -601,7 +602,9 @@ class Rule(dict):
 
         # Task complete, check the task return code
         if self.returncode:
-            raise Exception(f"{command} exited with return code {self.returncode}")
+            raise ValueError(
+                f"Command {command} exited with return code {self.returncode}"
+            )
 
         # Task passed, return the output file list
         return self.abs_files_out
