@@ -4,7 +4,7 @@
 
 Hancho is a simple, pleasant build system with few moving parts.
 
-Hancho fits comfortably in 500 lines of Python and requires no installation, just copy-paste it into your source tree.
+Hancho fits comfortably in 500 lines* of Python and requires no installation, just copy-paste it into your source tree.
 
 Hancho is inspired by Ninja (for speed and simplicity) and Bazel (for syntax and extensibility).
 
@@ -18,12 +18,15 @@ Unlike Bazel, you can create build rules that call arbitary Python code (for bet
 
 Hancho should suffice for small to medium sized projects.
 
+(* - Autoformatting added some whitespace, but it's still under 500 lines of actual code :D )
+
 [Tutorial Here](tutorial)
 
 [Some Additional Documentation Here](docs)
 
 ## Updates
 
+ - 2024-03-04 - Cleaned up pylint & formatting issues in hancho.py and test.py. Hancho.py is now over 500 lines if you include whitespace and comments :D.
  - 2024-03-04 - Unrecognized '--key=value' command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
  - 2024-03-02 - Initial release. Some test cases yet to be written.
 
