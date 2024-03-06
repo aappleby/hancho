@@ -1,11 +1,11 @@
 # tutorial/tut4.hancho - Async/await and custom commands
 import asyncio
-import os
 
 config.build_dir = "build/tut4"
 
-# You can use promises that return arrays of filenames in place of actual
-# filenames in rules.
+# Functions (synchronous or asynchronous) that return filenames or arrays of
+# filenames can be used in place of actual filenames in rules.
+
 async def do_slow_thing():
   print("Doing slow thing")
   await asyncio.sleep(0.1)
@@ -19,8 +19,10 @@ echo = Rule(
 echo(do_slow_thing(), [])
 
 # You can also use them in the command field.
-async def custom_command(task):
-  await async_touch(task)
+def custom_command(task):
+  for f in task.files_out:
+    with open(f, "a") as file:
+      file.write("asdf\n")
   return task.files_out
 
 custom_rule = Rule(

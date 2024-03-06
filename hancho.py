@@ -112,22 +112,14 @@ def touch(name):
     if isinstance(name, Rule):
         for f in name.files_out:
             touch(f)
-    if os.path.exists(name):
+        return name.files_out
+    elif os.path.exists(name):
         os.utime(name, None)
+        return name
     else:
         with open(name, "w") as file:
             file.write("")
-
-
-async def async_touch(task):
-    """Convenience helper method"""
-    for name in task.files_out:
-        if os.path.exists(name):
-            os.utime(name, None)
-        else:
-            with open(name, "w") as file:
-                file.write("")
-    return task.files_out
+        return name
 
 ################################################################################
 

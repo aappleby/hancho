@@ -14,5 +14,5 @@ compile_cpp = Rule(
 )
 
 touch_outputs = Rule(
-  command = async_touch
+  command = touch
 )
