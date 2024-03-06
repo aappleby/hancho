@@ -20,9 +20,7 @@ echo(do_slow_thing(), [])
 
 # You can also use them in the command field.
 async def custom_command(task):
-  for f in task.files_out:
-    print(f"Touching {f}")
-    os.system(f"touch {f}")
+  await async_touch(task)
   return task.files_out
 
 custom_rule = Rule(

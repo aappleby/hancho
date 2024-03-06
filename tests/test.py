@@ -5,20 +5,34 @@ import os
 from os import path
 import subprocess
 import unittest
+import shutil
+import sys
 
-# min delta seems to be 4 msec
-# os.system("touch blahblah.txt")
+sys.path.append("..")
+import hancho
+
+# tests still needed -
+# calling hancho in src dir
+# meta deps changed
+# transitive dependencies
+
+# cl /c main.cpp
+# link /out:"blah.exe" main.obj
+
+# min delta seems to be 4 msec on linux, 1 msec on windows?
+#os.system("touch blahblah.txt")
 # old_mtime = path.getmtime("blahblah.txt")
 # min_delta = 1000000
-# for _ in range(1000):
-#   os.system("touch blahblah.txt")
+# for _ in range(10000):
+#   #os.system("touch blahblah.txt")
+#   os.utime("blahblah.txt", None)
 #   new_mtime = path.getmtime("blahblah.txt")
 #   delta = new_mtime - old_mtime
 #   if delta and delta < min_delta:
-#     log(str(delta))
+#     print(delta)
 #     min_delta = delta
 #   old_mtime = new_mtime
-
+# sys.exit(0)
 
 def mtime(file):
     """Shorthand for path.getmtime()"""
@@ -32,12 +46,7 @@ def run(cmd):
 
 def run_hancho(name):
     """Runs a Hancho build script, quietly."""
-    return os.system(f"../hancho.py --quiet {name}.hancho")
-
-
-def touch(name):
-    """Convenience helper method"""
-    os.system(f"touch {name}")
+    return os.system(f"python3 ../hancho.py --quiet {name}.hancho")
 
 
 ################################################################################
@@ -48,7 +57,8 @@ class TestHancho(unittest.TestCase):
 
     def setUp(self):
         """Always wipe the build dir before a test"""
-        os.system("rm -rf build")
+        if path.exists("build"):
+            shutil.rmtree("build")
 
     def test_should_pass(self):
         """Sanity check"""
@@ -102,15 +112,15 @@ class TestHancho(unittest.TestCase):
 
     def test_dep_changed(self):
         """Changing a file in deps[] should trigger a rebuild"""
-        os.system("mkdir build")
-        touch("build/dummy.txt")
+        os.makedirs("build", exist_ok = True)
+        hancho.touch("build/dummy.txt")
         run_hancho("dep_changed")
         mtime1 = mtime("build/result.txt")
 
         run_hancho("dep_changed")
         mtime2 = mtime("build/result.txt")
 
-        touch("build/dummy.txt")
+        hancho.touch("build/dummy.txt")
         run_hancho("dep_changed")
         mtime3 = mtime("build/result.txt")
         self.assertEqual(mtime1, mtime2)
@@ -134,7 +144,7 @@ class TestHancho(unittest.TestCase):
         run_hancho("header_changed")
         mtime2 = mtime("build/src/test.o")
 
-        os.system("touch src/test.hpp")
+        hancho.touch("src/test.hpp")
         run_hancho("header_changed")
         mtime3 = mtime("build/src/test.o")
         self.assertEqual(mtime1, mtime2)
@@ -148,7 +158,7 @@ class TestHancho(unittest.TestCase):
         run_hancho("input_changed")
         mtime2 = mtime("build/src/test.o")
 
-        os.system("touch src/test.cpp")
+        hancho.touch("src/test.cpp")
         run_hancho("input_changed")
         mtime3 = mtime("build/src/test.o")
         self.assertEqual(mtime1, mtime2)
@@ -164,9 +174,13 @@ class TestHancho(unittest.TestCase):
     def test_arbitrary_flags(self):
         """Passing arbitrary flags to Hancho should work"""
         os.system(
-            "../hancho.py --build_dir=build/some/other/dir --quiet does_create_output.hancho"
+            "python3 ../hancho.py --build_dir=build/some/other/dir --quiet does_create_output.hancho"
         )
         self.assertTrue(path.exists("build/some/other/dir/result.txt"))
+
+    def test_sync_command(self):
+        run_hancho("sync_command")
+        self.assertTrue(path.exists("build/result.txt"))
 
 
 ################################################################################

@@ -1,7 +1,2 @@
-# tests/does_create_output
-
-does_create_output = Rule(
-  command = "touch {files_out}",
-)
-
-does_create_output([], files_out = "result.txt")
+rules = load("rules.hancho")
+rules.touch_outputs([], files_out = "result.txt")

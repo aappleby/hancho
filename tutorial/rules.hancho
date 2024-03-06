@@ -1,15 +1,23 @@
 # tutorial/rules.hancho
 
+import os
+
+compile_lin = "g++ -MMD -c {files_in} -o {files_out}"
+compile_win = "cl.exe /nologo /c {files_in} /sourceDependencies {depfile} /Fo:{files_out} > NUL"
+
+link_lin = "g++ {files_in} -o {files_out}"
+link_win = "link.exe /nologo {files_in} /out:{files_out} > NUL"
+
 compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -MMD -c {files_in} -o {files_out}",
+  command   = compile_win if os.name == 'nt' else compile_lin,
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
 link = Rule(
   desc      = "Link {files_in} -> {files_out}",
-  command   = "g++ {files_in} -o {files_out}",
+  command   = link_win if os.name == 'nt' else link_lin,
 )
 
 def c_binary(files_in, files_out, **kwargs):

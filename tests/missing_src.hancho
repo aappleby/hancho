@@ -1,7 +1,2 @@
-# tests/missing_src.hancho
-
-missing_src = Rule(
-  command   = "touch {files_out}",
-)
-
-missing_src("src/does_not_exist.txt", "build/missing_src.txt")
+rules = load("rules.hancho")
+rules.touch_outputs("src/does_not_exist.txt", "build/missing_src.txt")

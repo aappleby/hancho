@@ -1,8 +1,10 @@
+import os
+
 multiple_commands = Rule(
   command = [
-    "touch {files_out[0]}",
-    "touch {files_out[1]}",
-    "touch {files_out[2]}"
+    "echo foo > {files_out[0]}",
+    "echo bar > {files_out[1]}",
+    "echo baz > {files_out[2]}"
   ]
 )
 

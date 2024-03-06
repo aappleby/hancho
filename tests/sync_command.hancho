@@ -1,0 +1,12 @@
+
+
+def sync_command(task):
+  print("hello world")
+  touch(task.files_out[0])
+  return task.files_out
+
+rule = Rule(
+  command = sync_command
+)
+
+rule(__file__, "result.txt")

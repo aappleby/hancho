@@ -1,7 +1,2 @@
-# test/always_rebuild_if_no_inputs.hancho
-
-always_rebuilt = Rule(
-  command   = "touch {files_out}",
-)
-
-always_rebuilt([], "result.txt")
+rules = load("rules.hancho")
+rules.touch_outputs([], "result.txt")

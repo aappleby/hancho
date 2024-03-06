@@ -1,8 +1,2 @@
-
-header_changed = Rule(
-  command = "gcc -MMD -c {files_in} -o {files_out}",
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
-)
-
-header_changed("src/test.cpp")
+rules = load("rules.hancho")
+rules.compile_cpp("src/test.cpp")

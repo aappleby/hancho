@@ -28,6 +28,8 @@ sys.modules["hancho"] = this
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string"""
+    # FIXME: Color strings don't work in Windows console?
+    if os.name == 'nt': return ""
     if red is None:
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
@@ -104,6 +106,28 @@ def maybe_as_number(text):
         except ValueError:
             return text
 
+
+def touch(name):
+    """Convenience helper method"""
+    if isinstance(name, Rule):
+        for f in name.files_out:
+            touch(f)
+    if os.path.exists(name):
+        os.utime(name, None)
+    else:
+        with open(name, "w") as file:
+            file.write("")
+
+
+async def async_touch(task):
+    """Convenience helper method"""
+    for name in task.files_out:
+        if os.path.exists(name):
+            os.utime(name, None)
+        else:
+            with open(name, "w") as file:
+                file.write("")
+    return task.files_out
 
 ################################################################################
 
@@ -252,11 +276,11 @@ async def async_main():
         log(f"mtime calls:   {this.mtime_calls}")
 
     if this.tasks_fail:
-        log("hancho: \x1B[31mBUILD FAILED\x1B[0m")
+        log(f"hancho: {color(255, 0, 0)}BUILD FAILED{color()}")
     elif this.tasks_pass:
-        log("hancho: \x1B[32mBUILD PASSED\x1B[0m")
+        log(f"hancho: {color(0, 255, 0)}BUILD PASSED{color()}")
     else:
-        log("hancho: \x1B[33mBUILD CLEAN\x1B[0m")
+        log(f"hancho: {color(255, 255, 0)}BUILD CLEAN{color()}")
 
     if this.config.chdir:
         os.chdir(this.hancho_root)
@@ -572,7 +596,9 @@ class Rule(dict):
 
         # Custom commands just get await'ed and then early-out'ed.
         if callable(command):
-            result = await command(self)
+            result = command(self)
+            if inspect.isawaitable(result):
+                result = await result
             if result is None:
                 raise ValueError(f"Command {command} returned None")
             return result
@@ -651,8 +677,14 @@ class Rule(dict):
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
                 with open(abs_depfile, encoding="utf-8") as depfile:
-                    deplines = depfile.read().split()
-                    deplines = [d for d in deplines[1:] if d != "\\"]
+                    deplines = None
+                    if os.name == 'nt':
+                        # MSVC /sourceDependencies json depfile
+                        deplines = json.load(depfile)['Data']['Includes']
+                    elif os.name == 'posix':
+                        # GCC .d depfile
+                        deplines = depfile.read().split()
+                        deplines = [d for d in deplines[1:] if d != "\\"]
                     if deplines and max(mtime(f) for f in deplines) >= min_out:
                         return (
                             f"Rebuilding {self.files_out} because a dependency in "

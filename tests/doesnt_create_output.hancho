@@ -1,7 +1,2 @@
-# tests/doesnt_create_output.hancho
-
-doesnt_create_output = Rule(
-  command = ":",
-)
-
+doesnt_create_output = Rule(command = ":")
 doesnt_create_output(__file__, "result.txt")

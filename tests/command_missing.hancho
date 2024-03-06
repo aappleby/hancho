@@ -1,6 +1,2 @@
-# tests/command_missing.hancho
-
-command_missing = Rule(
-)
-
+command_missing = Rule()
 command_missing(__file__)

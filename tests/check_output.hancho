@@ -1,7 +1,5 @@
 # tests/check_output.hancho
 
-check_output = Rule(
-  command = "touch {files_out[0]}",
-)
+check_output = Rule(command = "echo foo > {files_out[0]}")
 
 check_output(__file__, ["result.txt", "not_modified.txt"])
