@@ -13,9 +13,5 @@ link = Rule(
   libs      = "user32.lib"
 )
 
-def c_binary(files_in, files_out, **kwargs):
-  objs = [compile(file, **kwargs) for file in files_in]
-  return link(objs, files_out, **kwargs)
-
 main_o = compile("src/main.cpp")
 link(main_o, "app.exe")
