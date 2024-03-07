@@ -101,10 +101,10 @@ def touch(name):
     if os.path.exists(name):
         os.utime(name, None)
         return name
-    else:
-        with open(name, "w", encoding="utf-8") as file:
-            file.write("")
-        return name
+
+    with open(name, "w", encoding="utf-8") as file:
+        file.write("")
+    return name
 
 
 ################################################################################
@@ -346,7 +346,7 @@ async def expand_async(rule, template, depth=0):
         raise template
 
     # Functions just get passed through
-    #if inspect.isfunction(template):
+    # if inspect.isfunction(template):
     #    return template
     assert not inspect.isfunction(template)
 
@@ -405,12 +405,12 @@ async def flatten_async(rule, elements, depth=0):
 
 ################################################################################
 
+
 class Cancel(BaseException):
     """
     Stub exception class that's used to cancel tasks that depend on a task that
     threw a real exception.
     """
-    pass
 
 
 ################################################################################
