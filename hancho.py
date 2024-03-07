@@ -492,7 +492,7 @@ class Rule(dict):
 
         # If this task failed, we print the error and propagate a Cancel
         # exception to downstream tasks.
-        except Exception as err:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except
             if not self.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
