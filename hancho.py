@@ -283,6 +283,11 @@ async def async_main():
 # The .hancho file loader does a small amount of work to keep track of the
 # stack of .hancho files that have been loaded.
 
+# This is prepended to each .hancho file
+header = """
+from hancho import *
+from glob import glob
+"""
 
 def load(mod_path):
     """
@@ -295,7 +300,6 @@ def load(mod_path):
             return load_abs(abs_path)
     raise FileNotFoundError(f"Could not load module {mod_path}")
 
-
 def load_abs(abs_path):
     """
     Loads a Hancho module ***while chdir'd into its directory***
@@ -307,7 +311,6 @@ def load_abs(abs_path):
     mod_file = path.split(abs_path)[1]
     mod_name = mod_file.split(".")[0]
 
-    header = "from hancho import *\n"
     with open(abs_path, encoding="utf-8") as file:
         source = header + file.read()
         code = compile(source, abs_path, "exec", dont_inherit=True)
@@ -382,6 +385,55 @@ def expand(rule, template):
         template = new_template
     raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
 
+################################################################################
+# expand + await + flatten
+
+async def expand_once_async(rule, template):
+    """
+    Does one pass of template expansion on 'template' using fields from 'rule'.
+    Exceptions during expansion are _not_ an error, instead they cause the
+    template to be copied unexpanded to the output.
+    """
+    if template is None:
+        return ""
+    result = ""
+    while span := template_regex.search(template):
+        result += template[0 : span.start()]
+        exp = template[span.start() : span.end()]
+        try:
+            replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
+            if inspect.isawaitable(replacement):
+                replacement = await replacement
+            if isinstance(replacement, list):
+                replacement = flatten(replacement)
+            if replacement is not None:
+                result += join(replacement)
+        except Exception:  # pylint: disable=broad-except
+            result += exp
+        template = template[span.end() :]
+    result += template
+    return result
+
+
+async def expand_async(rule, template):
+    """
+    A trivial templating system that replaces {foo} with the value of rule.foo
+    and keeps going until it can't replace anything. Templates that evaluate to
+    None are replaced with the empty string.
+    """
+    if isinstance(template, list):
+        return [await expand_async(rule, t) for t in flatten(template)]
+
+    for _ in range(100):
+        if rule.debug:
+            log(f'expand "{template}"')
+        new_template = await expand_once_async(rule, template)
+        if template == new_template:
+            if template_regex.search(template):
+                raise ValueError(f"Expanding '{template[0:20]}' is stuck in a loop")
+            return template
+        template = new_template
+    raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
 # We have to disable 'attribute-defined-outside-init' because of the attribute
@@ -439,6 +491,10 @@ class Rule(dict):
         """Expands a template string using fields from this rule."""
         return expand(self, template)
 
+    async def expand_async(self, template):
+        """Expands a template string using fields from this rule."""
+        return expand_async(self, template)
+
     def __call__(self, files_in, files_out=None, **kwargs):
         this.tasks_total += 1
         task = self.extend()
@@ -476,7 +532,47 @@ class Rule(dict):
             raise ValueError(f"Task {self.desc} missing files_out")
 
         # Wait for all our deps
-        await self.await_paths()
+        # Flatten all filename promises in any of the input filename arrays.
+        self.files_in = await flatten_async(self.files_in)
+        self.files_out = await flatten_async(self.files_out)
+        self.deps = await flatten_async(self.deps)
+
+        # Early-out if any of our inputs or outputs are None (failed)
+        if None in self.files_in:
+            raise ValueError("One of our inputs failed")
+        if None in self.files_out:
+            raise ValueError("Somehow we have a None in our outputs")
+        if None in self.deps:
+            raise ValueError("One of our deps failed")
+
+        # Do the actual template expansion to produce real filename lists
+        self.files_in  = self.expand(self.files_in)
+        self.files_out = self.expand(self.files_out)
+        self.deps      = self.expand(self.deps)
+
+        # Prepend directories to filenames and then normalize + absolute them.
+        # If they're already absolute, this does nothing.
+        src_dir = path.relpath(self.abs_cwd, this.hancho_root)
+
+        build_dir = self.expand(self.build_dir)
+        build_dir = path.join(build_dir, src_dir)
+        build_dir = path.join(this.hancho_root, build_dir)
+
+        self.abs_files_in = [
+            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.files_in
+        ]
+        self.abs_files_out = [
+            path.abspath(path.join(build_dir, f))
+            for f in self.files_out
+        ]
+        self.abs_deps = [
+            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.deps
+        ]
+
+        # Strip hancho_root off the absolute paths to produce root-relative paths
+        self.files_in = [path.relpath(f, this.hancho_root) for f in self.abs_files_in]
+        self.files_out = [path.relpath(f, this.hancho_root) for f in self.abs_files_out]
+        self.deps = [path.relpath(f, this.hancho_root) for f in self.abs_deps]
 
         # Deps fulfilled, we are now runnable so grab a task index.
         this.task_counter += 1
@@ -519,50 +615,6 @@ class Rule(dict):
 
     ########################################
 
-    async def await_paths(self):
-        """Awaits, expands, and normalizes all paths in this task"""
-
-        # Flatten all filename promises in any of the input filename arrays.
-        self.files_in = await flatten_async(self.files_in)
-        self.files_out = await flatten_async(self.files_out)
-        self.deps = await flatten_async(self.deps)
-
-        # Early-out if any of our inputs or outputs are None (failed)
-        if None in self.files_in:
-            raise ValueError("One of our inputs failed")
-        if None in self.files_out:
-            raise ValueError("Somehow we have a None in our outputs")
-        if None in self.deps:
-            raise ValueError("One of our deps failed")
-
-        # Do the actual template expansion to produce real filename lists
-        self.files_in = self.expand(self.files_in)
-        self.files_out = self.expand(self.files_out)
-        self.deps = self.expand(self.deps)
-
-        # Prepend directories to filenames and then normalize + absolute them.
-        # If they're already absolute, this does nothing.
-        src_dir = path.relpath(self.abs_cwd, this.hancho_root)
-        build_dir = path.join(self.expand(self.build_dir), src_dir)
-
-        self.abs_files_in = [
-            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.files_in
-        ]
-        self.abs_files_out = [
-            path.abspath(path.join(this.hancho_root, build_dir, f))
-            for f in self.files_out
-        ]
-        self.abs_deps = [
-            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.deps
-        ]
-
-        # Strip hancho_root off the absolute paths to produce root-relative paths
-        self.files_in = [path.relpath(f, this.hancho_root) for f in self.abs_files_in]
-        self.files_out = [path.relpath(f, this.hancho_root) for f in self.abs_files_out]
-        self.deps = [path.relpath(f, this.hancho_root) for f in self.abs_deps]
-
-    ########################################
-
     def print_status(self):
         """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
         log(
@@ -599,9 +651,13 @@ class Rule(dict):
         if not isinstance(command, str):
             raise ValueError(f"Don't know what to do with {command}")
 
+        command = self.expand(command)
+        if self.debug or self.verbose:
+            log(command)
+
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
-            self.expand(command),
+            command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
