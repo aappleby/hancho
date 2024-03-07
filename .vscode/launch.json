@@ -8,9 +8,9 @@
       "name": "Python Debugger: hancho.py",
       "type": "debugpy",
       "request": "launch",
-      "program": "../hancho.py",
+      "program": "${workspaceFolder}/hancho.py",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}/hacks",
+      "cwd": "${workspaceFolder}/examples/hello_world",
       "justMyCode": false,
     },
     {

@@ -30,7 +30,8 @@ sys.modules["hancho"] = this
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string"""
     # FIXME: Color strings don't work in Windows console?
-    if os.name == 'nt': return ""
+    if os.name == "nt":
+        return ""
     if red is None:
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
@@ -39,14 +40,6 @@ def color(red=None, green=None, blue=None):
 def is_atom(element):
     """Returns True if 'element' should _not_ be flattened out"""
     return isinstance(element, str) or not hasattr(element, "__iter__")
-
-
-def join(elements, delim=" "):
-    """
-    Flattens 'elements', converts elements to strings, and joins all non-None
-    elements with 'delim'
-    """
-    return delim.join([str(y) for y in flatten(elements) if y is not None])
 
 
 def run_cmd(cmd):
@@ -58,6 +51,8 @@ def swap_ext(name, new_ext):
     """
     Replaces file extensions on either a single filename or a list of filenames
     """
+    if name is None:
+        return None
     if is_atom(name):
         return path.splitext(name)[0] + new_ext
     return [swap_ext(n, new_ext) for n in flatten(name)]
@@ -80,6 +75,7 @@ def flatten(elements):
     for element in elements:
         result.extend(flatten(element))
     return result
+
 
 def maybe_as_number(text):
     """
@@ -109,12 +105,13 @@ def touch(name):
             file.write("")
         return name
 
+
 ################################################################################
 
 this.line_dirty = False
 
 
-def log(message, *args, task=None, do_expand=False, sameline=False, **kwargs):
+def log(message, *args, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja"""
     if this.config.quiet:
         return
@@ -125,8 +122,6 @@ def log(message, *args, task=None, do_expand=False, sameline=False, **kwargs):
     output = io.StringIO()
     if sameline:
         kwargs["end"] = ""
-    if task and do_expand:
-        message = task.expand(message)
     print(message, *args, file=output, **kwargs)
     output = output.getvalue()
 
@@ -189,8 +184,6 @@ def main():
         build_dir="build",
         files_out=[],
         deps=[],
-        expand=expand,
-        join=join,
         len=len,
         run_cmd=run_cmd,
         swap_ext=swap_ext,
@@ -277,6 +270,7 @@ from hancho import *
 from glob import glob
 """
 
+
 def load(mod_path):
     """
     Searches the loaded Hancho module stack for a module whose directory
@@ -287,6 +281,7 @@ def load(mod_path):
         if os.path.exists(abs_path):
             return load_abs(abs_path)
     raise FileNotFoundError(f"Could not load module {mod_path}")
+
 
 def load_abs(abs_path):
     """
@@ -326,58 +321,12 @@ def load_abs(abs_path):
 
 
 ################################################################################
+# expand + await + flatten
 
 template_regex = re.compile("{[^}]*}")
 
 
-def expand_once(rule, template):
-    """
-    Does one pass of template expansion on 'template' using fields from 'rule'.
-    Exceptions during expansion are _not_ an error, instead they cause the
-    template to be copied unexpanded to the output.
-    """
-    if template is None:
-        return ""
-    result = ""
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        exp = template[span.start() : span.end()]
-        try:
-            replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-            if replacement is not None:
-                result += join(replacement)
-        except Exception:  # pylint: disable=broad-except
-            result += exp
-        template = template[span.end() :]
-    result += template
-    return result
-
-
-def expand(rule, template):
-    """
-    A trivial templating system that replaces {foo} with the value of rule.foo
-    and keeps going until it can't replace anything. Templates that evaluate to
-    None are replaced with the empty string.
-    """
-    if isinstance(template, list):
-        return [expand(rule, t) for t in template]
-
-    for _ in range(100):
-        if rule.debug:
-            log(f'expand "{template}"')
-        new_template = expand_once(rule, template)
-        if template == new_template:
-            if template_regex.search(template):
-                raise ValueError(f"Expanding '{template[0:20]}' is stuck in a loop")
-            return template
-        template = new_template
-    raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
-
-################################################################################
-# expand + await + flatten
-
-
-async def expand_async(rule, template, depth = 0):
+async def expand_async(rule, template, depth=0):
     """
     A trivial templating system that replaces {foo} with the value of rule.foo
     and keeps going until it can't replace anything. Templates that evaluate to
@@ -387,18 +336,31 @@ async def expand_async(rule, template, depth = 0):
     if depth == 10:
         raise ValueError(f"Expanding '{str(template)[0:20]}...' failed to terminate")
 
+    # Awaitables get awaited
     if inspect.isawaitable(template):
         template = await template
 
+    # Nones become empty strings
     if template is None:
         return ""
 
-    if isinstance(template, list):
-        return [await expand_async(rule, t, depth + 1) for t in template]
+    # Propagate exceptions
+    if isinstance(template, BaseException):
+        return template
 
+    # Lists get flattened and joined
+    if isinstance(template, list):
+        template = await flatten_async(rule, template, depth + 1)
+        if isinstance(template, BaseException):
+            return template
+        else:
+            return " ".join(template)
+
+    # Non-strings get stringified
     if not isinstance(template, str):
         template = str(template)
 
+    # Templates get expanded
     result = ""
     while span := template_regex.search(template):
         result += template[0 : span.start()]
@@ -406,13 +368,37 @@ async def expand_async(rule, template, depth = 0):
         try:
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
             replacement = await expand_async(rule, replacement, depth + 1)
-            result += join(replacement)
-        except Exception:  # pylint: disable=broad-except
+            result += replacement
+        except Exception as err:  # pylint: disable=broad-except
+            print(err)
             result += exp
         template = template[span.end() :]
     result += template
+
     return result
 
+
+async def flatten_async(rule, elements, depth=0):
+
+    if not isinstance(elements, list):
+        elements = [elements]
+
+    result = []
+    for element in elements:
+        if isinstance(element, list):
+            new_element = await flatten_async(rule, element, depth + 1)
+        else:
+            new_element = await expand_async(rule, element, depth + 1)
+
+        if isinstance(new_element, BaseException):
+            return new_element
+
+        if isinstance(new_element, list):
+            result.extend(new_element)
+        else:
+            result.append(new_element)
+
+    return result
 
 
 ################################################################################
@@ -467,14 +453,6 @@ class Rule(dict):
         """
         return Rule(base=self, **kwargs)
 
-    def expand(self, template):
-        """Expands a template string using fields from this rule."""
-        return expand(self, template)
-
-    async def expand_async(self, template):
-        """Expands a template string using fields from this rule."""
-        return await expand_async(self, template)
-
     def __call__(self, files_in, files_out=None, **kwargs):
         this.tasks_total += 1
         task = self.extend()
@@ -494,58 +472,58 @@ class Rule(dict):
             result = await self.dispatch()
             return result
         except Exception as err:  # pylint: disable=broad-except
-            log(f"Task '{await self.expand_async(self.desc)}' failed:")
-            log(f"{color(255, 128, 128)}{err}{color()}")
+            log(color(255, 128, 128))
             traceback.print_exception(err)
+            log(color())
+            sys.stdout.flush()
             this.tasks_fail += 1
-            return None
+            return err
 
     ########################################
 
     async def dispatch(self):
         """Does all the bookkeeping and depedency checking, then runs the command if needed."""
+        desc = await expand_async(self, self.desc)
+
         # Check for missing fields
         if not self.command:
             raise ValueError(f"Command missing for input {self.files_in}!")
         if self.files_in is None:
-            raise ValueError(f"Task {self.desc} missing files_in")
+            raise ValueError(f"Task {desc} missing files_in")
         if self.files_out is None:
-            raise ValueError(f"Task {self.desc} missing files_out")
+            raise ValueError(f"Task {desc} missing files_out")
 
         # Wait for all our deps
         # Flatten all filename promises in any of the input filename arrays.
 
-        self.files_in  = flatten(await self.expand_async(self.files_in))
-        self.files_out = flatten(await self.expand_async(self.files_out))
-        self.deps      = flatten(await self.expand_async(self.deps))
+        self.files_in = await flatten_async(self, self.files_in)
+        self.files_out = await flatten_async(self, self.files_out)
+        self.deps = await flatten_async(self, self.deps)
 
-        # Early-out if any of our inputs or outputs are None (failed)
-        if None in self.files_in:
-            raise ValueError("One of our inputs failed")
-        if None in self.files_out:
-            raise ValueError("Somehow we have a None in our outputs")
-        if None in self.deps:
-            raise ValueError("One of our deps failed")
+        # Early-out if any of our inputs failed
+        if isinstance(self.files_in, BaseException):
+            return self.files_in
+        if isinstance(self.files_out, BaseException):
+            return self.files_out
+        if isinstance(self.deps, BaseException):
+            return self.deps
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
         src_dir = path.relpath(self.abs_cwd, this.hancho_root)
 
-        build_dir = await self.expand_async(self.build_dir)
+        build_dir = await expand_async(self, self.build_dir)
         build_dir = path.join(build_dir, src_dir)
         build_dir = path.join(this.hancho_root, build_dir)
 
         self.abs_files_in = [
-            path.abspath(path.join(this.hancho_root, src_dir, f))
-            for f in self.files_in
+            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.files_in
         ]
         self.abs_files_out = [
-            path.abspath(path.join(build_dir, f))
-            for f in self.files_out
+            path.abspath(path.join(build_dir, f)) for f in self.files_out
         ]
         self.abs_deps = [
-            path.abspath(path.join(this.hancho_root, src_dir, f))
-            for f in self.deps
+            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.deps
         ]
 
         # Strip hancho_root off the absolute paths to produce root-relative paths
@@ -564,7 +542,7 @@ class Rule(dict):
             this.hancho_outs.add(file)
 
         # Check if we need a rebuild
-        self.reason = self.needs_rerun()
+        self.reason = await self.needs_rerun()
         if not self.reason:
             this.tasks_skip += 1
             return self.abs_files_out
@@ -575,22 +553,24 @@ class Rule(dict):
                 os.makedirs(dirname, exist_ok=True)
 
         # OK, we're ready to start the task.
-
-        commands = [await self.expand_async(c) for c in flatten(self.command)]
+        command = self.command
+        if not isinstance(command, list):
+            command = [command]
+        commands = await flatten_async(self, self.command)
 
         async with this.semaphore:
-            """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
-            desc = await self.expand_async(self.desc)
 
+            """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
             log(
                 f"[{self.task_index}/{this.tasks_total}] {desc}",
                 sameline=not self.verbose,
             )
+
             if self.verbose or self.debug:
                 log(f"Reason: {self.reason}")
-                for command in flatten(self.command):
+                for command in commands:
                     if isinstance(command, str):
-                        log(f">>> {self.expand(command)}")
+                        log(f">>> {command}")
                 if self.debug:
                     log(self)
 
@@ -600,9 +580,9 @@ class Rule(dict):
 
         # Task complete, check if it actually updated all the output files
         if self.files_in and self.files_out:
-            if second_reason := self.needs_rerun():
+            if second_reason := await self.needs_rerun():
                 raise ValueError(
-                    f"Task '{await self.expand_async(self.desc)}' still needs rerun after running!\n"
+                    f"Task '{desc}' still needs rerun after running!\n"
                     + f"Reason: {second_reason}"
                 )
 
@@ -653,7 +633,7 @@ class Rule(dict):
         # Task complete, check the task return code
         if self.returncode:
             raise ValueError(
-                f"Command {command} exited with return code {self.returncode}"
+                f"Command '{command}' exited with return code {self.returncode}"
             )
 
         # Task passed, return the output file list
@@ -663,7 +643,7 @@ class Rule(dict):
     # Pylint really doesn't like this function, lol.
     # pylint: disable=too-many-return-statements,too-many-branches
 
-    def needs_rerun(self):
+    async def needs_rerun(self):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
         files_in = self.abs_files_in
         files_out = self.abs_files_out
@@ -694,18 +674,17 @@ class Rule(dict):
 
         # Check GCC-format depfile, if present.
         if self.depfile:
-            abs_depfile = path.abspath(
-                path.join(this.hancho_root, self.expand(self.depfile))
-            )
+            depfile = await expand_async(self, self.depfile)
+            abs_depfile = path.abspath(path.join(this.hancho_root, depfile))
             if path.exists(abs_depfile):
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
                 with open(abs_depfile, encoding="utf-8") as depfile:
                     deplines = None
-                    if os.name == 'nt':
+                    if os.name == "nt":
                         # MSVC /sourceDependencies json depfile
-                        deplines = json.load(depfile)['Data']['Includes']
-                    elif os.name == 'posix':
+                        deplines = json.load(depfile)["Data"]["Includes"]
+                    elif os.name == "posix":
                         # GCC .d depfile
                         deplines = depfile.read().split()
                         deplines = [d for d in deplines[1:] if d != "\\"]
