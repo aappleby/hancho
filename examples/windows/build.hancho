@@ -9,13 +9,13 @@ compile = Rule(
 
 link = Rule(
   desc      = "Link {files_in} -> {files_out}",
-  command   = "link.exe /nologo {files_in} /out:{files_out} > NUL",
+  command   = "link.exe /nologo {libs} {files_in} /out:{files_out} > NUL",
+  libs      = "user32.lib"
 )
 
 def c_binary(files_in, files_out, **kwargs):
   objs = [compile(file, **kwargs) for file in files_in]
   return link(objs, files_out, **kwargs)
 
-
 main_o = compile("src/main.cpp")
-link([ain_o, , "app")
+link(main_o, "app.exe")

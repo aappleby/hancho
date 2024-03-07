@@ -2,13 +2,8 @@
 
 import os
 
-if os.name == 'nt':
-  rule = Rule(
-    command = "cl.exe /c {files_in} /Fo:{files_out}",
-  )
-else:
-  rule = Rule(
-    command = "g++ {files_in} -o {files_out}",
-  )
+rule = Rule(
+  command = "g++ {files_in} -o {files_out}",
+)
 
 rule(["src/main.cpp", "src/util.cpp"], "tut0/app")
