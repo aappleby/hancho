@@ -21,7 +21,7 @@ echo(do_slow_thing(), [])
 # You can also use them in the command field.
 def custom_command(task):
   for f in task.files_out:
-    with open(f, "a") as file:
+    with open(f, "a", encoding="utf-8") as file:
       file.write("asdf\n")
   return task.files_out
 

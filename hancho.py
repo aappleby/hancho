@@ -29,7 +29,7 @@ sys.modules["hancho"] = this
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string"""
-    # FIXME: Color strings don't work in Windows console?
+    # Color strings don't work in Windows console, so don't emit them.
     if os.name == "nt":
         return ""
     if red is None:
@@ -97,11 +97,12 @@ def touch(name):
         for f in name.files_out:
             touch(f)
         return name.files_out
-    elif os.path.exists(name):
+
+    if os.path.exists(name):
         os.utime(name, None)
         return name
     else:
-        with open(name, "w") as file:
+        with open(name, "w", encoding="utf-8") as file:
             file.write("")
         return name
 
@@ -265,7 +266,7 @@ async def async_main():
 # stack of .hancho files that have been loaded.
 
 # This is prepended to each .hancho file
-header = """
+HANCHO_HEADER = """
 from hancho import *
 from glob import glob
 """
@@ -295,7 +296,7 @@ def load_abs(abs_path):
     mod_name = mod_file.split(".")[0]
 
     with open(abs_path, encoding="utf-8") as file:
-        source = header + file.read()
+        source = HANCHO_HEADER + file.read()
         code = compile(source, abs_path, "exec", dont_inherit=True)
 
     module = type(sys)(mod_name)
@@ -371,7 +372,7 @@ async def expand_async(rule, template, depth=0):
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
             replacement = await expand_async(rule, replacement, depth + 1)
             result += replacement
-        except Exception as err:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except
             result += exp
         template = template[span.end() :]
     result += template
@@ -403,11 +404,12 @@ async def flatten_async(rule, elements, depth=0):
 
 
 ################################################################################
-# Stub exception class that's used to cancel tasks that depend on a task that
-# threw a real exception.
-
 
 class Cancel(BaseException):
+    """
+    Stub exception class that's used to cancel tasks that depend on a task that
+    threw a real exception.
+    """
     pass
 
 
@@ -499,6 +501,7 @@ class Rule(dict):
             return Cancel()
 
     ########################################
+    # pylint: disable=too-many-return-statements,too-many-branches
 
     async def dispatch(self):
         """Does all the bookkeeping and depedency checking, then runs the command if needed."""

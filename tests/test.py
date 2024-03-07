@@ -9,18 +9,15 @@ import shutil
 import sys
 
 sys.path.append("..")
-import hancho
+import hancho  # pylint: disable=wrong-import-position
 
 # tests still needed -
 # calling hancho in src dir
 # meta deps changed
 # transitive dependencies
 
-# cl /c main.cpp
-# link /out:"blah.exe" main.obj
-
 # min delta seems to be 4 msec on linux, 1 msec on windows?
-#os.system("touch blahblah.txt")
+# os.system("touch blahblah.txt")
 # old_mtime = path.getmtime("blahblah.txt")
 # min_delta = 1000000
 # for _ in range(10000):
@@ -33,6 +30,7 @@ import hancho
 #     min_delta = delta
 #   old_mtime = new_mtime
 # sys.exit(0)
+
 
 def mtime(file):
     """Shorthand for path.getmtime()"""
@@ -112,7 +110,7 @@ class TestHancho(unittest.TestCase):
 
     def test_dep_changed(self):
         """Changing a file in deps[] should trigger a rebuild"""
-        os.makedirs("build", exist_ok = True)
+        os.makedirs("build", exist_ok=True)
         hancho.touch("build/dummy.txt")
         run_hancho("dep_changed")
         mtime1 = mtime("build/result.txt")
@@ -179,6 +177,7 @@ class TestHancho(unittest.TestCase):
         self.assertTrue(path.exists("build/some/other/dir/result.txt"))
 
     def test_sync_command(self):
+        """The 'command' field of rules should be OK handling a sync function"""
         run_hancho("sync_command")
         self.assertTrue(path.exists("build/result.txt"))
 
