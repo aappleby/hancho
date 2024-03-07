@@ -13,4 +13,5 @@ link = Rule(
 )
 
 main_o = compile("main.cpp")
-main_app = link(main_o, "app")
+util_o = compile("util.cpp")
+main_app = link([main_o, util_o], "app")

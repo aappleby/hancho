@@ -81,19 +81,6 @@ def flatten(elements):
         result.extend(flatten(element))
     return result
 
-
-async def flatten_async(elements):
-    """Same as flatten(), except it awaits anything that needs awaiting."""
-    if inspect.isawaitable(elements):
-        elements = await elements
-    if is_atom(elements):
-        return [elements]
-    result = []
-    for element in elements:
-        result.extend(await flatten_async(element))
-    return result
-
-
 def maybe_as_number(text):
     """
     Tries to convert a string to an int, then a float, then gives up. Used for
@@ -390,27 +377,27 @@ def expand(rule, template):
 # expand + await + flatten
 
 
-async def expand_async2(rule, template, depth = 0):
-    if depth == 10:
-        raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
-
-    if template is None:
-        return ""
-
-    if inspect.isawaitable(template):
-        template = await template
-
-    if isinstance(template, list):
-        return flatten([await expand_async2(rule, t, depth + 1) for t in template])
-
-    if not isinstance(template, str):
-        template = str(template)
-
+async def expand_async(rule, template, depth = 0):
     """
     A trivial templating system that replaces {foo} with the value of rule.foo
     and keeps going until it can't replace anything. Templates that evaluate to
     None are replaced with the empty string.
     """
+
+    if depth == 10:
+        raise ValueError(f"Expanding '{str(template)[0:20]}...' failed to terminate")
+
+    if inspect.isawaitable(template):
+        template = await template
+
+    if template is None:
+        return ""
+
+    if isinstance(template, list):
+        return [await expand_async(rule, t, depth + 1) for t in template]
+
+    if not isinstance(template, str):
+        template = str(template)
 
     result = ""
     while span := template_regex.search(template):
@@ -418,7 +405,7 @@ async def expand_async2(rule, template, depth = 0):
         exp = template[span.start() : span.end()]
         try:
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-            replacement = await expand_async2(rule, replacement, depth + 1)
+            replacement = await expand_async(rule, replacement, depth + 1)
             result += join(replacement)
         except Exception:  # pylint: disable=broad-except
             result += exp
@@ -426,9 +413,6 @@ async def expand_async2(rule, template, depth = 0):
     result += template
     return result
 
-
-async def expand_async(rule, template):
-    return flatten(await expand_async2(rule, template))
 
 
 ################################################################################
@@ -510,7 +494,7 @@ class Rule(dict):
             result = await self.dispatch()
             return result
         except Exception as err:  # pylint: disable=broad-except
-            log(f"Task '{self.expand(self.desc)}' failed:")
+            log(f"Task '{await self.expand_async(self.desc)}' failed:")
             log(f"{color(255, 128, 128)}{err}{color()}")
             traceback.print_exception(err)
             this.tasks_fail += 1
@@ -531,9 +515,9 @@ class Rule(dict):
         # Wait for all our deps
         # Flatten all filename promises in any of the input filename arrays.
 
-        self.files_in  = await self.expand_async(self.files_in)
-        self.files_out = await self.expand_async(self.files_out)
-        self.deps      = await self.expand_async(self.deps)
+        self.files_in  = flatten(await self.expand_async(self.files_in))
+        self.files_out = flatten(await self.expand_async(self.files_out))
+        self.deps      = flatten(await self.expand_async(self.deps))
 
         # Early-out if any of our inputs or outputs are None (failed)
         if None in self.files_in:
@@ -547,19 +531,21 @@ class Rule(dict):
         # If they're already absolute, this does nothing.
         src_dir = path.relpath(self.abs_cwd, this.hancho_root)
 
-        build_dir = self.expand(self.build_dir)
+        build_dir = await self.expand_async(self.build_dir)
         build_dir = path.join(build_dir, src_dir)
         build_dir = path.join(this.hancho_root, build_dir)
 
         self.abs_files_in = [
-            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.files_in
+            path.abspath(path.join(this.hancho_root, src_dir, f))
+            for f in self.files_in
         ]
         self.abs_files_out = [
             path.abspath(path.join(build_dir, f))
             for f in self.files_out
         ]
         self.abs_deps = [
-            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.deps
+            path.abspath(path.join(this.hancho_root, src_dir, f))
+            for f in self.deps
         ]
 
         # Strip hancho_root off the absolute paths to produce root-relative paths
@@ -589,38 +575,39 @@ class Rule(dict):
                 os.makedirs(dirname, exist_ok=True)
 
         # OK, we're ready to start the task.
+
+        commands = [await self.expand_async(c) for c in flatten(self.command)]
+
         async with this.semaphore:
-            self.print_status()
+            """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
+            desc = await self.expand_async(self.desc)
+
+            log(
+                f"[{self.task_index}/{this.tasks_total}] {desc}",
+                sameline=not self.verbose,
+            )
+            if self.verbose or self.debug:
+                log(f"Reason: {self.reason}")
+                for command in flatten(self.command):
+                    if isinstance(command, str):
+                        log(f">>> {self.expand(command)}")
+                if self.debug:
+                    log(self)
+
             result = []
-            for command in flatten(self.command):
+            for command in commands:
                 result = await self.run_command(command)
 
         # Task complete, check if it actually updated all the output files
         if self.files_in and self.files_out:
             if second_reason := self.needs_rerun():
                 raise ValueError(
-                    f"Task '{self.expand(self.desc)}' still needs rerun after running!\n"
+                    f"Task '{await self.expand_async(self.desc)}' still needs rerun after running!\n"
                     + f"Reason: {second_reason}"
                 )
 
         this.tasks_pass += 1
         return result
-
-    ########################################
-
-    def print_status(self):
-        """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
-        log(
-            f"[{self.task_index}/{this.tasks_total}] {self.expand(self.desc)}",
-            sameline=not self.verbose,
-        )
-        if self.verbose or self.debug:
-            log(f"Reason: {self.reason}")
-            for command in flatten(self.command):
-                if isinstance(command, str):
-                    log(f"{self.expand(command)}")
-            if self.debug:
-                log(self)
 
     ########################################
 
@@ -643,10 +630,6 @@ class Rule(dict):
         # Non-string non-callable commands are not valid
         if not isinstance(command, str):
             raise ValueError(f"Don't know what to do with {command}")
-
-        command = self.expand(command)
-        if self.debug or self.verbose:
-            log(command)
 
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
