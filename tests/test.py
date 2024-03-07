@@ -9,7 +9,7 @@ import shutil
 import sys
 
 sys.path.append("..")
-import hancho  # pylint: disable=wrong-import-position
+import hancho  # pylint: disable=wrong-import-position, import-error
 
 # tests still needed -
 # calling hancho in src dir
@@ -172,7 +172,8 @@ class TestHancho(unittest.TestCase):
     def test_arbitrary_flags(self):
         """Passing arbitrary flags to Hancho should work"""
         os.system(
-            "python3 ../hancho.py --build_dir=build/some/other/dir --quiet does_create_output.hancho"
+            "python3 ../hancho.py --build_dir=build/some/other/dir --quiet "
+            + "does_create_output.hancho"
         )
         self.assertTrue(path.exists("build/some/other/dir/result.txt"))
 
