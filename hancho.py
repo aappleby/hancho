@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 import types
 from os import path
 
@@ -388,26 +389,37 @@ def expand(rule, template):
 ################################################################################
 # expand + await + flatten
 
-async def expand_once_async(rule, template):
-    """
-    Does one pass of template expansion on 'template' using fields from 'rule'.
-    Exceptions during expansion are _not_ an error, instead they cause the
-    template to be copied unexpanded to the output.
-    """
+
+async def expand_async2(rule, template, depth = 0):
+    if depth == 10:
+        raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
+
     if template is None:
         return ""
+
+    if inspect.isawaitable(template):
+        template = await template
+
+    if isinstance(template, list):
+        return flatten([await expand_async2(rule, t, depth + 1) for t in template])
+
+    if not isinstance(template, str):
+        template = str(template)
+
+    """
+    A trivial templating system that replaces {foo} with the value of rule.foo
+    and keeps going until it can't replace anything. Templates that evaluate to
+    None are replaced with the empty string.
+    """
+
     result = ""
     while span := template_regex.search(template):
         result += template[0 : span.start()]
         exp = template[span.start() : span.end()]
         try:
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-            if inspect.isawaitable(replacement):
-                replacement = await replacement
-            if isinstance(replacement, list):
-                replacement = flatten(replacement)
-            if replacement is not None:
-                result += join(replacement)
+            replacement = await expand_async2(rule, replacement, depth + 1)
+            result += join(replacement)
         except Exception:  # pylint: disable=broad-except
             result += exp
         template = template[span.end() :]
@@ -416,24 +428,8 @@ async def expand_once_async(rule, template):
 
 
 async def expand_async(rule, template):
-    """
-    A trivial templating system that replaces {foo} with the value of rule.foo
-    and keeps going until it can't replace anything. Templates that evaluate to
-    None are replaced with the empty string.
-    """
-    if isinstance(template, list):
-        return [await expand_async(rule, t) for t in flatten(template)]
+    return flatten(await expand_async2(rule, template))
 
-    for _ in range(100):
-        if rule.debug:
-            log(f'expand "{template}"')
-        new_template = await expand_once_async(rule, template)
-        if template == new_template:
-            if template_regex.search(template):
-                raise ValueError(f"Expanding '{template[0:20]}' is stuck in a loop")
-            return template
-        template = new_template
-    raise ValueError(f"Expanding '{template[0:20]}...' failed to terminate")
 
 ################################################################################
 # We have to disable 'attribute-defined-outside-init' because of the attribute
@@ -493,7 +489,7 @@ class Rule(dict):
 
     async def expand_async(self, template):
         """Expands a template string using fields from this rule."""
-        return expand_async(self, template)
+        return await expand_async(self, template)
 
     def __call__(self, files_in, files_out=None, **kwargs):
         this.tasks_total += 1
@@ -516,6 +512,7 @@ class Rule(dict):
         except Exception as err:  # pylint: disable=broad-except
             log(f"Task '{self.expand(self.desc)}' failed:")
             log(f"{color(255, 128, 128)}{err}{color()}")
+            traceback.print_exception(err)
             this.tasks_fail += 1
             return None
 
@@ -533,9 +530,10 @@ class Rule(dict):
 
         # Wait for all our deps
         # Flatten all filename promises in any of the input filename arrays.
-        self.files_in = await flatten_async(self.files_in)
-        self.files_out = await flatten_async(self.files_out)
-        self.deps = await flatten_async(self.deps)
+
+        self.files_in  = await self.expand_async(self.files_in)
+        self.files_out = await self.expand_async(self.files_out)
+        self.deps      = await self.expand_async(self.deps)
 
         # Early-out if any of our inputs or outputs are None (failed)
         if None in self.files_in:
@@ -544,11 +542,6 @@ class Rule(dict):
             raise ValueError("Somehow we have a None in our outputs")
         if None in self.deps:
             raise ValueError("One of our deps failed")
-
-        # Do the actual template expansion to produce real filename lists
-        self.files_in  = self.expand(self.files_in)
-        self.files_out = self.expand(self.files_out)
-        self.deps      = self.expand(self.deps)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
