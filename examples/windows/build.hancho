@@ -1,0 +1,21 @@
+# hancho/examples/windows/build.hancho - Builds a trivial Win32 app.
+
+compile = Rule(
+  desc      = "Compile {files_in} -> {files_out}",
+  command   = "cl.exe /nologo /c {files_in} /sourceDependencies {depfile} /Fo:{files_out} > NUL",
+  files_out = "{swap_ext(files_in, '.o')}",
+  depfile   = "{swap_ext(files_out, '.d')}",
+)
+
+link = Rule(
+  desc      = "Link {files_in} -> {files_out}",
+  command   = "link.exe /nologo {files_in} /out:{files_out} > NUL",
+)
+
+def c_binary(files_in, files_out, **kwargs):
+  objs = [compile(file, **kwargs) for file in files_in]
+  return link(objs, files_out, **kwargs)
+
+
+main_o = compile("src/main.cpp")
+link([ain_o, , "app")
