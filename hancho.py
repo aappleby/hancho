@@ -241,7 +241,7 @@ async def async_main():
         await asyncio.wait(pending_tasks)
 
     # Done, print status info if needed
-    if this.config.debug:
+    if this.config.debug or this.config.verbose:
         log(f"tasks total:   {this.tasks_total}")
         log(f"tasks passed:  {this.tasks_pass}")
         log(f"tasks failed:  {this.tasks_fail}")
@@ -340,21 +340,23 @@ async def expand_async(rule, template, depth=0):
     if inspect.isawaitable(template):
         template = await template
 
+    # Cancellations cancel this task
+    if isinstance(template, Cancel):
+        raise template
+
+    # Functions just get passed through
+    #if inspect.isfunction(template):
+    #    return template
+    assert not inspect.isfunction(template)
+
     # Nones become empty strings
     if template is None:
         return ""
 
-    # Propagate exceptions
-    if isinstance(template, BaseException):
-        return template
-
     # Lists get flattened and joined
     if isinstance(template, list):
         template = await flatten_async(rule, template, depth + 1)
-        if isinstance(template, BaseException):
-            return template
-        else:
-            return " ".join(template)
+        return " ".join(template)
 
     # Non-strings get stringified
     if not isinstance(template, str):
@@ -370,7 +372,6 @@ async def expand_async(rule, template, depth=0):
             replacement = await expand_async(rule, replacement, depth + 1)
             result += replacement
         except Exception as err:  # pylint: disable=broad-except
-            print(err)
             result += exp
         template = template[span.end() :]
     result += template
@@ -379,26 +380,35 @@ async def expand_async(rule, template, depth=0):
 
 
 async def flatten_async(rule, elements, depth=0):
+    """
+    Similar to expand_async, this turns an arbitrarily-nested array of template
+    strings and promises into a flat array of plain strings.
+    """
 
     if not isinstance(elements, list):
         elements = [elements]
 
     result = []
     for element in elements:
-        if isinstance(element, list):
+        if inspect.isfunction(element):
+            result.append(element)
+        elif isinstance(element, list):
             new_element = await flatten_async(rule, element, depth + 1)
-        else:
-            new_element = await expand_async(rule, element, depth + 1)
-
-        if isinstance(new_element, BaseException):
-            return new_element
-
-        if isinstance(new_element, list):
             result.extend(new_element)
         else:
+            new_element = await expand_async(rule, element, depth + 1)
             result.append(new_element)
 
     return result
+
+
+################################################################################
+# Stub exception class that's used to cancel tasks that depend on a task that
+# threw a real exception.
+
+
+class Cancel(BaseException):
+    pass
 
 
 ################################################################################
@@ -471,13 +481,22 @@ class Rule(dict):
         try:
             result = await self.dispatch()
             return result
+
+        # If any of this tasks's dependencies were cancelled, we propagate the
+        # cancellation to downstream tasks.
+        except Cancel as cancel:
+            this.tasks_skip += 1
+            return cancel
+
+        # If this task failed, we print the error and propagate a Cancel
+        # exception to downstream tasks.
         except Exception as err:  # pylint: disable=broad-except
             log(color(255, 128, 128))
             traceback.print_exception(err)
             log(color())
             sys.stdout.flush()
             this.tasks_fail += 1
-            return err
+            return Cancel()
 
     ########################################
 
@@ -493,47 +512,33 @@ class Rule(dict):
         if self.files_out is None:
             raise ValueError(f"Task {desc} missing files_out")
 
-        # Wait for all our deps
-        # Flatten all filename promises in any of the input filename arrays.
+        # Flatten+await all filename promises in any of the input filename arrays.
 
         self.files_in = await flatten_async(self, self.files_in)
         self.files_out = await flatten_async(self, self.files_out)
         self.deps = await flatten_async(self, self.deps)
 
-        # Early-out if any of our inputs failed
-        if isinstance(self.files_in, BaseException):
-            return self.files_in
-        if isinstance(self.files_out, BaseException):
-            return self.files_out
-        if isinstance(self.deps, BaseException):
-            return self.deps
-
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
-        src_dir = path.relpath(self.abs_cwd, this.hancho_root)
 
         build_dir = await expand_async(self, self.build_dir)
-        build_dir = path.join(build_dir, src_dir)
-        build_dir = path.join(this.hancho_root, build_dir)
+        build_dir = path.join(
+            this.hancho_root, build_dir, path.relpath(self.abs_cwd, this.hancho_root)
+        )
+        src_dir = path.join(
+            this.hancho_root, path.relpath(self.abs_cwd, this.hancho_root)
+        )
 
-        self.abs_files_in = [
-            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.files_in
-        ]
+        self.abs_files_in = [path.abspath(path.join(src_dir, f)) for f in self.files_in]
         self.abs_files_out = [
             path.abspath(path.join(build_dir, f)) for f in self.files_out
         ]
-        self.abs_deps = [
-            path.abspath(path.join(this.hancho_root, src_dir, f)) for f in self.deps
-        ]
+        self.abs_deps = [path.abspath(path.join(src_dir, f)) for f in self.deps]
 
         # Strip hancho_root off the absolute paths to produce root-relative paths
         self.files_in = [path.relpath(f, this.hancho_root) for f in self.abs_files_in]
         self.files_out = [path.relpath(f, this.hancho_root) for f in self.abs_files_out]
         self.deps = [path.relpath(f, this.hancho_root) for f in self.abs_deps]
-
-        # Deps fulfilled, we are now runnable so grab a task index.
-        this.task_counter += 1
-        self.task_index = this.task_counter
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -552,15 +557,19 @@ class Rule(dict):
             if dirname := path.dirname(file_out):
                 os.makedirs(dirname, exist_ok=True)
 
-        # OK, we're ready to start the task.
-        command = self.command
-        if not isinstance(command, list):
-            command = [command]
+        # And flatten+expand our command list
         commands = await flatten_async(self, self.command)
 
+        # OK, we're ready to start the task. Grab the semaphore before we start
+        # printing status stuff so that it'll end up near the actual task
+        # invocation.
         async with this.semaphore:
 
-            """Print the "[1/N] Foo foo.foo foo.o" status line and debug information"""
+            # Deps fulfilled, we are now runnable so grab a task index.
+            this.task_counter += 1
+            self.task_index = this.task_counter
+
+            # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
             log(
                 f"[{self.task_index}/{this.tasks_total}] {desc}",
                 sameline=not self.verbose,
@@ -569,8 +578,7 @@ class Rule(dict):
             if self.verbose or self.debug:
                 log(f"Reason: {self.reason}")
                 for command in commands:
-                    if isinstance(command, str):
-                        log(f">>> {command}")
+                    log(f">>> {command}")
                 if self.debug:
                     log(self)
 
