@@ -495,7 +495,7 @@ class Rule(dict):
         except Exception as err:  # pylint: disable=broad-except
             if not self.quiet:
                 log(color(255, 128, 128))
-                traceback.print_exception(err)
+                traceback.print_exception(*sys.exc_info())
                 log(color())
             this.tasks_fail += 1
             return Cancel()
