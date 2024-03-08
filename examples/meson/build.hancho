@@ -1,6 +1,5 @@
 # examples/meson/build.hancho
 
-#config.toolchain  = "x86_64-linux-gnu"
 config.build_type = "debug"
 config.build_dir  = "build/{build_type}"
 
