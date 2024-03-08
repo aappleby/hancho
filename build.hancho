@@ -2,6 +2,6 @@ config.verbose = True
 config.jobs = 1
 
 Rule()([], [], desc = "Run all tests",         command = "cd tests && rm -rf build && ./test.py 2> /dev/null")
-Rule()([], [], desc = "Build all tutorials",   command = "cd tutorial && rm -rf build && hancho --quiet")
-Rule()([], [], desc = "Build hello_world",     command = "cd examples/hello_world && rm -rf build && hancho --quiet")
-Rule()([], [], desc = "Build gtk hello_world", command = "cd examples/meson && rm -rf build && hancho --quiet")
+Rule()([], [], desc = "Build all tutorials",   command = "cd tutorial && rm -rf build && ../hancho.py --quiet")
+Rule()([], [], desc = "Build hello_world",     command = "cd examples/hello_world && rm -rf build && ../../hancho.py --quiet")
+Rule()([], [], desc = "Build gtk hello_world", command = "cd examples/meson && rm -rf build && ../../hancho.py --quiet")

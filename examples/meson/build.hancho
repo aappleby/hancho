@@ -1,17 +1,17 @@
 # examples/meson/build.hancho
 
-config.toolchain  = "x86_64-linux-gnu"
+#config.toolchain  = "x86_64-linux-gnu"
 config.build_type = "debug"
 config.build_dir  = "build/{build_type}"
 
 compile = Rule(
   desc      = "Compiling {files_in} -> {files_out} ({build_type})",
-  command   = "{toolchain}-gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
+  command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
   includes  = [
     "-I."
   ],
   gcc_opts  = [
-    "{'-O3' if build_type == 'release' else '-g -O0'}",
+    "{'-O3' if build_type == 'release' else '-O0'}",
     "-MMD",
     "-fdiagnostics-color=always"
   ],
@@ -28,7 +28,7 @@ compile = Rule(
 
 link = Rule(
   desc      = "Linking {files_out}",
-  command   = "{toolchain}-g++ {files_in} -o {files_out} {link_opts}",
+  command   = "gcc {files_in} -o {files_out} {link_opts}",
   link_opts = [
     "-Wl,--as-needed",
     "-Wl,--no-undefined",
