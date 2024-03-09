@@ -1,2 +1,4 @@
+from hancho import *
+
 command_missing = Rule()
 command_missing(__file__)

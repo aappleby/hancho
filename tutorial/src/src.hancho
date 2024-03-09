@@ -1,4 +1,5 @@
 # tutorial/src/src.hancho
+from hancho import *
 import glob
 import os
 

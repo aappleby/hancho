@@ -1,5 +1,5 @@
 # tutorial/tut0.hancho
-
+from hancho import *
 import os
 
 rule = Rule(

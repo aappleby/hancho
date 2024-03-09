@@ -1,4 +1,5 @@
 # tests/recursive_base_is_bad.hancho
+from hancho import *
 
 rule1 = Rule(
   command = "{thing}",

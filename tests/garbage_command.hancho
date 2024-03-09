@@ -1,2 +1,4 @@
+from hancho import *
+
 garbage_command = Rule(command  = "aklsjdflksjdlfkjldfk")
 garbage_command(__file__, "result.txt")

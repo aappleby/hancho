@@ -1,3 +1,5 @@
+from hancho import *
+
 config.verbose = True
 config.jobs = 1
 

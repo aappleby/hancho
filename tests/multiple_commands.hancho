@@ -1,3 +1,4 @@
+from hancho import *
 import os
 
 multiple_commands = Rule(

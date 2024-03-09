@@ -1,4 +1,5 @@
 # tutorial/tut1.hancho
+from hancho import *
 
 compile = Rule(
   desc = "Compile {files_in} -> {files_out}",

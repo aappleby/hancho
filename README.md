@@ -57,6 +57,7 @@ options:
 ## Simple Example
 ```py
 # examples/hello_world/build.hancho
+from hancho import *
 
 compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",

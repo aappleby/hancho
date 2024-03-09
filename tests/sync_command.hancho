@@ -1,4 +1,4 @@
-
+from hancho import *
 
 def sync_command(task):
   touch(task.files_out[0])

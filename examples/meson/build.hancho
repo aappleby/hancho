@@ -1,4 +1,5 @@
 # examples/meson/build.hancho
+from hancho import *
 
 config.build_type = "debug"
 config.build_dir  = "build/{build_type}"

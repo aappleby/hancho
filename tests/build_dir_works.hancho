@@ -1,3 +1,5 @@
+from hancho import *
+
 rules = load("rules.hancho")
 config.build_dir = "build/build_dir_works"
 rules.touch_outputs([], "result.txt")

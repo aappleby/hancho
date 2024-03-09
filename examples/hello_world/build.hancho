@@ -1,5 +1,5 @@
 # examples/hello_world/build.hancho
-
+from hancho import *
 import asyncio
 
 compile = Rule(

@@ -1,4 +1,5 @@
 # hancho/tutorial/build.hancho - Tests all the tutorials
+from hancho import *
 
 config.jobs = 1
 #config.verbose = True

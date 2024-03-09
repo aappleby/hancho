@@ -1,4 +1,5 @@
 # tests/check_output.hancho
+from hancho import *
 
 check_output = Rule(command = "echo foo > {files_out[0]}")
 

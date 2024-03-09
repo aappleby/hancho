@@ -1,2 +1,4 @@
+from hancho import *
+
 rules = load("rules.hancho")
 rules.touch_outputs([], "result.txt")

@@ -1,4 +1,5 @@
 # tests/should_pass.hancho
+from hancho import *
 
 should_pass = Rule(
   desc = "This task should pass",

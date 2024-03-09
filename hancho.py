@@ -265,13 +265,6 @@ async def async_main():
 # The .hancho file loader does a small amount of work to keep track of the
 # stack of .hancho files that have been loaded.
 
-# This is prepended to each .hancho file
-HANCHO_HEADER = """
-from hancho import *
-from glob import glob
-"""
-
-
 def load(mod_path):
     """
     Searches the loaded Hancho module stack for a module whose directory
@@ -296,7 +289,7 @@ def load_abs(abs_path):
     mod_name = mod_file.split(".")[0]
 
     with open(abs_path, encoding="utf-8") as file:
-        source = HANCHO_HEADER + file.read()
+        source = file.read()
         code = compile(source, abs_path, "exec", dont_inherit=True)
 
     module = type(sys)(mod_name)

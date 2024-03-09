@@ -1,2 +1,4 @@
+from hancho import *
+
 doesnt_create_output = Rule(command = ":")
 doesnt_create_output(__file__, "result.txt")

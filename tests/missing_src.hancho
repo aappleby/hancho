@@ -1,2 +1,4 @@
+from hancho import *
+
 rules = load("rules.hancho")
 rules.touch_outputs("src/does_not_exist.txt", "build/missing_src.txt")

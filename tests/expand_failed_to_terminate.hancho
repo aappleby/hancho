@@ -1,4 +1,5 @@
 # tests/expand_failed_to_terminate.hancho
+from hancho import *
 
 expand_failed_to_terminate = Rule(
   command = "{flarp}",

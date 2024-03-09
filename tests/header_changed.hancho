@@ -1,2 +1,4 @@
+from hancho import *
+
 rules = load("rules.hancho")
 rules.compile_cpp("src/test.cpp")
