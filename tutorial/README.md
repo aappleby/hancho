@@ -49,6 +49,7 @@ Here's how we run the same command in Hancho:
 
 ```py
 # tutorial/tut0.hancho
+from hancho import *
 
 rule = Rule(
   command = "g++ {files_in} -o {files_out}",
@@ -123,6 +124,7 @@ running a build.
 
 ``` py
 # tutorial/tut1.hancho
+from hancho import *
 
 compile = Rule(
   desc = "Compile {files_in} -> {files_out}",
@@ -346,6 +348,7 @@ builtin to generically define ```files_out``` and ```depfile``` in the
 
 ```py
 # tutorial/tut2.hancho
+from hancho import *
 
 config.build_dir = "build/tut2"
 
@@ -434,6 +437,7 @@ You'll notice that tut3.hancho is mostly empty now:
 
 ```py
 # tutorial/tut3.hancho
+from hancho import *
 
 config.build_dir = "build/tut3"
 
@@ -445,6 +449,7 @@ That's because the actual build has moved to ```src/src.hancho``` so it can live
 
 ```py
 # tutorial/src/src.hancho
+from hancho import *
 import glob
 
 rules = load("rules.hancho")
@@ -468,6 +473,7 @@ But what is ```rules.c_binary```? It's a helper function in ```rules.hancho```:
 
 ```py
 # tutorial/rules.hancho
+from hancho import *
 
 compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
@@ -512,6 +518,7 @@ For example, you can call asynchronous functions and pass their return values to
 
 ```py
 # tutorial/tut4.hancho - Async/await and custom commands
+from hancho import *
 import asyncio
 import os
 
