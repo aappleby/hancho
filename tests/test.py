@@ -15,6 +15,7 @@ import hancho  # pylint: disable=wrong-import-position, import-error
 # calling hancho in src dir
 # meta deps changed
 # transitive dependencies
+# dry run not creating files/dirs
 
 # min delta seems to be 4 msec on linux, 1 msec on windows?
 # os.system("touch blahblah.txt")

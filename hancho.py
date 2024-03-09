@@ -549,9 +549,10 @@ class Rule(dict):
             return self.abs_files_out
 
         # Make sure our output directories exist
-        for file_out in self.abs_files_out:
-            if dirname := path.dirname(file_out):
-                os.makedirs(dirname, exist_ok=True)
+        if not self.dryrun:
+            for file_out in self.abs_files_out:
+                if dirname := path.dirname(file_out):
+                    os.makedirs(dirname, exist_ok=True)
 
         # And flatten+expand our command list
         commands = await flatten_async(self, self.command)
@@ -574,7 +575,7 @@ class Rule(dict):
             if self.verbose or self.debug:
                 log(f"Reason: {self.reason}")
                 for command in commands:
-                    log(f">>> {command}")
+                    log(f">>>{' (DRY RUN)' if self.dryrun else ''} {command}")
                 if self.debug:
                     log(self)
 
@@ -583,7 +584,7 @@ class Rule(dict):
                 result = await self.run_command(command)
 
         # Task complete, check if it actually updated all the output files
-        if self.files_in and self.files_out:
+        if self.files_in and self.files_out and not self.dryrun:
             if second_reason := await self.needs_rerun():
                 raise ValueError(
                     f"Task '{desc}' still needs rerun after running!\n"
