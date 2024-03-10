@@ -15,8 +15,8 @@ link = Rule(
   command = "g++ {files_in} -o {files_out}",
 )
 
-main_o = compile("main.cpp")
-main_app = link(main_o, "app")
+main_o = compile(files_in = "main.cpp")
+main_app = link(files_in = main_o, files_out = "app")
 ```
 
 # Special fields in hancho.Rule()
