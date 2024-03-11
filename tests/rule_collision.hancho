@@ -1,0 +1,8 @@
+"""Multiple rules creating same output file = bad"""
+from hancho import Rule
+
+
+rule = Rule(command = "touch {files_out}")
+
+taskA = rule(__file__, "colliding_output.txt")
+taskB = rule(__file__, "colliding_output.txt")
