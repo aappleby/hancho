@@ -1,7 +1,6 @@
 from hancho import *
 
 config.verbose = True
-config.jobs = 1
 
 Rule()([], [], desc = "Run all tests",         command = "cd tests && rm -rf build && ./test.py 2> /dev/null")
 Rule()([], [], desc = "Build all tutorials",   command = "cd tutorial && rm -rf build && ../hancho.py --quiet")

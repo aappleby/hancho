@@ -15,14 +15,18 @@ import sys
 import traceback
 import types
 from pathlib import Path
-from os.path import abspath, relpath
+from os.path import relpath
+from os.path import abspath
+from glob import glob
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
 # that build.hancho and descendants don't try to load a second copy of Hancho.
 
 this = sys.modules[__name__]
-sys.modules["hancho"] = this
+sys.modules["hancho"] = sys.modules[__name__]
+
+config = None
 
 ################################################################################
 # Build rule helper methods
@@ -92,6 +96,20 @@ def maybe_as_number(text):
             return text
 
 
+class Chdir():
+    """Copied from Python 3.11 contextlib.py"""
+    def __init__(self, path):
+        self.path = path
+        self._old_cwd = []
+
+    def __enter__(self):
+        self._old_cwd.append(os.getcwd())
+        os.chdir(self.path)
+
+    def __exit__(self, *excinfo):
+        os.chdir(self._old_cwd.pop())
+
+
 ################################################################################
 
 this.line_dirty = False
@@ -99,7 +117,7 @@ this.line_dirty = False
 
 def log(message, *args, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja"""
-    if this.config.quiet:
+    if config.quiet:
         return
 
     if not sys.stdout.isatty():
@@ -142,7 +160,7 @@ def main():
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
-    parser.add_argument("-C", "--chdir",   default="",             type=str,            help="Change directory first")
+    parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory first")
     parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count, 0 = infinity)")
     parser.add_argument("-v", "--verbose", default=False,          action="store_true", help="Print verbose build info")
     parser.add_argument("-q", "--quiet",   default=False,          action="store_true", help="Mute all output")
@@ -153,13 +171,17 @@ def main():
 
     (flags, unrecognized) = parser.parse_known_args()
 
-    # We set this to None first so that this.config.base gets sets to None in
-    # the next line.
-    this.config = None
+    if not flags.jobs:
+        flags.jobs = 1000
 
-    this.config = Rule(
+    # We set this to None first so that config.base gets sets to None in the
+    # next line.
+    global config
+    config = None
+
+    config = Rule(
         filename="build.hancho",
-        chdir=None,
+        chdir=".",
         jobs=os.cpu_count(),
         verbose=False,
         quiet=False,
@@ -168,28 +190,34 @@ def main():
         force=False,
         desc="{files_in} -> {files_out}",
         build_dir="build",
+        task_dir=".",
         files_out=[],
         deps=[],
         len=len,
         run_cmd=run_cmd,
         swap_ext=swap_ext,
         color=color,
+        glob=glob,
     )
 
-    this.config |= flags.__dict__
+    config |= flags.__dict__
 
-    this.config.filename = Path(this.config.filename)
+    config.filename = Path(config.filename).absolute()
 
-    this.config.hancho_root = Path.cwd()
+    config.hancho_root = Path.cwd()
 
     # Unrecognized flags become global config fields.
     for span in unrecognized:
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-            this.config[match.group(1)] = (
+            config[match.group(1)] = (
                 maybe_as_number(match.group(2)) if match.group(2) is not None else True
             )
 
-    return asyncio.run(async_main())
+    # Configure our job semaphore
+    config.semaphore = asyncio.Semaphore(flags.jobs)
+
+    with Chdir(config.chdir):
+        return asyncio.run(async_main())
 
 
 ################################################################################
@@ -210,21 +238,14 @@ async def async_main():
     this.task_counter = 0
     this.mtime_calls = 0
 
-    # Change directory and load top module(s).
-    if not this.config.filename.exists():
-        raise FileNotFoundError(f"Could not find {this.config.filename}")
+    # Load top module(s).
+    if not config.filename.exists():
+        raise FileNotFoundError(f"Could not find {config.filename}")
 
-    if this.config.chdir:
-        os.chdir(this.config.chdir)
-
-    root_filename = this.config.filename.resolve()
+    root_filename = config.filename.resolve()
     load_abs(root_filename)
 
-    # Top module(s) loaded. Configure our job semaphore and run all tasks in the
-    # queue until we run out.
-    if not this.config.jobs:
-        this.config.jobs = 1000
-    this.semaphore = asyncio.Semaphore(this.config.jobs)
+    # Top module(s) loaded. Run all tasks in the queue until we run out.
 
     while True:
         pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
@@ -233,7 +254,7 @@ async def async_main():
         await asyncio.wait(pending_tasks)
 
     # Done, print status info if needed
-    if this.config.debug or this.config.verbose:
+    if config.debug or config.verbose:
         log(f"tasks total:   {this.tasks_total}")
         log(f"tasks passed:  {this.tasks_pass}")
         log(f"tasks failed:  {this.tasks_fail}")
@@ -247,8 +268,6 @@ async def async_main():
     else:
         log(f"hancho: {color(255, 255, 0)}BUILD CLEAN{color()}")
 
-    if this.config.chdir:
-        os.chdir(this.hancho_root)
     return -1 if this.tasks_fail else 0
 
 
@@ -288,17 +307,16 @@ def load_abs(abs_path):
     this.hancho_mods[abs_path] = module
 
     sys.path.insert(0, str(abs_path.parent))
-    old_dir = Path.cwd()
 
     # We must chdir()s into the .hancho file directory before running it so that
     # glob() can resolve files relative to the .hancho file itself.
     this.mod_stack.append(module)
-    os.chdir(abs_path.parent)
 
-    # Why Pylint thinks is not callable is a mystery.
-    types.FunctionType(code, module.__dict__)()  # pylint: disable=not-callable
+    with Chdir(abs_path.parent):
+        # Why Pylint thinks this is not callable is a mystery.
+        # pylint: disable=not-callable
+        types.FunctionType(code, module.__dict__)()
 
-    os.chdir(old_dir)
     this.mod_stack.pop()
 
     return module
@@ -414,7 +432,7 @@ class Rule(dict):
     def __init__(self, *, base=None, **kwargs):
         super().__init__(self)
         self |= kwargs
-        self.base = this.config if base is None else base
+        self.base = config if base is None else base
 
     def __missing__(self, key):
         if self.base:
@@ -438,6 +456,10 @@ class Rule(dict):
                     return "<function>"
                 if isinstance(o, asyncio.Task):
                     return "<task>"
+                if isinstance(o, Path):
+                    return f"Path {o}"
+                if isinstance(o, asyncio.Semaphore):
+                    return f"Semaphore"
                 return super().default(o)
 
         return json.dumps(self, indent=2, cls=Encoder)
@@ -454,7 +476,7 @@ class Rule(dict):
         task.files_in = files_in
         if files_out is not None:
             task.files_out = files_out
-        task.abs_cwd = Path.cwd().absolute()
+        task.script_dir = Path.cwd().absolute()
         task |= kwargs
         coroutine = task.async_call()
         task.promise = asyncio.create_task(coroutine)
@@ -508,15 +530,19 @@ class Rule(dict):
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
 
-        build_dir = Path(await expand_async(self, self.build_dir))
-        build_dir = (
-            this.hancho_root / build_dir / self.abs_cwd.relative_to(this.hancho_root)
+        self.build_dir2 = Path(await expand_async(self, self.build_dir))
+        self.build_dir2 = (
+            this.hancho_root
+            / self.build_dir2
+            / self.script_dir.relative_to(this.hancho_root)
         )
-        src_dir = this.hancho_root / self.abs_cwd.relative_to(this.hancho_root)
+        self.src_dir = this.hancho_root / self.script_dir.relative_to(this.hancho_root)
 
-        self.abs_files_in = [(src_dir / f).absolute() for f in self.files_in]
-        self.abs_files_out = [(build_dir / f).absolute() for f in self.files_out]
-        self.abs_deps = [(src_dir / f).absolute() for f in self.deps]
+        # FIXME - We need to do this with self.task_dir as well
+
+        self.abs_files_in = [self.src_dir / f for f in self.files_in]
+        self.abs_files_out = [self.build_dir2 / f for f in self.files_out]
+        self.abs_deps = [self.src_dir / f for f in self.deps]
 
         # Strip hancho_root off the absolute paths to produce root-relative paths
         self.files_in = [f.relative_to(this.hancho_root) for f in self.abs_files_in]
@@ -527,7 +553,7 @@ class Rule(dict):
         for file in self.abs_files_out:
             res_file = file.resolve()
             if res_file in this.hancho_outs:
-                rel_file = relpath(res_file, this.config.hancho_root)
+                rel_file = relpath(res_file, config.hancho_root)
                 raise NameError(f"Multiple rules build {rel_file}!")
             this.hancho_outs.add(res_file)
 
@@ -548,7 +574,7 @@ class Rule(dict):
         # OK, we're ready to start the task. Grab the semaphore before we start
         # printing status stuff so that it'll end up near the actual task
         # invocation.
-        async with this.semaphore:
+        async with self.semaphore:
 
             # Deps fulfilled, we are now runnable so grab a task index.
             this.task_counter += 1
@@ -595,7 +621,8 @@ class Rule(dict):
 
         # Custom commands just get await'ed and then early-out'ed.
         if callable(command):
-            result = command(self)
+            with Chdir(self.task_dir):
+                result = command(self)
             if inspect.isawaitable(result):
                 result = await result
             if result is None:
@@ -607,14 +634,12 @@ class Rule(dict):
             raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
-        old_dir = os.getcwd()
-        if self.task_dir: os.chdir(self.task_dir)
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        os.chdir(old_dir)
+        with Chdir(self.task_dir):
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         (stdout_data, stderr_data) = await proc.communicate()
 
         self.stdout = stdout_data.decode()
