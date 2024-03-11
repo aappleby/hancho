@@ -453,8 +453,9 @@ class Rule(dict):
             task.files_out = files_out
         task.abs_cwd = Path.cwd().absolute()
         task |= kwargs
-        promise = task.async_call()
-        return asyncio.create_task(promise)
+        coroutine = task.async_call()
+        task.promise = asyncio.create_task(coroutine)
+        return task.promise
 
     ########################################
 
