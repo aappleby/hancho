@@ -214,7 +214,7 @@ async def async_main():
     if this.config.chdir:
         os.chdir(this.config.chdir)
 
-    root_filename = this.config.filename.absolute()
+    root_filename = this.config.filename.resolve()
     load_abs(root_filename)
 
     # Top module(s) loaded. Configure our job semaphore and run all tasks in the
@@ -260,7 +260,7 @@ def load(mod_path):
     """
     mod_path = Path(mod_path)
     for parent_mod in reversed(this.mod_stack):
-        abs_path = (Path(parent_mod.__file__).parent / mod_path).absolute()
+        abs_path = (Path(parent_mod.__file__).parent / mod_path).resolve()
         if abs_path.exists():
             return load_abs(abs_path)
     raise FileNotFoundError(f"Could not load module {mod_path}")
