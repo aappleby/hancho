@@ -54,10 +54,8 @@ def swap_ext(name, new_ext):
     if name is None:
         return None
     if is_atom(name):
-        name = Path(name)
-        return str(name.parent / name.stem) + new_ext
+        return Path(name).with_suffix(new_ext)
     return [swap_ext(n, new_ext) for n in flatten(name)]
-
 
 def mtime(filename):
     """Gets the file's mtime and tracks how many times we called it"""
