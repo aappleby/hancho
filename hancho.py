@@ -14,7 +14,7 @@ import subprocess
 import sys
 import traceback
 import types
-from os import path
+from pathlib import Path
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -54,14 +54,15 @@ def swap_ext(name, new_ext):
     if name is None:
         return None
     if is_atom(name):
-        return path.splitext(name)[0] + new_ext
+        name = Path(name)
+        return str(name.parent / name.stem) + new_ext
     return [swap_ext(n, new_ext) for n in flatten(name)]
 
 
 def mtime(filename):
-    """Calls path.mtime and tracks how many times we called it"""
+    """Calls os.path.mtime and tracks how many times we called it"""
     this.mtime_calls += 1
-    return path.getmtime(filename)
+    return Path(filename).stat().st_mtime
 
 
 def flatten(elements):
@@ -210,7 +211,7 @@ async def async_main():
     """All the actual Hancho stuff runs in an async context."""
 
     # Reset all global state
-    this.hancho_root = os.getcwd()
+    this.hancho_root = Path.cwd()
     this.hancho_mods = {}
     this.mod_stack = []
     this.hancho_outs = set()
@@ -222,12 +223,14 @@ async def async_main():
     this.mtime_calls = 0
 
     # Change directory and load top module(s).
-    if not path.exists(this.config.filename):
+    if not os.path.exists(this.config.filename):
         raise FileNotFoundError(f"Could not find {this.config.filename}")
 
     if this.config.chdir:
         os.chdir(this.config.chdir)
-    load_abs(path.abspath(this.config.filename))
+
+    root_filename = Path(this.config.filename).absolute()
+    load_abs(root_filename)
 
     # Top module(s) loaded. Configure our job semaphore and run all tasks in the
     # queue until we run out.
@@ -270,9 +273,10 @@ def load(mod_path):
     Searches the loaded Hancho module stack for a module whose directory
     contains 'mod_path', then loads the module relative to that path.
     """
+    mod_path = Path(mod_path)
     for parent_mod in reversed(this.mod_stack):
-        abs_path = path.abspath(path.join(path.split(parent_mod.__file__)[0], mod_path))
-        if os.path.exists(abs_path):
+        abs_path = (Path(parent_mod.__file__).parent / mod_path).absolute()
+        if abs_path.exists():
             return load_abs(abs_path)
     raise FileNotFoundError(f"Could not load module {mod_path}")
 
@@ -281,29 +285,26 @@ def load_abs(abs_path):
     """
     Loads a Hancho module ***while chdir'd into its directory***
     """
+    abs_path = Path(abs_path)
     if abs_path in this.hancho_mods:
         return this.hancho_mods[abs_path]
-
-    mod_dir = path.split(abs_path)[0]
-    mod_file = path.split(abs_path)[1]
-    mod_name = mod_file.split(".")[0]
 
     with open(abs_path, encoding="utf-8") as file:
         source = file.read()
         code = compile(source, abs_path, "exec", dont_inherit=True)
 
-    module = type(sys)(mod_name)
+    module = type(sys)(abs_path.stem)
     module.__file__ = abs_path
     module.__builtins__ = builtins
     this.hancho_mods[abs_path] = module
 
-    sys.path.insert(0, mod_dir)
-    old_dir = os.getcwd()
+    sys.path.insert(0, str(abs_path.parent))
+    old_dir = Path.cwd()
 
     # We must chdir()s into the .hancho file directory before running it so that
     # glob() can resolve files relative to the .hancho file itself.
     this.mod_stack.append(module)
-    os.chdir(mod_dir)
+    os.chdir(abs_path.parent)
 
     # Why Pylint thinks is not callable is a mystery.
     types.FunctionType(code, module.__dict__)()  # pylint: disable=not-callable
@@ -464,7 +465,7 @@ class Rule(dict):
         task.files_in = files_in
         if files_out is not None:
             task.files_out = files_out
-        task.abs_cwd = path.split(this.mod_stack[-1].__file__)[0]
+        task.abs_cwd = Path.cwd().absolute()
         task |= kwargs
         promise = task.async_call()
         return asyncio.create_task(promise)
@@ -517,24 +518,18 @@ class Rule(dict):
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
 
-        build_dir = await expand_async(self, self.build_dir)
-        build_dir = path.join(
-            this.hancho_root, build_dir, path.relpath(self.abs_cwd, this.hancho_root)
-        )
-        src_dir = path.join(
-            this.hancho_root, path.relpath(self.abs_cwd, this.hancho_root)
-        )
+        build_dir = Path(await expand_async(self, self.build_dir))
+        build_dir = this.hancho_root / build_dir / self.abs_cwd.relative_to(this.hancho_root)
+        src_dir   = this.hancho_root / self.abs_cwd.relative_to(this.hancho_root)
 
-        self.abs_files_in = [path.abspath(path.join(src_dir, f)) for f in self.files_in]
-        self.abs_files_out = [
-            path.abspath(path.join(build_dir, f)) for f in self.files_out
-        ]
-        self.abs_deps = [path.abspath(path.join(src_dir, f)) for f in self.deps]
+        self.abs_files_in  = [(src_dir / f).absolute()   for f in self.files_in]
+        self.abs_files_out = [(build_dir / f).absolute() for f in self.files_out]
+        self.abs_deps      = [(src_dir / f).absolute()   for f in self.deps]
 
         # Strip hancho_root off the absolute paths to produce root-relative paths
-        self.files_in = [path.relpath(f, this.hancho_root) for f in self.abs_files_in]
-        self.files_out = [path.relpath(f, this.hancho_root) for f in self.abs_files_out]
-        self.deps = [path.relpath(f, this.hancho_root) for f in self.abs_deps]
+        self.files_in  = [f.relative_to(this.hancho_root) for f in self.abs_files_in]
+        self.files_out = [f.relative_to(this.hancho_root) for f in self.abs_files_out]
+        self.deps      = [f.relative_to(this.hancho_root) for f in self.abs_deps]
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -551,8 +546,7 @@ class Rule(dict):
         # Make sure our output directories exist
         if not self.dryrun:
             for file_out in self.abs_files_out:
-                if dirname := path.dirname(file_out):
-                    os.makedirs(dirname, exist_ok=True)
+                file_out.parent.mkdir(parents=True, exist_ok=True)
 
         # And flatten+expand our command list
         commands = await flatten_async(self, self.command)
@@ -662,7 +656,7 @@ class Rule(dict):
 
         # Tasks with missing outputs always run.
         for file_out in files_out:
-            if not path.exists(file_out):
+            if not file_out.exists():
                 return f"Rebuilding {self.files_out} because some are missing"
 
         min_out = min(mtime(f) for f in files_out)
@@ -679,9 +673,9 @@ class Rule(dict):
 
         # Check GCC-format depfile, if present.
         if self.depfile:
-            depfile = await expand_async(self, self.depfile)
-            abs_depfile = path.abspath(path.join(this.hancho_root, depfile))
-            if path.exists(abs_depfile):
+            depfile = Path(await expand_async(self, self.depfile))
+            abs_depfile = (this.hancho_root / depfile).absolute()
+            if os.path.exists(abs_depfile):
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
                 with open(abs_depfile, encoding="utf-8") as depfile:
