@@ -57,6 +57,7 @@ def swap_ext(name, new_ext):
         return Path(name).with_suffix(new_ext)
     return [swap_ext(n, new_ext) for n in flatten(name)]
 
+
 def mtime(filename):
     """Gets the file's mtime and tracks how many times we called it"""
     this.mtime_calls += 1
@@ -88,6 +89,7 @@ def maybe_as_number(text):
             return float(text)
         except ValueError:
             return text
+
 
 ################################################################################
 
@@ -250,6 +252,7 @@ async def async_main():
 ################################################################################
 # The .hancho file loader does a small amount of work to keep track of the
 # stack of .hancho files that have been loaded.
+
 
 def load(mod_path):
     """
@@ -502,17 +505,19 @@ class Rule(dict):
         # If they're already absolute, this does nothing.
 
         build_dir = Path(await expand_async(self, self.build_dir))
-        build_dir = this.hancho_root / build_dir / self.abs_cwd.relative_to(this.hancho_root)
-        src_dir   = this.hancho_root / self.abs_cwd.relative_to(this.hancho_root)
+        build_dir = (
+            this.hancho_root / build_dir / self.abs_cwd.relative_to(this.hancho_root)
+        )
+        src_dir = this.hancho_root / self.abs_cwd.relative_to(this.hancho_root)
 
-        self.abs_files_in  = [(src_dir / f).absolute()   for f in self.files_in]
+        self.abs_files_in = [(src_dir / f).absolute() for f in self.files_in]
         self.abs_files_out = [(build_dir / f).absolute() for f in self.files_out]
-        self.abs_deps      = [(src_dir / f).absolute()   for f in self.deps]
+        self.abs_deps = [(src_dir / f).absolute() for f in self.deps]
 
         # Strip hancho_root off the absolute paths to produce root-relative paths
-        self.files_in  = [f.relative_to(this.hancho_root) for f in self.abs_files_in]
+        self.files_in = [f.relative_to(this.hancho_root) for f in self.abs_files_in]
         self.files_out = [f.relative_to(this.hancho_root) for f in self.abs_files_out]
-        self.deps      = [f.relative_to(this.hancho_root) for f in self.abs_deps]
+        self.deps = [f.relative_to(this.hancho_root) for f in self.abs_deps]
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:

@@ -6,11 +6,7 @@ from os import path
 import subprocess
 import unittest
 import shutil
-import sys
 from pathlib import Path
-
-sys.path.append("..")
-import hancho  # pylint: disable=wrong-import-position, import-error
 
 # tests still needed -
 # calling hancho in src dir
