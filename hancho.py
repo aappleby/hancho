@@ -15,6 +15,7 @@ import sys
 import traceback
 import types
 from pathlib import Path
+from os.path import abspath, relpath
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -178,6 +179,8 @@ def main():
     this.config |= flags.__dict__
 
     this.config.filename = Path(this.config.filename)
+
+    this.config.hancho_root = Path.cwd()
 
     # Unrecognized flags become global config fields.
     for span in unrecognized:
@@ -522,9 +525,11 @@ class Rule(dict):
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
-            if file in this.hancho_outs:
-                raise NameError(f"Multiple rules build {file}!")
-            this.hancho_outs.add(file)
+            res_file = file.resolve()
+            if res_file in this.hancho_outs:
+                rel_file = relpath(res_file, this.config.hancho_root)
+                raise NameError(f"Multiple rules build {rel_file}!")
+            this.hancho_outs.add(res_file)
 
         # Check if we need a rebuild
         self.reason = await self.needs_rerun()
@@ -578,6 +583,8 @@ class Rule(dict):
         return result
 
     ########################################
+    # Note - We should _not_ be expanding any templates in this step, that
+    # should've been done already.
 
     async def run_command(self, command):
         """Actually runs a command, either by calling it or running it in a subprocess"""
@@ -600,11 +607,14 @@ class Rule(dict):
             raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
+        old_dir = os.getcwd()
+        if self.task_dir: os.chdir(self.task_dir)
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        os.chdir(old_dir)
         (stdout_data, stderr_data) = await proc.communicate()
 
         self.stdout = stdout_data.decode()
