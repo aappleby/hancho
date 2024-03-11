@@ -60,7 +60,7 @@ def swap_ext(name, new_ext):
 
 
 def mtime(filename):
-    """Calls os.path.mtime and tracks how many times we called it"""
+    """Gets the file's mtime and tracks how many times we called it"""
     this.mtime_calls += 1
     return Path(filename).stat().st_mtime
 
@@ -90,23 +90,6 @@ def maybe_as_number(text):
             return float(text)
         except ValueError:
             return text
-
-
-def touch(name):
-    """Convenience helper method"""
-    if isinstance(name, Rule):
-        for f in name.files_out:
-            touch(f)
-        return name.files_out
-
-    if os.path.exists(name):
-        os.utime(name, None)
-        return name
-
-    with open(name, "w", encoding="utf-8") as file:
-        file.write("")
-    return name
-
 
 ################################################################################
 
@@ -194,6 +177,8 @@ def main():
 
     this.config |= flags.__dict__
 
+    this.config.filename = Path(this.config.filename)
+
     # Unrecognized flags become global config fields.
     for span in unrecognized:
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
@@ -223,13 +208,13 @@ async def async_main():
     this.mtime_calls = 0
 
     # Change directory and load top module(s).
-    if not os.path.exists(this.config.filename):
+    if not this.config.filename.exists():
         raise FileNotFoundError(f"Could not find {this.config.filename}")
 
     if this.config.chdir:
         os.chdir(this.config.chdir)
 
-    root_filename = Path(this.config.filename).absolute()
+    root_filename = this.config.filename.absolute()
     load_abs(root_filename)
 
     # Top module(s) loaded. Configure our job semaphore and run all tasks in the
@@ -675,7 +660,7 @@ class Rule(dict):
         if self.depfile:
             depfile = Path(await expand_async(self, self.depfile))
             abs_depfile = (this.hancho_root / depfile).absolute()
-            if os.path.exists(abs_depfile):
+            if abs_depfile.exists():
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
                 with open(abs_depfile, encoding="utf-8") as depfile:

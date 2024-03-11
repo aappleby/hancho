@@ -1,7 +1,7 @@
 from hancho import *
 
 def sync_command(task):
-  touch(task.files_out[0])
+  Path(task.files_out[0]).touch()
   return task.files_out
 
 rule = Rule(

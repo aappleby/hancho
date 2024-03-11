@@ -7,6 +7,7 @@ import subprocess
 import unittest
 import shutil
 import sys
+from pathlib import Path
 
 sys.path.append("..")
 import hancho  # pylint: disable=wrong-import-position, import-error
@@ -112,14 +113,14 @@ class TestHancho(unittest.TestCase):
     def test_dep_changed(self):
         """Changing a file in deps[] should trigger a rebuild"""
         os.makedirs("build", exist_ok=True)
-        hancho.touch("build/dummy.txt")
+        Path("build/dummy.txt").touch()
         run_hancho("dep_changed")
         mtime1 = mtime("build/result.txt")
 
         run_hancho("dep_changed")
         mtime2 = mtime("build/result.txt")
 
-        hancho.touch("build/dummy.txt")
+        Path("build/dummy.txt").touch()
         run_hancho("dep_changed")
         mtime3 = mtime("build/result.txt")
         self.assertEqual(mtime1, mtime2)
@@ -143,7 +144,7 @@ class TestHancho(unittest.TestCase):
         run_hancho("header_changed")
         mtime2 = mtime("build/src/test.o")
 
-        hancho.touch("src/test.hpp")
+        Path("src/test.hpp").touch()
         run_hancho("header_changed")
         mtime3 = mtime("build/src/test.o")
         self.assertEqual(mtime1, mtime2)
@@ -157,7 +158,7 @@ class TestHancho(unittest.TestCase):
         run_hancho("input_changed")
         mtime2 = mtime("build/src/test.o")
 
-        hancho.touch("src/test.cpp")
+        Path("src/test.cpp").touch()
         run_hancho("input_changed")
         mtime3 = mtime("build/src/test.o")
         self.assertEqual(mtime1, mtime2)

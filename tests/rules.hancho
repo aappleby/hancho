@@ -15,5 +15,5 @@ compile_cpp = Rule(
 )
 
 touch_outputs = Rule(
-  command = touch
+  command = "touch {files_out}"
 )
