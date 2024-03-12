@@ -273,6 +273,12 @@ async def async_main():
             break
         await asyncio.wait(pending_tasks)
 
+    # Print a copy of the global config after all tasks are done if we're in
+    # debug mode
+    if config.debug:
+        log(f"Hancho global config: {config}")
+        log("")
+
     # Done, print status info if needed
     if config.debug or config.verbose:
         log(f"tasks total:   {this.tasks_total}")
@@ -555,6 +561,11 @@ class Task(Rule):
                 log(color())
             this.tasks_fail += 1
             return Cancel()
+
+        finally:
+            if self.debug:
+                log("")
+
 
     ########################################
 
