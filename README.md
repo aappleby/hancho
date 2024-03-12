@@ -4,7 +4,7 @@
 
 Hancho is a simple, pleasant build system with few moving parts.
 
-Hancho fits comfortably in 500 lines* of Python and requires no installation, just copy-paste it into your source tree.
+Hancho fits comfortably in a single Python file and requires no installation, just copy-paste it into your source tree.
 
 Hancho is inspired by Ninja (for speed and simplicity) and Bazel (for syntax and extensibility).
 
@@ -18,18 +18,14 @@ Unlike Bazel, you can create build rules that call arbitary Python code (for bet
 
 Hancho should suffice for small to medium sized projects.
 
-(* - Autoformatting added some whitespace, but it's still under 500 lines of actual code :D )
-
 [Tutorial Here](tutorial)
 
 [Some Additional Documentation Here](docs)
 
 ## Updates
 
+ - 2024-03-12 - Handling of paths is more flexible now (and will be documented shortly). Calling a Rule now returns a Task object. All the task-running code is now in Task instead of Rule.
  - 2024-03-07 - Tests should run on Windows now. Added a Windows build example. Promises are now valid as inputs to any template.
- - 2024-03-04 - Cleaned up pylint & formatting issues in hancho.py and test.py. Hancho.py is now over 500 lines if you include whitespace and comments :D.
- - 2024-03-04 - Unrecognized '--key=value' command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
- - 2024-03-02 - Initial release. Some test cases yet to be written.
 
 ## Installation
 
@@ -99,3 +95,9 @@ Hello World
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
 hancho: BUILD CLEAN
 ```
+
+## Old Updates
+
+ - 2024-03-04 - Cleaned up pylint & formatting issues in hancho.py and test.py. Hancho.py is now over 500 lines if you include whitespace and comments :D.
+ - 2024-03-04 - Unrecognized '--key=value' command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
+ - 2024-03-02 - Initial release. Some test cases yet to be written.
