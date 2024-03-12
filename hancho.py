@@ -612,6 +612,7 @@ class Task(Rule):
         self.desc = await expand_async(self, self.desc)
 
         # Check for missing fields
+
         if not self.command:  # pylint: disable=access-member-before-definition
             raise ValueError(f"Command missing for input {self.files_in}!")
         if self.files_in is None:
@@ -637,12 +638,14 @@ class Task(Rule):
         self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
         self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
 
-        # Strip root_dir off the absolute paths to produce root-relative paths
+        # Strip task_dir off the absolute paths to produce task_dir-relative paths
+
         self.files_in = [relpath(f, self.task_dir) for f in self.abs_files_in]
         self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
         self.deps = [relpath(f, self.task_dir) for f in self.abs_deps]
 
-        # Flatten+expand our command list
+        # Now that files_in/files_out/deps are flat, we can expand our command list
+
         self.command = await flatten_async(self, self.command)
 
     ########################################
