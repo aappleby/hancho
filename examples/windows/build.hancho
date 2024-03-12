@@ -1,6 +1,8 @@
 # hancho/examples/windows/build.hancho - Builds a trivial Win32 app.
 from hancho import *
 
+config.depformat = "msvc"
+
 compile = Rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "cl.exe /nologo /c {files_in} /sourceDependencies {depfile} /Fo:{files_out} > NUL",

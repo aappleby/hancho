@@ -156,21 +156,17 @@ class Config(dict):
         return self.__getitem__(key)
 
     def __repr__(self):
-        """Turns this config blob into a JSON doc for debugging"""
+        """
+        Turns this config blob into a JSON doc for debugging
+        """
 
         class Encoder(json.JSONEncoder):
-            """Turns functions and tasks into stub strings for dumping."""
+            """
+            Types the encoder doesn't understand just get stringified.
+            """
 
             def default(self, o):
-                if callable(o):
-                    return f"callable {o}"
-                if isinstance(o, asyncio.Task):
-                    return f"asyncio.Task {o}"
-                if isinstance(o, Path):
-                    return f"Path {o}"
-                if isinstance(o, asyncio.Semaphore):
-                    return f"asyncio.Semaphore {o}"
-                return super().default(o)
+                return f"{o}"
 
         return json.dumps(self, indent=2, cls=Encoder)
 
@@ -195,6 +191,7 @@ config = Config(
     dryrun    = False,
     debug     = False,
     force     = False,
+    depformat = "gcc",
 
     root_dir  = Path.cwd(),
     task_dir  = "{root_dir}",
@@ -266,7 +263,6 @@ def main():
     """
 
     # pylint: disable=line-too-long
-
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
@@ -332,7 +328,6 @@ async def async_main():
     load_abs(root_filename)
 
     # Top module(s) loaded. Run all tasks in the queue until we run out.
-
     while True:
         pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
         if not pending_tasks:
@@ -573,7 +568,8 @@ class Task(Rule):
 
     async def run_async(self):
         """
-        Entry point for async task stuff.
+        Entry point for async task stuff, handles exceptions generated during
+        task execution.
         """
 
         try:
@@ -725,7 +721,7 @@ class Task(Rule):
 
     async def run_command(self, command):
         """
-        Actually runs a command, either by calling it or running it in a subprocess.
+        Runs a single command, either by calling it or running it in a subprocess.
         """
 
         # Early exit if this is just a dry run
@@ -812,7 +808,7 @@ class Task(Rule):
                 f"Rebuilding {self.files_out} because a manual dependency has changed"
             )
 
-        # Check GCC-format depfile, if present.
+        # Check depfile, if present.
         if self.depfile:
             depfile = Path(await expand_async(self, self.depfile))
             abs_depfile = abspath(config.root_dir / depfile)
@@ -821,13 +817,16 @@ class Task(Rule):
                     log(f"Found depfile {abs_depfile}")
                 with open(abs_depfile, encoding="utf-8") as depfile:
                     deplines = None
-                    if os.name == "nt":
+                    if self.depformat == "msvc":
                         # MSVC /sourceDependencies json depfile
                         deplines = json.load(depfile)["Data"]["Includes"]
-                    elif os.name == "posix":
+                    elif self.depformat == "gcc":
                         # GCC .d depfile
                         deplines = depfile.read().split()
                         deplines = [d for d in deplines[1:] if d != "\\"]
+                    else:
+                        raise ValueError(f"Invalid depformat {self.depformat}")
+
                     if deplines and max(mtime(f) for f in deplines) >= min_out:
                         return (
                             f"Rebuilding {self.files_out} because a dependency in "
