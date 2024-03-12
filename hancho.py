@@ -15,8 +15,6 @@ import sys
 import traceback
 import types
 from pathlib import Path
-from os.path import relpath
-from os.path import abspath
 from glob import glob
 
 # If we were launched directly, a reference to this module is already in
@@ -26,11 +24,17 @@ from glob import glob
 this = sys.modules[__name__]
 sys.modules["hancho"] = sys.modules[__name__]
 
+# pylint: disable=invalid-name
 config = None
 
 ################################################################################
 # Build rule helper methods
 
+def abspath(path):
+    return Path(os.path.abspath(path))
+
+def relpath(path1, path2):
+    return Path(os.path.relpath(path1, path2))
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string"""
@@ -176,9 +180,8 @@ def main():
 
     # We set this to None first so that config.base gets sets to None in the
     # next line.
+    # pylint: disable=global-statement
     global config
-    config = None
-
     config = Rule(
         filename="build.hancho",
         chdir=".",
@@ -189,8 +192,15 @@ def main():
         debug=False,
         force=False,
         desc="{files_in} -> {files_out}",
-        build_dir="build",
-        task_dir=".",
+
+        root_dir  = Path.cwd(),
+        task_dir  = "{root_dir}",
+        in_dir    = "{root_dir / load_dir}",
+        deps_dir  = "{root_dir / load_dir}",
+        out_dir   = "{root_dir / build_dir / load_dir}",
+
+        build_dir = Path("build"),
+
         files_out=[],
         deps=[],
         len=len,
@@ -198,13 +208,13 @@ def main():
         swap_ext=swap_ext,
         color=color,
         glob=glob,
+        abspath=abspath,
+        relpath=relpath,
     )
 
     config |= flags.__dict__
 
-    config.filename = Path(config.filename).absolute()
-
-    config.hancho_root = Path.cwd()
+    config.filename = abspath(config.filename)
 
     # Unrecognized flags become global config fields.
     for span in unrecognized:
@@ -217,7 +227,9 @@ def main():
     config.semaphore = asyncio.Semaphore(flags.jobs)
 
     with Chdir(config.chdir):
-        return asyncio.run(async_main())
+        result = asyncio.run(async_main())
+
+    return result
 
 
 ################################################################################
@@ -227,7 +239,6 @@ async def async_main():
     """All the actual Hancho stuff runs in an async context."""
 
     # Reset all global state
-    this.hancho_root = Path.cwd()
     this.hancho_mods = {}
     this.mod_stack = []
     this.hancho_outs = set()
@@ -242,7 +253,7 @@ async def async_main():
     if not config.filename.exists():
         raise FileNotFoundError(f"Could not find {config.filename}")
 
-    root_filename = config.filename.resolve()
+    root_filename = abspath(config.filename)
     load_abs(root_filename)
 
     # Top module(s) loaded. Run all tasks in the queue until we run out.
@@ -283,7 +294,7 @@ def load(mod_path):
     """
     mod_path = Path(mod_path)
     for parent_mod in reversed(this.mod_stack):
-        abs_path = (Path(parent_mod.__file__).parent / mod_path).resolve()
+        abs_path = abspath(Path(parent_mod.__file__).parent / mod_path)
         if abs_path.exists():
             return load_abs(abs_path)
     raise FileNotFoundError(f"Could not load module {mod_path}")
@@ -340,11 +351,15 @@ async def expand_async(rule, template, depth=0):
 
     # Awaitables get awaited
     if inspect.isawaitable(template):
-        template = await template
+        return await expand_async(rule, await template, depth + 1)
 
     # Cancellations cancel this task
     if isinstance(template, Cancel):
         raise template
+
+    # Rules get their files_out expanded
+    if isinstance(template, Rule):
+        return await expand_async(rule, template.promise, depth + 1)
 
     # Functions just get passed through
     # if inspect.isfunction(template):
@@ -362,7 +377,7 @@ async def expand_async(rule, template, depth=0):
 
     # Non-strings get stringified
     if not isinstance(template, str):
-        template = str(template)
+        return await expand_async(rule, str(template), depth + 1)
 
     # Templates get expanded
     result = ""
@@ -384,7 +399,7 @@ async def expand_async(rule, template, depth=0):
 async def flatten_async(rule, elements, depth=0):
     """
     Similar to expand_async, this turns an arbitrarily-nested array of template
-    strings and promises into a flat array of plain strings.
+    strings, promises, and callbacks into a flat array.
     """
 
     if not isinstance(elements, list):
@@ -429,15 +444,18 @@ class Rule(dict):
     """
 
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, *, base=None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(self)
+        self.base = None
         self |= kwargs
-        self.base = config if base is None else base
 
     def __missing__(self, key):
         if self.base:
             return self.base[key]
-        return None
+        elif id(self) != id(config):
+            return config.__getattr__(key)
+        else:
+            return None
 
     def __setattr__(self, key, value):
         self.__setitem__(key, value)
@@ -459,7 +477,7 @@ class Rule(dict):
                 if isinstance(o, Path):
                     return f"Path {o}"
                 if isinstance(o, asyncio.Semaphore):
-                    return f"Semaphore"
+                    return f"Semaphore {o}"
                 return super().default(o)
 
         return json.dumps(self, indent=2, cls=Encoder)
@@ -476,11 +494,19 @@ class Rule(dict):
         task.files_in = files_in
         if files_out is not None:
             task.files_out = files_out
-        task.script_dir = Path.cwd().absolute()
         task |= kwargs
+
+        task.call_dir = relpath(Path(inspect.stack(context=0)[1].filename).parent, self.root_dir)
+        task.work_dir = relpath(Path.cwd(), self.root_dir)
+        task.load_dir = relpath(Path(this.mod_stack[-1].__file__).parent, self.root_dir)
+
+        #print(f"call_dir {task.call_dir}")
+        #print(f"work_dir {task.work_dir}")
+        #print(f"load_dir {task.load_dir}")
+
         coroutine = task.async_call()
         task.promise = asyncio.create_task(coroutine)
-        return task.promise
+        return task
 
     ########################################
 
@@ -530,32 +556,25 @@ class Rule(dict):
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
 
-        self.build_dir2 = Path(await expand_async(self, self.build_dir))
-        self.build_dir2 = (
-            this.hancho_root
-            / self.build_dir2
-            / self.script_dir.relative_to(this.hancho_root)
-        )
-        self.src_dir = this.hancho_root / self.script_dir.relative_to(this.hancho_root)
+        self.in_dir   = Path(await expand_async(self, self.in_dir))
+        self.deps_dir = Path(await expand_async(self, self.deps_dir))
+        self.out_dir  = Path(await expand_async(self, self.out_dir))
+        self.task_dir = Path(await expand_async(self, self.task_dir))
 
-        # FIXME - We need to do this with self.task_dir as well
+        self.abs_files_in  = [abspath(self.in_dir / f) for f in self.files_in]
+        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
+        self.abs_deps      = [abspath(self.deps_dir / f) for f in self.deps]
 
-        self.abs_files_in = [self.src_dir / f for f in self.files_in]
-        self.abs_files_out = [self.build_dir2 / f for f in self.files_out]
-        self.abs_deps = [self.src_dir / f for f in self.deps]
-
-        # Strip hancho_root off the absolute paths to produce root-relative paths
-        self.files_in = [f.relative_to(this.hancho_root) for f in self.abs_files_in]
-        self.files_out = [f.relative_to(this.hancho_root) for f in self.abs_files_out]
-        self.deps = [f.relative_to(this.hancho_root) for f in self.abs_deps]
+        # Strip root_dir off the absolute paths to produce root-relative paths
+        self.files_in  = [relpath(f, self.task_dir) for f in self.abs_files_in]
+        self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
+        self.deps      = [relpath(f, self.task_dir) for f in self.abs_deps]
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
-            res_file = file.resolve()
-            if res_file in this.hancho_outs:
-                rel_file = relpath(res_file, config.hancho_root)
-                raise NameError(f"Multiple rules build {rel_file}!")
-            this.hancho_outs.add(res_file)
+            if file in this.hancho_outs:
+                raise NameError(f"Multiple rules build {file}!")
+            this.hancho_outs.add(file)
 
         # Check if we need a rebuild
         self.reason = await self.needs_rerun()
@@ -594,8 +613,9 @@ class Rule(dict):
                     log(self)
 
             result = []
-            for command in commands:
-                result = await self.run_command(command)
+            with Chdir(self.task_dir):
+                for command in commands:
+                    result = await self.run_command(command)
 
         # Task complete, check if it actually updated all the output files
         if self.files_in and self.files_out and not self.dryrun:
@@ -698,7 +718,7 @@ class Rule(dict):
         # Check GCC-format depfile, if present.
         if self.depfile:
             depfile = Path(await expand_async(self, self.depfile))
-            abs_depfile = (this.hancho_root / depfile).absolute()
+            abs_depfile = abspath(config.root_dir / depfile)
             if abs_depfile.exists():
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
