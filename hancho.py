@@ -450,7 +450,7 @@ async def expand_async(rule, template, depth=0):
     if isinstance(template, list):
         return await flatten_async(rule, template, depth + 1)
 
-    # Non-strings get stringified and expandedoh waoh d
+    # Non-strings get stringified and expanded
     if not isinstance(template, str):
         return await expand_async(rule, str(template), depth + 1)
 
