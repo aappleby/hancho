@@ -15,6 +15,8 @@ from pathlib import Path
 # dry run not creating files/dirs
 # loading a module directly and then via "../foo.hancho" should not load two
 # copies
+# all the predefined directories need test cases
+# overriding in_dir/out_dir/task_dir need test cases
 
 # min delta seems to be 4 msec on linux, 1 msec on windows?
 # os.system("touch blahblah.txt")

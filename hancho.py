@@ -24,9 +24,6 @@ from glob import glob
 this = sys.modules[__name__]
 sys.modules["hancho"] = sys.modules[__name__]
 
-# pylint: disable=invalid-name
-config = None
-
 ################################################################################
 # Build rule helper methods
 
@@ -48,7 +45,9 @@ def relpath(path1, path2):
 
 
 def color(red=None, green=None, blue=None):
-    """Converts RGB color to ANSI format string"""
+    """
+    Converts RGB color to ANSI format string
+    """
     # Color strings don't work in Windows console, so don't emit them.
     if os.name == "nt":
         return ""
@@ -58,12 +57,16 @@ def color(red=None, green=None, blue=None):
 
 
 def is_atom(element):
-    """Returns True if 'element' should _not_ be flattened out"""
+    """
+    Returns True if 'element' should _not_ be flattened out
+    """
     return isinstance(element, str) or not hasattr(element, "__iter__")
 
 
 def run_cmd(cmd):
-    """Runs a console command and returns its stdout with whitespace stripped"""
+    """
+    Runs a console command and returns its stdout with whitespace stripped
+    """
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
@@ -111,8 +114,13 @@ def maybe_as_number(text):
             return text
 
 
+################################################################################
+
+
 class Chdir:
-    """Copied from Python 3.11 contextlib.py"""
+    """
+    Copied from Python 3.11 contextlib.py
+    """
 
     def __init__(self, path):
         self.path = path
@@ -128,11 +136,95 @@ class Chdir:
 
 ################################################################################
 
-this.line_dirty = False
+
+class Config(dict):
+    """
+    Config is a 'bag of fields' that behaves sort of like a Javascript object.
+    """
+
+    def __init__(self, base=None, **kwargs):
+        self.base = base
+        self |= kwargs
+
+    def __missing__(self, key):
+        return None if self.base is None else self.base[key]
+
+    def __setattr__(self, key, value):
+        self.__setitem__(key, value)
+
+    def __getattr__(self, key):
+        return self.__getitem__(key)
+
+    def __repr__(self):
+        """Turns this config blob into a JSON doc for debugging"""
+
+        class Encoder(json.JSONEncoder):
+            """Turns functions and tasks into stub strings for dumping."""
+
+            def default(self, o):
+                if callable(o):
+                    return f"callable {o}"
+                if isinstance(o, asyncio.Task):
+                    return f"asyncio.Task {o}"
+                if isinstance(o, Path):
+                    return f"Path {o}"
+                if isinstance(o, asyncio.Semaphore):
+                    return f"asyncio.Semaphore {o}"
+                return super().default(o)
+
+        return json.dumps(self, indent=2, cls=Encoder)
+
+    def extend(self, **kwargs):
+        """
+        Returns a 'subclass' of this config blob that can override its fields.
+        """
+        return type(self)(base=self, **kwargs)
+
+
+################################################################################
+
+# fmt: off
+config = Config(
+    filename  = "build.hancho",
+
+    desc      = "{files_in} -> {files_out}",
+    chdir     = ".",
+    jobs      = os.cpu_count(),
+    verbose   = False,
+    quiet     = False,
+    dryrun    = False,
+    debug     = False,
+    force     = False,
+
+    root_dir  = Path.cwd(),
+    task_dir  = "{root_dir}",
+    in_dir    = "{root_dir / load_dir}",
+    deps_dir  = "{root_dir / load_dir}",
+    out_dir   = "{root_dir / build_dir / load_dir}",
+    build_dir = Path("build"),
+
+    files_out = [],
+    deps      = [],
+
+    len       = len,
+    run_cmd   = run_cmd,
+    swap_ext  = swap_ext,
+    color     = color,
+    glob      = glob,
+    abspath   = abspath,
+    relpath   = relpath,
+)
+# fmt: on
+
+################################################################################
+
+line_dirty = False  # pylint: disable=invalid-name
 
 
 def log(message, *args, sameline=False, **kwargs):
-    """Simple logger that can do same-line log messages like Ninja"""
+    """
+    Simple logger that can do same-line log messages like Ninja
+    """
     if config.quiet:
         return
 
@@ -145,9 +237,10 @@ def log(message, *args, sameline=False, **kwargs):
     print(message, *args, file=output, **kwargs)
     output = output.getvalue()
 
-    if not sameline and this.line_dirty:
+    global line_dirty  # pylint: disable=global-statement
+    if not sameline and line_dirty:
         sys.stdout.write("\n")
-        this.line_dirty = False
+        line_dirty = False
 
     if not output:
         return
@@ -161,7 +254,7 @@ def log(message, *args, sameline=False, **kwargs):
         sys.stdout.write(output)
 
     sys.stdout.flush()
-    this.line_dirty = output[-1] != "\n"
+    line_dirty = output[-1] != "\n"
 
 
 ################################################################################
@@ -173,6 +266,7 @@ def main():
     """
 
     # pylint: disable=line-too-long
+
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
@@ -190,37 +284,7 @@ def main():
     if not flags.jobs:
         flags.jobs = 1000
 
-    # We set this to None first so that config.base gets sets to None in the
-    # next line.
-    # pylint: disable=global-statement
-    global config
-    config = Rule(
-        filename="build.hancho",
-        chdir=".",
-        jobs=os.cpu_count(),
-        verbose=False,
-        quiet=False,
-        dryrun=False,
-        debug=False,
-        force=False,
-        desc="{files_in} -> {files_out}",
-        root_dir=Path.cwd(),
-        task_dir="{root_dir}",
-        in_dir="{root_dir / load_dir}",
-        deps_dir="{root_dir / load_dir}",
-        out_dir="{root_dir / build_dir / load_dir}",
-        build_dir=Path("build"),
-        files_out=[],
-        deps=[],
-        len=len,
-        run_cmd=run_cmd,
-        swap_ext=swap_ext,
-        color=color,
-        glob=glob,
-        abspath=abspath,
-        relpath=relpath,
-    )
-
+    global config  # pylint: disable=global-statement
     config |= flags.__dict__
 
     config.filename = abspath(config.filename)
@@ -245,7 +309,9 @@ def main():
 
 
 async def async_main():
-    """All the actual Hancho stuff runs in an async context."""
+    """
+    All the actual Hancho stuff runs in an async context.
+    """
 
     # Reset all global state
     this.hancho_mods = {}
@@ -349,7 +415,6 @@ def load_abs(abs_path):
 
 
 ################################################################################
-# expand + await + flatten
 
 template_regex = re.compile("{[^}]*}")
 
@@ -445,84 +510,44 @@ class Cancel(BaseException):
 
 
 ################################################################################
-# We have to disable 'attribute-defined-outside-init' because of the attribute
-# inheritance we're implementing through '__missing__' - if we define
-# everything in __init__, __missing__ won't fire and we won't see the base
-# instance's version of that attribute.
-# pylint: disable=attribute-defined-outside-init
 
 
-class Rule(dict):
+class Rule(Config):
     """
-    Hancho's Rule object behaves like a Javascript object and implements a basic
-    form of prototypal inheritance via Rule.base
+    Rules are callable Configs that create a Task when called.
+    Rules also delegate attribute lookups to the global 'config' object if they
+    are missing a field.
     """
 
+    # pylint: disable=access-member-before-definition
+    # pylint: disable=attribute-defined-outside-init
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, **kwargs):
-        super().__init__(self)
-        self.base = None
-        self |= kwargs
-        if config is not None and self.rule_dir is None:
+
+    def __init__(self, base=None, **kwargs):
+        super().__init__(base, **kwargs)
+        if self.rule_dir is None:
             self.rule_dir = relpath(
                 Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
             )
 
     def __missing__(self, key):
-        if self.base:
-            # Why does this trigger pylint?
-            return self.base[key]  # pylint: disable=unsubscriptable-object
-        if config is not None and id(self) != id(config):
-            return config[key]
-        return None
-
-    def __setattr__(self, key, value):
-        self.__setitem__(key, value)
-
-    def __getattr__(self, key):
-        return self.__getitem__(key)
-
-    def __repr__(self):
-        """Turns this rule into a JSON doc for debugging"""
-
-        class Encoder(json.JSONEncoder):
-            """Turns functions and tasks into stub strings for dumping."""
-
-            def default(self, o):
-                if callable(o):
-                    return "<function>"
-                if isinstance(o, asyncio.Task):
-                    return "<task>"
-                if isinstance(o, Path):
-                    return f"Path {o}"
-                if isinstance(o, asyncio.Semaphore):
-                    return f"Semaphore {o}"
-                return super().default(o)
-
-        return json.dumps(self, indent=2, cls=Encoder)
-
-    def extend(self, **kwargs):
         """
-        Returns a 'subclass' of this Rule that can override this rule's fields.
+        Rules delegate to config[key] if a key is missing.
         """
-        return Rule(base=self, **kwargs)
+        result = super().__missing__(key)
+        return result if result else config[key]
 
     def __call__(self, files_in, files_out=None, **kwargs):
-        task = Task(base=self)
+        task = Task(base=self, **kwargs)
         task.files_in = files_in
         if files_out is not None:
             task.files_out = files_out
-        task |= kwargs
 
         task.call_dir = relpath(
             Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
         )
         task.work_dir = relpath(Path.cwd(), self.root_dir)
         task.load_dir = relpath(Path(this.mod_stack[-1].__file__).parent, self.root_dir)
-
-        # print(f"call_dir {task.call_dir}")
-        # print(f"work_dir {task.work_dir}")
-        # print(f"load_dir {task.load_dir}")
 
         coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
@@ -532,11 +557,13 @@ class Rule(dict):
 ################################################################################
 
 
-# pylint: disable=too-many-instance-attributes
 class Task(Rule):
     """
     Calling a Rule creates a Task.
     """
+
+    # pylint: disable=too-many-instance-attributes
+    # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -545,7 +572,9 @@ class Task(Rule):
     ########################################
 
     async def run_async(self):
-        """Entry point for async task stuff."""
+        """
+        Entry point for async task stuff.
+        """
 
         try:
             return await self.task_main()
@@ -573,7 +602,9 @@ class Task(Rule):
     ########################################
 
     async def task_main(self):
-        """All the steps needed to run a task and check the result."""
+        """
+        All the steps needed to run a task and check the result.
+        """
 
         # Expand everything
         await self.expand()
@@ -611,27 +642,26 @@ class Task(Rule):
     ########################################
 
     async def expand(self):
-        """Expands all template strings in the task."""
-        self.desc = await expand_async(self, self.desc)
+        """
+        Expands all template strings in the task.
+        """
 
         # Check for missing fields
-
         if not self.command:  # pylint: disable=access-member-before-definition
-            raise ValueError(f"Command missing for input {self.files_in}!")
+            raise ValueError("Task missing command")
         if self.files_in is None:
-            raise ValueError(f"Task {self.desc} missing files_in")
+            raise ValueError("Task missing files_in")
         if self.files_out is None:
-            raise ValueError(f"Task {self.desc} missing files_out")
+            raise ValueError("Task missing files_out")
 
-        # Flatten+await all filename promises in any of the input filename arrays.
-
+        # Flatten+await all filename promises in any of the input filename
+        # arrays.
         self.files_in = await flatten_async(self, self.files_in)
         self.files_out = await flatten_async(self, self.files_out)
         self.deps = await flatten_async(self, self.deps)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
-
         self.in_dir = Path(await expand_async(self, self.in_dir))
         self.deps_dir = Path(await expand_async(self, self.deps_dir))
         self.out_dir = Path(await expand_async(self, self.out_dir))
@@ -641,20 +671,23 @@ class Task(Rule):
         self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
         self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
 
-        # Strip task_dir off the absolute paths to produce task_dir-relative paths
-
+        # Strip task_dir off the absolute paths to produce task_dir-relative
+        # paths
         self.files_in = [relpath(f, self.task_dir) for f in self.abs_files_in]
         self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
         self.deps = [relpath(f, self.task_dir) for f in self.abs_deps]
 
-        # Now that files_in/files_out/deps are flat, we can expand our command list
-
+        # Now that files_in/files_out/deps are flat, we can expand our
+        # description and command list
+        self.desc = await expand_async(self, self.desc)
         self.command = await flatten_async(self, self.command)
 
     ########################################
 
     async def run_commands(self):
-        """Runs all the commands in the task while holding the semaphore."""
+        """
+        Runs all the commands in the task while holding the semaphore.
+        """
 
         # OK, we're ready to start the task. Grab the semaphore before we start
         # printing status stuff so that it'll end up near the actual task
@@ -691,7 +724,9 @@ class Task(Rule):
     # should've been done already.
 
     async def run_command(self, command):
-        """Actually runs a command, either by calling it or running it in a subprocess"""
+        """
+        Actually runs a command, either by calling it or running it in a subprocess.
+        """
 
         # Early exit if this is just a dry run
         if self.dryrun:
@@ -741,11 +776,15 @@ class Task(Rule):
         return self.abs_files_out
 
     ########################################
-    # Pylint really doesn't like this function, lol.
-    # pylint: disable=too-many-return-statements,too-many-branches
 
     async def needs_rerun(self):
-        """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
+        """
+        Checks if a task needs to be re-run, and returns a non-empty reason if so.
+        """
+
+        # Pylint really doesn't like this function, lol.
+        # pylint: disable=too-many-return-statements,too-many-branches
+
         files_in = self.abs_files_in
         files_out = self.abs_files_out
 
