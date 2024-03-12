@@ -415,7 +415,7 @@ def load_abs(abs_path):
 
 template_regex = re.compile("{[^}]*}")
 
-
+# pylint: disable=too-many-return-statements
 async def expand_async(rule, template, depth=0):
     """
     A trivial templating system that replaces {foo} with the value of rule.foo
@@ -439,20 +439,18 @@ async def expand_async(rule, template, depth=0):
         return await expand_async(rule, template.promise, depth + 1)
 
     # Functions just get passed through
-    # if inspect.isfunction(template):
-    #    return template
-    assert not inspect.isfunction(template)
+    if inspect.isfunction(template):
+        return template
 
     # Nones become empty strings
     if template is None:
         return ""
 
-    # Lists get flattened and joined
+    # Lists get flattened
     if isinstance(template, list):
-        template = await flatten_async(rule, template, depth + 1)
-        return " ".join(template)
+        return await flatten_async(rule, template, depth + 1)
 
-    # Non-strings get stringified
+    # Non-strings get stringified and expandedoh waoh d
     if not isinstance(template, str):
         return await expand_async(rule, str(template), depth + 1)
 
@@ -463,8 +461,8 @@ async def expand_async(rule, template, depth=0):
         exp = template[span.start() : span.end()]
         try:
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-            replacement = await expand_async(rule, replacement, depth + 1)
-            result += replacement
+            replacement = await flatten_async(rule, replacement, depth + 1)
+            result += " ".join(replacement)
         except Exception:  # pylint: disable=broad-except
             result += exp
         template = template[span.end() :]
@@ -484,13 +482,10 @@ async def flatten_async(rule, elements, depth=0):
 
     result = []
     for element in elements:
-        if inspect.isfunction(element):
-            result.append(element)
-        elif isinstance(element, list):
-            new_element = await flatten_async(rule, element, depth + 1)
+        new_element = await expand_async(rule, element, depth + 1)
+        if isinstance(new_element, list):
             result.extend(new_element)
         else:
-            new_element = await expand_async(rule, element, depth + 1)
             result.append(new_element)
 
     return result
