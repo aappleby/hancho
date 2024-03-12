@@ -186,6 +186,7 @@ config = Config(
     desc      = "{files_in} -> {files_out}",
     chdir     = ".",
     jobs      = os.cpu_count(),
+    semaphore = None,
     verbose   = False,
     quiet     = False,
     dryrun    = False,
@@ -266,8 +267,8 @@ def main():
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
-    parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory first")
-    parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count, 0 = infinity)")
+    parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory before starting the build")
+    parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
     parser.add_argument("-v", "--verbose", default=False,          action="store_true", help="Print verbose build info")
     parser.add_argument("-q", "--quiet",   default=False,          action="store_true", help="Mute all output")
     parser.add_argument("-n", "--dryrun",  default=False,          action="store_true", help="Do not run commands")
@@ -275,26 +276,22 @@ def main():
     parser.add_argument("-f", "--force",   default=False,          action="store_true", help="Force rebuild of everything")
     # fmt: on
 
+    # Parse the command line
     (flags, unrecognized) = parser.parse_known_args()
 
-    if not flags.jobs:
-        flags.jobs = 1000
-
+    # Merge all known command line flags into our global config object.
     global config  # pylint: disable=global-statement
     config |= flags.__dict__
 
-    config.filename = abspath(config.filename)
-
-    # Unrecognized flags become global config fields.
+    # Unrecognized command line parameters also become global config fields if
+    # they are flag-like
     for span in unrecognized:
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
             config[match.group(1)] = (
                 maybe_as_number(match.group(2)) if match.group(2) is not None else True
             )
 
-    # Configure our job semaphore
-    config.semaphore = asyncio.Semaphore(flags.jobs)
-
+    # Change directory if needed and kick off the build.
     with Chdir(config.chdir):
         result = asyncio.run(async_main())
 
@@ -320,14 +317,16 @@ async def async_main():
     this.task_counter = 0
     this.mtime_calls = 0
 
-    # Load top module(s).
-    if not config.filename.exists():
-        raise FileNotFoundError(f"Could not find {config.filename}")
+    # Configure our job semaphore
+    config.semaphore = asyncio.Semaphore(config.jobs) # pylint: disable=attribute-defined-outside-init
 
+    # Load the root build.hancho file.
     root_filename = abspath(config.filename)
+    if not root_filename.exists():
+        raise FileNotFoundError(f"Could not find {root_filename}")
     load_abs(root_filename)
 
-    # Top module(s) loaded. Run all tasks in the queue until we run out.
+    # Root module(s) loaded. Run all tasks in the queue until we run out.
     while True:
         pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
         if not pending_tasks:
@@ -393,12 +392,15 @@ def load_abs(abs_path):
     module.__builtins__ = builtins
     this.hancho_mods[abs_path] = module
 
+    # The directory the module is in gets added to the global path so we can
+    # import .py modules in the same directory as it if needed. This may not
+    # be necessary.
     sys.path.insert(0, str(abs_path.parent))
+
+    this.mod_stack.append(module)
 
     # We must chdir()s into the .hancho file directory before running it so that
     # glob() can resolve files relative to the .hancho file itself.
-    this.mod_stack.append(module)
-
     with Chdir(abs_path.parent):
         # Why Pylint thinks this is not callable is a mystery.
         # pylint: disable=not-callable
