@@ -30,11 +30,22 @@ config = None
 ################################################################################
 # Build rule helper methods
 
+
 def abspath(path):
+    """
+    Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use
+    os.path.abspath.
+    """
     return Path(os.path.abspath(path))
 
+
 def relpath(path1, path2):
+    """
+    Pathlib's path.relative_to() refuses to generate "../bar", so we use
+    os.path.relpath.
+    """
     return Path(os.path.relpath(path1, path2))
+
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string"""
@@ -100,8 +111,9 @@ def maybe_as_number(text):
             return text
 
 
-class Chdir():
+class Chdir:
     """Copied from Python 3.11 contextlib.py"""
+
     def __init__(self, path):
         self.path = path
         self._old_cwd = []
@@ -192,15 +204,12 @@ def main():
         debug=False,
         force=False,
         desc="{files_in} -> {files_out}",
-
-        root_dir  = Path.cwd(),
-        task_dir  = "{root_dir}",
-        in_dir    = "{root_dir / load_dir}",
-        deps_dir  = "{root_dir / load_dir}",
-        out_dir   = "{root_dir / build_dir / load_dir}",
-
-        build_dir = Path("build"),
-
+        root_dir=Path.cwd(),
+        task_dir="{root_dir}",
+        in_dir="{root_dir / load_dir}",
+        deps_dir="{root_dir / load_dir}",
+        out_dir="{root_dir / build_dir / load_dir}",
+        build_dir=Path("build"),
         files_out=[],
         deps=[],
         len=len,
@@ -357,8 +366,8 @@ async def expand_async(rule, template, depth=0):
     if isinstance(template, Cancel):
         raise template
 
-    # Rules get their files_out expanded
-    if isinstance(template, Rule):
+    # Tasks get their promises expanded
+    if isinstance(template, Task):
         return await expand_async(rule, template.promise, depth + 1)
 
     # Functions just get passed through
@@ -451,11 +460,11 @@ class Rule(dict):
 
     def __missing__(self, key):
         if self.base:
-            return self.base[key]
-        elif id(self) != id(config):
-            return config.__getattr__(key)
-        else:
-            return None
+            # Why does this trigger pylint?
+            return self.base[key]  # pylint: disable=unsubscriptable-object
+        if id(self) != id(config):
+            return config[key]
+        return None
 
     def __setattr__(self, key, value):
         self.__setitem__(key, value)
@@ -489,32 +498,47 @@ class Rule(dict):
         return Rule(base=self, **kwargs)
 
     def __call__(self, files_in, files_out=None, **kwargs):
-        this.tasks_total += 1
-        task = self.extend()
+        task = Task(base=self)
         task.files_in = files_in
         if files_out is not None:
             task.files_out = files_out
         task |= kwargs
 
-        task.call_dir = relpath(Path(inspect.stack(context=0)[1].filename).parent, self.root_dir)
+        task.call_dir = relpath(
+            Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
+        )
         task.work_dir = relpath(Path.cwd(), self.root_dir)
         task.load_dir = relpath(Path(this.mod_stack[-1].__file__).parent, self.root_dir)
 
-        #print(f"call_dir {task.call_dir}")
-        #print(f"work_dir {task.work_dir}")
-        #print(f"load_dir {task.load_dir}")
+        # print(f"call_dir {task.call_dir}")
+        # print(f"work_dir {task.work_dir}")
+        # print(f"load_dir {task.load_dir}")
 
-        coroutine = task.async_call()
+        coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
         return task
 
+
+################################################################################
+
+
+# pylint: disable=too-many-instance-attributes
+class Task(Rule):
+    """
+    Calling a Rule creates a Task.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        this.tasks_total += 1
+
     ########################################
 
-    async def async_call(self):
+    async def run_async(self):
         """Entry point for async task stuff."""
+
         try:
-            result = await self.dispatch()
-            return result
+            return await self.task_main()
 
         # If any of this tasks's dependencies were cancelled, we propagate the
         # cancellation to downstream tasks.
@@ -533,42 +557,12 @@ class Rule(dict):
             return Cancel()
 
     ########################################
-    # pylint: disable=too-many-return-statements,too-many-branches
 
-    async def dispatch(self):
-        """Does all the bookkeeping and depedency checking, then runs the command if needed."""
-        desc = await expand_async(self, self.desc)
+    async def task_main(self):
+        """All the steps needed to run a task and check the result."""
 
-        # Check for missing fields
-        if not self.command:
-            raise ValueError(f"Command missing for input {self.files_in}!")
-        if self.files_in is None:
-            raise ValueError(f"Task {desc} missing files_in")
-        if self.files_out is None:
-            raise ValueError(f"Task {desc} missing files_out")
-
-        # Flatten+await all filename promises in any of the input filename arrays.
-
-        self.files_in = await flatten_async(self, self.files_in)
-        self.files_out = await flatten_async(self, self.files_out)
-        self.deps = await flatten_async(self, self.deps)
-
-        # Prepend directories to filenames and then normalize + absolute them.
-        # If they're already absolute, this does nothing.
-
-        self.in_dir   = Path(await expand_async(self, self.in_dir))
-        self.deps_dir = Path(await expand_async(self, self.deps_dir))
-        self.out_dir  = Path(await expand_async(self, self.out_dir))
-        self.task_dir = Path(await expand_async(self, self.task_dir))
-
-        self.abs_files_in  = [abspath(self.in_dir / f) for f in self.files_in]
-        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
-        self.abs_deps      = [abspath(self.deps_dir / f) for f in self.deps]
-
-        # Strip root_dir off the absolute paths to produce root-relative paths
-        self.files_in  = [relpath(f, self.task_dir) for f in self.abs_files_in]
-        self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
-        self.deps      = [relpath(f, self.task_dir) for f in self.abs_deps]
+        # Expand everything
+        await self.expand()
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -587,8 +581,63 @@ class Rule(dict):
             for file_out in self.abs_files_out:
                 file_out.parent.mkdir(parents=True, exist_ok=True)
 
-        # And flatten+expand our command list
-        commands = await flatten_async(self, self.command)
+        # Run the commands
+        result = await self.run_commands()
+
+        # Check if the commands actually updated all the output files
+        if self.files_in and self.files_out and not self.dryrun:
+            if second_reason := await self.needs_rerun():
+                raise ValueError(
+                    f"Task '{self.desc}' still needs rerun after running!\n"
+                    + f"Reason: {second_reason}"
+                )
+
+        return result
+
+    ########################################
+
+    async def expand(self):
+        """Expands all template strings in the task."""
+        self.desc = await expand_async(self, self.desc)
+
+        # Check for missing fields
+        if not self.command:  # pylint: disable=access-member-before-definition
+            raise ValueError(f"Command missing for input {self.files_in}!")
+        if self.files_in is None:
+            raise ValueError(f"Task {self.desc} missing files_in")
+        if self.files_out is None:
+            raise ValueError(f"Task {self.desc} missing files_out")
+
+        # Flatten+await all filename promises in any of the input filename arrays.
+
+        self.files_in = await flatten_async(self, self.files_in)
+        self.files_out = await flatten_async(self, self.files_out)
+        self.deps = await flatten_async(self, self.deps)
+
+        # Prepend directories to filenames and then normalize + absolute them.
+        # If they're already absolute, this does nothing.
+
+        self.in_dir = Path(await expand_async(self, self.in_dir))
+        self.deps_dir = Path(await expand_async(self, self.deps_dir))
+        self.out_dir = Path(await expand_async(self, self.out_dir))
+        self.task_dir = Path(await expand_async(self, self.task_dir))
+
+        self.abs_files_in = [abspath(self.in_dir / f) for f in self.files_in]
+        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
+        self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
+
+        # Strip root_dir off the absolute paths to produce root-relative paths
+        self.files_in = [relpath(f, self.task_dir) for f in self.abs_files_in]
+        self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
+        self.deps = [relpath(f, self.task_dir) for f in self.abs_deps]
+
+        # Flatten+expand our command list
+        self.command = await flatten_async(self, self.command)
+
+    ########################################
+
+    async def run_commands(self):
+        """Runs all the commands in the task while holding the semaphore."""
 
         # OK, we're ready to start the task. Grab the semaphore before we start
         # printing status stuff so that it'll end up near the actual task
@@ -601,29 +650,21 @@ class Rule(dict):
 
             # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
             log(
-                f"[{self.task_index}/{this.tasks_total}] {desc}",
+                f"[{self.task_index}/{this.tasks_total}] {self.desc}",
                 sameline=not self.verbose,
             )
 
             if self.verbose or self.debug:
                 log(f"Reason: {self.reason}")
-                for command in commands:
+                for command in self.command:
                     log(f">>>{' (DRY RUN)' if self.dryrun else ''} {command}")
                 if self.debug:
                     log(self)
 
             result = []
             with Chdir(self.task_dir):
-                for command in commands:
+                for command in self.command:
                     result = await self.run_command(command)
-
-        # Task complete, check if it actually updated all the output files
-        if self.files_in and self.files_out and not self.dryrun:
-            if second_reason := await self.needs_rerun():
-                raise ValueError(
-                    f"Task '{desc}' still needs rerun after running!\n"
-                    + f"Reason: {second_reason}"
-                )
 
         this.tasks_pass += 1
         return result
