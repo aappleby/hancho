@@ -166,7 +166,7 @@ class Config(dict):
             """
 
             def default(self, o):
-                return f"{o}"
+                return str(o)
 
         return json.dumps(self, indent=2, cls=Encoder)
 
