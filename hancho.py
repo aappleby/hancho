@@ -463,12 +463,16 @@ class Rule(dict):
         super().__init__(self)
         self.base = None
         self |= kwargs
+        if config is not None and self.rule_dir is None:
+            self.rule_dir = relpath(
+                Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
+            )
 
     def __missing__(self, key):
         if self.base:
             # Why does this trigger pylint?
             return self.base[key]  # pylint: disable=unsubscriptable-object
-        if id(self) != id(config):
+        if config is not None and id(self) != id(config):
             return config[key]
         return None
 
@@ -565,7 +569,6 @@ class Task(Rule):
         finally:
             if self.debug:
                 log("")
-
 
     ########################################
 
