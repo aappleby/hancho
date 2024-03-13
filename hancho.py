@@ -13,7 +13,6 @@ import re
 import subprocess
 import sys
 import traceback
-from turtle import st
 import types
 from pathlib import Path
 from glob import glob
@@ -72,8 +71,7 @@ def swap_ext(name, new_ext):
         return None
     if isinstance(name, list):
         return [swap_ext(n, new_ext) for n in name]
-    else:
-        return Path(name).with_suffix(new_ext)
+    return Path(name).with_suffix(new_ext)
 
 
 def mtime(filename):
@@ -163,7 +161,9 @@ def expand_async(rule, template):
             # expression directly to the output for debugging.
             replacement = ""
             try:
-                replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
+                replacement = eval(
+                    exp[1:-1], globals(), rule
+                )  # pylint: disable=eval-used
             except Exception:  # pylint: disable=broad-except
                 replacement = exp
 
@@ -215,7 +215,6 @@ async def await_variant(variant):
         return variant
 
     return variant
-
 
 
 ################################################################################
@@ -619,6 +618,7 @@ class Task(Rule):
 
     ########################################
 
+    # pylint: disable=too-many-branches
     async def task_main(self):
         """
         All the steps needed to run a task and check the result.
@@ -680,7 +680,9 @@ class Task(Rule):
     ########################################
 
     def flatten(self):
-        # Flatten all filename promises in any of the input filename arrays.
+        """
+        Flatten all filename promises in any of the input filename arrays.
+        """
         self.files_in = flatten(self.files_in)
         self.files_out = flatten(self.files_out)
         self.deps = flatten(self.deps)

@@ -52,6 +52,7 @@ def run_hancho(name):
 ################################################################################
 
 
+# pylint: disable=too-many-public-methods
 class TestHancho(unittest.TestCase):
     """Basic test cases"""
 
@@ -193,6 +194,9 @@ class TestHancho(unittest.TestCase):
         self.assertTrue(path.exists("build/result.txt"))
 
     def test_cancellation(self):
+        """
+        A task that receives a cancellation exception should not run.
+        """
         self.assertNotEqual(0, run_hancho("cancellation"))
         self.assertTrue(Path("build/pass_result.txt").exists())
         self.assertFalse(Path("build/fail_result.txt").exists())
