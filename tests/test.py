@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Test cases for Hancho"""
 
+import sys
 import os
 from os import path
 import subprocess
@@ -58,8 +59,11 @@ class TestHancho(unittest.TestCase):
 
     def setUp(self):
         """Always wipe the build dir before a test"""
+        print()
+        print(f"Running {self._testMethodName}..", end="")
         if path.exists("build"):
             shutil.rmtree("build")
+        sys.stdout.flush()
 
     def test_should_pass(self):
         """Sanity check"""

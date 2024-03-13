@@ -227,6 +227,9 @@ async def flatten2(rule, variant, depth = 0):
     if depth > 20:
         raise ValueError(f"Flattening '{variant}' failed to terminate")
 
+    if isinstance(variant, Cancel):
+        raise variant
+
     if inspect.isawaitable(variant):
         return await flatten2(rule, await variant, depth + 1)
 
@@ -250,7 +253,7 @@ async def flatten2(rule, variant, depth = 0):
 
     print()
     print(f"Don't know how to flatten {type(variant)}")
-    sys.exit(-1)
+    assert False
 
 ########################################
 
@@ -261,6 +264,9 @@ async def stringize2(rule, variant, depth = 0):
 
     if depth > 20:
         raise ValueError(f"Stringizing '{variant}' failed to terminate")
+
+    if isinstance(variant, Cancel):
+        raise variant
 
     if variant is None:
         return ""
@@ -287,7 +293,7 @@ async def stringize2(rule, variant, depth = 0):
 
     print()
     print(f"Don't know how to stringize {type(variant)}")
-    sys.exit(-1)
+    assert False
 
 ########################################
 
@@ -298,6 +304,9 @@ async def expand2(rule, variant, depth = 0):
 
     if depth > 20:
         raise ValueError(f"Expanding '{variant}' failed to terminate")
+
+    if isinstance(variant, Cancel):
+        raise variant
 
     if isinstance(variant, Path):
         return Path(await expand2(rule, str(variant), depth + 1))
@@ -326,7 +335,7 @@ async def expand2(rule, variant, depth = 0):
 
     print()
     print(f"Don't know how to expand {type(variant)}")
-    sys.exit(-1)
+    assert False
 
 ################################################################################
 
@@ -816,9 +825,13 @@ class Task(Rule):
         self.out_dir = Path(expand_async(self, self.out_dir))
         self.task_dir = Path(expand_async(self, self.task_dir))
 
-        self.files_in = expand_async(self, self.files_in)
-        self.files_out = expand_async(self, self.files_out)
-        self.deps = expand_async(self, self.deps)
+        #self.files_in = expand_async(self, self.files_in)
+        #self.files_out = expand_async(self, self.files_out)
+        #self.deps = expand_async(self, self.deps)
+
+        self.files_in = await flatten2(self, self.files_in)
+        self.files_out = await flatten2(self, self.files_out)
+        self.deps = await flatten2(self, self.deps)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
