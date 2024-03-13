@@ -198,15 +198,14 @@ class TestHancho(unittest.TestCase):
         self.assertTrue(path.exists("build/result.txt"))
 
     def test_cancellation(self):
-        """
-        A task that receives a cancellation exception should not run.
-        """
+        """A task that receives a cancellation exception should not run."""
         self.assertNotEqual(0, run_hancho("cancellation"))
         self.assertTrue(Path("build/pass_result.txt").exists())
         self.assertFalse(Path("build/fail_result.txt").exists())
         self.assertFalse(Path("build/should_not_be_created.txt").exists())
 
     def test_task_creates_task(self):
+        """Tasks using callbacks can create new tasks when they run."""
         self.assertEqual(0, run_hancho("task_creates_task"))
         self.assertTrue(Path("build/dummy.txt").exists())
 
