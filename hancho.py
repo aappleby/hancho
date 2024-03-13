@@ -748,10 +748,10 @@ class Task(Rule):
             self[key] = await await_variant(self[key])
 
         # Flatten everything
-        self.flatten()
+        await self.flatten()
 
         # Expand everything
-        self.expand()
+        await self.expand()
 
         # Check for missing inputs
         for file in self.abs_files_in:
@@ -790,7 +790,7 @@ class Task(Rule):
 
     ########################################
 
-    def flatten(self):
+    async def flatten(self):
         """
         Flatten all filename promises in any of the input filename arrays.
         """
@@ -801,7 +801,7 @@ class Task(Rule):
 
     ########################################
 
-    def expand(self):
+    async def expand(self):
         """
         Expands all template strings in the task.
         NOTE: The order that fields are expanded _does_ matter. For example,
