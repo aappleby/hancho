@@ -9,7 +9,7 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
-      "args": ["--force", "-j1"],
+      "args": ["--force", "-j1", "build.hancho"],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}/examples/meson",
       "justMyCode": false,

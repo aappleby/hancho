@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import traceback
+from turtle import st
 import types
 from pathlib import Path
 from glob import glob
@@ -56,13 +57,6 @@ def color(red=None, green=None, blue=None):
     return f"\x1B[38;2;{red};{green};{blue}m"
 
 
-def is_atom(element):
-    """
-    Returns True if 'element' should _not_ be flattened out
-    """
-    return isinstance(element, str) or not hasattr(element, "__iter__")
-
-
 def run_cmd(cmd):
     """
     Runs a console command and returns its stdout with whitespace stripped
@@ -76,9 +70,10 @@ def swap_ext(name, new_ext):
     """
     if name is None:
         return None
-    if is_atom(name):
+    if isinstance(name, list):
+        return [swap_ext(n, new_ext) for n in name]
+    else:
         return Path(name).with_suffix(new_ext)
-    return [swap_ext(n, new_ext) for n in flatten(name)]
 
 
 def mtime(filename):
@@ -92,12 +87,22 @@ def flatten(elements):
     Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it
     in [] if it's not a list.
     """
-    if is_atom(elements):
+    if not isinstance(elements, list):
         return [elements]
     result = []
     for element in elements:
-        result.extend(flatten(element))
+        if isinstance(element, list):
+            result.extend(flatten(element))
+        else:
+            result.append(element)
     return result
+
+
+def is_flat(elements):
+    for e in elements:
+        if isinstance(e, list):
+            return False
+    return True
 
 
 def maybe_as_number(text):
@@ -119,7 +124,7 @@ def maybe_as_number(text):
 template_regex = re.compile("{[^}]*}")
 
 
-async def expand_async(rule, template, depth=0):
+def expand_async(rule, template, depth=0):
     """
     A trivial templating system that replaces {foo} with the value of rule.foo
     and keeps going until it can't replace anything. Templates that evaluate to
@@ -136,10 +141,10 @@ async def expand_async(rule, template, depth=0):
         try:
             # Evaluate and flatten the template contents.
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-            replacement = await flatten_async(rule, replacement, depth + 1)
+            replacement = flatten_async(rule, replacement, depth + 1)
 
             # Strip out Nones and join the replacement into one string.
-            replacement = [r for r in replacement if r is not None]
+            replacement = [str(r) for r in replacement if r is not None]
             result += " ".join(replacement)
         except Exception:  # pylint: disable=broad-except
             result += exp
@@ -151,7 +156,7 @@ async def expand_async(rule, template, depth=0):
 ################################################################################
 
 
-async def flatten_async(rule, elements, depth=0):
+def flatten_async(rule, elements, depth=0):
     """
     Turns arbitrarily-nested arrays of stuff into flat flexpanded arrays.
     """
@@ -161,7 +166,7 @@ async def flatten_async(rule, elements, depth=0):
 
     result = []
     for element in elements:
-        new_element = await flexpand(rule, element, depth)
+        new_element = flexpand(rule, element, depth)
         if isinstance(new_element, list):
             result.extend(new_element)
         else:
@@ -174,14 +179,10 @@ async def flatten_async(rule, elements, depth=0):
 # pylint: disable=too-many-return-statements
 
 
-async def flexpand(rule, variant, depth):
+def flexpand(rule, variant, depth):
     """
     Flattens arrays, awaits promises, raises cancellations, and expands templates.
     """
-
-    # Awaitables get their awaited values flexpanded.
-    if inspect.isawaitable(variant):
-        return await flexpand(rule, await variant, depth)
 
     # Cancellations cancel the current task
     if isinstance(variant, Cancel):
@@ -189,7 +190,7 @@ async def flexpand(rule, variant, depth):
 
     # Tasks get their promises flexpanded
     if isinstance(variant, Task):
-        return await flexpand(rule, variant.promise, depth)
+        return flexpand(rule, variant.promise, depth)
 
     # Functions get passed through
     if inspect.isfunction(variant):
@@ -201,18 +202,49 @@ async def flexpand(rule, variant, depth):
 
     # Lists get flattened
     if isinstance(variant, list):
-        return await flatten_async(rule, variant, depth)
+        return flatten_async(rule, variant, depth)
 
     # Paths get stringified and expanded
     if isinstance(variant, Path):
-        return await expand_async(rule, str(variant), depth)
+        return Path(expand_async(rule, str(variant), depth))
 
     # Strings get expanded
     if isinstance(variant, str):
-        return await expand_async(rule, variant, depth)
+        return expand_async(rule, variant, depth)
 
     # Everything else is an error.
     raise ValueError(f"Don't know how to flexpand a {type(variant)}")
+
+
+################################################################################
+
+
+async def await_variant(variant):
+    """
+    Recursively awaits everything awaitable in the given variant. Replaces
+    awaitables in arrays & dicts with the result of the await.
+    """
+
+    # Do _not_ await the task that is currently running.
+    if variant == asyncio.current_task():
+        return variant
+
+    if inspect.isawaitable(variant):
+        return await await_variant(await variant)
+
+    if isinstance(variant, list):
+        for i, v in enumerate(variant):
+            variant[i] = await await_variant(v)
+        return variant
+
+    if isinstance(variant, dict):
+        # Python complains about changing the size of a dict if we use
+        # enumerate() here :P
+        for key in list(variant.keys()):
+            variant[key] = await await_variant(variant[key])
+        return variant
+
+    return variant
 
 
 ################################################################################
@@ -621,8 +653,11 @@ class Task(Rule):
         All the steps needed to run a task and check the result.
         """
 
+        # Await everything
+        await await_variant(self)
+
         # Expand everything
-        await self.expand()
+        self.expand()
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -631,7 +666,7 @@ class Task(Rule):
             this.hancho_outs.add(file)
 
         # Check if we need a rebuild
-        self.reason = await self.needs_rerun(self.force)
+        self.reason = self.needs_rerun(self.force)
         if not self.reason:
             this.tasks_skip += 1
             return self.abs_files_out
@@ -646,7 +681,7 @@ class Task(Rule):
 
         # Check if the commands actually updated all the output files
         if self.files_in and self.files_out and not self.dryrun:
-            if second_reason := await self.needs_rerun():
+            if second_reason := self.needs_rerun():
                 raise ValueError(
                     f"Task '{self.desc}' still needs rerun after running!\n"
                     + f"Reason: {second_reason}"
@@ -656,7 +691,7 @@ class Task(Rule):
 
     ########################################
 
-    async def expand(self):
+    def expand(self):
         """
         Expands all template strings in the task.
         NOTE: The order that fields are expanded _does_ matter. For example,
@@ -674,16 +709,19 @@ class Task(Rule):
             raise ValueError("Task missing files_out")
 
         # Expand all our directories
-        self.in_dir = Path(await expand_async(self, self.in_dir))
-        self.deps_dir = Path(await expand_async(self, self.deps_dir))
-        self.out_dir = Path(await expand_async(self, self.out_dir))
-        self.task_dir = Path(await expand_async(self, self.task_dir))
+        self.in_dir = Path(expand_async(self, self.in_dir))
+        self.deps_dir = Path(expand_async(self, self.deps_dir))
+        self.out_dir = Path(expand_async(self, self.out_dir))
+        self.task_dir = Path(expand_async(self, self.task_dir))
 
-        # Flatten+await all filename promises in any of the input filename
-        # arrays.
-        self.files_in = await flatten_async(self, self.files_in)
-        self.files_out = await flatten_async(self, self.files_out)
-        self.deps = await flatten_async(self, self.deps)
+        # Flatten all filename promises in any of the input filename arrays.
+        self.files_in = flatten(self.files_in)
+        self.files_out = flatten(self.files_out)
+        self.deps = flatten(self.deps)
+
+        self.files_in = flatten_async(self, self.files_in)
+        self.files_out = flatten_async(self, self.files_out)
+        self.deps = flatten_async(self, self.deps)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
@@ -699,12 +737,12 @@ class Task(Rule):
 
         # Now that files_in/files_out/deps are flat, we can expand our
         # description and command list
-        self.command = await flatten_async(self, self.command)
+        self.command = flatten_async(self, self.command)
         # pylint: disable=access-member-before-definition
         if self.desc:
-            self.desc = await expand_async(self, self.desc)
+            self.desc = expand_async(self, self.desc)
         if self.depfile:
-            self.depfile = Path(await expand_async(self, self.depfile))
+            self.depfile = Path(expand_async(self, self.depfile))
 
     ########################################
 
@@ -756,12 +794,10 @@ class Task(Rule):
         if self.dryrun:
             return self.abs_files_out
 
-        # Custom commands just get await'ed and then early-out'ed.
+        # Custom commands just get called and then early-out'ed.
         if callable(command):
             with Chdir(self.task_dir):
                 result = command(self)
-            if inspect.isawaitable(result):
-                result = await result
             if result is None:
                 raise ValueError(f"Command {command} returned None")
             return result
@@ -801,7 +837,7 @@ class Task(Rule):
 
     ########################################
 
-    async def needs_rerun(self, force=False):
+    def needs_rerun(self, force=False):
         """
         Checks if a task needs to be re-run, and returns a non-empty reason if so.
         """
