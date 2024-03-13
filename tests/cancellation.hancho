@@ -1,0 +1,14 @@
+# tests/cancellation.hancho
+from hancho import *
+
+touch = Rule(command = "touch {files_out}")
+
+fail = Rule(command = "(exit 255)")
+
+task_that_fails  = fail ([], "fail_result.txt")
+task_that_passes = touch([], "pass_result.txt")
+
+touch(
+  [task_that_fails, task_that_passes],
+  "should_not_be_created.txt"
+)

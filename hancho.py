@@ -82,30 +82,6 @@ def mtime(filename):
     return Path(filename).stat().st_mtime
 
 
-def flatten(elements):
-    """
-    Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it
-    in [] if it's not a list.
-    """
-    if isinstance(elements, Task):
-        return flatten(elements.promise)
-
-    if not isinstance(elements, list):
-        return [elements]
-
-    result = []
-    for element in elements:
-        result.extend(flatten(element))
-    return result
-
-
-def is_flat(elements):
-    for e in elements:
-        if isinstance(e, list):
-            return False
-    return True
-
-
 def maybe_as_number(text):
     """
     Tries to convert a string to an int, then a float, then gives up. Used for
@@ -122,24 +98,47 @@ def maybe_as_number(text):
 
 ################################################################################
 
+
+def flatten(elements):
+    """
+    Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it
+    in [] if it's not a list.
+    """
+    if isinstance(elements, Task):
+        assert not inspect.isawaitable(elements.promise)
+        assert isinstance(elements.promise, list)
+        return flatten(elements.promise)
+
+    if not isinstance(elements, list):
+        return [elements]
+
+    result = []
+    for element in elements:
+        result.extend(flatten(element))
+    return result
+
+
+################################################################################
+
 template_regex = re.compile("{[^}]*}")
 
 
-def expand_async(rule, template, depth=0):
+def expand_async(rule, template):
     """
     A trivial templating system that replaces {foo} with the value of rule.foo
     and keeps going until it can't replace anything. Templates that evaluate to
     None are replaced with the empty string.
     """
 
-    if depth > 20:
-        raise ValueError(f"Expanding '{str(template)[0:20]}...' failed to terminate")
+    # Cancellations cancel the current task
+    if isinstance(template, Cancel):
+        raise template
 
     if isinstance(template, list):
-        return [expand_async(rule, x, depth) for x in template]
+        return [expand_async(rule, x) for x in template]
 
     if isinstance(template, Path):
-        return Path(expand_async(rule, str(template), depth))
+        return Path(expand_async(rule, str(template)))
 
     if inspect.isfunction(template):
         return template
@@ -151,31 +150,37 @@ def expand_async(rule, template, depth=0):
         print(f"Bad type {type(template)}")
         sys.exit(-1)
 
-    result = ""
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        exp = template[span.start() : span.end()]
+    for _ in range(20):
+        if not template_regex.search(template):
+            return template
 
-        replacement = ""
-        try:
-            # Evaluate and flatten the template contents.
-            replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-        except Exception as err:  # pylint: disable=broad-except
-            replacement = exp
+        result = ""
+        while span := template_regex.search(template):
+            result += template[0 : span.start()]
+            exp = template[span.start() : span.end()]
 
-        replacement = flatten(replacement)
-        replacement = expand_async(rule, replacement, depth + 1)
+            # Evaluate the template contents. If it fails to evaluate, pass the
+            # expression directly to the output for debugging.
+            replacement = ""
+            try:
+                replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
+            except Exception:  # pylint: disable=broad-except
+                replacement = exp
 
-        if not isinstance(replacement, list):
-            replacement = [replacement]
+            replacement = flatten(replacement)
 
-        # Strip out Nones and join the replacement into one string.
-        replacement = [str(r) for r in replacement if r is not None]
-        result += " ".join(replacement)
+            if not isinstance(replacement, list):
+                replacement = [replacement]
 
-        template = template[span.end() :]
-    result += template
-    return result
+            # Strip out Nones and join the replacement into one string.
+            replacement = [str(r) for r in replacement if r is not None]
+            result += " ".join(replacement)
+            template = template[span.end() :]
+
+        result += template
+        template = result
+
+    raise ValueError(f"Expanding '{str(template)[0:20]}...' failed to terminate")
 
 
 ################################################################################
@@ -212,10 +217,6 @@ async def await_variant(variant):
     return variant
 
 
-async def await_task(task):
-    for key in list(task.keys()):
-        task[key] = await await_variant(task[key])
-    return task
 
 ################################################################################
 
@@ -623,14 +624,28 @@ class Task(Rule):
         All the steps needed to run a task and check the result.
         """
 
+        # Check for missing fields
+        if not self.command:  # pylint: disable=access-member-before-definition
+            raise ValueError("Task missing command")
+        if self.files_in is None:
+            raise ValueError("Task missing files_in")
+        if self.files_out is None:
+            raise ValueError("Task missing files_out")
+
         # Await everything
-        await await_task(self)
+        for key in list(self.keys()):
+            self[key] = await await_variant(self[key])
+
+        # Flatten everything
+        self.flatten()
 
         # Expand everything
-        try:
-            self.expand()
-        except Exception as err:
-            raise err
+        self.expand()
+
+        # Check for missing inputs
+        for file in self.abs_files_in:
+            if not file.exists():
+                raise NameError(f"Input file doesn't exist - {file}")
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -664,6 +679,15 @@ class Task(Rule):
 
     ########################################
 
+    def flatten(self):
+        # Flatten all filename promises in any of the input filename arrays.
+        self.files_in = flatten(self.files_in)
+        self.files_out = flatten(self.files_out)
+        self.deps = flatten(self.deps)
+        self.command = flatten(self.command)
+
+    ########################################
+
     def expand(self):
         """
         Expands all template strings in the task.
@@ -673,24 +697,11 @@ class Task(Rule):
         that would be bad.
         """
 
-        # Check for missing fields
-        if not self.command:  # pylint: disable=access-member-before-definition
-            raise ValueError("Task missing command")
-        if self.files_in is None:
-            raise ValueError("Task missing files_in")
-        if self.files_out is None:
-            raise ValueError("Task missing files_out")
-
         # Expand all our directories
         self.in_dir = Path(expand_async(self, self.in_dir))
         self.deps_dir = Path(expand_async(self, self.deps_dir))
         self.out_dir = Path(expand_async(self, self.out_dir))
         self.task_dir = Path(expand_async(self, self.task_dir))
-
-        # Flatten all filename promises in any of the input filename arrays.
-        self.files_in = flatten(self.files_in)
-        self.files_out = flatten(self.files_out)
-        self.deps = flatten(self.deps)
 
         self.files_in = expand_async(self, self.files_in)
         self.files_out = expand_async(self, self.files_out)
@@ -710,7 +721,6 @@ class Task(Rule):
 
         # Now that files_in/files_out/deps are flat, we can expand our
         # description and command list
-        self.command = flatten(self.command)
         self.command = expand_async(self, self.command)
         # pylint: disable=access-member-before-definition
         if self.desc:
@@ -782,6 +792,7 @@ class Task(Rule):
 
         # Create the subprocess via asyncio and then await the result.
         with Chdir(self.task_dir):
+            log(f"Running {command}")
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,

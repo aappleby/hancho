@@ -192,6 +192,12 @@ class TestHancho(unittest.TestCase):
         run_hancho("sync_command")
         self.assertTrue(path.exists("build/result.txt"))
 
+    def test_cancellation(self):
+        self.assertNotEqual(0, run_hancho("cancellation"))
+        self.assertTrue(Path("build/pass_result.txt").exists())
+        self.assertFalse(Path("build/fail_result.txt").exists())
+        self.assertFalse(Path("build/should_not_be_created.txt").exists())
+
 
 ################################################################################
 
