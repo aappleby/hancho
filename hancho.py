@@ -94,18 +94,11 @@ def maybe_as_number(text):
             return text
 
 
-################################################################################
-
-
 def flatten(elements):
     """
     Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it
     in [] if it's not a list.
     """
-    if isinstance(elements, Task):
-        assert not inspect.isawaitable(elements.promise)
-        assert isinstance(elements.promise, list)
-        return flatten(elements.promise)
 
     if not isinstance(elements, list):
         return [elements]
@@ -117,152 +110,78 @@ def flatten(elements):
 
 
 ################################################################################
+# The next three functions require some explanation.
+#
+# We do not necessarily know in advance how the users will nest strings,
+# templates, promises, callbacks, etcetera. So, when we need to produce a flat
+# list of files from whatever was passed to files_in, we need to do a bunch of
+# dynamic-dispatch-type stuff to ensure that we can always turn that thing into
+# a flat list of files.
+#
+# We also need to ensure that if anything in this process throws an exception
+# (or if an exception was passed into a rule due to a previous rule failing)
+# that we always propagate the exception up to Task.run_async, where it will
+# be handled and propagated to other Tasks.
+#
+# The result of this is that the following three functions are mutually
+# recursive in a way that can lead to confusing callstacks, but that should
+# handle every possible case of stuff inside other stuff.
+#
+# The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary
+# limit but it should suffice.
 
-template_regex = re.compile("{[^}]*}")
-
-
-def expand_async(rule, template):
-    """
-    A trivial templating system that replaces {foo} with the value of rule.foo
-    and keeps going until it can't replace anything. Templates that evaluate to
-    None are replaced with the empty string.
-    """
-
-    # Cancellations cancel the current task
-    if isinstance(template, Cancel):
-        raise template
-
-    if isinstance(template, list):
-        return [expand_async(rule, x) for x in template]
-
-    if isinstance(template, Path):
-        return Path(expand_async(rule, str(template)))
-
-    if inspect.isfunction(template):
-        return template
-
-    if template is None:
-        return ""
-
-    if not isinstance(template, str):
-        print(f"Bad type {type(template)}")
-        sys.exit(-1)
-
-    for _ in range(20):
-        if not template_regex.search(template):
-            return template
-
-        result = ""
-        while span := template_regex.search(template):
-            result += template[0 : span.start()]
-            exp = template[span.start() : span.end()]
-
-            # Evaluate the template contents. If it fails to evaluate, pass the
-            # expression directly to the output for debugging.
-            replacement = ""
-            try:
-                replacement = eval(
-                    exp[1:-1], globals(), rule
-                )  # pylint: disable=eval-used
-            except Exception:  # pylint: disable=broad-except
-                replacement = exp
-
-            replacement = flatten(replacement)
-
-            if not isinstance(replacement, list):
-                replacement = [replacement]
-
-            # Strip out Nones and join the replacement into one string.
-            replacement = [str(r) for r in replacement if r is not None]
-            result += " ".join(replacement)
-            template = template[span.end() :]
-
-        result += template
-        template = result
-
-    raise ValueError(f"Expanding '{str(template)[0:20]}...' failed to terminate")
+MAX_DEPTH = 100
 
 
-################################################################################
-
-
-async def await_variant(variant):
-    """
-    Recursively awaits everything awaitable in the given variant. Replaces
-    awaitables in arrays & dicts with the result of the await.
-    """
-
-    # Do _not_ await the task that is currently running.
-    if variant == asyncio.current_task():
-        return variant
-
-    if inspect.isawaitable(variant):
-        return await await_variant(await variant)
-
-    if isinstance(variant, Task):
-        return await variant.promise
-
-    if isinstance(variant, list):
-        for i, v in enumerate(variant):
-            variant[i] = await await_variant(v)
-        return variant
-
-    if isinstance(variant, dict):
-        # Python complains about changing the size of a dict if we use
-        # enumerate() here :P
-        for key in list(variant.keys()):
-            variant[key] = await await_variant(variant[key])
-        return variant
-
-    return variant
-
-
-################################################################################
-
-async def flatten2(rule, variant, depth = 0):
+async def flatten_variant(rule, variant, depth=0):
     """
     Turns 'variant' into a flat array of non-templated strings, paths, and callbacks.
     """
+    # pylint: disable=too-many-return-statements
 
-    if depth > 20:
+    if depth > MAX_DEPTH:
         raise ValueError(f"Flattening '{variant}' failed to terminate")
 
     if isinstance(variant, Cancel):
         raise variant
 
+    if variant is None:
+        return []
+
     if inspect.isawaitable(variant):
-        return await flatten2(rule, await variant, depth + 1)
+        return await flatten_variant(rule, await variant, depth + 1)
 
     if isinstance(variant, Task):
-        return await flatten2(rule, variant.promise, depth + 1)
+        return await flatten_variant(rule, variant.promise, depth + 1)
 
     if isinstance(variant, Path):
-        return [Path(await stringize2(rule, str(variant), depth + 1))]
+        return [Path(await stringize_variant(rule, str(variant), depth + 1))]
 
     if inspect.isfunction(variant):
         return [variant]
 
-    if isinstance(variant, str):
-        return [await stringize2(rule, variant, depth + 1)]
-
     if isinstance(variant, list):
         result = []
         for element in variant:
-            result.extend(await flatten2(rule, element, depth + 1))
+            result.extend(await flatten_variant(rule, element, depth + 1))
         return result
 
-    print()
-    print(f"Don't know how to flatten {type(variant)}")
-    assert False
+    if isinstance(variant, str):
+        return [await stringize_variant(rule, variant, depth + 1)]
+
+    raise ValueError(f"Don't know how to flatten {type(variant)}")
+
 
 ########################################
 
-async def stringize2(rule, variant, depth = 0):
+
+async def stringize_variant(rule, variant, depth=0):
     """
     Turns 'variant' into a non-templated string.
     """
+    # pylint: disable=too-many-return-statements
 
-    if depth > 20:
+    if depth > MAX_DEPTH:
         raise ValueError(f"Stringizing '{variant}' failed to terminate")
 
     if isinstance(variant, Cancel):
@@ -272,43 +191,43 @@ async def stringize2(rule, variant, depth = 0):
         return ""
 
     if inspect.isawaitable(variant):
-        return await stringize2(rule, await variant, depth + 1)
+        return await stringize_variant(rule, await variant, depth + 1)
 
     if isinstance(variant, Task):
-        return await stringize2(rule, variant.promise, depth + 1)
+        return await stringize_variant(rule, variant.promise, depth + 1)
 
     if isinstance(variant, Path):
-        return await stringize2(rule, str(variant), depth + 1)
+        return await stringize_variant(rule, str(variant), depth + 1)
 
     if isinstance(variant, list):
-        variant = await flatten2(rule, variant, depth + 1)
+        variant = await flatten_variant(rule, variant, depth + 1)
         variant = [str(s) for s in variant if s is not None]
         variant = " ".join(variant)
         return variant
 
     if isinstance(variant, str):
         if template_regex.search(variant):
-            return await expand2(rule, variant, depth + 1)
+            return await expand_template(rule, variant, depth + 1)
         return variant
 
-    print()
-    print(f"Don't know how to stringize {type(variant)}")
-    assert False
+    raise ValueError(f"Don't know how to stringize {type(variant)}")
+
 
 ########################################
 
-async def expand2(rule, template, depth = 0):
+template_regex = re.compile("{[^}]*}")
+
+
+async def expand_template(rule, template, depth=0):
     """
     Expands all templates to produce a non-templated string.
     """
 
-    assert isinstance(template, str)
+    if not isinstance(template, str):
+        raise ValueError(f"Don't know how to expand {type(template)}")
 
-    if depth > 20:
+    if depth > MAX_DEPTH:
         raise ValueError(f"Expanding '{template}' failed to terminate")
-
-    #if isinstance(variant, Path):
-    #    return Path(await expand2(rule, str(variant), depth + 1))
 
     result = ""
     while span := template_regex.search(template):
@@ -324,11 +243,12 @@ async def expand2(rule, template, depth = 0):
         except Exception:  # pylint: disable=broad-except
             replacement = exp
 
-        result += await stringize2(rule, replacement, depth + 1)
+        result += await stringize_variant(rule, replacement, depth + 1)
         template = template[span.end() :]
 
     result += template
     return result
+
 
 ################################################################################
 
@@ -735,6 +655,11 @@ class Task(Rule):
     async def task_main(self):
         """
         All the steps needed to run a task and check the result.
+
+        NOTE: The order that fields are expanded _does_ matter. For example,
+        if we call swap_ext() on a filename array that hasn't been awaited,
+        we would end up trying to change the file extension of a promise and
+        that would be bad.
         """
 
         # Check for missing fields
@@ -745,15 +670,37 @@ class Task(Rule):
         if self.files_out is None:
             raise ValueError("Task missing files_out")
 
-        # Await everything
-        for key in list(self.keys()):
-            self[key] = await await_variant(self[key])
+        # Stringize our directories
+        self.in_dir = Path(await stringize_variant(self, self.in_dir))
+        self.deps_dir = Path(await stringize_variant(self, self.deps_dir))
+        self.out_dir = Path(await stringize_variant(self, self.out_dir))
+        self.task_dir = Path(await stringize_variant(self, self.task_dir))
 
-        # Flatten everything
-        await self.flatten()
+        # Flatten our file lists
+        self.files_in = await flatten_variant(self, self.files_in)
+        self.files_out = await flatten_variant(self, self.files_out)
+        self.deps = await flatten_variant(self, self.deps)
 
-        # Expand everything
-        await self.expand()
+        # Prepend directories to filenames and then normalize + absolute them.
+        # If they're already absolute, this does nothing.
+        self.abs_files_in = [abspath(self.in_dir / f) for f in self.files_in]
+        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
+        self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
+
+        # Strip task_dir off the absolute paths to produce task_dir-relative
+        # paths
+        self.files_in = [relpath(f, self.task_dir) for f in self.abs_files_in]
+        self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
+        self.deps = [relpath(f, self.task_dir) for f in self.abs_deps]
+
+        # Now that files_in/files_out/deps are flat, we can expand our
+        # description and command list
+        self.command = await flatten_variant(self, self.command)
+        # pylint: disable=access-member-before-definition
+        if self.desc:
+            self.desc = await stringize_variant(self, self.desc)
+        if self.depfile:
+            self.depfile = await stringize_variant(self, self.depfile)
 
         # Check for missing inputs
         for file in self.abs_files_in:
@@ -789,63 +736,6 @@ class Task(Rule):
                 )
 
         return result
-
-    ########################################
-
-    async def flatten(self):
-        """
-        Flatten all filename promises in any of the input filename arrays.
-        """
-        self.files_in = flatten(self.files_in)
-        self.files_out = flatten(self.files_out)
-        self.deps = flatten(self.deps)
-        self.command = flatten(self.command)
-
-    ########################################
-
-    async def expand(self):
-        """
-        Expands all template strings in the task.
-        NOTE: The order that fields are expanded _does_ matter. For example,
-        if we call swap_ext() on a filename array that hasn't been awaited,
-        we would end up trying to change the file extension of a promise and
-        that would be bad.
-        """
-
-        # Expand all our directories
-        self.in_dir = Path(await stringize2(self, self.in_dir))
-        self.deps_dir = Path(await stringize2(self, self.deps_dir))
-        self.out_dir = Path(await stringize2(self, self.out_dir))
-        self.task_dir = Path(await stringize2(self, self.task_dir))
-
-        #self.files_in = expand_async(self, self.files_in)
-        #self.files_out = expand_async(self, self.files_out)
-        #self.deps = expand_async(self, self.deps)
-
-        self.files_in = await flatten2(self, self.files_in)
-        self.files_out = await flatten2(self, self.files_out)
-        self.deps = await flatten2(self, self.deps)
-
-        # Prepend directories to filenames and then normalize + absolute them.
-        # If they're already absolute, this does nothing.
-        self.abs_files_in = [abspath(self.in_dir / f) for f in self.files_in]
-        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
-        self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
-
-        # Strip task_dir off the absolute paths to produce task_dir-relative
-        # paths
-        self.files_in = [relpath(f, self.task_dir) for f in self.abs_files_in]
-        self.files_out = [relpath(f, self.task_dir) for f in self.abs_files_out]
-        self.deps = [relpath(f, self.task_dir) for f in self.abs_deps]
-
-        # Now that files_in/files_out/deps are flat, we can expand our
-        # description and command list
-        self.command = await flatten2(self, self.command)
-        # pylint: disable=access-member-before-definition
-        if self.desc:
-            self.desc = await stringize2(self, self.desc)
-        if self.depfile:
-            self.depfile = await stringize2(self, self.depfile)
 
     ########################################
 
@@ -947,7 +837,8 @@ class Task(Rule):
         """
 
         # Pylint really doesn't like this function, lol.
-        # pylint: disable=too-many-return-statements,too-many-branches
+        # pylint: disable=too-many-return-statements
+        # pylint: disable=too-many-branches
 
         files_in = self.abs_files_in
         files_out = self.abs_files_out
