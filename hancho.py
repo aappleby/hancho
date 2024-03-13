@@ -820,10 +820,10 @@ class Task(Rule):
         """
 
         # Expand all our directories
-        self.in_dir = Path(expand_async(self, self.in_dir))
-        self.deps_dir = Path(expand_async(self, self.deps_dir))
-        self.out_dir = Path(expand_async(self, self.out_dir))
-        self.task_dir = Path(expand_async(self, self.task_dir))
+        self.in_dir = Path(await stringize2(self, self.in_dir))
+        self.deps_dir = Path(await stringize2(self, self.deps_dir))
+        self.out_dir = Path(await stringize2(self, self.out_dir))
+        self.task_dir = Path(await stringize2(self, self.task_dir))
 
         #self.files_in = expand_async(self, self.files_in)
         #self.files_out = expand_async(self, self.files_out)
