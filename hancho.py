@@ -290,6 +290,8 @@ class Config(dict):
             """Types the encoder doesn't understand just get stringified."""
 
             def default(self, o):
+                if isinstance(o, Path):
+                    return f"Path {o}"
                 return str(o)
 
         return json.dumps(self, indent=2, cls=Encoder)
@@ -330,10 +332,17 @@ class Rule(Config):
             Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
         )
         task.work_dir = relpath(Path.cwd(), self.root_dir)
-        task.load_dir = relpath(Path(app.mod_stack[-1].__file__).parent, self.root_dir)
+
+        # A task that's created during task execution instead of module loading will have no mod
+        # stack entry to pull load_dir from, so it runs from '.' (root_dir) instead.
+        if app.mod_stack:
+            task.load_dir = relpath(Path(app.mod_stack[-1].__file__).parent, self.root_dir)
+        else:
+            task.load_dir = Path(".")
 
         coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
+        app.all_tasks.append(task)
         return task
 
 
@@ -429,9 +438,9 @@ class Task(Rule):
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
-            if file in app.hancho_outs:
+            if file in app.all_files_out:
                 raise NameError(f"Multiple rules build {file}!")
-            app.hancho_outs.add(file)
+            app.all_files_out.add(file)
 
         # Check if we need a rebuild
         self.reason = self.needs_rerun(self.force)
@@ -511,7 +520,6 @@ class Task(Rule):
 
         # Create the subprocess via asyncio and then await the result.
         with Chdir(self.task_dir):
-            log(f"Running {command}")
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
@@ -617,7 +625,8 @@ class App:
     def __init__(self):
         self.hancho_mods = {}
         self.mod_stack = []
-        self.hancho_outs = set()
+        self.all_tasks = []
+        self.all_files_out = set()
         self.tasks_total = 0
         self.tasks_pass = 0
         self.tasks_fail = 0

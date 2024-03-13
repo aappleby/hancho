@@ -206,6 +206,9 @@ class TestHancho(unittest.TestCase):
         self.assertFalse(Path("build/fail_result.txt").exists())
         self.assertFalse(Path("build/should_not_be_created.txt").exists())
 
+    def test_task_creates_task(self):
+        self.assertEqual(0, run_hancho("task_creates_task"))
+        self.assertTrue(Path("build/dummy.txt").exists())
 
 ################################################################################
 

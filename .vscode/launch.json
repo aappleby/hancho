@@ -10,7 +10,7 @@
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}/tests",
-      "args": ["--force", "-j1", "multiple_commands.hancho"],
+      "args": ["--force", "-j1", "task_creates_task.hancho"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },
