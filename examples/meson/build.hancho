@@ -50,9 +50,9 @@ main_o = compile(
   ],
 )
 
-main = link(main_o, "demo",
-  libs = [
-    link.libs,
-    "{run_cmd('pkg-config gtk+-3.0 --libs')}"
-  ],
-)
+#main = link(main_o, "demo",
+#  libs = [
+#    link.libs,
+#    "{run_cmd('pkg-config gtk+-3.0 --libs')}"
+#  ],
+#)

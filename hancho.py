@@ -87,14 +87,15 @@ def flatten(elements):
     Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it
     in [] if it's not a list.
     """
+    if isinstance(elements, Task):
+        return flatten(elements.promise)
+
     if not isinstance(elements, list):
         return [elements]
+
     result = []
     for element in elements:
-        if isinstance(element, list):
-            result.extend(flatten(element))
-        else:
-            result.append(element)
+        result.extend(flatten(element))
     return result
 
 
@@ -131,89 +132,50 @@ def expand_async(rule, template, depth=0):
     None are replaced with the empty string.
     """
 
-    if depth == 20:
+    if depth > 20:
         raise ValueError(f"Expanding '{str(template)[0:20]}...' failed to terminate")
+
+    if isinstance(template, list):
+        return [expand_async(rule, x, depth) for x in template]
+
+    if isinstance(template, Path):
+        return Path(expand_async(rule, str(template), depth))
+
+    if inspect.isfunction(template):
+        return template
+
+    if template is None:
+        return ""
+
+    if not isinstance(template, str):
+        print(f"Bad type {type(template)}")
+        sys.exit(-1)
 
     result = ""
     while span := template_regex.search(template):
         result += template[0 : span.start()]
         exp = template[span.start() : span.end()]
+
+        replacement = ""
         try:
             # Evaluate and flatten the template contents.
             replacement = eval(exp[1:-1], globals(), rule)  # pylint: disable=eval-used
-            replacement = flatten_async(rule, replacement, depth + 1)
+        except Exception as err:  # pylint: disable=broad-except
+            replacement = exp
 
-            # Strip out Nones and join the replacement into one string.
-            replacement = [str(r) for r in replacement if r is not None]
-            result += " ".join(replacement)
-        except Exception:  # pylint: disable=broad-except
-            result += exp
+        replacement = flatten(replacement)
+        replacement = expand_async(rule, replacement, depth + 1)
+
+        if not isinstance(replacement, list):
+            replacement = [replacement]
+
+        # Strip out Nones and join the replacement into one string.
+        replacement = [str(r) for r in replacement if r is not None]
+        result += " ".join(replacement)
+
         template = template[span.end() :]
     result += template
     return result
-
-
-################################################################################
-
-
-def flatten_async(rule, elements, depth=0):
-    """
-    Turns arbitrarily-nested arrays of stuff into flat flexpanded arrays.
-    """
-
-    if not isinstance(elements, list):
-        elements = [elements]
-
-    result = []
-    for element in elements:
-        new_element = flexpand(rule, element, depth)
-        if isinstance(new_element, list):
-            result.extend(new_element)
-        else:
-            result.append(new_element)
-
-    return result
-
-
-################################################################################
-# pylint: disable=too-many-return-statements
-
-
-def flexpand(rule, variant, depth):
-    """
-    Flattens arrays, awaits promises, raises cancellations, and expands templates.
-    """
-
-    # Cancellations cancel the current task
-    if isinstance(variant, Cancel):
-        raise variant
-
-    # Tasks get their promises flexpanded
-    if isinstance(variant, Task):
-        return flexpand(rule, variant.promise, depth)
-
-    # Functions get passed through
-    if inspect.isfunction(variant):
-        return variant
-
-    # Nones get passed through
-    if variant is None:
-        return None
-
-    # Lists get flattened
-    if isinstance(variant, list):
-        return flatten_async(rule, variant, depth)
-
-    # Paths get stringified and expanded
-    if isinstance(variant, Path):
-        return Path(expand_async(rule, str(variant), depth))
-
-    # Strings get expanded
-    if isinstance(variant, str):
-        return expand_async(rule, variant, depth)
-
-    # Everything else is an error.
-    raise ValueError(f"Don't know how to flexpand a {type(variant)}")
 
 
 ################################################################################
@@ -232,6 +194,9 @@ async def await_variant(variant):
     if inspect.isawaitable(variant):
         return await await_variant(await variant)
 
+    if isinstance(variant, Task):
+        return await variant.promise
+
     if isinstance(variant, list):
         for i, v in enumerate(variant):
             variant[i] = await await_variant(v)
@@ -246,6 +211,11 @@ async def await_variant(variant):
 
     return variant
 
+
+async def await_task(task):
+    for key in list(task.keys()):
+        task[key] = await await_variant(task[key])
+    return task
 
 ################################################################################
 
@@ -654,10 +624,13 @@ class Task(Rule):
         """
 
         # Await everything
-        await await_variant(self)
+        await await_task(self)
 
         # Expand everything
-        self.expand()
+        try:
+            self.expand()
+        except Exception as err:
+            raise err
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -719,9 +692,9 @@ class Task(Rule):
         self.files_out = flatten(self.files_out)
         self.deps = flatten(self.deps)
 
-        self.files_in = flatten_async(self, self.files_in)
-        self.files_out = flatten_async(self, self.files_out)
-        self.deps = flatten_async(self, self.deps)
+        self.files_in = expand_async(self, self.files_in)
+        self.files_out = expand_async(self, self.files_out)
+        self.deps = expand_async(self, self.deps)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
@@ -737,7 +710,8 @@ class Task(Rule):
 
         # Now that files_in/files_out/deps are flat, we can expand our
         # description and command list
-        self.command = flatten_async(self, self.command)
+        self.command = flatten(self.command)
+        self.command = expand_async(self, self.command)
         # pylint: disable=access-member-before-definition
         if self.desc:
             self.desc = expand_async(self, self.desc)

@@ -1,0 +1,7 @@
+from hancho import *
+
+rule = Rule(
+  command = "touch {files_out} {this_field_does_not_exist}"
+)
+
+rule([], "result.txt")

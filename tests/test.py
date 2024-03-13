@@ -84,6 +84,10 @@ class TestHancho(unittest.TestCase):
         """Rules with missing commands should fail"""
         self.assertNotEqual(0, run_hancho("command_missing"))
 
+    def test_missing_field(self):
+        """Missing fields should turn into empty strings when expanded"""
+        self.assertEqual(0, run_hancho("missing_field"))
+
     def test_expand_failed_to_terminate(self):
         """A recursive text template should cause an 'expand failed to terminate' error."""
         self.assertNotEqual(0, run_hancho("expand_failed_to_terminate"))
