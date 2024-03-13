@@ -297,45 +297,38 @@ async def stringize2(rule, variant, depth = 0):
 
 ########################################
 
-async def expand2(rule, variant, depth = 0):
+async def expand2(rule, template, depth = 0):
     """
-    Expands all templates in 'variant' to produce a non-templated string.
+    Expands all templates to produce a non-templated string.
     """
+
+    assert isinstance(template, str)
 
     if depth > 20:
-        raise ValueError(f"Expanding '{variant}' failed to terminate")
+        raise ValueError(f"Expanding '{template}' failed to terminate")
 
-    if isinstance(variant, Cancel):
-        raise variant
+    #if isinstance(variant, Path):
+    #    return Path(await expand2(rule, str(variant), depth + 1))
 
-    if isinstance(variant, Path):
-        return Path(await expand2(rule, str(variant), depth + 1))
+    result = ""
+    while span := template_regex.search(template):
+        result += template[0 : span.start()]
+        exp = template[span.start() : span.end()]
 
-    if isinstance(variant, str):
-        template = variant
-        result = ""
-        while span := template_regex.search(template):
-            result += template[0 : span.start()]
-            exp = template[span.start() : span.end()]
+        # Evaluate the template contents. If it fails to evaluate, pass the
+        # expression directly to the output for debugging.
+        replacement = ""
+        try:
+            # pylint: disable=eval-used
+            replacement = eval(exp[1:-1], globals(), rule)
+        except Exception:  # pylint: disable=broad-except
+            replacement = exp
 
-            # Evaluate the template contents. If it fails to evaluate, pass the
-            # expression directly to the output for debugging.
-            replacement = ""
-            try:
-                # pylint: disable=eval-used
-                replacement = eval(exp[1:-1], globals(), rule)
-            except Exception:  # pylint: disable=broad-except
-                replacement = exp
+        result += await stringize2(rule, replacement, depth + 1)
+        template = template[span.end() :]
 
-            result += await stringize2(rule, replacement, depth + 1)
-            template = template[span.end() :]
-
-        result += template
-        return result
-
-    print()
-    print(f"Don't know how to expand {type(variant)}")
-    assert False
+    result += template
+    return result
 
 ################################################################################
 
