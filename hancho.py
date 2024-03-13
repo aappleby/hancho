@@ -219,6 +219,117 @@ async def await_variant(variant):
 
 ################################################################################
 
+async def flatten2(rule, variant, depth = 0):
+    """
+    Turns 'variant' into a flat array of non-templated strings, paths, and callbacks.
+    """
+
+    if depth > 20:
+        raise ValueError(f"Flattening '{variant}' failed to terminate")
+
+    if inspect.isawaitable(variant):
+        return await flatten2(rule, await variant, depth + 1)
+
+    if isinstance(variant, Task):
+        return await flatten2(rule, variant.promise, depth + 1)
+
+    if isinstance(variant, Path):
+        return [Path(await stringize2(rule, str(variant), depth + 1))]
+
+    if inspect.isfunction(variant):
+        return [variant]
+
+    if isinstance(variant, str):
+        return [await stringize2(rule, variant, depth + 1)]
+
+    if isinstance(variant, list):
+        result = []
+        for element in variant:
+            result.extend(await flatten2(rule, element, depth + 1))
+        return result
+
+    print()
+    print(f"Don't know how to flatten {type(variant)}")
+    sys.exit(-1)
+
+########################################
+
+async def stringize2(rule, variant, depth = 0):
+    """
+    Turns 'variant' into a non-templated string.
+    """
+
+    if depth > 20:
+        raise ValueError(f"Stringizing '{variant}' failed to terminate")
+
+    if variant is None:
+        return ""
+
+    if inspect.isawaitable(variant):
+        return await stringize2(rule, await variant, depth + 1)
+
+    if isinstance(variant, Task):
+        return await stringize2(rule, variant.promise, depth + 1)
+
+    if isinstance(variant, Path):
+        return Path(await stringize2(rule, str(variant), depth + 1))
+
+    if isinstance(variant, list):
+        variant = await flatten2(rule, variant, depth + 1)
+        variant = [str(s) for s in variant if s is not None]
+        variant = " ".join(variant)
+        return variant
+
+    if isinstance(variant, str):
+        if template_regex.search(variant):
+            return await expand2(rule, variant, depth + 1)
+        return variant
+
+    print()
+    print(f"Don't know how to stringize {type(variant)}")
+    sys.exit(-1)
+
+########################################
+
+async def expand2(rule, variant, depth = 0):
+    """
+    Expands all templates in 'variant' to produce a non-templated string.
+    """
+
+    if depth > 20:
+        raise ValueError(f"Expanding '{variant}' failed to terminate")
+
+    if isinstance(variant, Path):
+        return Path(await expand2(rule, str(variant), depth + 1))
+
+    if isinstance(variant, str):
+        template = variant
+        result = ""
+        while span := template_regex.search(template):
+            result += template[0 : span.start()]
+            exp = template[span.start() : span.end()]
+
+            # Evaluate the template contents. If it fails to evaluate, pass the
+            # expression directly to the output for debugging.
+            replacement = ""
+            try:
+                # pylint: disable=eval-used
+                replacement = eval(exp[1:-1], globals(), rule)
+            except Exception:  # pylint: disable=broad-except
+                replacement = exp
+
+            result += await stringize2(rule, replacement, depth + 1)
+            template = template[span.end() :]
+
+        result += template
+        return result
+
+    print()
+    print(f"Don't know how to expand {type(variant)}")
+    sys.exit(-1)
+
+################################################################################
+
 
 class Chdir:
     """
@@ -298,10 +409,10 @@ config = Config(
     depformat = "gcc",
 
     root_dir  = Path.cwd(),
-    task_dir  = "{root_dir}",
-    in_dir    = "{root_dir / load_dir}",
-    deps_dir  = "{root_dir / load_dir}",
-    out_dir   = "{root_dir / build_dir / load_dir}",
+    task_dir  = Path("{root_dir}"),
+    in_dir    = Path("{root_dir / load_dir}"),
+    deps_dir  = Path("{root_dir / load_dir}"),
+    out_dir   = Path("{root_dir / build_dir / load_dir}"),
     build_dir = Path("build"),
 
     files_out = [],
