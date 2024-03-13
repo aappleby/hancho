@@ -272,7 +272,7 @@ async def stringize2(rule, variant, depth = 0):
         return await stringize2(rule, variant.promise, depth + 1)
 
     if isinstance(variant, Path):
-        return Path(await stringize2(rule, str(variant), depth + 1))
+        return await stringize2(rule, str(variant), depth + 1)
 
     if isinstance(variant, list):
         variant = await flatten2(rule, variant, depth + 1)
@@ -834,12 +834,12 @@ class Task(Rule):
 
         # Now that files_in/files_out/deps are flat, we can expand our
         # description and command list
-        self.command = expand_async(self, self.command)
+        self.command = await flatten2(self, self.command)
         # pylint: disable=access-member-before-definition
         if self.desc:
-            self.desc = expand_async(self, self.desc)
+            self.desc = await stringize2(self, self.desc)
         if self.depfile:
-            self.depfile = Path(expand_async(self, self.depfile))
+            self.depfile = await stringize2(self, self.depfile)
 
     ########################################
 
