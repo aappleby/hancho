@@ -21,33 +21,60 @@ from glob import glob
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
 # that build.hancho and descendants don't try to load a second copy of Hancho.
 
-this = sys.modules[__name__]
 sys.modules["hancho"] = sys.modules[__name__]
 
-################################################################################
-# Build rule helper methods
+# The maximum number of recursion levels we will do to expand a template
+MAX_EXPAND_DEPTH = 100
+
+# Matches {} delimited regions inside a template string.
+template_regex = re.compile("{[^}]*}")
+
+
+def log(message, *args, sameline=False, **kwargs):
+    """Simple logger that can do same-line log messages like Ninja."""
+    if config.quiet:
+        return
+
+    if not sys.stdout.isatty():
+        sameline = False
+
+    output = io.StringIO()
+    if sameline:
+        kwargs["end"] = ""
+    print(message, *args, file=output, **kwargs)
+    output = output.getvalue()
+
+    if not sameline and app.line_dirty:
+        sys.stdout.write("\n")
+        app.line_dirty = False
+
+    if not output:
+        return
+
+    if sameline:
+        sys.stdout.write("\r")
+        output = output[: os.get_terminal_size().columns - 1]
+        sys.stdout.write(output)
+        sys.stdout.write("\x1B[K")
+    else:
+        sys.stdout.write(output)
+
+    sys.stdout.flush()
+    app.line_dirty = output[-1] != "\n"
 
 
 def abspath(path):
-    """
-    Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use
-    os.path.abspath.
-    """
+    """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
     return Path(os.path.abspath(path))
 
 
 def relpath(path1, path2):
-    """
-    Pathlib's path.relative_to() refuses to generate "../bar", so we use
-    os.path.relpath.
-    """
+    """Pathlib's path.relative_to() refuses to generate "../bar", so we use os.path.relpath."""
     return Path(os.path.relpath(path1, path2))
 
 
 def color(red=None, green=None, blue=None):
-    """
-    Converts RGB color to ANSI format string
-    """
+    """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
     if os.name == "nt":
         return ""
@@ -57,16 +84,12 @@ def color(red=None, green=None, blue=None):
 
 
 def run_cmd(cmd):
-    """
-    Runs a console command and returns its stdout with whitespace stripped
-    """
+    """Runs a console command and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
 def swap_ext(name, new_ext):
-    """
-    Replaces file extensions on either a single filename or a list of filenames
-    """
+    """Replaces file extensions on either a single filename or a list of filenames."""
     if name is None:
         return None
     if isinstance(name, list):
@@ -76,15 +99,13 @@ def swap_ext(name, new_ext):
 
 def mtime(filename):
     """Gets the file's mtime and tracks how many times we called it"""
-    this.mtime_calls += 1
+    app.mtime_calls += 1
     return Path(filename).stat().st_mtime
 
 
 def maybe_as_number(text):
-    """
-    Tries to convert a string to an int, then a float, then gives up. Used for
-    ingesting unrecognized flag values.
-    """
+    """Tries to convert a string to an int, then a float, then gives up. Used for ingesting
+    unrecognized flag values."""
     try:
         return int(text)
     except ValueError:
@@ -94,22 +115,6 @@ def maybe_as_number(text):
             return text
 
 
-def flatten(elements):
-    """
-    Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it
-    in [] if it's not a list.
-    """
-
-    if not isinstance(elements, list):
-        return [elements]
-
-    result = []
-    for element in elements:
-        result.extend(flatten(element))
-    return result
-
-
-################################################################################
 # The next three functions require some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings,
@@ -130,19 +135,15 @@ def flatten(elements):
 # The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary
 # limit but it should suffice.
 
-MAX_DEPTH = 100
-
 
 async def flatten_variant(rule, variant, depth=0):
-    """
-    Turns 'variant' into a flat array of non-templated strings, paths, and callbacks.
-    """
+    """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
     # pylint: disable=too-many-return-statements
 
-    if depth > MAX_DEPTH:
+    if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Flattening '{variant}' failed to terminate")
 
-    if isinstance(variant, Cancel):
+    if isinstance(variant, asyncio.CancelledError):
         raise variant
 
     if variant is None:
@@ -172,19 +173,14 @@ async def flatten_variant(rule, variant, depth=0):
     raise ValueError(f"Don't know how to flatten {type(variant)}")
 
 
-########################################
-
-
 async def stringize_variant(rule, variant, depth=0):
-    """
-    Turns 'variant' into a non-templated string.
-    """
+    """Turns 'variant' into a non-templated string."""
     # pylint: disable=too-many-return-statements
 
-    if depth > MAX_DEPTH:
+    if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Stringizing '{variant}' failed to terminate")
 
-    if isinstance(variant, Cancel):
+    if isinstance(variant, asyncio.CancelledError):
         raise variant
 
     if variant is None:
@@ -213,20 +209,13 @@ async def stringize_variant(rule, variant, depth=0):
     raise ValueError(f"Don't know how to stringize {type(variant)}")
 
 
-########################################
-
-template_regex = re.compile("{[^}]*}")
-
-
 async def expand_template(rule, template, depth=0):
-    """
-    Expands all templates to produce a non-templated string.
-    """
+    """Expands all templates to produce a non-templated string."""
 
     if not isinstance(template, str):
         raise ValueError(f"Don't know how to expand {type(template)}")
 
-    if depth > MAX_DEPTH:
+    if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Expanding '{template}' failed to terminate")
 
     result = ""
@@ -250,13 +239,21 @@ async def expand_template(rule, template, depth=0):
     return result
 
 
-################################################################################
+def load(mod_path):
+    """Module loader entry point for .hancho files. Searches the loaded Hancho module stack for a
+    module whose directory contains 'mod_path', then loads the module relative to that path.
+    """
+
+    mod_path = Path(mod_path)
+    for parent_mod in reversed(app.mod_stack):
+        abs_path = abspath(Path(parent_mod.__file__).parent / mod_path)
+        if abs_path.exists():
+            return app.load_module(abs_path)
+    raise FileNotFoundError(f"Could not load module {mod_path}")
 
 
 class Chdir:
-    """
-    Copied from Python 3.11 contextlib.py
-    """
+    """Copied from Python 3.11 contextlib.py"""
 
     def __init__(self, path):
         self.path = path
@@ -270,13 +267,8 @@ class Chdir:
         os.chdir(self._old_cwd.pop())
 
 
-################################################################################
-
-
 class Config(dict):
-    """
-    Config is a 'bag of fields' that behaves sort of like a Javascript object.
-    """
+    """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
     def __init__(self, base=None, **kwargs):
         self.base = base
@@ -292,14 +284,10 @@ class Config(dict):
         return self.__getitem__(key)
 
     def __repr__(self):
-        """
-        Turns this config blob into a JSON doc for debugging
-        """
+        """Turns this config blob into a JSON doc for debugging."""
 
         class Encoder(json.JSONEncoder):
-            """
-            Types the encoder doesn't understand just get stringified.
-            """
+            """Types the encoder doesn't understand just get stringified."""
 
             def default(self, o):
                 return str(o)
@@ -307,282 +295,28 @@ class Config(dict):
         return json.dumps(self, indent=2, cls=Encoder)
 
     def extend(self, **kwargs):
-        """
-        Returns a 'subclass' of this config blob that can override its fields.
-        """
+        """Returns a 'subclass' of this config blob that can override its fields."""
         return type(self)(base=self, **kwargs)
 
 
-################################################################################
-
-# fmt: off
-config = Config(
-    filename  = "build.hancho",
-
-    desc      = "{files_in} -> {files_out}",
-    chdir     = ".",
-    jobs      = os.cpu_count(),
-    semaphore = None,
-    verbose   = False,
-    quiet     = False,
-    dryrun    = False,
-    debug     = False,
-    force     = False,
-    depformat = "gcc",
-
-    root_dir  = Path.cwd(),
-    task_dir  = Path("{root_dir}"),
-    in_dir    = Path("{root_dir / load_dir}"),
-    deps_dir  = Path("{root_dir / load_dir}"),
-    out_dir   = Path("{root_dir / build_dir / load_dir}"),
-    build_dir = Path("build"),
-
-    files_out = [],
-    deps      = [],
-
-    len       = len,
-    run_cmd   = run_cmd,
-    swap_ext  = swap_ext,
-    color     = color,
-    glob      = glob,
-    abspath   = abspath,
-    relpath   = relpath,
-)
-# fmt: on
-
-################################################################################
-
-line_dirty = False  # pylint: disable=invalid-name
-
-
-def log(message, *args, sameline=False, **kwargs):
-    """
-    Simple logger that can do same-line log messages like Ninja
-    """
-    if config.quiet:
-        return
-
-    if not sys.stdout.isatty():
-        sameline = False
-
-    output = io.StringIO()
-    if sameline:
-        kwargs["end"] = ""
-    print(message, *args, file=output, **kwargs)
-    output = output.getvalue()
-
-    global line_dirty  # pylint: disable=global-statement
-    if not sameline and line_dirty:
-        sys.stdout.write("\n")
-        line_dirty = False
-
-    if not output:
-        return
-
-    if sameline:
-        sys.stdout.write("\r")
-        output = output[: os.get_terminal_size().columns - 1]
-        sys.stdout.write(output)
-        sys.stdout.write("\x1B[K")
-    else:
-        sys.stdout.write(output)
-
-    sys.stdout.flush()
-    line_dirty = output[-1] != "\n"
-
-
-################################################################################
-
-
-def main():
-    """
-    Our main() just handles command line args and delegates to async_main()
-    """
-
-    # pylint: disable=line-too-long
-    # fmt: off
-    parser = argparse.ArgumentParser()
-    parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
-    parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory before starting the build")
-    parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
-    parser.add_argument("-v", "--verbose", default=False,          action="store_true", help="Print verbose build info")
-    parser.add_argument("-q", "--quiet",   default=False,          action="store_true", help="Mute all output")
-    parser.add_argument("-n", "--dryrun",  default=False,          action="store_true", help="Do not run commands")
-    parser.add_argument("-d", "--debug",   default=False,          action="store_true", help="Print debugging information")
-    parser.add_argument("-f", "--force",   default=False,          action="store_true", help="Force rebuild of everything")
-    # fmt: on
-
-    # Parse the command line
-    (flags, unrecognized) = parser.parse_known_args()
-
-    # Merge all known command line flags into our global config object.
-    global config  # pylint: disable=global-statement
-    config |= flags.__dict__
-
-    # Unrecognized command line parameters also become global config fields if
-    # they are flag-like
-    for span in unrecognized:
-        if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-            config[match.group(1)] = (
-                maybe_as_number(match.group(2)) if match.group(2) is not None else True
-            )
-
-    # Change directory if needed and kick off the build.
-    with Chdir(config.chdir):
-        result = asyncio.run(async_main())
-
-    return result
-
-
-################################################################################
-
-
-async def async_main():
-    """
-    All the actual Hancho stuff runs in an async context.
-    """
-
-    # Reset all global state
-    this.hancho_mods = {}
-    this.mod_stack = []
-    this.hancho_outs = set()
-    this.tasks_total = 0
-    this.tasks_pass = 0
-    this.tasks_fail = 0
-    this.tasks_skip = 0
-    this.task_counter = 0
-    this.mtime_calls = 0
-
-    # Configure our job semaphore
-    # pylint: disable=attribute-defined-outside-init
-    config.semaphore = asyncio.Semaphore(config.jobs)
-
-    # Load the root build.hancho file.
-    root_filename = abspath(config.filename)
-    if not root_filename.exists():
-        raise FileNotFoundError(f"Could not find {root_filename}")
-    load_abs(root_filename)
-
-    # Root module(s) loaded. Run all tasks in the queue until we run out.
-    while True:
-        pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
-        if not pending_tasks:
-            break
-        await asyncio.wait(pending_tasks)
-
-    # Print a copy of the global config after all tasks are done if we're in
-    # debug mode
-    if config.debug:
-        log(f"Hancho global config: {config}")
-        log("")
-
-    # Done, print status info if needed
-    if config.debug or config.verbose:
-        log(f"tasks total:   {this.tasks_total}")
-        log(f"tasks passed:  {this.tasks_pass}")
-        log(f"tasks failed:  {this.tasks_fail}")
-        log(f"tasks skipped: {this.tasks_skip}")
-        log(f"mtime calls:   {this.mtime_calls}")
-
-    if this.tasks_fail:
-        log(f"hancho: {color(255, 0, 0)}BUILD FAILED{color()}")
-    elif this.tasks_pass:
-        log(f"hancho: {color(0, 255, 0)}BUILD PASSED{color()}")
-    else:
-        log(f"hancho: {color(255, 255, 0)}BUILD CLEAN{color()}")
-
-    return -1 if this.tasks_fail else 0
-
-
-################################################################################
-# The .hancho file loader does a small amount of work to keep track of the
-# stack of .hancho files that have been loaded.
-
-
-def load(mod_path):
-    """
-    Searches the loaded Hancho module stack for a module whose directory
-    contains 'mod_path', then loads the module relative to that path.
-    """
-    mod_path = Path(mod_path)
-    for parent_mod in reversed(this.mod_stack):
-        abs_path = abspath(Path(parent_mod.__file__).parent / mod_path)
-        if abs_path.exists():
-            return load_abs(abs_path)
-    raise FileNotFoundError(f"Could not load module {mod_path}")
-
-
-def load_abs(abs_path):
-    """
-    Loads a Hancho module ***while chdir'd into its directory***
-    """
-    abs_path = Path(abs_path)
-    if abs_path in this.hancho_mods:
-        return this.hancho_mods[abs_path]
-
-    with open(abs_path, encoding="utf-8") as file:
-        source = file.read()
-        code = compile(source, abs_path, "exec", dont_inherit=True)
-
-    module = type(sys)(abs_path.stem)
-    module.__file__ = abs_path
-    module.__builtins__ = builtins
-    this.hancho_mods[abs_path] = module
-
-    # The directory the module is in gets added to the global path so we can
-    # import .py modules in the same directory as it if needed. This may not
-    # be necessary.
-    sys.path.insert(0, str(abs_path.parent))
-
-    this.mod_stack.append(module)
-
-    # We must chdir()s into the .hancho file directory before running it so that
-    # glob() can resolve files relative to the .hancho file itself.
-    with Chdir(abs_path.parent):
-        # Why Pylint thinks this is not callable is a mystery.
-        # pylint: disable=not-callable
-        types.FunctionType(code, module.__dict__)()
-
-    this.mod_stack.pop()
-
-    return module
-
-
-################################################################################
-
-
-class Cancel(BaseException):
-    """
-    Stub exception class that's used to cancel tasks that depend on a task that
-    threw a real exception.
-    """
-
-
-################################################################################
-
-
 class Rule(Config):
-    """
-    Rules are callable Configs that create a Task when called.
-    Rules also delegate attribute lookups to the global 'config' object if they
-    are missing a field.
-    """
+    """Rules are callable Configs that create a Task when called. Rules also delegate attribute
+    lookups to the global 'config' object if they are missing a field."""
 
-    # pylint: disable=access-member-before-definition
     # pylint: disable=attribute-defined-outside-init
-    # pylint: disable=too-many-instance-attributes
+    # pyglint: disable=too-many-instance-attributes
 
     def __init__(self, base=None, **kwargs):
         super().__init__(base, **kwargs)
+        # pylint: disable=access-member-before-definition
         if self.rule_dir is None:
             self.rule_dir = relpath(
                 Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
             )
 
     def __missing__(self, key):
-        """
-        Rules delegate to config[key] if a key is missing.
-        """
+        """Rules delegate to config[key] if a key is missing."""
+
         result = super().__missing__(key)
         return result if result else config[key]
 
@@ -596,71 +330,57 @@ class Rule(Config):
             Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
         )
         task.work_dir = relpath(Path.cwd(), self.root_dir)
-        task.load_dir = relpath(Path(this.mod_stack[-1].__file__).parent, self.root_dir)
+        task.load_dir = relpath(Path(app.mod_stack[-1].__file__).parent, self.root_dir)
 
         coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
         return task
 
 
-################################################################################
-
-
 class Task(Rule):
-    """
-    Calling a Rule creates a Task.
-    """
+    """Calling a Rule creates a Task."""
 
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        this.tasks_total += 1
-
-    ########################################
+        app.tasks_total += 1
 
     async def run_async(self):
-        """
-        Entry point for async task stuff, handles exceptions generated during
-        task execution.
-        """
+        """Entry point for async task stuff, handles exceptions generated
+        during task execution."""
 
         try:
             return await self.task_main()
 
         # If any of this tasks's dependencies were cancelled, we propagate the
         # cancellation to downstream tasks.
-        except Cancel as cancel:
-            this.tasks_skip += 1
+        except asyncio.CancelledError as cancel:
+            app.tasks_skip += 1
             return cancel
 
-        # If this task failed, we print the error and propagate a Cancel
-        # exception to downstream tasks.
+        # If this task failed, we print the error and propagate a cancellation
+        # to downstream tasks.
         except Exception:  # pylint: disable=broad-except
             if not self.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
-            this.tasks_fail += 1
-            return Cancel()
+            app.tasks_fail += 1
+            return asyncio.CancelledError()
 
         finally:
             if self.debug:
                 log("")
 
-    ########################################
-
     # pylint: disable=too-many-branches
     async def task_main(self):
-        """
-        All the steps needed to run a task and check the result.
+        """All the steps needed to run a task and check the result.
 
-        NOTE: The order that fields are expanded _does_ matter. For example,
-        if we call swap_ext() on a filename array that hasn't been awaited,
-        we would end up trying to change the file extension of a promise and
-        that would be bad.
-        """
+        NOTE: The order that fields are expanded _does_ matter. For example, if we call swap_ext()
+        on a filename array that hasn't been awaited, we would end up trying to change the file
+        extension of a promise and that would be bad."""
 
         # Check for missing fields
         if not self.command:  # pylint: disable=access-member-before-definition
@@ -709,14 +429,14 @@ class Task(Rule):
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
-            if file in this.hancho_outs:
+            if file in app.hancho_outs:
                 raise NameError(f"Multiple rules build {file}!")
-            this.hancho_outs.add(file)
+            app.hancho_outs.add(file)
 
         # Check if we need a rebuild
         self.reason = self.needs_rerun(self.force)
         if not self.reason:
-            this.tasks_skip += 1
+            app.tasks_skip += 1
             return self.abs_files_out
 
         # Make sure our output directories exist
@@ -737,12 +457,8 @@ class Task(Rule):
 
         return result
 
-    ########################################
-
     async def run_commands(self):
-        """
-        Runs all the commands in the task while holding the semaphore.
-        """
+        """Runs all the commands in the task while holding the semaphore."""
 
         # OK, we're ready to start the task. Grab the semaphore before we start
         # printing status stuff so that it'll end up near the actual task
@@ -750,12 +466,12 @@ class Task(Rule):
         async with self.semaphore:
 
             # Deps fulfilled, we are now runnable so grab a task index.
-            this.task_counter += 1
-            self.task_index = this.task_counter
+            app.task_counter += 1
+            self.task_index = app.task_counter
 
             # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
             log(
-                f"[{self.task_index}/{this.tasks_total}] {self.desc}",
+                f"[{self.task_index}/{app.tasks_total}] {self.desc}",
                 sameline=not self.verbose,
             )
 
@@ -771,17 +487,11 @@ class Task(Rule):
                 for command in self.command:
                     result = await self.run_command(command)
 
-        this.tasks_pass += 1
+        app.tasks_pass += 1
         return result
 
-    ########################################
-    # Note - We should _not_ be expanding any templates in this step, that
-    # should've been done already.
-
     async def run_command(self, command):
-        """
-        Runs a single command, either by calling it or running it in a subprocess.
-        """
+        """Runs a single command, either by calling it or running it in a subprocess."""
 
         # Early exit if this is just a dry run
         if self.dryrun:
@@ -829,12 +539,8 @@ class Task(Rule):
         # Task passed, return the output file list
         return self.abs_files_out
 
-    ########################################
-
     def needs_rerun(self, force=False):
-        """
-        Checks if a task needs to be re-run, and returns a non-empty reason if so.
-        """
+        """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
         # Pylint really doesn't like this function, lol.
         # pylint: disable=too-many-return-statements
@@ -858,7 +564,7 @@ class Task(Rule):
         min_out = min(mtime(f) for f in files_out)
 
         # Check the hancho file(s) that generated the task
-        if max(mtime(f) for f in this.hancho_mods.keys()) >= min_out:
+        if max(mtime(f) for f in app.hancho_mods) >= min_out:
             return f"Rebuilding {self.files_out} because its .hancho files have changed"
 
         # Check user-specified deps.
@@ -869,7 +575,7 @@ class Task(Rule):
 
         # Check depfile, if present.
         if self.depfile:
-            abs_depfile = abspath(config.root_dir / self.depfile)
+            abs_depfile = abspath(self.root_dir / self.depfile)
             if abs_depfile.exists():
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
@@ -903,7 +609,182 @@ class Task(Rule):
         return None
 
 
-################################################################################
+class App:
+    """The application state. Mostly here so that the linter will stop complaining about my use of
+    global variables. :D"""
+
+    # pylint: disable=too-many-instance-attributes
+    def __init__(self):
+        self.hancho_mods = {}
+        self.mod_stack = []
+        self.hancho_outs = set()
+        self.tasks_total = 0
+        self.tasks_pass = 0
+        self.tasks_fail = 0
+        self.tasks_skip = 0
+        self.task_counter = 0
+        self.mtime_calls = 0
+        self.line_dirty = False
+
+    def main(self):
+        """Our main() just handles command line args and delegates to async_main()"""
+
+        # pylint: disable=line-too-long
+        # fmt: off
+        parser = argparse.ArgumentParser()
+        parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
+        parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory before starting the build")
+        parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-v", "--verbose", default=False,          action="store_true", help="Print verbose build info")
+        parser.add_argument("-q", "--quiet",   default=False,          action="store_true", help="Mute all output")
+        parser.add_argument("-n", "--dryrun",  default=False,          action="store_true", help="Do not run commands")
+        parser.add_argument("-d", "--debug",   default=False,          action="store_true", help="Print debugging information")
+        parser.add_argument("-f", "--force",   default=False,          action="store_true", help="Force rebuild of everything")
+        # fmt: on
+
+        # Parse the command line
+        (flags, unrecognized) = parser.parse_known_args()
+
+        # Merge all known command line flags into our global config object.
+        global config  # pylint: disable=global-statement
+        config |= flags.__dict__
+
+        # Unrecognized command line parameters also become global config fields if
+        # they are flag-like
+        for span in unrecognized:
+            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+                config[match.group(1)] = (
+                    maybe_as_number(match.group(2))
+                    if match.group(2) is not None
+                    else True
+                )
+
+        # Change directory if needed and kick off the build.
+        with Chdir(config.chdir):
+            result = asyncio.run(self.async_main())
+
+        return result
+
+    async def async_main(self):
+        """All the actual Hancho stuff runs in an async context."""
+
+        # Configure our job semaphore
+        # pyglint: disable=attribute-defined-outside-init
+        config.semaphore = asyncio.Semaphore(config.jobs)
+
+        # Load the root build.hancho file.
+        root_filename = abspath(config.filename)
+        if not root_filename.exists():
+            raise FileNotFoundError(f"Could not find {root_filename}")
+        self.load_module(root_filename)
+
+        # Root module(s) loaded. Run all tasks in the queue until we run out.
+        while True:
+            pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
+            if not pending_tasks:
+                break
+            await asyncio.wait(pending_tasks)
+
+        # Print a copy of the global config after all tasks are done if we're in
+        # debug mode
+        if config.debug:
+            log(f"Hancho global config: {config}")
+            log("")
+
+        # Done, print status info if needed
+        if config.debug or config.verbose:
+            log(f"tasks total:   {self.tasks_total}")
+            log(f"tasks passed:  {self.tasks_pass}")
+            log(f"tasks failed:  {self.tasks_fail}")
+            log(f"tasks skipped: {self.tasks_skip}")
+            log(f"mtime calls:   {self.mtime_calls}")
+
+        if self.tasks_fail:
+            log(f"hancho: {color(255, 0, 0)}BUILD FAILED{color()}")
+        elif self.tasks_pass:
+            log(f"hancho: {color(0, 255, 0)}BUILD PASSED{color()}")
+        else:
+            log(f"hancho: {color(255, 255, 0)}BUILD CLEAN{color()}")
+
+        return -1 if self.tasks_fail else 0
+
+    def load_module(self, abs_path):
+        """Loads a Hancho module ***while chdir'd into its directory***"""
+
+        abs_path = Path(abs_path)
+        if abs_path in self.hancho_mods:
+            return self.hancho_mods[abs_path]
+
+        with open(abs_path, encoding="utf-8") as file:
+            source = file.read()
+            code = compile(source, abs_path, "exec", dont_inherit=True)
+
+        module = type(sys)(abs_path.stem)
+        module.__file__ = abs_path
+        module.__builtins__ = builtins
+        self.hancho_mods[abs_path] = module
+
+        # The directory the module is in gets added to the global path so we can
+        # import .py modules in the same directory as it if needed. This may not
+        # be necessary.
+        sys.path.insert(0, str(abs_path.parent))
+
+        self.mod_stack.append(module)
+
+        # We must chdir()s into the .hancho file directory before running it so that
+        # glob() can resolve files relative to the .hancho file itself.
+        with Chdir(abs_path.parent):
+            # Why Pylint thinks this is not callable is a mystery.
+            # pylint: disable=not-callable
+            types.FunctionType(code, module.__dict__)()
+
+        self.mod_stack.pop()
+
+        return module
+
+
+class GlobalConfig(Config):
+    """The global config object. All fields here can be used in any template."""
+
+    # pylint: disable=too-many-instance-attributes
+    def __init__(self):
+        # fmt: off
+        super().__init__()
+        self.filename  = "build.hancho"
+
+        self.desc      = "{files_in} -> {files_out}"
+        self.chdir     = "."
+        self.jobs      = os.cpu_count()
+        self.semaphore = None
+        self.verbose   = False
+        self.quiet     = False
+        self.dryrun    = False
+        self.debug     = False
+        self.force     = False
+        self.depformat = "gcc"
+
+        self.root_dir  = Path.cwd()
+        self.task_dir  = Path("{root_dir}")
+        self.in_dir    = Path("{root_dir / load_dir}")
+        self.deps_dir  = Path("{root_dir / load_dir}")
+        self.out_dir   = Path("{root_dir / build_dir / load_dir}")
+        self.build_dir = Path("build")
+
+        self.files_out = []
+        self.deps      = []
+
+        self.len       = len
+        self.run_cmd   = run_cmd
+        self.swap_ext  = swap_ext
+        self.color     = color
+        self.glob      = glob
+        self.abspath   = abspath
+        self.relpath   = relpath
+        # fmt: on
+
+
+config = GlobalConfig()
+app = App()
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(app.main())
