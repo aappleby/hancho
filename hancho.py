@@ -115,6 +115,17 @@ def maybe_as_number(text):
             return text
 
 
+def flatten(elements):
+    """Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it in [] if it's
+    not a list."""
+    if not isinstance(elements, list):
+        return [elements]
+    result = []
+    for element in elements:
+        result.extend(flatten(element))
+    return result
+
+
 # The next three functions require some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings,
@@ -487,14 +498,16 @@ class Task(Rule):
 
             # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
             log(
-                f"[{self.task_index}/{app.tasks_total}] {self.desc}",
+                f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
                 sameline=not self.verbose,
             )
 
             if self.verbose or self.debug:
-                log(f"Reason: {self.reason}")
+                log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
                 for command in self.command:
-                    log(f">>>{' (DRY RUN)' if self.dryrun else ''} {command}")
+                    task_dir = Path("root") / relpath(self.task_dir, self.root_dir)
+                    dry_run = "(DRY RUN) " if self.dryrun else ""
+                    log(f"{color(128,128,255)}{task_dir}$ {color()}{dry_run}{command}")
                 if self.debug:
                     log(self)
 
@@ -517,8 +530,7 @@ class Task(Rule):
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            with Chdir(self.task_dir):
-                result = command(self)
+            result = command(self)
             if result is None:
                 raise ValueError(f"Command {command} returned None")
             return result
@@ -528,12 +540,11 @@ class Task(Rule):
             raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
-        with Chdir(self.task_dir):
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         (stdout_data, stderr_data) = await proc.communicate()
 
         self.stdout = stdout_data.decode()
@@ -681,7 +692,9 @@ class App:
 
         # Change directory if needed and kick off the build.
         with Chdir(config.chdir):
-            result = asyncio.run(self.async_main())
+            # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
+            # in Github, so I'm gonna try this.
+            result = asyncio.get_event_loop().run_until_complete(self.async_main())
 
         return result
 
