@@ -10,7 +10,7 @@ Hancho is inspired by Ninja (for speed and simplicity) and Bazel (for syntax and
 
 Like Ninja, it knows nothing about your build tools and is only trying to assemble and run commands as fast as possible.
 
-Unlike Ninja, you don't need a separate build rule invocation for every single output file.
+Unlike Ninja, you can use glob("*.cpp") and such to make things far less verbose.
 
 Like Bazel, you invoke build rules by calling them as if they were functions with keyword arguments.
 
