@@ -44,7 +44,7 @@ options:
   -h, --help            show this help message and exit
   -C CHDIR, --chdir CHDIR
                         Change directory first
-  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count, 0 = infinity)
+  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count)
   -v, --verbose         Print verbose build info
   -q, --quiet           Mute all output
   -n, --dryrun          Do not run commands
