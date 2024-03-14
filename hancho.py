@@ -20,7 +20,6 @@ from glob import glob
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
 # that build.hancho and descendants don't try to load a second copy of Hancho.
-
 sys.modules["hancho"] = sys.modules[__name__]
 
 # The maximum number of recursion levels we will do to expand a template
@@ -84,7 +83,7 @@ def color(red=None, green=None, blue=None):
 
 
 def run_cmd(cmd):
-    """Runs a console command and returns its stdout with whitespace stripped."""
+    """Runs a console command synchronously and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
@@ -98,7 +97,7 @@ def swap_ext(name, new_ext):
 
 
 def mtime(filename):
-    """Gets the file's mtime and tracks how many times we called it"""
+    """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
     return Path(filename).stat().st_mtime
 
@@ -128,23 +127,21 @@ def flatten(elements):
 
 # The next three functions require some explanation.
 #
-# We do not necessarily know in advance how the users will nest strings,
-# templates, promises, callbacks, etcetera. So, when we need to produce a flat
-# list of files from whatever was passed to files_in, we need to do a bunch of
-# dynamic-dispatch-type stuff to ensure that we can always turn that thing into
-# a flat list of files.
+# We do not necessarily know in advance how the users will nest strings, templates, promises,
+# callbacks, etcetera. So, when we need to produce a flat list of files from whatever was passed to
+# files_in, we need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn
+# that thing into a flat list of files.
 #
-# We also need to ensure that if anything in this process throws an exception
-# (or if an exception was passed into a rule due to a previous rule failing)
-# that we always propagate the exception up to Task.run_async, where it will
-# be handled and propagated to other Tasks.
+# We also need to ensure that if anything in this process throws an exception (or if an exception
+# was passed into a rule due to a previous rule failing) that we always propagate the exception up
+# to Task.run_async, where it will be handled and propagated to other Tasks.
 #
-# The result of this is that the following three functions are mutually
-# recursive in a way that can lead to confusing callstacks, but that should
-# handle every possible case of stuff inside other stuff.
+# The result of this is that the following three functions are mutually recursive in a way that can
+# lead to confusing callstacks, but that should handle every possible case of stuff inside other
+# stuff.
 #
-# The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary
-# limit but it should suffice.
+# The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary limit but it should
+# suffice.
 
 
 async def flatten_variant(rule, variant, depth=0):
@@ -156,6 +153,12 @@ async def flatten_variant(rule, variant, depth=0):
 
     if isinstance(variant, asyncio.CancelledError):
         raise variant
+
+    if isinstance(variant, str):
+        return [await stringize_variant(rule, variant, depth + 1)]
+
+    if isinstance(variant, (float, int)):
+        return [str(variant)]
 
     if variant is None:
         return []
@@ -178,9 +181,6 @@ async def flatten_variant(rule, variant, depth=0):
             result.extend(await flatten_variant(rule, element, depth + 1))
         return result
 
-    if isinstance(variant, str):
-        return [await stringize_variant(rule, variant, depth + 1)]
-
     raise ValueError(f"Don't know how to flatten {type(variant)}")
 
 
@@ -194,7 +194,12 @@ async def stringize_variant(rule, variant, depth=0):
     if isinstance(variant, asyncio.CancelledError):
         raise variant
 
-    if isinstance(variant, int):
+    if isinstance(variant, str):
+        if template_regex.search(variant):
+            return await expand_template(rule, variant, depth + 1)
+        return variant
+
+    if isinstance(variant, (float, int)):
         return str(variant)
 
     if variant is None:
@@ -215,11 +220,6 @@ async def stringize_variant(rule, variant, depth=0):
         variant = " ".join(variant)
         return variant
 
-    if isinstance(variant, str):
-        if template_regex.search(variant):
-            return await expand_template(rule, variant, depth + 1)
-        return variant
-
     raise ValueError(f"Don't know how to stringize {type(variant)}")
 
 
@@ -237,14 +237,13 @@ async def expand_template(rule, template, depth=0):
         result += template[0 : span.start()]
         exp = template[span.start() : span.end()]
 
-        # Evaluate the template contents. If it fails to evaluate, pass the
-        # expression directly to the output for debugging.
+        # Evaluate the template contents.
         replacement = ""
         try:
             # pylint: disable=eval-used
             replacement = eval(exp[1:-1], globals(), rule)
-        except Exception:  # pylint: disable=broad-except
-            replacement = exp
+        except Exception as exc:  # pylint: disable=broad-except
+            raise ValueError(f"Template '{exp}' failed to eval") from exc
 
         result += await stringize_variant(rule, replacement, depth + 1)
         template = template[span.end() :]
@@ -486,7 +485,7 @@ class Task(Rule):
         return result
 
     async def run_commands(self):
-        """Runs all the commands in the task while holding the semaphore."""
+        """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
         try:
             # Wait for enough jobs to free up to run this task.
@@ -589,19 +588,22 @@ class Task(Rule):
             if not file_out.exists():
                 return f"Rebuilding {self.files_out} because some are missing"
 
+        # Check if any task inputs are newer than any outputs.
         min_out = min(mtime(f) for f in files_out)
+        if files_in and max(mtime(f) for f in files_in) >= min_out:
+            return f"Rebuilding {self.files_out} because an input has changed"
 
-        # Check the hancho file(s) that generated the task
+        # Check if the hancho file(s) that generated the task have changed.
         if max(mtime(f) for f in app.hancho_mods) >= min_out:
             return f"Rebuilding {self.files_out} because its .hancho files have changed"
 
-        # Check user-specified deps.
+        # Check if any user-specified deps have changed.
         if self.deps and max(mtime(f) for f in self.deps) >= min_out:
             return (
                 f"Rebuilding {self.files_out} because a manual dependency has changed"
             )
 
-        # Check depfile, if present.
+        # Check all dependencies in the depfile, if present.
         if self.depfile:
             abs_depfile = abspath(self.root_dir / self.depfile)
             if abs_depfile.exists():
@@ -625,15 +627,10 @@ class Task(Rule):
                             + f"{abs_depfile} has changed"
                         )
 
-        # Check input files.
-        if files_in and max(mtime(f) for f in files_in) >= min_out:
-            return f"Rebuilding {self.files_out} because an input has changed"
-
-        # All checks passed, so we don't need to rebuild this output.
+        # All checks passed; we don't need to rebuild this output.
         if self.debug:
             log(f"Files {self.files_out} are up to date")
 
-        # All deps were up-to-date, nothing to do.
         return None
 
 
@@ -774,14 +771,16 @@ class App:
         return module
 
     async def acquire_jobs(self, count):
-        """Waits until 'count' jobs are available and then removes them from the pool."""
+        """Waits until 'count' jobs are available and then removes them from the job pool."""
+
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
         self.jobs_available -= count
         self.jobs_lock.release()
 
     async def release_jobs(self, count):
-        """Returns 'count' jobs back to the pool."""
+        """Returns 'count' jobs back to the job pool."""
+
         await self.jobs_lock.acquire()
         self.jobs_available += count
 
@@ -798,8 +797,8 @@ class GlobalConfig(Config):
     """The global config object. All fields here can be used in any template."""
 
     # pylint: disable=too-many-instance-attributes
+    # fmt: off
     def __init__(self):
-        # fmt: off
         super().__init__()
         self.filename  = "build.hancho"
 
@@ -833,7 +832,7 @@ class GlobalConfig(Config):
         self.glob      = glob
         self.abspath   = abspath
         self.relpath   = relpath
-        # fmt: on
+    # fmt: on
 
 
 config = GlobalConfig()

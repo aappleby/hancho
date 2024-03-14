@@ -66,6 +66,11 @@ class TestHancho(unittest.TestCase):
             shutil.rmtree("build")
         sys.stdout.flush()
 
+    def tearDown(self):
+        """And wipe the build dir after a test too."""
+        if path.exists("build"):
+            shutil.rmtree("build")
+
     def test_should_pass(self):
         """Sanity check"""
         self.assertEqual(0, run_hancho("should_pass"))
@@ -101,6 +106,10 @@ class TestHancho(unittest.TestCase):
     def test_garbage_command(self):
         """Non-existent command line commands should cause Hancho to fail the build."""
         self.assertNotEqual(0, run_hancho("garbage_command"))
+
+    def test_garbage_template(self):
+        """Templates that can't be eval()d should cause Hancho to fail the build."""
+        self.assertNotEqual(0, run_hancho("garbage_template"))
 
     def test_rule_collision(self):
         """If multiple rules generate the same output file, that's an error."""
