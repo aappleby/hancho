@@ -183,6 +183,9 @@ async def stringize_variant(rule, variant, depth=0):
     if isinstance(variant, asyncio.CancelledError):
         raise variant
 
+    if isinstance(variant, int):
+        return str(variant)
+
     if variant is None:
         return ""
 
@@ -336,9 +339,14 @@ class Rule(Config):
         # A task that's created during task execution instead of module loading will have no mod
         # stack entry to pull load_dir from, so it runs from '.' (root_dir) instead.
         if app.mod_stack:
-            task.load_dir = relpath(Path(app.mod_stack[-1].__file__).parent, self.root_dir)
+            task.load_dir = relpath(
+                Path(app.mod_stack[-1].__file__).parent, self.root_dir
+            )
         else:
             task.load_dir = Path(".")
+
+        if task.job_count > config.jobs:
+            raise ValueError("Task requires too many cores!")
 
         coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
@@ -469,12 +477,11 @@ class Task(Rule):
     async def run_commands(self):
         """Runs all the commands in the task while holding the semaphore."""
 
-        # OK, we're ready to start the task. Grab the semaphore before we start
-        # printing status stuff so that it'll end up near the actual task
-        # invocation.
-        async with self.semaphore:
+        try:
+            # Wait for enough jobs to free up to run this task.
+            await app.acquire_jobs(self.job_count)
 
-            # Deps fulfilled, we are now runnable so grab a task index.
+            # Deps fulfilled and jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
             self.task_index = app.task_counter
 
@@ -495,6 +502,8 @@ class Task(Rule):
             with Chdir(self.task_dir):
                 for command in self.command:
                     result = await self.run_command(command)
+        finally:
+            await app.release_jobs(self.job_count)
 
         app.tasks_pass += 1
         return result
@@ -634,6 +643,8 @@ class App:
         self.task_counter = 0
         self.mtime_calls = 0
         self.line_dirty = False
+        self.jobs_available = os.cpu_count()
+        self.jobs_lock = asyncio.Condition()
 
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
@@ -677,9 +688,7 @@ class App:
     async def async_main(self):
         """All the actual Hancho stuff runs in an async context."""
 
-        # Configure our job semaphore
-        # pyglint: disable=attribute-defined-outside-init
-        config.semaphore = asyncio.Semaphore(config.jobs)
+        self.jobs_available = config.jobs
 
         # Load the root build.hancho file.
         root_filename = abspath(config.filename)
@@ -751,6 +760,26 @@ class App:
 
         return module
 
+    async def acquire_jobs(self, count):
+        """Waits until 'count' jobs are available and then removes them from the pool."""
+        await self.jobs_lock.acquire()
+        await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
+        self.jobs_available -= count
+        self.jobs_lock.release()
+
+    async def release_jobs(self, count):
+        """Returns 'count' jobs back to the pool."""
+        await self.jobs_lock.acquire()
+        self.jobs_available += count
+
+        # NOTE: The notify_all here is required because we don't know in advance which tasks will
+        # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
+        # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
+        # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
+        # rest will go back to sleep again, this will repeat for every call to release_jobs().
+        self.jobs_lock.notify_all()
+        self.jobs_lock.release()
+
 
 class GlobalConfig(Config):
     """The global config object. All fields here can be used in any template."""
@@ -764,7 +793,6 @@ class GlobalConfig(Config):
         self.desc      = "{files_in} -> {files_out}"
         self.chdir     = "."
         self.jobs      = os.cpu_count()
-        self.semaphore = None
         self.verbose   = False
         self.quiet     = False
         self.dryrun    = False
@@ -781,6 +809,9 @@ class GlobalConfig(Config):
 
         self.files_out = []
         self.deps      = []
+
+        # The default number of parallel jobs a task consumes.
+        self.job_count = 1
 
         self.len       = len
         self.run_cmd   = run_cmd

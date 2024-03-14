@@ -1,0 +1,9 @@
+from hancho import *
+
+rule = Rule(
+  desc = "I am task {index}",
+  command = "echo {index} > {files_out}",
+)
+
+for i in range(1000):
+  rule([], "dummy{index}.txt", index = i)

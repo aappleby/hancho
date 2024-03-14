@@ -7,6 +7,7 @@ from os import path
 import subprocess
 import unittest
 import shutil
+import glob
 from pathlib import Path
 
 # tests still needed -
@@ -208,6 +209,17 @@ class TestHancho(unittest.TestCase):
         """Tasks using callbacks can create new tasks when they run."""
         self.assertEqual(0, run_hancho("task_creates_task"))
         self.assertTrue(Path("build/dummy.txt").exists())
+
+    def test_tons_of_tasks(self):
+        """We should be able to queue up 1000+ tasks at once."""
+        self.assertEqual(0, run_hancho("tons_of_tasks"))
+        self.assertEqual(1000, len(glob.glob("build/*")))
+
+    def test_job_count(self):
+        """We should be able to dispatch tasks that require various numbers of jobs/cores."""
+        self.assertEqual(0, run_hancho("job_count"))
+        self.assertTrue(Path("build/slow_result.txt").exists())
+
 
 ################################################################################
 
