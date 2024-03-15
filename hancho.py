@@ -154,11 +154,8 @@ async def flatten_variant(rule, variant, depth=0):
     if isinstance(variant, asyncio.CancelledError):
         raise variant
 
-    if isinstance(variant, str):
-        return [await stringize_variant(rule, variant, depth + 1)]
-
-    if isinstance(variant, (float, int)):
-        return [str(variant)]
+    if inspect.isfunction(variant):
+        return [variant]
 
     if variant is None:
         return []
@@ -172,16 +169,13 @@ async def flatten_variant(rule, variant, depth=0):
     if isinstance(variant, Path):
         return [Path(await stringize_variant(rule, str(variant), depth + 1))]
 
-    if inspect.isfunction(variant):
-        return [variant]
-
     if isinstance(variant, list):
         result = []
         for element in variant:
             result.extend(await flatten_variant(rule, element, depth + 1))
         return result
 
-    raise ValueError(f"Don't know how to flatten {type(variant)}")
+    return [await stringize_variant(rule, variant, depth+1)]
 
 
 async def stringize_variant(rule, variant, depth=0):
@@ -198,9 +192,6 @@ async def stringize_variant(rule, variant, depth=0):
         if template_regex.search(variant):
             return await expand_template(rule, variant, depth + 1)
         return variant
-
-    if isinstance(variant, (float, int)):
-        return str(variant)
 
     if variant is None:
         return ""
@@ -220,7 +211,7 @@ async def stringize_variant(rule, variant, depth=0):
         variant = " ".join(variant)
         return variant
 
-    raise ValueError(f"Don't know how to stringize {type(variant)}")
+    return str(variant)
 
 
 async def expand_template(rule, template, depth=0):
@@ -257,11 +248,11 @@ def load(mod_path):
     module whose directory contains 'mod_path', then loads the module relative to that path.
     """
 
-    mod_path = Path(mod_path)
-    for parent_mod in reversed(app.mod_stack):
-        abs_path = abspath(Path(parent_mod.__file__).parent / mod_path)
-        if abs_path.exists():
-            return app.load_module(abs_path)
+    test_path = abspath(Path(app.mod_stack[-1].__file__).parent / mod_path)
+    if test_path.exists():
+        #print(f"load_module({test_path})")
+        result = app.load_module(test_path)
+        return result
     raise FileNotFoundError(f"Could not load module {mod_path}")
 
 
@@ -348,12 +339,13 @@ class Rule(Config):
 
         # A task that's created during task execution instead of module loading will have no mod
         # stack entry to pull load_dir from, so it runs from '.' (root_dir) instead.
-        if app.mod_stack:
-            task.load_dir = relpath(
-                Path(app.mod_stack[-1].__file__).parent, self.root_dir
-            )
-        else:
-            task.load_dir = Path(".")
+        if not "load_dir" in kwargs:
+            if app.mod_stack:
+                task.load_dir = relpath(
+                    Path(app.mod_stack[-1].__file__).parent, self.root_dir
+                )
+            else:
+                task.load_dir = Path(".")
 
         if task.job_count > config.jobs:
             raise ValueError("Task requires too many cores!")
@@ -450,9 +442,10 @@ class Task(Rule):
             self.depfile = await stringize_variant(self, self.depfile)
 
         # Check for missing inputs
-        for file in self.abs_files_in:
-            if not file.exists():
-                raise NameError(f"Input file doesn't exist - {file}")
+        if not self.dryrun:
+            for file in self.abs_files_in:
+                if not file.exists():
+                    raise NameError(f"Input file doesn't exist - {file}")
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -505,8 +498,8 @@ class Task(Rule):
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
                 for command in self.command:
                     task_dir = Path("root") / relpath(self.task_dir, self.root_dir)
-                    dry_run = "(DRY RUN) " if self.dryrun else ""
-                    log(f"{color(128,128,255)}{task_dir}$ {color()}{dry_run}{command}")
+                    dryrun = "(DRY RUN) " if self.dryrun else ""
+                    log(f"{color(128,128,255)}{task_dir}$ {color()}{dryrun}{command}")
                 if self.debug:
                     log(self)
 
@@ -739,9 +732,12 @@ class App:
     def load_module(self, abs_path):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        abs_path = Path(abs_path)
-        if abs_path in self.hancho_mods:
-            return self.hancho_mods[abs_path]
+        phys_path = Path(abs_path).resolve()
+        #print(f"abs_module({abspath(abs_path)})")
+        #print(f"phys_module({phys_path})")
+
+        if phys_path in self.hancho_mods:
+            return self.hancho_mods[phys_path]
 
         with open(abs_path, encoding="utf-8") as file:
             source = file.read()
@@ -750,7 +746,7 @@ class App:
         module = type(sys)(abs_path.stem)
         module.__file__ = abs_path
         module.__builtins__ = builtins
-        self.hancho_mods[abs_path] = module
+        self.hancho_mods[phys_path] = module
 
         # The directory the module is in gets added to the global path so we can
         # import .py modules in the same directory as it if needed. This may not

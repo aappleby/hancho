@@ -3,7 +3,7 @@ from hancho import *
 import glob
 import os
 
-rules = load("rules.hancho")
+rules = load("../rules.hancho")
 
 if os.name == 'nt':
   rules.c_binary(glob.glob("*.cpp"), "app.exe")
