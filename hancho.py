@@ -733,9 +733,6 @@ class App:
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         phys_path = Path(abs_path).resolve()
-        #print(f"abs_module({abspath(abs_path)})")
-        #print(f"phys_module({phys_path})")
-
         if phys_path in self.hancho_mods:
             return self.hancho_mods[phys_path]
 
