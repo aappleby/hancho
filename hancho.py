@@ -175,7 +175,7 @@ async def flatten_variant(rule, variant, depth=0):
             result.extend(await flatten_variant(rule, element, depth + 1))
         return result
 
-    return [await stringize_variant(rule, variant, depth+1)]
+    return [await stringize_variant(rule, variant, depth + 1)]
 
 
 async def stringize_variant(rule, variant, depth=0):
@@ -250,7 +250,7 @@ def load(mod_path):
 
     test_path = abspath(Path(app.mod_stack[-1].__file__).parent / mod_path)
     if test_path.exists():
-        #print(f"load_module({test_path})")
+        # print(f"load_module({test_path})")
         result = app.load_module(test_path)
         return result
     raise FileNotFoundError(f"Could not load module {mod_path}")
@@ -324,7 +324,7 @@ class Rule(Config):
         """Rules delegate to config[key] if a key is missing."""
 
         result = super().__missing__(key)
-        return result if result else config[key]
+        return result if result is not None else config[key]
 
     def __call__(self, files_in, files_out=None, **kwargs):
         task = Task(base=self, **kwargs)
@@ -339,7 +339,7 @@ class Rule(Config):
 
         # A task that's created during task execution instead of module loading will have no mod
         # stack entry to pull load_dir from, so it runs from '.' (root_dir) instead.
-        if not "load_dir" in kwargs:
+        if "load_dir" not in kwargs:
             if app.mod_stack:
                 task.load_dir = relpath(
                     Path(app.mod_stack[-1].__file__).parent, self.root_dir
