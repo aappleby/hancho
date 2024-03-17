@@ -228,21 +228,21 @@ to expand whatever text template we like:
 ```py
 >>> from hancho import config, Rule
 >>> rule = Rule(foo = "{bar}", bar = "{baz}", baz = "Hancho")
->>> rule.expand("One Hancho: {foo}")
+>>> expand("One Hancho: {foo}", rule)
 'One Hancho: Hancho'
 ```
 
 Basic expressions work inside templates as well:
 ```py
 >>> rule = Rule(foo = "{bar*3}", bar = "{baz*3}", baz = "Hancho")
->>> rule.expand("Nine Hanchos: {foo}")
+>>> expand("Nine Hanchos: {foo}", rule)
 'Nine Hanchos: HanchoHanchoHanchoHanchoHanchoHanchoHanchoHanchoHancho'
 ```
 
 Rule fields can also be functions or lambdas:
 ```py
 >>> rule = Rule(foo = lambda x: "Hancho" * x)
->>> rule.expand("{foo(4)}")
+>>> expand("{foo(4)}", rule)
 'HanchoHanchoHanchoHancho'
 ```
 
@@ -250,7 +250,7 @@ but note that you do _not_ have access to any Python globals or builtins,
 
 ```py
 >>> rule = Rule(foo = "{print(4)}")
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 {print(4)}
 Expanding '{print(4)}' is stuck in a loop
 ```
@@ -259,7 +259,7 @@ Expanding '{print(4)}' is stuck in a loop
 
 ```py
 >>> rule = Rule(foo = "{print(4)}", print = print)
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 4
 ''
 ```
@@ -268,14 +268,14 @@ Arbitrarily-nested arrays of strings will be flattened out and joined with
 spaces:
 ```py
 >>> rule = Rule(foo = [1,2,3,[4,5],[[[6,7]]]])
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 '1 2 3 4 5 6 7'
 ```
 
 Fields that are never defined will turn into empty strings:
 ```py
 >>> rule = Rule(foo = "{missing}")
->>> rule.expand("?{foo}?")
+>>> expand("?{foo}?", rule)
 '??'
 ```
 
@@ -284,7 +284,7 @@ Fields that are used globally in multiple rules can be set on
 ```py
 >>> config.bar = "Hancho"
 >>> rule = Rule(foo = "{bar}")
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 'Hancho'
 ```
 
@@ -294,21 +294,21 @@ is a better option for common fields that shouldn't be globally visible:
 ```py
 >>> base_rule = Rule(bar = "Hancho")
 >>> rule = base_rule.extend(foo = "{bar}")
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 'Hancho'
 ```
 
 Text templates that cause infinite loops will fail:
 ```py
 >>> rule = Rule(foo = "{bar}", bar = "{foo}")
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 Expanding '{foo}...' failed to terminate
 ```
 
 as will templates that create infinitely-long strings:
 ```py
 >>> rule = Rule(foo = "!{foo}!")
->>> rule.expand("{foo}")
+>>> expand("{foo}", rule)
 Expanding '!!!!!!!!!!!!!!!!!!!!...' failed to terminate
 ```
 

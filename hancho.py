@@ -138,7 +138,7 @@ def maybe_as_number(text):
 # suffice.
 
 
-def flatten(rule, variant, depth=0):
+def flatten(variant, rule=None, depth=0):
     """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
     # pylint: disable=too-many-return-statements
 
@@ -155,21 +155,21 @@ def flatten(rule, variant, depth=0):
         return []
 
     if isinstance(variant, Task):
-        return flatten(rule, variant.promise, depth + 1)
+        return flatten(variant.promise, rule, depth + 1)
 
     if isinstance(variant, Path):
-        return [Path(stringize(rule, str(variant), depth + 1))]
+        return [Path(stringize(str(variant), rule, depth + 1))]
 
     if isinstance(variant, list):
         result = []
         for element in variant:
-            result.extend(flatten(rule, element, depth + 1))
+            result.extend(flatten(element, rule, depth + 1))
         return result
 
-    return [stringize(rule, variant, depth + 1)]
+    return [stringize(variant, rule, depth + 1)]
 
 
-def stringize(rule, variant, depth=0):
+def stringize(variant, rule=None, depth=0):
     """Turns 'variant' into a non-templated string."""
     # pylint: disable=too-many-return-statements
 
@@ -181,20 +181,20 @@ def stringize(rule, variant, depth=0):
 
     if isinstance(variant, str):
         if template_regex.search(variant):
-            return expand(rule, variant, depth + 1)
+            return expand(variant, rule, depth + 1)
         return variant
 
     if variant is None:
         return ""
 
     if isinstance(variant, Task):
-        return stringize(rule, variant.promise, depth + 1)
+        return stringize(variant.promise, rule, depth + 1)
 
     if isinstance(variant, Path):
-        return stringize(rule, str(variant), depth + 1)
+        return stringize(str(variant), rule, depth + 1)
 
     if isinstance(variant, list):
-        variant = flatten(rule, variant, depth + 1)
+        variant = flatten(variant, rule, depth + 1)
         variant = [str(s) for s in variant if s is not None]
         variant = " ".join(variant)
         return variant
@@ -202,8 +202,11 @@ def stringize(rule, variant, depth=0):
     return str(variant)
 
 
-def expand(rule, template, depth=0):
+def expand(template, rule=None, depth=0):
     """Expands all templates to produce a non-templated string."""
+
+    if rule is None:
+        rule = config
 
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Expanding '{template}' failed to terminate")
@@ -224,7 +227,7 @@ def expand(rule, template, depth=0):
         except Exception as exc:  # pylint: disable=broad-except
             raise ValueError(f"Template '{exp}' failed to eval") from exc
 
-        result += stringize(rule, replacement, depth + 1)
+        result += stringize(replacement, rule, depth + 1)
         template = template[span.end() :]
 
     result += template
@@ -259,10 +262,10 @@ def load(file=None, root=None):
     if file is None:
         raise FileNotFoundError("No .hancho filename given")
 
-    file = Path(stringize(config, file))
+    file = Path(stringize(file, config))
 
     if root is not None:
-        file = Path(stringize(config, root)) / file
+        file = Path(stringize(root, config)) / file
 
     test_path = abspath(Path(app.mod_stack[-1].__file__).parent / file)
     if test_path.exists():
@@ -433,10 +436,10 @@ class Task(Rule):
             raise ValueError("Task missing files_out")
 
         # Stringize our directories
-        self.work_dir = Path(stringize(self, self.work_dir))
-        self.in_dir = Path(stringize(self, self.in_dir))
-        self.deps_dir = Path(stringize(self, self.deps_dir))
-        self.out_dir = Path(stringize(self, self.out_dir))
+        self.work_dir = Path(stringize(self.work_dir, self))
+        self.in_dir = Path(stringize(self.in_dir, self))
+        self.deps_dir = Path(stringize(self.deps_dir, self))
+        self.out_dir = Path(stringize(self.out_dir, self))
 
         assert self.work_dir.is_absolute() and self.work_dir.exists()
         assert self.in_dir.is_absolute() and self.in_dir.exists()
@@ -446,12 +449,12 @@ class Task(Rule):
         assert self.out_dir.is_absolute()
 
         # Flatten our file lists
-        self.files_in = flatten(self, self.files_in)
-        self.deps = flatten(self, self.deps)
-        self.files_out = flatten(self, self.files_out)
+        self.files_in = flatten(self.files_in, self)
+        self.deps = flatten(self.deps, self)
+        self.files_out = flatten(self.files_out, self)
 
         for key in self.named_deps:
-            self.named_deps[key] = stringize(self, self.named_deps[key])
+            self.named_deps[key] = stringize(self.named_deps[key], self)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
@@ -478,11 +481,11 @@ class Task(Rule):
 
         # Now that files_in/files_out/deps are flat, we can expand our description and command
         # list.
-        self.command = flatten(self, self.command)
+        self.command = flatten(self.command, self)
 
         # pylint: disable=access-member-before-definition
-        self.desc = stringize(self, self.desc)
-        self.depfile = stringize(self, self.depfile)
+        self.desc = stringize(self.desc, self)
+        self.depfile = stringize(self.depfile, self)
 
         # Check for missing inputs
         if not self.dryrun:
