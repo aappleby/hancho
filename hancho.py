@@ -386,7 +386,8 @@ class Task(Rule):
         during task execution."""
 
         try:
-            # Await everything awaitable in this task and replace the promises with the awaited values.
+            # Await everything awaitable in this task and replace the promises with the awaited
+            # values.
             for key in self:
                 if key != "promise":
                     self[key] = await await_variant(self[key])
@@ -512,8 +513,6 @@ class Task(Rule):
 
         # Check if we need a rebuild
         self.reason = self.needs_rerun(self.force)
-
-
 
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""

@@ -95,9 +95,6 @@ class TestHancho(unittest.TestCase):
         """Missing fields should turn into empty strings when expanded"""
         self.assertEqual(0, run_hancho("missing_field"))
 
-
-
-
     def test_missing_input(self):
         """We should fail if an input is missing"""
         self.assertNotEqual(0, run_hancho("missing_input"))
@@ -109,9 +106,6 @@ class TestHancho(unittest.TestCase):
     def test_missing_dep(self):
         """Missing dep should fail"""
         self.assertNotEqual(0, run_hancho("missing_dep"))
-
-
-
 
     def test_expand_failed_to_terminate(self):
         """A recursive text template should cause an 'expand failed to terminate' error."""
