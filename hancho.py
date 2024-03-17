@@ -145,28 +145,24 @@ def flatten(variant, rule=None, depth=0):
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Flattening '{variant}' failed to terminate")
 
-    if isinstance(variant, asyncio.CancelledError):
-        raise variant
-
-    if inspect.isfunction(variant):
-        return [variant]
-
-    if variant is None:
-        return []
-
-    if isinstance(variant, Task):
-        return flatten(variant.promise, rule, depth + 1)
-
-    if isinstance(variant, Path):
-        return [Path(stringize(str(variant), rule, depth + 1))]
-
-    if isinstance(variant, list):
-        result = []
-        for element in variant:
-            result.extend(flatten(element, rule, depth + 1))
-        return result
-
-    return [stringize(variant, rule, depth + 1)]
+    match variant:
+        case None:
+            return []
+        case asyncio.CancelledError():
+            raise variant
+        case Task():
+            return flatten(variant.promise, rule, depth + 1)
+        case Path():
+            return [Path(stringize(str(variant), rule, depth + 1))]
+        case list():
+            result = []
+            for element in variant:
+                result.extend(flatten(element, rule, depth + 1))
+            return result
+        case _ if inspect.isfunction(variant):
+            return [variant]
+        case _:
+            return [stringize(variant, rule, depth + 1)]
 
 
 def stringize(variant, rule=None, depth=0):
@@ -176,43 +172,39 @@ def stringize(variant, rule=None, depth=0):
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Stringizing '{variant}' failed to terminate")
 
-    if isinstance(variant, asyncio.CancelledError):
-        raise variant
-
-    if isinstance(variant, str):
-        if template_regex.search(variant):
-            return expand(variant, rule, depth + 1)
-        return variant
-
-    if variant is None:
-        return ""
-
-    if isinstance(variant, Task):
-        return stringize(variant.promise, rule, depth + 1)
-
-    if isinstance(variant, Path):
-        return stringize(str(variant), rule, depth + 1)
-
-    if isinstance(variant, list):
-        variant = flatten(variant, rule, depth + 1)
-        variant = [str(s) for s in variant if s is not None]
-        variant = " ".join(variant)
-        return variant
-
-    return str(variant)
+    match variant:
+        case None:
+            return ""
+        case asyncio.CancelledError():
+            raise variant
+        case Task():
+            return stringize(variant.promise, rule, depth + 1)
+        case Path():
+            return stringize(str(variant), rule, depth + 1)
+        case list():
+            variant = flatten(variant, rule, depth + 1)
+            variant = [str(s) for s in variant if s is not None]
+            variant = " ".join(variant)
+            return variant
+        case str():
+            if template_regex.search(variant):
+                return expand(variant, rule, depth + 1)
+            return variant
+        case _:
+            return str(variant)
 
 
 def expand(template, rule=None, depth=0):
     """Expands all templates to produce a non-templated string."""
-
-    if rule is None:
-        rule = config
 
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Expanding '{template}' failed to terminate")
 
     if not isinstance(template, str):
         raise ValueError(f"Don't know how to expand {type(template)}")
+
+    if rule is None:
+        rule = config
 
     result = ""
     while span := template_regex.search(template):
@@ -237,20 +229,20 @@ def expand(template, rule=None, depth=0):
 async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
 
-    if isinstance(variant, Task):
-        # We don't iterate through subtasks because they should await themselves except for their
-        # own promise.
-        if inspect.isawaitable(variant.promise):
-            variant.promise = await variant.promise
-    elif isinstance(variant, dict):
-        for key in variant:
-            variant[key] = await await_variant(variant[key])
-    elif isinstance(variant, list):
-        for index, value in enumerate(variant):
-            variant[index] = await await_variant(value)
-    elif inspect.isawaitable(variant):
-        variant = await variant
-
+    match variant:
+        case Task():
+            # We don't iterate through subtasks because they should await themselves except for
+            # their own promise.
+            if inspect.isawaitable(variant.promise):
+                variant.promise = await variant.promise
+        case dict():
+            for key in variant:
+                variant[key] = await await_variant(variant[key])
+        case list():
+            for index, value in enumerate(variant):
+                variant[index] = await await_variant(value)
+        case _ if inspect.isawaitable(variant):
+            variant = await variant
     return variant
 
 
@@ -266,13 +258,13 @@ def load(file=None, root=None):
 
     if root is not None:
         file = Path(stringize(root, config)) / file
+    else:
+        file = Path(app.mod_stack[-1].__file__).parent / file
 
-    test_path = abspath(Path(app.mod_stack[-1].__file__).parent / file)
-    if test_path.exists():
-        # print(f"load_module({test_path})")
-        result = app.load_module(test_path, root)
-        return result
-    raise FileNotFoundError(f"Could not load module {file}")
+    if not file.exists():
+        raise FileNotFoundError(f"Could not load module {file}")
+
+    return app.load_module(file, root)
 
 
 class Chdir:
@@ -367,7 +359,6 @@ class Rule(Config):
 
         coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
-        app.all_tasks.append(task)
         return task
 
 
@@ -398,9 +389,10 @@ class Task(Rule):
             # Run the commands if we need to.
             if self.reason:
                 result = await self.run_commands()
+                app.tasks_pass += 1
             else:
-                app.tasks_skip += 1
                 result = self.abs_files_out
+                app.tasks_skip += 1
 
             return result
 
@@ -417,7 +409,7 @@ class Task(Rule):
         # If any of this tasks's dependencies were cancelled, we propagate the
         # cancellation to downstream tasks.
         except asyncio.CancelledError as cancel:
-            app.tasks_skip += 1
+            app.tasks_cancel += 1
             return cancel
 
         finally:
@@ -514,101 +506,6 @@ class Task(Rule):
         # Check if we need a rebuild
         self.reason = self.needs_rerun(self.force)
 
-    async def run_commands(self):
-        """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
-
-        try:
-            # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(self.job_count)
-
-            # Deps fulfilled and jobs acquired, we are now runnable so grab a task index.
-            app.task_counter += 1
-            self.task_index = app.task_counter
-
-            # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
-            log(
-                f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
-                sameline=not self.verbose,
-            )
-
-            if self.work_dir == self.start_dir:
-                work_dir = "."
-            else:
-                work_dir = str(self.work_dir).removeprefix(str(self.start_dir) + "/")
-            dryrun = "(DRY RUN) " if self.dryrun else ""
-
-            if self.verbose or self.debug:
-                log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
-
-            if self.debug:
-                log(self)
-
-            result = []
-            for command in self.command:
-                if self.verbose or self.debug:
-                    log(f"{color(128,128,255)}{work_dir}$ {color()}{dryrun}{command}")
-                result = await self.run_command(command)
-        finally:
-            await app.release_jobs(self.job_count)
-
-        # Check if the commands actually updated all the output files
-        if self.files_in and self.files_out and not self.dryrun:
-            if second_reason := self.needs_rerun():
-                raise ValueError(
-                    f"Task '{self.desc}' still needs rerun after running!\n"
-                    + f"Reason: {second_reason}"
-                )
-
-        app.tasks_pass += 1
-        return result
-
-    async def run_command(self, command):
-        """Runs a single command, either by calling it or running it in a subprocess."""
-
-        # Early exit if this is just a dry run
-        if self.dryrun:
-            return self.abs_files_out
-
-        # Custom commands just get called and then early-out'ed.
-        if callable(command):
-            result = command(self)
-            if result is None:
-                raise ValueError(f"Command {command} returned None")
-            return result
-
-        # Non-string non-callable commands are not valid
-        if not isinstance(command, str):
-            raise ValueError(f"Don't know what to do with {command}")
-
-        # Create the subprocess via asyncio and then await the result.
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=self.work_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        (stdout_data, stderr_data) = await proc.communicate()
-
-        self.stdout = stdout_data.decode()
-        self.stderr = stderr_data.decode()
-        self.returncode = proc.returncode
-
-        # Print command output if needed
-        if not self.quiet and (self.stdout or self.stderr):
-            if self.stderr:
-                log(self.stderr, end="")
-            if self.stdout:
-                log(self.stdout, end="")
-
-        # Task complete, check the task return code
-        if self.returncode:
-            raise ValueError(
-                f"Command '{command}' exited with return code {self.returncode}"
-            )
-
-        # Task passed, return the output file list
-        return self.abs_files_out
-
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
@@ -680,6 +577,97 @@ class Task(Rule):
 
         return None
 
+    async def run_commands(self):
+        """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
+
+        try:
+            # Wait for enough jobs to free up to run this task.
+            await app.acquire_jobs(self.job_count)
+
+            # Deps fulfilled and jobs acquired, we are now runnable so grab a task index.
+            app.task_counter += 1
+            self.task_index = app.task_counter
+
+            # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
+            log(
+                f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
+                sameline=not self.verbose,
+            )
+
+            if self.work_dir == self.start_dir:
+                work_dir = "."
+            else:
+                work_dir = str(self.work_dir).removeprefix(str(self.start_dir) + "/")
+            dryrun = "(DRY RUN) " if self.dryrun else ""
+
+            if self.verbose or self.debug:
+                log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
+
+            if self.debug:
+                log(self)
+
+            result = []
+            for command in self.command:
+                if self.verbose or self.debug:
+                    log(f"{color(128,128,255)}{work_dir}$ {color()}{dryrun}{command}")
+                result = await self.run_command(command)
+        finally:
+            await app.release_jobs(self.job_count)
+
+        # Check if the commands actually updated all the output files
+        if self.files_in and self.files_out and not self.dryrun:
+            if second_reason := self.needs_rerun():
+                raise ValueError(
+                    f"Task '{self.desc}' still needs rerun after running!\n"
+                    + f"Reason: {second_reason}"
+                )
+
+        return result
+
+    async def run_command(self, command):
+        """Runs a single command, either by calling it or running it in a subprocess."""
+
+        # Early exit if this is just a dry run
+        if self.dryrun:
+            return self.abs_files_out
+
+        # Custom commands just get called and then early-out'ed.
+        if callable(command):
+            return command(self)
+
+        # Non-string non-callable commands are not valid
+        if not isinstance(command, str):
+            raise ValueError(f"Don't know what to do with {command}")
+
+        # Create the subprocess via asyncio and then await the result.
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=self.work_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        (stdout_data, stderr_data) = await proc.communicate()
+
+        self.stdout = stdout_data.decode()
+        self.stderr = stderr_data.decode()
+        self.returncode = proc.returncode
+
+        # Print command output if needed
+        if not self.quiet and (self.stdout or self.stderr):
+            if self.stderr:
+                log(self.stderr, end="")
+            if self.stdout:
+                log(self.stdout, end="")
+
+        # Task complete, check the task return code
+        if self.returncode:
+            raise ValueError(
+                f"Command '{command}' exited with return code {self.returncode}"
+            )
+
+        # Task passed, return the output file list
+        return self.abs_files_out
+
 
 class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
@@ -689,12 +677,12 @@ class App:
     def __init__(self):
         self.hancho_mods = {}
         self.mod_stack = []
-        self.all_tasks = []
         self.all_files_out = set()
         self.tasks_total = 0
         self.tasks_pass = 0
         self.tasks_fail = 0
         self.tasks_skip = 0
+        self.tasks_cancel = 0
         self.task_counter = 0
         self.mtime_calls = 0
         self.line_dirty = False
@@ -769,18 +757,19 @@ class App:
 
         # Done, print status info if needed
         if config.debug or config.verbose:
-            log(f"tasks total:   {self.tasks_total}")
-            log(f"tasks passed:  {self.tasks_pass}")
-            log(f"tasks failed:  {self.tasks_fail}")
-            log(f"tasks skipped: {self.tasks_skip}")
-            log(f"mtime calls:   {self.mtime_calls}")
+            log(f"tasks total:     {self.tasks_total}")
+            log(f"tasks passed:    {self.tasks_pass}")
+            log(f"tasks failed:    {self.tasks_fail}")
+            log(f"tasks skipped:   {self.tasks_skip}")
+            log(f"tasks cancelled: {self.tasks_cancel}")
+            log(f"mtime calls:     {self.mtime_calls}")
 
         if self.tasks_fail:
-            log(f"hancho: {color(255, 0, 0)}BUILD FAILED{color()}")
+            log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
         elif self.tasks_pass:
-            log(f"hancho: {color(0, 255, 0)}BUILD PASSED{color()}")
+            log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
         else:
-            log(f"hancho: {color(255, 255, 0)}BUILD CLEAN{color()}")
+            log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
 
         return -1 if self.tasks_fail else 0
 
