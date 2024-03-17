@@ -1,0 +1,16 @@
+from hancho import *
+
+rule1 = Rule(
+  command = "touch {files_out}"
+)
+
+blah1 = rule1([], "blah1.txt")
+
+rule = Rule(
+  command = "echo {named_deps.blarg}",
+  named_deps = Config(
+    blarg = blah1
+  )
+)
+
+rule([], [])

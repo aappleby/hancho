@@ -1,0 +1,10 @@
+from hancho import *
+
+rules = load("rules.hancho")
+rules.touch_outputs(
+  "src/test.cpp",
+  "result.txt",
+  named_deps = {
+    "dummy" : "build/dummy.txt"
+  }
+)

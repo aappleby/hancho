@@ -65,11 +65,16 @@ def log(message, *args, sameline=False, **kwargs):
 def abspath(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
     return Path(os.path.abspath(path))
+    # Hmm this acutally works now, am I forgetting a corner case?
+    # return Path(path).absolute()
 
 
 def relpath(path1, path2):
     """Pathlib's path.relative_to() refuses to generate "../bar", so we use os.path.relpath."""
     return Path(os.path.relpath(path1, path2))
+    # This also works now, def need to check corner cases.
+    # if path2 is None: return path1
+    # return Path(path1).relative_to(path2)
 
 
 def color(red=None, green=None, blue=None):
@@ -114,23 +119,12 @@ def maybe_as_number(text):
             return text
 
 
-def flatten(elements):
-    """Converts an arbitrarily-nested list 'elements' into a flat list, or wraps it in [] if it's
-    not a list."""
-    if not isinstance(elements, list):
-        return [elements]
-    result = []
-    for element in elements:
-        result.extend(flatten(element))
-    return result
-
-
 # The next three functions require some explanation.
 #
-# We do not necessarily know in advance how the users will nest strings, templates, promises,
-# callbacks, etcetera. So, when we need to produce a flat list of files from whatever was passed to
-# files_in, we need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn
-# that thing into a flat list of files.
+# We do not necessarily know in advance how the users will nest strings, templates, callbacks,
+# etcetera. So, when we need to produce a flat list of files from whatever was passed to files_in,
+# we need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn that thing
+# into a flat list of files.
 #
 # We also need to ensure that if anything in this process throws an exception (or if an exception
 # was passed into a rule due to a previous rule failing) that we always propagate the exception up
@@ -144,109 +138,7 @@ def flatten(elements):
 # suffice.
 
 
-async def flatten_async(rule, variant, depth=0):
-    """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
-    # pylint: disable=too-many-return-statements
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Flattening '{variant}' failed to terminate")
-
-    if isinstance(variant, asyncio.CancelledError):
-        raise variant
-
-    if inspect.isfunction(variant):
-        return [variant]
-
-    if variant is None:
-        return []
-
-    if inspect.isawaitable(variant):
-        return await flatten_async(rule, await variant, depth + 1)
-
-    if isinstance(variant, Task):
-        return await flatten_async(rule, variant.promise, depth + 1)
-
-    if isinstance(variant, Path):
-        return [Path(await stringize_async(rule, str(variant), depth + 1))]
-
-    if isinstance(variant, list):
-        result = []
-        for element in variant:
-            result.extend(await flatten_async(rule, element, depth + 1))
-        return result
-
-    return [await stringize_async(rule, variant, depth + 1)]
-
-
-async def stringize_async(rule, variant, depth=0):
-    """Turns 'variant' into a non-templated string."""
-    # pylint: disable=too-many-return-statements
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Stringizing '{variant}' failed to terminate")
-
-    if isinstance(variant, asyncio.CancelledError):
-        raise variant
-
-    if isinstance(variant, str):
-        if template_regex.search(variant):
-            return await expand_async(rule, variant, depth + 1)
-        return variant
-
-    if variant is None:
-        return ""
-
-    if inspect.isawaitable(variant):
-        return await stringize_async(rule, await variant, depth + 1)
-
-    if isinstance(variant, Task):
-        return await stringize_async(rule, variant.promise, depth + 1)
-
-    if isinstance(variant, Path):
-        return await stringize_async(rule, str(variant), depth + 1)
-
-    if isinstance(variant, list):
-        variant = await flatten_async(rule, variant, depth + 1)
-        variant = [str(s) for s in variant if s is not None]
-        variant = " ".join(variant)
-        return variant
-
-    return str(variant)
-
-
-async def expand_async(rule, template, depth=0):
-    """Expands all templates to produce a non-templated string."""
-
-    if not isinstance(template, str):
-        raise ValueError(f"Don't know how to expand {type(template)}")
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Expanding '{template}' failed to terminate")
-
-    result = ""
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        exp = template[span.start() : span.end()]
-
-        # Evaluate the template contents.
-        replacement = ""
-        try:
-            # pylint: disable=eval-used
-            replacement = eval(exp[1:-1], globals(), rule)
-        except Exception as exc:  # pylint: disable=broad-except
-            raise ValueError(f"Template '{exp}' failed to eval") from exc
-
-        result += await stringize_async(rule, replacement, depth + 1)
-        template = template[span.end() :]
-
-    result += template
-    return result
-
-####################################################################################################
-# Due to Python async rules, we _can't_ use the same flatten/stringize/expand code in a sync context
-# and an async context. I'll refactor these to be less redundant later.
-
-def flatten_sync(rule, variant, depth=0):
+def flatten(rule, variant, depth=0):
     """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
     # pylint: disable=too-many-return-statements
 
@@ -263,21 +155,21 @@ def flatten_sync(rule, variant, depth=0):
         return []
 
     if isinstance(variant, Task):
-        return flatten_sync(rule, variant.promise, depth + 1)
+        return flatten(rule, variant.promise, depth + 1)
 
     if isinstance(variant, Path):
-        return [Path(stringize_sync(rule, str(variant), depth + 1))]
+        return [Path(stringize(rule, str(variant), depth + 1))]
 
     if isinstance(variant, list):
         result = []
         for element in variant:
-            result.extend(flatten_sync(rule, element, depth + 1))
+            result.extend(flatten(rule, element, depth + 1))
         return result
 
-    return [stringize_sync(rule, variant, depth + 1)]
+    return [stringize(rule, variant, depth + 1)]
 
 
-def stringize_sync(rule, variant, depth=0):
+def stringize(rule, variant, depth=0):
     """Turns 'variant' into a non-templated string."""
     # pylint: disable=too-many-return-statements
 
@@ -289,20 +181,20 @@ def stringize_sync(rule, variant, depth=0):
 
     if isinstance(variant, str):
         if template_regex.search(variant):
-            return expand_sync(rule, variant, depth + 1)
+            return expand(rule, variant, depth + 1)
         return variant
 
     if variant is None:
         return ""
 
     if isinstance(variant, Task):
-        return stringize_sync(rule, variant.promise, depth + 1)
+        return stringize(rule, variant.promise, depth + 1)
 
     if isinstance(variant, Path):
-        return Path(stringize_sync(rule, str(variant), depth + 1))
+        return stringize(rule, str(variant), depth + 1)
 
     if isinstance(variant, list):
-        variant = flatten_sync(rule, variant, depth + 1)
+        variant = flatten(rule, variant, depth + 1)
         variant = [str(s) for s in variant if s is not None]
         variant = " ".join(variant)
         return variant
@@ -310,14 +202,14 @@ def stringize_sync(rule, variant, depth=0):
     return str(variant)
 
 
-def expand_sync(rule, template, depth=0):
+def expand(rule, template, depth=0):
     """Expands all templates to produce a non-templated string."""
-
-    if not isinstance(template, str):
-        raise ValueError(f"Don't know how to expand {type(template)}")
 
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Expanding '{template}' failed to terminate")
+
+    if not isinstance(template, str):
+        raise ValueError(f"Don't know how to expand {type(template)}")
 
     result = ""
     while span := template_regex.search(template):
@@ -332,24 +224,45 @@ def expand_sync(rule, template, depth=0):
         except Exception as exc:  # pylint: disable=broad-except
             raise ValueError(f"Template '{exp}' failed to eval") from exc
 
-        result += stringize_sync(rule, replacement, depth + 1)
+        result += stringize(rule, replacement, depth + 1)
         template = template[span.end() :]
 
     result += template
     return result
 
-####################################################################################################
 
-def load(file = None, root = None):
+async def await_variant(variant):
+    """Recursively replaces every awaitable in the variant with its awaited value."""
+
+    if isinstance(variant, Task):
+        # We don't iterate through subtasks because they should await themselves except for their
+        # own promise.
+        if inspect.isawaitable(variant.promise):
+            variant.promise = await variant.promise
+    elif isinstance(variant, dict):
+        for key in variant:
+            variant[key] = await await_variant(variant[key])
+    elif isinstance(variant, list):
+        for index, value in enumerate(variant):
+            variant[index] = await await_variant(value)
+    elif inspect.isawaitable(variant):
+        variant = await variant
+
+    return variant
+
+
+def load(file=None, root=None):
     """Module loader entry point for .hancho files. Searches the loaded Hancho module stack for a
     module whose directory contains 'mod_path', then loads the module relative to that path.
     """
 
     if file is None:
-        raise FileNotFoundError(f"No .hancho filename given")
+        raise FileNotFoundError("No .hancho filename given")
+
+    file = Path(stringize(config, file))
 
     if root is not None:
-        file = Path(root) / Path(file)
+        file = Path(stringize(config, root)) / file
 
     test_path = abspath(Path(app.mod_stack[-1].__file__).parent / file)
     if test_path.exists():
@@ -470,13 +383,22 @@ class Task(Rule):
         during task execution."""
 
         try:
-            return await self.task_main()
+            # Await everything awaitable in this task and replace the promises with the awaited values.
+            for key in self:
+                if key != "promise":
+                    self[key] = await await_variant(self[key])
 
-        # If any of this tasks's dependencies were cancelled, we propagate the
-        # cancellation to downstream tasks.
-        except asyncio.CancelledError as cancel:
-            app.tasks_skip += 1
-            return cancel
+            # Everything awaited, task_init runs synchronously.
+            self.task_init()
+
+            # Run the commands if we need to.
+            if self.reason:
+                result = await self.run_commands()
+            else:
+                app.tasks_skip += 1
+                result = self.abs_files_out
+
+            return result
 
         # If this task failed, we print the error and propagate a cancellation
         # to downstream tasks.
@@ -488,20 +410,22 @@ class Task(Rule):
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
+        # If any of this tasks's dependencies were cancelled, we propagate the
+        # cancellation to downstream tasks.
+        except asyncio.CancelledError as cancel:
+            app.tasks_skip += 1
+            return cancel
+
         finally:
             if self.debug:
                 log("")
 
     # pylint: disable=too-many-branches
-    async def task_main(self):
-        """All the steps needed to run a task and check the result.
-
-        NOTE: The order that fields are expanded _does_ matter. For example, if we call swap_ext()
-        on a filename array that hasn't been awaited, we would end up trying to change the file
-        extension of a promise and that would be bad."""
+    def task_init(self):
+        """All the setup steps needed before we run a task."""
 
         # Check for missing fields
-        if not self.command:  # pylint: disable=access-member-before-definition
+        if self.command is None:  # pylint: disable=access-member-before-definition
             raise ValueError("Task missing command")
         if self.files_in is None:
             raise ValueError("Task missing files_in")
@@ -509,50 +433,68 @@ class Task(Rule):
             raise ValueError("Task missing files_out")
 
         # Stringize our directories
-        self.work_dir = Path(await stringize_async(self, self.work_dir))
-        self.in_dir   = Path(await stringize_async(self, self.in_dir))
-        self.deps_dir = Path(await stringize_async(self, self.deps_dir))
-        self.out_dir  = Path(await stringize_async(self, self.out_dir))
+        self.work_dir = Path(stringize(self, self.work_dir))
+        self.in_dir = Path(stringize(self, self.in_dir))
+        self.deps_dir = Path(stringize(self, self.deps_dir))
+        self.out_dir = Path(stringize(self, self.out_dir))
 
         assert self.work_dir.is_absolute() and self.work_dir.exists()
         assert self.in_dir.is_absolute() and self.in_dir.exists()
         assert self.deps_dir.is_absolute() and self.deps_dir.exists()
-        assert self.out_dir.is_absolute() # may not exist yet and that's OK, we will create it.
+
+        # 'out_dir' may not exist yet and that's OK, we will create it.
+        assert self.out_dir.is_absolute()
 
         # Flatten our file lists
-        self.files_in = await flatten_async(self, self.files_in)
-        self.deps = await flatten_async(self, self.deps)
-        self.files_out = await flatten_async(self, self.files_out)
+        self.files_in = flatten(self, self.files_in)
+        self.deps = flatten(self, self.deps)
+        self.files_out = flatten(self, self.files_out)
+
+        for key in self.named_deps:
+            self.named_deps[key] = stringize(self, self.named_deps[key])
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
-        self.abs_files_in  = [abspath(self.in_dir / f)   for f in self.files_in]
-        self.abs_deps      = [abspath(self.deps_dir / f) for f in self.deps]
-        self.abs_files_out = [abspath(self.out_dir / f)  for f in self.files_out]
+        self.abs_files_in = [abspath(self.in_dir / f) for f in self.files_in]
+        self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
+        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
+
+        self.abs_named_deps = {}
+        for key in self.named_deps:
+            self.abs_named_deps[key] = abspath(self.deps_dir / self.named_deps[key])
 
         # Strip the working directory off all our file paths to make our command lines less bulky.
         # Note that we _don't_ want relpath() here as it could add "../../.." that would go up
         # through a symlink to the wrong directory.
-        work_dir_prefix = str(self.work_dir) + "/"
-        self.files_in  = [Path(str(f).removeprefix(work_dir_prefix)) for f in self.abs_files_in]
-        self.deps      = [Path(str(f).removeprefix(work_dir_prefix)) for f in self.abs_deps]
-        self.files_out = [Path(str(f).removeprefix(work_dir_prefix)) for f in self.abs_files_out]
+        def strip(f):
+            work_dir_prefix = str(self.work_dir) + "/"
+            return Path(str(f).removeprefix(work_dir_prefix))
 
-        # Now that files_in/files_out/deps are flat, we can expand our
-        # description and command list
-        self.command = await flatten_async(self, self.command)
+        self.files_in = [strip(f) for f in self.abs_files_in]
+        self.deps = [strip(f) for f in self.abs_deps]
+        self.files_out = [strip(f) for f in self.abs_files_out]
+        for key in self.named_deps:
+            self.named_deps[key] = strip(self.abs_named_deps[key])
+
+        # Now that files_in/files_out/deps are flat, we can expand our description and command
+        # list.
+        self.command = flatten(self, self.command)
 
         # pylint: disable=access-member-before-definition
-        if self.desc:
-            self.desc = await stringize_async(self, self.desc)
-        if self.depfile:
-            self.depfile = await stringize_async(self, self.depfile)
+        self.desc = stringize(self, self.desc)
+        self.depfile = stringize(self, self.depfile)
 
         # Check for missing inputs
         if not self.dryrun:
             for file in self.abs_files_in:
                 if not file.exists():
                     raise NameError(f"Input file doesn't exist - {file}")
+            for file in self.abs_deps:
+                if not file.exists():
+                    raise NameError(f"Dependency doesn't exist - {file}")
+            for kv in self.abs_named_deps.items():
+                if not kv[1].exists():
+                    raise NameError(f"Named dependency doesn't exist - {kv[0]}:{kv[1]}")
 
         # Check for duplicate task outputs
         for file in self.abs_files_out:
@@ -560,29 +502,15 @@ class Task(Rule):
                 raise NameError(f"Multiple rules build {file}!")
             app.all_files_out.add(file)
 
-        # Check if we need a rebuild
-        self.reason = self.needs_rerun(self.force)
-        if not self.reason:
-            app.tasks_skip += 1
-            return self.abs_files_out
-
         # Make sure our output directories exist
         if not self.dryrun:
             for file_out in self.abs_files_out:
                 file_out.parent.mkdir(parents=True, exist_ok=True)
 
-        # Run the commands
-        result = await self.run_commands()
+        # Check if we need a rebuild
+        self.reason = self.needs_rerun(self.force)
 
-        # Check if the commands actually updated all the output files
-        if self.files_in and self.files_out and not self.dryrun:
-            if second_reason := self.needs_rerun():
-                raise ValueError(
-                    f"Task '{self.desc}' still needs rerun after running!\n"
-                    + f"Reason: {second_reason}"
-                )
 
-        return result
 
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
@@ -601,10 +529,10 @@ class Task(Rule):
                 sameline=not self.verbose,
             )
 
-            if (self.work_dir == self.start_dir):
+            if self.work_dir == self.start_dir:
                 work_dir = "."
             else:
-                work_dir = str(self.work_dir).removeprefix(str(self.start_dir) + '/')
+                work_dir = str(self.work_dir).removeprefix(str(self.start_dir) + "/")
             dryrun = "(DRY RUN) " if self.dryrun else ""
 
             if self.verbose or self.debug:
@@ -620,6 +548,14 @@ class Task(Rule):
                 result = await self.run_command(command)
         finally:
             await app.release_jobs(self.job_count)
+
+        # Check if the commands actually updated all the output files
+        if self.files_in and self.files_out and not self.dryrun:
+            if second_reason := self.needs_rerun():
+                raise ValueError(
+                    f"Task '{self.desc}' still needs rerun after running!\n"
+                    + f"Reason: {second_reason}"
+                )
 
         app.tasks_pass += 1
         return result
@@ -643,15 +579,12 @@ class Task(Rule):
             raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
-        # Note - We do _not_ want this 'with Chdir()' statement higher up the call stack. If we hit
-        # an await while inside the block, we could switch to another task and they would then be
-        # running in the wrong directory.
-        with Chdir(self.work_dir):
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=self.work_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         (stdout_data, stderr_data) = await proc.communicate()
 
         self.stdout = stdout_data.decode()
@@ -707,9 +640,11 @@ class Task(Rule):
 
         # Check if any user-specified deps have changed.
         if self.deps and max(mtime(f) for f in self.deps) >= min_out:
-            return (
-                f"Rebuilding {self.files_out} because a manual dependency has changed"
-            )
+            return f"Rebuilding {self.files_out} because a dependency has changed"
+
+        for key in self.named_deps:
+            if mtime(self.named_deps[key]) >= min_out:
+                return f"Rebuilding {self.files_out} because a named dependency has changed"
 
         # Check all dependencies in the depfile, if present.
         if self.depfile:
@@ -847,7 +782,7 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, abs_path, root = None):
+    def load_module(self, abs_path, root=None):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         phys_path = Path(abs_path).resolve()
@@ -874,7 +809,8 @@ class App:
         self.root_stack.append(root)
 
         # We must chdir()s into the .hancho file directory before running it so that
-        # glob() can resolve files relative to the .hancho file itself.
+        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+        # context here so there should be no other threads trying to change cwd.
         with Chdir(abs_path.parent):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
@@ -948,6 +884,7 @@ class GlobalConfig(Config):
 
         self.files_out = []
         self.deps      = []
+        self.named_deps   = {}
 
         # The default number of parallel jobs a task consumes.
         self.job_count = 1
@@ -959,6 +896,9 @@ class GlobalConfig(Config):
         self.glob      = glob
         self.abspath   = abspath
         self.relpath   = relpath
+        self.flatten   = flatten
+        self.stringize = stringize
+        self.expand    = expand
     # fmt: on
 
 

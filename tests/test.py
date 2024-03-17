@@ -83,10 +83,6 @@ class TestHancho(unittest.TestCase):
         """A build rule that doesn't update one of its outputs should fail"""
         self.assertNotEqual(0, run_hancho("check_output"))
 
-    def test_check_missing_src(self):
-        """We should fail if a source file is missing"""
-        self.assertNotEqual(0, run_hancho("missing_src"))
-
     def test_recursive_base_is_bad(self):
         """Referring to base.attrib in a template is a bad idea"""
         self.assertNotEqual(0, run_hancho("recursive_base_is_bad"))
@@ -98,6 +94,24 @@ class TestHancho(unittest.TestCase):
     def test_missing_field(self):
         """Missing fields should turn into empty strings when expanded"""
         self.assertEqual(0, run_hancho("missing_field"))
+
+
+
+
+    def test_missing_input(self):
+        """We should fail if an input is missing"""
+        self.assertNotEqual(0, run_hancho("missing_input"))
+
+    def test_missing_named_dep(self):
+        """Missing named dep should fail"""
+        self.assertNotEqual(0, run_hancho("missing_named_dep"))
+
+    def test_missing_dep(self):
+        """Missing dep should fail"""
+        self.assertNotEqual(0, run_hancho("missing_dep"))
+
+
+
 
     def test_expand_failed_to_terminate(self):
         """A recursive text template should cause an 'expand failed to terminate' error."""
@@ -145,6 +159,22 @@ class TestHancho(unittest.TestCase):
 
         Path("build/dummy.txt").touch()
         run_hancho("dep_changed")
+        mtime3 = mtime("build/result.txt")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_named_dep_changed(self):
+        """Changing a file referenced by named_deps{} should trigger a rebuild"""
+        os.makedirs("build", exist_ok=True)
+        Path("build/dummy.txt").touch()
+        run_hancho("dep_changed")
+        mtime1 = mtime("build/result.txt")
+
+        run_hancho("named_dep_changed")
+        mtime2 = mtime("build/result.txt")
+
+        Path("build/dummy.txt").touch()
+        run_hancho("named_dep_changed")
         mtime3 = mtime("build/result.txt")
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
