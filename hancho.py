@@ -29,39 +29,6 @@ MAX_EXPAND_DEPTH = 100
 template_regex = re.compile("{[^}]*}")
 
 
-def log(message, *args, sameline=False, **kwargs):
-    """Simple logger that can do same-line log messages like Ninja."""
-    if config.quiet:
-        return
-
-    if not sys.stdout.isatty():
-        sameline = False
-
-    output = io.StringIO()
-    if sameline:
-        kwargs["end"] = ""
-    print(message, *args, file=output, **kwargs)
-    output = output.getvalue()
-
-    if not sameline and app.line_dirty:
-        sys.stdout.write("\n")
-        app.line_dirty = False
-
-    if not output:
-        return
-
-    if sameline:
-        sys.stdout.write("\r")
-        output = output[: os.get_terminal_size().columns - 1]
-        sys.stdout.write(output)
-        sys.stdout.write("\x1B[K")
-    else:
-        sys.stdout.write(output)
-
-    sys.stdout.flush()
-    app.line_dirty = output[-1] != "\n"
-
-
 def abspath(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
     return Path(os.path.abspath(path))
@@ -138,7 +105,7 @@ def maybe_as_number(text):
 # suffice.
 
 
-def flatten(variant, rule=None, depth=0):
+def flatten(variant, rule, depth=0):
     """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
     # pylint: disable=too-many-return-statements
 
@@ -165,7 +132,7 @@ def flatten(variant, rule=None, depth=0):
             return [stringize(variant, rule, depth + 1)]
 
 
-def stringize(variant, rule=None, depth=0):
+def stringize(variant, rule, depth=0):
     """Turns 'variant' into a non-templated string."""
     # pylint: disable=too-many-return-statements
 
@@ -194,7 +161,7 @@ def stringize(variant, rule=None, depth=0):
             return str(variant)
 
 
-def expand(template, rule=None, depth=0):
+def expand(template, rule, depth=0):
     """Expands all templates to produce a non-templated string."""
 
     if depth > MAX_EXPAND_DEPTH:
@@ -202,9 +169,6 @@ def expand(template, rule=None, depth=0):
 
     if not isinstance(template, str):
         raise ValueError(f"Don't know how to expand {type(template)}")
-
-    if rule is None:
-        rule = config
 
     result = ""
     while span := template_regex.search(template):
@@ -251,6 +215,9 @@ def load(file=None, root=None):
     module whose directory contains 'mod_path', then loads the module relative to that path.
     """
 
+    # Grab the parent module's global config object
+    config = app.mod_stack[-1].config if app.mod_stack else global_config
+
     if file is None:
         raise FileNotFoundError("No .hancho filename given")
 
@@ -285,9 +252,10 @@ class Chdir:
 class Config(dict):
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
-    def __init__(self, base=None, **kwargs):
-        self.base = base
+    def __init__(self, name=None, base=None, **kwargs):
+        self.name = name
         self |= kwargs
+        self.base = base
 
     def __missing__(self, key):
         return None if self.base is None else self.base[key]
@@ -317,23 +285,25 @@ class Config(dict):
 
 
 class Rule(Config):
-    """Rules are callable Configs that create a Task when called. Rules also delegate attribute
-    lookups to the global 'config' object if they are missing a field."""
+    """Rules are callable Configs that create a Task when called. Rules also inherit from their
+    parent module's config if they have no other ancestor."""
 
     # pylint: disable=attribute-defined-outside-init
-    # pyglint: disable=too-many-instance-attributes
+    # pylint: disable=super-init-not-called
 
-    def __init__(self, base=None, **kwargs):
-        super().__init__(base, **kwargs)
+    def __init__(self, name=None, base=None, **kwargs):
+
         # pylint: disable=access-member-before-definition
-        if self.rule_dir is None:
+        self.name = name if name is not None else "<Rule>"
+        if hasattr(kwargs, "rule_dir"):
+            self.rule_dir = kwargs["rule_dir"]
+        else:
             self.rule_dir = Path(inspect.stack(context=0)[1].filename).parent
-
-    def __missing__(self, key):
-        """Rules delegate to config[key] if a key is missing."""
-
-        result = super().__missing__(key)
-        return result if result is not None else config[key]
+        self |= kwargs
+        if base is None:
+            self.base = app.mod_stack[-1].config
+        else:
+            self.base = base
 
     def __call__(self, files_in, files_out=None, **kwargs):
         task = Task(base=self, **kwargs)
@@ -346,14 +316,14 @@ class Rule(Config):
 
         # A task that's created during task execution instead of module loading will have no mod
         # stack entry to pull load_dir from, so it just inherits its parent's cwd.
-        #if "load_dir" not in kwargs:
+        # if "load_dir" not in kwargs:
         if self.load_dir is None:
             if app.mod_stack:
                 task.load_dir = Path(app.mod_stack[-1].__file__).parent
             else:
                 task.load_dir = Path.cwd()
 
-        if task.job_count > config.jobs:
+        if task.job_count > global_config.jobs:
             raise ValueError("Task requires too many cores!")
 
         coroutine = task.run_async()
@@ -366,9 +336,16 @@ class Task(Rule):
 
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
+    # pylint: disable=super-init-not-called
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, name=None, base=None, **kwargs):
+        # super().__init__(name, base, **kwargs)
+        self.name = name if name is not None else "<Task>"
+        self |= kwargs
+        if base is None:
+            self.base = app.mod_stack[-1].config
+        else:
+            self.base = base
         app.tasks_total += 1
 
     async def run_async(self):
@@ -427,11 +404,16 @@ class Task(Rule):
         if self.files_out is None:
             raise ValueError("Task missing files_out")
 
+        # print(self.in_dir)
+        # print(self)
+
         # Stringize our directories
         self.work_dir = Path(stringize(self.work_dir, self))
         self.in_dir = Path(stringize(self.in_dir, self))
         self.deps_dir = Path(stringize(self.deps_dir, self))
         self.out_dir = Path(stringize(self.out_dir, self))
+
+        # print(self.in_dir)
 
         assert self.work_dir.is_absolute() and self.work_dir.exists()
         assert self.in_dir.is_absolute() and self.in_dir.exists()
@@ -708,22 +690,29 @@ class App:
         # Parse the command line
         (flags, unrecognized) = parser.parse_known_args()
 
+        start_filename = flags.filename
+        del flags.filename
+
         # Merge all known command line flags into our global config object.
-        global config  # pylint: disable=global-statement
-        config |= flags.__dict__
+
+        global global_config  # pylint: disable=global-statement
+        global_config.start_filename = (
+            start_filename  # pylint: disable=attribute-defined-outside-init
+        )
+        global_config |= flags.__dict__
 
         # Unrecognized command line parameters also become global config fields if
         # they are flag-like
         for span in unrecognized:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-                config[match.group(1)] = (
+                global_config[match.group(1)] = (
                     maybe_as_number(match.group(2))
                     if match.group(2) is not None
                     else True
                 )
 
         # Change directory if needed and kick off the build.
-        with Chdir(config.chdir):
+        with Chdir(global_config.chdir):
             # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
             # in Github, so I'm gonna try this.
             result = asyncio.get_event_loop().run_until_complete(self.async_main())
@@ -733,13 +722,13 @@ class App:
     async def async_main(self):
         """All the actual Hancho stuff runs in an async context."""
 
-        self.jobs_available = config.jobs
+        self.jobs_available = global_config.jobs
 
-        # Load the root build.hancho file.
-        root_filename = abspath(config.filename)
-        if not root_filename.exists():
-            raise FileNotFoundError(f"Could not find {root_filename}")
-        self.load_module(root_filename, Path.cwd())
+        # Load the starting .hancho file.
+        start_filename = abspath(global_config.start_filename)
+        if not start_filename.exists():
+            raise FileNotFoundError(f"Could not find {start_filename}")
+        self.load_module(start_filename, Path.cwd())
 
         # Root module(s) loaded. Run all tasks in the queue until we run out.
         while True:
@@ -748,14 +737,8 @@ class App:
                 break
             await asyncio.wait(pending_tasks)
 
-        # Print a copy of the global config after all tasks are done if we're in
-        # debug mode
-        if config.debug:
-            log(f"Hancho global config: {config}")
-            log("")
-
         # Done, print status info if needed
-        if config.debug or config.verbose:
+        if global_config.debug or global_config.verbose:
             log(f"tasks total:     {self.tasks_total}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
@@ -786,6 +769,7 @@ class App:
         module = type(sys)(abs_path.stem)
         module.__file__ = abs_path
         module.__builtins__ = builtins
+
         self.hancho_mods[phys_path] = module
 
         # The directory the module is in gets added to the global path so we can
@@ -795,19 +779,29 @@ class App:
 
         root = self.root_stack[-1] if root is None else abspath(root)
 
+        root = abspath(root)
+
+        # Each module inherits a configuration object from its parent module's config
+        parent_config = app.mod_stack[-1].config if app.mod_stack else global_config
+        module.config = parent_config.extend(
+            name=f"<Config for {abs_path}>",
+            root_dir=root,
+        )
+
         self.mod_stack.append(module)
         self.root_stack.append(root)
 
-        # We must chdir()s into the .hancho file directory before running it so that
-        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-        # context here so there should be no other threads trying to change cwd.
-        with Chdir(abs_path.parent):
-            # Why Pylint thinks this is not callable is a mystery.
-            # pylint: disable=not-callable
-            types.FunctionType(code, module.__dict__)()
-
-        self.mod_stack.pop()
-        self.root_stack.pop()
+        try:
+            # We must chdir()s into the .hancho file directory before running it so that
+            # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+            # context here so there should be no other threads trying to change cwd.
+            with Chdir(abs_path.parent):
+                # Why Pylint thinks this is not callable is a mystery.
+                # pylint: disable=not-callable
+                types.FunctionType(code, module.__dict__)()
+        finally:
+            self.mod_stack.pop()
+            self.root_stack.pop()
 
         return module
 
@@ -834,71 +828,86 @@ class App:
         self.jobs_lock.release()
 
 
-class GlobalConfig(Config):
-    """The global config object. All fields here can be used in any template."""
-
-    # pylint: disable=too-many-instance-attributes
-    # fmt: off
-    def __init__(self):
-        super().__init__()
-        self.filename  = "build.hancho"
-
-        self.desc      = "{files_in} -> {files_out}"
-        self.chdir     = "."
-        self.jobs      = os.cpu_count()
-        self.verbose   = False
-        self.quiet     = False
-        self.dryrun    = False
-        self.debug     = False
-        self.force     = False
-        self.depformat = "gcc"
-
-        # The directory we started hancho.py from.
-        self.start_dir  = Path.cwd()
-
-        self.root_dir   = Path.cwd()
-
-        # The working directory that we run commands in. For single projects it's the same as
-        # start_dir, for stuff we're building from submodules it's the submodule's root directory.
-        self.work_dir   = Path("{root_dir}")
-
-
-        # Input filenames are resolved relative to in_dir.
-        self.in_dir     = Path("{load_dir}")
-
-        # Dependency filenames are resolved relative to deps_dir.
-        self.deps_dir   = Path("{load_dir}")
-
-        # All output files from all tasks go under build_dir.
-        self.build_dir  = Path("build")
-
-        # Use build_tag to split outputs into separate debug/profile/release/etc folders.
-        self.build_tag  = ""
-
-        # Each .hancho file gets a separate directory under build_dir for its output files.
-        self.out_dir    = Path("{start_dir / build_dir / build_tag / relpath(load_dir, start_dir)}")
-
-        self.files_out = []
-        self.deps      = []
-        self.named_deps   = {}
-
-        # The default number of parallel jobs a task consumes.
-        self.job_count = 1
-
-        self.len       = len
-        self.run_cmd   = run_cmd
-        self.swap_ext  = swap_ext
-        self.color     = color
-        self.glob      = glob
-        self.abspath   = abspath
-        self.relpath   = relpath
-        self.flatten   = flatten
-        self.stringize = stringize
-        self.expand    = expand
-    # fmt: on
+# The global config object. All fields here can be used in any template.
+global_config = Config(
+    name="<Global Config>",
+    desc="{files_in} -> {files_out}",
+    chdir=".",
+    jobs=os.cpu_count(),
+    verbose=False,
+    quiet=False,
+    dryrun=False,
+    debug=False,
+    force=False,
+    depformat="gcc",
+    # The directory we started hancho.py from.
+    start_dir=Path.cwd(),
+    start_filename="build.hancho",
+    root_dir=Path.cwd(),
+    # The working directory that we run commands in. For single projects it's the same as
+    # start_dir, for stuff we're building from submodules it's the submodule's root directory.
+    work_dir=Path("{root_dir}"),
+    # Input filenames are resolved relative to in_dir.
+    in_dir=Path("{load_dir}"),
+    # Dependency filenames are resolved relative to deps_dir.
+    deps_dir=Path("{load_dir}"),
+    # All output files from all tasks go under build_dir.
+    build_dir=Path("build"),
+    # Use build_tag to split outputs into separate debug/profile/release/etc folders.
+    build_tag="",
+    # Each .hancho file gets a separate directory under build_dir for its output files.
+    out_dir=Path("{start_dir / build_dir / build_tag / relpath(load_dir, start_dir)}"),
+    files_out=[],
+    deps=[],
+    named_deps={},
+    # The default number of parallel jobs a task consumes.
+    job_count=1,
+    len=len,
+    run_cmd=run_cmd,
+    swap_ext=swap_ext,
+    color=color,
+    glob=glob,
+    abspath=abspath,
+    relpath=relpath,
+    flatten=flatten,
+    stringize=stringize,
+    expand=expand,
+)
 
 
-config = GlobalConfig()
+def log(message, *args, sameline=False, **kwargs):
+    """Simple logger that can do same-line log messages like Ninja."""
+    if global_config.quiet:
+        return
+
+    if not sys.stdout.isatty():
+        sameline = False
+
+    output = io.StringIO()
+    if sameline:
+        kwargs["end"] = ""
+    print(message, *args, file=output, **kwargs)
+    output = output.getvalue()
+
+    if not sameline and app.line_dirty:
+        sys.stdout.write("\n")
+        app.line_dirty = False
+
+    if not output:
+        return
+
+    if sameline:
+        sys.stdout.write("\r")
+        output = output[: os.get_terminal_size().columns - 1]
+        sys.stdout.write(output)
+        sys.stdout.write("\x1B[K")
+    else:
+        sys.stdout.write(output)
+
+    sys.stdout.flush()
+    app.line_dirty = output[-1] != "\n"
+
+
 app = App()
 
 if __name__ == "__main__":
