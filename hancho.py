@@ -327,9 +327,7 @@ class Rule(Config):
         super().__init__(base, **kwargs)
         # pylint: disable=access-member-before-definition
         if self.rule_dir is None:
-            self.rule_dir = relpath(
-                Path(inspect.stack(context=0)[1].filename).parent, self.root_dir
-            )
+            self.rule_dir = Path(inspect.stack(context=0)[1].filename).parent
 
     def __missing__(self, key):
         """Rules delegate to config[key] if a key is missing."""
@@ -348,7 +346,8 @@ class Rule(Config):
 
         # A task that's created during task execution instead of module loading will have no mod
         # stack entry to pull load_dir from, so it just inherits its parent's cwd.
-        if "load_dir" not in kwargs:
+        #if "load_dir" not in kwargs:
+        if self.load_dir is None:
             if app.mod_stack:
                 task.load_dir = Path(app.mod_stack[-1].__file__).parent
             else:
@@ -857,9 +856,12 @@ class GlobalConfig(Config):
         # The directory we started hancho.py from.
         self.start_dir  = Path.cwd()
 
+        self.root_dir   = Path.cwd()
+
         # The working directory that we run commands in. For single projects it's the same as
         # start_dir, for stuff we're building from submodules it's the submodule's root directory.
         self.work_dir   = Path("{root_dir}")
+
 
         # Input filenames are resolved relative to in_dir.
         self.in_dir     = Path("{load_dir}")
@@ -870,8 +872,11 @@ class GlobalConfig(Config):
         # All output files from all tasks go under build_dir.
         self.build_dir  = Path("build")
 
+        # Use build_tag to split outputs into separate debug/profile/release/etc folders.
+        self.build_tag  = ""
+
         # Each .hancho file gets a separate directory under build_dir for its output files.
-        self.out_dir    = Path("{start_dir / build_dir / relpath(load_dir, start_dir)}")
+        self.out_dir    = Path("{start_dir / build_dir / build_tag / relpath(load_dir, start_dir)}")
 
         self.files_out = []
         self.deps      = []

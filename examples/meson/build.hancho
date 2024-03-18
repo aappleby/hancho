@@ -1,17 +1,16 @@
 # examples/meson/build.hancho
 from hancho import *
 
-config.build_type = "debug"
-config.build_dir  = "build/{build_type}"
+config.build_tag = "debug"
 
 compile = Rule(
-  desc      = "Compiling {files_in} -> {files_out} ({build_type})",
+  desc      = "Compiling {files_in} -> {files_out} ({build_tag})",
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
   includes  = [
     "-I."
   ],
   gcc_opts  = [
-    "{'-O3' if build_type == 'release' else '-O0'}",
+    "{'-O3' if build_tag == 'release' else '-O0'}",
     "-MMD",
     "-fdiagnostics-color=always"
   ],
