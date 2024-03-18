@@ -1,0 +1,10 @@
+from hancho import *
+import sys
+
+config.foobar = "config.foobar"
+
+mod2 = load("config_child.hancho")
+
+# Our child module should not be able to accidentally modify our config
+if config.foobar != "config.foobar":
+  sys.exit(-1)

@@ -83,6 +83,14 @@ class TestHancho(unittest.TestCase):
         """A build rule that doesn't update one of its outputs should fail"""
         self.assertNotEqual(0, run_hancho("check_output"))
 
+    def test_config_inheritance(self):
+        """A module should inherit a config object extended from its parent, but should not be able
+        to modify its parent's config object."""
+        self.assertEqual(0, run_hancho("config_parent"))
+
+        # This should fail because it was expecting inheritance from its parent.
+        self.assertNotEqual(0, run_hancho("config_child"))
+
     def test_recursive_base_is_bad(self):
         """Referring to base.attrib in a template is a bad idea"""
         self.assertNotEqual(0, run_hancho("recursive_base_is_bad"))

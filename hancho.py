@@ -695,10 +695,10 @@ class App:
 
         # Merge all known command line flags into our global config object.
 
-        global global_config  # pylint: disable=global-statement
-        global_config.start_filename = (
-            start_filename  # pylint: disable=attribute-defined-outside-init
-        )
+        # pylint: disable=global-statement
+        global global_config
+        # pylint: disable=attribute-defined-outside-init
+        global_config.start_filename = start_filename
         global_config |= flags.__dict__
 
         # Unrecognized command line parameters also become global config fields if
