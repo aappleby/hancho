@@ -268,7 +268,7 @@ async def await_variant(variant):
     return variant
 
 
-def load(file=None, new_root=None):
+def load(file=None, root=None):
     """Module loader entry point for .hancho files. Searches the loaded Hancho module stack for a
     module whose directory contains 'mod_path', then loads the module relative to that path.
     """
@@ -277,14 +277,14 @@ def load(file=None, new_root=None):
         raise FileNotFoundError("No .hancho filename given")
 
     config = app.current_config()
+    file = stringize(file, config)
 
-    if new_root:
-        new_root = app.current_leaf_dir() / Path(stringize(new_root, config))
-    else:
-        new_root = app.current_root_dir()
+    if root is None:
+        return app.load_module(abspath(file), app.current_root_dir())
 
-    new_root = abspath(new_root)
-    new_leaf = abspath(new_root / stringize(file, config))
+    root = stringize(root, config)
+    new_root = abspath(app.current_leaf_dir() / root)
+    new_leaf = abspath(new_root / file)
 
     if not new_leaf.exists():
         raise FileNotFoundError(f"Could not load module {new_leaf}")
@@ -315,9 +315,6 @@ class Chdir:
 
 class Config(dict):
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
-
-    def __init__(self, **kwargs):
-        self |= kwargs
 
     def __getitem__(self, key):
         try:
@@ -368,28 +365,20 @@ class Rule(Config):
     # pylint: disable=attribute-defined-outside-init
     # pylint: disable=super-init-not-called
 
-    def __init__(self, name=None, base=None, **kwargs):
-        super().__init__(
-            name="<Rule>" if name is None else name,
-            root_dir=app.current_root_dir(),
-            leaf_dir=app.current_leaf_dir(),
-            call_dir=hancho_caller_dir(),
-            **kwargs,
-            base=app.current_config() if base is None else base,
-        )
+    def __init__(self, **kwargs):
+        kwargs.setdefault("name", "<Rule>")
+        kwargs.setdefault("base", app.current_config())
+        super().__init__(**kwargs)
 
     def __call__(self, files_in, files_out=None, **kwargs):
+        kwargs.setdefault("name", "<Task>")
+        kwargs.setdefault("files_in", files_in)
+        kwargs.setdefault("files_out", files_out)
+        kwargs.setdefault("root_dir", app.current_root_dir())
+        kwargs.setdefault("leaf_dir", app.current_leaf_dir())
+        kwargs.setdefault("base", self)
 
-        task = Task(
-            name="<Task>",
-            files_in=files_in,
-            files_out=files_out,
-            root_dir=app.current_root_dir(),
-            leaf_dir=app.current_leaf_dir(),
-            call_dir=hancho_caller_dir(),
-            **kwargs,
-            base=self,
-        )
+        task = Task(**kwargs)
         app.tasks_total += 1
 
         coroutine = task.run_async()
@@ -463,16 +452,11 @@ class Task(Config):
         if self.files_out is None:
             raise ValueError("Task missing files_out")
 
-        # print(self.in_dir)
-        # print(self)
-
         # Stringize our directories
         self.work_dir = Path(stringize(self.work_dir, self))
         self.in_dir = Path(stringize(self.in_dir, self))
         self.deps_dir = Path(stringize(self.deps_dir, self))
         self.out_dir = Path(stringize(self.out_dir, self))
-
-        # print(self.in_dir)
 
         assert self.work_dir.is_absolute() and self.work_dir.exists()
         assert self.in_dir.is_absolute() and self.in_dir.exists()
@@ -587,7 +571,8 @@ class Task(Config):
 
         # Check all dependencies in the depfile, if present.
         if self.depfile:
-            abs_depfile = abspath(self.root_dir / self.depfile)
+            assert os.path.isabs(self.work_dir)
+            abs_depfile = abspath(self.work_dir / self.depfile)
             if abs_depfile.exists():
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
@@ -739,24 +724,22 @@ class App:
         """Returns the module on top of the mod stack."""
         return self.mod_stack[-1] if self.mod_stack else None
 
-    def current_leaf_dir(self):
-        """Returns the directory of the module on top of the mod stack, or the directory of the
-        topmost hancho file in the call stack if there is no mod stack."""
-        return (
-            Path(self.mod_stack[-1].__file__).parent
-            if self.mod_stack
-            else hancho_caller_dir()
-        )
-
     def current_root_dir(self):
         """Returns the directory of the module on top of the mod stack, or the root directory of
         the whole build if there is no mod stack."""
-        return self.current_mod().root_dir if self.mod_stack else global_config.root_dir
+        return (
+            self.current_mod().root_dir if self.mod_stack else global_config.start_dir
+        )
+
+    def current_leaf_dir(self):
+        """Returns the directory of the module on top of the mod stack, or the directory of the
+        topmost hancho file in the call stack if there is no mod stack."""
+        return self.current_mod().leaf_dir if self.mod_stack else hancho_caller_dir()
 
     def current_config(self):
         """Returns the config object of the module on top of the mod stack, or the global config if
         there is no mod stack."""
-        return self.mod_stack[-1].config if self.mod_stack else global_config
+        return self.current_mod().config if self.mod_stack else global_config
 
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
@@ -839,8 +822,11 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, abs_path, root=None):
+    def load_module(self, abs_path, root_dir):
         """Loads a Hancho module ***while chdir'd into its directory***"""
+
+        assert abs_path.is_absolute()
+        assert root_dir.is_absolute()
 
         phys_path = Path(abs_path).resolve()
         if phys_path in self.hancho_mods:
@@ -854,6 +840,9 @@ class App:
         module.__file__ = abs_path
         module.__builtins__ = builtins
 
+        module.root_dir = root_dir
+        module.leaf_dir = Path(abs_path).parent
+
         self.hancho_mods[phys_path] = module
 
         # The directory the module is in gets added to the global path so we can
@@ -862,19 +851,7 @@ class App:
         sys.path.insert(0, str(abs_path.parent))
 
         # Each module gets a configuration object extended from its parent module's config
-        module.config = app.current_config().extend(
-            name=f"<Config for {abs_path}>",
-            root_dir=root,
-        )
-
-        # Each module has a 'root' directory that is either provided by the caller or is the same
-        # as its parent module (or the global root if there is no parent)
-        if root is not None:
-            module.root_dir = abspath(root)
-        elif parent_mod := self.current_mod():
-            module.root_dir = parent_mod.root_dir
-        else:
-            module.root_dir = global_config.root_dir
+        module.config = app.current_config().extend(name=f"<Config for {abs_path}>")
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
@@ -925,8 +902,6 @@ global_config = Config(
     name="<Global Config>",
     start_filename="build.hancho",
     start_dir=Path.cwd(),
-    root_dir=Path.cwd(),
-    leaf_dir=Path.cwd(),
     # The working directory that we run commands in, defaults to root_dir.
     work_dir=Path("{root_dir}"),
     # Input filenames are resolved relative to in_dir, defaults to leaf_dir.
