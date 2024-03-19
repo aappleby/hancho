@@ -134,6 +134,23 @@ def hancho_caller_dir():
     return Path(hancho_caller_filename()).parent
 
 
+def check_path(path):
+    """Sanity-checks an expanded path - it must be absolute, under start_dir, and without
+    '..'s."""
+    path = str(path)
+    if path[0] != "/":
+        print(f"Path does not start with / : {path}")
+        assert False
+    if not path.startswith(str(global_config.start_dir)):
+        print(f"Path not under start_dir : {path}")
+        assert False
+    if ".." in path:
+        print(f"Path contains '..' : {path}")
+        print(f"Abspath {abspath(path)}")
+        assert False
+    return True
+
+
 ####################################################################################################
 # The next three functions require some explanation.
 #
@@ -279,12 +296,13 @@ def load(file=None, root=None):
     config = app.current_config()
     file = stringize(file, config)
 
-    if root is None:
-        return app.load_module(abspath(file), app.current_root_dir())
-
-    root = stringize(root, config)
-    new_root = abspath(app.current_leaf_dir() / root)
-    new_leaf = abspath(new_root / file)
+    if root is not None:
+        root = stringize(root, config)
+        new_root = abspath(app.current_leaf_dir() / root)
+        new_leaf = abspath(new_root / file)
+    else:
+        new_root = app.current_root_dir()
+        new_leaf = abspath(app.current_leaf_dir() / file)
 
     if not new_leaf.exists():
         raise FileNotFoundError(f"Could not load module {new_leaf}")
@@ -458,12 +476,12 @@ class Task(Config):
         self.deps_dir = Path(stringize(self.deps_dir, self))
         self.out_dir = Path(stringize(self.out_dir, self))
 
-        assert self.work_dir.is_absolute() and self.work_dir.exists()
-        assert self.in_dir.is_absolute() and self.in_dir.exists()
-        assert self.deps_dir.is_absolute() and self.deps_dir.exists()
+        assert check_path(self.work_dir) and self.work_dir.exists()
+        assert check_path(self.in_dir) and self.in_dir.exists()
+        assert check_path(self.deps_dir) and self.deps_dir.exists()
 
         # 'out_dir' may not exist yet and that's OK, we will create it.
-        assert self.out_dir.is_absolute()
+        assert check_path(self.out_dir)
 
         # Flatten our file lists
         self.files_in = flatten(self.files_in, self)
@@ -475,13 +493,23 @@ class Task(Config):
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
-        self.abs_files_in = [abspath(self.in_dir / f) for f in self.files_in]
-        self.abs_deps = [abspath(self.deps_dir / f) for f in self.deps]
-        self.abs_files_out = [abspath(self.out_dir / f) for f in self.files_out]
+        self.abs_files_in = [self.in_dir / f for f in self.files_in]
+        self.abs_deps = [self.deps_dir / f for f in self.deps]
+        self.abs_files_out = [self.out_dir / f for f in self.files_out]
+
+        for f in self.abs_files_in:
+            check_path(f)
+        for f in self.abs_deps:
+            check_path(f)
+        for f in self.abs_files_out:
+            check_path(f)
 
         self.abs_named_deps = {}
         for key in self.named_deps:
-            self.abs_named_deps[key] = abspath(self.deps_dir / self.named_deps[key])
+            self.abs_named_deps[key] = self.deps_dir / self.named_deps[key]
+
+        for f in self.abs_named_deps.values():
+            check_path(f)
 
         # Strip the working directory off all our file paths to make our command lines less bulky.
         # Note that we _don't_ want relpath() here as it could add "../../.." that would go up
@@ -572,7 +600,8 @@ class Task(Config):
         # Check all dependencies in the depfile, if present.
         if self.depfile:
             assert os.path.isabs(self.work_dir)
-            abs_depfile = abspath(self.work_dir / self.depfile)
+            abs_depfile = self.work_dir / self.depfile
+            check_path(abs_depfile)
             if abs_depfile.exists():
                 if self.debug:
                     log(f"Found depfile {abs_depfile}")
@@ -728,13 +757,19 @@ class App:
         """Returns the directory of the module on top of the mod stack, or the root directory of
         the whole build if there is no mod stack."""
         return (
-            self.current_mod().root_dir if self.mod_stack else global_config.start_dir
+            self.current_mod().config.root_dir
+            if self.mod_stack
+            else global_config.start_dir
         )
 
     def current_leaf_dir(self):
         """Returns the directory of the module on top of the mod stack, or the directory of the
         topmost hancho file in the call stack if there is no mod stack."""
-        return self.current_mod().leaf_dir if self.mod_stack else hancho_caller_dir()
+        return (
+            self.current_mod().config.leaf_dir
+            if self.mod_stack
+            else hancho_caller_dir()
+        )
 
     def current_config(self):
         """Returns the config object of the module on top of the mod stack, or the global config if
@@ -792,7 +827,7 @@ class App:
         self.jobs_available = global_config.jobs
 
         # Load the starting .hancho file.
-        start_filename = abspath(global_config.start_filename)
+        start_filename = Path.cwd() / global_config.start_filename
         if not start_filename.exists():
             raise FileNotFoundError(f"Could not find {start_filename}")
         self.load_module(start_filename, Path.cwd())
@@ -825,8 +860,8 @@ class App:
     def load_module(self, abs_path, root_dir):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        assert abs_path.is_absolute()
-        assert root_dir.is_absolute()
+        check_path(abs_path)
+        check_path(root_dir)
 
         phys_path = Path(abs_path).resolve()
         if phys_path in self.hancho_mods:
@@ -840,9 +875,6 @@ class App:
         module.__file__ = abs_path
         module.__builtins__ = builtins
 
-        module.root_dir = root_dir
-        module.leaf_dir = Path(abs_path).parent
-
         self.hancho_mods[phys_path] = module
 
         # The directory the module is in gets added to the global path so we can
@@ -851,7 +883,11 @@ class App:
         sys.path.insert(0, str(abs_path.parent))
 
         # Each module gets a configuration object extended from its parent module's config
-        module.config = app.current_config().extend(name=f"<Config for {abs_path}>")
+        module.config = app.current_config().extend(
+            name=f"<Config for {abs_path}>",
+            root_dir=root_dir,
+            leaf_dir=Path(abs_path).parent,
+        )
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
