@@ -61,7 +61,7 @@ main_app = link(files_in = main_o, files_out = "app")
 - ```debug``` (Default: ```False```)
     - True if this rule should print debug information when run.
 - ```depfile``` (Default: ```None```)
-    - A [GCC format](http://www.google.com/search?q=gcc+dependency+file+format) dependencies file.
+    - Optional: The filename of a [GCC format](http://www.google.com/search?q=gcc+dependency+file+format) dependencies file. Changing a dependency in this file will cause the task to rebuild.
 - ```deps``` (Default: ```None```)
     - A list of files (or file promises) this rule depends on to run that are not input files - use this for configuration files, custom scripts, or anything else that could affect the output of a build aside from the list of input files.
 - ```desc``` (Default: ```"{files_in} -> {files_out}"```)
