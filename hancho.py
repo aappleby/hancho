@@ -28,6 +28,41 @@ MAX_EXPAND_DEPTH = 100
 # Matches {} delimited regions inside a template string.
 template_regex = re.compile("{[^}]*}")
 
+####################################################################################################
+
+
+def log(message, *args, sameline=False, **kwargs):
+    """Simple logger that can do same-line log messages like Ninja."""
+    if global_config.quiet:
+        return
+
+    if not sys.stdout.isatty():
+        sameline = False
+
+    output = io.StringIO()
+    if sameline:
+        kwargs["end"] = ""
+    print(message, *args, file=output, **kwargs)
+    output = output.getvalue()
+
+    if not sameline and app.line_dirty:
+        sys.stdout.write("\n")
+        app.line_dirty = False
+
+    if not output:
+        return
+
+    if sameline:
+        sys.stdout.write("\r")
+        output = output[: os.get_terminal_size().columns - 1]
+        sys.stdout.write(output)
+        sys.stdout.write("\x1B[K")
+    else:
+        sys.stdout.write(output)
+
+    sys.stdout.flush()
+    app.line_dirty = output[-1] != "\n"
+
 
 def abspath(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
@@ -86,6 +121,20 @@ def maybe_as_number(text):
             return text
 
 
+def hancho_caller_filename():
+    """Returns the filename of the topmost function call that was in a .hancho file."""
+    for frame in inspect.stack():
+        if frame.filename.endswith(".hancho"):
+            return frame.filename
+    assert False
+
+
+def hancho_caller_dir():
+    """Returns the directory of the topmost function call that was in a .hancho file."""
+    return Path(hancho_caller_filename()).parent
+
+
+####################################################################################################
 # The next three functions require some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings, templates, callbacks,
@@ -105,12 +154,15 @@ def maybe_as_number(text):
 # suffice.
 
 
-def flatten(variant, rule, depth=0):
+def flatten(variant, rule=None, depth=0):
     """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
     # pylint: disable=too-many-return-statements
 
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Flattening '{variant}' failed to terminate")
+
+    if rule is None:
+        rule = app.current_config()
 
     match variant:
         case None:
@@ -132,12 +184,15 @@ def flatten(variant, rule, depth=0):
             return [stringize(variant, rule, depth + 1)]
 
 
-def stringize(variant, rule, depth=0):
+def stringize(variant, rule=None, depth=0):
     """Turns 'variant' into a non-templated string."""
     # pylint: disable=too-many-return-statements
 
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Stringizing '{variant}' failed to terminate")
+
+    if rule is None:
+        rule = app.current_config()
 
     match variant:
         case None:
@@ -161,11 +216,14 @@ def stringize(variant, rule, depth=0):
             return str(variant)
 
 
-def expand(template, rule, depth=0):
+def expand(template, rule=None, depth=0):
     """Expands all templates to produce a non-templated string."""
 
     if depth > MAX_EXPAND_DEPTH:
         raise ValueError(f"Expanding '{template}' failed to terminate")
+
+    if rule is None:
+        rule = app.current_config()
 
     if not isinstance(template, str):
         raise ValueError(f"Don't know how to expand {type(template)}")
@@ -215,23 +273,25 @@ def load(file=None, root=None):
     module whose directory contains 'mod_path', then loads the module relative to that path.
     """
 
-    # Grab the parent module's global config object
-    config = app.mod_stack[-1].config if app.mod_stack else global_config
-
     if file is None:
         raise FileNotFoundError("No .hancho filename given")
 
-    file = Path(stringize(file, config))
+    config = app.current_config()
 
-    if root is not None:
-        file = Path(stringize(root, config)) / file
+    leaf = app.current_leaf_dir() / stringize(file, config)
+
+    if root is None:
+        root = app.current_root_dir()
     else:
-        file = Path(app.mod_stack[-1].__file__).parent / file
+        root = Path(stringize(root, config))
 
-    if not file.exists():
-        raise FileNotFoundError(f"Could not load module {file}")
+    if not leaf.exists():
+        raise FileNotFoundError(f"Could not load module {leaf}")
 
-    return app.load_module(file, root)
+    return app.load_module(leaf, root)
+
+
+####################################################################################################
 
 
 class Chdir:
@@ -249,17 +309,30 @@ class Chdir:
         os.chdir(self._old_cwd.pop())
 
 
+####################################################################################################
+
+
 class Config(dict):
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
-    def __init__(self, name=None, base=None, **kwargs):
-        self.name = name
+    def __init__(self, **kwargs):
         self |= kwargs
-        self.base = base
 
-    def __missing__(self, key):
-        return None if self.base is None else self.base[key]
+    def __getitem__(self, key):
+        try:
+            val = super().__getitem__(key)
+        except KeyError:
+            val = None
 
+        # Don't recurse if we found the key, or if we were trying to find our base instance.
+        if key == "base" or val is not None:
+            return val
+
+        # Key was missing or value was None, recurse into base if present.
+        base = super().__getitem__("base")
+        return base[key] if base is not None else None
+
+    # Attributes and items are the same for Config.
     def __setattr__(self, key, value):
         self.__setitem__(key, value)
 
@@ -281,7 +354,10 @@ class Config(dict):
 
     def extend(self, **kwargs):
         """Returns a 'subclass' of this config blob that can override its fields."""
-        return type(self)(base=self, **kwargs)
+        return type(self)(**kwargs, base=self)
+
+
+####################################################################################################
 
 
 class Rule(Config):
@@ -292,69 +368,50 @@ class Rule(Config):
     # pylint: disable=super-init-not-called
 
     def __init__(self, name=None, base=None, **kwargs):
-
-        # pylint: disable=access-member-before-definition
-        self.name = name if name is not None else "<Rule>"
-        if hasattr(kwargs, "rule_dir"):
-            self.rule_dir = kwargs["rule_dir"]
-        else:
-            self.rule_dir = Path(inspect.stack(context=0)[1].filename).parent
-        self |= kwargs
-        if base is None:
-            self.base = app.mod_stack[-1].config
-        else:
-            self.base = base
+        super().__init__(
+            name="<Rule>" if name is None else name,
+            root_dir=app.current_root_dir(),
+            leaf_dir=app.current_leaf_dir(),
+            call_dir=hancho_caller_dir(),
+            **kwargs,
+            base=app.current_config() if base is None else base,
+        )
 
     def __call__(self, files_in, files_out=None, **kwargs):
-        task = Task(base=self, **kwargs)
-        task.files_in = files_in
-        if files_out is not None:
-            task.files_out = files_out
 
-        task.root_dir = app.root_stack[-1]
-        task.call_dir = Path(inspect.stack(context=0)[1].filename).parent
-
-        # A task that's created during task execution instead of module loading will have no mod
-        # stack entry to pull load_dir from, so it just inherits its parent's cwd.
-        # if "load_dir" not in kwargs:
-        if self.load_dir is None:
-            if app.mod_stack:
-                task.load_dir = Path(app.mod_stack[-1].__file__).parent
-            else:
-                task.load_dir = Path.cwd()
-
-        if task.job_count > global_config.jobs:
-            raise ValueError("Task requires too many cores!")
+        task = Task(
+            name="<Task>",
+            files_in=files_in,
+            files_out=files_out,
+            root_dir=app.current_root_dir(),
+            leaf_dir=app.current_leaf_dir(),
+            call_dir=hancho_caller_dir(),
+            **kwargs,
+            base=self,
+        )
+        app.tasks_total += 1
 
         coroutine = task.run_async()
         task.promise = asyncio.create_task(coroutine)
         return task
 
 
-class Task(Rule):
+####################################################################################################
+
+
+class Task(Config):
     """Calling a Rule creates a Task."""
 
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
     # pylint: disable=super-init-not-called
 
-    def __init__(self, name=None, base=None, **kwargs):
-        # super().__init__(name, base, **kwargs)
-        self.name = name if name is not None else "<Task>"
-        self |= kwargs
-        if base is None:
-            self.base = app.mod_stack[-1].config
-        else:
-            self.base = base
-        app.tasks_total += 1
-
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated
         during task execution."""
 
         try:
-            # Await everything awaitable in this task and replace the promises with the awaited
-            # values.
+            # Await everything awaitable in this task except the task's own promise.
             for key in self:
                 if key != "promise":
                     self[key] = await await_variant(self[key])
@@ -397,7 +454,8 @@ class Task(Rule):
         """All the setup steps needed before we run a task."""
 
         # Check for missing fields
-        if self.command is None:  # pylint: disable=access-member-before-definition
+        # pylint: disable=access-member-before-definition
+        if self.command is None:
             raise ValueError("Task missing command")
         if self.files_in is None:
             raise ValueError("Task missing files_in")
@@ -556,7 +614,8 @@ class Task(Rule):
         if self.debug:
             log(f"Files {self.files_out} are up to date")
 
-        return None
+        # Empty string = no reason to rebuild
+        return ""
 
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
@@ -575,10 +634,12 @@ class Task(Rule):
                 sameline=not self.verbose,
             )
 
-            if self.work_dir == self.start_dir:
+            if self.work_dir == global_config.start_dir:
                 work_dir = "."
             else:
-                work_dir = str(self.work_dir).removeprefix(str(self.start_dir) + "/")
+                work_dir = str(self.work_dir).removeprefix(
+                    str(global_config.start_dir) + "/"
+                )
             dryrun = "(DRY RUN) " if self.dryrun else ""
 
             if self.verbose or self.debug:
@@ -650,6 +711,9 @@ class Task(Rule):
         return self.abs_files_out
 
 
+####################################################################################################
+
+
 class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
     global variables. :D"""
@@ -669,7 +733,29 @@ class App:
         self.line_dirty = False
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
-        self.root_stack = [Path.cwd()]
+
+    def current_mod(self):
+        """Returns the module on top of the mod stack."""
+        return self.mod_stack[-1] if self.mod_stack else None
+
+    def current_leaf_dir(self):
+        """Returns the directory of the module on top of the mod stack, or the directory of the
+        topmost hancho file in the call stack if there is no mod stack."""
+        return (
+            Path(self.mod_stack[-1].__file__).parent
+            if self.mod_stack
+            else hancho_caller_dir()
+        )
+
+    def current_root_dir(self):
+        """Returns the directory of the module on top of the mod stack, or the root directory of
+        the whole build if there is no mod stack."""
+        return self.current_mod().root_dir if self.mod_stack else global_config.root_dir
+
+    def current_config(self):
+        """Returns the config object of the module on top of the mod stack, or the global config if
+        there is no mod stack."""
+        return self.mod_stack[-1].config if self.mod_stack else global_config
 
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
@@ -677,7 +763,7 @@ class App:
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("filename",        default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
+        parser.add_argument("start_filename",  default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
         parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory before starting the build")
         parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-v", "--verbose", default=False,          action="store_true", help="Print verbose build info")
@@ -690,15 +776,11 @@ class App:
         # Parse the command line
         (flags, unrecognized) = parser.parse_known_args()
 
-        start_filename = flags.filename
-        del flags.filename
-
         # Merge all known command line flags into our global config object.
 
         # pylint: disable=global-statement
         global global_config
         # pylint: disable=attribute-defined-outside-init
-        global_config.start_filename = start_filename
         global_config |= flags.__dict__
 
         # Unrecognized command line parameters also become global config fields if
@@ -714,7 +796,7 @@ class App:
         # Change directory if needed and kick off the build.
         with Chdir(global_config.chdir):
             # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
-            # in Github, so I'm gonna try this.
+            # in Github, so I'm gonna try this. Seems to fix the issue.
             result = asyncio.get_event_loop().run_until_complete(self.async_main())
 
         return result
@@ -777,36 +859,42 @@ class App:
         # be necessary.
         sys.path.insert(0, str(abs_path.parent))
 
-        root = self.root_stack[-1] if root is None else abspath(root)
-
-        root = abspath(root)
-
-        # Each module inherits a configuration object from its parent module's config
-        parent_config = app.mod_stack[-1].config if app.mod_stack else global_config
-        module.config = parent_config.extend(
+        # Each module gets a configuration object extended from its parent module's config
+        module.config = app.current_config().extend(
             name=f"<Config for {abs_path}>",
             root_dir=root,
         )
 
-        self.mod_stack.append(module)
-        self.root_stack.append(root)
+        # Each module has a 'root' directory that is either provided by the caller or is the same
+        # as its parent module (or the global root if there is no parent)
+        if root is not None:
+            module.root_dir = abspath(root)
+        elif parent_mod := self.current_mod():
+            module.root_dir = parent_mod.root_dir
+        else:
+            module.root_dir = global_config.root_dir
 
+        # We must chdir()s into the .hancho file directory before running it so that
+        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+        # context here so there should be no other threads trying to change cwd.
         try:
-            # We must chdir()s into the .hancho file directory before running it so that
-            # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-            # context here so there should be no other threads trying to change cwd.
+            self.mod_stack.append(module)
             with Chdir(abs_path.parent):
                 # Why Pylint thinks this is not callable is a mystery.
                 # pylint: disable=not-callable
                 types.FunctionType(code, module.__dict__)()
         finally:
             self.mod_stack.pop()
-            self.root_stack.pop()
 
         return module
 
     async def acquire_jobs(self, count):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
+
+        if count > global_config.jobs:
+            raise ValueError(
+                f"Tried to acquire {count} jobs, but we only have {global_config.jobs} in the pool."
+            )
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
@@ -828,10 +916,34 @@ class App:
         self.jobs_lock.release()
 
 
+####################################################################################################
 # The global config object. All fields here can be used in any template.
+
 global_config = Config(
     name="<Global Config>",
+    start_filename="build.hancho",
+    start_dir=Path.cwd(),
+    root_dir=Path.cwd(),
+    leaf_dir=Path.cwd(),
+    # The working directory that we run commands in, defaults to root_dir.
+    work_dir=Path("{root_dir}"),
+    # Input filenames are resolved relative to in_dir, defaults to leaf_dir.
+    in_dir=Path("{leaf_dir}"),
+    # Dependency filenames are resolved relative to deps_dir, defaults to leaf_dir.
+    deps_dir=Path("{leaf_dir}"),
+    # All output files from all tasks go under build_dir.
+    build_dir=Path("build"),
+    # Each .hancho file gets a separate directory under build_dir for its output files.
+    out_dir=Path("{start_dir / build_dir / build_tag / relpath(leaf_dir, start_dir)}"),
     desc="{files_in} -> {files_out}",
+    # Use build_tag to split outputs into separate debug/profile/release/etc folders.
+    build_tag="",
+    files_out=[],
+    deps=[],
+    named_deps={},
+    # The default number of parallel jobs a task consumes.
+    job_count=1,
+    depformat="gcc",
     chdir=".",
     jobs=os.cpu_count(),
     verbose=False,
@@ -839,29 +951,6 @@ global_config = Config(
     dryrun=False,
     debug=False,
     force=False,
-    depformat="gcc",
-    # The directory we started hancho.py from.
-    start_dir=Path.cwd(),
-    start_filename="build.hancho",
-    root_dir=Path.cwd(),
-    # The working directory that we run commands in. For single projects it's the same as
-    # start_dir, for stuff we're building from submodules it's the submodule's root directory.
-    work_dir=Path("{root_dir}"),
-    # Input filenames are resolved relative to in_dir.
-    in_dir=Path("{load_dir}"),
-    # Dependency filenames are resolved relative to deps_dir.
-    deps_dir=Path("{load_dir}"),
-    # All output files from all tasks go under build_dir.
-    build_dir=Path("build"),
-    # Use build_tag to split outputs into separate debug/profile/release/etc folders.
-    build_tag="",
-    # Each .hancho file gets a separate directory under build_dir for its output files.
-    out_dir=Path("{start_dir / build_dir / build_tag / relpath(load_dir, start_dir)}"),
-    files_out=[],
-    deps=[],
-    named_deps={},
-    # The default number of parallel jobs a task consumes.
-    job_count=1,
     len=len,
     run_cmd=run_cmd,
     swap_ext=swap_ext,
@@ -872,41 +961,10 @@ global_config = Config(
     flatten=flatten,
     stringize=stringize,
     expand=expand,
+    base=None,
 )
 
-
-def log(message, *args, sameline=False, **kwargs):
-    """Simple logger that can do same-line log messages like Ninja."""
-    if global_config.quiet:
-        return
-
-    if not sys.stdout.isatty():
-        sameline = False
-
-    output = io.StringIO()
-    if sameline:
-        kwargs["end"] = ""
-    print(message, *args, file=output, **kwargs)
-    output = output.getvalue()
-
-    if not sameline and app.line_dirty:
-        sys.stdout.write("\n")
-        app.line_dirty = False
-
-    if not output:
-        return
-
-    if sameline:
-        sys.stdout.write("\r")
-        output = output[: os.get_terminal_size().columns - 1]
-        sys.stdout.write(output)
-        sys.stdout.write("\x1B[K")
-    else:
-        sys.stdout.write(output)
-
-    sys.stdout.flush()
-    app.line_dirty = output[-1] != "\n"
-
+####################################################################################################
 
 app = App()
 
