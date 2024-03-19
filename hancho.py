@@ -1,6 +1,16 @@
 #!/usr/bin/python3
 
-"""Hancho is a simple, pleasant build system."""
+"""
+Hancho is a simple, pleasant build system.
+
+Hancho v0.0.5, 19-03-2024
+
+- Special dir-related fields are now start_dir, root_dir, leaf_dir, work_dir, and build_dir
+- Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho)
+- Each Hancho module now gets its own 'config' object extended from its parent module (or
+  global_config). This prevents submodules from accidentally changing global fields that their
+  parent modules use while still allowing sharing of configuration across files.
+"""
 
 import argparse
 import asyncio
