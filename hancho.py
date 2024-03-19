@@ -404,6 +404,7 @@ class Rule(Config):
         kwargs.setdefault("files_out", files_out)
         kwargs.setdefault("root_dir", app.current_root_dir())
         kwargs.setdefault("leaf_dir", app.current_leaf_dir())
+        kwargs.setdefault("call_dir", Path(inspect.stack(context=0)[1].filename).parent)
         kwargs.setdefault("base", self)
 
         task = Task(**kwargs)
