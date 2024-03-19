@@ -268,7 +268,7 @@ async def await_variant(variant):
     return variant
 
 
-def load(file=None, root=None):
+def load(file=None, new_root=None):
     """Module loader entry point for .hancho files. Searches the loaded Hancho module stack for a
     module whose directory contains 'mod_path', then loads the module relative to that path.
     """
@@ -278,17 +278,18 @@ def load(file=None, root=None):
 
     config = app.current_config()
 
-    leaf = app.current_leaf_dir() / stringize(file, config)
-
-    if root is None:
-        root = app.current_root_dir()
+    if new_root:
+        new_root = app.current_leaf_dir() / Path(stringize(new_root, config))
     else:
-        root = Path(stringize(root, config))
+        new_root = app.current_root_dir()
 
-    if not leaf.exists():
-        raise FileNotFoundError(f"Could not load module {leaf}")
+    new_root = abspath(new_root)
+    new_leaf = abspath(new_root / stringize(file, config))
 
-    return app.load_module(leaf, root)
+    if not new_leaf.exists():
+        raise FileNotFoundError(f"Could not load module {new_leaf}")
+
+    return app.load_module(new_leaf, new_root)
 
 
 ####################################################################################################
@@ -802,7 +803,8 @@ class App:
         return result
 
     async def async_main(self):
-        """All the actual Hancho stuff runs in an async context."""
+        """All the actual Hancho stuff runs in an async context so that clients can schedule their
+        own async tasks as needed."""
 
         self.jobs_available = global_config.jobs
 
