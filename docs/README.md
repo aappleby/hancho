@@ -53,7 +53,7 @@ main_app = link(files_in = main_o, files_out = "app")
 
 # Special fields in hancho.Rule()
 
-- ```base``` (Default: ```hancho.config```)
+- ```base``` (Default: ```config```)
     - The rule this rule inherits from. Reading missing fields from a ```rule``` will check ```rule.base``` for the field if there is one, otherwise the missing field will read as ```None```.
 - ```command``` (Default: ```None```)
     - The console command this rule should run, or
