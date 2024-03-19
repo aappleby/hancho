@@ -26,7 +26,7 @@ Hancho should suffice for small to medium sized projects.
 
  - 2024-03-19 - Hancho v0.0.5
    - Special dir-related fields are now start_dir, root_dir, leaf_dir, work_dir, and build_dir
-   - Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho)
+   - Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho")
    - Each Hancho module now gets its own 'config' object extended from its parent module (or global_config). This prevents submodules from accidentally changing global fields that their parent modules use while still allowing sharing of configuration across files.
  - 2024-03-13 - Tasks can now 'reserve' jobs so that commands that themselves use many jobs (like Ninja) can block until the jobs are free. See the [job_count](tests/job_count.hancho) test for details.
  - 2024-03-13 - Code cleaned up to be more standard Python style and reduce linter complaints. Added 'rule_dir' field to each Rule that stores the directory of the file that created the rule.
