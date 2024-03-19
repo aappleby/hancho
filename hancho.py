@@ -395,6 +395,7 @@ class Rule(Config):
 
     def __init__(self, **kwargs):
         kwargs.setdefault("name", "<Rule>")
+        kwargs.setdefault("rule_dir", Path(inspect.stack(context=0)[1].filename).parent)
         kwargs.setdefault("base", app.current_config())
         super().__init__(**kwargs)
 
