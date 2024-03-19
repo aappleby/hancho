@@ -19,12 +19,41 @@ main_o = compile(files_in = "main.cpp")
 main_app = link(files_in = main_o, files_out = "app")
 ```
 
+# Directory nomenclature
+
+## Automatically set directories:
+- ```start_dir```
+   - The directory that Hancho was started in
+- ```root_dir```
+   - The root of the repository currently being built
+- ```leaf_dir```
+   - The directory of the .hancho file currently being loaded
+
+## Fields that control build output location
+- ```build_dir``` (Default: ```'build'```)
+   - The top-level directory to put built files in
+- ```build_tag``` (Default:```''```)
+   - An optional subdirectory used to split up different build types.
+   - Set this to ```'release'``` if you want output in ```build/release```, etc.
+
+## Templated directories that refer to the above:
+- ```work_dir``` (Default: ```{root_dir}```)
+   - The working directory to run commands in
+- ```in_dir``` (Default: ```{leaf_dir}```)
+   - The directory to search for input files
+- ```deps_dir``` (Default: ```{leaf_dir}```)
+   - The directory to search for extra dependencies
+- ```out_dir``` (Default: ```{start_dir / build_dir / build_tag / relpath(leaf_dir, start_dir)}```)
+   - The full path to the build directory for a single task
+
+## Building Hancho files in submodules
+- In your top .hancho file, use ```thingy = load(root="my_submodule", file="component/thingy/build.hancho")```
+- Built files will appear in ```build/my_submodule/component/thingy/...```
+
 # Special fields in hancho.Rule()
 
 - ```base``` (Default: ```hancho.config```)
     - The rule this rule inherits from. Reading missing fields from a ```rule``` will check ```rule.base``` for the field if there is one, otherwise the missing field will read as ```None```.
-- ```build_dir``` (Default: ```build```)
-    - The directory to put output files in.
 - ```command``` (Default: ```None```)
     - The console command this rule should run, or
     - A function (sync or async) that returns a list of absolute-path filenames.
