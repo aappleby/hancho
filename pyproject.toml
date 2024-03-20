@@ -1,0 +1,35 @@
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "hancho"
+version = "0.0.5"
+description = "A simple, pleasant build system"
+license = "MIT"
+authors = ["aappleby"]
+readme = ["README.md", "docs/README.md"]
+repository = "https://github.com/aappleby/hancho"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Utilities",
+]
+include = [
+    { path = "docs", format = "sdist" },
+    { path = "tests", format = "sdist" },
+    { path = "tutorial", format = "sdist" },
+    { path = "examples", format = "sdist" },
+]
+exclude = ["**/.gitignore"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+
+[tool.poetry.scripts]
+hancho = "hancho:app.main"
+
+[tool.poetry.urls]
+"Additional documentation" = "https://github.com/aappleby/hancho/tree/main/docs#readme"
+"Tutorial" = "https://github.com/aappleby/hancho/tree/main/tutorial#readme"
+"Issue tracker" = "https://github.com/aappleby/hancho/issues"
