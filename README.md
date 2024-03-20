@@ -1,4 +1,4 @@
-# ![Logo](docs/hancho_small.png) Hancho
+# ![Logo](https://github.com/aappleby/hancho/blob/main/docs/hancho_small.png?raw=true) Hancho
 
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
