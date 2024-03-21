@@ -76,17 +76,21 @@ def log(message, *args, sameline=False, **kwargs):
 
 def abspath(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
-    return Path(os.path.abspath(path))
+    if template_regex.search(str(path)):
+        raise ValueError("Abspath can't operate on templated strings")
     # Hmm this acutally works now, am I forgetting a corner case?
     # return Path(path).absolute()
+    return Path(os.path.abspath(path))
 
 
 def relpath(path1, path2):
     """Pathlib's path.relative_to() refuses to generate "../bar", so we use os.path.relpath."""
-    return Path(os.path.relpath(path1, path2))
+    if template_regex.search(str(path1)) or template_regex.search(str(path2)):
+        raise ValueError("Relpath can't operate on templated strings")
     # This also works now, def need to check corner cases.
     # if path2 is None: return path1
     # return Path(path1).relative_to(path2)
+    return Path(os.path.relpath(path1, path2))
 
 
 def color(red=None, green=None, blue=None):
@@ -149,14 +153,14 @@ def check_path(path):
     '..'s."""
     path = str(path)
     if path[0] != "/":
-        print(f"Path does not start with / : {path}")
+        log(f"Path does not start with / : {path}")
         assert False
     if not path.startswith(str(global_config.start_dir)):
-        print(f"Path not under start_dir : {path}")
+        log(f"Path not under start_dir : {path}")
         assert False
     if ".." in path:
-        print(f"Path contains '..' : {path}")
-        print(f"Abspath {abspath(path)}")
+        log(f"Path contains '..' : {path}")
+        log(f"Abspath {abspath(path)}")
         assert False
     return True
 
@@ -261,18 +265,157 @@ def expand(template, rule=None, depth=0):
         exp = template[span.start() : span.end()]
 
         # Evaluate the template contents.
-        replacement = ""
         try:
             # pylint: disable=eval-used
             replacement = eval(exp[1:-1], globals(), rule)
+            result += stringize(replacement, rule, depth + 1)
         except Exception as exc:  # pylint: disable=broad-except
-            raise ValueError(f"Template '{exp}' failed to eval") from exc
+            #print(f"exp {exp} did not expand")
+            #raise ValueError(f"Template '{exp}' failed to eval") from exc
+            result += exp
 
-        result += stringize(replacement, rule, depth + 1)
         template = template[span.end() :]
 
     result += template
     return result
+
+
+####################################################################################################
+
+
+def flatten_norecurse(variant, rule=None, depth=0):
+    """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
+    # pylint: disable=too-many-return-statements
+
+    if depth > MAX_EXPAND_DEPTH:
+        raise ValueError(f"Flattening '{variant}' failed to terminate")
+
+    if rule is None:
+        rule = app.current_config()
+
+    match variant:
+        case None:
+            return []
+        case asyncio.CancelledError():
+            raise variant
+        case Task():
+            return flatten_norecurse(variant.promise, rule, depth + 1)
+        case Path():
+            return [Path(stringize_norecurse(str(variant), rule, depth + 1))]
+        case list():
+            result = []
+            for element in variant:
+                result.extend(flatten_norecurse(element, rule, depth + 1))
+            return result
+        case _ if inspect.isfunction(variant):
+            return [variant]
+        case _:
+            return [stringize_norecurse(variant, rule, depth + 1)]
+
+
+def stringize_norecurse(variant, rule=None, depth=0):
+    """Turns 'variant' into a non-templated string."""
+    # pylint: disable=too-many-return-statements
+
+    if depth > MAX_EXPAND_DEPTH:
+        raise ValueError(f"Stringizing '{variant}' failed to terminate")
+
+    if rule is None:
+        rule = app.current_config()
+
+    match variant:
+        case None:
+            return ""
+        case asyncio.CancelledError():
+            raise variant
+        case Task():
+            return stringize_norecurse(variant.promise, rule, depth + 1)
+        case Path():
+            return stringize_norecurse(str(variant), rule, depth + 1)
+        case list():
+            variant = flatten_norecurse(variant, rule, depth + 1)
+            variant = [str(s) for s in variant if s is not None]
+            variant = " ".join(variant)
+            return variant
+        case str():
+            return variant
+        case _:
+            return str(variant)
+
+
+def expand_norecurse(template, rule=None, depth=0):
+    """Expands all templates to produce a non-templated string."""
+
+    if depth > MAX_EXPAND_DEPTH:
+        raise ValueError(f"Expanding '{template}' failed to terminate")
+
+    if rule is None:
+        rule = app.current_config()
+
+    if not isinstance(template, str):
+        raise ValueError(f"Don't know how to expand {type(template)}")
+
+    result = ""
+    while span := template_regex.search(template):
+        result += template[0 : span.start()]
+        exp = template[span.start() : span.end()]
+
+        # Evaluate the template contents.
+        try:
+            # pylint: disable=eval-used
+            replacement = eval(exp[1:-1], globals(), rule)
+            result += stringize_norecurse(replacement, rule, depth + 1)
+        except Exception as exc:  # pylint: disable=broad-except
+            #print(f"exp {exp} did not expand")
+            #raise ValueError(f"Template '{exp}' failed to eval") from exc
+            result += exp
+
+        template = template[span.end() :]
+
+    result += template
+    return result
+
+def expand_variant(variant, task, expand_tasks = False):
+    match variant:
+        case Rule():
+            return variant, false
+        case Task() if not expand_tasks:
+            return variant, False
+        case dict():
+            expanded = False
+            for key, value in variant.items():
+                new_value, child_expanded = expand_variant(value, task)
+                variant[key] = new_value
+                expanded |= child_expanded
+            return variant, expanded
+        case list():
+            expanded = False
+            for key, value in enumerate(variant):
+                new_value, child_expanded = expand_variant(value, task)
+                variant[key] = new_value
+                expanded |= child_expanded
+            return variant, expanded
+        case Path() if template_regex.search(str(variant)):
+            new_value = expand_norecurse(str(variant), task)
+            return Path(new_value), new_value != str(variant)
+        case str() if template_regex.search(variant):
+            new_value = expand_norecurse(variant, task)
+            #print()
+            #print(new_value)
+            return new_value, new_value != variant
+        case _:
+            return variant, False
+
+def expand_task(task):
+    for _ in range(MAX_EXPAND_DEPTH):
+        print(task)
+        task, expanded = expand_variant(task, task, True)
+        if not expanded:
+            return
+    raise ValueError(f"Expanding task failed to terminate")
+
+
+####################################################################################################
 
 
 async def await_variant(variant):
@@ -293,6 +436,10 @@ async def await_variant(variant):
         case _ if inspect.isawaitable(variant):
             variant = await variant
     return variant
+
+
+
+####################################################################################################
 
 
 def load(file=None, root=None):
@@ -347,7 +494,7 @@ class Config(dict):
     def __getitem__(self, key):
         try:
             val = super().__getitem__(key)
-        except KeyError:
+        except Exception:
             val = None
 
         # Don't recurse if we found the key, or if we were trying to find our base instance.
@@ -355,8 +502,10 @@ class Config(dict):
             return val
 
         # Key was missing or value was None, recurse into base if present.
-        base = super().__getitem__("base")
-        return base[key] if base is not None else None
+        try:
+            return super().__getitem__("base")[key]
+        except Exception:
+            return None
 
     # Attributes and items are the same for Config.
     def __setattr__(self, key, value):
@@ -399,7 +548,7 @@ class Rule(Config):
         kwargs.setdefault("base", app.current_config())
         super().__init__(**kwargs)
 
-    def __call__(self, files_in, files_out=None, **kwargs):
+    def __call__(self, files_in=None, files_out=None, **kwargs):
         kwargs.setdefault("name", "<Task>")
         kwargs.setdefault("files_in", files_in)
         kwargs.setdefault("files_out", files_out)
@@ -472,6 +621,8 @@ class Task(Config):
     # pylint: disable=too-many-branches
     def task_init(self):
         """All the setup steps needed before we run a task."""
+
+        #expand_task(self)
 
         # Check for missing fields
         # pylint: disable=access-member-before-definition
@@ -683,8 +834,10 @@ class Task(Config):
         finally:
             await app.release_jobs(self.job_count)
 
-        # Check if the commands actually updated all the output files
-        if self.files_in and self.files_out and not self.dryrun:
+        # Check if the commands actually updated all the output files.
+        # _Don't_ do this if this task represents a call to an external build system, as that
+        # system might not actually write to the output files.
+        if self.files_in and self.files_out and not (self.dryrun or self.ext_build):
             if second_reason := self.needs_rerun():
                 raise ValueError(
                     f"Task '{self.desc}' still needs rerun after running!\n"
@@ -955,11 +1108,11 @@ global_config = Config(
     # Input filenames are resolved relative to in_dir, defaults to leaf_dir.
     in_dir=Path("{leaf_dir}"),
     # Dependency filenames are resolved relative to deps_dir, defaults to leaf_dir.
-    deps_dir=Path("{leaf_dir}"),
+    deps_dir=Path("{in_dir}"),
     # All output files from all tasks go under build_dir.
     build_dir=Path("build"),
     # Each .hancho file gets a separate directory under build_dir for its output files.
-    out_dir=Path("{start_dir / build_dir / build_tag / relpath(leaf_dir, start_dir)}"),
+    out_dir=Path("{start_dir / build_dir / build_tag / relpath(in_dir, start_dir)}"),
     desc="{files_in} -> {files_out}",
     # Use build_tag to split outputs into separate debug/profile/release/etc folders.
     build_tag="",
@@ -976,16 +1129,18 @@ global_config = Config(
     dryrun=False,
     debug=False,
     force=False,
-    len=len,
-    run_cmd=run_cmd,
-    swap_ext=swap_ext,
-    color=color,
-    glob=glob,
+    ext_build=False,
     abspath=abspath,
-    relpath=relpath,
-    flatten=flatten,
-    stringize=stringize,
+    color=color,
     expand=expand,
+    flatten=flatten,
+    glob=glob,
+    len=len,
+    Path=Path,
+    relpath=relpath,
+    run_cmd=run_cmd,
+    stringize=stringize,
+    swap_ext=swap_ext,
     base=None,
 )
 
@@ -994,4 +1149,18 @@ global_config = Config(
 app = App()
 
 if __name__ == "__main__":
+
+#    t = Task(
+#        foo = "{relpath(bar, baz)}",
+#        bar = "{bar2}",
+#        baz = "{baz2}",
+#        bar2 = "/home/foo/bar",
+#        baz2 = "{baz3}",
+#        baz3 = "/home/foo",
+#        relpath = relpath,
+#    )
+#
+#    expand_task(t)
+#    sys.exit(0)
+
     sys.exit(app.main())
