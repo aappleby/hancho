@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# pylint: disable=too-many-lines
 
 """
 Hancho is a simple, pleasant build system.
@@ -33,6 +34,7 @@ from glob import glob
 sys.modules["hancho"] = sys.modules[__name__]
 
 # The maximum number of recursion levels we will do to expand a template
+# Tests currently require MAX_EXPAND_DEPTH >= 6
 MAX_EXPAND_DEPTH = 100
 
 # Matches {} delimited regions inside a template string.
@@ -260,6 +262,14 @@ def expand(template, rule=None, depth=0):
         raise ValueError(f"Don't know how to expand {type(template)}")
 
     result = ""
+
+    if isinstance(rule, Expander):
+        expander = Expander(rule, depth)
+    else:
+        expander = rule
+
+    expander.depth = depth
+
     while span := template_regex.search(template):
         result += template[0 : span.start()]
         exp = template[span.start() : span.end()]
@@ -267,11 +277,11 @@ def expand(template, rule=None, depth=0):
         # Evaluate the template contents.
         try:
             # pylint: disable=eval-used
-            replacement = eval(exp[1:-1], globals(), rule)
+            #replacement = eval(exp[1:-1], globals(), Expander(rule))
+            replacement = eval(exp[1:-1], globals(), expander)
             result += stringize(replacement, rule, depth + 1)
         except Exception as exc:  # pylint: disable=broad-except
-            #print(f"exp {exp} did not expand")
-            #raise ValueError(f"Template '{exp}' failed to eval") from exc
+            raise exc
             result += exp
 
         template = template[span.end() :]
@@ -283,136 +293,29 @@ def expand(template, rule=None, depth=0):
 ####################################################################################################
 
 
-def flatten_norecurse(variant, rule=None, depth=0):
-    """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
-    # pylint: disable=too-many-return-statements
+class Expander:
+    """Expander does template expasion on read so that eval() always sees expanded templates."""
 
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Flattening '{variant}' failed to terminate")
+    def __init__(self, task, depth):
+        self.task = task
+        self.depth = depth
+        #self.cache = {}
 
-    if rule is None:
-        rule = app.current_config()
+    def __getitem__(self, key):
+        #if key in self.cache:
+        #    # print(f"key {key} was in cache")
+        #    return self.cache[key]
+        val = self.task[key]
 
-    match variant:
-        case None:
-            return []
-        case asyncio.CancelledError():
-            raise variant
-        case Task():
-            return flatten_norecurse(variant.promise, rule, depth + 1)
-        case Path():
-            return [Path(stringize_norecurse(str(variant), rule, depth + 1))]
-        case list():
-            result = []
-            for element in variant:
-                result.extend(flatten_norecurse(element, rule, depth + 1))
-            return result
-        case _ if inspect.isfunction(variant):
-            return [variant]
-        case _:
-            return [stringize_norecurse(variant, rule, depth + 1)]
+        if isinstance(val, Path) and template_regex.search(str(val)):
+            val = Path(stringize(str(val), self, self.depth + 1))
 
+        if isinstance(val, str) and template_regex.search(val):
+            val = stringize(val, self, self.depth + 1)
 
-def stringize_norecurse(variant, rule=None, depth=0):
-    """Turns 'variant' into a non-templated string."""
-    # pylint: disable=too-many-return-statements
+        #self.cache[key] = val
+        return val
 
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Stringizing '{variant}' failed to terminate")
-
-    if rule is None:
-        rule = app.current_config()
-
-    match variant:
-        case None:
-            return ""
-        case asyncio.CancelledError():
-            raise variant
-        case Task():
-            return stringize_norecurse(variant.promise, rule, depth + 1)
-        case Path():
-            return stringize_norecurse(str(variant), rule, depth + 1)
-        case list():
-            variant = flatten_norecurse(variant, rule, depth + 1)
-            variant = [str(s) for s in variant if s is not None]
-            variant = " ".join(variant)
-            return variant
-        case str():
-            return variant
-        case _:
-            return str(variant)
-
-
-def expand_norecurse(template, rule=None, depth=0):
-    """Expands all templates to produce a non-templated string."""
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Expanding '{template}' failed to terminate")
-
-    if rule is None:
-        rule = app.current_config()
-
-    if not isinstance(template, str):
-        raise ValueError(f"Don't know how to expand {type(template)}")
-
-    result = ""
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        exp = template[span.start() : span.end()]
-
-        # Evaluate the template contents.
-        try:
-            # pylint: disable=eval-used
-            replacement = eval(exp[1:-1], globals(), rule)
-            result += stringize_norecurse(replacement, rule, depth + 1)
-        except Exception as exc:  # pylint: disable=broad-except
-            #print(f"exp {exp} did not expand")
-            #raise ValueError(f"Template '{exp}' failed to eval") from exc
-            result += exp
-
-        template = template[span.end() :]
-
-    result += template
-    return result
-
-def expand_variant(variant, task, expand_tasks = False):
-    match variant:
-        case Rule():
-            return variant, false
-        case Task() if not expand_tasks:
-            return variant, False
-        case dict():
-            expanded = False
-            for key, value in variant.items():
-                new_value, child_expanded = expand_variant(value, task)
-                variant[key] = new_value
-                expanded |= child_expanded
-            return variant, expanded
-        case list():
-            expanded = False
-            for key, value in enumerate(variant):
-                new_value, child_expanded = expand_variant(value, task)
-                variant[key] = new_value
-                expanded |= child_expanded
-            return variant, expanded
-        case Path() if template_regex.search(str(variant)):
-            new_value = expand_norecurse(str(variant), task)
-            return Path(new_value), new_value != str(variant)
-        case str() if template_regex.search(variant):
-            new_value = expand_norecurse(variant, task)
-            #print()
-            #print(new_value)
-            return new_value, new_value != variant
-        case _:
-            return variant, False
-
-def expand_task(task):
-    for _ in range(MAX_EXPAND_DEPTH):
-        print(task)
-        task, expanded = expand_variant(task, task, True)
-        if not expanded:
-            return
-    raise ValueError(f"Expanding task failed to terminate")
 
 
 ####################################################################################################
@@ -494,7 +397,7 @@ class Config(dict):
     def __getitem__(self, key):
         try:
             val = super().__getitem__(key)
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             val = None
 
         # Don't recurse if we found the key, or if we were trying to find our base instance.
@@ -504,7 +407,7 @@ class Config(dict):
         # Key was missing or value was None, recurse into base if present.
         try:
             return super().__getitem__("base")[key]
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return None
 
     # Attributes and items are the same for Config.
@@ -549,41 +452,85 @@ class Rule(Config):
         super().__init__(**kwargs)
 
     def __call__(self, files_in=None, files_out=None, **kwargs):
+        print(files_in)
+        print(files_out)
+
         kwargs.setdefault("name", "<Task>")
         kwargs.setdefault("files_in", files_in)
         kwargs.setdefault("files_out", files_out)
         kwargs.setdefault("root_dir", app.current_root_dir())
         kwargs.setdefault("leaf_dir", app.current_leaf_dir())
         kwargs.setdefault("call_dir", Path(inspect.stack(context=0)[1].filename).parent)
-        kwargs.setdefault("base", self)
 
-        task = Task(**kwargs)
-        app.tasks_total += 1
-
-        coroutine = task.run_async()
-        task.promise = asyncio.create_task(coroutine)
+        rule = self.extend(**kwargs)
+        task = Task(rule)
         return task
 
 
 ####################################################################################################
 
 
-class Task(Config):
+class Task():
     """Calling a Rule creates a Task."""
 
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
     # pylint: disable=super-init-not-called
 
+    def __init__(self, config):
+        self.config = config
+        self.reason = None
+        self.command = None
+
+        self.task_index = None
+
+        self.files_in = None
+        self.deps = None
+        self.files_out = None
+
+        self.work_dir = None
+        self.in_dir = None
+        self.out_dir = None
+        self.deps_dir = None
+
+
+        self.abs_files_in = None
+        self.abs_deps = None
+        self.abs_files_out = None
+        self.abs_named_deps = None
+
+        self.stdout = None
+        self.stderr = None
+        self.named_deps = None
+        self.desc = None
+        self.depfile = None
+        self.promise = None
+        app.tasks_total += 1
+        coroutine = self.run_async()
+        self.promise = asyncio.create_task(coroutine)
+
+    def __repr__(self):
+        """Turns this config blob into a JSON doc for debugging."""
+
+        print("SLKDJFLSKJF")
+        this = self.config
+        class Encoder(json.JSONEncoder):
+            """Types the encoder doesn't understand just get stringified."""
+            def default(self, o):
+                return str(o)
+        return json.dumps(self.__dict__, indent=2, cls=Encoder)
+
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated
         during task execution."""
 
+        print(self)
+        config = self.config
+
         try:
             # Await everything awaitable in this task except the task's own promise.
-            for key in self:
-                if key != "promise":
-                    self[key] = await await_variant(self[key])
+            for key in config:
+                config[key] = await await_variant(config[key])
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -601,7 +548,7 @@ class Task(Config):
         # If this task failed, we print the error and propagate a cancellation
         # to downstream tasks.
         except Exception:  # pylint: disable=broad-except
-            if not self.quiet:
+            if not self.config.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -615,29 +562,30 @@ class Task(Config):
             return cancel
 
         finally:
-            if self.debug:
+            if self.config.debug:
                 log("")
 
     # pylint: disable=too-many-branches
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        #expand_task(self)
+        config = self.config
+        expander = Expander(config, 0)
 
         # Check for missing fields
         # pylint: disable=access-member-before-definition
-        if self.command is None:
+        if config.command is None:
             raise ValueError("Task missing command")
-        if self.files_in is None:
+        if config.files_in is None:
             raise ValueError("Task missing files_in")
-        if self.files_out is None:
+        if config.files_out is None:
             raise ValueError("Task missing files_out")
 
         # Stringize our directories
-        self.work_dir = Path(stringize(self.work_dir, self))
-        self.in_dir = Path(stringize(self.in_dir, self))
-        self.deps_dir = Path(stringize(self.deps_dir, self))
-        self.out_dir = Path(stringize(self.out_dir, self))
+        self.work_dir = Path(stringize(config.work_dir, expander))
+        self.in_dir   = Path(stringize(config.in_dir, expander))
+        self.deps_dir = Path(stringize(config.deps_dir, expander))
+        self.out_dir  = Path(stringize(config.out_dir, expander))
 
         assert check_path(self.work_dir) and self.work_dir.exists()
         assert check_path(self.in_dir) and self.in_dir.exists()
@@ -647,17 +595,18 @@ class Task(Config):
         assert check_path(self.out_dir)
 
         # Flatten our file lists
-        self.files_in = flatten(self.files_in, self)
-        self.deps = flatten(self.deps, self)
-        self.files_out = flatten(self.files_out, self)
+        self.files_in  = flatten(config.files_in, expander)
+        self.deps      = flatten(config.deps, expander)
+        self.files_out = flatten(config.files_out, expander)
 
-        for key in self.named_deps:
-            self.named_deps[key] = stringize(self.named_deps[key], self)
+        self.named_deps = {}
+        for key in config.named_deps:
+            self.named_deps[key] = stringize(config.named_deps[key], expander)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
-        self.abs_files_in = [self.in_dir / f for f in self.files_in]
-        self.abs_deps = [self.deps_dir / f for f in self.deps]
+        self.abs_files_in  = [self.in_dir / f for f in self.files_in]
+        self.abs_deps      = [self.deps_dir / f for f in self.deps]
         self.abs_files_out = [self.out_dir / f for f in self.files_out]
 
         for f in self.abs_files_in:
@@ -681,22 +630,24 @@ class Task(Config):
             work_dir_prefix = str(self.work_dir) + "/"
             return Path(str(f).removeprefix(work_dir_prefix))
 
-        self.files_in = [strip(f) for f in self.abs_files_in]
-        self.deps = [strip(f) for f in self.abs_deps]
+        self.files_in  = [strip(f) for f in self.abs_files_in]
+        self.deps      = [strip(f) for f in self.abs_deps]
         self.files_out = [strip(f) for f in self.abs_files_out]
         for key in self.named_deps:
             self.named_deps[key] = strip(self.abs_named_deps[key])
 
         # Now that files_in/files_out/deps are flat, we can expand our description and command
         # list.
-        self.command = flatten(self.command, self)
+        self.command = flatten(config.command, expander)
+
+        #print(self.command)
 
         # pylint: disable=access-member-before-definition
-        self.desc = stringize(self.desc, self)
-        self.depfile = stringize(self.depfile, self)
+        self.desc    = stringize(config.desc, expander)
+        self.depfile = stringize(config.depfile, expander)
 
         # Check for missing inputs
-        if not self.dryrun:
+        if not config.dryrun:
             for file in self.abs_files_in:
                 if not file.exists():
                     raise NameError(f"Input file doesn't exist - {file}")
@@ -714,12 +665,13 @@ class Task(Config):
             app.all_files_out.add(file)
 
         # Make sure our output directories exist
-        if not self.dryrun:
+        if not config.dryrun:
             for file_out in self.abs_files_out:
                 file_out.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
-        self.reason = self.needs_rerun(self.force)
+        self.reason = self.needs_rerun(config.force)
+        print(self)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -728,7 +680,8 @@ class Task(Config):
         # pylint: disable=too-many-return-statements
         # pylint: disable=too-many-branches
 
-        files_in = self.abs_files_in
+        config    = self.config
+        files_in  = self.abs_files_in
         files_out = self.abs_files_out
 
         if force:
@@ -766,19 +719,19 @@ class Task(Config):
             abs_depfile = self.work_dir / self.depfile
             check_path(abs_depfile)
             if abs_depfile.exists():
-                if self.debug:
+                if config.debug:
                     log(f"Found depfile {abs_depfile}")
                 with open(abs_depfile, encoding="utf-8") as depfile:
                     deplines = None
-                    if self.depformat == "msvc":
+                    if config.depformat == "msvc":
                         # MSVC /sourceDependencies json depfile
                         deplines = json.load(depfile)["Data"]["Includes"]
-                    elif self.depformat == "gcc":
+                    elif config.depformat == "gcc":
                         # GCC .d depfile
                         deplines = depfile.read().split()
                         deplines = [d for d in deplines[1:] if d != "\\"]
                     else:
-                        raise ValueError(f"Invalid depformat {self.depformat}")
+                        raise ValueError(f"Invalid depformat {config.depformat}")
 
                     # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
                     deplines = [self.work_dir / Path(d) for d in deplines]
@@ -789,7 +742,7 @@ class Task(Config):
                         )
 
         # All checks passed; we don't need to rebuild this output.
-        if self.debug:
+        if config.debug:
             log(f"Files {self.files_out} are up to date")
 
         # Empty string = no reason to rebuild
@@ -798,9 +751,11 @@ class Task(Config):
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
+        config = self.config
+
         try:
             # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(self.job_count)
+            await app.acquire_jobs(config.job_count)
 
             # Deps fulfilled and jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
@@ -809,7 +764,7 @@ class Task(Config):
             # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
             log(
                 f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
-                sameline=not self.verbose,
+                sameline=not config.verbose,
             )
 
             if self.work_dir == global_config.start_dir:
@@ -818,26 +773,26 @@ class Task(Config):
                 work_dir = str(self.work_dir).removeprefix(
                     str(global_config.start_dir) + "/"
                 )
-            dryrun = "(DRY RUN) " if self.dryrun else ""
+            dryrun = "(DRY RUN) " if config.dryrun else ""
 
-            if self.verbose or self.debug:
+            if config.verbose or config.debug:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
-            if self.debug:
+            if config.debug:
                 log(self)
 
             result = []
             for command in self.command:
-                if self.verbose or self.debug:
+                if config.verbose or config.debug:
                     log(f"{color(128,128,255)}{work_dir}$ {color()}{dryrun}{command}")
                 result = await self.run_command(command)
         finally:
-            await app.release_jobs(self.job_count)
+            await app.release_jobs(config.job_count)
 
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
-        if self.files_in and self.files_out and not (self.dryrun or self.ext_build):
+        if self.files_in and self.files_out and not (config.dryrun or config.ext_build):
             if second_reason := self.needs_rerun():
                 raise ValueError(
                     f"Task '{self.desc}' still needs rerun after running!\n"
@@ -849,8 +804,10 @@ class Task(Config):
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
+        config = self.config
+
         # Early exit if this is just a dry run
-        if self.dryrun:
+        if config.dryrun:
             return self.abs_files_out
 
         # Custom commands just get called and then early-out'ed.
@@ -875,7 +832,7 @@ class Task(Config):
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if not self.quiet and (self.stdout or self.stderr):
+        if not config.quiet and (self.stdout or self.stderr):
             if self.stderr:
                 log(self.stderr, end="")
             if self.stdout:
@@ -1148,19 +1105,17 @@ global_config = Config(
 
 app = App()
 
-if __name__ == "__main__":
 
-#    t = Task(
-#        foo = "{relpath(bar, baz)}",
-#        bar = "{bar2}",
-#        baz = "{baz2}",
-#        bar2 = "/home/foo/bar",
-#        baz2 = "{baz3}",
-#        baz3 = "/home/foo",
-#        relpath = relpath,
-#    )
-#
-#    expand_task(t)
-#    sys.exit(0)
+####################################################################################################
+
+
+if __name__ == "__main__":
+    #recursive_config = Config(flarp = "asdf {flarp}")
+    #print(recursive_config)
+
+    #x = expand("{flarp}", recursive_config)
+
+    #sys.exit(0)
+
 
     sys.exit(app.main())

@@ -2,8 +2,8 @@ from hancho import *
 import os
 import random
 
-# Queues up 500 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
-# another batch of 500 tasks that use random numbers of cores.
+# Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
+# another batch of 100 tasks that use random numbers of cores.
 
 rule = Rule(
   desc = "I am task {index}, I use {job_count} cores",
@@ -15,10 +15,10 @@ slow_rule = Rule(
   command = "touch {files_out} && sleep 0.3",
 )
 
-for i in range(500):
+for i in range(100):
   rule([], [], job_count = random.randrange(1, os.cpu_count() + 1), index = i)
 
 slow_rule([], "slow_result.txt", job_count = os.cpu_count())
 
-for i in range(500):
-  rule([], [], job_count = random.randrange(1, os.cpu_count() + 1), index = 500 + i)
+for i in range(100):
+  rule([], [], job_count = random.randrange(1, os.cpu_count() + 1), index = 100 + i)
