@@ -24,6 +24,11 @@ Hancho should suffice for small to medium sized projects.
 
 ## Updates
 
+ - 2024-03-22
+   - I'm working on a v0.1.0 branch that will rework the way paths/files/directories and template expansion works.
+   - The current setup is fine for my personal projects, but I've gotten feedback that it's unintuitive for other use cases - for example, moving a Rule invocation from top-level into a function and then calling that function from another file can change how file paths are interpreted.
+   - Similarly, template expansion is currently order-dependent in a few cases - expanding {"a": {"print(b)"}, "b": "{c}", "c": "foo"} can print either "{c}" or "foo" depending on whether "a" or "b" are expanded first.
+   - The revised version will fix both those issues but will probably break some existing builds, hence the version bump.
  - 2024-03-19 - Hancho v0.0.5
    - Special dir-related fields are now start_dir, root_dir, leaf_dir, work_dir, and build_dir
    - Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho")
