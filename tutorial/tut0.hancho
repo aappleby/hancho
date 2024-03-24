@@ -2,8 +2,13 @@
 from hancho import *
 import os
 
-rule = Rule(
-  command = "g++ {files_in} -o {files_out}",
-)
+Task(
+  command      = "g++ {source_files} -o {build_files}",
+  command_path = Path.cwd(),
 
-rule(["src/main.cpp", "src/util.cpp"], "tut0/app")
+  source_files = ["src/main.cpp", "src/util.cpp"],
+  source_path  = Path.cwd(),
+
+  build_files  = "build/tut0/app",
+  build_path   = Path.cwd(),
+)

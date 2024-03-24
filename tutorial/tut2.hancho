@@ -1,20 +1,26 @@
 # tutorial/tut2.hancho
 from hancho import *
 
-config.build_dir = "build/tut2"
-
-compile = Rule(
-  desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -MMD -c {files_in} -o {files_out}",
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
+config = global_config.extend(
+  source_dir   = "src",
+  build_dir    = "build/tut2",
+  command_path = Path.cwd(),
+  source_path  = "{command_path / source_dir}",
+  build_path   = "{command_path / build_dir}",
 )
 
-link = Rule(
-  desc      = "Link {files_in} -> {files_out}",
-  command   = "g++ {files_in} -o {files_out}",
+compile = config.extend(
+  desc         = "Compile {source_files} -> {build_files}",
+  command      = "g++ -MMD -c {join(source_dir, source_files)} -o {join(build_dir, build_files)}",
+  build_files  = "{swap_ext(source_files, '.o')}",
+  build_deps   = "{swap_ext(source_files, '.d')}",
 )
 
-main_o = compile("src/main.cpp")
-util_o = compile("src/util.cpp")
-link([main_o, util_o], "app")
+link = config.extend(
+  desc    = "Link {source_files} -> {build_files}",
+  command = "g++ {join(source_dir, source_files)} -o {join(build_dir, build_files)}",
+)
+
+main_o = compile(source_files = "main.cpp")
+util_o = compile(source_files = "util.cpp")
+link(source_files = [main_o, util_o], build_files = "app")

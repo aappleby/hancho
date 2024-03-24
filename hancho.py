@@ -6,7 +6,7 @@ Hancho is a simple, pleasant build system.
 
 Hancho v0.0.5, 19-03-2024
 
-- Special dir-related fields are now start_dir, root_dir, leaf_dir, work_dir, and build_dir
+- Special dir-related fields are now start_path, root_dir, leaf_dir, work_dir, and build_dir
 - Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho)
 - Each Hancho module now gets its own 'config' object extended from its parent module (or
   global_config). This prevents submodules from accidentally changing global fields that their
@@ -27,6 +27,7 @@ import traceback
 import types
 from pathlib import Path
 from glob import glob
+from collections import UserDict
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -39,6 +40,8 @@ MAX_EXPAND_DEPTH = 100
 
 # Matches {} delimited regions inside a template string.
 template_regex = re.compile("{[^}]*}")
+
+single_template_regex = re.compile("^{[^}]*}$")
 
 ####################################################################################################
 
@@ -137,185 +140,22 @@ def maybe_as_number(text):
             return text
 
 
-def hancho_caller_filename():
-    """Returns the filename of the topmost function call that was in a .hancho file."""
-    for frame in inspect.stack():
-        if frame.filename.endswith(".hancho"):
-            return frame.filename
-    assert False
-
-
-def hancho_caller_dir():
-    """Returns the directory of the topmost function call that was in a .hancho file."""
-    return Path(hancho_caller_filename()).parent
-
-
 def check_path(path):
-    """Sanity-checks an expanded path - it must be absolute, under start_dir, and without
-    '..'s."""
+    """Sanity-checks an expanded path - it must be absolute and without '..'s."""
+    if isinstance(path, list):
+        result = True
+        for p in path:
+            result &= check_path(p)
+        return result
     path = str(path)
     if path[0] != "/":
         log(f"Path does not start with / : {path}")
-        assert False
-    if not path.startswith(str(global_config.start_dir)):
-        log(f"Path not under start_dir : {path}")
         assert False
     if ".." in path:
         log(f"Path contains '..' : {path}")
         log(f"Abspath {abspath(path)}")
         assert False
     return True
-
-
-####################################################################################################
-# The next three functions require some explanation.
-#
-# We do not necessarily know in advance how the users will nest strings, templates, callbacks,
-# etcetera. So, when we need to produce a flat list of files from whatever was passed to files_in,
-# we need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn that thing
-# into a flat list of files.
-#
-# We also need to ensure that if anything in this process throws an exception (or if an exception
-# was passed into a rule due to a previous rule failing) that we always propagate the exception up
-# to Task.run_async, where it will be handled and propagated to other Tasks.
-#
-# The result of this is that the following three functions are mutually recursive in a way that can
-# lead to confusing callstacks, but that should handle every possible case of stuff inside other
-# stuff.
-#
-# The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary limit but it should
-# suffice.
-
-
-def flatten(variant, rule=None, depth=0):
-    """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
-    # pylint: disable=too-many-return-statements
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Flattening '{variant}' failed to terminate")
-
-    if rule is None:
-        rule = app.current_config()
-
-    match variant:
-        case None:
-            return []
-        case asyncio.CancelledError():
-            raise variant
-        case Task():
-            return flatten(variant.promise, rule, depth + 1)
-        case Path():
-            return [Path(stringize(str(variant), rule, depth + 1))]
-        case list():
-            result = []
-            for element in variant:
-                result.extend(flatten(element, rule, depth + 1))
-            return result
-        case _ if inspect.isfunction(variant):
-            return [variant]
-        case _:
-            return [stringize(variant, rule, depth + 1)]
-
-
-def stringize(variant, rule=None, depth=0):
-    """Turns 'variant' into a non-templated string."""
-    # pylint: disable=too-many-return-statements
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Stringizing '{variant}' failed to terminate")
-
-    if rule is None:
-        rule = app.current_config()
-
-    match variant:
-        case None:
-            return ""
-        case asyncio.CancelledError():
-            raise variant
-        case Task():
-            return stringize(variant.promise, rule, depth + 1)
-        case Path():
-            return stringize(str(variant), rule, depth + 1)
-        case list():
-            variant = flatten(variant, rule, depth + 1)
-            variant = [str(s) for s in variant if s is not None]
-            variant = " ".join(variant)
-            return variant
-        case str():
-            if template_regex.search(variant):
-                return expand(variant, rule, depth + 1)
-            return variant
-        case _:
-            return str(variant)
-
-
-def expand(template, rule=None, depth=0):
-    """Expands all templates to produce a non-templated string."""
-
-    if depth > MAX_EXPAND_DEPTH:
-        raise ValueError(f"Expanding '{template}' failed to terminate")
-
-    if rule is None:
-        rule = app.current_config()
-
-    if not isinstance(template, str):
-        raise ValueError(f"Don't know how to expand {type(template)}")
-
-    result = ""
-
-    if isinstance(rule, Expander):
-        expander = Expander(rule, depth)
-    else:
-        expander = rule
-
-    expander.depth = depth
-
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        exp = template[span.start() : span.end()]
-
-        # Evaluate the template contents.
-        try:
-            # pylint: disable=eval-used
-            #replacement = eval(exp[1:-1], globals(), Expander(rule))
-            replacement = eval(exp[1:-1], globals(), expander)
-            result += stringize(replacement, rule, depth + 1)
-        except Exception as exc:  # pylint: disable=broad-except
-            raise exc
-            result += exp
-
-        template = template[span.end() :]
-
-    result += template
-    return result
-
-
-####################################################################################################
-
-
-class Expander:
-    """Expander does template expasion on read so that eval() always sees expanded templates."""
-
-    def __init__(self, task, depth):
-        self.task = task
-        self.depth = depth
-        #self.cache = {}
-
-    def __getitem__(self, key):
-        #if key in self.cache:
-        #    # print(f"key {key} was in cache")
-        #    return self.cache[key]
-        val = self.task[key]
-
-        if isinstance(val, Path) and template_regex.search(str(val)):
-            val = Path(stringize(str(val), self, self.depth + 1))
-
-        if isinstance(val, str) and template_regex.search(val):
-            val = stringize(val, self, self.depth + 1)
-
-        #self.cache[key] = val
-        return val
-
 
 
 ####################################################################################################
@@ -330,6 +170,8 @@ async def await_variant(variant):
             # their own promise.
             if inspect.isawaitable(variant.promise):
                 variant.promise = await variant.promise
+        case Config():
+            await await_variant(variant.__dict__["_data"])
         case dict():
             for key in variant:
                 variant[key] = await await_variant(variant[key])
@@ -341,33 +183,12 @@ async def await_variant(variant):
     return variant
 
 
-
 ####################################################################################################
 
 
-def load(file=None, root=None):
-    """Module loader entry point for .hancho files. Searches the loaded Hancho module stack for a
-    module whose directory contains 'mod_path', then loads the module relative to that path.
-    """
-
-    if file is None:
-        raise FileNotFoundError("No .hancho filename given")
-
-    config = app.current_config()
-    file = stringize(file, config)
-
-    if root is not None:
-        root = stringize(root, config)
-        new_root = abspath(app.current_leaf_dir() / root)
-        new_leaf = abspath(new_root / file)
-    else:
-        new_root = app.current_root_dir()
-        new_leaf = abspath(app.current_leaf_dir() / file)
-
-    if not new_leaf.exists():
-        raise FileNotFoundError(f"Could not load module {new_leaf}")
-
-    return app.load_module(new_leaf, new_root)
+def load(file=None):
+    """Module loader entry point for .hancho files."""
+    return app.load_module(file)
 
 
 ####################################################################################################
@@ -391,146 +212,280 @@ class Chdir:
 ####################################################################################################
 
 
-class Config(dict):
-    """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
+class Config:
+    """Config is an immutable 'bag of fields' that behaves sort of like a Javascript object."""
+
+    def __init__(self, **kwargs):
+        self.__dict__["_base"] = kwargs.pop("base", None)
+        self.__dict__["_data"] = dict(kwargs)
 
     def __getitem__(self, key):
-        try:
-            val = super().__getitem__(key)
-        except Exception:  # pylint: disable=broad-except
-            val = None
+        base = self.__dict__["_base"]
+        data = self.__dict__["_data"]
+        if key in data:
+            val = data[key]
+            if val is not None:
+                return val
+        if base is not None:
+            return base[key]
+        if self is not global_config:
+            return global_config[key]
+        return None
 
-        # Don't recurse if we found the key, or if we were trying to find our base instance.
-        if key == "base" or val is not None:
-            return val
-
-        # Key was missing or value was None, recurse into base if present.
-        try:
-            return super().__getitem__("base")[key]
-        except Exception:  # pylint: disable=broad-except
-            return None
-
-    # Attributes and items are the same for Config.
-    def __setattr__(self, key, value):
-        self.__setitem__(key, value)
+    def __setitem__(self, key, val):
+        self.__dict__["_data"][key] = val
 
     def __getattr__(self, key):
         return self.__getitem__(key)
 
-    def __repr__(self):
-        """Turns this config blob into a JSON doc for debugging."""
+    def __setattr__(self, key, val):
+        self.__setitem__(key, val)
 
+    def __repr__(self):
         class Encoder(json.JSONEncoder):
             """Types the encoder doesn't understand just get stringified."""
 
             def default(self, o):
-                if isinstance(o, Path):
-                    return f"Path {o}"
                 return str(o)
 
-        return json.dumps(self, indent=2, cls=Encoder)
+        base = self.__dict__["_base"]
+        data = self.__dict__["_data"]
+        result1 = json.dumps(data, indent=2, cls=Encoder)
+        return result1 if not base else result1 + ",\n" + "base : " + str(base)
+
+    def get(self, key, default):
+        val = self.__getitem__(key)
+        return val if val is not None else default
+
+    def update(self, values):
+        self.__dict__["_data"].update(values)
 
     def extend(self, **kwargs):
         """Returns a 'subclass' of this config blob that can override its fields."""
-        return type(self)(**kwargs, base=self)
+        return self.__class__(base=self, **kwargs)
+
+    def __call__(self, **kwargs):
+        return Task(self, **kwargs)
+
+
+####################################################################################################
+# The next three functions require some explanation.
+#
+# We do not necessarily know in advance how the users will nest strings, templates, callbacks,
+# etcetera. So, when we need to produce a flat list of files from whatever was passed to
+# source_files, we need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always
+# turn that thing into a flat list of files.
+#
+# We also need to ensure that if anything in this process throws an exception (or if an exception
+# was passed into a rule due to a previous rule failing) that we always propagate the exception up
+# to Task.run_async, where it will be handled and propagated to other Tasks.
+#
+# The result of this is that the following three functions are mutually recursive in a way that can
+# lead to confusing callstacks, but that should handle every possible case of stuff inside other
+# stuff.
+#
+# The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary limit but it should
+# suffice.
+
+
+class Expander:
+    """Expander does template expasion on read so that eval() always sees expanded templates."""
+
+    def __init__(self, config):
+        assert isinstance(config, Config)
+        self.__dict__["config"] = config
+        self.__dict__["depth"] = 0
+
+    def __getitem__(self, key):
+        val = self.__dict__["config"][key]
+        # FIXME need a match or something
+        if isinstance(val, list):
+            val = self.flatten(val)
+        if isinstance(val, str):
+            val = self.stringize(val)
+        if isinstance(val, Path):
+            val = Path(self.stringize(str(val)))
+        return val
+
+    def __getattr__(self, key):
+        return self.__getitem__(key)
+
+    def get(self, key, default=None):
+        val = self.__getitem__(key)
+        if val is None:
+            val = default
+        return val
+
+    def flatten(self, variant):
+        """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
+        # pylint: disable=too-many-return-statements
+
+        if self.__dict__["depth"] > MAX_EXPAND_DEPTH:
+            raise ValueError(f"Flattening '{variant}' failed to terminate")
+
+        match variant:
+            case None:
+                return []
+            case asyncio.CancelledError():
+                raise variant
+            case Task():
+                return self.flatten(variant.promise)
+            case Path():
+                return [Path(self.stringize(str(variant)))]
+            case list():
+                result = []
+                for element in variant:
+                    result.extend(self.flatten(element))
+                return result
+            case _ if inspect.isfunction(variant):
+                return [variant]
+            case _:
+                return [self.stringize(variant)]
+
+    def stringize(self, variant):
+        """Turns 'variant' into a non-templated string."""
+        # pylint: disable=too-many-return-statements
+
+        match variant:
+            case None:
+                return ""
+            case asyncio.CancelledError():
+                raise variant
+            case Task():
+                return self.stringize(variant.promise)
+            case Path():
+                return self.stringize(str(variant))
+            case list():
+                variant = self.flatten(variant)
+                variant = [str(s) for s in variant if s is not None]
+                variant = " ".join(variant)
+                return variant
+            case str():
+                if template_regex.search(variant):
+                    return self.expand(variant)
+                return variant
+            case _:
+                return str(variant)
+
+    def expand(self, template):
+        """Expands all templates to produce a non-templated string."""
+
+        if self.__dict__["depth"] > MAX_EXPAND_DEPTH:
+            raise ValueError(f"Expanding '{template}' failed to terminate")
+
+        if isinstance(template, Path):
+            return Path(self.expand(str(template)))
+
+        if not isinstance(template, str):
+            raise ValueError(f"Don't know how to expand {type(template)}")
+
+        if single_template_regex.search(template):
+            return self.expand(eval(template[1:-1], {}, self))
+
+        # Evaluate the template contents.
+        try:
+            self.__dict__["depth"] += 1
+            result = ""
+
+            while span := template_regex.search(template):
+                result += template[0 : span.start()]
+                exp = template[span.start() : span.end()]
+                try:
+                    # pylint: disable=eval-used
+                    code = exp[1:-1]
+                    replacement = eval(exp[1:-1], {}, self)
+                    result += self.stringize(replacement)
+                except Exception as exc:  # pylint: disable=broad-except
+                    raise exc
+
+                template = template[span.end() :]
+
+            result += template
+        finally:
+            self.__dict__["depth"] -= 1
+
+        return result
 
 
 ####################################################################################################
 
 
 class Rule(Config):
-    """Rules are callable Configs that create a Task when called. Rules also inherit from their
-    parent module's config if they have no other ancestor."""
-
-    # pylint: disable=attribute-defined-outside-init
-    # pylint: disable=super-init-not-called
-
-    def __init__(self, **kwargs):
-        kwargs.setdefault("name", "<Rule>")
-        kwargs.setdefault("rule_dir", Path(inspect.stack(context=0)[1].filename).parent)
-        kwargs.setdefault("base", app.current_config())
-        super().__init__(**kwargs)
-
-    def __call__(self, files_in=None, files_out=None, **kwargs):
-        print(files_in)
-        print(files_out)
-
-        kwargs.setdefault("name", "<Task>")
-        kwargs.setdefault("files_in", files_in)
-        kwargs.setdefault("files_out", files_out)
-        kwargs.setdefault("root_dir", app.current_root_dir())
-        kwargs.setdefault("leaf_dir", app.current_leaf_dir())
-        kwargs.setdefault("call_dir", Path(inspect.stack(context=0)[1].filename).parent)
-
-        rule = self.extend(**kwargs)
-        task = Task(rule)
-        return task
+    """Rules are callable Configs that create a Task when called."""
+    pass
 
 
 ####################################################################################################
 
 
-class Task():
+class Task:
     """Calling a Rule creates a Task."""
 
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
     # pylint: disable=super-init-not-called
 
-    def __init__(self, config):
-        self.config = config
-        self.reason = None
-        self.command = None
+    def __init__(self, rule=None, **kwargs):
+        app.tasks_total += 1
 
+        self.desc = None
+        self.reason = None
         self.task_index = None
 
-        self.files_in = None
-        self.deps = None
-        self.files_out = None
+        self.command = None
+        self.command_files = None
+        self.command_path = None
+        self.command_stdout = None
+        self.command_stderr = None
 
-        self.work_dir = None
-        self.in_dir = None
-        self.out_dir = None
-        self.deps_dir = None
+        self.source_files = None
+        self.source_path = None
 
+        self.build_files = None
+        self.build_deps = None
+        self.build_path = None
 
-        self.abs_files_in = None
-        self.abs_deps = None
-        self.abs_files_out = None
-        self.abs_named_deps = None
+        self.abs_command_files = None
+        self.abs_source_files = None
+        self.abs_build_files = None
+        self.abs_build_deps = None
 
-        self.stdout = None
-        self.stderr = None
-        self.named_deps = None
-        self.desc = None
-        self.depfile = None
+        if rule is None:
+            self.rule = Rule(**kwargs)
+        elif len(kwargs):
+            self.rule = rule.extend(**kwargs)
+        else:
+            self.rule = rule
+
         self.promise = None
-        app.tasks_total += 1
+
         coroutine = self.run_async()
         self.promise = asyncio.create_task(coroutine)
 
     def __repr__(self):
         """Turns this config blob into a JSON doc for debugging."""
 
-        print("SLKDJFLSKJF")
-        this = self.config
         class Encoder(json.JSONEncoder):
             """Types the encoder doesn't understand just get stringified."""
+
             def default(self, o):
+                if isinstance(o, Config):
+                    return "<config>"
                 return str(o)
-        return json.dumps(self.__dict__, indent=2, cls=Encoder)
+
+        base = json.dumps(self.__dict__, indent=2, cls=Encoder)
+        config = str(self.rule)
+        return "task: " + base + ",\nrule: " + config
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated
         during task execution."""
 
-        print(self)
-        config = self.config
+        rule = self.rule
 
         try:
-            # Await everything awaitable in this task except the task's own promise.
-            for key in config:
-                config[key] = await await_variant(config[key])
+            # Await everything awaitable in this task's rule.
+            await await_variant(rule)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -540,7 +495,7 @@ class Task():
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
-                result = self.abs_files_out
+                result = self.abs_build_files
                 app.tasks_skip += 1
 
             return result
@@ -548,7 +503,7 @@ class Task():
         # If this task failed, we print the error and propagate a cancellation
         # to downstream tasks.
         except Exception:  # pylint: disable=broad-except
-            if not self.config.quiet:
+            if not self.rule.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -562,116 +517,84 @@ class Task():
             return cancel
 
         finally:
-            if self.config.debug:
+            if self.rule.debug:
                 log("")
 
     # pylint: disable=too-many-branches
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        config = self.config
-        expander = Expander(config, 0)
-
         # Check for missing fields
-        # pylint: disable=access-member-before-definition
-        if config.command is None:
+
+        if self.rule.source_files is None:
+            raise ValueError("Task missing source_files")
+        if self.rule.source_path is None:
+            raise ValueError("Task missing source_path")
+
+        if self.rule.command is None:
             raise ValueError("Task missing command")
-        if config.files_in is None:
-            raise ValueError("Task missing files_in")
-        if config.files_out is None:
-            raise ValueError("Task missing files_out")
+        if self.rule.command_path is None:
+            raise ValueError("Task missing command_path")
 
-        # Stringize our directories
-        self.work_dir = Path(stringize(config.work_dir, expander))
-        self.in_dir   = Path(stringize(config.in_dir, expander))
-        self.deps_dir = Path(stringize(config.deps_dir, expander))
-        self.out_dir  = Path(stringize(config.out_dir, expander))
+        if self.rule.build_files is None:
+            raise ValueError("Task missing build_files")
+        if self.rule.build_path is None:
+            raise ValueError("Task missing build_path")
 
-        assert check_path(self.work_dir) and self.work_dir.exists()
-        assert check_path(self.in_dir) and self.in_dir.exists()
-        assert check_path(self.deps_dir) and self.deps_dir.exists()
+        # Expand everything
+        expander = Expander(self.rule)
 
-        # 'out_dir' may not exist yet and that's OK, we will create it.
-        assert check_path(self.out_dir)
+        self.desc = expander.stringize(self.rule.desc)
 
-        # Flatten our file lists
-        self.files_in  = flatten(config.files_in, expander)
-        self.deps      = flatten(config.deps, expander)
-        self.files_out = flatten(config.files_out, expander)
+        self.command = expander.flatten(self.rule.command)
+        self.command_files = expander.flatten(self.rule.command_files)
+        self.command_path = expander.expand(self.rule.command_path)
 
-        self.named_deps = {}
-        for key in config.named_deps:
-            self.named_deps[key] = stringize(config.named_deps[key], expander)
+        self.source_files = expander.flatten(self.rule.source_files)
+        self.source_path = expander.expand(self.rule.source_path)
+
+        self.build_files = expander.flatten(self.rule.build_files)
+        self.build_deps = expander.flatten(self.rule.build_deps)
+        self.build_path = expander.expand(self.rule.build_path)
+
+        # 'build_path' may not exist yet and that's OK, we will create it.
+        assert check_path(self.source_path) and self.source_path.exists()
+        assert check_path(self.command_path) and self.command_path.exists()
+        assert check_path(self.build_path)
 
         # Prepend directories to filenames and then normalize + absolute them.
         # If they're already absolute, this does nothing.
-        self.abs_files_in  = [self.in_dir / f for f in self.files_in]
-        self.abs_deps      = [self.deps_dir / f for f in self.deps]
-        self.abs_files_out = [self.out_dir / f for f in self.files_out]
+        self.abs_command_files = [self.command_path / f for f in self.command_files]
+        self.abs_source_files = [self.source_path / f for f in self.source_files]
+        self.abs_build_files = [self.build_path / f for f in self.build_files]
+        self.abs_build_deps = [self.build_path / f for f in self.build_deps]
 
-        for f in self.abs_files_in:
-            check_path(f)
-        for f in self.abs_deps:
-            check_path(f)
-        for f in self.abs_files_out:
-            check_path(f)
-
-        self.abs_named_deps = {}
-        for key in self.named_deps:
-            self.abs_named_deps[key] = self.deps_dir / self.named_deps[key]
-
-        for f in self.abs_named_deps.values():
-            check_path(f)
-
-        # Strip the working directory off all our file paths to make our command lines less bulky.
-        # Note that we _don't_ want relpath() here as it could add "../../.." that would go up
-        # through a symlink to the wrong directory.
-        def strip(f):
-            work_dir_prefix = str(self.work_dir) + "/"
-            return Path(str(f).removeprefix(work_dir_prefix))
-
-        self.files_in  = [strip(f) for f in self.abs_files_in]
-        self.deps      = [strip(f) for f in self.abs_deps]
-        self.files_out = [strip(f) for f in self.abs_files_out]
-        for key in self.named_deps:
-            self.named_deps[key] = strip(self.abs_named_deps[key])
-
-        # Now that files_in/files_out/deps are flat, we can expand our description and command
-        # list.
-        self.command = flatten(config.command, expander)
-
-        #print(self.command)
-
-        # pylint: disable=access-member-before-definition
-        self.desc    = stringize(config.desc, expander)
-        self.depfile = stringize(config.depfile, expander)
+        assert check_path(self.abs_command_files)
+        assert check_path(self.abs_source_files)
+        assert check_path(self.abs_build_files)
 
         # Check for missing inputs
-        if not config.dryrun:
-            for file in self.abs_files_in:
+        if not self.rule.dry_run:
+            for file in self.abs_source_files:
                 if not file.exists():
                     raise NameError(f"Input file doesn't exist - {file}")
-            for file in self.abs_deps:
+            for file in self.abs_command_files:
                 if not file.exists():
                     raise NameError(f"Dependency doesn't exist - {file}")
-            for kv in self.abs_named_deps.items():
-                if not kv[1].exists():
-                    raise NameError(f"Named dependency doesn't exist - {kv[0]}:{kv[1]}")
 
         # Check for duplicate task outputs
-        for file in self.abs_files_out:
-            if file in app.all_files_out:
+        for file in self.abs_build_files:
+            if file in app.all_build_files:
                 raise NameError(f"Multiple rules build {file}!")
-            app.all_files_out.add(file)
+            app.all_build_files.add(file)
 
         # Make sure our output directories exist
-        if not config.dryrun:
-            for file_out in self.abs_files_out:
-                file_out.parent.mkdir(parents=True, exist_ok=True)
+        if not self.rule.dry_run:
+            for build_file in self.abs_build_files:
+                build_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
-        self.reason = self.needs_rerun(config.force)
-        print(self)
+        self.reason = self.needs_rerun(self.rule.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -680,70 +603,69 @@ class Task():
         # pylint: disable=too-many-return-statements
         # pylint: disable=too-many-branches
 
-        config    = self.config
-        files_in  = self.abs_files_in
-        files_out = self.abs_files_out
-
         if force:
-            return f"Files {self.files_out} forced to rebuild"
-        if not files_in:
+            return f"Files {self.abs_build_files} forced to rebuild"
+        if not self.abs_source_files:
             return "Always rebuild a target with no inputs"
-        if not files_out:
+        if not self.abs_build_files:
             return "Always rebuild a target with no outputs"
 
         # Tasks with missing outputs always run.
-        for file_out in files_out:
+        for file_out in self.abs_build_files:
             if not file_out.exists():
-                return f"Rebuilding {self.files_out} because some are missing"
+                return f"Rebuilding {self.abs_build_files} because some are missing"
 
         # Check if any task inputs are newer than any outputs.
-        min_out = min(mtime(f) for f in files_out)
-        if files_in and max(mtime(f) for f in files_in) >= min_out:
-            return f"Rebuilding {self.files_out} because an input has changed"
+        min_out = min(mtime(f) for f in self.abs_build_files)
+        if (
+            self.abs_source_files
+            and max(mtime(f) for f in self.abs_source_files) >= min_out
+        ):
+            return f"Rebuilding {self.abs_build_files} because an input has changed"
 
         # Check if the hancho file(s) that generated the task have changed.
         if max(mtime(f) for f in app.hancho_mods) >= min_out:
-            return f"Rebuilding {self.files_out} because its .hancho files have changed"
+            return f"Rebuilding {self.abs_build_files} because its .hancho files have changed"
 
-        # Check if any user-specified deps have changed.
-        if self.deps and max(mtime(f) for f in self.deps) >= min_out:
-            return f"Rebuilding {self.files_out} because a dependency has changed"
-
-        for key in self.named_deps:
-            if mtime(self.named_deps[key]) >= min_out:
-                return f"Rebuilding {self.files_out} because a named dependency has changed"
+        # Check if any files the command needs have changed.
+        if (
+            self.abs_command_files
+            and max(mtime(f) for f in self.abs_command_files) >= min_out
+        ):
+            return f"Rebuilding {self.abs_build_files} because a dependency has changed"
 
         # Check all dependencies in the depfile, if present.
-        if self.depfile:
-            assert os.path.isabs(self.work_dir)
-            abs_depfile = self.work_dir / self.depfile
-            check_path(abs_depfile)
-            if abs_depfile.exists():
-                if config.debug:
-                    log(f"Found depfile {abs_depfile}")
-                with open(abs_depfile, encoding="utf-8") as depfile:
-                    deplines = None
-                    if config.depformat == "msvc":
-                        # MSVC /sourceDependencies json depfile
-                        deplines = json.load(depfile)["Data"]["Includes"]
-                    elif config.depformat == "gcc":
-                        # GCC .d depfile
-                        deplines = depfile.read().split()
-                        deplines = [d for d in deplines[1:] if d != "\\"]
-                    else:
-                        raise ValueError(f"Invalid depformat {config.depformat}")
+        if self.build_deps:
+            for file in self.build_deps:
+                abs_depfile = self.build_path / file
+                check_path(abs_depfile)
+                if abs_depfile.exists():
+                    #if self.rule.debug:
+                    #    log(f"Found depfile {abs_depfile}")
+                    log(f"!!!! Found depfile {abs_depfile}")
+                    with open(abs_depfile, encoding="utf-8") as depfile:
+                        deplines = None
+                        if self.rule.depformat == "msvc":
+                            # MSVC /sourceDependencies json depfile
+                            deplines = json.load(depfile)["Data"]["Includes"]
+                        elif self.rule.depformat == "gcc":
+                            # GCC .d depfile
+                            deplines = depfile.read().split()
+                            deplines = [d for d in deplines[1:] if d != "\\"]
+                        else:
+                            raise ValueError(f"Invalid depformat {self.rule.depformat}")
 
-                    # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                    deplines = [self.work_dir / Path(d) for d in deplines]
-                    if deplines and max(mtime(f) for f in deplines) >= min_out:
-                        return (
-                            f"Rebuilding {self.files_out} because a dependency in "
-                            + f"{abs_depfile} has changed"
-                        )
+                        # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
+                        deplines = [self.command_path / d for d in deplines]
+                        if deplines and max(mtime(f) for f in deplines) >= min_out:
+                            return (
+                                f"Rebuilding {self.abs_build_files} because a dependency in "
+                                + f"{abs_depfile} has changed"
+                            )
 
         # All checks passed; we don't need to rebuild this output.
-        if config.debug:
-            log(f"Files {self.files_out} are up to date")
+        if self.rule.debug:
+            log(f"Files {self.abs_build_files} are up to date")
 
         # Empty string = no reason to rebuild
         return ""
@@ -751,11 +673,9 @@ class Task():
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
-        config = self.config
-
         try:
             # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(config.job_count)
+            await app.acquire_jobs(self.rule.job_count)
 
             # Deps fulfilled and jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
@@ -764,35 +684,40 @@ class Task():
             # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
             log(
                 f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
-                sameline=not config.verbose,
+                sameline=not self.rule.verbose,
             )
 
-            if self.work_dir == global_config.start_dir:
-                work_dir = "."
-            else:
-                work_dir = str(self.work_dir).removeprefix(
-                    str(global_config.start_dir) + "/"
+            command_path = "."
+            if self.command_path != self.rule.start_path:
+                command_path = str(self.command_path).removeprefix(
+                    str(self.rule.start_path) + "/"
                 )
-            dryrun = "(DRY RUN) " if config.dryrun else ""
+            dry_run = "(DRY RUN) " if self.rule.dry_run else ""
 
-            if config.verbose or config.debug:
+            if self.rule.verbose or self.rule.debug:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
-            if config.debug:
+            if self.rule.debug:
                 log(self)
 
             result = []
             for command in self.command:
-                if config.verbose or config.debug:
-                    log(f"{color(128,128,255)}{work_dir}$ {color()}{dryrun}{command}")
+                if self.rule.verbose or self.rule.debug:
+                    log(
+                        f"{color(128,128,255)}{command_path}$ {color()}{dry_run}{command}"
+                    )
                 result = await self.run_command(command)
         finally:
-            await app.release_jobs(config.job_count)
+            await app.release_jobs(self.rule.job_count)
 
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
-        if self.files_in and self.files_out and not (config.dryrun or config.ext_build):
+        if (
+            self.source_files
+            and self.build_files
+            and not (self.rule.dry_run or self.rule.ext_build)
+        ):
             if second_reason := self.needs_rerun():
                 raise ValueError(
                     f"Task '{self.desc}' still needs rerun after running!\n"
@@ -804,11 +729,9 @@ class Task():
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        config = self.config
-
         # Early exit if this is just a dry run
-        if config.dryrun:
-            return self.abs_files_out
+        if self.rule.dry_run:
+            return self.abs_build_files
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
@@ -821,7 +744,7 @@ class Task():
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd=self.work_dir,
+            cwd=self.command_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -832,7 +755,7 @@ class Task():
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if not config.quiet and (self.stdout or self.stderr):
+        if not self.rule.quiet and (self.stdout or self.stderr):
             if self.stderr:
                 log(self.stderr, end="")
             if self.stdout:
@@ -845,7 +768,7 @@ class Task():
             )
 
         # Task passed, return the output file list
-        return self.abs_files_out
+        return self.abs_build_files
 
 
 ####################################################################################################
@@ -858,8 +781,7 @@ class App:
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
         self.hancho_mods = {}
-        self.mod_stack = []
-        self.all_files_out = set()
+        self.all_build_files = set()
         self.tasks_total = 0
         self.tasks_pass = 0
         self.tasks_fail = 0
@@ -871,58 +793,30 @@ class App:
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
 
-    def current_mod(self):
-        """Returns the module on top of the mod stack."""
-        return self.mod_stack[-1] if self.mod_stack else None
-
-    def current_root_dir(self):
-        """Returns the directory of the module on top of the mod stack, or the root directory of
-        the whole build if there is no mod stack."""
-        return (
-            self.current_mod().config.root_dir
-            if self.mod_stack
-            else global_config.start_dir
-        )
-
-    def current_leaf_dir(self):
-        """Returns the directory of the module on top of the mod stack, or the directory of the
-        topmost hancho file in the call stack if there is no mod stack."""
-        return (
-            self.current_mod().config.leaf_dir
-            if self.mod_stack
-            else hancho_caller_dir()
-        )
-
-    def current_config(self):
-        """Returns the config object of the module on top of the mod stack, or the global config if
-        there is no mod stack."""
-        return self.current_mod().config if self.mod_stack else global_config
-
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("start_filename",  default="build.hancho", type=str, nargs="?", help="The name of the .hancho file to build")
-        parser.add_argument("-C", "--chdir",   default=".",            type=str,            help="Change directory before starting the build")
-        parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
-        parser.add_argument("-v", "--verbose", default=False,          action="store_true", help="Print verbose build info")
-        parser.add_argument("-q", "--quiet",   default=False,          action="store_true", help="Mute all output")
-        parser.add_argument("-n", "--dryrun",  default=False,          action="store_true", help="Do not run commands")
-        parser.add_argument("-d", "--debug",   default=False,          action="store_true", help="Print debugging information")
-        parser.add_argument("-f", "--force",   default=False,          action="store_true", help="Force rebuild of everything")
+        parser.add_argument("start_files",     default=["build.hancho"], type=str, nargs="*", help="The name of the .hancho file to build")
+        parser.add_argument("-C", "--chdir",   default=".",              type=str,            help="Change directory before starting the build")
+        parser.add_argument("-j", "--jobs",    default=os.cpu_count(),   type=int,            help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-v", "--verbose", default=False,            action="store_true", help="Print verbose build info")
+        parser.add_argument("-q", "--quiet",   default=False,            action="store_true", help="Mute all output")
+        parser.add_argument("-n", "--dry_run", default=False,            action="store_true", help="Do not run commands")
+        parser.add_argument("-d", "--debug",   default=False,            action="store_true", help="Print debugging information")
+        parser.add_argument("-f", "--force",   default=False,            action="store_true", help="Force rebuild of everything")
         # fmt: on
 
         # Parse the command line
         (flags, unrecognized) = parser.parse_known_args()
 
         # Merge all known command line flags into our global config object.
-
         # pylint: disable=global-statement
         global global_config
         # pylint: disable=attribute-defined-outside-init
-        global_config |= flags.__dict__
+        global_config.update(flags.__dict__)
 
         # Unrecognized command line parameters also become global config fields if
         # they are flag-like
@@ -948,11 +842,12 @@ class App:
 
         self.jobs_available = global_config.jobs
 
-        # Load the starting .hancho file.
-        start_filename = Path.cwd() / global_config.start_filename
-        if not start_filename.exists():
-            raise FileNotFoundError(f"Could not find {start_filename}")
-        self.load_module(start_filename, Path.cwd())
+        # Load the root .hancho files.
+        for file in global_config.start_files:
+            file = global_config.start_path / file
+            if not file.exists():
+                raise FileNotFoundError(f"Could not find {file}")
+            self.load_module(file)
 
         # Root module(s) loaded. Run all tasks in the queue until we run out.
         while True:
@@ -979,49 +874,34 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, abs_path, root_dir):
+    def load_module(self, mod_filename):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        check_path(abs_path)
-        check_path(root_dir)
+        mod_path = abspath(mod_filename)
+        if not mod_path.exists():
+            raise FileNotFoundError(f"Could not load module {file}")
 
-        phys_path = Path(abs_path).resolve()
+        phys_path = Path(mod_path).resolve()
         if phys_path in self.hancho_mods:
             return self.hancho_mods[phys_path]
 
-        with open(abs_path, encoding="utf-8") as file:
+        with open(mod_path, encoding="utf-8") as file:
             source = file.read()
-            code = compile(source, abs_path, "exec", dont_inherit=True)
+            code = compile(source, mod_path, "exec", dont_inherit=True)
 
-        module = type(sys)(abs_path.stem)
-        module.__file__ = abs_path
+        module = type(sys)(mod_path.stem)
+        module.__file__ = mod_path
         module.__builtins__ = builtins
 
         self.hancho_mods[phys_path] = module
 
-        # The directory the module is in gets added to the global path so we can
-        # import .py modules in the same directory as it if needed. This may not
-        # be necessary.
-        sys.path.insert(0, str(abs_path.parent))
-
-        # Each module gets a configuration object extended from its parent module's config
-        module.config = app.current_config().extend(
-            name=f"<Config for {abs_path}>",
-            root_dir=root_dir,
-            leaf_dir=Path(abs_path).parent,
-        )
-
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        try:
-            self.mod_stack.append(module)
-            with Chdir(abs_path.parent):
-                # Why Pylint thinks this is not callable is a mystery.
-                # pylint: disable=not-callable
-                types.FunctionType(code, module.__dict__)()
-        finally:
-            self.mod_stack.pop()
+        with Chdir(mod_path.parent):
+            # Why Pylint thinks this is not callable is a mystery.
+            # pylint: disable=not-callable
+            types.FunctionType(code, module.__dict__)()
 
         return module
 
@@ -1056,66 +936,55 @@ class App:
 ####################################################################################################
 # The global config object. All fields here can be used in any template.
 
+
+def join(prefix, suffix):
+    if isinstance(prefix, list):
+        return [join(p, suffix) for p in prefix]
+    if isinstance(suffix, list):
+        return [Path(prefix) / s for s in suffix]
+    return Path(prefix) / suffix
+
+
+def trim(path, prefix):
+    if isinstance(path, list):
+        return [trim(p, prefix) for p in path]
+    if isinstance(path, Path):
+        return Path(trim(str(path), prefix))
+    return path.removeprefix(str(prefix) + "/")
+
+
 global_config = Config(
     name="<Global Config>",
-    start_filename="build.hancho",
-    start_dir=Path.cwd(),
-    # The working directory that we run commands in, defaults to root_dir.
-    work_dir=Path("{root_dir}"),
-    # Input filenames are resolved relative to in_dir, defaults to leaf_dir.
-    in_dir=Path("{leaf_dir}"),
-    # Dependency filenames are resolved relative to deps_dir, defaults to leaf_dir.
-    deps_dir=Path("{in_dir}"),
-    # All output files from all tasks go under build_dir.
-    build_dir=Path("build"),
-    # Each .hancho file gets a separate directory under build_dir for its output files.
-    out_dir=Path("{start_dir / build_dir / build_tag / relpath(in_dir, start_dir)}"),
-    desc="{files_in} -> {files_out}",
-    # Use build_tag to split outputs into separate debug/profile/release/etc folders.
-    build_tag="",
-    files_out=[],
-    deps=[],
-    named_deps={},
-    # The default number of parallel jobs a task consumes.
+    start_path=Path.cwd(),
+    start_files="build.hancho",
+    desc="{source_files} -> {build_files}",
     job_count=1,
     depformat="gcc",
     chdir=".",
     jobs=os.cpu_count(),
     verbose=False,
     quiet=False,
-    dryrun=False,
+    dry_run=False,
     debug=False,
     force=False,
     ext_build=False,
     abspath=abspath,
+    relpath=relpath,
     color=color,
-    expand=expand,
-    flatten=flatten,
     glob=glob,
     len=len,
     Path=Path,
-    relpath=relpath,
     run_cmd=run_cmd,
-    stringize=stringize,
     swap_ext=swap_ext,
+    join=join,
+    trim=trim,
     base=None,
 )
 
 ####################################################################################################
 
+
 app = App()
 
-
-####################################################################################################
-
-
 if __name__ == "__main__":
-    #recursive_config = Config(flarp = "asdf {flarp}")
-    #print(recursive_config)
-
-    #x = expand("{flarp}", recursive_config)
-
-    #sys.exit(0)
-
-
     sys.exit(app.main())
