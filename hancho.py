@@ -265,7 +265,7 @@ class Config:
         return self.__class__(base=self, **kwargs)
 
     def __call__(self, **kwargs):
-        return Task(self, **kwargs)
+        return Task(rule=self, **kwargs)
 
 
 ####################################################################################################
@@ -425,7 +425,7 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
     # pylint: disable=super-init-not-called
 
-    def __init__(self, rule=None, **kwargs):
+    def __init__(self, *, rule, **kwargs):
         app.tasks_total += 1
 
         self.desc = None

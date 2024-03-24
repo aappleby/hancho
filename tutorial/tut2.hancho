@@ -21,6 +21,6 @@ link = config.extend(
   command = "g++ {join(source_dir, source_files)} -o {join(build_dir, build_files)}",
 )
 
-main_o = compile(source_files = "main.cpp")
+main_o = Task(rule = compile, source_files = "main.cpp")
 util_o = compile(source_files = "util.cpp")
 link(source_files = [main_o, util_o], build_files = "app")
