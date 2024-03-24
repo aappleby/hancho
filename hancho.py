@@ -213,7 +213,7 @@ class Chdir:
 
 
 class Config:
-    """Config is an immutable 'bag of fields' that behaves sort of like a Javascript object."""
+    """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
     def __init__(self, **kwargs):
         self.__dict__["_base"] = kwargs.pop("base", None)
@@ -264,8 +264,18 @@ class Config:
         """Returns a 'subclass' of this config blob that can override its fields."""
         return self.__class__(base=self, **kwargs)
 
-    def __call__(self, **kwargs):
-        return Task(rule=self, **kwargs)
+    def rule(self, **kwargs):
+        """Returns a 'subclass' of this config blob that can override its fields."""
+        return Rule(base=self, **kwargs)
+
+
+class Rule(Config):
+    """Rules are callable Configs that create a Task when called."""
+
+    def __call__(self, source_files=None, build_files=None, **kwargs):
+        return Task(
+            rule=self, source_files=source_files, build_files=build_files, **kwargs
+        )
 
 
 ####################################################################################################
@@ -410,14 +420,6 @@ class Expander:
 ####################################################################################################
 
 
-class Rule(Config):
-    """Rules are callable Configs that create a Task when called."""
-    pass
-
-
-####################################################################################################
-
-
 class Task:
     """Calling a Rule creates a Task."""
 
@@ -425,7 +427,7 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
     # pylint: disable=super-init-not-called
 
-    def __init__(self, *, rule, **kwargs):
+    def __init__(self, *,  rule=None, **kwargs):
         app.tasks_total += 1
 
         self.desc = None
@@ -640,7 +642,7 @@ class Task:
                 abs_depfile = self.build_path / file
                 check_path(abs_depfile)
                 if abs_depfile.exists():
-                    #if self.rule.debug:
+                    # if self.rule.debug:
                     #    log(f"Found depfile {abs_depfile}")
                     log(f"!!!! Found depfile {abs_depfile}")
                     with open(abs_depfile, encoding="utf-8") as depfile:
