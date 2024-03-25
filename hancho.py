@@ -665,6 +665,12 @@ class App:
             debug=False,
             force=False,
 
+            # Rule defaults
+            desc = "{source_files} -> {build_files}",
+            job_count=1,
+            depformat="gcc",
+            ext_build=False,
+
             # Helper functions
             abspath=abspath,
             relpath=relpath,
@@ -683,12 +689,6 @@ class App:
             rel_source_files  = "{relpath(abs_source_files, command_path)}",
             rel_build_files   = "{relpath(abs_build_files, command_path)}",
             rel_command_files = "{relpath(abs_command_files, command_path)}",
-
-            # Rule defaults
-            desc = "{source_files} -> {build_files}",
-            job_count=1,
-            depformat="gcc",
-            ext_build=False,
 
             # Global config has no base.
             base=None,
@@ -758,7 +758,7 @@ class App:
             await asyncio.wait(pending_tasks)
 
         # Done, print status info if needed
-        if global_config.debug or global_config.verbose:
+        if global_config.debug:
             log(f"tasks total:     {self.tasks_total}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
@@ -777,9 +777,6 @@ class App:
 
     def load_module(self, mod_filename, build_config=None, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
-
-        print(f"mod_filename {mod_filename}")
-        print(f"build_config {build_config}")
 
         mod_path = abspath(mod_filename)
         if not mod_path.exists():
