@@ -4,11 +4,7 @@ import glob
 
 this_path = Path(__file__).parent
 
-build_config.set_defaults(
-  command_path = this_path,
-  source_path  = this_path,
-  build_path   = this_path / "build",
-)
+build_config.source_path = this_path
 
 rules = load("../rules.hancho", build_config)
 

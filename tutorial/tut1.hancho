@@ -2,16 +2,16 @@
 from hancho import *
 
 compile = Rule(
-  desc         = "Compile {source_files} -> {build_files}",
-  command      = "g++ -c {source_files} -o {build_files}",
+  desc         = "Compile {rel_source_files} -> {rel_build_files}",
+  command      = "g++ -c {rel_source_files} -o {rel_build_files}",
   command_path = Path.cwd(),
   source_path  = Path.cwd(),
   build_path   = Path.cwd(),
 )
 
 link = Rule(
-  desc         = "Link {source_files} -> {build_files}",
-  command      = "g++ {source_files} -o {build_files}",
+  desc         = "Link {rel_source_files} -> {rel_build_files}",
+  command      = "g++ {rel_source_files} -o {rel_build_files}",
   command_path = Path.cwd(),
   source_path  = Path.cwd(),
   build_path   = Path.cwd(),

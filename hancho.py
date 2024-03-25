@@ -77,14 +77,14 @@ def relpath(path1, path2):
     return Path(str(path1).removeprefix(str(path2) + "/"))
 
 
-def join(*args):
+def joinpath(*args):
     """Produces all possible concatenated paths from the given paths (or arrays of paths)."""
     if len(args) > 2:
-        return join(args[0], join(*args[1:]))
+        return joinpath(args[0], joinpath(*args[1:]))
     if isinstance(args[0], list):
-        return [join(a, args[1]) for a in args[0]]
+        return [joinpath(a, args[1]) for a in args[0]]
     if isinstance(args[1], list):
-        return [join(args[0], a) for a in args[1]]
+        return [joinpath(args[0], a) for a in args[1]]
     return Path(args[0]) / Path(args[1])
 
 
@@ -653,11 +653,10 @@ class App:
         # fmt: off
         self.global_config = Config(
             name="<Global Config>",
+
+            # Config flags
             start_path=Path.cwd(),
             start_files="build.hancho",
-            desc = "{source_files} -> {build_files}",
-            job_count=1,
-            depformat="gcc",
             chdir=".",
             jobs=os.cpu_count(),
             verbose=False,
@@ -665,22 +664,33 @@ class App:
             dry_run=False,
             debug=False,
             force=False,
-            ext_build=False,
+
+            # Helper functions
             abspath=abspath,
             relpath=relpath,
+            joinpath=joinpath,
             color=color,
             glob=glob,
             len=len,
             Path=Path,
             run_cmd=run_cmd,
             swap_ext=swap_ext,
-            join=join,
-            abs_source_files  = "{join(source_path, source_files)}",
-            abs_build_files   = "{join(build_path, build_files)}",
-            abs_command_files = "{join(command_path, command_files)}",
+
+            # Helper macros
+            abs_source_files  = "{joinpath(source_path, source_files)}",
+            abs_build_files   = "{joinpath(build_path, build_files)}",
+            abs_command_files = "{joinpath(command_path, command_files)}",
             rel_source_files  = "{relpath(abs_source_files, command_path)}",
             rel_build_files   = "{relpath(abs_build_files, command_path)}",
             rel_command_files = "{relpath(abs_command_files, command_path)}",
+
+            # Rule defaults
+            desc = "{source_files} -> {build_files}",
+            job_count=1,
+            depformat="gcc",
+            ext_build=False,
+
+            # Global config has no base.
             base=None,
         )
         # fmt: on

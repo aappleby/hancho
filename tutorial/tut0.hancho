@@ -3,7 +3,7 @@ from hancho import *
 import os
 
 Task(
-  command      = "g++ {source_files} -o {build_files}",
+  command      = "g++ {rel_source_files} -o {rel_build_files}",
   command_path = Path.cwd(),
 
   source_files = ["src/main.cpp", "src/util.cpp"],
