@@ -1,6 +1,5 @@
 # tutorial/tut0.hancho
 from hancho import *
-import os
 
 Task(
   command      = "g++ {source_files} -o {build_files}",

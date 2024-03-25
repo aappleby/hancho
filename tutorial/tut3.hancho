@@ -1,13 +1,12 @@
 from hancho import *
 
-this_path = Path(__file__).parent
-
-rules = load(
-  hancho_file  = "rules.hancho",
-  command_path = this_path,
-  source_path  = this_path / "src",
-  build_path   = this_path / "build/tut3",
+build_config.set_defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd() / "src",
+  build_path   = Path.cwd() / "build/tut3",
 )
+
+rules = load("rules.hancho", build_config)
 
 app = rules.c_binary(
   source_files = ["main.cpp", "util.cpp"],
