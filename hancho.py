@@ -71,7 +71,7 @@ def relpath(path1, path2):
     """We don't want to generate paths with '..' in them, so we just try and remove the prefix.
     If we can't remove the prefix we'll still have an absolute path."""
     if isinstance(path1, list):
-        return [relpath(p, prefix) for p in path1]
+        return [relpath(p, path2) for p in path1]
     if str(path1) == str(path2):
         return Path("")
     return Path(str(path1).removeprefix(str(path2) + "/"))
@@ -163,9 +163,9 @@ async def await_variant(variant):
     return variant
 
 
-def load(hancho_file=None, **kwargs):
+def load(hancho_file=None, build_config=None, **kwargs):
     """Module loader entry point for .hancho files."""
-    return app.load_module(hancho_file, kwargs)
+    return app.load_module(hancho_file, build_config, kwargs)
 
 
 class Chdir:
@@ -675,6 +675,12 @@ class App:
             run_cmd=run_cmd,
             swap_ext=swap_ext,
             join=join,
+            abs_source_files  = "{join(source_path, source_files)}",
+            abs_build_files   = "{join(build_path, build_files)}",
+            abs_command_files = "{join(command_path, command_files)}",
+            rel_source_files  = "{relpath(abs_source_files, command_path)}",
+            rel_build_files   = "{relpath(abs_build_files, command_path)}",
+            rel_command_files = "{relpath(abs_command_files, command_path)}",
             base=None,
         )
         # fmt: on
@@ -732,7 +738,7 @@ class App:
             abs_file = global_config.start_path / file
             if not abs_file.exists():
                 raise FileNotFoundError(f"Could not find {abs_file}")
-            self.load_module(abs_file)
+            self.load_module(abs_file, None)
 
         # Root module(s) loaded. Run all tasks in the queue until we run out.
         while True:
@@ -759,8 +765,11 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, mod_filename, kwargs={}):
+    def load_module(self, mod_filename, build_config=None, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
+
+        print(f"mod_filename {mod_filename}")
+        print(f"build_config {build_config}")
 
         mod_path = abspath(mod_filename)
         if not mod_path.exists():
@@ -780,7 +789,10 @@ class App:
         module = type(sys)(mod_path.stem)
         module.__file__ = mod_path
         module.__builtins__ = builtins
-        module.build_config = Config(**kwargs)
+        if build_config is not None:
+            module.build_config = build_config.extend(**kwargs)
+        else:
+            module.build_config = Config(**kwargs)
         self.hancho_mods[module_key] = module
 
         # We must chdir()s into the .hancho file directory before running it so that

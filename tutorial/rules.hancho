@@ -1,23 +1,17 @@
 # tutorial/rules.hancho
 from hancho import *
-
-build_config.set_defaults(
-  source_dir       = "{relpath(source_path, command_path)}",
-  build_dir        = "{relpath(build_path, command_path)}",
-  source_dir_files = "{join(source_dir, source_files)}",
-  build_dir_files  = "{join(build_dir, build_files)}",
-)
+import os
 
 compile = build_config.rule(
-  desc         = "Compile {source_dir_files} -> {build_dir_files}",
-  command      = "g++ -MMD -c {source_dir_files} -o {build_dir_files}",
-  build_files  = "{swap_ext(source_dir_files, '.o')}",
-  build_deps   = "{swap_ext(source_dir_files, '.d')}",
+  desc         = "Compile {rel_source_files} -> {rel_build_files}",
+  command      = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
+  build_files  = "{swap_ext(rel_source_files, '.o')}",
+  build_deps   = "{swap_ext(rel_source_files, '.d')}",
 )
 
 link = build_config.rule(
-  desc    = "Link {source_dir_files} -> {build_dir_files}",
-  command = "g++ {source_dir_files} -o {build_dir_files}",
+  desc    = "Link {rel_source_files} -> {rel_build_files}",
+  command = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
 def c_binary(source_files, build_files, **kwargs):

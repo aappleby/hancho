@@ -1,11 +1,15 @@
 # tutorial/src/src.hancho
 from hancho import *
 import glob
-import os
 
-rules = load("../rules.hancho")
+this_path = Path(__file__).parent
 
-if os.name == 'nt':
-  rules.c_binary(glob.glob("*.cpp"), "app.exe")
-else:
-  rules.c_binary(glob.glob("*.cpp"), "app")
+build_config.set_defaults(
+  command_path = this_path,
+  source_path  = this_path,
+  build_path   = this_path / "build",
+)
+
+rules = load("../rules.hancho", build_config)
+
+rules.c_binary(glob.glob("*.cpp"), "app")
