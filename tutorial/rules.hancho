@@ -1,7 +1,7 @@
 # tutorial/rules.hancho
 from hancho import *
 
-build_config.set(
+build_config.set_defaults(
   source_dir       = "{trim(source_path, command_path)}",
   build_dir        = "{trim(build_path, command_path)}",
   source_dir_files = "{join(source_dir, source_files)}",
