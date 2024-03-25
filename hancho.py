@@ -1,17 +1,6 @@
 #!/usr/bin/python3
-# pylint: disable=too-many-lines
 
-"""
-Hancho is a simple, pleasant build system.
-
-Hancho v0.0.5, 19-03-2024
-
-- Special dir-related fields are now start_path, root_dir, leaf_dir, work_dir, and build_dir
-- Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho)
-- Each Hancho module now gets its own 'config' object extended from its parent module (or
-  global_config). This prevents submodules from accidentally changing global fields that their
-  parent modules use while still allowing sharing of configuration across files.
-"""
+"""Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
 
 import argparse
 import asyncio
@@ -27,24 +16,21 @@ import traceback
 import types
 from pathlib import Path
 from glob import glob
-from collections import UserDict
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
 # that build.hancho and descendants don't try to load a second copy of Hancho.
 sys.modules["hancho"] = sys.modules[__name__]
 
-# The maximum number of recursion levels we will do to expand a template
+# The maximum number of recursion levels we will do to expand a macro.
 # Tests currently require MAX_EXPAND_DEPTH >= 6
-MAX_EXPAND_DEPTH = 100
+MAX_EXPAND_DEPTH = 20
 
-# Matches {} delimited regions inside a template string.
-template_regex = re.compile("{[^}]*}")
-
-# Matches "{expression}"
+# Matches "{expression}" macros
 macro_regex = re.compile("^{[^}]*}$")
 
-####################################################################################################
+# Matches macros inside a template string.
+template_regex = re.compile("{[^}]*}")
 
 
 def log(message, *args, sameline=False, **kwargs):
@@ -56,28 +42,22 @@ def log(message, *args, sameline=False, **kwargs):
         sameline = False
 
     output = io.StringIO()
-    if sameline:
-        kwargs["end"] = ""
     print(message, *args, file=output, **kwargs)
     output = output.getvalue()
-
-    if not sameline and app.line_dirty:
-        sys.stdout.write("\n")
-        app.line_dirty = False
 
     if not output:
         return
 
     if sameline:
-        sys.stdout.write("\r")
         output = output[: os.get_terminal_size().columns - 1]
-        sys.stdout.write(output)
-        sys.stdout.write("\x1B[K")
+        sys.stdout.write("\r" + output + "\x1B[K")
     else:
+        if app.line_dirty:
+            sys.stdout.write("\n")
         sys.stdout.write(output)
 
+    app.line_dirty = sameline
     sys.stdout.flush()
-    app.line_dirty = output[-1] != "\n"
 
 
 def abspath(path):
@@ -125,8 +105,6 @@ def run_cmd(cmd):
 
 def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
-    if name is None:
-        return None
     if isinstance(name, list):
         return [swap_ext(n, new_ext) for n in name]
     return Path(name).with_suffix(new_ext)
@@ -280,7 +258,6 @@ class Rule(Config):
         )
 
 
-####################################################################################################
 # Expander requires some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings, templates, callbacks,
@@ -296,8 +273,8 @@ class Rule(Config):
 # lead to confusing callstacks, but that should handle every possible case of stuff inside other
 # stuff.
 #
-# The 'depth' checks are to prevent recursive runaway - 100 is an arbitrary limit but it should
-# suffice.
+# The 'depth' checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
+# should suffice.
 
 
 class Expander:
@@ -381,44 +358,16 @@ class Task:
 
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
-    # pylint: disable=super-init-not-called
 
     def __init__(self, *, rule=None, **kwargs):
         app.tasks_total += 1
-
-        self.desc = None
-        self.reason = None
-        self.task_index = None
-
-        self.command = None
-        self.command_files = None
-        self.command_path = None
-        self.command_stdout = None
-        self.command_stderr = None
-
-        self.source_files = None
-        self.source_path = None
-
-        self.build_files = None
-        self.build_deps = None
-        self.build_path = None
-
-        self.abs_command_files = None
-        self.abs_source_files = None
-        self.abs_build_files = None
-        self.abs_build_deps = None
-
         if rule is None:
             self.rule = Rule(**kwargs)
         elif len(kwargs):
             self.rule = rule.extend(**kwargs)
         else:
             self.rule = rule
-
-        self.promise = None
-
-        coroutine = self.run_async()
-        self.promise = asyncio.create_task(coroutine)
+        self.promise = asyncio.create_task(self.run_async())
 
     def __repr__(self):
         class Encoder(json.JSONEncoder):
@@ -434,9 +383,7 @@ class Task:
         return "task: " + base + ",\nrule: " + config
 
     async def run_async(self):
-        """Entry point for async task stuff, handles exceptions generated
-        during task execution."""
-
+        """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
             await await_variant(self.rule)
@@ -454,8 +401,7 @@ class Task:
 
             return result
 
-        # If this task failed, we print the error and propagate a cancellation
-        # to downstream tasks.
+        # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except Exception:  # pylint: disable=broad-except
             if not self.rule.quiet:
                 log(color(255, 128, 128))
@@ -464,8 +410,8 @@ class Task:
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
-        # If any of this tasks's dependencies were cancelled, we propagate the
-        # cancellation to downstream tasks.
+        # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
+        # downstream tasks.
         except asyncio.CancelledError as cancel:
             app.tasks_cancel += 1
             return cancel
@@ -474,7 +420,6 @@ class Task:
             if self.rule.debug:
                 log("")
 
-    # pylint: disable=too-many-branches
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
@@ -535,24 +480,25 @@ class Task:
         if not self.abs_build_files:
             return "Always rebuild a target with no outputs"
 
-        # Tasks with missing outputs always run.
+        # Check if any of our output files are missing.
         for abs_file in self.abs_build_files:
             if not abs_file.exists():
-                return f"Rebuilding {abs_file} because it's missing"
+                return f"Rebuilding because {abs_file} is missing"
 
-        # Check if any task inputs are newer than any outputs.
+        # Check if any of our input files are newer than the output files.
         min_out = min(mtime(f) for f in self.abs_build_files)
-        if max(mtime(f) for f in self.abs_source_files) >= min_out:
-            return f"Rebuilding {self.abs_build_files} because an input has changed"
 
-        # Check if the hancho file(s) that generated the task have changed.
-        if max(mtime(f.__file__) for f in app.hancho_mods.values()) >= min_out:
-            return f"Rebuilding {self.abs_build_files} because its .hancho files have changed"
+        for abs_file in self.abs_source_files:
+            if mtime(abs_file) >= min_out:
+                return f"Rebuilding because {abs_file} has changed"
 
-        # Check if any files the command needs have changed.
-        if self.abs_command_files:
-            if max(mtime(f) for f in self.abs_command_files) >= min_out:
-                return f"Rebuilding {self.abs_build_files} because a dependency has changed"
+        for abs_file in self.abs_command_files:
+            if mtime(abs_file) >= min_out:
+                return f"Rebuilding because {abs_file} has changed"
+
+        for mod in app.hancho_mods.values():
+            if mtime(mod.__file__) >= min_out:
+                return f"Rebuilding because {mod.__file__} has changed"
 
         # Check all dependencies in the depfile, if present.
         for abs_depfile in self.abs_build_deps:
@@ -574,8 +520,9 @@ class Task:
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [self.command_path / d for d in deplines]
-                if deplines and max(mtime(f) for f in deplines) >= min_out:
-                    return f"Rebuilding {self.abs_build_files} because a depfile has changed"
+                for abs_file in deplines:
+                    if mtime(abs_file) >= min_out:
+                        return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
         if self.rule.debug:
@@ -591,11 +538,11 @@ class Task:
             # Wait for enough jobs to free up to run this task.
             await app.acquire_jobs(self.rule.job_count)
 
-            # Deps fulfilled and jobs acquired, we are now runnable so grab a task index.
+            # Jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
             self.task_index = app.task_counter
 
-            # Print the "[1/N] Foo foo.foo foo.o" status line and debug information
+            # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
                 f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
                 sameline=not self.rule.verbose,
@@ -611,18 +558,17 @@ class Task:
             for command in self.command:
                 if self.rule.verbose or self.rule.debug:
                     command_path = relpath(self.command_path, self.rule.start_path)
-                    log(f"{color(128,128,255)}{command_path}$ {color()}")
-                    log("(DRY RUN) " if self.rule.dry_run else "")
+                    log(f"{color(128,128,255)}{command_path}$ {color()}", end="")
+                    log("(DRY RUN) " if self.rule.dry_run else "", end="")
                     log(command)
                 result = await self.run_command(command)
         finally:
             await app.release_jobs(self.rule.job_count)
 
         # After the build, the deps files should exist if specified.
-        if not self.rule.dry_run:
-            for file in self.abs_build_deps:
-                if not file.exists():
-                    raise NameError(f"Dep file wasn't created {file}")
+        for abs_file in self.abs_build_deps:
+            if not abs_file.exists() and not self.rule.dry_run:
+                raise NameError(f"Dep file {abs_file} wasn't created")
 
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
@@ -671,9 +617,9 @@ class Task:
         # Print command output if needed
         if not self.rule.quiet and (self.stdout or self.stderr):
             if self.stderr:
-                log(self.stderr, end="")
+                log(f"stderr: {self.stderr}", end="")
             if self.stdout:
-                log(self.stdout, end="")
+                log(f"stdout: {self.stdout}", end="")
 
         # Task complete, check the task return code
         if self.returncode:
@@ -683,9 +629,6 @@ class Task:
 
         # Task passed, return the output file list
         return self.abs_build_files
-
-
-####################################################################################################
 
 
 class App:
@@ -706,6 +649,35 @@ class App:
         self.line_dirty = False
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
+        # The global config object. All fields here can be used in any template.
+        # fmt: off
+        self.global_config = Config(
+            name="<Global Config>",
+            start_path=Path.cwd(),
+            start_files="build.hancho",
+            desc = "{source_files} -> {build_files}",
+            job_count=1,
+            depformat="gcc",
+            chdir=".",
+            jobs=os.cpu_count(),
+            verbose=False,
+            quiet=False,
+            dry_run=False,
+            debug=False,
+            force=False,
+            ext_build=False,
+            abspath=abspath,
+            relpath=relpath,
+            color=color,
+            glob=glob,
+            len=len,
+            Path=Path,
+            run_cmd=run_cmd,
+            swap_ext=swap_ext,
+            join=join,
+            base=None,
+        )
+        # fmt: on
 
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
@@ -728,20 +700,18 @@ class App:
 
         # Merge all known command line flags into our global config object.
         # pylint: disable=global-statement
-        global global_config
         # pylint: disable=attribute-defined-outside-init
         for key, val in flags.__dict__.items():
-            global_config.set(key, val)
+            self.global_config.set(key, val)
 
         # Unrecognized command line parameters also become global config fields if
         # they are flag-like
         for span in unrecognized:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-                global_config[match.group(1)] = (
-                    maybe_as_number(match.group(2))
-                    if match.group(2) is not None
-                    else True
-                )
+                key = match.group(1)
+                val = match.group(2)
+                val = maybe_as_number(val) if val is not None else True
+                global_config.set(key, val)
 
         # Change directory if needed and kick off the build.
         with Chdir(global_config.chdir):
@@ -759,10 +729,10 @@ class App:
 
         # Load the root .hancho files.
         for file in global_config.start_files:
-            file = global_config.start_path / file
-            if not file.exists():
-                raise FileNotFoundError(f"Could not find {file}")
-            self.load_module(file)
+            abs_file = global_config.start_path / file
+            if not abs_file.exists():
+                raise FileNotFoundError(f"Could not find {abs_file}")
+            self.load_module(abs_file)
 
         # Root module(s) loaded. Run all tasks in the queue until we run out.
         while True:
@@ -796,9 +766,10 @@ class App:
         if not mod_path.exists():
             raise FileNotFoundError(f"Could not load module {file}")
 
+        # We dedupe module loads based on the physical path to the .hancho file and the contents
+        # of the arguments passed to it.
         phys_path = Path(mod_path).resolve()
         module_key = f"{phys_path} : params {sorted(kwargs.items())}"
-        # print(f"Module key {module_key}")
         if module_key in self.hancho_mods:
             return self.hancho_mods[module_key]
 
@@ -809,9 +780,7 @@ class App:
         module = type(sys)(mod_path.stem)
         module.__file__ = mod_path
         module.__builtins__ = builtins
-        module.build_params = kwargs
         module.build_config = Config(**kwargs)
-
         self.hancho_mods[module_key] = module
 
         # We must chdir()s into the .hancho file directory before running it so that
@@ -828,9 +797,7 @@ class App:
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
         if count > global_config.jobs:
-            raise ValueError(
-                f"Tried to acquire {count} jobs, but we only have {global_config.jobs} in the pool."
-            )
+            raise ValueError(f"Nedd {count} jobs, but pool is {global_config.jobs}.")
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
@@ -840,62 +807,18 @@ class App:
     async def release_jobs(self, count):
         """Returns 'count' jobs back to the job pool."""
 
-        await self.jobs_lock.acquire()
-        self.jobs_available += count
-
         # NOTE: The notify_all here is required because we don't know in advance which tasks will
         # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
         # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
         # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
         # rest will go back to sleep again, this will repeat for every call to release_jobs().
+        await self.jobs_lock.acquire()
+        self.jobs_available += count
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
 
 
-####################################################################################################
-# The global config object. All fields here can be used in any template.
-
-
-# fmt: off
-global_config = Config(
-    name="<Global Config>",
-    start_path=Path.cwd(),
-    start_files="build.hancho",
-
-    desc          = "{source_files} -> {build_files}",
-
-
-
-    job_count=1,
-    depformat="gcc",
-    chdir=".",
-    jobs=os.cpu_count(),
-
-    verbose=False,
-    quiet=False,
-    dry_run=False,
-    debug=False,
-    force=False,
-    ext_build=False,
-
-    abspath=abspath,
-    relpath=relpath,
-    color=color,
-    glob=glob,
-    len=len,
-    Path=Path,
-    run_cmd=run_cmd,
-    swap_ext=swap_ext,
-    join=join,
-
-    base=None,
-)
-# fmt: on
-
-####################################################################################################
-
-
-app = App()
-
 if __name__ == "__main__":
+    app = App()
+    global_config = app.global_config
     sys.exit(app.main())
