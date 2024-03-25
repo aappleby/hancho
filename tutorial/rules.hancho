@@ -2,8 +2,8 @@
 from hancho import *
 
 build_config.set_defaults(
-  source_dir       = "{trim(source_path, command_path)}",
-  build_dir        = "{trim(build_path, command_path)}",
+  source_dir       = "{relpath(source_path, command_path)}",
+  build_dir        = "{relpath(build_path, command_path)}",
   source_dir_files = "{join(source_dir, source_files)}",
   build_dir_files  = "{join(build_dir, build_files)}",
 )

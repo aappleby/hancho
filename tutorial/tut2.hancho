@@ -12,13 +12,13 @@ compile = config.rule(
   command      = "g++ -MMD -c {source_files} -o {join(build_dir, build_files)}",
   build_files  = "{swap_ext(source_files, '.o')}",
   build_deps   = "{swap_ext(source_files, '.d')}",
-  build_dir    = "{trim(build_path, command_path)}",
+  build_dir    = "{relpath(build_path, command_path)}",
 )
 
 link = config.rule(
   desc    = "Link {source_files} -> {build_files}",
   command = "g++ {source_files} -o {join(build_dir,build_files)}",
-  build_dir    = "{trim(build_path, command_path)}",
+  build_dir    = "{relpath(build_path, command_path)}",
 )
 
 main_o = compile("src/main.cpp")

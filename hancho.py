@@ -82,13 +82,30 @@ def log(message, *args, sameline=False, **kwargs):
 
 def abspath(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
+    if isinstance(path, list):
+        return [abspath(p) for p in path]
     return Path(os.path.abspath(path))
 
 
 def relpath(path1, path2):
     """We don't want to generate paths with '..' in them, so we just try and remove the prefix.
-    If we can't remove the prefix we'll still have an absolute path, which also works."""
+    If we can't remove the prefix we'll still have an absolute path."""
+    if isinstance(path1, list):
+        return [relpath(p, prefix) for p in path1]
+    if str(path1) == str(path2):
+        return Path("")
     return Path(str(path1).removeprefix(str(path2) + "/"))
+
+
+def join(*args):
+    """Produces all possible concatenated paths from the given paths (or arrays of paths)."""
+    if len(args) > 2:
+        return join(args[0], join(*args[1:]))
+    if isinstance(args[0], list):
+        return [join(a, args[1]) for a in args[0]]
+    if isinstance(args[1], list):
+        return [join(args[0], a) for a in args[1]]
+    return Path(args[0]) / Path(args[1])
 
 
 def color(red=None, green=None, blue=None):
@@ -150,11 +167,9 @@ def check_path(path, *, exists=False):
 
 async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
-
     match variant:
         case Task():
-            # We don't iterate through subtasks because they should await themselves except for
-            # their own promise.
+            # We don't recurse through subtasks because they should await themselves.
             if inspect.isawaitable(variant.promise):
                 variant.promise = await variant.promise
         case Config():
@@ -173,28 +188,6 @@ async def await_variant(variant):
 def load(hancho_file=None, **kwargs):
     """Module loader entry point for .hancho files."""
     return app.load_module(hancho_file, kwargs)
-
-
-def join(*args):
-    if len(args) > 2:
-        return join(args[0], join(*args[1:]))
-    if isinstance(args[0], list):
-        return [join(a, args[1]) for a in args[0]]
-    if isinstance(args[1], list):
-        return [join(args[0], a) for a in args[1]]
-    return Path(args[0]) / Path(args[1])
-
-
-def trim(path, prefix):
-    if isinstance(path, list):
-        return [trim(p, prefix) for p in path]
-    path = str(path)
-    prefix = str(prefix)
-    if path == prefix:
-        return Path("")
-    result = path.removeprefix(prefix + "/")
-    result = Path(result)
-    return result
 
 
 class Chdir:
@@ -237,10 +230,12 @@ class Config:
     def __repr__(self):
         class Encoder(json.JSONEncoder):
             """Types the encoder doesn't understand just get stringified."""
+
             def default(self, o):
                 if isinstance(o, Task):
                     return f"task {Expander(o.rule).desc}"
                 return str(o)
+
         base = self.__dict__["_base"]
         data = self.__dict__["_data"]
         result1 = json.dumps(data, indent=2, cls=Encoder)
@@ -337,10 +332,12 @@ class Expander:
             case _ if inspect.isfunction(variant):
                 return variant
             case _:
-                raise ValueError(f"Don't know how to expand {type(variant)}='{variant}'")
+                raise ValueError(
+                    f"Don't know how to expand {type(variant)}='{variant}'"
+                )
 
     def flatten(self, variant):
-        """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
+        """Turns 'variant' into a flat array of expanded variants."""
         match variant:
             case Task():
                 return self.flatten(variant.promise)
@@ -355,15 +352,12 @@ class Expander:
         result = ""
         while span := template_regex.search(template):
             result += template[0 : span.start()]
-            exp = template[span.start() : span.end()]
             try:
-                variant = self.eval_macro(exp)
-                if isinstance(variant, list):
-                    result += " ".join([str(s) for s in self.flatten(variant)])
-                else:
-                    result += str(variant)
+                macro = template[span.start() : span.end()]
+                variant = self.eval_macro(macro)
+                result += " ".join([str(s) for s in self.flatten(variant)])
             except BaseException as exc:
-                log(color(255,255,0))
+                log(color(255, 255, 0))
                 log(f"Expanding template '{old_template}' failed!")
                 log(color())
                 raise exc
@@ -373,20 +367,14 @@ class Expander:
 
     def eval_macro(self, macro):
         """Evaluates the contents of a "{macro}" string."""
-        # pylint: disable=eval-used
         if self.depth > MAX_EXPAND_DEPTH:
             raise ValueError(f"Expanding '{template}' failed to terminate")
         self.depth += 1
-        result = self.expand(eval(macro[1:-1], {}, self))
+        # pylint: disable=eval-used
+        result = eval(macro[1:-1], {}, self)
         self.depth -= 1
         return result
 
-
-
-####################################################################################################
-
-
-Optional = object()
 
 class Task:
     """Calling a Rule creates a Task."""
@@ -403,7 +391,7 @@ class Task:
         self.task_index = None
 
         self.command = None
-        self.command_files = []
+        self.command_files = None
         self.command_path = None
         self.command_stdout = None
         self.command_stderr = None
@@ -412,7 +400,7 @@ class Task:
         self.source_path = None
 
         self.build_files = None
-        self.build_deps = []
+        self.build_deps = None
         self.build_path = None
 
         self.abs_command_files = None
@@ -449,11 +437,9 @@ class Task:
         """Entry point for async task stuff, handles exceptions generated
         during task execution."""
 
-        rule = self.rule
-
         try:
             # Await everything awaitable in this task's rule.
-            await await_variant(rule)
+            await await_variant(self.rule)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -494,54 +480,50 @@ class Task:
 
         # Expand everything
         expander = Expander(self.rule)
-
         self.desc = expander.expand(self.rule.desc)
-
         self.command = expander.flatten(self.rule.command)
-        self.command_files = expander.flatten(self.rule.get('command_files', []))
+        self.command_files = expander.flatten(self.rule.get("command_files", []))
         self.command_path = expander.expand(self.rule.command_path)
-
         self.source_files = expander.flatten(self.rule.source_files)
         self.source_path = expander.expand(self.rule.source_path)
-
         self.build_files = expander.flatten(self.rule.build_files)
-        self.build_deps = expander.flatten(self.rule.get('build_deps', []))
+        self.build_deps = expander.flatten(self.rule.get("build_deps", []))
         self.build_path = expander.expand(self.rule.build_path)
 
-        # 'build_path' may not exist yet and that's OK, we will create it.
+        # Sanity-check expanded paths. It's OK if 'build_path' doesn't exist yet.
         check_path(self.source_path, exists=True)
         check_path(self.command_path, exists=True)
         check_path(self.build_path, exists=False)
 
-        # Prepend directories to filenames and then normalize + absolute them.
-        # If they're already absolute, this does nothing.
+        # Prepend expanded absolute paths to expanded filenames. If the filenames are already
+        # absolute, this does nothing.
         self.abs_command_files = [self.command_path / f for f in self.command_files]
         self.abs_source_files = [self.source_path / f for f in self.source_files]
         self.abs_build_files = [self.build_path / f for f in self.build_files]
         self.abs_build_deps = [self.build_path / f for f in self.build_deps]
 
+        # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
         check_path(self.abs_source_files, exists=True)
         check_path(self.abs_build_files, exists=False)
+        check_path(self.abs_build_deps, exists=False)
 
         # Check for duplicate task outputs
-        for file in self.abs_build_files:
-            if file in app.all_build_files:
-                raise NameError(f"Multiple rules build {file}!")
-            app.all_build_files.add(file)
+        for abs_file in self.abs_build_files:
+            if abs_file in app.all_build_files:
+                raise NameError(f"Multiple rules build {abs_file}!")
+            app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
         if not self.rule.dry_run:
-            for build_file in self.abs_build_files:
-                # print(f"mkdir for {build_file}")
-                build_file.parent.mkdir(parents=True, exist_ok=True)
+            for abs_file in self.abs_build_files:
+                abs_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
         self.reason = self.needs_rerun(self.rule.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
-
         # Pylint really doesn't like this function, lol.
         # pylint: disable=too-many-return-statements
         # pylint: disable=too-many-branches
@@ -554,16 +536,13 @@ class Task:
             return "Always rebuild a target with no outputs"
 
         # Tasks with missing outputs always run.
-        for file_out in self.abs_build_files:
-            if not file_out.exists():
-                return f"Rebuilding {self.abs_build_files} because some are missing"
+        for abs_file in self.abs_build_files:
+            if not abs_file.exists():
+                return f"Rebuilding {abs_file} because it's missing"
 
         # Check if any task inputs are newer than any outputs.
         min_out = min(mtime(f) for f in self.abs_build_files)
-        if (
-            self.abs_source_files
-            and max(mtime(f) for f in self.abs_source_files) >= min_out
-        ):
+        if max(mtime(f) for f in self.abs_source_files) >= min_out:
             return f"Rebuilding {self.abs_build_files} because an input has changed"
 
         # Check if the hancho file(s) that generated the task have changed.
@@ -571,39 +550,32 @@ class Task:
             return f"Rebuilding {self.abs_build_files} because its .hancho files have changed"
 
         # Check if any files the command needs have changed.
-        if (
-            self.abs_command_files
-            and max(mtime(f) for f in self.abs_command_files) >= min_out
-        ):
-            return f"Rebuilding {self.abs_build_files} because a dependency has changed"
+        if self.abs_command_files:
+            if max(mtime(f) for f in self.abs_command_files) >= min_out:
+                return f"Rebuilding {self.abs_build_files} because a dependency has changed"
 
         # Check all dependencies in the depfile, if present.
-        if self.build_deps:
-            for file in self.abs_build_deps:
-                abs_depfile = file
-                check_path(abs_depfile)
-                if abs_depfile.exists():
-                    if self.rule.debug:
-                        log(f"Found depfile {abs_depfile}")
-                    with open(abs_depfile, encoding="utf-8") as depfile:
-                        deplines = None
-                        if self.rule.depformat == "msvc":
-                            # MSVC /sourceDependencies json depfile
-                            deplines = json.load(depfile)["Data"]["Includes"]
-                        elif self.rule.depformat == "gcc":
-                            # GCC .d depfile
-                            deplines = depfile.read().split()
-                            deplines = [d for d in deplines[1:] if d != "\\"]
-                        else:
-                            raise ValueError(f"Invalid depformat {self.rule.depformat}")
+        for abs_depfile in self.abs_build_deps:
+            if not abs_depfile.exists():
+                continue
+            if self.rule.debug:
+                log(f"Found depfile {abs_depfile}")
+            with open(abs_depfile, encoding="utf-8") as depfile:
+                deplines = None
+                if self.rule.depformat == "msvc":
+                    # MSVC /sourceDependencies json depfile
+                    deplines = json.load(depfile)["Data"]["Includes"]
+                elif self.rule.depformat == "gcc":
+                    # GCC .d depfile
+                    deplines = depfile.read().split()
+                    deplines = [d for d in deplines[1:] if d != "\\"]
+                else:
+                    raise ValueError(f"Invalid depformat {self.rule.depformat}")
 
-                        # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                        deplines = [self.command_path / d for d in deplines]
-                        if deplines and max(mtime(f) for f in deplines) >= min_out:
-                            return (
-                                f"Rebuilding {self.abs_build_files} because a dependency in "
-                                + f"{abs_depfile} has changed"
-                            )
+                # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
+                deplines = [self.command_path / d for d in deplines]
+                if deplines and max(mtime(f) for f in deplines) >= min_out:
+                    return f"Rebuilding {self.abs_build_files} because a depfile has changed"
 
         # All checks passed; we don't need to rebuild this output.
         if self.rule.debug:
@@ -629,13 +601,6 @@ class Task:
                 sameline=not self.rule.verbose,
             )
 
-            command_path = "."
-            if self.command_path != self.rule.start_path:
-                command_path = str(self.command_path).removeprefix(
-                    str(self.rule.start_path) + "/"
-                )
-            dry_run = "(DRY RUN) " if self.rule.dry_run else ""
-
             if self.rule.verbose or self.rule.debug:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
@@ -645,9 +610,10 @@ class Task:
             result = []
             for command in self.command:
                 if self.rule.verbose or self.rule.debug:
-                    log(
-                        f"{color(128,128,255)}{command_path}$ {color()}{dry_run}{command}"
-                    )
+                    command_path = relpath(self.command_path, self.rule.start_path)
+                    log(f"{color(128,128,255)}{command_path}$ {color()}")
+                    log("(DRY RUN) " if self.rule.dry_run else "")
+                    log(command)
                 result = await self.run_command(command)
         finally:
             await app.release_jobs(self.rule.job_count)
@@ -921,7 +887,6 @@ global_config = Config(
     run_cmd=run_cmd,
     swap_ext=swap_ext,
     join=join,
-    trim=trim,
 
     base=None,
 )
