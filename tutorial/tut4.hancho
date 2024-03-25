@@ -1,4 +1,4 @@
-# tutorial/tut3.hancho
+# tutorial/tut4.hancho
 from hancho import *
 
 build_config.set_defaults(

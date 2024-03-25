@@ -1,6 +1,5 @@
 # tutorial/rules.hancho
 from hancho import *
-import os
 
 compile = build_config.rule(
   desc         = "Compile {rel_source_files} -> {rel_build_files}",

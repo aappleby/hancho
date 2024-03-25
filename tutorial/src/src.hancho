@@ -1,9 +1,8 @@
 # tutorial/src/src.hancho
 from hancho import *
-import glob
 
 build_config.source_path = Path(__file__).parent
 
 rules = load("../rules.hancho", build_config)
 
-rules.c_binary(glob.glob("*.cpp"), "app")
+rules.c_binary(glob("*.cpp"), "app")
