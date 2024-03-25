@@ -41,7 +41,8 @@ MAX_EXPAND_DEPTH = 100
 # Matches {} delimited regions inside a template string.
 template_regex = re.compile("{[^}]*}")
 
-single_template_regex = re.compile("^{[^}]*}$")
+# Matches "{expression}"
+macro_regex = re.compile("^{[^}]*}$")
 
 ####################################################################################################
 
@@ -81,22 +82,13 @@ def log(message, *args, sameline=False, **kwargs):
 
 def abspath(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
-    if template_regex.search(str(path)):
-        raise ValueError("Abspath can't operate on templated strings")
-    # Hmm this acutally works now, am I forgetting a corner case?
-    # return Path(path).absolute()
     return Path(os.path.abspath(path))
 
 
 def relpath(path1, path2):
+    """We don't want to generate paths with '..' in them, so we just try and remove the prefix.
+    If we can't remove the prefix we'll still have an absolute path, which also works."""
     return Path(str(path1).removeprefix(str(path2) + "/"))
-    # """Pathlib's path.relative_to() refuses to generate "../bar", so we use os.path.relpath."""
-    # if template_regex.search(str(path1)) or template_regex.search(str(path2)):
-    #    raise ValueError("Relpath can't operate on templated strings")
-    ## This also works now, def need to check corner cases.
-    ## if path2 is None: return path1
-    ## return Path(path1).relative_to(path2)
-    # return Path(os.path.relpath(path1, path2))
 
 
 def color(red=None, green=None, blue=None):
@@ -318,115 +310,75 @@ class Expander:
 
     def __init__(self, config):
         assert isinstance(config, Config)
-        self.__dict__["config"] = config
-        self.__dict__["depth"] = 0
+        self.config = config
+        self.depth = 0
 
     def __getitem__(self, key):
         """Defining __getitem__ is required to use this expander as a mapping in eval()."""
-        val = self.__dict__["config"][key]
-        # FIXME need a match or something
-        if isinstance(val, list):
-            val = self.flatten(val)
-        if isinstance(val, str):
-            val = self.stringize(val)
-        if isinstance(val, Path):
-            val = Path(self.stringize(str(val)))
-        return val
+        return self.expand(self.config[key])
+
+    def expand(self, variant):
+        """Expands all templates anywhere inside 'variant'."""
+        match variant:
+            case BaseException():
+                raise variant
+            case Task():
+                return self.expand(variant.promise)
+            case Path():
+                return Path(self.expand(str(variant)))
+            case list():
+                return [self.expand(s) for s in variant]
+            case str() if macro_regex.search(variant):
+                return self.eval_macro(variant)
+            case str() if template_regex.search(variant):
+                return self.expand_template(variant)
+            case int() | bool() | float() | str():
+                return variant
+            case _ if inspect.isfunction(variant):
+                return variant
+            case _:
+                raise ValueError(f"Don't know how to expand {type(variant)}='{variant}'")
 
     def flatten(self, variant):
         """Turns 'variant' into a flat array of non-templated strings, paths, and callbacks."""
-        # pylint: disable=too-many-return-statements
-
         match variant:
-            case None:
-                return []
-            case asyncio.CancelledError():
-                raise variant
             case Task():
                 return self.flatten(variant.promise)
-            case Path():
-                return [Path(self.stringize(str(variant)))]
             case list():
-                result = []
-                for element in variant:
-                    result.extend(self.flatten(element))
-                return result
-            case _ if inspect.isfunction(variant):
-                return [variant]
+                return [x for element in variant for x in self.flatten(element)]
             case _:
-                return [self.stringize(variant)]
-
-    def stringize(self, variant):
-        """Turns 'variant' into a non-templated string."""
-        # pylint: disable=too-many-return-statements
-
-        match variant:
-            case None:
-                return ""
-            case asyncio.CancelledError():
-                raise variant
-            case Task():
-                return self.stringize(variant.promise)
-            case Path():
-                return self.stringize(str(variant))
-            case list():
-                variant = self.flatten(variant)
-                variant = [str(s) for s in variant if s is not None]
-                variant = " ".join(variant)
-                return variant
-            case str():
-                if template_regex.search(variant):
-                    # print(variant)
-                    return self.stringize(self.expand(variant))
-                return variant
-            case _:
-                return str(variant)
-
-    def expand(self, template):
-        """Expands all templates to produce a non-templated string."""
-
-        if self.depth > MAX_EXPAND_DEPTH:
-            raise ValueError(f"Expanding '{template}' failed to terminate")
-
-        if isinstance(template, Path):
-            return Path(self.expand(str(template)))
-
-        if isinstance(template, list):
-            return [self.expand(t) for t in template]
-
-        if not isinstance(template, str):
-            # print(template)
-            raise ValueError(f"Don't know how to expand {type(template)}")
-
-        if single_template_regex.search(template):
-            return self.expand(eval(template[1:-1], {}, self))
-
-        return self.expand_template(template)
+                return [self.expand(variant)]
 
     def expand_template(self, template):
+        """Replaces all macros in template with their stringified values."""
         old_template = template
-        self.depth += 1
         result = ""
-
         while span := template_regex.search(template):
             result += template[0 : span.start()]
             exp = template[span.start() : span.end()]
             try:
-                # pylint: disable=eval-used
-                code = exp[1:-1]
-                replacement = eval(exp[1:-1], {}, self)
-                result += self.stringize(replacement)
-            except Exception as exc:  # pylint: disable=broad-except
-                log(
-                    f"{color(255,255,0)}Expanding template '{old_template}' failed!{color()}"
-                )
+                variant = self.eval_macro(exp)
+                if isinstance(variant, list):
+                    result += " ".join([str(s) for s in self.flatten(variant)])
+                else:
+                    result += str(variant)
+            except BaseException as exc:
+                log(color(255,255,0))
+                log(f"Expanding template '{old_template}' failed!")
+                log(color())
                 raise exc
-
             template = template[span.end() :]
-
         result += template
-        self.depth -= 1
+        return result
 
+    def eval_macro(self, macro):
+        """Evaluates the contents of a "{macro}" string."""
+        # pylint: disable=eval-used
+        if self.depth > MAX_EXPAND_DEPTH:
+            raise ValueError(f"Expanding '{template}' failed to terminate")
+        self.depth += 1
+        result = self.expand(eval(macro[1:-1], {}, self))
+        self.depth -= 1
         return result
 
 
@@ -543,7 +495,7 @@ class Task:
         # Expand everything
         expander = Expander(self.rule)
 
-        self.desc = expander.stringize(self.rule.desc)
+        self.desc = expander.expand(self.rule.desc)
 
         self.command = expander.flatten(self.rule.command)
         self.command_files = expander.flatten(self.rule.get('command_files', []))
