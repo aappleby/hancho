@@ -17,6 +17,6 @@ link = Rule(
   build_path   = Path.cwd(),
 )
 
-main_o = compile(source_files = ["src/main.cpp"], build_files = ["build/tut1/src/main.o"])
-util_o = compile(source_files = ["src/util.cpp"], build_files = ["build/tut1/src/util.o"])
-link(source_files = [main_o, util_o], build_files = ["build/tut1/app"])
+main_o = compile("src/main.cpp", "build/tut1/src/main.o")
+util_o = compile("src/util.cpp", "build/tut1/src/util.o")
+link([main_o, util_o], "build/tut1/app")

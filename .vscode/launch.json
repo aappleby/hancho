@@ -10,7 +10,7 @@
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}/tutorial",
-      "args": ["-j1", "tut2.hancho"],
+      "args": ["-j1", "tut3.hancho"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },

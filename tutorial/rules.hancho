@@ -1,19 +1,25 @@
 # tutorial/rules.hancho
 from hancho import *
-import os
 
-compile = Rule(
-  desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -MMD -c {files_in} -o {files_out}",
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
+build_config.set(
+  source_dir       = "{trim(source_path, command_path)}",
+  build_dir        = "{trim(build_path, command_path)}",
+  source_dir_files = "{join(source_dir, source_files)}",
+  build_dir_files  = "{join(build_dir, build_files)}",
 )
 
-link = Rule(
-  desc      = "Link {files_in} -> {files_out}",
-  command   = "g++ {files_in} -o {files_out}",
+compile = build_config.rule(
+  desc         = "Compile {source_dir_files} -> {build_dir_files}",
+  command      = "g++ -MMD -c {source_dir_files} -o {build_dir_files}",
+  build_files  = "{swap_ext(source_dir_files, '.o')}",
+  build_deps   = "{swap_ext(source_dir_files, '.d')}",
 )
 
-def c_binary(files_in, files_out, **kwargs):
-  objs = [compile(file, **kwargs) for file in files_in]
-  return link(objs, files_out, **kwargs)
+link = build_config.rule(
+  desc    = "Link {source_dir_files} -> {build_dir_files}",
+  command = "g++ {source_dir_files} -o {build_dir_files}",
+)
+
+def c_binary(source_files, build_files, **kwargs):
+  objs = [compile(file, **kwargs) for file in source_files]
+  return link(objs, build_files, **kwargs)

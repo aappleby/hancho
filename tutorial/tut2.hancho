@@ -2,27 +2,25 @@
 from hancho import *
 
 config = global_config.extend(
-  source_dir   = "src",
-  build_dir    = "build/tut2",
   command_path = Path.cwd(),
-  source_path  = "{command_path / source_dir}",
-  build_path   = "{command_path / build_dir}",
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build/tut2",
 )
 
 compile = config.rule(
   desc         = "Compile {source_files} -> {build_files}",
-  command      = "g++ -MMD -c {join(source_dir, source_files)} -o {join(build_dir, build_files)}",
+  command      = "g++ -MMD -c {source_files} -o {join(build_dir, build_files)}",
   build_files  = "{swap_ext(source_files, '.o')}",
   build_deps   = "{swap_ext(source_files, '.d')}",
+  build_dir    = "{trim(build_path, command_path)}",
 )
 
 link = config.rule(
   desc    = "Link {source_files} -> {build_files}",
-  command = "g++ {join(source_dir, source_files)} -o {join(build_dir, build_files)}",
+  command = "g++ {source_files} -o {join(build_dir,build_files)}",
+  build_dir    = "{trim(build_path, command_path)}",
 )
 
-# Fix .o's going in build/tut2
-
-main_o = compile("main.cpp")
-util_o = compile("util.cpp")
+main_o = compile("src/main.cpp")
+util_o = compile("src/util.cpp")
 link([main_o, util_o], "app")
