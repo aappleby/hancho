@@ -1,11 +1,16 @@
 from hancho import *
-import os
 
-multiple_commands = Rule(
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build",
+)
+
+multiple_commands = build_config.rule(
   command = [
-    "echo foo > {files_out[0]}",
-    "echo bar > {files_out[1]}",
-    "echo baz > {files_out[2]}"
+    "echo foo > {rel_build_files[0]}",
+    "echo bar > {rel_build_files[1]}",
+    "echo baz > {rel_build_files[2]}"
   ]
 )
 

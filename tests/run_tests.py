@@ -211,35 +211,35 @@ class TestHancho(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-#    def test_input_changed(self):
-#        """Changing a source file should trigger a rebuild"""
-#        run_hancho("input_changed")
-#        mtime1 = mtime("build/src/test.o")
-#
-#        run_hancho("input_changed")
-#        mtime2 = mtime("build/src/test.o")
-#
-#        Path("src/test.cpp").touch()
-#        run_hancho("input_changed")
-#        mtime3 = mtime("build/src/test.o")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_multiple_commands(self):
-#        """Rules with arrays of commands should run all of them"""
-#        run_hancho("multiple_commands")
-#        self.assertTrue(path.exists("build/foo.txt"))
-#        self.assertTrue(path.exists("build/bar.txt"))
-#        self.assertTrue(path.exists("build/baz.txt"))
-#
-#    def test_arbitrary_flags(self):
-#        """Passing arbitrary flags to Hancho should work"""
-#        os.system(
-#            "python3 ../hancho.py --build_dir=build/some/other/dir --quiet "
-#            + "does_create_output.hancho"
-#        )
-#        self.assertTrue(path.exists("build/some/other/dir/result.txt"))
-#
+    def test_input_changed(self):
+        """Changing a source file should trigger a rebuild"""
+        run_hancho("input_changed")
+        mtime1 = mtime("build/src/test.o")
+
+        run_hancho("input_changed")
+        mtime2 = mtime("build/src/test.o")
+
+        Path("src/test.cpp").touch()
+        run_hancho("input_changed")
+        mtime3 = mtime("build/src/test.o")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_multiple_commands(self):
+        """Rules with arrays of commands should run all of them"""
+        run_hancho("multiple_commands")
+        self.assertTrue(path.exists("build/foo.txt"))
+        self.assertTrue(path.exists("build/bar.txt"))
+        self.assertTrue(path.exists("build/baz.txt"))
+
+    def test_arbitrary_flags(self):
+        """Passing arbitrary flags to Hancho should work"""
+        os.system(
+            "python3 ../hancho.py --build_path=$(pwd)/build/some/other/dir --quiet "
+            + "does_create_output.hancho"
+        )
+        self.assertTrue(path.exists("build/some/other/dir/result.txt"))
+
 #    def test_sync_command(self):
 #        """The 'command' field of rules should be OK handling a sync function"""
 #        run_hancho("sync_command")
