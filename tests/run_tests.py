@@ -49,7 +49,13 @@ def run(cmd):
 
 def run_hancho(name):
     """Runs a Hancho build script and returns a subprocess.CompletedProcess."""
-    return subprocess.run(f"python3 ../hancho.py {name}.hancho", shell=True, text=True, capture_output=True)
+    return subprocess.run(
+        f"python3 ../hancho.py {name}.hancho",
+        shell=True,
+        text=True,
+        capture_output=True,
+    )
+
 
 ################################################################################
 
@@ -77,7 +83,10 @@ class TestHancho(unittest.TestCase):
     def test_should_fail(self):
         """Sanity check"""
         result = run_hancho("should_fail")
-        self.assertTrue("ValueError: Command '(exit 255)' exited with return code 255" in result.stderr)
+        self.assertTrue(
+            "ValueError: Command '(exit 255)' exited with return code 255"
+            in result.stderr
+        )
 
     def test_check_output(self):
         """A build rule that doesn't update one of its outputs should fail"""
@@ -102,7 +111,10 @@ class TestHancho(unittest.TestCase):
     def test_missing_field(self):
         """Missing fields should raise an error when expanded"""
         result = run_hancho("missing_field")
-        self.assertTrue("NameError: name 'this_field_does_not_exist' is not defined" in result.stderr)
+        self.assertTrue(
+            "NameError: name 'this_field_does_not_exist' is not defined"
+            in result.stderr
+        )
 
     def test_missing_input(self):
         """We should fail if an input is missing"""
@@ -119,12 +131,19 @@ class TestHancho(unittest.TestCase):
     def test_expand_failed_to_terminate(self):
         """A recursive text template should cause an 'expand failed to terminate' error."""
         result = run_hancho("expand_failed_to_terminate")
-        self.assertTrue("RecursionError: Expanding '{flarp}' failed to terminate" in result.stderr)
+        self.assertTrue(
+            "RecursionError: Expanding '{flarp}' failed to terminate" in result.stderr
+        )
 
-#    def test_garbage_command(self):
-#        """Non-existent command line commands should cause Hancho to fail the build."""
-#        self.assertNotEqual(0, run_hancho("garbage_command"))
-#
+    def test_garbage_command(self):
+        """Non-existent command line commands should cause Hancho to fail the build."""
+        result = run_hancho("garbage_command")
+        self.assertTrue(
+            "ValueError: Command 'aklsjdflksjdlfkjldfk' exited with return code 127"
+            in result.stderr
+        )
+
+
 #    def test_garbage_template(self):
 #        """Templates that can't be eval()d should cause Hancho to fail the build."""
 #        self.assertNotEqual(0, run_hancho("garbage_template"))

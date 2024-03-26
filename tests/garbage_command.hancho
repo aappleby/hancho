@@ -1,4 +1,10 @@
 from hancho import *
 
-garbage_command = Rule(command  = "aklsjdflksjdlfkjldfk")
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build",
+)
+
+garbage_command = build_config.rule(command  = "aklsjdflksjdlfkjldfk")
 garbage_command(__file__, "result.txt")
