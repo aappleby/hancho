@@ -692,6 +692,10 @@ class App:
 
             # Rule defaults
             desc = "{source_files} -> {build_files}",
+            command_path="{start_path}",
+            build_path="{start_path/build_dir/build_tag/rel_source_path}",
+            build_dir = "build",
+            build_tag = "",
             job_count=1,
             depformat="gcc",
             ext_build=False,
@@ -719,10 +723,10 @@ class App:
             abs_build_files   = "{joinpath(build_path, build_files)}",
             abs_build_deps    = "{joinpath(build_path, build_deps)}",
 
-            rel_command_files = "{joinpath(rel_command_path, command_files)}",
-            rel_source_files  = "{joinpath(rel_source_path, source_files)}",
-            rel_build_files   = "{joinpath(rel_build_path, build_files)}",
-            rel_build_deps    = "{joinpath(rel_build_path, build_deps)}",
+            rel_command_files = "{relpath(abs_command_files, command_path)}",
+            rel_source_files  = "{relpath(abs_source_files, command_path)}",
+            rel_build_files   = "{relpath(abs_build_files, command_path)}",
+            rel_build_deps    = "{relpath(abs_build_deps, command_path)}",
 
             # Global config has no base.
             base=None,
@@ -835,16 +839,11 @@ class App:
             module.build_config = build_config.extend(**kwargs)
         else:
             module.build_config = Config(**kwargs)
+        module.build_config.this_path = mod_path.parent
 
-        # If this module was loaded via load() and not include(), set the default paths.
-        # Otherwise the paths are taken from the caller module.
+        # If this module was loaded via load() and not include(), it gets its own source_path.
         if not include:
-            module.build_config.this_path = mod_path.parent
             module.build_config.source_path = mod_path.parent
-            module.build_config.defaults(
-                command_path="{start_path}",
-                build_path="{start_path/'build'/rel_source_path}",
-            )
 
         self.hancho_mods[module_key] = module
 

@@ -12,8 +12,8 @@ else:
 
 compile_cpp = build_config.rule(
   command   = compile_command,
-  build_files = "{swap_ext(rel_source_files, '.o')}",
-  build_deps  = "{swap_ext(rel_source_files, '.d')}",
+  build_files = "{swap_ext(source_files, '.o')}",
+  build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
 touch_outputs = build_config.rule(
