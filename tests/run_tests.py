@@ -110,18 +110,17 @@ class TestHancho(unittest.TestCase):
         self.assertTrue("FileNotFoundError" in result.stderr)
         self.assertTrue("does_not_exist.txt" in result.stderr)
 
-#    def test_missing_named_dep(self):
-#        """Missing named dep should fail"""
-#        self.assertNotEqual(0, run_hancho("missing_named_dep"))
-#
-#    def test_missing_dep(self):
-#        """Missing dep should fail"""
-#        self.assertNotEqual(0, run_hancho("missing_dep"))
-#
-#    def test_expand_failed_to_terminate(self):
-#        """A recursive text template should cause an 'expand failed to terminate' error."""
-#        self.assertNotEqual(0, run_hancho("expand_failed_to_terminate"))
-#
+    def test_missing_dep(self):
+        """Missing dep should fail"""
+        result = run_hancho("missing_dep")
+        self.assertTrue("FileNotFoundError" in result.stderr)
+        self.assertTrue("missing_dep.txt" in result.stderr)
+
+    def test_expand_failed_to_terminate(self):
+        """A recursive text template should cause an 'expand failed to terminate' error."""
+        result = run_hancho("expand_failed_to_terminate")
+        self.assertTrue("RecursionError: Expanding '{flarp}' failed to terminate" in result.stderr)
+
 #    def test_garbage_command(self):
 #        """Non-existent command line commands should cause Hancho to fail the build."""
 #        self.assertNotEqual(0, run_hancho("garbage_command"))

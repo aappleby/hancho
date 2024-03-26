@@ -1,9 +1,15 @@
 from hancho import *
 
-rules = load("rules.hancho")
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd() / "src",
+  build_path   = Path.cwd() / "build",
+)
+
+rules = load("rules.hancho", build_config)
 
 rules.touch_outputs(
-  "src/test.cpp",
+  "test.cpp",
   "result.txt",
-  deps = ["src/does_not_exist.txt"]
+  command_files = ["missing_dep.txt"]
 )

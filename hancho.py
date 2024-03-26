@@ -358,7 +358,7 @@ class Expander:
     def eval_macro(self, macro):
         """Evaluates the contents of a "{macro}" string."""
         if self.depth > MAX_EXPAND_DEPTH:
-            raise RecursionError(f"Expanding '{template}' failed to terminate")
+            raise RecursionError(f"Expanding '{macro}' failed to terminate")
         self.depth += 1
         # pylint: disable=eval-used
         try:
