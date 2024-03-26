@@ -2,20 +2,20 @@ from hancho import *
 import os
 
 if os.name == 'nt':
-  config.depformat = "msvc"
-  compile_command = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{files_out}"
+  build_config.depformat = "msvc"
+  compile_command = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}"
 elif os.name == 'posix':
-  config.depformat = "gcc"
-  compile_command = "gcc -MMD -c {files_in} -o {files_out}"
+  build_config.depformat = "gcc"
+  compile_command = "gcc -MMD -c {rel_source_files} -o {rel_build_files}"
 else:
   compile_command = "<unknown OS>"
 
-compile_cpp = Rule(
+compile_cpp = build_config.rule(
   command   = compile_command,
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
+  build_files = "{swap_ext(rel_source_files, '.o')}",
+  build_deps  = "{swap_ext(rel_source_files, '.d')}",
 )
 
-touch_outputs = Rule(
-  command = "touch {files_out}"
+touch_outputs = build_config.rule(
+  command = "touch {rel_build_files[0]}"
 )

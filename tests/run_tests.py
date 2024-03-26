@@ -93,21 +93,23 @@ class TestHancho(unittest.TestCase):
 
         # This should fail because it was expecting inheritance from its parent.
         self.assertNotEqual(0, run_hancho("config_child").returncode)
-#
-#    def test_command_missing(self):
-#        """Rules with missing commands should fail"""
-#        result = run_hancho("command_missing")
-#        self.assertTrue("Config key 'command' was never defined" in result.stderr)
-#
-#    def test_missing_field(self):
-#        """Missing fields should raise an error when expanded"""
-#        result = run_hancho("missing_field")
-#        self.assertTrue("NameError: name 'this_field_does_not_exist' is not defined" in result.stderr)
 
-#    def test_missing_input(self):
-#        """We should fail if an input is missing"""
-#        self.assertNotEqual(0, run_hancho("missing_input"))
-#
+    def test_command_missing(self):
+        """Rules with missing commands should fail"""
+        result = run_hancho("command_missing")
+        self.assertTrue("Config key 'command' was never defined" in result.stderr)
+
+    def test_missing_field(self):
+        """Missing fields should raise an error when expanded"""
+        result = run_hancho("missing_field")
+        self.assertTrue("NameError: name 'this_field_does_not_exist' is not defined" in result.stderr)
+
+    def test_missing_input(self):
+        """We should fail if an input is missing"""
+        result = run_hancho("missing_input")
+        self.assertTrue("FileNotFoundError" in result.stderr)
+        self.assertTrue("does_not_exist.txt" in result.stderr)
+
 #    def test_missing_named_dep(self):
 #        """Missing named dep should fail"""
 #        self.assertNotEqual(0, run_hancho("missing_named_dep"))

@@ -81,15 +81,14 @@ def relpath(path1, path2):
 
 
 def joinpath(*args):
-    """Produces all possible concatenated paths from the given paths (or arrays of paths)."""
+    """Returns an array of all possible concatenated paths from the given paths (or arrays of paths)."""
     if len(args) > 2:
         return joinpath(args[0], joinpath(*args[1:]))
     if isinstance(args[0], list):
-        return [joinpath(a, args[1]) for a in args[0]]
+        return [path for prefix in args[0] for path in joinpath(prefix, args[1])]
     if isinstance(args[1], list):
-        return [joinpath(args[0], a) for a in args[1]]
-    return Path(args[0]) / Path(args[1])
-
+        return [path for suffix in args[1] for path in joinpath(args[0], suffix)]
+    return [Path(args[0]) / Path(args[1])]
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -347,11 +346,11 @@ class Expander:
                 macro = template[span.start() : span.end()]
                 variant = self.eval_macro(macro)
                 result += " ".join([str(s) for s in self.flatten(variant)])
-            except BaseException as exc:
+            except:
                 log(color(255, 255, 0))
                 log(f"Expanding template '{old_template}' failed!")
                 log(color())
-                raise exc
+                raise
             template = template[span.end() :]
         result += template
         return result
@@ -362,7 +361,14 @@ class Expander:
             raise RecursionError(f"Expanding '{template}' failed to terminate")
         self.depth += 1
         # pylint: disable=eval-used
-        result = eval(macro[1:-1], {}, self)
+        try:
+            result = eval(macro[1:-1], {}, self)
+        except:
+            log(color(255, 255, 0))
+            log(f"Expanding macro '{macro}' failed!")
+            log(color())
+            raise
+
         self.depth -= 1
         return result
 
