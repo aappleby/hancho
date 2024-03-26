@@ -5,12 +5,6 @@ import random
 # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
 # another batch of 100 tasks that use random numbers of cores.
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 rule = build_config.rule(
   desc = "I am task {index}, I use {job_count} cores",
   command = "(exit 0)",

@@ -1,11 +1,5 @@
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 multiple_commands = build_config.rule(
   command = [
     "echo foo > {rel_build_files[0]}",

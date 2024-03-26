@@ -1,11 +1,5 @@
 # tests/command_missing.hancho
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 command_missing = Rule()
 command_missing(__file__, "dummy.txt")

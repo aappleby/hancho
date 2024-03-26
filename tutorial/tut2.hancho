@@ -1,11 +1,7 @@
 # tutorial/tut2.hancho
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build/tut2",
-)
+build_config.build_path = build_config.this_path / "build/tut2"
 
 compile = build_config.rule(
   desc         = "Compile {rel_source_files} -> {rel_build_files}",

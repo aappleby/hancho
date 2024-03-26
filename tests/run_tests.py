@@ -166,10 +166,10 @@ class TestHancho(unittest.TestCase):
         self.assertLess(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-    def test_build_dir_works(self):
-        """Customizing build_dir should put output files in build_dir"""
-        run_hancho("build_dir_works")
-        self.assertTrue(path.exists("build/build_dir_works/result.txt"))
+    def test_build_path_works(self):
+        """Customizing build_path should put output files in build_path"""
+        run_hancho("build_path_works")
+        self.assertTrue(path.exists("build/build_path_works/result.txt"))
 
     def test_dep_changed(self):
         """Changing a file in deps[] should trigger a rebuild"""

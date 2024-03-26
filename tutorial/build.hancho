@@ -3,12 +3,6 @@ from hancho import *
 
 global_config.jobs = 1
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build"
-)
-
 test_build = build_config.rule(
   desc        = "{color(200, 200, 100)}Testing tutorial build '{rel_source_files}'{color()}",
   command     = "python3 ../hancho.py --verbose {rel_source_files} && echo pass > {rel_build_files} && echo",

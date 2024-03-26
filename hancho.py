@@ -165,9 +165,12 @@ async def await_variant(variant):
     return variant
 
 
-def load(hancho_file=None, build_config=None, **kwargs):
+def load(hancho_file, build_config=None, **kwargs):
     """Module loader entry point for .hancho files."""
-    return app.load_module(hancho_file, build_config, kwargs)
+    return app.load_module(hancho_file, build_config, include=False, kwargs=kwargs)
+
+def include(hancho_file, build_config=None, **kwargs):
+    return app.load_module(hancho_file, build_config, include=True, kwargs=kwargs)
 
 
 class Chdir:
@@ -710,10 +713,6 @@ class App:
             # Global config has no base.
             base=None,
         )
-        # fmt: on
-
-    def main(self):
-        """Our main() just handles command line args and delegates to async_main()"""
 
         # pylint: disable=line-too-long
         # fmt: off
@@ -736,6 +735,9 @@ class App:
         # pylint: disable=attribute-defined-outside-init
         self.global_config.set(**flags.__dict__)
 
+        if self.global_config.chdir != ".":
+            self.global_config.start_path = Path.cwd() / self.global_config.chdir
+
         # Unrecognized command line parameters also become global config fields if
         # they are flag-like
         for span in unrecognized:
@@ -743,7 +745,13 @@ class App:
                 key = match.group(1)
                 val = match.group(2)
                 val = maybe_as_number(val) if val is not None else True
-                global_config[key] = val
+                self.global_config[key] = val
+
+
+        # fmt: on
+
+    def main(self):
+        """Our main() just handles command line args and delegates to async_main()"""
 
         # Change directory if needed and kick off the build.
         with Chdir(global_config.chdir):
@@ -790,7 +798,7 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, mod_filename, build_config=None, kwargs={}):
+    def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         mod_path = abspath(mod_filename)
@@ -815,6 +823,17 @@ class App:
             module.build_config = build_config.extend(**kwargs)
         else:
             module.build_config = Config(**kwargs)
+
+        # If this module was loaded via load() and not include(), set the default paths.
+        # Otherwise the paths are taken from the caller module.
+        if not include:
+            module.build_config.this_path = mod_path.parent
+            module.build_config.source_path = mod_path.parent
+            module.build_config.defaults(
+                command_path = global_config.start_path,
+                build_path = global_config.start_path / "build",
+            )
+
         self.hancho_mods[module_key] = module
 
         # We must chdir()s into the .hancho file directory before running it so that

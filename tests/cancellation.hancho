@@ -1,12 +1,6 @@
 # tests/cancellation.hancho
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 touch = build_config.rule(command = "touch {rel_build_files}")
 
 fail = build_config.rule(command = "(exit 255)")

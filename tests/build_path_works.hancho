@@ -1,4 +1,6 @@
 from hancho import *
 
+build_config.build_path = "{this_path/'build/build_path_works'}"
+
 rules = load("rules.hancho", build_config)
 rules.touch_outputs([], "result.txt")

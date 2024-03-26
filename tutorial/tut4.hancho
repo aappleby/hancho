@@ -1,9 +1,8 @@
 # tutorial/tut4.hancho
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  build_path   = Path.cwd() / "build/tut4",
+build_config.set(
+  build_path = build_config.this_path / "build/tut4"
 )
 
 load("src/src.hancho", build_config)

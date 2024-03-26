@@ -1,12 +1,6 @@
 # tests/missing_field.hancho
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 rule = build_config.rule(
   command = "touch {build_files} {this_field_does_not_exist}"
 )

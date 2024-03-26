@@ -1,11 +1,5 @@
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 rule = build_config.rule(
   desc = "I am task {index}",
   command = "echo {index} > {rel_build_files}",

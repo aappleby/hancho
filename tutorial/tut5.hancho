@@ -2,11 +2,7 @@
 from hancho import *
 import asyncio
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build/tut5"
-)
+build_config.build_path = build_config.this_path / "build/tut5"
 
 # Synchronous functions can be used in place of command strings.
 

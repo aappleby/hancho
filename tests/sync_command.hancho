@@ -1,11 +1,5 @@
 from hancho import *
 
-build_config.defaults(
-  command_path = Path.cwd(),
-  source_path  = Path.cwd(),
-  build_path   = Path.cwd() / "build",
-)
-
 def sync_command(task):
   Path(task.abs_build_files[0]).touch()
   return task.abs_build_files
