@@ -165,11 +165,12 @@ async def await_variant(variant):
     return variant
 
 
-def load(hancho_file, build_config=None, **kwargs):
+def load(hancho_file, build_config, **kwargs):
     """Module loader entry point for .hancho files."""
     return app.load_module(hancho_file, build_config, include=False, kwargs=kwargs)
 
-def include(hancho_file, build_config=None, **kwargs):
+def include(hancho_file, build_config, **kwargs):
+    """Include loader entry point for .hancho files."""
     return app.load_module(hancho_file, build_config, include=True, kwargs=kwargs)
 
 
@@ -798,7 +799,7 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
+    def load_module(self, mod_filename, build_config, include=False, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         mod_path = abspath(mod_filename)

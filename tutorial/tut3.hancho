@@ -1,9 +1,11 @@
 # tutorial/tut3.hancho
 from hancho import *
 
-build_config.build_path = build_config.this_path / "build/tut3"
+build_config.set(
+  build_path = build_config.this_path / "build/tut3"
+)
 
-rules = load("rules.hancho", build_config)
+rules = include("rules.hancho", build_config)
 
 app = rules.c_binary(
   source_files = ["src/main.cpp", "src/util.cpp"],

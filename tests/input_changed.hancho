@@ -1,4 +1,4 @@
 from hancho import *
 
-rules = load("rules.hancho", build_config)
+rules = include("rules.hancho", build_config)
 rules.compile_cpp("src/test.cpp")
