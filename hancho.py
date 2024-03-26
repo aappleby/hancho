@@ -90,6 +90,7 @@ def joinpath(*args):
         return [path for suffix in args[1] for path in joinpath(args[0], suffix)]
     return [Path(args[0]) / Path(args[1])]
 
+
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
@@ -169,9 +170,16 @@ def load(hancho_file, build_config, **kwargs):
     """Module loader entry point for .hancho files."""
     return app.load_module(hancho_file, build_config, include=False, kwargs=kwargs)
 
+
 def include(hancho_file, build_config, **kwargs):
     """Include loader entry point for .hancho files."""
     return app.load_module(hancho_file, build_config, include=True, kwargs=kwargs)
+
+
+def flatten(variant):
+    if isinstance(variant, list):
+        return [x for element in variant for x in flatten(element)]
+    return [variant]
 
 
 class Chdir:
@@ -611,7 +619,7 @@ class Task:
         if callable(command):
             result = command(self)
             if inspect.isawaitable(result):
-                result = await(result)
+                result = await result
             return result
 
         # Non-string non-callable commands are not valid
@@ -702,18 +710,24 @@ class App:
             swap_ext=swap_ext,
 
             # Helper macros
+            rel_command_path  = "{relpath(command_path, command_path)}",
+            rel_source_path   = "{relpath(source_path, command_path)}",
+            rel_build_path    = "{relpath(build_path, command_path)}",
+
             abs_command_files = "{joinpath(command_path, command_files)}",
             abs_source_files  = "{joinpath(source_path, source_files)}",
             abs_build_files   = "{joinpath(build_path, build_files)}",
             abs_build_deps    = "{joinpath(build_path, build_deps)}",
-            rel_command_files = "{relpath(abs_command_files, command_path)}",
-            rel_source_files  = "{relpath(abs_source_files, command_path)}",
-            rel_build_files   = "{relpath(abs_build_files, command_path)}",
-            rel_build_deps    = "{relpath(abs_build_deps, command_path)}",
+
+            rel_command_files = "{joinpath(rel_command_path, command_files)}",
+            rel_source_files  = "{joinpath(rel_source_path, source_files)}",
+            rel_build_files   = "{joinpath(rel_build_path, build_files)}",
+            rel_build_deps    = "{joinpath(rel_build_path, build_deps)}",
 
             # Global config has no base.
             base=None,
         )
+        # fmt: on
 
         # pylint: disable=line-too-long
         # fmt: off
@@ -747,9 +761,6 @@ class App:
                 val = match.group(2)
                 val = maybe_as_number(val) if val is not None else True
                 self.global_config[key] = val
-
-
-        # fmt: on
 
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
@@ -804,7 +815,7 @@ class App:
 
         mod_path = abspath(mod_filename)
         if not mod_path.exists():
-            raise FileNotFoundError(f"Could not load module {file}")
+            raise FileNotFoundError(f"Could not load module {mod_path}")
 
         # We dedupe module loads based on the physical path to the .hancho file and the contents
         # of the arguments passed to it.
@@ -831,8 +842,8 @@ class App:
             module.build_config.this_path = mod_path.parent
             module.build_config.source_path = mod_path.parent
             module.build_config.defaults(
-                command_path = global_config.start_path,
-                build_path = global_config.start_path / "build",
+                command_path="{start_path}",
+                build_path="{start_path/'build'/rel_source_path}",
             )
 
         self.hancho_mods[module_key] = module
