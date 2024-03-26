@@ -4,7 +4,7 @@ from hancho import *
 build_config.defaults(
   command_path = Path.cwd(),
   source_path  = Path.cwd(),
-  build_path   = Path.cwd()
+  build_path   = Path.cwd() / "build",
 )
 
 should_pass = build_config.rule(

@@ -3,7 +3,7 @@ import os
 
 if os.name == 'nt':
   config.depformat = "msvc"
-  compile_command = "cl.exe /c {files_in} /sourceDependencies {depfile} /Fo:{files_out}"
+  compile_command = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{files_out}"
 elif os.name == 'posix':
   config.depformat = "gcc"
   compile_command = "gcc -MMD -c {files_in} -o {files_out}"

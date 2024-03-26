@@ -2,6 +2,7 @@ from hancho import *
 import sys
 
 # We should inherit config.foobar from our parent module.
+
 if build_config.get('foobar') is None:
   sys.exit(-1)
 

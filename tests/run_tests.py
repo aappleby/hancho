@@ -48,9 +48,8 @@ def run(cmd):
 
 
 def run_hancho(name):
-    """Runs a Hancho build script, quietly."""
-    return os.system(f"python3 ../hancho.py --quiet {name}.hancho")
-
+    """Runs a Hancho build script and returns a subprocess.CompletedProcess."""
+    return subprocess.run(f"python3 ../hancho.py {name}.hancho", shell=True, text=True, capture_output=True)
 
 ################################################################################
 
@@ -63,8 +62,7 @@ class TestHancho(unittest.TestCase):
         """Always wipe the build dir before a test"""
         print()
         print(f"Running {self._testMethodName}..", end="")
-        if path.exists("build"):
-            shutil.rmtree("build")
+        shutil.rmtree("build", ignore_errors=True)
         sys.stdout.flush()
 
     def tearDown(self):
@@ -74,36 +72,38 @@ class TestHancho(unittest.TestCase):
 
     def test_should_pass(self):
         """Sanity check"""
-        self.assertEqual(0, run_hancho("should_pass"))
+        self.assertEqual(0, run_hancho("should_pass").returncode)
 
     def test_should_fail(self):
         """Sanity check"""
-        self.assertNotEqual(0, run_hancho("should_fail"))
+        result = run_hancho("should_fail")
+        self.assertTrue("ValueError: Command '(exit 255)' exited with return code 255" in result.stderr)
 
     def test_check_output(self):
         """A build rule that doesn't update one of its outputs should fail"""
-        self.assertNotEqual(0, run_hancho("check_output"))
+        result = run_hancho("check_output")
+        self.assertTrue(Path("build/result.txt").exists())
+        self.assertFalse(Path("build/not_modified.txt").exists())
+        self.assertTrue("still needs rerun after running" in result.stderr)
 
     def test_config_inheritance(self):
         """A module should inherit a config object extended from its parent, but should not be able
         to modify its parent's config object."""
-        self.assertEqual(0, run_hancho("config_parent"))
+        self.assertEqual(0, run_hancho("config_parent").returncode)
 
         # This should fail because it was expecting inheritance from its parent.
-        self.assertNotEqual(0, run_hancho("config_child"))
-
-#    def test_recursive_base_is_bad(self):
-#        """Referring to base.attrib in a template is a bad idea"""
-#        self.assertNotEqual(0, run_hancho("recursive_base_is_bad"))
+        self.assertNotEqual(0, run_hancho("config_child").returncode)
 #
 #    def test_command_missing(self):
 #        """Rules with missing commands should fail"""
-#        self.assertNotEqual(0, run_hancho("command_missing"))
+#        result = run_hancho("command_missing")
+#        self.assertTrue("Config key 'command' was never defined" in result.stderr)
 #
 #    def test_missing_field(self):
-#        """Missing fields should turn into empty strings when expanded"""
-#        self.assertEqual(0, run_hancho("missing_field"))
-#
+#        """Missing fields should raise an error when expanded"""
+#        result = run_hancho("missing_field")
+#        self.assertTrue("NameError: name 'this_field_does_not_exist' is not defined" in result.stderr)
+
 #    def test_missing_input(self):
 #        """We should fail if an input is missing"""
 #        self.assertNotEqual(0, run_hancho("missing_input"))

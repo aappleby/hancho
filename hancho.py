@@ -41,6 +41,9 @@ def log(message, *args, sameline=False, **kwargs):
     if not sys.stdout.isatty():
         sameline = False
 
+    if sameline:
+        kwargs.setdefault("end", "")
+
     output = io.StringIO()
     print(message, *args, file=output, **kwargs)
     output = output.getvalue()
@@ -329,6 +332,8 @@ class Expander:
                 return self.flatten(variant.promise)
             case list():
                 return [x for element in variant for x in self.flatten(element)]
+            case str() if macro_regex.search(variant):
+                return self.flatten(self.expand(variant))
             case _:
                 return [self.expand(variant)]
 
@@ -433,28 +438,18 @@ class Task:
         """All the setup steps needed before we run a task."""
 
         # Expand everything
+
+        # FIXME we don't need to expand source_files and prepend source_path, we can expand
+        # abs_source_files instead
+
         expander = Expander(self.rule)
         self.desc = expander.expand(self.rule.desc)
         self.command = expander.flatten(self.rule.command)
-        self.command_files = expander.flatten(self.rule.get("command_files", []))
         self.command_path = expander.expand(self.rule.command_path)
-        self.source_files = expander.flatten(self.rule.source_files)
-        self.source_path = expander.expand(self.rule.source_path)
-        self.build_files = expander.flatten(self.rule.build_files)
-        self.build_deps = expander.flatten(self.rule.get("build_deps", []))
-        self.build_path = expander.expand(self.rule.build_path)
-
-        # Sanity-check expanded paths. It's OK if 'build_path' doesn't exist yet.
-        check_path(self.source_path, exists=True)
-        check_path(self.command_path, exists=True)
-        check_path(self.build_path, exists=False)
-
-        # Prepend expanded absolute paths to expanded filenames. If the filenames are already
-        # absolute, this does nothing.
-        self.abs_command_files = [self.command_path / f for f in self.command_files]
-        self.abs_source_files = [self.source_path / f for f in self.source_files]
-        self.abs_build_files = [self.build_path / f for f in self.build_files]
-        self.abs_build_deps = [self.build_path / f for f in self.build_deps]
+        self.abs_command_files = expander.flatten(self.rule.abs_command_files)
+        self.abs_source_files = expander.flatten(self.rule.abs_source_files)
+        self.abs_build_files = expander.flatten(self.rule.abs_build_files)
+        self.abs_build_deps = expander.flatten(self.rule.abs_build_deps)
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
@@ -583,8 +578,8 @@ class Task:
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
         if (
-            self.source_files
-            and self.build_files
+            self.abs_source_files
+            and self.abs_build_files
             and not (self.rule.dry_run or self.rule.ext_build)
         ):
             if second_reason := self.needs_rerun():
@@ -682,6 +677,8 @@ class App:
             job_count=1,
             depformat="gcc",
             ext_build=False,
+            command_files=[],
+            build_deps=[],
 
             # Helper functions
             abspath=abspath,
@@ -695,12 +692,14 @@ class App:
             swap_ext=swap_ext,
 
             # Helper macros
+            abs_command_files = "{joinpath(command_path, command_files)}",
             abs_source_files  = "{joinpath(source_path, source_files)}",
             abs_build_files   = "{joinpath(build_path, build_files)}",
-            abs_command_files = "{joinpath(command_path, command_files)}",
+            abs_build_deps    = "{joinpath(build_path, build_deps)}",
+            rel_command_files = "{relpath(abs_command_files, command_path)}",
             rel_source_files  = "{relpath(abs_source_files, command_path)}",
             rel_build_files   = "{relpath(abs_build_files, command_path)}",
-            rel_command_files = "{relpath(abs_command_files, command_path)}",
+            rel_build_deps    = "{relpath(abs_build_deps, command_path)}",
 
             # Global config has no base.
             base=None,
