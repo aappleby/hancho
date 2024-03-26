@@ -1,4 +1,10 @@
 from hancho import *
 
-doesnt_create_output = Rule(command = ":")
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build",
+)
+
+doesnt_create_output = build_config.rule(command = ":")
 doesnt_create_output(__file__, "result.txt")

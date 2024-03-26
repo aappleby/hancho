@@ -1,5 +1,10 @@
 from hancho import *
 
-rules = load("rules.hancho")
-config.build_dir = "build/build_dir_works"
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build/build_dir_works",
+)
+
+rules = load("rules.hancho", build_config)
 rules.touch_outputs([], "result.txt")

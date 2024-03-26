@@ -7,7 +7,7 @@ build_config.defaults(
   build_path   = Path.cwd() / "build",
 )
 
-rule = build_config.rule(command = "touch {build_files}")
+rule = build_config.rule(command = "touch {rel_build_files}")
 
 taskA = rule(__file__, "colliding_output.txt")
 taskB = rule(__file__, "colliding_output.txt")

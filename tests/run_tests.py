@@ -153,66 +153,50 @@ class TestHancho(unittest.TestCase):
         result = run_hancho("rule_collision")
         self.assertTrue("NameError: Multiple rules build" in result.stderr)
 
-#    def test_always_rebuild_if_no_inputs(self):
-#        """A rule with no inputs should always rebuild"""
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime1 = mtime("build/result.txt")
-#
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime2 = mtime("build/result.txt")
-#
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime3 = mtime("build/result.txt")
-#        self.assertLess(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_build_dir_works(self):
-#        """Customizing build_dir should put output files in build_dir"""
-#        run_hancho("build_dir_works")
-#        self.assertTrue(path.exists("build/build_dir_works/result.txt"))
-#
-#    def test_dep_changed(self):
-#        """Changing a file in deps[] should trigger a rebuild"""
-#        os.makedirs("build", exist_ok=True)
-#        Path("build/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime1 = mtime("build/result.txt")
-#
-#        run_hancho("dep_changed")
-#        mtime2 = mtime("build/result.txt")
-#
-#        Path("build/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime3 = mtime("build/result.txt")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_named_dep_changed(self):
-#        """Changing a file referenced by named_deps{} should trigger a rebuild"""
-#        os.makedirs("build", exist_ok=True)
-#        Path("build/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime1 = mtime("build/result.txt")
-#
-#        run_hancho("named_dep_changed")
-#        mtime2 = mtime("build/result.txt")
-#
-#        Path("build/dummy.txt").touch()
-#        run_hancho("named_dep_changed")
-#        mtime3 = mtime("build/result.txt")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_does_create_output(self):
-#        """Output files should appear in build/ by default"""
-#        run_hancho("does_create_output")
-#        self.assertTrue(path.exists("build/result.txt"))
-#
-#    def test_doesnt_create_output(self):
-#        """Having a file mentioned in files_out should not magically create it"""
-#        run_hancho("doesnt_create_output")
-#        self.assertFalse(path.exists("build/result.txt"))
-#
+    def test_always_rebuild_if_no_inputs(self):
+        """A rule with no inputs should always rebuild"""
+        run_hancho("always_rebuild_if_no_inputs")
+        mtime1 = mtime("build/result.txt")
+
+        run_hancho("always_rebuild_if_no_inputs")
+        mtime2 = mtime("build/result.txt")
+
+        run_hancho("always_rebuild_if_no_inputs")
+        mtime3 = mtime("build/result.txt")
+        self.assertLess(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_build_dir_works(self):
+        """Customizing build_dir should put output files in build_dir"""
+        run_hancho("build_dir_works")
+        self.assertTrue(path.exists("build/build_dir_works/result.txt"))
+
+    def test_dep_changed(self):
+        """Changing a file in deps[] should trigger a rebuild"""
+        os.makedirs("build", exist_ok=True)
+        Path("build/dummy.txt").touch()
+        run_hancho("dep_changed")
+        mtime1 = mtime("build/result.txt")
+
+        run_hancho("dep_changed")
+        mtime2 = mtime("build/result.txt")
+
+        Path("build/dummy.txt").touch()
+        run_hancho("dep_changed")
+        mtime3 = mtime("build/result.txt")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_does_create_output(self):
+        """Output files should appear in build/ by default"""
+        run_hancho("does_create_output")
+        self.assertTrue(path.exists("build/result.txt"))
+
+    def test_doesnt_create_output(self):
+        """Having a file mentioned in files_out should not magically create it"""
+        run_hancho("doesnt_create_output")
+        self.assertFalse(path.exists("build/result.txt"))
+
 #    def test_header_changed(self):
 #        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
 #        run_hancho("header_changed")
