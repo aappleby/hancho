@@ -1,9 +1,15 @@
 # tests/cancellation.hancho
 from hancho import *
 
-touch = Rule(command = "touch {files_out}")
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build",
+)
 
-fail = Rule(command = "(exit 255)")
+touch = build_config.rule(command = "touch {rel_build_files}")
+
+fail = build_config.rule(command = "(exit 255)")
 
 task_that_fails  = fail ([], "fail_result.txt")
 task_that_passes = touch([], "pass_result.txt")
