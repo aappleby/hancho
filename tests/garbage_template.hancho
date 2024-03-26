@@ -1,4 +1,10 @@
 from hancho import *
 
-garbage_template = Rule(command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}")
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build",
+)
+
+garbage_template = build_config.rule(command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}")
 garbage_template(__file__, "result.txt")

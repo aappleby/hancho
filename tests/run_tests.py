@@ -143,15 +143,16 @@ class TestHancho(unittest.TestCase):
             in result.stderr
         )
 
+    def test_garbage_template(self):
+        """Templates that can't be eval()d should cause Hancho to fail the build."""
+        result = run_hancho("garbage_template")
+        self.assertTrue("SyntaxError: invalid syntax" in result.stderr)
 
-#    def test_garbage_template(self):
-#        """Templates that can't be eval()d should cause Hancho to fail the build."""
-#        self.assertNotEqual(0, run_hancho("garbage_template"))
-#
-#    def test_rule_collision(self):
-#        """If multiple rules generate the same output file, that's an error."""
-#        self.assertNotEqual(0, run_hancho("rule_collision"))
-#
+    def test_rule_collision(self):
+        """If multiple rules generate the same output file, that's an error."""
+        result = run_hancho("rule_collision")
+        self.assertTrue("NameError: Multiple rules build" in result.stderr)
+
 #    def test_always_rebuild_if_no_inputs(self):
 #        """A rule with no inputs should always rebuild"""
 #        run_hancho("always_rebuild_if_no_inputs")
