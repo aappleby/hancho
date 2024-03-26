@@ -188,22 +188,30 @@ class Config:
 
     def __init__(self, **kwargs):
         self.__dict__["_base"] = kwargs.pop("base", None)
-        self.__dict__["_data"] = dict(kwargs)
+        self.__dict__["_data"] = kwargs
 
     def __getitem__(self, key):
         val = self.get(key)
         if val is None:
-            raise ValueError(f"Config key '{key}' was never defined")
+            raise KeyError(f"Config key '{key}' was never defined")
         return val
 
     def __setitem__(self, key, val):
-        self.set(key, val)
+        if val is None:
+            raise ValueError(f"Config key '{key}' cannot be set to None")
+        self.__dict__["_data"][key] = val
+
+    def __delitem__(self, key):
+        del self.__dict__["_data"][key]
 
     def __getattr__(self, key):
         return self.__getitem__(key)
 
     def __setattr__(self, key, val):
         self.__setitem__(key, val)
+
+    def __delattr__(self, key):
+        self.__delitem__(key)
 
     def __repr__(self):
         class Encoder(json.JSONEncoder):
@@ -232,13 +240,14 @@ class Config:
             return global_config.get(key, default)
         return default
 
-    def set(self, key, val):
-        self.__dict__["_data"][key] = val
+    def set(self, **kwargs):
+        self.__dict__["_data"].update(kwargs)
 
-    def set_defaults(self, **kwargs):
+    def defaults(self, **kwargs):
+        """Sets key-val pairs in this config if the key does not already exist."""
         for key, val in kwargs.items():
-            if old_val := self.get(key) is None:
-                self.set(key, val)
+            if self.get(key) is None:
+                self[key] = val
 
     def extend(self, **kwargs):
         """Returns a 'subclass' of this config blob that can override its fields."""
@@ -345,7 +354,7 @@ class Expander:
     def eval_macro(self, macro):
         """Evaluates the contents of a "{macro}" string."""
         if self.depth > MAX_EXPAND_DEPTH:
-            raise ValueError(f"Expanding '{template}' failed to terminate")
+            raise RecursionError(f"Expanding '{template}' failed to terminate")
         self.depth += 1
         # pylint: disable=eval-used
         result = eval(macro[1:-1], {}, self)
@@ -403,7 +412,7 @@ class Task:
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except Exception:  # pylint: disable=broad-except
-            if not self.rule.quiet:
+            if not (global_config.quiet or self.rule.quiet):
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -720,8 +729,7 @@ class App:
         # Merge all known command line flags into our global config object.
         # pylint: disable=global-statement
         # pylint: disable=attribute-defined-outside-init
-        for key, val in flags.__dict__.items():
-            self.global_config.set(key, val)
+        self.global_config.set(**flags.__dict__)
 
         # Unrecognized command line parameters also become global config fields if
         # they are flag-like
@@ -730,7 +738,7 @@ class App:
                 key = match.group(1)
                 val = match.group(2)
                 val = maybe_as_number(val) if val is not None else True
-                global_config.set(key, val)
+                global_config[key] = val
 
         # Change directory if needed and kick off the build.
         with Chdir(global_config.chdir):

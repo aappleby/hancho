@@ -1,10 +1,13 @@
 from hancho import *
 import sys
 
-config.foobar = "config.foobar"
+build_config.foobar = "config.foobar"
 
-mod2 = load("config_child.hancho")
+mod2 = load("config_child.hancho", build_config)
 
 # Our child module should not be able to accidentally modify our config
-if config.foobar != "config.foobar":
+if build_config.foobar != "config.foobar":
+  sys.exit(-1)
+
+if mod2.build_config.foobar != "this should not change config_parent.build_config.foobar":
   sys.exit(-1)

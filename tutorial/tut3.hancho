@@ -1,7 +1,7 @@
 # tutorial/tut3.hancho
 from hancho import *
 
-build_config.set_defaults(
+build_config.defaults(
   command_path = Path.cwd(),
   source_path  = Path.cwd() / "src",
   build_path   = Path.cwd() / "build/tut3",

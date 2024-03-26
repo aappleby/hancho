@@ -2,7 +2,7 @@
 from hancho import *
 import asyncio
 
-build_config.set_defaults(
+build_config.defaults(
   command_path = Path.cwd(),
   source_path  = Path.cwd(),
   build_path   = Path.cwd() / "build/tut5"

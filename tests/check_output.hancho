@@ -1,6 +1,12 @@
 # tests/check_output.hancho
 from hancho import *
 
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd()
+)
+
 check_output = Rule(command = "echo foo > {files_out[0]}")
 
 check_output(__file__, ["result.txt", "not_modified.txt"])

@@ -1,9 +1,15 @@
 # tests/should_pass.hancho
 from hancho import *
 
-should_pass = Rule(
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd()
+)
+
+should_pass = build_config.rule(
   desc = "This task should pass",
   command = "(exit 0)",
 )
 
-should_pass(__file__)
+should_pass(__file__, [])
