@@ -197,20 +197,20 @@ class TestHancho(unittest.TestCase):
         run_hancho("doesnt_create_output")
         self.assertFalse(path.exists("build/result.txt"))
 
-#    def test_header_changed(self):
-#        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
-#        run_hancho("header_changed")
-#        mtime1 = mtime("build/src/test.o")
-#
-#        run_hancho("header_changed")
-#        mtime2 = mtime("build/src/test.o")
-#
-#        Path("src/test.hpp").touch()
-#        run_hancho("header_changed")
-#        mtime3 = mtime("build/src/test.o")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
+    def test_header_changed(self):
+        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
+        run_hancho("header_changed")
+        mtime1 = mtime("build/src/test.o")
+
+        run_hancho("header_changed")
+        mtime2 = mtime("build/src/test.o")
+
+        Path("src/test.hpp").touch()
+        run_hancho("header_changed")
+        mtime3 = mtime("build/src/test.o")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
 #    def test_input_changed(self):
 #        """Changing a source file should trigger a rebuild"""
 #        run_hancho("input_changed")
