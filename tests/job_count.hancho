@@ -5,14 +5,20 @@ import random
 # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
 # another batch of 100 tasks that use random numbers of cores.
 
-rule = Rule(
+build_config.defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build",
+)
+
+rule = build_config.rule(
   desc = "I am task {index}, I use {job_count} cores",
   command = "(exit 0)",
 )
 
-slow_rule = Rule(
+slow_rule = build_config.rule(
   desc = "********** I am the slow task, I eat all the cores **********",
-  command = "touch {files_out} && sleep 0.3",
+  command = "touch {rel_build_files} && sleep 0.3",
 )
 
 for i in range(100):
