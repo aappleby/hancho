@@ -2,33 +2,50 @@
 from hancho import *
 import asyncio
 
-config.build_dir = "build/tut4"
+build_config.set_defaults(
+  command_path = Path.cwd(),
+  source_path  = Path.cwd(),
+  build_path   = Path.cwd() / "build/tut5"
+)
 
-# Functions (synchronous or asynchronous) that return filenames or arrays of
-# filenames can be used in place of actual filenames in rules.
+# Synchronous functions can be used in place of command strings.
 
-async def do_slow_thing():
-  print("Doing slow thing")
+def sync_callback(task):
+  print("Sync callback begin")
+  for abs_file in task.abs_build_files:
+    print(f"Writing {abs_file}")
+    with open(abs_file, 'w', encoding="utf-8") as file:
+      file.write("hello world")
+  print("Sync callback end")
+  return task.abs_build_files
+
+fast_task = build_config.rule(command = sync_callback)
+fast_task(["src/main.cpp"], ["fast1.txt", "fast2.txt", "fast3.txt"])
+
+# Asynchronous functions can also be used in place of command strings.
+
+async def async_callback(task):
+  print("Async callback begin")
+  for abs_file in task.abs_build_files:
+    print(f"Writing {abs_file}")
+    with open(abs_file, 'w', encoding="utf-8") as file:
+      file.write("hello world")
+    await asyncio.sleep(0.1)
+  print("Async callback end")
+  return task.abs_build_files
+
+slow_task = build_config.rule(command = async_callback)
+slow_task(["src/main.cpp"], ["slow1.txt", "slow2.txt", "slow3.txt"])
+
+# Promises that resolve to filenames can be used in place of actual filenames in rules.
+
+async def slow_filename_promise():
+  print("Slow promise begin")
   await asyncio.sleep(0.1)
-  print("Slow thing done")
+  print("Slow promise end")
   return ["src/main.cpp"]
 
-echo = Rule(
-  desc = "Consuming a promise as files_in",
-  command = "echo {files_in}",
+echo = build_config.rule(
+  command = "echo {rel_source_files} > {rel_build_files}",
 )
-echo(do_slow_thing(), [])
-
-# You can also use them in the command field.
-def custom_command(task):
-  for f in task.files_out:
-    with open(f, "a", encoding="utf-8") as file:
-      file.write("asdf\n")
-  return task.files_out
-
-custom_rule = Rule(
-  desc    = "Custom rule: {files_in} -> {files_out}",
-  command = custom_command
-)
-
-custom_rule("src/main.cpp", ["tut4/custom1", "tut4/custom2"])
+echo([slow_filename_promise()], ["promise1.txt"])

@@ -595,7 +595,10 @@ class Task:
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            return command(self)
+            result = command(self)
+            if inspect.isawaitable(result):
+                result = await(result)
+            return result
 
         # Non-string non-callable commands are not valid
         if not isinstance(command, str):
@@ -741,8 +744,6 @@ class App:
         """All the actual Hancho stuff runs in an async context so that clients can schedule their
         own async tasks as needed."""
 
-        self.jobs_available = global_config.jobs
-
         # Load the root .hancho files.
         for file in global_config.start_files:
             abs_file = global_config.start_path / file
@@ -751,6 +752,7 @@ class App:
             self.load_module(abs_file, None)
 
         # Root module(s) loaded. Run all tasks in the queue until we run out.
+        self.jobs_available = global_config.jobs
         while True:
             pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
             if not pending_tasks:
