@@ -1,5 +1,4 @@
 # tutorial/tut16.hancho
-from hancho import Config
 
 build_config.build_tag = "tut16"
 
