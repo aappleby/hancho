@@ -293,14 +293,14 @@ class Config:
 
     def task(self, **kwargs):
         """Creates a task directly from this config object."""
-        return Task(rule=self, **kwargs)
+        return Task(config=self, **kwargs)
 
 
 
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
     def __call__(self, source_files=None, build_files=None, **kwargs):
-        return Task(rule=self, source_files=source_files, build_files=build_files, **kwargs)
+        return Task(config=self, source_files=source_files, build_files=build_files, **kwargs)
 
 
 # Expander requires some explanation.
@@ -413,14 +413,14 @@ class Task:
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
 
-    def __init__(self, *, rule=None, **kwargs):
+    def __init__(self, *, config=None, **kwargs):
         app.tasks_total += 1
-        if rule is None:
-            self.rule = Rule(**kwargs)
+        if config is None:
+            self.config = Config(**kwargs)
         elif len(kwargs):
-            self.rule = rule.extend(**kwargs)
+            self.config = config.extend(**kwargs)
         else:
-            self.rule = rule
+            self.config = config
         self.promise = asyncio.create_task(self.run_async())
 
     def __repr__(self):
@@ -433,14 +433,14 @@ class Task:
                 return str(o)
 
         base = json.dumps(self.__dict__, indent=2, cls=Encoder)
-        config = str(self.rule)
+        config = str(self.config)
         return "task: " + base + ",\nrule: " + config
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            await await_variant(self.rule)
+            await await_variant(self.config)
 
             # Everything awaited, task_init runs synchronously.
             #print()
@@ -459,7 +459,7 @@ class Task:
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except Exception:  # pylint: disable=broad-except
-            if not (global_config.quiet or self.rule.quiet):
+            if not (global_config.quiet or self.config.quiet):
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -473,25 +473,21 @@ class Task:
             return cancel
 
         finally:
-            if self.rule.debug:
+            if self.config.debug:
                 log("")
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
         # Expand everything
-
-        # FIXME we don't need to expand source_files and prepend source_path, we can expand
-        # abs_source_files instead
-
-        expander = Expander(self.rule)
-        self.exp_desc = expander.expand(self.rule.desc)
-        self.exp_command = expander.flatten(self.rule.command)
-        self.exp_command_path = expander.expand(self.rule.command_path)
-        self.abs_command_files = expander.flatten(self.rule.abs_command_files)
-        self.abs_source_files = expander.flatten(self.rule.abs_source_files)
-        self.abs_build_files = expander.flatten(self.rule.abs_build_files)
-        self.abs_build_deps = expander.flatten(self.rule.abs_build_deps)
+        expander = Expander(self.config)
+        self.exp_desc = expander.expand(self.config.desc)
+        self.exp_command = expander.flatten(self.config.command)
+        self.exp_command_path = expander.expand(self.config.command_path)
+        self.abs_command_files = expander.flatten(self.config.abs_command_files)
+        self.abs_source_files = expander.flatten(self.config.abs_source_files)
+        self.abs_build_files = expander.flatten(self.config.abs_build_files)
+        self.abs_build_deps = expander.flatten(self.config.abs_build_deps)
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
@@ -506,12 +502,12 @@ class Task:
             app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
-        if not self.rule.dry_run:
+        if not self.config.dry_run:
             for abs_file in self.abs_build_files:
                 abs_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
-        self.reason = self.needs_rerun(self.rule.force)
+        self.reason = self.needs_rerun(self.config.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -550,19 +546,19 @@ class Task:
         for abs_depfile in self.abs_build_deps:
             if not abs_depfile.exists():
                 continue
-            if self.rule.debug:
+            if self.config.debug:
                 log(f"Found depfile {abs_depfile}")
             with open(abs_depfile, encoding="utf-8") as depfile:
                 deplines = None
-                if self.rule.depformat == "msvc":
+                if self.config.depformat == "msvc":
                     # MSVC /sourceDependencies json depfile
                     deplines = json.load(depfile)["Data"]["Includes"]
-                elif self.rule.depformat == "gcc":
+                elif self.config.depformat == "gcc":
                     # GCC .d depfile
                     deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise ValueError(f"Invalid depformat {self.rule.depformat}")
+                    raise ValueError(f"Invalid depformat {self.config.depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [self.exp_command_path / d for d in deplines]
@@ -571,7 +567,7 @@ class Task:
                         return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
-        if self.rule.debug:
+        if self.config.debug:
             log(f"Files {self.abs_build_files} are up to date")
 
         # Empty string = no reason to rebuild
@@ -582,7 +578,7 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(self.rule.job_count)
+            await app.acquire_jobs(self.config.job_count)
 
             # Jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
@@ -591,29 +587,29 @@ class Task:
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
                 f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.exp_desc}",
-                sameline=not self.rule.verbose,
+                sameline=not self.config.verbose,
             )
 
-            if self.rule.verbose or self.rule.debug:
+            if self.config.verbose or self.config.debug:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
-            if self.rule.debug:
+            if self.config.debug:
                 log(self)
 
             result = []
             for exp_command in self.exp_command:
-                if self.rule.verbose or self.rule.debug:
-                    rel_command_path = relpath(self.exp_command_path, self.rule.start_path)
-                    log(f"{color(128,128,255)}{command_path}$ {color()}", end="")
-                    log("(DRY RUN) " if self.rule.dry_run else "", end="")
+                if self.config.verbose or self.config.debug:
+                    rel_command_path = relpath(self.exp_command_path, self.config.start_path)
+                    log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
+                    log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
                 result = await self.run_command(exp_command)
         finally:
-            await app.release_jobs(self.rule.job_count)
+            await app.release_jobs(self.config.job_count)
 
         # After the build, the deps files should exist if specified.
         for abs_file in self.abs_build_deps:
-            if not abs_file.exists() and not self.rule.dry_run:
+            if not abs_file.exists() and not self.config.dry_run:
                 raise NameError(f"Dep file {abs_file} wasn't created")
 
         # Check if the commands actually updated all the output files.
@@ -622,7 +618,7 @@ class Task:
         if (
             self.abs_source_files
             and self.abs_build_files
-            and not (self.rule.dry_run or self.rule.ext_build)
+            and not (self.config.dry_run or self.config.ext_build)
         ):
             if second_reason := self.needs_rerun():
                 raise ValueError(
@@ -636,7 +632,7 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # Early exit if this is just a dry run
-        if self.rule.dry_run:
+        if self.config.dry_run:
             return self.abs_build_files
 
         # Custom commands just get called and then early-out'ed.
@@ -664,7 +660,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if not self.rule.quiet and (self.stdout or self.stderr):
+        if not self.config.quiet and (self.stdout or self.stderr):
             if self.stderr:
                 log(f"stderr: {self.stderr}", end="")
             if self.stdout:

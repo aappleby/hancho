@@ -1,13 +1,12 @@
-# tutorial/tut0.hancho
+# tutorial/tut02.hancho
 from hancho import Config
-from hancho import Task
 from pathlib import Path
 
 config = Config(
   command_path  = Path.cwd(),
+  command_files = [],
   source_path   = Path.cwd(),
   build_path    = Path.cwd(),
-  command_files = [],
 )
 
 main_o = config.task(

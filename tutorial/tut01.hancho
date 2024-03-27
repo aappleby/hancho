@@ -1,4 +1,4 @@
-# tutorial/tut0.hancho
+# tutorial/tut01.hancho
 from hancho import Task
 from pathlib import Path
 
@@ -32,4 +32,5 @@ app = Task(
   source_files  = [main_o, util_o],
   build_path    = Path.cwd(),
   build_files   = ["build/tut01/app"],
+  build_deps    = []
 )

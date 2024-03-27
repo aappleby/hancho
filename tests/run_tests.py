@@ -50,7 +50,7 @@ def run(cmd):
 def run_hancho(name):
     """Runs a Hancho build script and returns a subprocess.CompletedProcess."""
     return subprocess.run(
-        f"python3 ../hancho.py {name}.hancho",
+        f"python3 ../hancho.py -v -d {name}.hancho",
         shell=True,
         text=True,
         capture_output=True,
@@ -78,7 +78,8 @@ class TestHancho(unittest.TestCase):
 
     def test_should_pass(self):
         """Sanity check"""
-        self.assertEqual(0, run_hancho("should_pass").returncode)
+        result = run_hancho("should_pass")
+        self.assertEqual(0, result.returncode)
 
     def test_should_fail(self):
         """Sanity check"""
