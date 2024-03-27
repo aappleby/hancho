@@ -351,9 +351,9 @@ def flatten(config, variant):
     """Turns 'variant' into a flat array of expanded variants."""
     match variant:
         case Task():
-            return flatten(config, variant.promise)
+            return flatten(config, expand(config, variant.promise))
         case list():
-            return [x for element in variant for x in flatten(config, element)]
+            return [expand(config, x) for element in variant for x in flatten(config, element)]
         case str() if macro_regex.search(variant):
             return flatten(config, expand(config, variant))
         case _:
@@ -401,20 +401,27 @@ class Expander:
 
     def __init__(self, config):
         assert isinstance(config, Config)
-        self.config = config
+        self.__dict__['config'] = config
+
+    def __getattr__(self, key):
+        """Defining __getitem__ is required to use this expander as a mapping in eval()."""
+        return expand(self, self.__dict__['config'][key])
 
     def __getitem__(self, key):
         """Defining __getitem__ is required to use this expander as a mapping in eval()."""
-        return expand(self, self.config[key])
+        return expand(self, self.__dict__['config'][key])
 
 class Flattener:
 
     def __init__(self, config):
         assert isinstance(config, Config)
-        self.config = config
+        self.__dict__['config'] = config
+
+    def __getattr__(self, key):
+        return flatten(self, self.__dict__['config'][key])
 
     def __getitem__(self, key):
-        return flatten(self, self.config[key])
+        return flatten(self, self.__dict__['config'][key])
 
 
 
@@ -491,9 +498,12 @@ class Task:
         """All the setup steps needed before we run a task."""
 
         # Expand everything
-        self.exp_desc = self.config.expanded['desc']
-        self.exp_command = flatten(self.config.expanded, self.config.command)
-        self.exp_command_path = expand(self.config.expanded, self.config.command_path)
+        self.exp_desc = self.config.expanded.desc
+
+        #self.exp_command = flatten(self.config.expanded, self.config.command)
+        self.exp_command = expand(self.config.expanded, flatten(self.config.expanded, self.config.command))
+
+        self.exp_command_path = self.config.expanded.command_path
         self.abs_command_files = flatten(self.config.expanded, self.config.abs_command_files)
         self.abs_source_files = flatten(self.config.expanded, self.config.abs_source_files)
         self.abs_build_files = flatten(self.config.expanded, self.config.abs_build_files)
