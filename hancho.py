@@ -332,7 +332,7 @@ class Rule(Config):
 # lead to confusing callstacks, but that should handle every possible case of stuff inside other
 # stuff.
 #
-# The 'depth' checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
+# The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
 
 def expand(config, variant):
@@ -447,8 +447,6 @@ class Task:
             await await_variant(self.config)
 
             # Everything awaited, task_init runs synchronously.
-            #print()
-            #print(self)
             self.task_init()
 
             # Run the commands if we need to.
@@ -799,11 +797,12 @@ class App:
         with Chdir(global_config.chdir):
             # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
             # in Github, so I'm gonna try this. Seems to fix the issue.
-            result = asyncio.get_event_loop().run_until_complete(self.async_main())
+            result = asyncio.get_event_loop().run_until_complete(self.async_load_modules())
+            result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
 
         return result
 
-    async def async_main(self):
+    async def async_load_modules(self):
         """All the actual Hancho stuff runs in an async context so that clients can schedule their
         own async tasks as needed."""
 
@@ -814,6 +813,7 @@ class App:
                 raise FileNotFoundError(f"Could not find {abs_file}")
             self.load_module(abs_file, None)
 
+    async def async_run_tasks(self):
         # Root module(s) loaded. Run all tasks in the queue until we run out.
         self.jobs_available = global_config.jobs
         while True:
@@ -840,6 +840,7 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
+
     def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
@@ -860,8 +861,6 @@ class App:
             new_build_config.source_path = mod_path.parent
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
-        #print()
-        #print(f"Looking for module compatible with {new_build_config}")
         new_build_dict = new_build_config.to_dict()
         reuse = None
         for mod in self.loaded_modules:
@@ -871,15 +870,7 @@ class App:
                     raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
                 reuse = mod
         if reuse:
-            # Compatible module found, reuse it.
-            #print(f"Reusing module {reuse.build_config}")
             return reuse
-        else:
-            #print("No reusable module found")
-            pass
-
-        #print()
-
 
         # There was no compatible module loaded, so make a new one.
         with open(mod_path, encoding="utf-8") as file:
