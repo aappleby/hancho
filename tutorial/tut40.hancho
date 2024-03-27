@@ -1,7 +1,7 @@
-# tutorial/tut4.hancho
+# tutorial/tut40.hancho
 from hancho import *
 
-build_config.build_tag = "tut4"
+build_config.build_tag = "tut40"
 build_config.rules_path = build_config.this_path
 
 load("src/src.hancho", build_config)

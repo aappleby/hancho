@@ -1,14 +1,3 @@
-# tutorial/tut03.hancho
-from hancho import Config
-from pathlib import Path
-
-config = Config(
-  command_path  = Path.cwd(),
-  command_files = [],
-  source_path   = Path.cwd(),
-  build_path    = Path.cwd(),
-)
-
 def compile_cpp(config, source, build_dir):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')
@@ -28,7 +17,3 @@ def link_cpp(config, tasks, build_dir, binary):
     source_files  = tasks,
     build_files   = [f"{build_dir}/{binary}"],
   )
-
-main_o = compile_cpp(config, "src/main.cpp", "build/tut03")
-util_o = compile_cpp(config, "src/util.cpp", "build/tut03")
-app = link_cpp(config, [main_o, util_o], "build/tut03", "app")

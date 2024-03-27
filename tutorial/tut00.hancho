@@ -3,6 +3,7 @@ from hancho import Task
 from pathlib import Path
 
 Task(
+  desc          = "Compile main.cpp and util.cpp and link app",
   command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
   command_path  = Path.cwd(),
   command_files = [],

@@ -1,8 +1,8 @@
-# tutorial/tut4.hancho - Async/await and custom commands
+# tutorial/tut50.hancho - Async/await and custom commands
 from hancho import *
 import asyncio
 
-build_config.build_tag = "tut5"
+build_config.build_tag = "tut50"
 
 # Synchronous functions can be used in place of command strings.
 

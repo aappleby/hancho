@@ -1,4 +1,4 @@
-# tutorial/tut10.hancho - branches off from tut02.hancho
+# tutorial/tut12.hancho
 from hancho import Config
 from pathlib import Path
 
@@ -7,28 +7,30 @@ config = Config(
   command_files = [],
   source_path   = Path.cwd(),
   build_path    = Path.cwd(),
-  build_dir     = "build/tut10",
+  build_dir     = "build/tut12",
 )
 
-main_o = config.task(
+compile = config.extend(
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_files}",
+  build_files   = "{joinpath(build_dir, swap_ext(source_files, '.o'))}",
+  build_deps    = "{joinpath(build_dir, swap_ext(source_files, '.d'))}",
+)
+
+main_o = compile.task(
   source_files  = ["src/main.cpp"],
-  build_files   = ["{build_dir}/src/main.o"],
-  build_deps    = ["{build_dir}/src/main.d"],
 )
 
-util_o = config.task(
-  desc          = "Compile {source_files}",
-  command       = "g++ -MMD -c {source_files} -o {build_files}",
+util_o = compile.task(
   source_files  = ["src/util.cpp"],
-  build_files   = ["{build_dir}/src/util.o"],
-  build_deps    = ["{build_dir}/src/util.d"],
 )
 
-app = config.task(
+link = config.extend(
   desc          = "Link {source_files} into {build_files}",
   command       = "g++ {joinpath(build_dir, source_files)} -o {build_files}",
+)
+
+app = link.task(
   source_files  = [main_o, util_o],
   build_files   = ["{build_dir}/app"],
 )

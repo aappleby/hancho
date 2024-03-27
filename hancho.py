@@ -238,7 +238,7 @@ class Config:
 
             def default(self, o):
                 if isinstance(o, Task):
-                    return f"task {Expander(o.rule)['desc']}"
+                    return f"task {Expander(o.config)['desc']}"
                 return str(o)
 
         base = self.__dict__["_base"]
@@ -662,9 +662,11 @@ class Task:
         # Print command output if needed
         if not self.config.quiet and (self.stdout or self.stderr):
             if self.stderr:
-                log(f"stderr: {self.stderr}", end="")
+                log("-----stderr-----")
+                log(self.stderr, end="")
             if self.stdout:
-                log(f"stdout: {self.stdout}", end="")
+                log("-----stdout-----")
+                log(self.stdout, end="")
 
         # Task complete, check the task return code
         if self.returncode:

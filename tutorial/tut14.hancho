@@ -1,0 +1,27 @@
+# tutorial/tut14.hancho
+from hancho import Config
+from pathlib import Path
+
+config = Config(
+  command_path  = Path.cwd(),
+  command_files = [],
+  source_path   = Path.cwd(),
+  build_path    = Path.cwd(),
+  build_dir     = "build/tut14",
+)
+
+compile = config.rule(
+  desc          = "Compile {rel_source_files}",
+  command       = "g++ -MMD -c {rel_source_files} -o {build_files}",
+  build_files   = "{joinpath(build_dir, swap_ext(rel_source_files, '.o'))}",
+  build_deps    = "{joinpath(build_dir, swap_ext(rel_source_files, '.d'))}",
+)
+
+link = config.rule(
+  desc          = "Link {rel_source_files} into {build_files}",
+  command       = "g++ {rel_source_files} -o {build_files}",
+)
+
+main_o = compile("src/main.cpp")
+util_o = compile("src/util.cpp")
+app = link([main_o, util_o], "{build_dir}/app")

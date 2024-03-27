@@ -1,7 +1,7 @@
-# tutorial/tut3.hancho
+# tutorial/tut30.hancho
 from hancho import *
 
-build_config.build_tag = "tut3"
+build_config.build_tag = "tut30"
 
 rules = include("rules.hancho", build_config)
 

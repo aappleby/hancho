@@ -10,21 +10,24 @@ config = Config(
 )
 
 main_o = config.task(
-  command       = "g++ -MMD -c src/main.cpp -o build/tut01/main.o",
+  desc          = "Compile main.cpp",
+  command       = "g++ -MMD -c src/main.cpp -o build/tut02/src/main.o",
   source_files  = ["src/main.cpp"],
-  build_files   = ["build/tut01/main.o"],
-  build_deps    = ["build/tut01/main.d"],
+  build_files   = ["build/tut02/src/main.o"],
+  build_deps    = ["build/tut02/src/main.d"],
 )
 
 util_o = config.task(
-  command       = "g++ -MMD -c src/util.cpp -o build/tut01/util.o",
+  desc          = "Compile util.cpp",
+  command       = "g++ -MMD -c src/util.cpp -o build/tut02/src/util.o",
   source_files  = ["src/util.cpp"],
-  build_files   = ["build/tut01/util.o"],
-  build_deps    = ["build/tut01/util.d"],
+  build_files   = ["build/tut02/src/util.o"],
+  build_deps    = ["build/tut02/src/util.d"],
 )
 
 app = config.task(
-  command       = "g++ build/tut01/main.o build/tut01/util.o -o build/tut01/app",
+  desc          = "Link main.o and util.o into app",
+  command       = "g++ build/tut02/src/main.o build/tut02/src/util.o -o build/tut02/app",
   source_files  = [main_o, util_o],
-  build_files   = ["build/tut01/app"],
+  build_files   = ["build/tut02/app"],
 )
