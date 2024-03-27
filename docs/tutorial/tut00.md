@@ -85,5 +85,4 @@ And now our build-agnostic stuff is in ```tut04_rules.py``` and our build-specif
 
 If you really like writing Python, you can stop reading the tutorials here and get to work on scaling up this tiny example to build your own applications. You'll probably need to handle globbing, multiple build configurations, that sort of thing. It's a bit tedious, but Hancho's task runner should Just Work (tm).
 
-If you'd rather not do that, the next tutorial chapter will go into Hancho's text templating system which combines ```Config``` objects with ```"text {templating} powers``` to produce something more like a declarative build system instead of an imperative build system.
-
+If you'd rather not do that, the next tutorial chapter will go into Hancho's text templating system which combines ```Config``` objects with ```"text {template} powers"``` to produce something more like a declarative build system instead of an imperative build system.
