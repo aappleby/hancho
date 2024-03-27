@@ -71,13 +71,17 @@ https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781
 
 ## ```tut04.hancho```: Pulling our functions out into a separate module
 
-There's one more step we can do to modularize the code - we can cut and paste put our helper functions in their own module ```tut04_rules.py```. To use that, we need to ```import``` the module from the current directory, which requires tweaking ```sys.path```: 
+There's one more step we can do to modularize the code - we can cut and paste put our helper functions in their own module ```tut04_rules.py```.
+
+https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut04_rules.py#L1-L19
+
+To use that, we need to ```import``` the module from the current directory, which requires tweaking ```sys.path```: 
 
 https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut04.hancho#L5-L7
 
 Once we've done that, our tasks can use the functions from ```tut04_rules.py```:
 
-https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut04.hancho#L9-L18
+https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut04.hancho#L16-L18
 
 And now our build-agnostic stuff is in ```tut04_rules.py``` and our build-specific stuff is in ```tut04.hancho``` - that's a good start.
 
