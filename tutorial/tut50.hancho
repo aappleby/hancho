@@ -1,5 +1,4 @@
 # tutorial/tut50.hancho - Async/await and custom commands
-from hancho import *
 import asyncio
 
 build_config.build_tag = "tut50"

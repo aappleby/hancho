@@ -31,7 +31,7 @@ Hancho should suffice for small to medium sized projects.
  - 2024-03-13 - Tasks can now 'reserve' jobs so that commands that themselves use many jobs (like Ninja) can block until the jobs are free. See the [job_count](tests/job_count.hancho) test for details.
  - 2024-03-13 - Code cleaned up to be more standard Python style and reduce linter complaints. Added 'rule_dir' field to each Rule that stores the directory of the file that created the rule.
  - 2024-03-12 - Handling of paths is more flexible now (and will be documented shortly). Calling a Rule now returns a Task object. All the task-running code is now in Task instead of Rule.
- 
+
 ## Installation
 
 ``` bash
@@ -58,16 +58,15 @@ options:
 ## Simple Example
 ```py
 # examples/hello_world/build.hancho
-from hancho import *
 
-compile = Rule(
+compile = build_config.rule(
   desc      = "Compile {files_in} -> {files_out}",
   command   = "g++ -MMD -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = Rule(
+link = build_config.rule(
   desc      = "Link {files_in} -> {files_out}",
   command   = "g++ {files_in} -o {files_out}",
 )

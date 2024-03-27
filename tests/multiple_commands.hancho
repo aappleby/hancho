@@ -1,4 +1,3 @@
-from hancho import *
 
 multiple_commands = build_config.rule(
   command = [

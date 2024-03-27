@@ -1,5 +1,4 @@
 # tests/should_fail.hancho
-from hancho import *
 
 should_fail = build_config.rule(
   desc = "This task should fail",

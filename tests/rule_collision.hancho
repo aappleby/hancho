@@ -1,5 +1,4 @@
 """Multiple rules creating same output file = bad"""
-from hancho import *
 
 rule = build_config.rule(command = "touch {rel_build_files}")
 

@@ -1,5 +1,4 @@
 # tests/cancellation.hancho
-from hancho import *
 
 touch = build_config.rule(command = "touch {rel_build_files}")
 

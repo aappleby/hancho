@@ -293,15 +293,21 @@ class Config:
         """Returns a callable rule that uses this config blob (plus any kwargs)."""
         return Rule(base=self, **kwargs)
 
-    def task(self, **kwargs):
+    def task(self, source_files=None, build_files=None, **kwargs):
         """Creates a task directly from this config object."""
-        return Task(config=self, **kwargs)
+        return Task(config=self, source_files=source_files, build_files=build_files, **kwargs)
 
     def expand(self, variant):
         return expand(self.expanded, variant)
 
     def flatten(self, variant):
         return flatten(self.expand(variant))
+
+    def load(self, hancho_file, **kwargs):
+        return app.load_module(hancho_file, self, include=False, kwargs=kwargs)
+
+    def include(self, hancho_file, **kwargs):
+        return app.load_module(hancho_file, self, include=True, kwargs=kwargs)
 
 
 

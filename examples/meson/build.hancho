@@ -1,9 +1,8 @@
 # examples/meson/build.hancho
-from hancho import *
 
-config.build_tag = "debug"
+build_config.build_tag = "debug"
 
-compile = Rule(
+compile = build_config.rule(
   desc      = "Compiling {files_in} -> {files_out} ({build_tag})",
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
   includes  = [
@@ -25,7 +24,7 @@ compile = Rule(
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = Rule(
+link = build_config.rule(
   desc      = "Linking {files_out}",
   command   = "gcc {files_in} -o {files_out} {link_opts}",
   link_opts = [

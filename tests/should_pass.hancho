@@ -1,5 +1,4 @@
 # tests/should_pass.hancho
-from hancho import *
 
 should_pass = build_config.rule(
   desc = "This task should pass",

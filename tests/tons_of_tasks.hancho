@@ -1,5 +1,3 @@
-from hancho import *
-
 rule = build_config.rule(
   desc = "I am task {index}",
   command = "echo {index} > {rel_build_files}",

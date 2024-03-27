@@ -1,5 +1,4 @@
 # tests/check_output.hancho
-from hancho import *
 
 check_output = build_config.rule(command = "echo foo > {rel_build_files[0]}")
 

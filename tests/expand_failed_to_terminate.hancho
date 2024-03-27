@@ -1,9 +1,4 @@
 # tests/expand_failed_to_terminate.hancho
-from hancho import *
 
-expand_failed_to_terminate = build_config.rule(
-  command = "{flarp}",
-  flarp = "asdf {flarp}"
-)
-
+expand_failed_to_terminate = build_config.rule(command = "{flarp}", flarp = "asdf {flarp}")
 expand_failed_to_terminate([], [])

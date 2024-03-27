@@ -113,7 +113,7 @@ class TestHancho(unittest.TestCase):
         """Missing fields should raise an error when expanded"""
         result = run_hancho("missing_field")
         self.assertTrue(
-            "NameError: name 'this_field_does_not_exist' is not defined"
+            "NameError: name 'does_not_exist' is not defined"
             in result.stderr
         )
 

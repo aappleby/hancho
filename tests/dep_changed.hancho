@@ -1,6 +1,4 @@
-from hancho import *
-
-rules = include("rules.hancho", build_config)
+rules = build_config.include("rules.hancho")
 rules.touch_outputs(
   "src/test.cpp",
   "result.txt",

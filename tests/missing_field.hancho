@@ -1,8 +1,3 @@
 # tests/missing_field.hancho
-from hancho import *
 
-rule = build_config.rule(
-  command = "touch {build_files} {this_field_does_not_exist}"
-)
-
-rule([], "result.txt")
+build_config.task([], "result.txt", command = "touch {build_files} {does_not_exist}")

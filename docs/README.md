@@ -2,16 +2,15 @@
 
 ```py
 # examples/hello_world/build.hancho
-from hancho import *
 
-compile = Rule(
+compile = build_config.rule(
   desc = "Compile {files_in} -> {files_out}",
   command = "g++ -MMD -c {files_in} -o {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile = "{swap_ext(files_out, '.d')}",
 )
 
-link = Rule(
+link = build_config.rule(
   desc = "Link {files_in} -> {files_out}",
   command = "g++ {files_in} -o {files_out}",
 )

@@ -1,4 +1,2 @@
-from hancho import *
-
 garbage_command = build_config.rule(command  = "aklsjdflksjdlfkjldfk")
 garbage_command(__file__, "result.txt")

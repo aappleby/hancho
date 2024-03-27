@@ -1,4 +1,2 @@
-from hancho import *
-
 garbage_template = build_config.rule(command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}")
 garbage_template(__file__, "result.txt")
