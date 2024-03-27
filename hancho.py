@@ -210,6 +210,8 @@ class Config:
         self.__dict__["_data"] = kwargs
 
     def __getitem__(self, key):
+        if key == "expanded":
+            return Expander(self)
         val = self.get(key)
         if val is None:
             raise KeyError(f"Config key '{key}' was never defined")
@@ -238,7 +240,7 @@ class Config:
 
             def default(self, o):
                 if isinstance(o, Task):
-                    return f"task {Expander(o.config)['desc']}"
+                    return f"task {o.config.expanded['desc']}"
                 return str(o)
 
         base = self.__dict__["_base"]
@@ -321,6 +323,78 @@ class Rule(Config):
 # The 'depth' checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
 
+def expand(config, variant):
+    """Expands all templates anywhere inside 'variant'."""
+    match variant:
+        case BaseException():
+            raise variant
+        case Task():
+            return expand(config, variant.promise)
+        case Path():
+            return Path(expand(config, str(variant)))
+        case list():
+            return [expand(config, s) for s in variant]
+        case str() if macro_regex.search(variant):
+            return eval_macro(config, variant)
+        case str() if template_regex.search(variant):
+            return expand_template(config, variant)
+        case int() | bool() | float() | str():
+            return variant
+        case _ if inspect.isfunction(variant):
+            return variant
+        case _:
+            raise ValueError(
+                f"Don't know how to expand {type(variant)}='{variant}'"
+            )
+
+def flatten(config, variant):
+    """Turns 'variant' into a flat array of expanded variants."""
+    match variant:
+        case Task():
+            return flatten(config, variant.promise)
+        case list():
+            return [x for element in variant for x in flatten(config, element)]
+        case str() if macro_regex.search(variant):
+            return flatten(config, expand(config, variant))
+        case _:
+            return [expand(config, variant)]
+
+def expand_template(config, template):
+    """Replaces all macros in template with their stringified values."""
+    old_template = template
+    result = ""
+    while span := template_regex.search(template):
+        result += template[0 : span.start()]
+        try:
+            macro = template[span.start() : span.end()]
+            variant = eval_macro(config, macro)
+            result += " ".join([str(s) for s in flatten(config, variant)])
+        except:
+            log(color(255, 255, 0))
+            log(f"Expanding template '{old_template}' failed!")
+            log(color())
+            raise
+        template = template[span.end() :]
+    result += template
+    return result
+
+def eval_macro(config, macro):
+    """Evaluates the contents of a "{macro}" string."""
+    if app.expand_depth > MAX_EXPAND_DEPTH:
+        raise RecursionError(f"Expanding '{macro}' failed to terminate")
+    app.expand_depth += 1
+    # pylint: disable=eval-used
+    try:
+        result = eval(macro[1:-1], {}, config)
+    except:
+        log(color(255, 255, 0))
+        log(f"Expanding macro '{macro}' failed!")
+        log(color())
+        raise
+    finally:
+        app.expand_depth -= 1
+    return result
+
 
 class Expander:
     """Expander does template expasion on read so that eval() always sees expanded templates."""
@@ -328,83 +402,20 @@ class Expander:
     def __init__(self, config):
         assert isinstance(config, Config)
         self.config = config
-        self.depth = 0
 
     def __getitem__(self, key):
         """Defining __getitem__ is required to use this expander as a mapping in eval()."""
-        return self.expand(self.config[key])
+        return expand(self, self.config[key])
 
-    def expand(self, variant):
-        """Expands all templates anywhere inside 'variant'."""
-        match variant:
-            case BaseException():
-                raise variant
-            case Task():
-                return self.expand(variant.promise)
-            case Path():
-                return Path(self.expand(str(variant)))
-            case list():
-                return [self.expand(s) for s in variant]
-            case str() if macro_regex.search(variant):
-                return self.eval_macro(variant)
-            case str() if template_regex.search(variant):
-                return self.expand_template(variant)
-            case int() | bool() | float() | str():
-                return variant
-            case _ if inspect.isfunction(variant):
-                return variant
-            case _:
-                raise ValueError(
-                    f"Don't know how to expand {type(variant)}='{variant}'"
-                )
+class Flattener:
 
-    def flatten(self, variant):
-        """Turns 'variant' into a flat array of expanded variants."""
-        match variant:
-            case Task():
-                return self.flatten(variant.promise)
-            case list():
-                return [x for element in variant for x in self.flatten(element)]
-            case str() if macro_regex.search(variant):
-                return self.flatten(self.expand(variant))
-            case _:
-                return [self.expand(variant)]
+    def __init__(self, config):
+        assert isinstance(config, Config)
+        self.config = config
 
-    def expand_template(self, template):
-        """Replaces all macros in template with their stringified values."""
-        old_template = template
-        result = ""
-        while span := template_regex.search(template):
-            result += template[0 : span.start()]
-            try:
-                macro = template[span.start() : span.end()]
-                variant = self.eval_macro(macro)
-                result += " ".join([str(s) for s in self.flatten(variant)])
-            except:
-                log(color(255, 255, 0))
-                log(f"Expanding template '{old_template}' failed!")
-                log(color())
-                raise
-            template = template[span.end() :]
-        result += template
-        return result
+    def __getitem__(self, key):
+        return flatten(self, self.config[key])
 
-    def eval_macro(self, macro):
-        """Evaluates the contents of a "{macro}" string."""
-        if self.depth > MAX_EXPAND_DEPTH:
-            raise RecursionError(f"Expanding '{macro}' failed to terminate")
-        self.depth += 1
-        # pylint: disable=eval-used
-        try:
-            result = eval(macro[1:-1], {}, self)
-        except:
-            log(color(255, 255, 0))
-            log(f"Expanding macro '{macro}' failed!")
-            log(color())
-            raise
-
-        self.depth -= 1
-        return result
 
 
 class Task:
@@ -480,14 +491,13 @@ class Task:
         """All the setup steps needed before we run a task."""
 
         # Expand everything
-        expander = Expander(self.config)
-        self.exp_desc = expander.expand(self.config.desc)
-        self.exp_command = expander.flatten(self.config.command)
-        self.exp_command_path = expander.expand(self.config.command_path)
-        self.abs_command_files = expander.flatten(self.config.abs_command_files)
-        self.abs_source_files = expander.flatten(self.config.abs_source_files)
-        self.abs_build_files = expander.flatten(self.config.abs_build_files)
-        self.abs_build_deps = expander.flatten(self.config.abs_build_deps)
+        self.exp_desc = self.config.expanded['desc']
+        self.exp_command = flatten(self.config.expanded, self.config.command)
+        self.exp_command_path = expand(self.config.expanded, self.config.command_path)
+        self.abs_command_files = flatten(self.config.expanded, self.config.abs_command_files)
+        self.abs_source_files = flatten(self.config.expanded, self.config.abs_source_files)
+        self.abs_build_files = flatten(self.config.expanded, self.config.abs_build_files)
+        self.abs_build_deps = flatten(self.config.expanded, self.config.abs_build_deps)
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
@@ -694,6 +704,7 @@ class App:
         self.task_counter = 0
         self.mtime_calls = 0
         self.line_dirty = False
+        self.expand_depth = 0
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
         # The global config object. All fields here can be used in any template.
@@ -844,7 +855,8 @@ class App:
         new_build_config.update(kwargs)
 
         # Use the new config to expand the mod filename
-        mod_filename = Expander(new_build_config).expand(mod_filename)
+        expander = Expander(new_build_config)
+        mod_filename = expand(expander, mod_filename)
         mod_path = abspath(mod_filename)
         if not mod_path.exists():
             raise FileNotFoundError(f"Could not load module {mod_path}")
