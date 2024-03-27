@@ -1,5 +1,8 @@
 # Tutorial Chapter 1 - Cooked Hancho, or how to use ```{templates}``` to make generic build tasks.
 
+If you're reading this, you probably decided not to write your own Python scripts and functions to run your build. This tutorial will go into how to use Hancho's text templating system to do the same thing as the helper functions in the previous chapter, but without the functions.
+
+----------
 ## ```tut10.hancho```: Factoring out the build directory
 
 Let's take a look at the tasks in ```tut02.hancho``` again:
@@ -41,3 +44,27 @@ And some plus sides that f-strings don't have:
 - You can nest templates up to ```MAX_EXPAND_DEPTH = 20``` levels deep
   - Probably don't make your templates that complicated, though.
   - Infinite loops like ```Task(command = "lol {command}")``` will expand to ```"lol lol lol lol lol....``` and eventually fail.
+
+----------
+## ```tut11.hancho```: Splitting off descriptions and commands.
+
+The ```description``` and ```command``` fields of our compile tasks are now identical. Much like we pulled common fields off tasks and into a ```Config``` object, we can do the same thing a second time to isolate them:
+
+https://github.com/aappleby/hancho/blob/b895dd1792e4bcaa47c670fc0c139278e77a1b4f/tutorial/tut11.hancho#L13-L16
+
+Extending config objects works like prototypal inheritance in Javascript - if you refer to ```config.foo``` and ```config``` doesn't have its own ```foo```, it'll look for ```foo``` in the parent object and so on - up until it hits ```global_config```, which we haven't talked about yet.
+
+That removes another two lines of task-independent stuff from our compile task:
+
+https://github.com/aappleby/hancho/blob/b895dd1792e4bcaa47c670fc0c139278e77a1b4f/tutorial/tut11.hancho#L18-L22
+
+and our link task is similarly small:
+
+https://github.com/aappleby/hancho/blob/b895dd1792e4bcaa47c670fc0c139278e77a1b4f/tutorial/tut11.hancho#L35-L38
+
+----------
+## ```tut11.hancho```: Using builtin functions to factor out ```build_files``` and ```build_deps```
+
+The ```build_files``` and ```build_deps``` in our ```main_o``` and ```util_o``` tasks are almost but not quite identical. We can factor them out, but we'll need to use some of Hancho's built-in functions to do so.
+
+https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672/tutorial/tut12.hancho#L16-L17
