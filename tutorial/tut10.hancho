@@ -28,7 +28,7 @@ util_o = config.task(
 
 app = config.task(
   desc          = "Link {source_files} into {build_files}",
-  command       = "g++ {joinpath(build_dir, source_files)} -o {build_files}",
+  command       = "g++ {source_files} -o {build_files}",
   source_files  = [main_o, util_o],
   build_files   = ["{build_dir}/app"],
 )
