@@ -793,12 +793,15 @@ class App:
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
-        # Change directory if needed and kick off the build.
+        # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
+        # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
+
+        # Change directory if needed and load all Hancho modules
         with Chdir(global_config.chdir):
-            # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
-            # in Github, so I'm gonna try this. Seems to fix the issue.
             result = asyncio.get_event_loop().run_until_complete(self.async_load_modules())
-            result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
+
+        # Run tasks until we're done with all of them.
+        result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
 
         return result
 
