@@ -485,9 +485,9 @@ class Task:
         # abs_source_files instead
 
         expander = Expander(self.rule)
-        self.desc = expander.expand(self.rule.desc)
-        self.command = expander.flatten(self.rule.command)
-        self.command_path = expander.expand(self.rule.command_path)
+        self.exp_desc = expander.expand(self.rule.desc)
+        self.exp_command = expander.flatten(self.rule.command)
+        self.exp_command_path = expander.expand(self.rule.command_path)
         self.abs_command_files = expander.flatten(self.rule.abs_command_files)
         self.abs_source_files = expander.flatten(self.rule.abs_source_files)
         self.abs_build_files = expander.flatten(self.rule.abs_build_files)
@@ -565,7 +565,7 @@ class Task:
                     raise ValueError(f"Invalid depformat {self.rule.depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [self.command_path / d for d in deplines]
+                deplines = [self.exp_command_path / d for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -590,7 +590,7 @@ class Task:
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
-                f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
+                f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.exp_desc}",
                 sameline=not self.rule.verbose,
             )
 
@@ -601,13 +601,13 @@ class Task:
                 log(self)
 
             result = []
-            for command in self.command:
+            for exp_command in self.exp_command:
                 if self.rule.verbose or self.rule.debug:
-                    command_path = relpath(self.command_path, self.rule.start_path)
+                    rel_command_path = relpath(self.exp_command_path, self.rule.start_path)
                     log(f"{color(128,128,255)}{command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.rule.dry_run else "", end="")
-                    log(command)
-                result = await self.run_command(command)
+                    log(exp_command)
+                result = await self.run_command(exp_command)
         finally:
             await app.release_jobs(self.rule.job_count)
 
@@ -653,7 +653,7 @@ class Task:
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd=self.command_path,
+            cwd=self.exp_command_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

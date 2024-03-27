@@ -22,7 +22,6 @@ def compile_cpp(source, build_dir):
 
 def link_cpp(tasks, build_dir, binary):
   objs = [task.rule.build_files[0] for task in tasks]
-  print(objs)
   return config.task(
     command       = f"g++ {' '.join(objs)} -o {build_dir}/{binary}",
     source_files  = tasks,
