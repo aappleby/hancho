@@ -212,8 +212,6 @@ class Config:
     def __getitem__(self, key):
         if key == "expanded":
             return Expander(self)
-        if key == "flattened":
-            return Flattener(self)
         val = self.get(key)
         if val is None:
             raise KeyError(f"Config key '{key}' was never defined")
@@ -303,7 +301,7 @@ class Config:
         return expand(self.expanded, variant)
 
     def flatten(self, variant):
-        return flatten(self.expanded, self.expand(variant))
+        return flatten(self.expand(variant))
 
 
 
@@ -355,18 +353,6 @@ def expand(config, variant):
                 f"Don't know how to expand {type(variant)}='{variant}'"
             )
 
-def flatten(config, variant):
-    """Turns 'variant' into a flat array of expanded variants."""
-    match variant:
-        case Task():
-            return flatten(config, expand(config, variant.promise))
-        case list():
-            return [expand(config, x) for element in variant for x in flatten(config, element)]
-        case str() if macro_regex.search(variant):
-            return flatten(config, expand(config, variant))
-        case _:
-            return [expand(config, variant)]
-
 def expand_template(config, template):
     """Replaces all macros in template with their stringified values."""
     old_template = template
@@ -376,7 +362,7 @@ def expand_template(config, template):
         try:
             macro = template[span.start() : span.end()]
             variant = eval_macro(config, macro)
-            result += " ".join([str(s) for s in flatten(config, variant)])
+            result += " ".join([str(s) for s in flatten(variant)])
         except:
             log(color(255, 255, 0))
             log(f"Expanding template '{old_template}' failed!")
@@ -412,25 +398,11 @@ class Expander:
         self.__dict__['config'] = config
 
     def __getattr__(self, key):
-        """Defining __getitem__ is required to use this expander as a mapping in eval()."""
         return expand(self, self.__dict__['config'][key])
 
     def __getitem__(self, key):
         """Defining __getitem__ is required to use this expander as a mapping in eval()."""
         return expand(self, self.__dict__['config'][key])
-
-class Flattener:
-
-    def __init__(self, config):
-        assert isinstance(config, Config)
-        self.__dict__['expanded'] = config.expanded
-
-    def __getattr__(self, key):
-        return flatten(self, self.__dict__['expanded'][key])
-
-    def __getitem__(self, key):
-        return flatten(self, self.__dict__['expanded'][key])
-
 
 
 class Task:
@@ -507,12 +479,12 @@ class Task:
 
         # Expand everything
         self.exp_desc = self.config.expanded.desc
-        self.exp_command = self.config.flattened.command
+        self.exp_command = flatten(self.config.expanded.command)
         self.exp_command_path = self.config.expanded.command_path
-        self.abs_command_files = self.config.flattened.abs_command_files
-        self.abs_source_files = self.config.flattened.abs_source_files
-        self.abs_build_files = self.config.flattened.abs_build_files
-        self.abs_build_deps = self.config.flattened.abs_build_deps
+        self.abs_command_files = flatten(self.config.expanded.abs_command_files)
+        self.abs_source_files = flatten(self.config.expanded.abs_source_files)
+        self.abs_build_files = flatten(self.config.expanded.abs_build_files)
+        self.abs_build_deps = flatten(self.config.expanded.abs_build_deps)
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
