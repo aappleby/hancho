@@ -793,31 +793,37 @@ class App:
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
+        asyncio.get_event_loop()
+
         # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
         # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
 
         # Change directory if needed and load all Hancho modules
+        mod_paths = [global_config.start_path / file for file in global_config.start_files]
         with Chdir(global_config.chdir):
-            result = asyncio.get_event_loop().run_until_complete(self.async_load_modules())
+            promise = self.async_load_modules(mod_paths)
+            result = asyncio.get_event_loop().run_until_complete(promise)
 
         # Run tasks until we're done with all of them.
         result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
 
         return result
 
-    async def async_load_modules(self):
+    async def async_load_modules(self, mod_paths):
         """All the actual Hancho stuff runs in an async context so that clients can schedule their
         own async tasks as needed."""
 
         # Load the root .hancho files.
-        for file in global_config.start_files:
-            abs_file = global_config.start_path / file
+        for abs_file in mod_paths:
             if not abs_file.exists():
                 raise FileNotFoundError(f"Could not find {abs_file}")
             self.load_module(abs_file, None)
 
     async def async_run_tasks(self):
         # Root module(s) loaded. Run all tasks in the queue until we run out.
+        # FIXME - Make Task _not_ queue the task, just create the coroutine. Then have this
+        # function queue and run all the tasks in batches. Once that's done, module loading can
+        # be in a sync context.
         self.jobs_available = global_config.jobs
         while True:
             pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
