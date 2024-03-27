@@ -30,8 +30,8 @@ And some plus sides that f-strings don't have:
 - Hancho templates that refer to ```list```s will get flattened out and joined with spaces
   - Expanding ```"{foo}"``` with ```foo = ["Hello", "Hancho", "World"]``` will produce ```"Hello Hancho World"```
   - Expanding ```"{foo}"``` with ```foo = [[["nesting"]], ["levels"], "don't", [[[[[["matter"]]]]]]]``` will produce ```"nesting levels don't matter"```
-- Hancho templates that refer to ```Task```s will be replaced with that task's ```build_files```.
-  - In the link task, ```source_files = [main_o, util_o]``` becomes ```["build/tut10/src/main.o", "build/tut10/src/util.o"]```
+- Hancho templates that refer to ```Task```s will be replaced with that task's ```build_files``` converted to absolute paths.
+  - In the link task, ```source_files = [main_o, util_o]``` becomes ```["/home/user/hancho/tutorial/build/tut10/src/main.o", "/home/user/hancho/tutorial/build/tut10/src/util.o"]```
 - Templates can refer to other templates
   - ```command``` contains ```{build_files}```, ```build_files``` contains ```{build_dir}```, and this all works fine.
 - You can nest templates up to ```MAX_EXPAND_DEPTH = 20``` levels deep
