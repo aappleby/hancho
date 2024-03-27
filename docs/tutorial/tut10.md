@@ -4,15 +4,19 @@
 
 Let's take a look at the tasks in ```tut02.hancho``` again:
 
-https://github.com/aappleby/hancho/blob/6ad89cdf4854a5949deaec33be28495f5e492528/tutorial/tut02.hancho#L12-L33
+https://github.com/aappleby/hancho/blob/29ee9c997102fe3c361b9a3a7249cfa43ca1693d/tutorial/tut02.hancho#L12-L33
 
 We have to specify the build directory ```build/tut02``` _ten_ times. Let's move it into the config object:
 
-https://github.com/aappleby/hancho/blob/6ad89cdf4854a5949deaec33be28495f5e492528/tutorial/tut10.hancho#L5-L11
+https://github.com/aappleby/hancho/blob/29ee9c997102fe3c361b9a3a7249cfa43ca1693d/tutorial/tut10.hancho#L5-L11
 
-Now we can use it in our tasks along with the other ```config``` fields to un-hardcode our description and command strings:
+Now we can use it in our tasks along with the other ```config``` fields to un-hardcode our compile task:
 
-https://github.com/aappleby/hancho/blob/6ad89cdf4854a5949deaec33be28495f5e492528/tutorial/tut10.hancho#L13-L19
+https://github.com/aappleby/hancho/blob/29ee9c997102fe3c361b9a3a7249cfa43ca1693d/tutorial/tut10.hancho#L13-L19
+
+And the link task works the same way:
+
+https://github.com/aappleby/hancho/blob/29ee9c997102fe3c361b9a3a7249cfa43ca1693d/tutorial/tut10.hancho#L29-L34
 
 Note that these strings are _not_ Python f-strings since they don't have the
 ```f""``` prefix. They are now Hancho template strings, which are similar to f-strings except they're not
