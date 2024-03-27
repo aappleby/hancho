@@ -57,7 +57,7 @@ https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781
 
 ## ```tut03.hancho```: Generating ```Task```s with functions
 
-Hardcoding all our paths is a bad idea. Let's make a compile-task-generating functions using Python's f-string syntax:
+Hardcoding all our paths is a bad idea. Let's make a compile-task-generating functions using Python's f-string syntax. If you're not familiar with f-strings, they are Python strings prefixed with ```f""``` that can use ```{bracketed expressions}``` to embed Python code inside the string. When the f-string is evaluated, Python will replace the contents of the ```{}```s with the value of the expressions inside them.
 
 https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut03.hancho#L12-L21
 
@@ -68,3 +68,22 @@ https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781
 And now the meat of our build is just three lines:
 
 https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut03.hancho#L32-L34
+
+## ```tut04.hancho```: Pulling our functions out into a separate module
+
+There's one more step we can do to modularize the code - we can cut and paste put our helper functions in their own module ```tut04_rules.py```. To use that, we need to ```import``` the module from the current directory, which requires tweaking ```sys.path```: 
+
+https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut04.hancho#L5-L7
+
+Once we've done that, our tasks can use the functions from ```tut04_rules.py```:
+
+https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut04.hancho#L9-L18
+
+And now our build-agnostic stuff is in ```tut04_rules.py``` and our build-specific stuff is in ```tut04.hancho``` - that's a good start.
+
+# Should we stop here, or continue further?
+
+If you really like writing Python, you can stop reading the tutorials here and get to work on scaling up this tiny example to build your own applications. You'll probably need to handle globbing, multiple build configurations, that sort of thing. It's a bit tedious, but Hancho's task runner should Just Work (tm).
+
+If you'd rather not do that, the next tutorial chapter will go into Hancho's text templating system which combines ```Config``` objects with ```"text {templating} powers``` to produce something more like a declarative build system instead of an imperative build system.
+
