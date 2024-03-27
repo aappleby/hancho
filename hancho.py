@@ -212,6 +212,8 @@ class Config:
     def __getitem__(self, key):
         if key == "expanded":
             return Expander(self)
+        if key == "flattened":
+            return Flattener(self)
         val = self.get(key)
         if val is None:
             raise KeyError(f"Config key '{key}' was never defined")
@@ -296,6 +298,12 @@ class Config:
     def task(self, **kwargs):
         """Creates a task directly from this config object."""
         return Task(config=self, **kwargs)
+
+    def expand(self, variant):
+        return expand(self.expanded, variant)
+
+    def flatten(self, variant):
+        return flatten(self.expanded, self.expand(variant))
 
 
 
@@ -415,13 +423,13 @@ class Flattener:
 
     def __init__(self, config):
         assert isinstance(config, Config)
-        self.__dict__['config'] = config
+        self.__dict__['expanded'] = config.expanded
 
     def __getattr__(self, key):
-        return flatten(self, self.__dict__['config'][key])
+        return flatten(self, self.__dict__['expanded'][key])
 
     def __getitem__(self, key):
-        return flatten(self, self.__dict__['config'][key])
+        return flatten(self, self.__dict__['expanded'][key])
 
 
 
@@ -499,15 +507,12 @@ class Task:
 
         # Expand everything
         self.exp_desc = self.config.expanded.desc
-
-        #self.exp_command = flatten(self.config.expanded, self.config.command)
-        self.exp_command = expand(self.config.expanded, flatten(self.config.expanded, self.config.command))
-
+        self.exp_command = self.config.flattened.command
         self.exp_command_path = self.config.expanded.command_path
-        self.abs_command_files = flatten(self.config.expanded, self.config.abs_command_files)
-        self.abs_source_files = flatten(self.config.expanded, self.config.abs_source_files)
-        self.abs_build_files = flatten(self.config.expanded, self.config.abs_build_files)
-        self.abs_build_deps = flatten(self.config.expanded, self.config.abs_build_deps)
+        self.abs_command_files = self.config.flattened.abs_command_files
+        self.abs_source_files = self.config.flattened.abs_source_files
+        self.abs_build_files = self.config.flattened.abs_build_files
+        self.abs_build_deps = self.config.flattened.abs_build_deps
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
@@ -865,8 +870,7 @@ class App:
         new_build_config.update(kwargs)
 
         # Use the new config to expand the mod filename
-        expander = Expander(new_build_config)
-        mod_filename = expand(expander, mod_filename)
+        mod_filename = new_build_config.expand(mod_filename)
         mod_path = abspath(mod_filename)
         if not mod_path.exists():
             raise FileNotFoundError(f"Could not load module {mod_path}")
