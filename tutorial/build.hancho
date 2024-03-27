@@ -14,9 +14,12 @@ test_build("tut01.hancho")
 test_build("tut02.hancho")
 test_build("tut03.hancho")
 
-#test_build("tut0.hancho")
-#test_build("tut1.hancho")
-#test_build("tut2.hancho")
-#test_build("tut3.hancho")
-#test_build("tut4.hancho")
-#test_build("tut5.hancho")
+test_build("tut10.hancho")
+
+test_build("tut20.hancho")
+
+test_build("tut30.hancho")
+
+test_build("tut40.hancho")
+
+test_build("tut50.hancho")
