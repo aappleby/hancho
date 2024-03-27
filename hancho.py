@@ -299,8 +299,8 @@ class Config:
 
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
-    def __call__(self, **kwargs):
-        return Task(rule=self, **kwargs)
+    def __call__(self, source_files=None, build_files=None, **kwargs):
+        return Task(rule=self, source_files=source_files, build_files=build_files, **kwargs)
 
 
 # Expander requires some explanation.
