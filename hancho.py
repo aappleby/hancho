@@ -154,7 +154,12 @@ async def await_variant(variant):
             if inspect.isawaitable(variant.promise):
                 variant.promise = await variant.promise
         case Config():
-            await await_variant(variant.__dict__["_data"])
+            base = variant.__dict__["_base"]
+            data = variant.__dict__["_data"]
+            if base is not None:
+                await await_variant(base)
+            if data is not None:
+                await await_variant(data)
         case dict():
             for key in variant:
                 variant[key] = await await_variant(variant[key])
@@ -166,7 +171,7 @@ async def await_variant(variant):
     return variant
 
 
-def load(hancho_file, build_config, **kwargs):
+def load(hancho_file, build_config=None, **kwargs):
     """Module loader entry point for .hancho files."""
     return app.load_module(hancho_file, build_config, include=False, kwargs=kwargs)
 
@@ -233,7 +238,7 @@ class Config:
 
             def default(self, o):
                 if isinstance(o, Task):
-                    return f"task {Expander(o.rule).desc}"
+                    return f"task {Expander(o.rule)['desc']}"
                 return str(o)
 
         base = self.__dict__["_base"]
@@ -255,7 +260,17 @@ class Config:
         return default
 
     def set(self, **kwargs):
+        self.update(kwargs)
+
+    def update(self, kwargs):
         self.__dict__["_data"].update(kwargs)
+
+    def to_dict(self):
+        base = self.__dict__["_base"]
+        data = self.__dict__["_data"]
+        result = base.to_dict() if base else {}
+        result |= data
+        return result
 
     def defaults(self, **kwargs):
         """Sets key-val pairs in this config if the key does not already exist."""
@@ -267,18 +282,25 @@ class Config:
         """Returns a 'subclass' of this config blob that can override its fields."""
         return self.__class__(base=self, **kwargs)
 
+    def clone(self):
+        base = self.__dict__["_base"]
+        data = self.__dict__["_data"]
+        return Config(base=base, **data)
+
     def rule(self, **kwargs):
         """Returns a callable rule that uses this config blob (plus any kwargs)."""
         return Rule(base=self, **kwargs)
 
+    def task(self, **kwargs):
+        """Creates a task directly from this config object."""
+        return Task(rule=self, **kwargs)
+
+
 
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
-
-    def __call__(self, source_files=None, build_files=None, **kwargs):
-        return Task(
-            rule=self, source_files=source_files, build_files=build_files, **kwargs
-        )
+    def __call__(self, **kwargs):
+        return Task(rule=self, **kwargs)
 
 
 # Expander requires some explanation.
@@ -421,6 +443,8 @@ class Task:
             await await_variant(self.rule)
 
             # Everything awaited, task_init runs synchronously.
+            #print()
+            #print(self)
             self.task_init()
 
             # Run the commands if we need to.
@@ -518,7 +542,7 @@ class Task:
             if mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
-        for mod in app.hancho_mods.values():
+        for mod in app.loaded_modules:
             if mtime(mod.__file__) >= min_out:
                 return f"Rebuilding because {mod.__file__} has changed"
 
@@ -662,7 +686,7 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.hancho_mods = {}
+        self.loaded_modules = []
         self.all_build_files = set()
         self.tasks_total = 0
         self.tasks_pass = 0
@@ -814,20 +838,48 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, mod_filename, build_config, include=False, kwargs={}):
+    def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
+        # Create the module's initial build_config
+        new_build_config = build_config.clone() if build_config is not None else Config()
+        new_build_config.update(kwargs)
+
+        # Use the new config to expand the mod filename
+        mod_filename = Expander(new_build_config).expand(mod_filename)
         mod_path = abspath(mod_filename)
         if not mod_path.exists():
             raise FileNotFoundError(f"Could not load module {mod_path}")
 
-        # We dedupe module loads based on the physical path to the .hancho file and the contents
-        # of the arguments passed to it.
-        phys_path = Path(mod_path).resolve()
-        module_key = f"{phys_path} : params {sorted(kwargs.items())}"
-        if module_key in self.hancho_mods:
-            return self.hancho_mods[module_key]
+        new_build_config.phys_path = Path(mod_path).resolve()
+        new_build_config.this_path = mod_path.parent
+        if not include:
+            # If this module was loaded via load() and not include(), it gets its own source_path.
+            new_build_config.source_path = mod_path.parent
 
+        # Look through our loaded modules and see if there's already a compatible one loaded.
+        #print()
+        #print(f"Looking for module compatible with {new_build_config}")
+        new_build_dict = new_build_config.to_dict()
+        reuse = None
+        for mod in self.loaded_modules:
+            old_build_dict = mod.build_config.to_dict()
+            if old_build_dict | new_build_dict == old_build_dict:
+                if reuse is not None:
+                    raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
+                reuse = mod
+        if reuse:
+            # Compatible module found, reuse it.
+            #print(f"Reusing module {reuse.build_config}")
+            return reuse
+        else:
+            #print("No reusable module found")
+            pass
+
+        #print()
+
+
+        # There was no compatible module loaded, so make a new one.
         with open(mod_path, encoding="utf-8") as file:
             source = file.read()
             code = compile(source, mod_path, "exec", dont_inherit=True)
@@ -835,17 +887,8 @@ class App:
         module = type(sys)(mod_path.stem)
         module.__file__ = mod_path
         module.__builtins__ = builtins
-        if build_config is not None:
-            module.build_config = build_config.extend(**kwargs)
-        else:
-            module.build_config = Config(**kwargs)
-        module.build_config.this_path = mod_path.parent
-
-        # If this module was loaded via load() and not include(), it gets its own source_path.
-        if not include:
-            module.build_config.source_path = mod_path.parent
-
-        self.hancho_mods[module_key] = module
+        module.build_config = new_build_config
+        self.loaded_modules.append(module)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async

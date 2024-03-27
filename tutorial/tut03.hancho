@@ -1,0 +1,34 @@
+# tutorial/tut0.hancho
+from hancho import Config
+from hancho import Task
+from pathlib import Path
+
+config = Config(
+  command_path  = Path.cwd(),
+  source_path   = Path.cwd(),
+  build_path    = Path.cwd(),
+  command_files = [],
+)
+
+def compile_cpp(source, build_dir):
+  obj = source.replace('.cpp', '.o')
+  dep = source.replace('.cpp', '.d')
+  return config.task(
+    command       = f"g++ -MMD -c {source} -o {build_dir}/{obj}",
+    source_files  = [source],
+    build_files   = [f"{build_dir}/{obj}"],
+    build_deps    = [f"{build_dir}/{dep}"],
+  )
+
+def link_cpp(tasks, build_dir, binary):
+  objs = [task.rule.build_files[0] for task in tasks]
+  print(objs)
+  return config.task(
+    command       = f"g++ {' '.join(objs)} -o {build_dir}/{binary}",
+    source_files  = tasks,
+    build_files   = [f"{build_dir}/{binary}"],
+  )
+
+main_o = compile_cpp("src/main.cpp", "build/tut01")
+util_o = compile_cpp("src/util.cpp", "build/tut01")
+app = link_cpp([main_o, util_o], "build/tut01", "app")

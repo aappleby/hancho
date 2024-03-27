@@ -3,14 +3,11 @@ from hancho import Task
 from pathlib import Path
 
 Task(
-  command       = "g++ src/main.cpp src/util.cpp -o build/tut0/app",
-
+  command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
   command_path  = Path.cwd(),
   command_files = [],
-
   source_path   = Path.cwd(),
   source_files  = ["src/main.cpp", "src/util.cpp"],
-
   build_path    = Path.cwd(),
-  build_files   = ["build/tut0/app"],
+  build_files   = ["build/tut00/app"],
 )

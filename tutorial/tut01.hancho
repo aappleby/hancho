@@ -1,0 +1,35 @@
+# tutorial/tut0.hancho
+from hancho import Task
+from pathlib import Path
+
+main_o = Task(
+  command       = "g++ -MMD -c src/main.cpp -o build/tut01/main.o",
+  command_path  = Path.cwd(),
+  command_files = [],
+  source_path   = Path.cwd(),
+  source_files  = ["src/main.cpp"],
+  build_path    = Path.cwd(),
+  build_files   = ["build/tut01/main.o"],
+  build_deps    = ["build/tut01/main.d"],
+)
+
+util_o = Task(
+  command       = "g++ -MMD -c src/util.cpp -o build/tut01/util.o",
+  command_path  = Path.cwd(),
+  command_files = [],
+  source_path   = Path.cwd(),
+  source_files  = ["src/util.cpp"],
+  build_path    = Path.cwd(),
+  build_files   = ["build/tut01/util.o"],
+  build_deps    = ["build/tut01/util.d"],
+)
+
+app = Task(
+  command       = "g++ build/tut01/main.o build/tut01/util.o -o build/tut01/app",
+  command_path  = Path.cwd(),
+  command_files = [],
+  source_path   = Path.cwd(),
+  source_files  = [main_o, util_o],
+  build_path    = Path.cwd(),
+  build_files   = ["build/tut01/app"],
+)
