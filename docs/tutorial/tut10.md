@@ -93,3 +93,94 @@ https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672
 And then we call those rules. Using ```source_files=``` and ```build_files=``` is optional in rule calls, so our tasks shrink down to this:
 
 https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672/tutorial/tut13.hancho#L25-L27
+
+----------
+## ```tut14.hancho```: Absolute vs. relative paths and builtin macros.
+
+Let's go back to the command line for a moment and rebuild ```tut13.hancho```:
+
+```console
+user@host:~/hancho/tutorial$ rm -rf build && hancho tut13.hancho -v
+[1/3] Compile src/main.cpp
+Reason: Rebuilding because /home/user/hancho/tutorial/build/tut13/src/main.o is missing
+.$ g++ -MMD -c src/main.cpp -o build/tut13/src/main.o
+[2/3] Compile src/util.cpp
+Reason: Rebuilding because /home/user/hancho/tutorial/build/tut13/src/util.o is missing
+.$ g++ -MMD -c src/util.cpp -o build/tut13/src/util.o
+[3/3] Link /home/user/hancho/tutorial/build/tut13/src/main.o /home/user/hancho/tutorial/build/tut13/src/util.o into build/tut13/app
+Reason: Rebuilding because /home/user/hancho/tutorial/build/tut13/app is missing
+.$ g++ /home/user/hancho/tutorial/build/tut13/src/main.o /home/user/hancho/tutorial/build/tut13/src/util.o -o build/tut13/app
+hancho: BUILD PASSED
+user@host:~/hancho/tutorial$
+```
+
+It works fine, but having absolute paths like ```/home/user/hancho/tutorial/build/tut13/src/main.o``` is a bit annoying. If this were a larger project with deeper directory trees, the absolute paths could make reading our build log awkward.
+
+Like the builtin functions ```joinpath``` and ```swap_ext```, Hancho includes some builtin macros (just named templates without surrounding text) that you can use in your templates.
+
+In particular, ```rel_source_files``` will give us our ```source_files``` field with all the filenames changed to be relative to ```command_path```, the directory where our command is running.
+
+The ```rel_source_files``` macro is defined as ```"{relpath(abs_source_files, command_path)}"```, and ```abs_source_files``` is defined as ```"{joinpath(source_path, source_files)}"```. The macro joins the absolute ```source_path``` with our filenames, then removes the ```command_path``` prefix if present. If ```command_path``` _isn't_ present (say we're pulling in the files from some remote directory), the ```relpath``` will do nothing and we'll still have absolute filenames.
+
+Note that ```abspath``` and ```relpath``` are not necessarily identical to Python's ```os.path.abspath``` or ```Path.relative_to()``` - they need to operate on arrays of filenames, and we need to be slightly more careful about how we add and remove path pieces when symlinks are involved (you may not be using symlinks in your repos, but I find them helpful).
+
+Changing ```source_files``` to ```rel_source_files``` is trivial:
+
+https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291/tutorial/tut14.hancho#L13-L23
+
+and now we see relative paths passed to GCC instead of absolute ones:
+
+```console
+user@host:~/hancho/tutorial$ rm -rf build && hancho tut14.hancho -v
+[1/3] Compile src/main.cpp
+Reason: Rebuilding because /home/user/hancho/tutorial/build/tut14/src/main.o is missing
+.$ g++ -MMD -c src/main.cpp -o build/tut14/src/main.o
+[2/3] Compile src/util.cpp
+Reason: Rebuilding because /home/user/hancho/tutorial/build/tut14/src/util.o is missing
+.$ g++ -MMD -c src/util.cpp -o build/tut14/src/util.o
+[3/3] Link build/tut14/src/main.o build/tut14/src/util.o into build/tut14/app
+Reason: Rebuilding because /home/user/hancho/tutorial/build/tut14/app is missing
+.$ g++ build/tut14/src/main.o build/tut14/src/util.o -o build/tut14/app
+hancho: BUILD PASSED
+user@host:~/hancho/tutorial$
+```
+
+----------
+## ```tut15.hancho```: Relative paths, now for build files.
+
+We can do the same swap with ```build_files``` -> ```rel_build_files``` and things will still work. While we're at it, let's get rid of ```build_dir``` and just make it part of ```build_path```.
+
+We move ```"build/tut15"``` up a line:
+
+https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291/tutorial/tut15.hancho#L5-L10
+
+and now we can remove ```joinpath(build_dir, ...``` since it' now part of the build path:
+
+https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291/tutorial/tut15.hancho#L12-L26
+
+This is about as far as we can go with templates for now - our build rules are now completely generic, and our tasks are all one-liners.
+
+----------
+## ```tut16.hancho```: ```build_config``` and sensible defaults.
+
+There are still a few lines we can remove from our build script by making use of some sensible default values that Hancho provides in a global config object called ```build_config```.
+
+Hancho creates a separate module-wide ```build_config``` object for each .hancho file it loads, and it contains default values for ```command_path```, ```source_path```, and ```build_path``` that will work for most projects. Or at least most of my projects, anyway - I wrote this thing for personal use, so the defaults are the defaults I wanted. Change them if you like. :D
+
+The ```build_path``` default is particularly interesting:
+
+https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291/hancho.py#L720
+
+Unpacking this a bit:
+- ```start_path``` is globally defined as the path to the directory you ran ```python3 hancho.py``` in.
+- ```build_dir``` is globally defined to be ```"build"``` by default, as doing out-of-tree builds is generally preferred over in-tree builds.
+- ```build_tag``` is globally defined to be an empty string, but it can be set to whatever you want. For example, you might want to split your build directory up into separate ```debug``` and ```release``` trees using ```build_tag```.
+- ```rel_source_path``` is the same macro as we saw earlier - the source filenames, relative to ```command_path```.
+
+If we set ```build_config.build_tag``` to ```"tut16"``` and then use ```build_config``` in place of ```config```, we can ditch our ```config = Config(...``` object entirely. That in turn means we don't have to ```from hancho import Config``` or ```from pathlib import Path``` anymore either.
+
+Here's the build file in its final form, for now:
+
+https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291/tutorial/tut16.hancho#L1-L19
+
+That's not too shabby. There are more things we can do with ```build_config``` and it would be nice to move our two build rules to a separate ```rules.hancho``` file, but those are topics for Hancho Tutorial Chapter 2 (coming soon).
