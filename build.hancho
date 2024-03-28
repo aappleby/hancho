@@ -1,6 +1,6 @@
 build_config.verbose = True
 
-build_config.task([], [], desc = "Run all tests",         command = "cd tests && rm -rf build && ./test.py > /dev/null")
+build_config.task([], [], desc = "Run all tests",         command = "cd tests && rm -rf build && ./run_tests.py > /dev/null")
 build_config.task([], [], desc = "Build all tutorials",   command = "cd tutorial && rm -rf build && ../hancho.py --quiet")
 build_config.task([], [], desc = "Build hello_world",     command = "cd examples/hello_world && rm -rf build && ../../hancho.py --quiet")
 build_config.task([], [], desc = "Build gtk hello_world", command = "cd examples/meson && rm -rf build && ../../hancho.py --quiet")

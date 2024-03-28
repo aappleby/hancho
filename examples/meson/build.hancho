@@ -1,10 +1,12 @@
 # examples/meson/build.hancho
 
+from hancho import *
+
 build_config.build_tag = "debug"
 
 compile = build_config.rule(
-  desc      = "Compiling {files_in} -> {files_out} ({build_tag})",
-  command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {files_in} -o {files_out}",
+  desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
+  command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
   includes  = [
     "-I."
   ],
@@ -20,20 +22,21 @@ compile = build_config.rule(
     "-Wall",
     "-Winvalid-pch"
   ],
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
+  build_files = "{swap_ext(source_files, '.o')}",
+  build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
 link = build_config.rule(
-  desc      = "Linking {files_out}",
-  command   = "gcc {files_in} -o {files_out} {link_opts}",
+  desc      = "Linking {rel_source_files} -> {rel_build_files}",
+  command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
   link_opts = [
     "-Wl,--as-needed",
     "-Wl,--no-undefined",
     "-Wl,--start-group",
     "{libs}",
     "-Wl,--end-group",
-  ]
+  ],
+  libs = []
 )
 
 main_o = compile(
@@ -48,9 +51,6 @@ main_o = compile(
   ],
 )
 
-#main = link(main_o, "demo",
-#  libs = [
-#    link.libs,
-#    "{run_cmd('pkg-config gtk+-3.0 --libs')}"
-#  ],
-#)
+main = link(main_o, "demo",
+  libs = ["{run_cmd('pkg-config gtk+-3.0 --libs')}"],
+)
