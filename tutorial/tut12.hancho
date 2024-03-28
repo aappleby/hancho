@@ -27,7 +27,7 @@ util_o = compile.task(
 
 link = config.extend(
   desc          = "Link {source_files} into {build_files}",
-  command       = "g++ {joinpath(build_dir, source_files)} -o {build_files}",
+  command       = "g++ {source_files} -o {build_files}",
 )
 
 app = link.task(
