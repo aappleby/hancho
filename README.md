@@ -24,6 +24,7 @@ Hancho should suffice for small to medium sized projects.
 
 ## Updates
 
+ - 2024-03-28 - WIP tutorial for the redesigned Hancho is in the v010 branch here - https://github.com/aappleby/hancho/tree/v010/docs/tutorial
  - 2024-03-22
    - I'm working on a v0.1.0 branch that will rework the way paths/files/directories and template expansion works.
    - The current setup is fine for my personal projects, but I've gotten feedback that it's unintuitive for other use cases - for example, moving a Rule invocation from top-level into a function and then calling that function from another file can change how file paths are interpreted.
