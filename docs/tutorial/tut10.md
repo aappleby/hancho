@@ -63,8 +63,33 @@ and our link task is similarly small:
 https://github.com/aappleby/hancho/blob/b895dd1792e4bcaa47c670fc0c139278e77a1b4f/tutorial/tut11.hancho#L35-L38
 
 ----------
-## ```tut11.hancho```: Using builtin functions to factor out ```build_files``` and ```build_deps```
+## ```tut12.hancho```: Using builtin functions to factor out ```build_files``` and ```build_deps```
 
 The ```build_files``` and ```build_deps``` in our ```main_o``` and ```util_o``` tasks are almost but not quite identical. We can factor them out, but we'll need to use some of Hancho's built-in functions to do so.
 
 https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672/tutorial/tut12.hancho#L16-L17
+
+To make ```build/tut11/src/main.o``` out of ```build/tut11``` and ```src/main.cpp```, we use ```swap_ext``` to change the file extension to ```.o``` and then join it with ```build_dir```. Easy.
+
+Like most of the Hancho helper functions, ```swap_ext``` and ```join_path``` work on both strings and lists.
+
+The ```join_path``` method can also take as many path pieces as you need to stitch together, and will produce all possible permutations of those pieces. So ```join_path("build", ["debug", "release"], ["foo.o", "bar.o"])``` will produce ```["build/debug/foo.o", "build/debug/bar.o", "build/release/foo.o", "build/release/bar.o"]```.
+
+With that change, our compile tasks are almost one-liners:
+
+https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672/tutorial/tut12.hancho#L20-L26
+
+----------
+## ```tut13.hancho```: A bit of syntactical sugar.
+
+We can reduce our tasks to actual one-liners by taking advantage of a little bit of shorthand. Build rules in some build systems like Bazel look like function calls - see ```cc_binary()``` [here](https://bazel.build/reference/be/c-cpp#cc_binary) if you're interested.
+
+Hancho can emulate that as well - just use ```compile = config.rule(...)``` and you can call ```main_o = compile(...)``` directly instead of using ```compile.task(...)```.
+
+First we switch our compile and link configurations over to rules:
+
+https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672/tutorial/tut13.hancho#L13-L23
+
+And then we call those rules. Using ```source_files=``` and ```build_files=``` is optional in rule calls, so our tasks shrink down to this:
+
+https://github.com/aappleby/hancho/blob/ebb3bec0091cb3fcde2033d933e1722d39fc4672/tutorial/tut13.hancho#L25-L27
