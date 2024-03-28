@@ -1,4 +1,4 @@
-build_config.build_path = "{this_path/'build/build_path_works'}"
+build_config.build_path = this_path / "build/build_path_works"
 
 rules = build_config.include("rules.hancho")
 rules.touch_outputs([], "result.txt")

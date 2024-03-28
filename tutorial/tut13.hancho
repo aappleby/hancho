@@ -13,8 +13,8 @@ config = Config(
 compile = config.rule(
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_files}",
-  build_files   = "{joinpath(build_dir, swap_ext(source_files, '.o'))}",
-  build_deps    = "{joinpath(build_dir, swap_ext(source_files, '.d'))}",
+  build_files   = "{join_path(build_dir, swap_ext(source_files, '.o'))}",
+  build_deps    = "{join_path(build_dir, swap_ext(source_files, '.d'))}",
 )
 
 link = config.rule(

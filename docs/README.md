@@ -43,7 +43,7 @@ main_app = link(files_in = main_o, files_out = "app")
    - The directory to search for input files
 - ```deps_dir``` (Default: ```{leaf_dir}```)
    - The directory to search for extra dependencies
-- ```out_dir``` (Default: ```{start_dir / build_dir / build_tag / relpath(leaf_dir, start_dir)}```)
+- ```out_dir``` (Default: ```{start_dir / build_dir / build_tag / rel_path(leaf_dir, start_dir)}```)
    - The full path to the build directory for a single task
 
 ### Building Hancho files in submodules

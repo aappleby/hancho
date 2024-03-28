@@ -63,31 +63,31 @@ def log(message, *args, sameline=False, **kwargs):
     sys.stdout.flush()
 
 
-def abspath(path):
+def abs_path(path):
     """Pathlib's path.absolute() doesn't resolve "foo/../bar", so we use os.path.abspath."""
     if isinstance(path, list):
-        return [abspath(p) for p in path]
+        return [abs_path(p) for p in path]
     return Path(os.path.abspath(path))
 
 
-def relpath(path1, path2):
+def rel_path(path1, path2):
     """We don't want to generate paths with '..' in them, so we just try and remove the prefix.
     If we can't remove the prefix we'll still have an absolute path."""
     if isinstance(path1, list):
-        return [relpath(p, path2) for p in path1]
+        return [rel_path(p, path2) for p in path1]
     if str(path1) == str(path2):
         return Path("")
     return Path(str(path1).removeprefix(str(path2) + "/"))
 
 
-def joinpath(*args):
+def join_path(*args):
     """Returns an array of all possible concatenated paths from the given paths (or arrays of paths)."""
     if len(args) > 2:
-        return joinpath(args[0], joinpath(*args[1:]))
+        return join_path(args[0], join_path(*args[1:]))
     if isinstance(args[0], list):
-        return [path for prefix in args[0] for path in joinpath(prefix, args[1])]
+        return [path for prefix in args[0] for path in join_path(prefix, args[1])]
     if isinstance(args[1], list):
-        return [path for suffix in args[1] for path in joinpath(args[0], suffix)]
+        return [path for suffix in args[1] for path in join_path(args[0], suffix)]
     return [Path(args[0]) / Path(args[1])]
 
 
@@ -240,7 +240,7 @@ class Config:
 
             def default(self, o):
                 if isinstance(o, Task):
-                    return f"task {o.config.expanded['desc']}"
+                    return f"task {o.config.expanded.desc}"
                 return str(o)
 
         base = self.__dict__["_base"]
@@ -308,6 +308,9 @@ class Config:
 
     def include(self, hancho_file, **kwargs):
         return app.load_module(hancho_file, self, include=True, kwargs=kwargs)
+
+    def collapse(self):
+        return type(self)(**self.to_dict())
 
 
 
@@ -600,7 +603,7 @@ class Task:
             result = []
             for exp_command in self.exp_command:
                 if self.config.verbose or self.config.debug:
-                    rel_command_path = relpath(self.exp_command_path, self.config.start_path)
+                    rel_command_path = rel_path(self.exp_command_path, self.config.start_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -727,9 +730,9 @@ class App:
             build_deps=[],
 
             # Helper functions
-            abspath=abspath,
-            relpath=relpath,
-            joinpath=joinpath,
+            abs_path=abs_path,
+            rel_path=rel_path,
+            join_path=join_path,
             color=color,
             glob=glob,
             len=len,
@@ -738,19 +741,19 @@ class App:
             swap_ext=swap_ext,
 
             # Helper macros
-            rel_command_path  = "{relpath(command_path, command_path)}",
-            rel_source_path   = "{relpath(source_path, command_path)}",
-            rel_build_path    = "{relpath(build_path, command_path)}",
+            rel_command_path  = "{rel_path(command_path, command_path)}",
+            rel_source_path   = "{rel_path(source_path, command_path)}",
+            rel_build_path    = "{rel_path(build_path, command_path)}",
 
-            abs_command_files = "{joinpath(command_path, command_files)}",
-            abs_source_files  = "{joinpath(source_path, source_files)}",
-            abs_build_files   = "{joinpath(build_path, build_files)}",
-            abs_build_deps    = "{joinpath(build_path, build_deps)}",
+            abs_command_files = "{join_path(command_path, command_files)}",
+            abs_source_files  = "{join_path(source_path, source_files)}",
+            abs_build_files   = "{join_path(build_path, build_files)}",
+            abs_build_deps    = "{join_path(build_path, build_deps)}",
 
-            rel_command_files = "{relpath(abs_command_files, command_path)}",
-            rel_source_files  = "{relpath(abs_source_files, command_path)}",
-            rel_build_files   = "{relpath(abs_build_files, command_path)}",
-            rel_build_deps    = "{relpath(abs_build_deps, command_path)}",
+            rel_command_files = "{rel_path(abs_command_files, command_path)}",
+            rel_source_files  = "{rel_path(abs_source_files, command_path)}",
+            rel_build_files   = "{rel_path(abs_build_files, command_path)}",
+            rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
 
             # Global config has no base.
             base=None,
@@ -853,33 +856,41 @@ class App:
     def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        # Create the module's initial build_config
-        new_build_config = build_config.clone() if build_config is not None else Config()
-        new_build_config.update(kwargs)
+        # Create the module's initial config object
+        new_initial_config = build_config.collapse() if build_config is not None else Config()
+        new_initial_config.update(kwargs)
 
         # Use the new config to expand the mod filename
-        mod_filename = new_build_config.expand(mod_filename)
-        mod_path = abspath(mod_filename)
+        mod_filename = new_initial_config.expand(mod_filename)
+        mod_path = abs_path(mod_filename)
+        phys_path = Path(mod_path).resolve()
         if not mod_path.exists():
             raise FileNotFoundError(f"Could not load module {mod_path}")
 
-        new_build_config.phys_path = Path(mod_path).resolve()
-        new_build_config.this_path = mod_path.parent
         if not include:
             # If this module was loaded via load() and not include(), it gets its own source_path.
-            new_build_config.source_path = mod_path.parent
+            new_initial_config.source_path = mod_path.parent
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
-        new_build_dict = new_build_config.to_dict()
+        new_initial_dict = new_initial_config.to_dict()
         reuse = None
         for mod in self.loaded_modules:
-            old_build_dict = mod.build_config.to_dict()
-            if old_build_dict | new_build_dict == old_build_dict:
+            if mod.phys_path != phys_path:
+                continue
+
+            old_initial_dict = mod.initial_config.to_dict()
+            if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
                     raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
+                print(f"old_build_dict {old_initial_dict}")
+                print(f"new_build_dict {new_initial_dict}")
                 reuse = mod
         if reuse:
+            print(f"Reusing module {reuse.__file__}")
             return reuse
+
+        if (global_config.debug):
+            log(f"Loading module {mod_path} using config {new_initial_config}")
 
         # There was no compatible module loaded, so make a new one.
         with open(mod_path, encoding="utf-8") as file:
@@ -889,7 +900,11 @@ class App:
         module = type(sys)(mod_path.stem)
         module.__file__ = mod_path
         module.__builtins__ = builtins
-        module.build_config = new_build_config
+        module.self = module
+        module.phys_path = phys_path
+        module.this_path = mod_path.parent
+        module.initial_config = new_initial_config
+        module.build_config = module.initial_config.extend()
         self.loaded_modules.append(module)
 
         # We must chdir()s into the .hancho file directory before running it so that

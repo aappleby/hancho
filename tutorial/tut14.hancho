@@ -12,14 +12,14 @@ config = Config(
 
 compile = config.rule(
   desc          = "Compile {rel_source_files}",
-  command       = "g++ -MMD -c {rel_source_files} -o {build_files}",
-  build_files   = "{joinpath(build_dir, swap_ext(rel_source_files, '.o'))}",
-  build_deps    = "{joinpath(build_dir, swap_ext(rel_source_files, '.d'))}",
+  command       = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
+  build_files   = "{join_path(build_dir, swap_ext(rel_source_files, '.o'))}",
+  build_deps    = "{join_path(build_dir, swap_ext(rel_source_files, '.d'))}",
 )
 
 link = config.rule(
-  desc          = "Link {rel_source_files} into {build_files}",
-  command       = "g++ {rel_source_files} -o {build_files}",
+  desc          = "Link {rel_source_files} into {rel_build_files}",
+  command       = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
 main_o = compile("src/main.cpp")

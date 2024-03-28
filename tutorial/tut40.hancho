@@ -1,6 +1,6 @@
 # tutorial/tut40.hancho
 
 build_config.build_tag = "tut40"
-build_config.rules_path = build_config.this_path
+build_config.rules_path = this_path
 
 build_config.load("src/src.hancho")
