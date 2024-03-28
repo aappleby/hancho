@@ -19,7 +19,7 @@ compile = config.rule(
 
 link = config.rule(
   desc          = "Link {source_files} into {build_files}",
-  command       = "g++ {joinpath(build_dir, source_files)} -o {build_files}",
+  command       = "g++ {source_files} -o {build_files}",
 )
 
 main_o = compile("src/main.cpp")
