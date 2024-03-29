@@ -16,6 +16,7 @@ import traceback
 import types
 from pathlib import Path
 from glob import glob
+import time
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -428,7 +429,7 @@ class Task:
             self.config = config.extend(**kwargs)
         else:
             self.config = config
-        self.promise = asyncio.create_task(self.run_async())
+        app.pending_tasks.append(self)
 
     def __repr__(self):
         class Encoder(json.JSONEncoder):
@@ -701,6 +702,8 @@ class App:
         self.expand_depth = 0
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
+        self.pending_tasks = []
+
         # The global config object. All fields here can be used in any template.
         # fmt: off
         self.global_config = Config(
@@ -796,43 +799,48 @@ class App:
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
-        asyncio.get_event_loop()
+        # Change directory if needed and load all Hancho modules
+        time_a = time.perf_counter()
+        with Chdir(global_config.chdir):
+            mod_paths = [global_config.start_path / file for file in global_config.start_files]
+            for abs_file in mod_paths:
+                if not abs_file.exists():
+                    raise FileNotFoundError(f"Could not find {abs_file}")
+                self.load_module(abs_file, None)
+        time_b = time.perf_counter()
+        if global_config.debug or global_config.verbose:
+            log(f"Loading .hancho files took {time_b-time_a:.4f} seconds")
 
         # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
         # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
 
-        # Change directory if needed and load all Hancho modules
-        mod_paths = [global_config.start_path / file for file in global_config.start_files]
-        with Chdir(global_config.chdir):
-            promise = self.async_load_modules(mod_paths)
-            result = asyncio.get_event_loop().run_until_complete(promise)
-
         # Run tasks until we're done with all of them.
         result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
-
         return result
 
-    async def async_load_modules(self, mod_paths):
-        """All the actual Hancho stuff runs in an async context so that clients can schedule their
-        own async tasks as needed."""
-
-        # Load the root .hancho files.
-        for abs_file in mod_paths:
-            if not abs_file.exists():
-                raise FileNotFoundError(f"Could not find {abs_file}")
-            self.load_module(abs_file, None)
+    def queue_pending_tasks(self):
+        """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
+        tasks = self.pending_tasks
+        self.pending_tasks = []
+        for task in tasks:
+            task.promise = asyncio.create_task(task.run_async())
+        return tasks
 
     async def async_run_tasks(self):
         # Root module(s) loaded. Run all tasks in the queue until we run out.
-        # FIXME - Make Task _not_ queue the task, just create the coroutine. Then have this
-        # function queue and run all the tasks in batches. Once that's done, module loading can
-        # be in a sync context.
+
         self.jobs_available = global_config.jobs
-        while True:
-            pending_tasks = asyncio.all_tasks() - {asyncio.current_task()}
-            if not pending_tasks:
-                break
-            await asyncio.wait(pending_tasks)
+
+        # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
+        # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
+        # tasks after awaiting each one. Because we're awaiting tasks in the order they were
+        # created, this will effectively walk through all tasks in dependency order.
+        tasks = self.queue_pending_tasks()
+        while tasks:
+            task = tasks.pop(0)
+            if inspect.isawaitable(task.promise):
+                await task.promise
+            tasks.extend(self.queue_pending_tasks())
 
         # Done, print status info if needed
         if global_config.debug:
@@ -882,14 +890,13 @@ class App:
             if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
                     raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
-                print(f"old_build_dict {old_initial_dict}")
-                print(f"new_build_dict {new_initial_dict}")
                 reuse = mod
         if reuse:
-            print(f"Reusing module {reuse.__file__}")
+            if global_config.debug:
+                log(f"Reusing module {reuse.__file__}")
             return reuse
 
-        if (global_config.debug):
+        if global_config.debug:
             log(f"Loading module {mod_path} using config {new_initial_config}")
 
         # There was no compatible module loaded, so make a new one.
@@ -905,6 +912,7 @@ class App:
         module.this_path = mod_path.parent
         module.initial_config = new_initial_config
         module.build_config = module.initial_config.extend()
+        module.hancho = sys.modules["hancho"]
         self.loaded_modules.append(module)
 
         # We must chdir()s into the .hancho file directory before running it so that
