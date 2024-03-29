@@ -23,7 +23,17 @@ Hancho should suffice for small to medium sized projects.
 [Some Additional Documentation Here](docs)
 
 ## Updates
-
+ - 2024-03-28 - The v010 branch now has visualization of template and macro expansion which you can enable via ```--debug_expansion```. It produces diagrams like this:
+```
+┏ Eval '{join_path(build_path, build_files)}'
+┃┏ Eval '{start_path/build_dir/build_tag/rel_source_path}'
+┃┃┏ Eval '{rel_path(source_path, command_path)}'
+┃┃┃┏ Eval '{start_path}'
+┃┃┃┗ /home/user/hancho/tutorial
+┃┃┗ .
+┃┗ /home/user/hancho/tutorial/build/tut16
+┗ [PosixPath('/home/user/hancho/tutorial/build/tut16/app')]
+```
  - 2024-03-28 - WIP tutorial for the redesigned Hancho is in the v010 branch here - https://github.com/aappleby/hancho/tree/v010/docs/tutorial
  - 2024-03-22
    - I'm working on a v0.1.0 branch that will rework the way paths/files/directories and template expansion works.
