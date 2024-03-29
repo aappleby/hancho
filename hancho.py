@@ -241,7 +241,7 @@ class Config:
 
             def default(self, o):
                 if isinstance(o, Task):
-                    return f"task {o.config.expanded.desc}"
+                    return f"task {expand(o.config.expanded, o.config.desc)}"
                 return str(o)
 
         base = self.__dict__["_base"]
@@ -302,7 +302,7 @@ class Config:
         return expand(self.expanded, variant)
 
     def flatten(self, variant):
-        return flatten(self.expand(variant))
+        return flatten(expand(self.expanded, variant))
 
     def load(self, hancho_file, **kwargs):
         return app.load_module(hancho_file, self, include=False, kwargs=kwargs)
@@ -363,7 +363,7 @@ def expand(config, variant):
                 f"Don't know how to expand {type(variant)}='{variant}'"
             )
 
-def expand_template(config, template):
+def expand_template_once(config, template):
     """Replaces all macros in template with their stringified values."""
     old_template = template
     result = ""
@@ -381,6 +381,17 @@ def expand_template(config, template):
         template = template[span.end() :]
     result += template
     return result
+
+def expand_template(config, template):
+    reps = 0
+    #print(f"Expand '{template}'")
+    while template_regex.search(template):
+        template = expand_template_once(config, template)
+        #print(f"    == '{template}'")
+        reps += 1
+        if reps == MAX_EXPAND_DEPTH:
+            raise RecursionError(f"Expanding '{template}' failed to terminate")
+    return template
 
 def eval_macro(config, macro):
     """Evaluates the contents of a "{macro}" string."""
@@ -486,13 +497,17 @@ class Task:
         """All the setup steps needed before we run a task."""
 
         # Expand everything
-        self.exp_desc = self.config.expanded.desc
-        self.exp_command = flatten(self.config.expanded.command)
-        self.exp_command_path = self.config.expanded.command_path
-        self.abs_command_files = flatten(self.config.expanded.abs_command_files)
-        self.abs_source_files = flatten(self.config.expanded.abs_source_files)
-        self.abs_build_files = flatten(self.config.expanded.abs_build_files)
-        self.abs_build_deps = flatten(self.config.expanded.abs_build_deps)
+        expanded = self.config.expanded
+
+        #self.exp_desc = expanded.desc
+        #return expand(self, self.__dict__['config'][key])
+        self.exp_desc = expand(self.config.expanded, self.config.desc)
+        self.exp_command = flatten(expand(self.config.expanded, self.config.command))
+        self.exp_command_path = expand(self.config.expanded, self.config.command_path)
+        self.abs_command_files = flatten(expand(self.config.expanded, self.config.abs_command_files))
+        self.abs_source_files = flatten(expand(self.config.expanded, self.config.abs_source_files))
+        self.abs_build_files = flatten(expand(self.config.expanded, self.config.abs_build_files))
+        self.abs_build_deps = flatten(expand(self.config.expanded, self.config.abs_build_deps))
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
@@ -949,8 +964,10 @@ class App:
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
 
+# Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
+# module instead of running it directly.
+app = App()
+global_config = app.global_config
 
 if __name__ == "__main__":
-    app = App()
-    global_config = app.global_config
     sys.exit(app.main())
