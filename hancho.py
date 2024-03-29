@@ -211,8 +211,6 @@ class Config:
         self.__dict__["_data"] = kwargs
 
     def __getitem__(self, key):
-        if key == "expanded":
-            return Expander(self)
         val = self.get(key)
         if val is None:
             raise KeyError(f"Config key '{key}' was never defined")
@@ -299,10 +297,10 @@ class Config:
         return Task(config=self, source_files=source_files, build_files=build_files, **kwargs)
 
     def expand(self, variant):
-        return expand(self.expanded, variant)
+        return expand(self, variant)
 
     def flatten(self, variant):
-        return flatten(expand(self.expanded, variant))
+        return flatten(expand(self, variant))
 
     def load(self, hancho_file, **kwargs):
         return app.load_module(hancho_file, self, include=False, kwargs=kwargs)
@@ -415,7 +413,11 @@ def eval_macro(config, macro):
     app.expand_depth += 1
     # pylint: disable=eval-used
     try:
-        result = eval(macro[1:-1], {}, config.expanded)
+        # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
+        # paths and stuff, which will break.
+        if not isinstance(config, Expander):
+            config = Expander(config)
+        result = eval(macro[1:-1], {}, config)
     except:
         log(color(255, 255, 0))
         log(f"Expanding macro '{macro}' failed!")
@@ -430,7 +432,6 @@ class Expander:
     """Expander does template expasion on read so that eval() always sees expanded templates."""
 
     def __init__(self, config):
-        assert isinstance(config, Config)
         self.__dict__['config'] = config
 
     def __getitem__(self, key):
@@ -516,17 +517,13 @@ class Task:
         """All the setup steps needed before we run a task."""
 
         # Expand everything
-        expanded = self.config.expanded
-
-        #self.exp_desc = expanded.desc
-        #return expand(self, self.__dict__['config'][key])
-        self.exp_desc = expand(self.config.expanded, self.config.desc)
-        self.exp_command = flatten(expand(self.config.expanded, self.config.command))
-        self.exp_command_path = expand(self.config.expanded, self.config.command_path)
-        self.abs_command_files = flatten(expand(self.config.expanded, self.config.abs_command_files))
-        self.abs_source_files = flatten(expand(self.config.expanded, self.config.abs_source_files))
-        self.abs_build_files = flatten(expand(self.config.expanded, self.config.abs_build_files))
-        self.abs_build_deps = flatten(expand(self.config.expanded, self.config.abs_build_deps))
+        self.exp_desc = expand(self.config, self.config.desc)
+        self.exp_command = flatten(expand(self.config, self.config.command))
+        self.exp_command_path = expand(self.config, self.config.command_path)
+        self.abs_command_files = flatten(expand(self.config, self.config.abs_command_files))
+        self.abs_source_files = flatten(expand(self.config, self.config.abs_source_files))
+        self.abs_build_files = flatten(expand(self.config, self.config.abs_build_files))
+        self.abs_build_deps = flatten(expand(self.config, self.config.abs_build_deps))
 
         # Sanity-check file paths.
         check_path(self.abs_command_files, exists=True)
