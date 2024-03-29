@@ -284,6 +284,7 @@ class Config:
         return self.__class__(base=self, **kwargs)
 
     def clone(self):
+        """Makes a one-level-deep copy of this config."""
         base = self.__dict__["_base"]
         data = self.__dict__["_data"]
         return Config(base=base, **data)
@@ -294,7 +295,9 @@ class Config:
 
     def task(self, source_files=None, build_files=None, **kwargs):
         """Creates a task directly from this config object."""
-        return Task(config=self, source_files=source_files, build_files=build_files, **kwargs)
+        return Task(
+            config=self, source_files=source_files, build_files=build_files, **kwargs
+        )
 
     def expand(self, variant):
         return expand(self, variant)
@@ -309,17 +312,21 @@ class Config:
         return app.load_module(hancho_file, self, include=True, kwargs=kwargs)
 
     def collapse(self):
+        """Returns a version of this config with all fields from all ancestors collapsed into a
+        single level."""
         return type(self)(**self.to_dict())
-
 
 
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
+
     def __call__(self, source_files=None, build_files=None, **kwargs):
-        return Task(config=self, source_files=source_files, build_files=build_files, **kwargs)
+        return Task(
+            config=self, source_files=source_files, build_files=build_files, **kwargs
+        )
 
 
-# Expander requires some explanation.
+# The template expansion / macro evaluation code requires some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings, templates, callbacks,
 # etcetera. So, when we need to produce a flat list of files from whatever was passed to
@@ -330,12 +337,12 @@ class Rule(Config):
 # was passed into a rule due to a previous rule failing) that we always propagate the exception up
 # to Task.run_async, where it will be handled and propagated to other Tasks.
 #
-# The result of this is that the functions in Expander are mutually recursive in a way that can
-# lead to confusing callstacks, but that should handle every possible case of stuff inside other
-# stuff.
+# The result of this is that the functions here are mutually recursive in a way that can lead to
+# confusing callstacks, but that should handle every possible case of stuff inside other stuff.
 #
 # The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
+
 
 def expand(config, variant):
     """Expands all templates anywhere inside 'variant'."""
@@ -357,64 +364,59 @@ def expand(config, variant):
         case _ if inspect.isfunction(variant):
             return variant
         case _:
-            raise ValueError(
-                f"Don't know how to expand {type(variant)}='{variant}'"
-            )
+            raise ValueError(f"Don't know how to expand {type(variant)}='{variant}'")
 
-def stringize(config, variant):
-    match variant:
-        case BaseException():
-            raise variant
-        case Task():
-            return stringize(config, variant.promise)
-        case list():
-            return " ".join([stringize(config, s) for s in flatten(variant)])
-        case int() | bool() | float() | str() | Path():
-            return str(variant)
-        case _:
-            raise ValueError(f"Don't know how to stringize {type(variant)}='{variant}'")
-
-def expand_template_once(config, template):
-    """Replaces all macros in template with their stringified values."""
-    old_template = template
-    result = ""
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        try:
-            macro = template[span.start() : span.end()]
-            variant = eval_macro(config, macro)
-            variant = stringize(config, variant)
-            #result += " ".join([str(s) for s in flatten(variant)])
-            result += variant
-        except:
-            log(color(255, 255, 0))
-            log(f"Expanding template '{old_template}' failed!")
-            log(color())
-            raise
-        template = template[span.end() :]
-    result += template
-    return result
 
 def expand_template(config, template):
-    reps = 0
-    #print(f"Expand '{template}'")
-    while template_regex.search(template):
-        template = expand_template_once(config, template)
-        #print(f"    == '{template}'")
-        reps += 1
-        if reps == MAX_EXPAND_DEPTH:
-            raise RecursionError(f"Expanding '{template}' failed to terminate")
-    return template
+    """Replaces all macros in template with their stringified values."""
+    if global_config.debug_expansion:
+        log(f"┏ Expand '{template}'")
+
+    try:
+        app.expand_depth += 1
+        old_template = template
+        result = ""
+        while span := template_regex.search(template):
+            result += template[0 : span.start()]
+            try:
+                macro = template[span.start() : span.end()]
+                variant = eval_macro(config, macro)
+                result += " ".join([str(s) for s in flatten(variant)])
+            except:
+                log(color(255, 255, 0))
+                log(f"Expanding template '{old_template}' failed!")
+                log(color())
+                raise
+            template = template[span.end() :]
+        result += template
+    finally:
+        app.expand_depth -= 1
+
+    if global_config.debug_expansion:
+        log(f"┗ '{result}'")
+    return result
+
 
 def eval_macro(config, macro):
     """Evaluates the contents of a "{macro}" string."""
     if app.expand_depth > MAX_EXPAND_DEPTH:
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
+    if global_config.debug_expansion:
+        log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
     app.expand_depth += 1
     # pylint: disable=eval-used
     try:
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
+        class Expander:
+            """JIT template expansion for use in eval()."""
+
+            def __init__(self, config):
+                self.config = config
+
+            def __getitem__(self, key):
+                return expand(self, self.config[key])
+
         if not isinstance(config, Expander):
             config = Expander(config)
         result = eval(macro[1:-1], {}, config)
@@ -425,25 +427,9 @@ def eval_macro(config, macro):
         raise
     finally:
         app.expand_depth -= 1
+    if global_config.debug_expansion:
+        log(("┃" * app.expand_depth) + f"┗ {result}")
     return result
-
-
-class Expander:
-    """Expander does template expasion on read so that eval() always sees expanded templates."""
-
-    def __init__(self, config):
-        self.__dict__['config'] = config
-
-    def __getitem__(self, key):
-        """Defining __getitem__ is required to use this expander as a mapping in eval()."""
-        if key == "expanded":
-            #print("Expanding expander lol")
-            return self
-        return expand(self, self.__dict__['config'][key])
-
-    def __getattr__(self, key):
-        return self.__getitem__(key)
-
 
 
 class Task:
@@ -520,8 +506,12 @@ class Task:
         self.exp_desc = expand(self.config, self.config.desc)
         self.exp_command = flatten(expand(self.config, self.config.command))
         self.exp_command_path = expand(self.config, self.config.command_path)
-        self.abs_command_files = flatten(expand(self.config, self.config.abs_command_files))
-        self.abs_source_files = flatten(expand(self.config, self.config.abs_source_files))
+        self.abs_command_files = flatten(
+            expand(self.config, self.config.abs_command_files)
+        )
+        self.abs_source_files = flatten(
+            expand(self.config, self.config.abs_source_files)
+        )
         self.abs_build_files = flatten(expand(self.config, self.config.abs_build_files))
         self.abs_build_deps = flatten(expand(self.config, self.config.abs_build_deps))
 
@@ -635,7 +625,9 @@ class Task:
             result = []
             for exp_command in self.exp_command:
                 if self.config.verbose or self.config.debug:
-                    rel_command_path = rel_path(self.exp_command_path, self.config.start_path)
+                    rel_command_path = rel_path(
+                        self.exp_command_path, self.config.start_path
+                    )
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -750,6 +742,7 @@ class App:
             dry_run=False,
             debug=False,
             force=False,
+            debug_expansion=False,
 
             # Rule defaults
             desc = "{source_files} -> {build_files}",
@@ -833,7 +826,9 @@ class App:
         # Change directory if needed and load all Hancho modules
         time_a = time.perf_counter()
         with Chdir(global_config.chdir):
-            mod_paths = [global_config.start_path / file for file in global_config.start_files]
+            mod_paths = [
+                global_config.start_path / file for file in global_config.start_files
+            ]
             for abs_file in mod_paths:
                 if not abs_file.exists():
                     raise FileNotFoundError(f"Could not find {abs_file}")
@@ -891,12 +886,13 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-
     def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         # Create the module's initial config object
-        new_initial_config = build_config.collapse() if build_config is not None else Config()
+        new_initial_config = (
+            build_config.collapse() if build_config is not None else Config()
+        )
         new_initial_config.update(kwargs)
 
         # Use the new config to expand the mod filename
@@ -979,6 +975,7 @@ class App:
         self.jobs_available += count
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
+
 
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
