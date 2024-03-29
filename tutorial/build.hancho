@@ -5,7 +5,7 @@ shutil.rmtree("build", ignore_errors=True)
 
 test_build = build_config.rule(
   desc        = "{color(200, 200, 100)}Testing tutorial build '{rel_source_files}'{color()}",
-  command     = "python3 ../hancho.py -q {rel_source_files} && echo pass > {rel_build_files}",
+  command     = "python3 ../hancho.py -v -d {rel_source_files} > /dev/null && echo pass > {rel_build_files}",
   build_files = "{swap_ext(source_files, '.pass')}",
 )
 

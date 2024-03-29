@@ -241,7 +241,7 @@ class Config:
 
             def default(self, o):
                 if isinstance(o, Task):
-                    return f"task {expand(o.config.expanded, o.config.desc)}"
+                    return f"task {expand(o.config, o.config.desc)}"
                 return str(o)
 
         base = self.__dict__["_base"]
@@ -363,6 +363,19 @@ def expand(config, variant):
                 f"Don't know how to expand {type(variant)}='{variant}'"
             )
 
+def stringize(config, variant):
+    match variant:
+        case BaseException():
+            raise variant
+        case Task():
+            return stringize(config, variant.promise)
+        case list():
+            return " ".join([stringize(config, s) for s in flatten(variant)])
+        case int() | bool() | float() | str() | Path():
+            return str(variant)
+        case _:
+            raise ValueError(f"Don't know how to stringize {type(variant)}='{variant}'")
+
 def expand_template_once(config, template):
     """Replaces all macros in template with their stringified values."""
     old_template = template
@@ -372,7 +385,9 @@ def expand_template_once(config, template):
         try:
             macro = template[span.start() : span.end()]
             variant = eval_macro(config, macro)
-            result += " ".join([str(s) for s in flatten(variant)])
+            variant = stringize(config, variant)
+            #result += " ".join([str(s) for s in flatten(variant)])
+            result += variant
         except:
             log(color(255, 255, 0))
             log(f"Expanding template '{old_template}' failed!")
@@ -400,7 +415,7 @@ def eval_macro(config, macro):
     app.expand_depth += 1
     # pylint: disable=eval-used
     try:
-        result = eval(macro[1:-1], {}, config)
+        result = eval(macro[1:-1], {}, config.expanded)
     except:
         log(color(255, 255, 0))
         log(f"Expanding macro '{macro}' failed!")
@@ -418,12 +433,16 @@ class Expander:
         assert isinstance(config, Config)
         self.__dict__['config'] = config
 
-    def __getattr__(self, key):
-        return expand(self, self.__dict__['config'][key])
-
     def __getitem__(self, key):
         """Defining __getitem__ is required to use this expander as a mapping in eval()."""
+        if key == "expanded":
+            #print("Expanding expander lol")
+            return self
         return expand(self, self.__dict__['config'][key])
+
+    def __getattr__(self, key):
+        return self.__getitem__(key)
+
 
 
 class Task:
