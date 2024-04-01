@@ -13,6 +13,11 @@
         "kind": "build",
         "isDefault": true
       }
+    },
+    {
+      "label": "Wipe build",
+      "type": "shell",
+      "command": "rm -rf build",
     }
   ]
 }

@@ -1,6 +1,6 @@
 # tutorial/src/src.hancho
 from hancho import *
 
-rules = include(build_config.rules_path / "rules.hancho", build_config)
+rules = build_config.include("{rules_path}/rules.hancho")
 
 rules.c_binary(glob("*.cpp"), "app")

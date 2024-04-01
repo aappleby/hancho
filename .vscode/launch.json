@@ -10,9 +10,10 @@
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}/tutorial",
-      "args": ["tut16.hancho"],
+      "args": ["-f", "build.hancho"],
       "console": "integratedTerminal",
       "justMyCode": false,
+      "preLaunchTask": "Wipe build",
     },
   ]
 }

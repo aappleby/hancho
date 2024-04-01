@@ -13,10 +13,10 @@ import re
 import subprocess
 import sys
 import traceback
+import time
 import types
 from pathlib import Path
 from glob import glob
-import time
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -36,7 +36,7 @@ template_regex = re.compile("{[^}]*}")
 
 def log(message, *args, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
-    if global_config.quiet:
+    if app.global_config.quiet:
         return
 
     if not sys.stdout.isatty():
@@ -172,16 +172,6 @@ async def await_variant(variant):
     return variant
 
 
-def load(hancho_file, build_config=None, **kwargs):
-    """Module loader entry point for .hancho files."""
-    return app.load_module(hancho_file, build_config, include=False, kwargs=kwargs)
-
-
-def include(hancho_file, build_config, **kwargs):
-    """Include loader entry point for .hancho files."""
-    return app.load_module(hancho_file, build_config, include=True, kwargs=kwargs)
-
-
 def flatten(variant):
     if isinstance(variant, list):
         return [x for element in variant for x in flatten(element)]
@@ -202,6 +192,7 @@ class Chdir:
     def __exit__(self, *excinfo):
         os.chdir(self._old_cwd.pop())
 
+####################################################################################################
 
 class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
@@ -256,8 +247,11 @@ class Config:
                 return val
         if base is not None:
             return base.get(key, default)
-        if self is not global_config:
-            return global_config.get(key, default)
+        if self is not app.global_config:
+            if key == "root_path":
+                pass
+            result = app.global_config.get(key, default)
+            return result
         return default
 
     def set(self, **kwargs):
@@ -273,6 +267,17 @@ class Config:
         result |= data
         return result
 
+    def getdefault(self, key, val):
+        result = self.get(key)
+        return val if result is None else result
+
+    def setdefault(self, key, val):
+        result = self.get(key)
+        if result is not None:
+            return result
+        self[key] = val
+        return val
+
     def defaults(self, **kwargs):
         """Sets key-val pairs in this config if the key does not already exist."""
         for key, val in kwargs.items():
@@ -283,11 +288,13 @@ class Config:
         """Returns a 'subclass' of this config blob that can override its fields."""
         return self.__class__(base=self, **kwargs)
 
-    def clone(self):
+    def clone(self, **kwargs):
         """Makes a one-level-deep copy of this config."""
         base = self.__dict__["_base"]
         data = self.__dict__["_data"]
-        return Config(base=base, **data)
+        result = Config(base=base, **data)
+        result.__dict__["_data"].update(kwargs)
+        return result
 
     def rule(self, **kwargs):
         """Returns a callable rule that uses this config blob (plus any kwargs)."""
@@ -306,10 +313,23 @@ class Config:
         return flatten(expand(self, variant))
 
     def load(self, hancho_file, **kwargs):
-        return app.load_module(hancho_file, self, include=False, kwargs=kwargs)
+        hancho_filepath = Path.cwd() / self.expand(hancho_file)
+        child_config = self.clone(
+            mod_path     = hancho_filepath.parent,
+            mod_filepath = hancho_filepath,
+            source_path  = hancho_filepath.parent,
+            **kwargs
+        )
+        return app.load_module(child_config)
 
     def include(self, hancho_file, **kwargs):
-        return app.load_module(hancho_file, self, include=True, kwargs=kwargs)
+        hancho_filepath = Path.cwd() / self.expand(hancho_file)
+        child_config = self.clone(
+            mod_path     = hancho_filepath.parent,
+            mod_filepath = hancho_filepath,
+            **kwargs
+        )
+        return app.load_module(child_config)
 
     def collapse(self):
         """Returns a version of this config with all fields from all ancestors collapsed into a
@@ -369,7 +389,7 @@ def expand(config, variant):
 
 def expand_template(config, template):
     """Replaces all macros in template with their stringified values."""
-    if global_config.debug_expansion:
+    if app.global_config.debug_expansion:
         log(f"┏ Expand '{template}'")
 
     try:
@@ -392,7 +412,7 @@ def expand_template(config, template):
     finally:
         app.expand_depth -= 1
 
-    if global_config.debug_expansion:
+    if app.global_config.debug_expansion:
         log(f"┗ '{result}'")
     return result
 
@@ -401,7 +421,7 @@ def eval_macro(config, macro):
     """Evaluates the contents of a "{macro}" string."""
     if app.expand_depth > MAX_EXPAND_DEPTH:
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
-    if global_config.debug_expansion:
+    if app.global_config.debug_expansion:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
     app.expand_depth += 1
     # pylint: disable=eval-used
@@ -427,10 +447,11 @@ def eval_macro(config, macro):
         raise
     finally:
         app.expand_depth -= 1
-    if global_config.debug_expansion:
+    if app.global_config.debug_expansion:
         log(("┃" * app.expand_depth) + f"┗ {result}")
     return result
 
+####################################################################################################
 
 class Task:
     """Calling a Rule creates a Task."""
@@ -482,7 +503,7 @@ class Task:
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except Exception:  # pylint: disable=broad-except
-            if not (global_config.quiet or self.config.quiet):
+            if not self.config.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -625,9 +646,8 @@ class Task:
             result = []
             for exp_command in self.exp_command:
                 if self.config.verbose or self.config.debug:
-                    rel_command_path = rel_path(
-                        self.exp_command_path, self.config.start_path
-                    )
+                    sys.stdout.flush()
+                    rel_command_path = rel_path(self.exp_command_path, self.config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -650,7 +670,7 @@ class Task:
         ):
             if second_reason := self.needs_rerun():
                 raise ValueError(
-                    f"Task '{self.desc}' still needs rerun after running!\n"
+                    f"Task '{self.exp_desc}' still needs rerun after running!\n"
                     + f"Reason: {second_reason}"
                 )
 
@@ -705,6 +725,94 @@ class Task:
         # Task passed, return the output file list
         return self.abs_build_files
 
+####################################################################################################
+
+def create_global_config(flags, unrecognized):
+
+    # Unrecognized command line parameters also become flags if they are flag-like
+    for span in unrecognized:
+        if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+            key = match.group(1)
+            val = match.group(2)
+            val = maybe_as_number(val) if val is not None else True
+            flags.__dict__[key] = val
+
+    root_path = flags.__dict__.pop("root_path", Path.cwd())
+    root_file = flags.__dict__.pop("root_file", "build.hancho")
+
+    # The global config object. All fields here can be used in any template.
+    # fmt: off
+    config = Config(
+        name="<Global Config>",
+
+        # Config flags
+        chdir=".",
+        jobs=os.cpu_count(),
+        verbose=False,
+        quiet=False,
+        dry_run=False,
+        debug=False,
+        force=False,
+        debug_expansion=False,
+
+        # Rule default build_config
+        root_path     = root_path,
+        repo_path     = root_path,
+        mod_path      = root_path,
+        mod_filepath  = root_path / root_file,
+        source_path   = root_path,
+        command_path  = root_path,
+        build_tag     = "",
+        build_dir     = "build",
+        build_path    = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}",
+
+        # Rule defaults
+        desc = "{source_files} -> {build_files}",
+        job_count=1,
+        depformat="gcc",
+        ext_build=False,
+        command_files=[],
+        build_deps=[],
+
+        # Helper functions
+        abs_path=abs_path,
+        rel_path=rel_path,
+        join_path=join_path,
+        color=color,
+        glob=glob,
+        len=len,
+        Path=Path,
+        run_cmd=run_cmd,
+        swap_ext=swap_ext,
+        flatten=flatten,
+        print=print,
+
+        # Helper macros
+        rel_source_path   = "{rel_path(source_path, command_path)}",
+        rel_build_path    = "{rel_path(build_path, command_path)}",
+
+        abs_command_files = "{join_path(command_path, command_files)}",
+        abs_source_files  = "{join_path(source_path, source_files)}",
+        abs_build_files   = "{join_path(build_path, build_files)}",
+        abs_build_deps    = "{join_path(build_path, build_deps)}",
+
+        rel_command_files = "{rel_path(abs_command_files, command_path)}",
+        rel_source_files  = "{rel_path(abs_source_files, command_path)}",
+        rel_build_files   = "{rel_path(abs_build_files, command_path)}",
+        rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
+
+        # Global config has no base.
+        base=None,
+    )
+    # fmt: on
+
+    # Merge all known command line flags into our global config object.
+    config.set(**flags.__dict__)
+
+    return config
+
+
+####################################################################################################
 
 class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
@@ -712,6 +820,7 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
+        self.global_config = None
         self.loaded_modules = []
         self.all_build_files = set()
         self.tasks_total = 0
@@ -727,115 +836,34 @@ class App:
         self.jobs_lock = asyncio.Condition()
         self.pending_tasks = []
 
-        # The global config object. All fields here can be used in any template.
-        # fmt: off
-        self.global_config = Config(
-            name="<Global Config>",
+    ########################################
 
-            # Config flags
-            start_path=Path.cwd(),
-            start_files="build.hancho",
-            chdir=".",
-            jobs=os.cpu_count(),
-            verbose=False,
-            quiet=False,
-            dry_run=False,
-            debug=False,
-            force=False,
-            debug_expansion=False,
-
-            # Rule defaults
-            desc = "{source_files} -> {build_files}",
-            command_path="{start_path}",
-            build_path="{start_path/build_dir/build_tag/rel_source_path}",
-            build_dir = "build",
-            build_tag = "",
-            job_count=1,
-            depformat="gcc",
-            ext_build=False,
-            command_files=[],
-            build_deps=[],
-
-            # Helper functions
-            abs_path=abs_path,
-            rel_path=rel_path,
-            join_path=join_path,
-            color=color,
-            glob=glob,
-            len=len,
-            Path=Path,
-            run_cmd=run_cmd,
-            swap_ext=swap_ext,
-
-            # Helper macros
-            rel_command_path  = "{rel_path(command_path, command_path)}",
-            rel_source_path   = "{rel_path(source_path, command_path)}",
-            rel_build_path    = "{rel_path(build_path, command_path)}",
-
-            abs_command_files = "{join_path(command_path, command_files)}",
-            abs_source_files  = "{join_path(source_path, source_files)}",
-            abs_build_files   = "{join_path(build_path, build_files)}",
-            abs_build_deps    = "{join_path(build_path, build_deps)}",
-
-            rel_command_files = "{rel_path(abs_command_files, command_path)}",
-            rel_source_files  = "{rel_path(abs_source_files, command_path)}",
-            rel_build_files   = "{rel_path(abs_build_files, command_path)}",
-            rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
-
-            # Global config has no base.
-            base=None,
-        )
-        # fmt: on
-
-        # pylint: disable=line-too-long
-        # fmt: off
-        parser = argparse.ArgumentParser()
-        parser.add_argument("start_files",     default=["build.hancho"], type=str, nargs="*", help="The name of the .hancho file to build")
-        parser.add_argument("-C", "--chdir",   default=".",              type=str,            help="Change directory before starting the build")
-        parser.add_argument("-j", "--jobs",    default=os.cpu_count(),   type=int,            help="Run N jobs in parallel (default = cpu_count)")
-        parser.add_argument("-v", "--verbose", default=False,            action="store_true", help="Print verbose build info")
-        parser.add_argument("-q", "--quiet",   default=False,            action="store_true", help="Mute all output")
-        parser.add_argument("-n", "--dry_run", default=False,            action="store_true", help="Do not run commands")
-        parser.add_argument("-d", "--debug",   default=False,            action="store_true", help="Print debugging information")
-        parser.add_argument("-f", "--force",   default=False,            action="store_true", help="Force rebuild of everything")
-        # fmt: on
-
-        # Parse the command line
-        (flags, unrecognized) = parser.parse_known_args()
-
-        # Merge all known command line flags into our global config object.
-        # pylint: disable=global-statement
-        # pylint: disable=attribute-defined-outside-init
-        self.global_config.set(**flags.__dict__)
-
-        if self.global_config.chdir != ".":
-            self.global_config.start_path = Path.cwd() / self.global_config.chdir
-
-        # Unrecognized command line parameters also become global config fields if
-        # they are flag-like
-        for span in unrecognized:
-            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-                key = match.group(1)
-                val = match.group(2)
-                val = maybe_as_number(val) if val is not None else True
-                self.global_config[key] = val
-
-    def main(self):
+    def main(self, flags, unrecognized):
         """Our main() just handles command line args and delegates to async_main()"""
+
+        self.global_config = create_global_config(flags, unrecognized)
+        global_config = self.global_config
 
         # Change directory if needed and load all Hancho modules
         time_a = time.perf_counter()
-        with Chdir(global_config.chdir):
-            mod_paths = [
-                global_config.start_path / file for file in global_config.start_files
-            ]
-            for abs_file in mod_paths:
-                if not abs_file.exists():
-                    raise FileNotFoundError(f"Could not find {abs_file}")
-                self.load_module(abs_file, None)
+
+        self.root_config = Config(
+            root_path    = global_config.root_path,
+            repo_path    = global_config.repo_path,
+            mod_path     = global_config.mod_path,
+            mod_filepath = global_config.mod_filepath,
+            source_path  = global_config.source_path,
+            command_path = global_config.command_path,
+            build_tag    = global_config.build_tag,
+            build_dir    = global_config.build_dir,
+            build_path   = global_config.build_path,
+        )
+
+        self.load_module(self.root_config)
+
         time_b = time.perf_counter()
         if global_config.debug or global_config.verbose:
-            log(f"Loading .hancho files took {time_b-time_a:.4f} seconds")
+            log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
         # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
@@ -843,6 +871,8 @@ class App:
         # Run tasks until we're done with all of them.
         result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         return result
+
+    ########################################
 
     def queue_pending_tasks(self):
         """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
@@ -852,24 +882,30 @@ class App:
             task.promise = asyncio.create_task(task.run_async())
         return tasks
 
+    ########################################
+
     async def async_run_tasks(self):
         # Root module(s) loaded. Run all tasks in the queue until we run out.
 
-        self.jobs_available = global_config.jobs
+        self.jobs_available = self.global_config.jobs
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
         # tasks after awaiting each one. Because we're awaiting tasks in the order they were
         # created, this will effectively walk through all tasks in dependency order.
+        time_a = time.perf_counter()
         tasks = self.queue_pending_tasks()
         while tasks:
             task = tasks.pop(0)
             if inspect.isawaitable(task.promise):
                 await task.promise
             tasks.extend(self.queue_pending_tasks())
+        time_b = time.perf_counter()
+        if self.global_config.debug or self.global_config.verbose:
+            log(f"Running tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        if global_config.debug:
+        if self.global_config.debug:
             log(f"tasks total:     {self.tasks_total}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
@@ -886,31 +922,19 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    def load_module(self, mod_filename, build_config=None, include=False, kwargs={}):
+    ########################################
+
+    def load_module(self, build_config):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        # Create the module's initial config object
-        new_initial_config = (
-            build_config.collapse() if build_config is not None else Config()
-        )
-        new_initial_config.update(kwargs)
-
-        # Use the new config to expand the mod filename
-        mod_filename = new_initial_config.expand(mod_filename)
-        mod_path = abs_path(mod_filename)
-        phys_path = Path(mod_path).resolve()
-        if not mod_path.exists():
-            raise FileNotFoundError(f"Could not load module {mod_path}")
-
-        if not include:
-            # If this module was loaded via load() and not include(), it gets its own source_path.
-            new_initial_config.source_path = mod_path.parent
+        if self.global_config.verbose:
+            log(f"Loading module {build_config.mod_filepath} with config = {build_config}")
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
-        new_initial_dict = new_initial_config.to_dict()
+        new_initial_dict = build_config.to_dict()
         reuse = None
         for mod in self.loaded_modules:
-            if mod.phys_path != phys_path:
+            if mod.build_config.mod_filepath != build_config.mod_filepath:
                 continue
 
             old_initial_dict = mod.initial_config.to_dict()
@@ -919,49 +943,54 @@ class App:
                     raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
                 reuse = mod
         if reuse:
-            if global_config.debug:
-                log(f"Reusing module {reuse.__file__}")
+            if self.global_config.verbose:
+            #if True:
+                log(f"Reusing module {reuse.__file__}@{id(reuse)}")
             return reuse
 
-        if global_config.debug:
-            log(f"Loading module {mod_path} using config {new_initial_config}")
+        ##########
 
         # There was no compatible module loaded, so make a new one.
-        with open(mod_path, encoding="utf-8") as file:
+        with open(build_config.mod_filepath, encoding="utf-8") as file:
             source = file.read()
-            code = compile(source, mod_path, "exec", dont_inherit=True)
+            code = compile(source, build_config.mod_filepath, "exec", dont_inherit=True)
 
-        module = type(sys)(mod_path.stem)
-        module.__file__ = mod_path
+        module = type(sys)(build_config.mod_filepath.stem)
+        module.__file__ = build_config.mod_filepath
         module.__builtins__ = builtins
         module.self = module
-        module.phys_path = phys_path
-        module.this_path = mod_path.parent
-        module.initial_config = new_initial_config
-        module.build_config = module.initial_config.extend()
         module.hancho = sys.modules["hancho"]
+        module.build_config = build_config
+
         self.loaded_modules.append(module)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        with Chdir(mod_path.parent):
+        with Chdir(module.build_config.mod_path):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
+            if self.global_config.verbose:
+            #if True:
+                log(f"Initializing module {module.__file__}@{id(reuse)}")
             types.FunctionType(code, module.__dict__)()
 
         return module
 
+    ########################################
+
     async def acquire_jobs(self, count):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > global_config.jobs:
-            raise ValueError(f"Nedd {count} jobs, but pool is {global_config.jobs}.")
+        if count > self.global_config.jobs:
+            raise ValueError(f"Nedd {count} jobs, but pool is {self.global_config.jobs}.")
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
         self.jobs_available -= count
         self.jobs_lock.release()
+
+    ########################################
 
     async def release_jobs(self, count):
         """Returns 'count' jobs back to the job pool."""
@@ -976,11 +1005,32 @@ class App:
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
 
-
+####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
+
 app = App()
-global_config = app.global_config
+
+def main():
+    # pylint: disable=line-too-long
+    # fmt: off
+    parser = argparse.ArgumentParser()
+    parser.add_argument("root_file",       default="build.hancho",   type=str, nargs="?", help="The name of the .hancho file(s) to build")
+    parser.add_argument("-C", "--chdir",   default=".",              type=str,            help="Change directory before starting the build")
+    parser.add_argument("-j", "--jobs",    default=os.cpu_count(),   type=int,            help="Run N jobs in parallel (default = cpu_count)")
+    parser.add_argument("-v", "--verbose", default=False,            action="store_true", help="Print verbose build info")
+    parser.add_argument("-q", "--quiet",   default=False,            action="store_true", help="Mute all output")
+    parser.add_argument("-n", "--dry_run", default=False,            action="store_true", help="Do not run commands")
+    parser.add_argument("-d", "--debug",   default=False,            action="store_true", help="Print debugging information")
+    parser.add_argument("-f", "--force",   default=False,            action="store_true", help="Force rebuild of everything")
+    # fmt: on
+
+    # Parse the command line
+    (flags, unrecognized) = parser.parse_known_args()
+
+    os.chdir(flags.chdir)
+    result = app.main(flags, unrecognized)
+    sys.exit(result)
 
 if __name__ == "__main__":
-    sys.exit(app.main())
+    main()
