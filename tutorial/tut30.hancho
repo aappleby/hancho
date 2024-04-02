@@ -2,7 +2,7 @@
 
 build_config.build_tag = "tut30"
 
-rules = build_config.include("rules.hancho")
+rules = build_config.include("tut30_rules.hancho")
 
 app = rules.c_binary(
   source_files = ["src/main.cpp", "src/util.cpp"],

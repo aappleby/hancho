@@ -1,6 +1,0 @@
-# tutorial/src/src.hancho
-from hancho import *
-
-rules = build_config.include("{rules_path}/rules.hancho")
-
-rules.c_binary(glob("*.cpp"), "app")
