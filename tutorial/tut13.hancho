@@ -5,7 +5,6 @@ from pathlib import Path
 config = Config(
   command_path  = Path.cwd(),
   command_files = [],
-  source_path   = Path.cwd(),
   build_path    = Path.cwd(),
   build_dir     = "build/tut13",
 )

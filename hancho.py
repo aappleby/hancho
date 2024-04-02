@@ -472,6 +472,7 @@ class Task:
             self.config = config
 
         self.config.defaults(
+            source_path = Path.cwd(),
             desc = "{source_files} -> {build_files}",
             job_count = 1,
             depformat = "gcc",
@@ -824,7 +825,6 @@ class App:
             repo_path = root_path,
             mod_path = root_filepath.parent,
             mod_filepath = root_filepath,
-            source_path = "{mod_path}",
             command_path = "{repo_path}",
             build_tag = "",
             build_dir = "build",
@@ -944,8 +944,8 @@ class App:
         with Chdir(module.build_config.mod_path):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
-            if self.global_config.verbose:
-                log(f"Initializing module {module.__file__}@{id(reuse)}")
+            #if self.global_config.verbose:
+            #    log(f"Initializing module {module.__file__}@{id(reuse)}")
             types.FunctionType(code, module.__dict__)()
 
         return module
