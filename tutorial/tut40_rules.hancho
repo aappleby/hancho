@@ -1,7 +1,5 @@
 # tutorial/rules.hancho
 
-print(build_config)
-
 compile = build_config.rule(
   desc         = "Compile {rel_source_files} -> {rel_build_files}",
   command      = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",

@@ -18,6 +18,14 @@ import types
 from pathlib import Path
 from glob import glob
 
+
+
+
+# FIXME can we delay any more defaults?
+
+
+
+
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
 # that build.hancho and descendants don't try to load a second copy of Hancho.
@@ -251,8 +259,6 @@ class Config:
         if base is not None:
             return base.get(key, default)
         if self is not app.global_config:
-            if key == "root_path":
-                pass
             result = app.global_config.get(key, default)
             return result
         return default
@@ -318,20 +324,18 @@ class Config:
     def load(self, hancho_file, **kwargs):
         hancho_filepath = Path.cwd() / self.expand(hancho_file)
         child_config = self.clone(
-            mod_path     = hancho_filepath.parent,
-            mod_filepath = hancho_filepath,
+            this_path     = hancho_filepath.parent,
             **kwargs
         )
-        return app.load_module(child_config)
+        return app.load_module(child_config, hancho_filepath)
 
     def include(self, hancho_file, **kwargs):
         hancho_filepath = Path.cwd() / self.expand(hancho_file)
         child_config = self.clone(
-            mod_path     = hancho_filepath.parent,
-            mod_filepath = hancho_filepath,
+            this_path     = hancho_filepath.parent,
             **kwargs
         )
-        return app.load_module(child_config)
+        return app.load_module(child_config, hancho_filepath)
 
     def collapse(self):
         """Returns a version of this config with all fields from all ancestors collapsed into a
@@ -537,6 +541,14 @@ class Task:
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
+        self.config.defaults(
+            command_path = Path.cwd(),
+            # what if we defer this default until task execution time?
+            build_tag = "",
+            build_dir = "build",
+            build_path = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}"
+        )
+
         # Expand everything
         self.exp_desc          = expand(self.config, self.config.desc)
 
@@ -656,7 +668,7 @@ class Task:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
             if self.config.debug:
-                log(self)
+                log(f"Task dump: {self}")
 
             result = []
             for exp_command in self.exp_command:
@@ -814,25 +826,21 @@ class App:
         global_config = self.global_config
 
         if self.global_config.debug:
-            print(f"global_config = {global_config}")
+            log(f"global_config = {global_config}")
 
         root_path = global_config.root_path.absolute()
         root_filepath = (root_path / global_config.root_file).absolute()
         os.chdir(root_path)
 
         self.root_config = Config()
+        self.root_config.root_path = self.root_config.root_path
         self.root_config.defaults(
             repo_path = root_path,
-            mod_path = root_filepath.parent,
-            mod_filepath = root_filepath,
-            command_path = "{repo_path}",
-            build_tag = "",
-            build_dir = "build",
-            build_path = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}"
+            this_path = root_filepath.parent,
         )
 
         time_a = time.perf_counter()
-        self.load_module(self.root_config)
+        self.load_module(self.root_config, root_filepath)
         time_b = time.perf_counter()
 
         if global_config.debug or global_config.verbose:
@@ -897,17 +905,17 @@ class App:
 
     ########################################
 
-    def load_module(self, build_config):
+    def load_module(self, build_config, mod_filepath):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         if self.global_config.verbose:
-            log(f"Loading module {build_config.mod_filepath} with config = {build_config}\n")
+            log(f"Loading module {mod_filepath} with config = {build_config}\n")
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
         new_initial_dict = build_config.to_dict()
         reuse = None
         for mod in self.loaded_modules:
-            if mod.build_config.mod_filepath != build_config.mod_filepath:
+            if mod.__file__ != mod_filepath:
                 continue
 
             old_initial_dict = mod.build_config.to_dict()
@@ -924,12 +932,12 @@ class App:
         ##########
 
         # There was no compatible module loaded, so make a new one.
-        with open(build_config.mod_filepath, encoding="utf-8") as file:
+        with open(mod_filepath, encoding="utf-8") as file:
             source = file.read()
-            code = compile(source, build_config.mod_filepath, "exec", dont_inherit=True)
+            code = compile(source, mod_filepath, "exec", dont_inherit=True)
 
-        module = type(sys)(build_config.mod_filepath.stem)
-        module.__file__ = build_config.mod_filepath
+        module = type(sys)(mod_filepath.stem)
+        module.__file__ = mod_filepath
         module.__builtins__ = builtins
         module.self = module
         module.hancho = sys.modules["hancho"]
@@ -941,7 +949,7 @@ class App:
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        with Chdir(module.build_config.mod_path):
+        with Chdir(module.build_config.this_path):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
             #if self.global_config.verbose:
