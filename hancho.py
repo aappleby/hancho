@@ -44,7 +44,7 @@ template_regex = re.compile("{[^}]*}")
 
 def log(message, *args, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
-    if app.global_config.quiet:
+    if global_config.quiet:
         return
 
     if not sys.stdout.isatty():
@@ -209,6 +209,7 @@ class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
     def __init__(self, **kwargs):
+        self.__dict__["_name"] = kwargs.pop("name", "<Config>")
         self.__dict__["_base"] = kwargs.pop("base", None)
         self.__dict__["_data"] = kwargs
 
@@ -246,8 +247,15 @@ class Config:
 
         base = self.__dict__["_base"]
         data = self.__dict__["_data"]
-        result1 = json.dumps(data, indent=2, cls=Encoder)
-        return result1 if not base else result1 + ",\n" + "base: " + str(base)
+        name = self.__dict__["_name"]
+
+        result1 = name + " = " + json.dumps(data, indent=2, cls=Encoder)
+        if base is None:
+            return result1
+        elif type(base) is Rule:
+            return result1 if not base else result1 + " extends rule: " + str(base)
+        else:
+            return result1 if not base else result1 + " extends base: " + str(base)
 
     def get(self, key, default=None):
         base = self.__dict__["_base"]
@@ -258,8 +266,8 @@ class Config:
                 return val
         if base is not None:
             return base.get(key, default)
-        if self is not app.global_config:
-            result = app.global_config.get(key, default)
+        if self is not global_config:
+            result = global_config.get(key, default)
             return result
         return default
 
@@ -276,10 +284,12 @@ class Config:
         result |= data
         return result
 
+    # still used?
     def getdefault(self, key, val):
         result = self.get(key)
         return val if result is None else result
 
+    # still used?
     def setdefault(self, key, val):
         result = self.get(key)
         if result is not None:
@@ -297,6 +307,7 @@ class Config:
         """Returns a 'subclass' of this config blob that can override its fields."""
         return self.__class__(base=self, **kwargs)
 
+    # still used?
     def clone(self, **kwargs):
         """Makes a one-level-deep copy of this config."""
         base = self.__dict__["_base"]
@@ -321,22 +332,21 @@ class Config:
     def flatten(self, variant):
         return flatten(expand(self, variant))
 
+    # FIXME merge these
     def load(self, hancho_file, **kwargs):
         hancho_filepath = Path.cwd() / self.expand(hancho_file)
-        child_config = self.clone(
-            this_path     = hancho_filepath.parent,
-            **kwargs
-        )
+        kwargs['this_path'] = hancho_filepath.parent
+        child_config = self.extend(name = f"<Module Config @ {hancho_file}>", **kwargs)
         return app.load_module(child_config, hancho_filepath)
 
+    # FIXME merge these
     def include(self, hancho_file, **kwargs):
         hancho_filepath = Path.cwd() / self.expand(hancho_file)
-        child_config = self.clone(
-            this_path     = hancho_filepath.parent,
-            **kwargs
-        )
+        kwargs['this_path'] = hancho_filepath.parent
+        child_config = self.extend(name = f"<Include Config @ {hancho_file}>", **kwargs)
         return app.load_module(child_config, hancho_filepath)
 
+    # still used?
     def collapse(self):
         """Returns a version of this config with all fields from all ancestors collapsed into a
         single level."""
@@ -346,10 +356,16 @@ class Config:
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
 
+    def __init__(self, **kwargs):
+        kwargs.setdefault("name", "<Rule>")
+        super().__init__(**kwargs)
+
     def __call__(self, source_files=None, build_files=None, **kwargs):
-        return Task(
-            config=self, source_files=source_files, build_files=build_files, **kwargs
-        )
+        if source_files is not None:
+            kwargs.setdefault('source_files', source_files)
+        if build_files is not None:
+            kwargs.setdefault('build_files', build_files)
+        return Task(config=self, **kwargs)
 
 
 # The template expansion / macro evaluation code requires some explanation.
@@ -395,7 +411,7 @@ def expand(config, variant):
 
 def expand_template(config, template):
     """Replaces all macros in template with their stringified values."""
-    if app.global_config.debug_expansion:
+    if config.debug_expansion:
         log(f"┏ Expand '{template}'")
 
     try:
@@ -418,7 +434,7 @@ def expand_template(config, template):
     finally:
         app.expand_depth -= 1
 
-    if app.global_config.debug_expansion:
+    if config.debug_expansion:
         log(f"┗ '{result}'")
     return result
 
@@ -427,7 +443,7 @@ def eval_macro(config, macro):
     """Evaluates the contents of a "{macro}" string."""
     if app.expand_depth > MAX_EXPAND_DEPTH:
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
-    if app.global_config.debug_expansion:
+    if config.debug_expansion:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
     app.expand_depth += 1
     # pylint: disable=eval-used
@@ -443,9 +459,13 @@ def eval_macro(config, macro):
             def __getitem__(self, key):
                 return expand(self, self.config[key])
 
+            def __getattr__(self, key):
+                return expand(self, self.config[key])
+
         if not isinstance(config, Expander):
-            config = Expander(config)
-        result = eval(macro[1:-1], {}, config)
+            result = eval(macro[1:-1], {}, Expander(config))
+        else:
+            result = eval(macro[1:-1], {}, config)
     except:
         log(color(255, 255, 0))
         log(f"Expanding macro '{macro}' failed!")
@@ -453,7 +473,8 @@ def eval_macro(config, macro):
         raise
     finally:
         app.expand_depth -= 1
-    if app.global_config.debug_expansion:
+
+    if config.debug_expansion:
         log(("┃" * app.expand_depth) + f"┗ {result}")
     return result
 
@@ -469,20 +490,15 @@ class Task:
         app.tasks_total += 1
 
         if config is None:
-            self.config = Config(**kwargs)
+            self.config = app.root_config.extend(**kwargs)
         elif len(kwargs):
             self.config = config.extend(**kwargs)
         else:
             self.config = config
 
         self.config.defaults(
+            # Source path needs to be captured at task _creation_ time.
             source_path = Path.cwd(),
-            desc = "{source_files} -> {build_files}",
-            job_count = 1,
-            depformat = "gcc",
-            ext_build = False,
-            command_files = [],
-            build_deps = [],
         )
 
         app.pending_tasks.append(self)
@@ -498,7 +514,7 @@ class Task:
 
         base = json.dumps(self.__dict__, indent=2, cls=Encoder)
         config = str(self.config)
-        return "task: " + base + ",\nrule: " + config
+        return "task: " + base + ",\nconfig: " + config
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -540,14 +556,6 @@ class Task:
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
-
-        self.config.defaults(
-            command_path = Path.cwd(),
-            # what if we defer this default until task execution time?
-            build_tag = "",
-            build_dir = "build",
-            build_path = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}"
-        )
 
         # Expand everything
         self.exp_desc          = expand(self.config, self.config.desc)
@@ -668,7 +676,7 @@ class Task:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
             if self.config.debug:
-                log(f"Task dump: {self}")
+                log(self)
 
             result = []
             for exp_command in self.exp_command:
@@ -787,6 +795,20 @@ def create_global_config():
         rel_source_files  = "{rel_path(abs_source_files, command_path)}",
         rel_build_files   = "{rel_path(abs_build_files, command_path)}",
         rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
+
+        # Global config defaults
+        build_tag = "",
+        build_dir = "build",
+        build_path = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}",
+        desc = "{source_files} -> {build_files}",
+        job_count = 1,
+        depformat = "gcc",
+        ext_build = False,
+        command_files = [],
+        build_deps = [],
+        source_files = [],
+        build_files = [],
+        command_path = Path.cwd(),
     )
     # fmt: on
 
@@ -795,14 +817,18 @@ def create_global_config():
 
 ####################################################################################################
 
+global_config = create_global_config()
+
 class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
     global variables. :D"""
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.global_config = create_global_config()
-        self.root_config = None
+        self.root_config = Config(
+            name = "<Root Config>",
+            root_path = global_config.root_path.absolute(),
+        )
         self.loaded_modules = []
         self.all_build_files = set()
         self.tasks_total = 0
@@ -823,24 +849,26 @@ class App:
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
-        global_config = self.global_config
+        time_a = time.perf_counter()
 
-        if self.global_config.debug:
+        if global_config.debug:
             log(f"global_config = {global_config}")
 
         root_path = global_config.root_path.absolute()
         root_filepath = (root_path / global_config.root_file).absolute()
         os.chdir(root_path)
 
-        self.root_config = Config()
-        self.root_config.root_path = self.root_config.root_path
-        self.root_config.defaults(
-            repo_path = root_path,
-            this_path = root_filepath.parent,
+        repo_config = self.root_config.extend(
+            name = "<Repo Config>",
+            repo_path = root_path
         )
 
-        time_a = time.perf_counter()
-        self.load_module(self.root_config, root_filepath)
+        this_config = repo_config.extend(
+            name = f"<Top Module Config @ {root_filepath}>",
+            this_path = root_filepath.parent
+        )
+
+        self.load_module(this_config, root_filepath)
         time_b = time.perf_counter()
 
         if global_config.debug or global_config.verbose:
@@ -868,7 +896,7 @@ class App:
     async def async_run_tasks(self):
         # Root module(s) loaded. Run all tasks in the queue until we run out.
 
-        self.jobs_available = self.global_config.jobs
+        self.jobs_available = global_config.jobs
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
@@ -882,11 +910,11 @@ class App:
                 await task.promise
             tasks.extend(self.queue_pending_tasks())
         time_b = time.perf_counter()
-        if self.global_config.debug or self.global_config.verbose:
+        if global_config.debug or global_config.verbose:
             log(f"Running tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        if self.global_config.debug:
+        if global_config.debug:
             log(f"tasks total:     {self.tasks_total}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
@@ -908,7 +936,7 @@ class App:
     def load_module(self, build_config, mod_filepath):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        if self.global_config.verbose:
+        if global_config.debug or global_config.verbose:
             log(f"Loading module {mod_filepath} with config = {build_config}\n")
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
@@ -924,7 +952,7 @@ class App:
                     raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
                 reuse = mod
         if reuse:
-            if self.global_config.verbose:
+            if global_config.debug or global_config.verbose:
             #if True:
                 log(f"Reusing module {reuse.__file__}@{id(reuse)}")
             return reuse
@@ -952,7 +980,7 @@ class App:
         with Chdir(module.build_config.this_path):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
-            #if self.global_config.verbose:
+            #if global_config.debug or global_config.verbose:
             #    log(f"Initializing module {module.__file__}@{id(reuse)}")
             types.FunctionType(code, module.__dict__)()
 
@@ -963,8 +991,8 @@ class App:
     async def acquire_jobs(self, count):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > self.global_config.jobs:
-            raise ValueError(f"Nedd {count} jobs, but pool is {self.global_config.jobs}.")
+        if count > global_config.jobs:
+            raise ValueError(f"Nedd {count} jobs, but pool is {global_config.jobs}.")
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
@@ -990,7 +1018,7 @@ class App:
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
-app = App()
+app = None
 
 def main():
     # pylint: disable=line-too-long
@@ -1012,7 +1040,10 @@ def main():
     (flags, unrecognized) = parser.parse_known_args()
     flags.root_path = Path(flags.root_path).absolute()
 
-    app.global_config.update(flags.__dict__)
+    global_config.update(flags.__dict__)
+
+    global app
+    app = App()
 
     # Unrecognized command line parameters also become flags if they are flag-like
     for span in unrecognized:
@@ -1020,7 +1051,7 @@ def main():
             key = match.group(1)
             val = match.group(2)
             val = maybe_as_number(val) if val is not None else True
-            app.global_config[key] = val
+            app.root_config[key] = val
 
     result = app.main()
     sys.exit(result)
