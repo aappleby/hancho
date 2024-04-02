@@ -464,19 +464,22 @@ class Task:
     def __init__(self, *, config=None, **kwargs):
         app.tasks_total += 1
 
-        kwargs.setdefault("desc", "{source_files} -> {build_files}")
-        kwargs.setdefault("job_count", 1)
-        kwargs.setdefault("depformat", "gcc")
-        kwargs.setdefault("ext_build", False)
-        kwargs.setdefault("command_files", [])
-        kwargs.setdefault("build_deps", [])
-
         if config is None:
             self.config = Config(**kwargs)
         elif len(kwargs):
             self.config = config.extend(**kwargs)
         else:
             self.config = config
+
+        self.config.defaults(
+            desc = "{source_files} -> {build_files}",
+            job_count = 1,
+            depformat = "gcc",
+            ext_build = False,
+            command_files = [],
+            build_deps = [],
+        )
+
         app.pending_tasks.append(self)
 
     def __repr__(self):
@@ -537,7 +540,7 @@ class Task:
         self.exp_desc          = expand(self.config, self.config.desc)
 
         self.exp_command       = flatten(expand(self.config, self.config.command))
-        self.exp_command_path  = expand(self.config, self.config.command_path)
+        self.abs_command_path  = expand(self.config, self.config.command_path)
         self.abs_command_files = flatten(expand(self.config, self.config.abs_command_files))
 
         self.abs_source_path   = expand(self.config, self.config.source_path)
@@ -619,7 +622,7 @@ class Task:
                     raise ValueError(f"Invalid depformat {self.config.depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [self.exp_command_path / d for d in deplines]
+                deplines = [self.abs_command_path / d for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -658,7 +661,7 @@ class Task:
             for exp_command in self.exp_command:
                 if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
-                    rel_command_path = rel_path(self.exp_command_path, self.config.root_path)
+                    rel_command_path = rel_path(self.abs_command_path, self.config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -694,22 +697,6 @@ class Task:
         if self.config.dry_run:
             return self.abs_build_files
 
-        for build_file in self.abs_build_files:
-            #print(build_file.absolute())
-            #print(self.config.root_path.absolute())
-            #print(self.config.build_path)
-
-            build_root = self.config.root_path / self.config.build_dir
-            print("=====")
-            print(build_root)
-            print("=====")
-
-            a = str(build_file.absolute())
-            b = str(self.abs_build_path)
-            #print(a)
-            #print(b)
-            assert a.startswith(b)
-
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             result = command(self)
@@ -724,7 +711,7 @@ class Task:
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd=self.exp_command_path,
+            cwd=self.abs_command_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -760,33 +747,6 @@ def create_global_config():
     # fmt: off
     config = Config(
         name="<Global Config>",
-
-        # Config flags
-        #chdir=".",
-        #jobs=os.cpu_count(),
-        #verbose=False,
-        #quiet=False,
-        #dry_run=False,
-        #debug=False,
-        #force=False,
-        #debug_expansion=False,
-
-        # Rule default build_config
-        #root_path     = root_path,
-        #repo_path     = root_path,
-        #mod_path      = (root_path / root_file).parent,
-        #mod_filepath  = root_path / root_file,
-        #build_tag     = "",
-        #build_dir     = "build",
-        #build_path    = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}",
-
-        # Rule defaults
-        #desc = "{source_files} -> {build_files}",
-        #job_count=1,
-        #depformat="gcc",
-        #ext_build=False,
-        #command_files=[],
-        #build_deps=[],
 
         # Helper functions
         abs_path=abs_path,
@@ -852,7 +812,8 @@ class App:
 
         global_config = self.global_config
 
-        print(f"global_config = {global_config}")
+        if self.global_config.debug:
+            print(f"global_config = {global_config}")
 
         root_path = global_config.root_path.absolute()
         root_filepath = (root_path / global_config.root_file).absolute()
@@ -983,9 +944,8 @@ class App:
         with Chdir(module.build_config.mod_path):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
-            #if self.global_config.verbose:
-            #if True:
-            #    log(f"Initializing module {module.__file__}@{id(reuse)}")
+            if self.global_config.verbose:
+                log(f"Initializing module {module.__file__}@{id(reuse)}")
             types.FunctionType(code, module.__dict__)()
 
         return module
