@@ -1,0 +1,1 @@
+repo2 = build_config.load("repo2/repo2_test2.hancho")

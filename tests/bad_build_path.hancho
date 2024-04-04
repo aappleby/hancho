@@ -1,0 +1,11 @@
+rule = build_config.rule(
+  command = "echo {rel_source_files} && touch {rel_build_files}",
+)
+
+rule("src/foo.c", "foo.o")
+
+rule(
+  "src/foo.c",
+  "foo2.o",
+  build_path = "/bad_build_path/{rel_path(source_path, root_path)}"
+)

@@ -89,6 +89,48 @@ class TestHancho(unittest.TestCase):
             in result.stderr
         )
 
+    def test_submodule_symlinks1(self):
+        shutil.rmtree("symlink_tests/build", ignore_errors=True)
+        result = subprocess.run(
+            f"python3 ../../hancho.py -v -d top_test1.hancho",
+            shell=True,
+            text=True,
+            capture_output=True,
+            cwd="symlink_tests",
+        )
+        self.assertTrue(Path("symlink_tests/build/repo1/repo2/repo2.txt").exists())
+
+    def test_submodule_symlinks2(self):
+        shutil.rmtree("symlink_tests/build", ignore_errors=True)
+        result = subprocess.run(
+            f"python3 ../../hancho.py -v -d top_test2.hancho",
+            shell=True,
+            text=True,
+            capture_output=True,
+            cwd="symlink_tests",
+        )
+        self.assertTrue(Path("symlink_tests/build/repo1/repo2/repo2.txt").exists())
+
+    def test_submodule_symlinks3(self):
+        shutil.rmtree("symlink_tests/build", ignore_errors=True)
+        result = subprocess.run(
+            f"python3 ../../hancho.py -v -d top_test3.hancho",
+            shell=True,
+            text=True,
+            capture_output=True,
+            cwd="symlink_tests",
+        )
+        self.assertTrue(Path("symlink_tests/build/top.txt").exists())
+        self.assertTrue(Path("symlink_tests/build/repo1/repo1.txt").exists())
+        self.assertTrue(Path("symlink_tests/build/repo1/repo2/repo2.txt").exists())
+
+    def test_bad_build_path(self):
+        result = run_hancho("bad_build_path")
+        self.assertTrue(
+            "ValueError: Path error, build_path /bad_build_path/. is not under root_path"
+            in result.stderr
+        )
+
     def test_check_output(self):
         """A build rule that doesn't update one of its outputs should fail"""
         result = run_hancho("check_output")

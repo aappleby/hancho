@@ -1,0 +1,6 @@
+
+rule = build_config.rule(
+  command = "touch {rel_build_files}",
+)
+
+rule([], "repo2.txt")

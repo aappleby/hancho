@@ -1,0 +1,3 @@
+rule = build_config.rule(
+  command = "touch {rel_build_files}",
+)

@@ -1,0 +1,3 @@
+# Load repo1 from repo2
+
+repo1 = build_config.load("repo1/repo1_test2.hancho")

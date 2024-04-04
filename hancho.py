@@ -18,14 +18,6 @@ import types
 from pathlib import Path
 from glob import glob
 
-
-
-
-# FIXME can we delay any more defaults?
-
-
-
-
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
 # that build.hancho and descendants don't try to load a second copy of Hancho.
@@ -40,6 +32,8 @@ macro_regex = re.compile("^{[^}]*}$")
 
 # Matches macros inside a template string.
 template_regex = re.compile("{[^}]*}")
+
+dotdot_regex = re.compile("/[^/]+/\.\.")
 
 
 def log(message, *args, sameline=False, **kwargs):
@@ -190,18 +184,18 @@ def flatten(variant):
 
 
 class Chdir:
-    """Copied from Python 3.11 contextlib.py"""
+    """Based on Python 3.11's contextlib.py"""
 
     def __init__(self, path):
         self.path = path
         self._old_cwd = []
 
     def __enter__(self):
-        self._old_cwd.append(os.getcwd())
-        os.chdir(self.path)
+        self._old_cwd.append(app.cwd)
+        app.chdir(self.path)
 
     def __exit__(self, *excinfo):
-        os.chdir(self._old_cwd.pop())
+        app.chdir(self._old_cwd.pop())
 
 ####################################################################################################
 
@@ -253,9 +247,9 @@ class Config:
         if base is None:
             return result1
         elif type(base) is Rule:
-            return result1 if not base else result1 + " extends rule: " + str(base)
+            return result1 if not base else result1 + " extends " + str(base)
         else:
-            return result1 if not base else result1 + " extends base: " + str(base)
+            return result1 if not base else result1 + " extends " + str(base)
 
     def get(self, key, default=None):
         base = self.__dict__["_base"]
@@ -332,18 +326,28 @@ class Config:
     def flatten(self, variant):
         return flatten(expand(self, variant))
 
+    def subrepo(self, repo_path, **kwargs):
+        repo_path = app.cwd / Path(self.expand(repo_path))
+        assert repo_path.is_absolute()
+        kwargs['repo_path'] = repo_path
+        repo_config = self.extend(**kwargs)
+        return repo_config
+
     # FIXME merge these
     def load(self, hancho_file, **kwargs):
-        hancho_filepath = Path.cwd() / self.expand(hancho_file)
+        expanded = self.expand(hancho_file)
+        hancho_filepath = app.cwd / expanded
         kwargs['this_path'] = hancho_filepath.parent
-        child_config = self.extend(name = f"<Module Config @ {hancho_file}>", **kwargs)
+        kwargs.setdefault("name", f"<Module config for {rel_path(hancho_filepath, self.root_path)}>")
+        child_config = self.extend(**kwargs)
         return app.load_module(child_config, hancho_filepath)
 
     # FIXME merge these
     def include(self, hancho_file, **kwargs):
-        hancho_filepath = Path.cwd() / self.expand(hancho_file)
+        hancho_filepath = app.cwd / self.expand(hancho_file)
         kwargs['this_path'] = hancho_filepath.parent
-        child_config = self.extend(name = f"<Include Config @ {hancho_file}>", **kwargs)
+        kwargs.setdefault("name", f"<Include config for {rel_path(hancho_filepath, self.root_path)}>")
+        child_config = self.extend(**kwargs)
         return app.load_module(child_config, hancho_filepath)
 
     # still used?
@@ -487,6 +491,7 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, *, config=None, **kwargs):
+
         app.tasks_total += 1
 
         if config is None:
@@ -496,10 +501,8 @@ class Task:
         else:
             self.config = config
 
-        self.config.defaults(
-            # Source path needs to be captured at task _creation_ time.
-            source_path = Path.cwd(),
-        )
+        # Source path needs to be captured at task _creation_ time if it's not set yet.
+        self.config.defaults(source_path = app.cwd)
 
         app.pending_tasks.append(self)
 
@@ -568,6 +571,10 @@ class Task:
         self.abs_source_files  = flatten(expand(self.config, self.config.abs_source_files))
 
         self.abs_build_path    = expand(self.config, self.config.build_path)
+
+        if not str(self.abs_build_path).startswith(str(self.config.root_path)):
+            raise ValueError(f"Path error, build_path {self.abs_build_path} is not under root_path {self.config.root_path}")
+
         self.abs_build_files   = flatten(expand(self.config, self.config.abs_build_files))
         self.abs_build_deps    = flatten(expand(self.config, self.config.abs_build_deps))
 
@@ -811,13 +818,11 @@ def create_global_config():
         command_path = Path.cwd(),
     )
     # fmt: on
-
     return config
 
+global_config = create_global_config()
 
 ####################################################################################################
-
-global_config = create_global_config()
 
 class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
@@ -825,10 +830,7 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.root_config = Config(
-            name = "<Root Config>",
-            root_path = global_config.root_path.absolute(),
-        )
+        self.root_config = None
         self.loaded_modules = []
         self.all_build_files = set()
         self.tasks_total = 0
@@ -843,6 +845,11 @@ class App:
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
         self.pending_tasks = []
+        self.cwd = os.getcwd()
+
+    def chdir(self, path):
+        os.chdir(path)
+        self.cwd = Path(path)
 
     ########################################
 
@@ -856,7 +863,6 @@ class App:
 
         root_path = global_config.root_path.absolute()
         root_filepath = (root_path / global_config.root_file).absolute()
-        os.chdir(root_path)
 
         repo_config = self.root_config.extend(
             name = "<Repo Config>",
@@ -864,7 +870,7 @@ class App:
         )
 
         this_config = repo_config.extend(
-            name = f"<Top Module Config @ {root_filepath}>",
+            name = f"<Top module config for {rel_path(root_filepath, root_path)}>",
             this_path = root_filepath.parent
         )
 
@@ -936,8 +942,7 @@ class App:
     def load_module(self, build_config, mod_filepath):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        if global_config.debug or global_config.verbose:
-            log(f"Loading module {mod_filepath} with config = {build_config}\n")
+        rel_filepath = rel_path(mod_filepath, build_config.root_path)
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
         new_initial_dict = build_config.to_dict()
@@ -949,12 +954,16 @@ class App:
             old_initial_dict = mod.build_config.to_dict()
             if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
-                    raise RuntimeError(f"Module load for {mod_filename} is ambiguous")
+                    raise RuntimeError(f"Module load for {rel_filepath} is ambiguous")
                 reuse = mod
+
+        if global_config.debug or global_config.verbose:
+            if reuse:
+                log(color(255, 255, 128) + f"Reusing module {rel_filepath}" + color())
+            else:
+                log(color(128,255,128) + f"Loading module {rel_filepath}" + color())
+
         if reuse:
-            if global_config.debug or global_config.verbose:
-            #if True:
-                log(f"Reusing module {reuse.__file__}@{id(reuse)}")
             return reuse
 
         ##########
@@ -980,8 +989,6 @@ class App:
         with Chdir(module.build_config.this_path):
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
-            #if global_config.debug or global_config.verbose:
-            #    log(f"Initializing module {module.__file__}@{id(reuse)}")
             types.FunctionType(code, module.__dict__)()
 
         return module
@@ -1038,12 +1045,16 @@ def main():
 
     # Parse the command line
     (flags, unrecognized) = parser.parse_known_args()
-    flags.root_path = Path(flags.root_path).absolute()
+    flags.root_path = Path(flags.root_path).resolve()
 
     global_config.update(flags.__dict__)
 
     global app
     app = App()
+    app.root_config = Config(
+        name = "<Root Config>",
+        root_path = global_config.root_path.absolute(),
+    )
 
     # Unrecognized command line parameters also become flags if they are flag-like
     for span in unrecognized:
@@ -1053,7 +1064,9 @@ def main():
             val = maybe_as_number(val) if val is not None else True
             app.root_config[key] = val
 
-    result = app.main()
+    with Chdir(global_config.root_path):
+        result = app.main()
+
     sys.exit(result)
 
 if __name__ == "__main__":
