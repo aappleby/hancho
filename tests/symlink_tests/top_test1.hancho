@@ -1,4 +1,7 @@
 # Load both repos directly.
 
-repo1 = build_config.load("repo1/repo1_test1.hancho")
-repo2 = build_config.load("repo1/repo2/repo2_test1.hancho")
+repo1 = build_config.subrepo("repo1")
+repo2 = repo1.subrepo("repo2")
+
+#repo1 = build_config.load("repo1/repo1_test1.hancho")
+#repo2 = build_config.load("repo1/repo2/repo2_test1.hancho")

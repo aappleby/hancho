@@ -2,6 +2,8 @@
 from hancho import Config
 from pathlib import Path
 
+print(Path.cwd())
+
 config = Config(
   command_path  = Path.cwd(),
   command_files = [],
