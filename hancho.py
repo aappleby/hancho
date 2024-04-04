@@ -235,6 +235,8 @@ class Config:
             """Types the encoder doesn't understand just get stringified."""
 
             def default(self, o):
+                if isinstance(o, Path):
+                    return f"Path {o}"
                 if isinstance(o, Task):
                     return f"task {expand(o.config, o.config.desc)}"
                 return str(o)
