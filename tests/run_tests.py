@@ -122,7 +122,7 @@ class TestHancho(unittest.TestCase):
         )
         self.assertTrue(Path("symlink_tests/build/top.txt").exists())
         self.assertTrue(Path("symlink_tests/build/repo1/repo1.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo1/repo2/repo2.txt").exists())
+        self.assertTrue(Path("symlink_tests/build/repo2/repo2.txt").exists())
 
     def test_bad_build_path(self):
         result = run_hancho("bad_build_path")

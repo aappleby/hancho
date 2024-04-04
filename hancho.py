@@ -332,24 +332,18 @@ class Config:
         repo_path = app.cwd / Path(self.expand(repo_path))
         assert repo_path.is_absolute()
         kwargs['repo_path'] = repo_path
-        repo_config = self.extend(**kwargs)
-        return repo_config
+        kwargs['repo_name'] = repo_path.stem
+        return Subrepo(base=self, **kwargs)
 
-    # FIXME merge these
     def load(self, hancho_file, **kwargs):
-        expanded = self.expand(hancho_file)
-        hancho_filepath = app.cwd / expanded
-        kwargs['this_path'] = hancho_filepath.parent
-        kwargs.setdefault("name", f"<Module config for {rel_path(hancho_filepath, self.root_path)}>")
-        child_config = self.extend(**kwargs)
-        return app.load_module(child_config, hancho_filepath)
-
-    # FIXME merge these
-    def include(self, hancho_file, **kwargs):
         hancho_filepath = app.cwd / self.expand(hancho_file)
+        if not hancho_filepath.exists():
+            raise BaseException(f"Could not load {hancho_filepath}")
+
         kwargs['this_path'] = hancho_filepath.parent
-        kwargs.setdefault("name", f"<Include config for {rel_path(hancho_filepath, self.root_path)}>")
+        kwargs.setdefault("name", f"<Config for {rel_path(hancho_filepath, self.root_path)}>")
         child_config = self.extend(**kwargs)
+
         return app.load_module(child_config, hancho_filepath)
 
     # still used?
@@ -358,6 +352,7 @@ class Config:
         single level."""
         return type(self)(**self.to_dict())
 
+####################################################################################################
 
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
@@ -373,7 +368,14 @@ class Rule(Config):
             kwargs.setdefault('build_files', build_files)
         return Task(config=self, **kwargs)
 
+####################################################################################################
 
+class Subrepo(Config):
+    def load(self, hancho_file, **kwargs):
+        expanded = self.repo_path / self.expand(hancho_file)
+        return super().load(expanded, **kwargs)
+
+####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings, templates, callbacks,
@@ -806,9 +808,10 @@ def create_global_config():
         rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
 
         # Global config defaults
+        repo_name = "",
         build_tag = "",
         build_dir = "build",
-        build_path = "{root_path/build_dir/build_tag/rel_path(source_path, root_path)}",
+        build_path = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
         desc = "{source_files} -> {build_files}",
         job_count = 1,
         depformat = "gcc",

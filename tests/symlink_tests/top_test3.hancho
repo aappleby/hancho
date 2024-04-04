@@ -3,5 +3,5 @@
 rules = build_config.load("{repo_path}/rules/top_test3_rules.hancho")
 rules.rule([], "top.txt")
 
-subrepo = build_config.subrepo("repo1")
-subrepo.load("{repo_path}/repo1_test3.hancho")
+repo1 = build_config.subrepo("repo1")
+repo1.load("repo1_test3.hancho")
