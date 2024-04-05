@@ -1,3 +1,10 @@
 # Load repo1 from repo2
 
-repo1 = build_config.load("repo1/repo1_test2.hancho")
+rule = build_config.rule(
+  command = "touch {rel_build_files}",
+)
+
+rule([], "top.txt")
+
+repo1 = build_config.subrepo("repo1")
+repo1.load("repo1_test2.hancho")

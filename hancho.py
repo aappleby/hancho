@@ -292,8 +292,8 @@ class Config:
         subrepo_path = self.this_path / Path(self.expand(subrepo_path))
         subrepo_config = SubrepoConfig(
             base = app.root_config,
-            repo_path = repo_path,
-            this_path = repo_path,
+            repo_path = subrepo_path.resolve(strict=True),
+            this_path = subrepo_path.resolve(strict=True),
             **kwargs,
         )
         # FIXME add checking for subrepo duplicates
@@ -760,6 +760,9 @@ def create_global_config():
         print=print,
 
         # Helper macros
+        repo_name  = "{repo_path.name if repo_path != root_path else ''}",
+        build_path = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
+
         rel_source_path   = "{rel_path(source_path, command_path)}",
         rel_build_path    = "{rel_path(build_path, command_path)}",
 
@@ -783,7 +786,6 @@ def create_global_config():
         source_files = [],
         build_tag = "",
         build_dir = "build",
-        build_path = "{root_path/build_dir/build_tag/repo_path.name/rel_path(source_path, repo_path)}",
         build_files = [],
         build_deps = [],
     )

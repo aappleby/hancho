@@ -1,0 +1,6 @@
+#print(root_config)
+#print(repo_config)
+print(build_config)
+
+#myrepo = build_config.subrepo("myrepo")
+#print(myrepo)

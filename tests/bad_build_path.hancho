@@ -1,11 +1,19 @@
+from pathlib import Path
+
 rule = build_config.rule(
   command = "echo {rel_source_files} && touch {rel_build_files}",
 )
 
-rule("src/foo.c", "foo.o")
+# Good build_path
+rule(
+  "src/foo.c",
+  "foo1.o",
+  build_path = Path.cwd( )/ "build"
+)
 
+# Bad build_path
 rule(
   "src/foo.c",
   "foo2.o",
-  build_path = "/bad_build_path/{rel_path(source_path, root_path)}"
+  build_path = Path.cwd().parent / "build"
 )
