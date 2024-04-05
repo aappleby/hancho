@@ -89,44 +89,44 @@ class TestHancho(unittest.TestCase):
             in result.stderr
         )
 
-    def test_submodule_symlinks1(self):
-        shutil.rmtree("symlink_tests/build", ignore_errors=True)
+    def test_submodules1(self):
+        shutil.rmtree("submodule_tests/build", ignore_errors=True)
         result = subprocess.run(
             f"python3 ../../hancho.py -v -d top_test1.hancho",
             shell=True,
             text=True,
             capture_output=True,
-            cwd="symlink_tests",
+            cwd="submodule_tests",
         )
-        self.assertTrue(Path("symlink_tests/build/top.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo1/repo1.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo2/repo2.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/top.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/repo1/repo1.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/repo2/repo2.txt").exists())
 
-    def test_submodule_symlinks2(self):
-        shutil.rmtree("symlink_tests/build", ignore_errors=True)
+    def test_submodules2(self):
+        shutil.rmtree("submodule_tests/build", ignore_errors=True)
         result = subprocess.run(
             f"python3 ../../hancho.py -v -d top_test2.hancho",
             shell=True,
             text=True,
             capture_output=True,
-            cwd="symlink_tests",
+            cwd="submodule_tests",
         )
-        self.assertTrue(Path("symlink_tests/build/top.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo1/repo1.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo2/repo2.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/top.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/repo1/repo1.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/repo2/repo2.txt").exists())
 
-    def test_submodule_symlinks3(self):
-        shutil.rmtree("symlink_tests/build", ignore_errors=True)
+    def test_submodules3(self):
+        shutil.rmtree("submodule_tests/build", ignore_errors=True)
         result = subprocess.run(
             f"python3 ../../hancho.py -v -d top_test3.hancho",
             shell=True,
             text=True,
             capture_output=True,
-            cwd="symlink_tests",
+            cwd="submodule_tests",
         )
-        self.assertTrue(Path("symlink_tests/build/top.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo1/repo1.txt").exists())
-        self.assertTrue(Path("symlink_tests/build/repo2/repo2.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/top.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/repo1/repo1.txt").exists())
+        self.assertTrue(Path("submodule_tests/build/repo2/repo2.txt").exists())
 
     def test_bad_build_path(self):
         result = run_hancho("bad_build_path")
