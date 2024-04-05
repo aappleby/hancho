@@ -7,7 +7,7 @@ rule = build_config.rule(
 rule([], "top.txt")
 
 repo1 = build_config.subrepo("repo1")
-repo2 = repo1.subrepo("repo2")
+repo2 = build_config.subrepo("repo1/repo2")
 
 repo1.load("repo1_test1.hancho")
 repo2.load("repo2_test1.hancho")
