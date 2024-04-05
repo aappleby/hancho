@@ -306,10 +306,7 @@ class Config:
         return app.load_module(child_config, hancho_filepath)
 
     def load(self, hancho_file, **kwargs):
-        hancho_filepath = self.this_path / self.expand(hancho_file)
-        if not hancho_filepath.exists():
-            raise BaseException(f"Could not load {hancho_filepath}")
-
+        hancho_filepath = abs_path(self.this_path / self.expand(hancho_file))
         kwargs['this_path'] = hancho_filepath.parent
         child_config = ModConfig(base = self, **kwargs)
 
@@ -952,7 +949,6 @@ class App:
         module.__builtins__ = builtins
         module.self = module
         module.hancho = sys.modules["hancho"]
-        module.root_config = self.root_config
         module.build_config = build_config
         module.glob = glob
 
