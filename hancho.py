@@ -186,26 +186,41 @@ class Chdir:
 
 ####################################################################################################
 
+class Encoder(json.JSONEncoder):
+    """Types the encoder doesn't understand just get stringified."""
+
+    def default(self, o):
+        if isinstance(o, Config):
+            name = o.__dict__.get("name", "<no name>")
+            return f"{type(o).__name__}('{name}')"
+        elif isinstance(o, Task):
+            return expand(o.config, o.config.desc)
+        else:
+            return str(o)
+
+
 class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
     def __init__(self, **kwargs):
-        self.__dict__["_base"] = kwargs.pop("base", None)
-        self.__dict__["_data"] = kwargs
+        self.__dict__.update(kwargs)
 
     def __getitem__(self, key):
         val = self.get(key)
         if val is None:
-            raise KeyError(f"Config key '{key}' was never defined")
+            raise KeyError(f"{type(self).__name__}@{id(self)} - Config key '{key}' was never defined")
         return val
 
     def __setitem__(self, key, val):
         if val is None:
-            raise ValueError(f"Config key '{key}' cannot be set to None")
-        self.__dict__["_data"][key] = val
+            raise ValueError(f"{type(self).__name__}@{id(self)} - Config key '{key}' cannot be set to None")
+        self.__dict__[key] = val
+
+    def __add__(self, val):
+        return Config(name = "add", lhs = self, rhs = val)
 
     def __delitem__(self, key):
-        del self.__dict__["_data"][key]
+        del self.__dict__[key]
 
     def __getattr__(self, key):
         return self.__getitem__(key)
@@ -216,62 +231,56 @@ class Config:
     def __delattr__(self, key):
         self.__delitem__(key)
 
-    def __repr__(self):
-        class Encoder(json.JSONEncoder):
-            """Types the encoder doesn't understand just get stringified."""
-
-            def default(self, o):
-                result = type(o).__name__
-                if isinstance(o, Config):
-                    return f"<{result}>"
-                elif isinstance(o, Task):
-                    result += " " + expand(o.config, o.config.desc)
-                else:
-                    result += " " + str(o)
-                return result
-
-        base = self.__dict__["_base"]
-        data = self.__dict__["_data"]
-        result = type(self).__name__ + " " + json.dumps(data, indent=2, cls=Encoder)
-        if base is not None:
-            result += " extends " + str(base)
+    def to_string(self):
+        name = self.__dict__.get("name", "<no name>")
+        result = f"{type(self).__name__}('{name}') "
+        result += json.dumps(self.__dict__, indent=2, cls=Encoder)
         return result
 
-    def base(self, klass):
-        if isinstance(self, klass):
-            return self
-        base = self.__dict__["_base"]
-        if base is not None:
-            return base.base(klass)
-        return None
-
-    def get(self, key, default=None):
-        base = self.__dict__["_base"]
-        data = self.__dict__["_data"]
-        if key in data:
-            val = data[key]
-            if val is not None:
-                return val
-        if base is not None:
-            return base.get(key, default)
-        if self is not global_config:
-            result = global_config.get(key, default)
-            return result
-        return default
+    def __repr__(self):
+        queue = [self]
+        done = set()
+        result = ""
+        while(queue):
+            item = queue.pop()
+            done.add(item)
+            result += ("-> " if result else "") + item.to_string() + "\n"
+            queue.extend([v for v in item.__dict__.values() if isinstance(v, Config) and v not in done])
+        return result
 
     def to_dict(self):
-        base = self.__dict__["_base"]
-        return (base.to_dict() if base else {}) | self.__dict__["_data"]
+        result = {}
+        for key in self.__dict__:
+            val = self.__dict__[key]
+            if not isinstance(val, Config):
+                result[key] = val
+        for key2, val2 in self.__dict__.items():
+            if isinstance(val2, Config):
+                child = val2.to_dict()
+                for key3, val3 in child.items():
+                    result[key3] = val3
+        return result
+
+    def collapse(self):
+        return Config(**self.to_dict())
+
+    def get(self, key, default=None):
+        if key in self.__dict__:
+            val = self.__dict__[key]
+            if val is not None:
+                return val
+        for val in reversed(self.__dict__.values()):
+            if isinstance(val, Config):
+                result = val.get(key)
+                if result is not None:
+                    return result
+        return None
 
     def defaults(self, **kwargs):
         """Sets key-val pairs in this config if the key does not already exist."""
         for key, val in kwargs.items():
             if self.get(key) is None:
                 self[key] = val
-
-    def extend(self, **kwargs):
-        """Returns a 'subclass' of this config blob that can override its fields."""
-        return self.__class__(base=self, **kwargs)
 
     def expand(self, variant):
         return expand(self, variant)
@@ -294,12 +303,10 @@ class Config:
     def subrepo(self, subrepo_path, **kwargs):
         subrepo_path = self.this_path / Path(self.expand(subrepo_path))
         subrepo_config = SubrepoConfig(
-            base = app.root_config,
             repo_path = subrepo_path.absolute(),
             this_path = subrepo_path.absolute(),
             **kwargs,
         )
-        # FIXME add checking for subrepo duplicates
         return subrepo_config
 
     def include(self, hancho_file, **kwargs):
@@ -316,27 +323,6 @@ class Config:
         return app.load_module(child_config, hancho_filepath)
 
 ####################################################################################################
-
-class GlobalConfig(Config):
-    pass
-
-class RootConfig(Config):
-    pass
-
-class RepoConfig(Config):
-    pass
-
-class SubrepoConfig(RepoConfig):
-    pass
-
-class IncludeConfig(Config):
-    pass
-
-class ModConfig(Config):
-    pass
-
-class TaskConfig(Config):
-    pass
 
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
@@ -739,59 +725,65 @@ class Task:
 
 ####################################################################################################
 
-def create_global_config():
+# fmt: off
+helper_functions = Config(
+    name = "Helper Functions",
+    abs_path=abs_path,
+    rel_path=rel_path,
+    join_path=join_path,
+    color=color,
+    glob=glob,
+    len=len,
+    Path=Path,
+    run_cmd=run_cmd,
+    swap_ext=swap_ext,
+    flatten=flatten,
+    print=print,
+)
 
-    # The global config object. All fields here can be used in any template.
-    # fmt: off
-    config = GlobalConfig(
+helper_macros = Config(
+    name = "Helper Macros",
+    repo_name  = "{repo_path.name if repo_path != root_path else ''}",
+    build_path = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
 
-        # Helper functions
-        abs_path=abs_path,
-        rel_path=rel_path,
-        join_path=join_path,
-        color=color,
-        glob=glob,
-        len=len,
-        Path=Path,
-        run_cmd=run_cmd,
-        swap_ext=swap_ext,
-        flatten=flatten,
-        print=print,
+    rel_source_path   = "{rel_path(source_path, command_path)}",
+    rel_build_path    = "{rel_path(build_path, command_path)}",
 
-        # Helper macros
-        repo_name  = "{repo_path.name if repo_path != root_path else ''}",
-        build_path = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
+    abs_command_files = "{join_path(command_path, command_files)}",
+    abs_source_files  = "{join_path(source_path, source_files)}",
+    abs_build_files   = "{join_path(build_path, build_files)}",
+    abs_build_deps    = "{join_path(build_path, build_deps)}",
 
-        rel_source_path   = "{rel_path(source_path, command_path)}",
-        rel_build_path    = "{rel_path(build_path, command_path)}",
+    rel_command_files = "{rel_path(abs_command_files, command_path)}",
+    rel_source_files  = "{rel_path(abs_source_files, command_path)}",
+    rel_build_files   = "{rel_path(abs_build_files, command_path)}",
+    rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
+)
 
-        abs_command_files = "{join_path(command_path, command_files)}",
-        abs_source_files  = "{join_path(source_path, source_files)}",
-        abs_build_files   = "{join_path(build_path, build_files)}",
-        abs_build_deps    = "{join_path(build_path, build_deps)}",
+rule_defaults = Config(
+    name = "Rule Defaults",
+    desc = "{source_files} -> {build_files}",
+    job_count = 1,
+    depformat = "gcc",
+    ext_build = False,
+    repo_path = "{root_path}",
+    this_path = "{root_path}",
+    command_path = "{root_path}",
+    command_files = [],
+    source_files = [],
+    build_tag = "",
+    build_dir = "build",
+    build_files = [],
+    build_deps = [],
+)
 
-        rel_command_files = "{rel_path(abs_command_files, command_path)}",
-        rel_source_files  = "{rel_path(abs_source_files, command_path)}",
-        rel_build_files   = "{rel_path(abs_build_files, command_path)}",
-        rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
-
-        # Global config defaults
-        desc = "{source_files} -> {build_files}",
-        job_count = 1,
-        depformat = "gcc",
-        ext_build = False,
-        repo_path = "{root_path}",
-        this_path = "{root_path}",
-        command_path = "{root_path}",
-        command_files = [],
-        source_files = [],
-        build_tag = "",
-        build_dir = "build",
-        build_files = [],
-        build_deps = [],
-    )
-    # fmt: on
-    return config
+global_config = Config(
+    name = "Global Config",
+    helper_functions = helper_functions,
+    helper_macros = helper_macros,
+    rule_defaults = rule_defaults,
+)
+# fmt: on
 
 ####################################################################################################
 
@@ -801,7 +793,9 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.root_config = RootConfig()
+        self.root_config = Config(
+            name = "Root Config"
+        )
         self.root_repo_config = None
         self.root_mod_config = None
         self.repos = []
@@ -833,17 +827,31 @@ class App:
         if global_config.debug:
             log(f"global_config = {global_config}")
 
-        self.root_repo_config = RepoConfig(
-            base = self.root_config,
+        self.root_repo_config = Config(
+            name = "Root Repo Config",
             repo_path = self.root_config.root_path,
             this_path = self.root_config.root_path,
         )
 
-        self.root_mod_config = ModConfig(
-            base = self.root_repo_config,
+        self.root_mod_config = Config(
+            name = "Root Mod Config",
+            derp = Config(name = "derp"),
             this_path = self.root_config.root_file.parent,
             this_file = self.root_config.root_file,
         )
+
+        build_config = Config(
+            name = "Build Config",
+            global_config = global_config,
+            root_config = self.root_config,
+            repo_config = self.root_repo_config,
+            mod_config = self.root_mod_config
+        )
+
+        #print(build_config.to_dict())
+        #print(json.dumps(build_config.to_dict(), indent=2, cls=Encoder))
+        print(build_config.collapse())
+        sys.exit(0)
 
         self.load_module(self.root_mod_config, self.root_config.root_file)
         time_b = time.perf_counter()
@@ -996,10 +1004,19 @@ class App:
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
-global_config = create_global_config()
 app = None
 
 def main():
+
+    a = Config(name = "a")
+    b = Config(name = "b", a = a)
+    c = Config(name = "c", a = a)
+
+    #d = Config(name = "d", b = b, c = c)
+    d = b + c
+    print(d)
+    sys.exit(0)
+
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -1018,7 +1035,7 @@ def main():
     # Parse the command line
     (flags, unrecognized) = parser.parse_known_args()
 
-    global_config.__dict__["_data"].update(flags.__dict__)
+    global_config.config_flags = Config(name = "Config Flags", **flags.__dict__)
 
     global app
     app = App()
@@ -1038,6 +1055,7 @@ def main():
             val = maybe_as_number(val) if val is not None else True
             app.root_config[key] = val
 
+    result = -1
     with Chdir(app.root_config.root_path):
         result = app.main()
 
