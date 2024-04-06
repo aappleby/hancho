@@ -1,7 +1,5 @@
 # examples/meson/build.hancho
 
-from hancho import *
-
 build_config.build_tag = "debug"
 
 compile = build_config.rule(

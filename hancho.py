@@ -73,7 +73,10 @@ def log(message, *args, sameline=False, **kwargs):
 def abs_path(path, strict=True):
     if isinstance(path, list):
         return [abs_path(p, strict) for p in path]
-    return Path(path).resolve(strict=strict)
+    result = Path(path).absolute()
+    if strict and not result.exists():
+        raise FileNotFoundError(path)
+    return result
 
 
 def rel_path(path1, path2):
@@ -175,11 +178,11 @@ class Chdir:
         self._old_cwd = []
 
     def __enter__(self):
-        self._old_cwd.append(app.getcwd())
-        app.chdir(self.path)
+        self._old_cwd.append(Path.cwd())
+        os.chdir(self.path)
 
     def __exit__(self, *excinfo):
-        app.chdir(self._old_cwd.pop())
+        os.chdir(self._old_cwd.pop())
 
 ####################################################################################################
 
@@ -292,8 +295,8 @@ class Config:
         subrepo_path = self.this_path / Path(self.expand(subrepo_path))
         subrepo_config = SubrepoConfig(
             base = app.root_config,
-            repo_path = subrepo_path.resolve(strict=True),
-            this_path = subrepo_path.resolve(strict=True),
+            repo_path = subrepo_path.absolute(),
+            this_path = subrepo_path.absolute(),
             **kwargs,
         )
         # FIXME add checking for subrepo duplicates
@@ -301,7 +304,7 @@ class Config:
 
     def include(self, hancho_file, **kwargs):
         child_config = IncludeConfig(base=self, **kwargs)
-        hancho_filepath = (self.this_path / self.expand(hancho_file)).resolve(strict = True)
+        hancho_filepath = (self.this_path / self.expand(hancho_file)).absolute()
 
         return app.load_module(child_config, hancho_filepath)
 
@@ -472,13 +475,12 @@ class Task:
         app.tasks_total += 1
 
         if config is None:
-            self.config = TaskConfig(base = app.root_config, **kwargs)
+            self.config = TaskConfig(base = app.root_repo_config, **kwargs)
         else:
             self.config = TaskConfig(base = config, **kwargs)
 
-        # Source path needs to be captured at task _creation_ time if it's not set yet.
-        # FIXME no it should come from this_path
-        self.config.defaults(source_path = app.getcwd())
+        # Source path needs to be set at task creation time if it's not set yet.
+        self.config.defaults(source_path = self.config.this_path)
 
         app.pending_tasks.append(self)
 
@@ -778,6 +780,8 @@ def create_global_config():
         job_count = 1,
         depformat = "gcc",
         ext_build = False,
+        repo_path = "{root_path}",
+        this_path = "{root_path}",
         command_path = "{root_path}",
         command_files = [],
         source_files = [],
@@ -798,6 +802,8 @@ class App:
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
         self.root_config = RootConfig()
+        self.root_repo_config = None
+        self.root_mod_config = None
         self.repos = []
         self.loaded_modules = []
         self.all_build_files = set()
@@ -817,12 +823,6 @@ class App:
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
 
-    def chdir(self, path):
-        os.chdir(path)
-
-    def getcwd(self):
-        return Path(os.getcwd())
-
     ########################################
 
     def main(self):
@@ -833,19 +833,19 @@ class App:
         if global_config.debug:
             log(f"global_config = {global_config}")
 
-        repo_config = RepoConfig(
+        self.root_repo_config = RepoConfig(
             base = self.root_config,
             repo_path = self.root_config.root_path,
             this_path = self.root_config.root_path,
         )
 
-        mod_config = ModConfig(
-            base = repo_config,
+        self.root_mod_config = ModConfig(
+            base = self.root_repo_config,
             this_path = self.root_config.root_file.parent,
             this_file = self.root_config.root_file,
         )
 
-        self.load_module(mod_config, self.root_config.root_file)
+        self.load_module(self.root_mod_config, self.root_config.root_file)
         time_b = time.perf_counter()
 
         if global_config.debug or global_config.verbose:
@@ -913,7 +913,7 @@ class App:
     def load_module(self, build_config, mod_filepath):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        rel_filepath = rel_path(mod_filepath, build_config.root_path)
+        #rel_filepath = rel_path(mod_filepath, build_config.root_path)
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
         new_initial_dict = build_config.to_dict()
@@ -925,14 +925,14 @@ class App:
             old_initial_dict = mod.build_config.to_dict()
             if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
-                    raise RuntimeError(f"Module load for {rel_filepath} is ambiguous")
+                    raise RuntimeError(f"Module load for {mod_filepath} is ambiguous")
                 reuse = mod
 
         if global_config.debug or global_config.verbose:
             if reuse:
-                log(color(255, 255, 128) + f"Reusing module {rel_filepath}" + color())
+                log(color(255, 255, 128) + f"Reusing module {mod_filepath}" + color())
             else:
-                log(color(128,255,128) + f"Loading module {rel_filepath}" + color())
+                log(color(128,255,128) + f"Loading module {mod_filepath}" + color())
 
         if reuse:
             return reuse
