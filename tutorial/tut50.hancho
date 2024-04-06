@@ -7,12 +7,12 @@ build_config.build_tag = "tut50"
 
 def sync_callback(task):
   #print("Sync callback begin")
-  for abs_file in task.abs_build_files:
+  for abs_file in task.build_files:
     #print(f"Writing {abs_file}")
     with open(abs_file, 'w', encoding="utf-8") as file:
       file.write("hello world")
   #print("Sync callback end")
-  return task.abs_build_files
+  return task.build_files
 
 fast_task = build_config.rule(command = sync_callback)
 fast_task(["src/main.cpp"], ["fast1.txt", "fast2.txt", "fast3.txt"])
@@ -21,13 +21,13 @@ fast_task(["src/main.cpp"], ["fast1.txt", "fast2.txt", "fast3.txt"])
 
 async def async_callback(task):
   #print("Async callback begin")
-  for abs_file in task.abs_build_files:
+  for abs_file in task.build_files:
     #print(f"Writing {abs_file}")
     with open(abs_file, 'w', encoding="utf-8") as file:
       file.write("hello world")
     await asyncio.sleep(0.1)
   #print("Async callback end")
-  return task.abs_build_files
+  return task.build_files
 
 slow_task = build_config.rule(command = async_callback)
 slow_task(["src/main.cpp"], ["slow1.txt", "slow2.txt", "slow3.txt"])

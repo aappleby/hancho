@@ -1,3 +1,11 @@
 rules = build_config.include("{rules_path}/tut40_rules.hancho")
 
-rules.c_binary(glob("*.cpp"), "app")
+print("---------- tut40_src build_config")
+print(build_config)
+print("----------")
+
+rules.c_binary(
+  glob("*.cpp"),
+  "app",
+  config = build_config
+)
