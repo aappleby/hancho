@@ -1,24 +1,30 @@
 # tutorial/tut13.hancho
 from hancho import Config
+from hancho import Rule
 from pathlib import Path
 
-config = Config(
+common = Config(
+  name          = "Tutorial 13 common options",
   command_path  = Path.cwd(),
   command_files = [],
   build_path    = Path.cwd(),
   build_dir     = "build/tut13",
 )
 
-compile = config.rule(
+compile = Rule(
+  name          = "Compile C++ code",
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_files}",
   build_files   = "{join_path(build_dir, swap_ext(source_files, '.o'))}",
   build_deps    = "{join_path(build_dir, swap_ext(source_files, '.d'))}",
+  common        = common,
 )
 
-link = config.rule(
+link = Rule(
+  name          = "Link C++ binary",
   desc          = "Link {source_files} into {build_files}",
   command       = "g++ {source_files} -o {build_files}",
+  common        = common,
 )
 
 main_o = compile("src/main.cpp")

@@ -227,7 +227,11 @@ class Config:
         self.__delitem__(key)
 
     def to_string(self):
-        name = self.__dict__.get("name", "<no name>")
+        name = self.__dict__.get("name", None)
+        if name is not None:
+            name = self.expand(name)
+        else:
+            name = "<no name>"
         result = f"{type(self).__name__}('{name}') "
         result += json.dumps(self.__dict__, indent=2, cls=Encoder)
         return result
@@ -264,10 +268,20 @@ class Config:
         if key in self.__dict__:
             if (val := self.__dict__[key]) is not None:
                 return val
+
+        #configs = filter(lambda val: isinstance(val, Config), reversed(self.__dict__.values()))
+        #blah = map(lambda val: val.get(key, default, is_global), configs)
+        #blee = filter(lambda val: val is not None, blah)
+        #result = next(blee, None)
+        #if result is not None:
+        #    return result
+
         for val in reversed(self.__dict__.values()):
-            #configs =
-            if (result := val.get(key, default, is_global) if isinstance(val, Config) else None) is not None:
-                return result
+            if isinstance(val, Config):
+                result = val.get(key, default, is_global)
+                if result is not None:
+                    return result
+
         return None if is_global else global_config.get(key, default, True)
 
     def defaults(self, **kwargs):
@@ -290,8 +304,9 @@ class Config:
 
     def task(self, source_files=None, build_files=None, **kwargs):
         """Creates a task directly from this config object."""
+        name = kwargs.pop("name", "<no_name>")
         return Task(
-            config=self, source_files=source_files, build_files=build_files, **kwargs
+            name = name, config=self, source_files=source_files, build_files=build_files, **kwargs
         )
 
     def subrepo(self, subrepo_path, **kwargs):
@@ -452,18 +467,16 @@ class Task:
 
     def __init__(self, *, config=None, **kwargs):
 
-        print(config)
-        print(Config(**kwargs))
-
         app.tasks_total += 1
 
         if config is None:
             self.config = Config(repo_config = app.root_repo_config, **kwargs)
         else:
-            self.config = Config(base = config, **kwargs)
+            kwargs['base'] = config
+            self.config = Config(**kwargs)
 
         # Source path needs to be set at task creation time if it's not set yet.
-        self.config.defaults(source_path = self.config.this_path)
+        #self.config.defaults(source_path = self.config.this_path)
 
         app.pending_tasks.append(self)
 
@@ -764,7 +777,8 @@ rule_defaults = Config(
     depformat = "gcc",
     ext_build = False,
     repo_path = "{root_path}",
-    this_path = "{root_path}",
+    this_path = "{repo_path}",
+    source_path = "{repo_path}",
     command_path = "{root_path}",
     command_files = [],
     source_files = [],
