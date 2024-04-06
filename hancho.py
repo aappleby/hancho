@@ -147,12 +147,7 @@ async def await_variant(variant):
                 promise = await variant.promise
                 variant.promise = await await_variant(promise)
         case Config():
-            base = variant.__dict__["_base"]
-            data = variant.__dict__["_data"]
-            if base is not None:
-                await await_variant(base)
-            if data is not None:
-                await await_variant(data)
+            await await_variant(variant.__dict__)
         case dict():
             for key in variant:
                 variant[key] = await await_variant(variant[key])
@@ -250,31 +245,30 @@ class Config:
 
     def to_dict(self):
         result = {}
-        for key in self.__dict__:
-            val = self.__dict__[key]
-            if not isinstance(val, Config):
+
+        # Add all the non-config keys to the dict in order.
+        for key, val in self.__dict__.items():
+            if not isinstance(val, Config) and val is not None:
                 result[key] = val
+
+        # Now apply all the sub-configs on top of our keys.
         for key2, val2 in self.__dict__.items():
             if isinstance(val2, Config):
-                child = val2.to_dict()
-                for key3, val3 in child.items():
-                    result[key3] = val3
+                result.update(val2.to_dict())
         return result
 
     def collapse(self):
         return Config(**self.to_dict())
 
-    def get(self, key, default=None):
+    def get(self, key, default=None, is_global = False):
         if key in self.__dict__:
-            val = self.__dict__[key]
-            if val is not None:
+            if (val := self.__dict__[key]) is not None:
                 return val
         for val in reversed(self.__dict__.values()):
-            if isinstance(val, Config):
-                result = val.get(key)
-                if result is not None:
-                    return result
-        return None
+            #configs =
+            if (result := val.get(key, default, is_global) if isinstance(val, Config) else None) is not None:
+                return result
+        return None if is_global else global_config.get(key, default, True)
 
     def defaults(self, **kwargs):
         """Sets key-val pairs in this config if the key does not already exist."""
@@ -458,12 +452,15 @@ class Task:
 
     def __init__(self, *, config=None, **kwargs):
 
+        print(config)
+        print(Config(**kwargs))
+
         app.tasks_total += 1
 
         if config is None:
-            self.config = TaskConfig(base = app.root_repo_config, **kwargs)
+            self.config = Config(repo_config = app.root_repo_config, **kwargs)
         else:
-            self.config = TaskConfig(base = config, **kwargs)
+            self.config = Config(base = config, **kwargs)
 
         # Source path needs to be set at task creation time if it's not set yet.
         self.config.defaults(source_path = self.config.this_path)
@@ -842,16 +839,10 @@ class App:
 
         build_config = Config(
             name = "Build Config",
-            global_config = global_config,
             root_config = self.root_config,
             repo_config = self.root_repo_config,
             mod_config = self.root_mod_config
         )
-
-        #print(build_config.to_dict())
-        #print(json.dumps(build_config.to_dict(), indent=2, cls=Encoder))
-        print(build_config.collapse())
-        sys.exit(0)
 
         self.load_module(self.root_mod_config, self.root_config.root_file)
         time_b = time.perf_counter()
@@ -1008,14 +999,14 @@ app = None
 
 def main():
 
-    a = Config(name = "a")
-    b = Config(name = "b", a = a)
-    c = Config(name = "c", a = a)
-
-    #d = Config(name = "d", b = b, c = c)
-    d = b + c
-    print(d)
-    sys.exit(0)
+#    a = Config(name = "a")
+#    b = Config(name = "b", a = a)
+#    c = Config(name = "c", a = a)
+#
+#    #d = Config(name = "d", b = b, c = c)
+#    d = b + c
+#    print(d)
+#    sys.exit(0)
 
     # pylint: disable=line-too-long
     # fmt: off
