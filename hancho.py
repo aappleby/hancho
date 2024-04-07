@@ -228,6 +228,12 @@ class Config:
             yield named_config[1]
 
     def named_iter(self):
+        """
+        Yields all config objects in the config graph in the order that we use them to resolve
+        fields.
+        We iterate over sub-config objects in _reverse_ order so that newer sub-configs can
+        override older sub-configs.
+        """
         queue = [(None, self)]
         done = set()
         while(queue):
@@ -248,7 +254,7 @@ class Config:
     def __repr__(self):
         result = ""
         for named_config in self.named_iter():
-            result += named_config[0] + " = " if named_config[0] is not None else ""
+            result += named_config[0] + " = " if named_config[0] else ""
             result += named_config[1].to_string() + "\n"
         return result
 
@@ -262,17 +268,11 @@ class Config:
 
     def get(self, key, default=None, is_global = False):
         for config in self:
-            if key in config.__dict__ and (val := config.__dict__[key]) is not None:
+            if (val := config.__dict__.get(key, None)) is not None:
                 return val
-        if not is_global:
-            return global_config.get(key, default, True)
-        return None
-
-    def defaults(self, **kwargs):
-        """Sets key-val pairs in this config if the key does not already exist."""
-        for key, val in kwargs.items():
-            if self.get(key) is None:
-                self[key] = val
+        if is_global:
+            return None
+        return global_config.get(key, default, True)
 
     def expand(self, variant):
         return expand(self, variant)
@@ -293,14 +293,17 @@ class Config:
         """Creates a task directly from this config object."""
         name = kwargs.pop("name", "<no_name>")
         return Task(
-            name = name, config=self, source_files=source_files, build_files=build_files, **kwargs
+            name=name,
+            rule=self,
+            source_files=source_files,
+            build_files=build_files,
+            **kwargs
         )
 
     def subrepo(self, subrepo_path, **kwargs):
         subrepo_path = self.this_path / Path(self.expand(subrepo_path))
-        subrepo_config = SubrepoConfig(
+        subrepo_config = Config(
             repo_path = subrepo_path.absolute(),
-            this_path = subrepo_path.absolute(),
             **kwargs,
         )
         return subrepo_config
@@ -460,7 +463,7 @@ class Task:
 
     def __repr__(self):
         base = json.dumps(self.__dict__, indent=2, cls=Encoder)
-        return "task = " + base + "\nconfig" + str(self.config)
+        return "task = " + base + "\nconfig = " + str(self.config)
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -482,7 +485,7 @@ class Task:
             return result
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
-        except Exception:  # pylint: disable=broad-except
+        except BaseException:
             if not self.config.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
@@ -503,7 +506,8 @@ class Task:
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        # Expand everything
+        # Expand all the critical fields
+        self.desc          = expand(self.config, self.config.desc)
         self.command       = flatten(expand(self.config, self.config.command))
         self.command_path  = abs_path(expand(self.config, self.config.command_path))
         self.command_files = abs_path(flatten(expand(self.config, self.config.abs_command_files)))
@@ -515,8 +519,8 @@ class Task:
         self.build_files   = abs_path(flatten(expand(self.config, self.config.abs_build_files)), strict=False)
         self.build_deps    = abs_path(flatten(expand(self.config, self.config.abs_build_deps)), strict=False)
 
-        if not str(self.build_path).startswith(str(app.root_config.root_path)):
-            raise ValueError(f"Path error, build_path {self.build_path} is not under root_path {self.config.root_path}")
+        if not str(self.build_path).startswith(str(global_config.root_path)):
+            raise ValueError(f"Path error, build_path {self.build_path} is not under root_path {global_config.root_path}")
 
         # Check for duplicate task outputs
         for abs_file in self.build_files:
@@ -772,9 +776,6 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.root_config = Config(
-            name = "Root Config"
-        )
         self.root_repo_config = None
         self.root_mod_config = None
         self.repos = []
@@ -795,6 +796,7 @@ class App:
         self.pending_tasks = []
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
+        pass
 
     ########################################
 
@@ -808,23 +810,22 @@ class App:
 
         self.root_repo_config = Config(
             name = "Root Repo Config",
-            repo_path = self.root_config.root_path,
-            this_path = self.root_config.root_path,
+            repo_path = global_config.root_path,
+            this_path = global_config.root_path,
         )
 
         self.root_mod_config = Config(
             name = "Root Mod Config",
-            this_path = self.root_config.root_file.parent,
-            this_file = self.root_config.root_file,
+            this_path = global_config.root_file.parent,
+            this_file = global_config.root_file,
         )
 
         build_config = Config(
-            root_config = self.root_config,
             repo_config = self.root_repo_config,
             mod_config = self.root_mod_config
         )
 
-        self.load_module(self.root_mod_config, self.root_config.root_file)
+        self.load_module(self.root_mod_config, global_config.root_file)
         time_b = time.perf_counter()
 
         if global_config.debug or global_config.verbose:
@@ -900,21 +901,19 @@ class App:
                 continue
 
             old_initial_dict = mod.build_config.to_dict()
+            # FIXME we just need to check that overlapping keys have matching values
             if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
                     raise RuntimeError(f"Module load for {mod_filepath} is ambiguous")
                 reuse = mod
 
-        if global_config.debug or global_config.verbose:
-            if reuse:
-                log(color(255, 255, 128) + f"Reusing module {mod_filepath}" + color())
-            else:
-                log(color(128,255,128) + f"Loading module {mod_filepath}" + color())
-
         if reuse:
+            if global_config.debug or global_config.verbose:
+                log(color(255, 255, 128) + f"Reusing module {mod_filepath}" + color())
             return reuse
 
-        ##########
+        if global_config.debug or global_config.verbose:
+            log(color(128,255,128) + f"Loading module {mod_filepath}" + color())
 
         # There was no compatible module loaded, so make a new one.
         with open(mod_filepath, encoding="utf-8") as file:
@@ -992,45 +991,41 @@ def main():
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
-    parser.add_argument("root_file",       default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
-    parser.add_argument("-C", "--chdir",   default=".", dest="root_path", type=str,     help="Change directory before starting the build")
-    parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
-    parser.add_argument("-v", "--verbose", default=False, action="store_true",          help="Print verbose build info")
-    parser.add_argument("-q", "--quiet",   default=False, action="store_true",          help="Mute all output")
-    parser.add_argument("-n", "--dry_run", default=False, action="store_true",          help="Do not run commands")
-    parser.add_argument("-d", "--debug",   default=False, action="store_true",          help="Print debugging information")
-    parser.add_argument("-f", "--force",   default=False, action="store_true",          help="Force rebuild of everything")
-
-    parser.add_argument("-e", default=False, action="store_true", dest="debug_expansion",         help="Debug template & macro expansion")
+    parser.add_argument("root_file",               default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
+    parser.add_argument("-C", "--chdir",           default=".", dest="root_path", type=str,     help="Change directory before starting the build")
+    parser.add_argument("-j", "--jobs",            default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
+    parser.add_argument("-v", "--verbose",         default=False, action="store_true",          help="Print verbose build info")
+    parser.add_argument("-q", "--quiet",           default=False, action="store_true",          help="Mute all output")
+    parser.add_argument("-n", "--dry_run",         default=False, action="store_true",          help="Do not run commands")
+    parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
+    parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
+    parser.add_argument("-e", "--debug_expansion", default=False, action="store_true",          help="Debug template & macro expansion")
     # fmt: on
 
     # Parse the command line
     (flags, unrecognized) = parser.parse_known_args()
+    flags.__dict__['root_file'] = Path(flags.__dict__['root_file']).absolute()
+    flags.__dict__['root_path'] = Path(flags.__dict__['root_path']).absolute()
 
     global_config.config_flags = Config(name = "Config Flags", **flags.__dict__)
 
-    global app
-    app = App()
-
-    global_config.root_path = abs_path(global_config.root_path)
-    global_config.root_file = abs_path(global_config.root_file)
-
-    app.root_config.root_path = abs_path(global_config.root_path)
-    app.root_config.root_file = abs_path(global_config.root_file)
-    app.root_config.this_path = abs_path(global_config.root_path)
-
-    # Unrecognized command line parameters also become flags if they are flag-like
+    # Unrecognized command line parameters also become config fields if they are flag-like
+    global_config.unrecognized_flags = Config(name = "Unrecognized Flags")
     for span in unrecognized:
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
             key = match.group(1)
             val = match.group(2)
             val = maybe_as_number(val) if val is not None else True
-            app.root_config[key] = val
+            global_config.unrecognized_flags[key] = val
+
+    #print(global_config)
+    #print(global_config.debug)
 
     result = -1
-    with Chdir(app.root_config.root_path):
+    with Chdir(global_config.root_path):
+        global app
+        app = App()
         result = app.main()
-
     sys.exit(result)
 
 if __name__ == "__main__":
