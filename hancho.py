@@ -15,6 +15,7 @@ import sys
 import traceback
 import time
 import types
+import random
 from pathlib import Path
 from glob import glob
 from enum import Enum
@@ -502,12 +503,13 @@ class Task:
             command_path  = "{repo_path}",
             command_files = [],
             source_path   = Path.cwd(),
-            source_files  = MISSING,
+            source_files  = [],
             build_tag     = "",
             build_dir     = "build",
             build_path    = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
-            build_files   = MISSING,
+            build_files   = [],
             build_deps    = [],
+            order_only    = [],
         )
 
         self.config = default_task_config.merge(*args, **kwargs).collapse()
@@ -550,6 +552,12 @@ class Task:
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
+                log(
+                    f"{color(128,196,255)}[{self.action.task_index}/{app.tasks_total}]{color()} {self.action.desc}",
+                    sameline=not self.config.verbose,
+                )
+                if self.config.verbose or self.config.debug:
+                    log(f"{color(128,128,128)}Files {self.action.build_files} are up to date{color()}")
                 result = self.action.build_files
                 app.tasks_skip += 1
 
@@ -591,6 +599,10 @@ class Task:
         self.action.depformat     = self.config.get('depformat', 'gcc')
         self.action.job_count     = self.config.get('job_count', 1)
         self.action.ext_build     = self.config.get('ext_build', False)
+
+        app.task_counter += 1
+        self.action.task_index = app.task_counter
+
 
         if not str(self.action.build_path).startswith(str(global_config.root_path)):
             raise ValueError(f"Path error, build_path {self.action.build_path} is not under root_path {global_config.root_path}")
@@ -667,9 +679,6 @@ class Task:
                         return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
-        if self.config.debug:
-            log(f"Files {self.action.build_files} are up to date")
-
         # Empty string = no reason to rebuild
         return ""
 
@@ -679,10 +688,6 @@ class Task:
         try:
             # Wait for enough jobs to free up to run this task.
             await app.acquire_jobs(self.action.job_count)
-
-            # Jobs acquired, we are now runnable so grab a task index.
-            app.task_counter += 1
-            self.action.task_index = app.task_counter
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
@@ -720,7 +725,7 @@ class Task:
         ):
             if second_reason := self.needs_rerun():
                 raise ValueError(
-                    f"Task '{self.desc}' still needs rerun after running!\n"
+                    f"Task '{self.action.desc}' still needs rerun after running!\n"
                     + f"Reason: {second_reason}"
                 )
 
@@ -890,6 +895,14 @@ class App:
 
     def queue_pending_tasks(self):
         """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
+
+        if not self.pending_tasks:
+            return
+
+        if global_config.shuffle:
+            log(f"Shufflin' {len(self.pending_tasks)} tasks")
+            random.shuffle(self.pending_tasks)
+
         for task in self.pending_tasks:
             #print(f"Queueing task {hex(id(task))}")
             task.promise = asyncio.create_task(task.run_async())
@@ -1046,6 +1059,7 @@ def main():
     parser.add_argument("-n", "--dry_run",         default=False, action="store_true",          help="Do not run commands")
     parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
     parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
+    parser.add_argument("-s", "--shuffle",         default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
     parser.add_argument("-e", "--debug_expansion", default=False, action="store_true",          help="Debug template & macro expansion")
     # fmt: on
 
