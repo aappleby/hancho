@@ -186,20 +186,20 @@ class Encoder(json.JSONEncoder):
         else:
             return str(o)
 
-class FieldState(Enum):
-    MISSING = "Missing Field"
+MISSING = "<Missing Field>"
 
 class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
-    def __init__(self, **kwargs):
-        self.__dict__['_fields'] = dict(**kwargs)
+    def __init__(self, *args, **kwargs):
+        self.__dict__['_fields'] = dict()
+        self.merge(*args, **kwargs)
 
     def __getitem__(self, key):
         if key == "_fields":
             return self._fields
         val = self.get(key, default = None)
-        if val is FieldState.MISSING:
+        if val is MISSING:
             raise KeyError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' was missing")
         if val is None:
             raise KeyError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' was never defined")
@@ -228,15 +228,9 @@ class Config:
     ########################################
 
     def __iter__(self):
-        for named_config in self.named_iter():
-            yield named_config[1]
-
-    def named_iter(self):
         """
-        Yields all config objects in the config graph in the order that we use them to resolve
-        fields.
-        We iterate over the queue in _reverse_ order so that newer sub-configs can override older
-        sub-configs.
+        Yields (name, config) tuples for all configs in this one in the order that we use them to
+        resolve fields.
         """
         queue = [(None, self)]
         done = set()
@@ -250,7 +244,7 @@ class Config:
                         queue.append((k,v))
 
     def flatten(self):
-        return [config for config in self]
+        return [config for name, config in self]
 
     ########################################
 
@@ -260,12 +254,16 @@ class Config:
 
     def __repr__(self):
         result = ""
-        for named_config in self.named_iter():
-            result += "." + named_config[0] + " = " if named_config[0] else ""
-            result += named_config[1].to_string() + "\n"
+        for name, config in self:
+            result += "." + name + " = " if name else ""
+            result += config.to_string() + "\n"
         return result
 
     def to_dict(self):
+        """
+        We iterate over configs in _reverse_ order so that newer sub-configs can override older
+        sub-configs.
+        """
         result = {}
         for config in reversed(self.flatten()):
             for key, val in config._fields.items():
@@ -274,7 +272,7 @@ class Config:
         return result
 
     def get(self, key, default=None, is_global = False):
-        for config in self:
+        for name, config in self:
             if (val := config._fields.get(key, default)) is not None:
                 return val
         if is_global:
@@ -301,6 +299,9 @@ class Config:
             self._fields.update(config)
         self._fields.update(kwargs)
         return self
+
+    def extend(self, *args, **kwargs):
+        return Config(self, *args, **kwargs)
 
     ########################################
 
@@ -352,12 +353,12 @@ class Config:
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
 
-    def __call__(self, source_files=None, build_files=None, **kwargs):
+    def __call__(self, source_files=None, build_files=None, *args, **kwargs):
         if source_files is not None:
             kwargs['source_files'] = source_files
         if build_files is not None:
             kwargs['build_files'] = build_files
-        return Task(rule=self, **kwargs)
+        return Task(self, *args, **kwargs)
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -487,15 +488,15 @@ class Task:
         default_task_config = Config(
             name          = "Task Config",
             desc          = "{source_files} -> {build_files}",
-            command       = FieldState.MISSING,
+            command       = MISSING,
             command_path  = Path.cwd(),
             command_files = [],
             source_path   = Path.cwd(),
-            source_files  = FieldState.MISSING,
+            source_files  = MISSING,
             build_tag     = "",
             build_dir     = "build",
             build_path    = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
-            build_files   = FieldState.MISSING,
+            build_files   = MISSING,
             build_deps    = [],
         )
 
@@ -558,8 +559,6 @@ class Task:
         self.build_path    = abs_path(expand(self.task_config, self.task_config.build_path), strict=False)
         self.build_files   = abs_path(flatten(expand(self.task_config, self.task_config.abs_build_files)), strict=False)
         self.build_deps    = abs_path(flatten(expand(self.task_config, self.task_config.abs_build_deps)), strict=False)
-
-        print(self.build_files)
 
         if not str(self.build_path).startswith(str(global_config.root_path)):
             raise ValueError(f"Path error, build_path {self.build_path} is not under root_path {global_config.root_path}")
@@ -755,10 +754,10 @@ class Task:
 
 default_mod_config = Config(
     name          = "Default Mod Config",
-    mod_file      = FieldState.MISSING,
-    mod_path      = FieldState.MISSING,
-    repo_path     = FieldState.MISSING,
-    root_path     = FieldState.MISSING,
+    mod_file      = MISSING,
+    mod_path      = MISSING,
+    repo_path     = MISSING,
+    root_path     = MISSING,
 )
 
 helper_functions = Config(

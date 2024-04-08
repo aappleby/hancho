@@ -10,8 +10,8 @@ compile = build_config.rule(
 )
 
 link = build_config.rule(
-  desc        = "Link {rel_source_files} into {rel_build_files}",
-  command     = "g++ {rel_source_files} -o {rel_build_files}",
+  desc    = "Link {rel_source_files} into {rel_build_files}",
+  command = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
 main_o = compile("src/main.cpp")

@@ -1,23 +1,23 @@
 # tutorial/tut15.hancho
+import os
 from hancho import Config
-from pathlib import Path
 
-config = Config(
-  command_path  = Path.cwd(),
+common = Config(
+  command_path  = os.getcwd(),
   command_files = [],
-  build_path    = Path.cwd() / "build/tut15",
+  build_path    = os.getcwd() + "/build/tut15/",
 )
 
-compile = config.rule(
-  desc          = "Compile {rel_source_files}",
-  command       = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
-  build_files   = "{swap_ext(rel_source_files, '.o')}",
-  build_deps    = "{swap_ext(rel_source_files, '.d')}",
+compile = common.rule(
+  desc        = "Compile {rel_source_files}",
+  command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
+  build_files = "{swap_ext(rel_source_files, '.o')}",
+  build_deps  = "{swap_ext(rel_source_files, '.d')}",
 )
 
-link = config.rule(
-  desc          = "Link {rel_source_files} into {rel_build_files}",
-  command       = "g++ {rel_source_files} -o {rel_build_files}",
+link = common.rule(
+  desc    = "Link {rel_source_files} into {rel_build_files}",
+  command = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
 main_o = compile("src/main.cpp")

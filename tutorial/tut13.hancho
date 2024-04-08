@@ -1,32 +1,25 @@
 # tutorial/tut13.hancho
+import os
 from hancho import Config
-from hancho import Rule
-from pathlib import Path
 
 common = Config(
-  name          = "Tutorial 13 common options",
-  command_path  = Path.cwd(),
+  command_path  = os.getcwd(),
   command_files = [],
-  build_path    = Path.cwd(),
-  build_dir     = "build/tut13",
+  build_path    = os.getcwd() + "/build/tut13/",
 )
 
-compile = Rule(
-  name          = "Compile C++ code",
-  desc          = "Compile {source_files}",
-  command       = "g++ -MMD -c {source_files} -o {build_files}",
-  build_files   = "{join_path(build_dir, swap_ext(source_files, '.o'))}",
-  build_deps    = "{join_path(build_dir, swap_ext(source_files, '.d'))}",
-  common        = common,
+compile = common.rule(
+  desc        = "Compile {source_files}",
+  command     = "g++ -MMD -c {source_files} -o {build_files}",
+  build_files = "{join_path(build_path, swap_ext(source_files, '.o'))}",
+  build_deps  = "{join_path(build_path, swap_ext(source_files, '.d'))}",
 )
 
-link = Rule(
-  name          = "Link C++ binary",
-  desc          = "Link {source_files} into {build_files}",
-  command       = "g++ {source_files} -o {build_files}",
-  common        = common,
+link = common.rule(
+  desc    = "Link {source_files} into {build_files}",
+  command = "g++ {source_files} -o {build_path + build_files}",
 )
 
 main_o = compile("src/main.cpp")
 util_o = compile("src/util.cpp")
-app = link([main_o, util_o], "{build_dir}/app")
+app = link([main_o, util_o], "app")

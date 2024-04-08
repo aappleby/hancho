@@ -1,33 +1,32 @@
 # tutorial/tut10.hancho - branches off from tut02.hancho
+import os
 from hancho import Config
-from pathlib import Path
 
 config = Config(
-  command_path  = Path.cwd(),
+  command_path  = os.getcwd(),
   command_files = [],
-  build_path    = Path.cwd(),
-  build_dir     = "build/tut10",
+  build_path    = os.getcwd() + "/build/tut10/",
 )
 
 main_o = config.task(
   desc          = "Compile {source_files}",
-  command       = "g++ -MMD -c {source_files} -o {build_files}",
-  source_files  = ["src/main.cpp"],
-  build_files   = ["{build_dir}/src/main.o"],
-  build_deps    = ["{build_dir}/src/main.d"],
+  command       = "g++ -MMD -c {source_files} -o {build_path + build_files}",
+  source_files  = "src/main.cpp",
+  build_files   = "src/main.o",
+  build_deps    = "src/main.d",
 )
 
 util_o = config.task(
   desc          = "Compile {source_files}",
-  command       = "g++ -MMD -c {source_files} -o {build_files}",
-  source_files  = ["src/util.cpp"],
-  build_files   = ["{build_dir}/src/util.o"],
-  build_deps    = ["{build_dir}/src/util.d"],
+  command       = "g++ -MMD -c {source_files} -o {build_path + build_files}",
+  source_files  = "src/util.cpp",
+  build_files   = "src/util.o",
+  build_deps    = "src/util.d",
 )
 
 app = config.task(
   desc          = "Link {source_files} into {build_files}",
-  command       = "g++ {source_files} -o {build_files}",
+  command       = "g++ {source_files} -o {build_path + build_files}",
   source_files  = [main_o, util_o],
-  build_files   = ["{build_dir}/app"],
+  build_files   = "app",
 )

@@ -1,45 +1,36 @@
 # tutorial/tut11.hancho
+import os
 from hancho import Config
-from pathlib import Path
 
 common = Config(
-  name = "Tutorial 11 common options",
-  command_path  = Path.cwd(),
+  command_path  = os.getcwd(),
   command_files = [],
-  build_path    = Path.cwd(),
-  build_dir     = "build/tut11",
+  build_path    = os.getcwd() + "/build/tut11/",
 )
 
-compile = Config(
-  name    = "Compile",
+compile = common.extend(
   desc    = "Compile {source_files}",
-  command = "g++ -MMD -c {source_files} -o {build_files}",
-  common  = common,
+  command = "g++ -MMD -c {source_files} -o {build_path + build_files}",
 )
 
 main_o = compile.task(
-  name          = "Compile src/main.cpp",
-  source_files  = ["src/main.cpp"],
-  build_files   = ["{build_dir}/src/main.o"],
-  build_deps    = ["{build_dir}/src/main.d"],
+  source_files  = "src/main.cpp",
+  build_files   = "src/main.o",
+  build_deps    = "src/main.d",
 )
 
 util_o = compile.task(
-  name          = "Compile src/util.cpp",
-  source_files  = ["src/util.cpp"],
-  build_files   = ["{build_dir}/src/util.o"],
-  build_deps    = ["{build_dir}/src/util.d"],
+  source_files  = "src/util.cpp",
+  build_files   = "src/util.o",
+  build_deps    = "src/util.d",
 )
 
-link = Config(
-  name    = "Link",
+link = common.extend(
   desc    = "Link {source_files} into {build_files}",
-  command = "g++ {source_files} -o {build_files}",
-  common  = common,
+  command = "g++ {source_files} -o {build_path + build_files}",
 )
 
 app = link.task(
-  name = "Link {build_dir}/app",
   source_files  = [main_o, util_o],
-  build_files   = ["{build_dir}/app"],
+  build_files   = "app",
 )

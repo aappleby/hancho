@@ -1,14 +1,14 @@
 # tutorial/tut02.hancho
+import os
 from hancho import Config
-from pathlib import Path
 
 print(build_config)
 
 config = Config(
-  command_path  = Path.cwd(),
+  command_path  = os.getcwd(),
   command_files = [],
-  source_path   = Path.cwd(),
-  build_path    = Path.cwd() / "build/tut02",
+  source_path   = os.getcwd(),
+  build_path    = os.getcwd() + "/build/tut02/",
 )
 
 main_o = config.task(
