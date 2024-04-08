@@ -1,0 +1,50 @@
+
+import random
+from glob import glob
+
+build_config.verbose = True
+
+build_config.task(
+  desc = "Touch 3 random files in src/ - {build_files}",
+  command = "touch {build_files}",
+  source_files = [],
+  build_files = random.sample(glob("src/*"), 3),
+  build_path = build_config.source_path,
+)
+
+def generate_filelist(task):
+  with open(task.action.build_files[0], "w") as file:
+    for f in random.sample(glob("src/*"), 3):
+      file.write(str(f) + "\n")
+  return task.action.build_files
+
+filelist_txt = build_config.task(
+  desc = "Write the names of 3 random files in src/ to {build_files}",
+  command = generate_filelist,
+  source_files = [],
+  build_files = "filelist.txt",
+)
+
+def generate_result(task):
+  """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
+  from_filelist = [f.strip() for f in open(task.action.source_files[0], "r").readlines()]
+  return build_config.task(
+    desc = "Concatenate {rel_source_files} into {rel_build_files}",
+    command = "cat {rel_source_files} > {rel_build_files}",
+    source_files = from_filelist,
+    build_files = "result.txt",
+  )
+
+result_txt = build_config.task(
+  desc = "Read {rel_source_files} and use its contents to generate another task",
+  command = generate_result,
+  source_files = filelist_txt,
+  build_files = [],
+)
+
+build_config.task(
+  desc = "Print the contents of {rel_source_files}",
+  command = "cat {rel_source_files}",
+  source_files = result_txt,
+  build_files = []
+)

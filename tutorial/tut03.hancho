@@ -22,7 +22,7 @@ def compile_cpp(source, config):
   return result
 
 def link_cpp(tasks, binary, config):
-  objs = [task.task_config.build_files for task in tasks]
+  objs = [task.config.build_files for task in tasks]
   return config.task(
     desc          = f"Link {' and '.join(objs)} into {config.build_path + binary}",
     command       = f"g++ {' '.join(objs)} -o {config.build_path + binary}",

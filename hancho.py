@@ -137,6 +137,10 @@ async def await_variant(variant):
         case asyncio.CancelledError():
             raise variant
         case Task():
+            # If the task hasn't been queued yet, queue it now before we await it.
+            if variant.promise is None:
+                app.queue_pending_tasks()
+
             # We don't recurse through subtasks because they should await themselves.
             if inspect.isawaitable(variant.promise):
                 promise = await variant.promise
@@ -182,7 +186,7 @@ class Encoder(json.JSONEncoder):
         if isinstance(o, Config):
             return f"{type(o).__name__} @ {hex(id(o))}"
         elif isinstance(o, Task):
-            return f"{type(o).__name__}({expand(o.task_config, o.task_config.desc)})"
+            return f"{type(o).__name__}({expand(o.config, o.config.desc)})"
         else:
             return str(o)
 
@@ -490,11 +494,7 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, *args, **kwargs):
-        self.desc        = None
-        self.reason      = None
-        self.task_index  = None
-        self.promise     = None
-
+        #print(f"Task.__init__ @ {hex(id(self))}")
         default_task_config = Config(
             name          = "Task Config",
             desc          = "{source_files} -> {build_files}",
@@ -510,36 +510,54 @@ class Task:
             build_deps    = [],
         )
 
-        self.task_config = default_task_config.merge(*args, **kwargs).collapse()
+        self.config = default_task_config.merge(*args, **kwargs).collapse()
+        self.action = Config()
+
+        # Note - We can't set promise = asyncio.create_task here, as we're not guaranteed to be in
+        # an event loop yet
+        self.promise = None
+
         app.tasks_total += 1
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        dump = json.dumps(self.__dict__, indent=2, cls=Encoder)
-        return "task = " + dump + "\n.task_config = " + str(self.task_config)
+        result = ""
+        result += "task.config = " + str(self.config)
+        result += "task.action = " + str(self.action)
+        result += "task.promise = " + str(self.promise)
+        return result
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            await await_variant(self.task_config)
+            #print(f"Awaiting task {hex(id(self))}")
+            await await_variant(self.config)
+
+            #print(f"Starting task {hex(id(self))}")
+
+            if self.config.debug:
+                log(f"task.config = {self.config}", end = "")
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
 
+            if self.config.debug:
+                log(f"task.action = {self.action}", end = "")
+
             # Run the commands if we need to.
-            if self.reason:
+            if self.action.reason:
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
-                result = self.build_files
+                result = self.action.build_files
                 app.tasks_skip += 1
 
             return result
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException:
-            if not self.task_config.quiet:
+            if not self.config.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -553,7 +571,7 @@ class Task:
             return cancel
 
         finally:
-            if self.task_config.debug:
+            if self.config.debug:
                 log("")
 
     def task_init(self):
@@ -561,37 +579,35 @@ class Task:
 
         # Expand all the critical fields
 
-        #print("==========")
-        #print(expand(self.task_config, "{abs_build_files}"))
-        #print(expand(self.task_config, "{command_path}"))
-        #print("==========")
+        self.action.desc          = self.config.expand(self.config.desc)
+        self.action.command       = flatten(self.config.expand(self.config.command))
+        self.action.command_path  = abs_path(self.config.expand(self.config.command_path))
+        self.action.command_files = abs_path(flatten(self.config.expand(self.config.abs_command_files)))
+        self.action.source_path   = abs_path(self.config.expand(self.config.source_path))
+        self.action.source_files  = abs_path(flatten(self.config.expand(self.config.abs_source_files)))
+        self.action.build_path    = abs_path(self.config.expand(self.config.build_path), strict=False)
+        self.action.build_files   = abs_path(flatten(self.config.expand(self.config.abs_build_files)), strict=False)
+        self.action.build_deps    = abs_path(flatten(self.config.expand(self.config.abs_build_deps)), strict=False)
+        self.action.depformat     = self.config.get('depformat', 'gcc')
+        self.action.job_count     = self.config.get('job_count', 1)
+        self.action.ext_build     = self.config.get('ext_build', False)
 
-        self.desc          = expand(self.task_config, self.task_config.desc)
-        self.command       = flatten(expand(self.task_config, self.task_config.command))
-        self.command_path  = abs_path(expand(self.task_config, self.task_config.command_path))
-        self.command_files = abs_path(flatten(expand(self.task_config, self.task_config.abs_command_files)))
-        self.source_path   = abs_path(expand(self.task_config, self.task_config.source_path))
-        self.source_files  = abs_path(flatten(expand(self.task_config, self.task_config.abs_source_files)))
-        self.build_path    = abs_path(expand(self.task_config, self.task_config.build_path), strict=False)
-        self.build_files   = abs_path(flatten(expand(self.task_config, self.task_config.abs_build_files)), strict=False)
-        self.build_deps    = abs_path(flatten(expand(self.task_config, self.task_config.abs_build_deps)), strict=False)
-
-        if not str(self.build_path).startswith(str(global_config.root_path)):
-            raise ValueError(f"Path error, build_path {self.build_path} is not under root_path {global_config.root_path}")
+        if not str(self.action.build_path).startswith(str(global_config.root_path)):
+            raise ValueError(f"Path error, build_path {self.action.build_path} is not under root_path {global_config.root_path}")
 
         # Check for duplicate task outputs
-        for abs_file in self.build_files:
+        for abs_file in self.action.build_files:
             if abs_file in app.all_build_files:
                 raise NameError(f"Multiple rules build {abs_file}!")
             app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
-        if not self.task_config.dry_run:
-            for abs_file in self.build_files:
+        if not self.config.dry_run:
+            for abs_file in self.action.build_files:
                 abs_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
-        self.reason = self.needs_rerun(self.task_config.force)
+        self.action.reason = self.needs_rerun(self.config.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -600,25 +616,25 @@ class Task:
         # pylint: disable=too-many-branches
 
         if force:
-            return f"Files {self.build_files} forced to rebuild"
-        if not self.source_files:
+            return f"Files {self.action.build_files} forced to rebuild"
+        if not self.action.source_files:
             return "Always rebuild a target with no inputs"
-        if not self.build_files:
+        if not self.action.build_files:
             return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
-        for abs_file in self.build_files:
+        for abs_file in self.action.build_files:
             if not abs_file.exists():
                 return f"Rebuilding because {abs_file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(mtime(f) for f in self.build_files)
+        min_out = min(mtime(f) for f in self.action.build_files)
 
-        for abs_file in self.source_files:
+        for abs_file in self.action.source_files:
             if mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
-        for abs_file in self.command_files:
+        for abs_file in self.action.command_files:
             if mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
@@ -627,18 +643,17 @@ class Task:
                 return f"Rebuilding because {mod.__file__} has changed"
 
         # Check all dependencies in the depfile, if present.
-        for abs_depfile in self.build_deps:
+        for abs_depfile in self.action.build_deps:
             if not abs_depfile.exists():
                 continue
-            if self.task_config.debug:
+            if self.config.debug:
                 log(f"Found depfile {abs_depfile}")
             with open(abs_depfile, encoding="utf-8") as depfile:
                 deplines = None
-                depformat = self.task_config.get('depformat', 'gcc')
-                if depformat == "msvc":
+                if self.action.depformat == "msvc":
                     # MSVC /sourceDependencies json depfile
                     deplines = json.load(depfile)["Data"]["Includes"]
-                elif depformat == "gcc":
+                elif self.action.depformat == "gcc":
                     # GCC .d depfile
                     deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
@@ -646,14 +661,14 @@ class Task:
                     raise ValueError(f"Invalid depformat {depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [self.command_path / d for d in deplines]
+                deplines = [self.action.command_path / d for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
-        if self.task_config.debug:
-            log(f"Files {self.build_files} are up to date")
+        if self.config.debug:
+            log(f"Files {self.action.build_files} are up to date")
 
         # Empty string = no reason to rebuild
         return ""
@@ -661,51 +676,47 @@ class Task:
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
-        job_count = self.task_config.get('job_count', 1)
         try:
             # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(job_count)
+            await app.acquire_jobs(self.action.job_count)
 
             # Jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
-            self.task_index = app.task_counter
+            self.action.task_index = app.task_counter
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
-                f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
-                sameline=not self.task_config.verbose,
+                f"{color(128,255,196)}[{self.action.task_index}/{app.tasks_total}]{color()} {self.action.desc}",
+                sameline=not self.config.verbose,
             )
 
-            if self.task_config.verbose or self.task_config.debug:
-                log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
-
-            if self.task_config.debug:
-                log(self)
+            if self.config.verbose or self.config.debug:
+                log(f"{color(128,128,128)}Reason: {self.action.reason}{color()}")
 
             result = []
-            for exp_command in self.command:
-                if self.task_config.verbose or self.task_config.debug:
+            for exp_command in self.action.command:
+                if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
-                    rel_command_path = rel_path(self.command_path, self.task_config.root_path)
+                    rel_command_path = rel_path(self.action.command_path, self.config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
-                    log("(DRY RUN) " if self.task_config.dry_run else "", end="")
+                    log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
                 result = await self.run_command(exp_command)
         finally:
-            await app.release_jobs(job_count)
+            await app.release_jobs(self.action.job_count)
 
         # After the build, the deps files should exist if specified.
-        for abs_file in self.build_deps:
-            if not abs_file.exists() and not self.task_config.dry_run:
+        for abs_file in self.action.build_deps:
+            if not abs_file.exists() and not self.config.dry_run:
                 raise NameError(f"Dep file {abs_file} wasn't created")
 
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
         if (
-            self.source_files
-            and self.build_files
-            and not (self.task_config.dry_run or self.task_config.get('ext_build', False))
+            self.action.source_files
+            and self.action.build_files
+            and not (self.action.dry_run or self.action.ext_build)
         ):
             if second_reason := self.needs_rerun():
                 raise ValueError(
@@ -719,7 +730,7 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # Early exit if this is just a dry run
-        if self.task_config.dry_run:
+        if self.action.dry_run:
             return self.build_files
 
         # Custom commands just get called and then early-out'ed.
@@ -736,7 +747,7 @@ class Task:
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd=self.command_path,
+            cwd=self.action.command_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -747,7 +758,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if not self.task_config.quiet and (self.stdout or self.stderr):
+        if not self.config.quiet and (self.stdout or self.stderr):
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")
@@ -762,7 +773,7 @@ class Task:
             )
 
         # Task passed, return the output file list
-        return self.build_files
+        return self.action.build_files
 
 ####################################################################################################
 
@@ -836,6 +847,7 @@ class App:
         self.expand_depth = 0
 
         self.pending_tasks = []
+        self.queued_tasks = []
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
         pass
@@ -851,7 +863,6 @@ class App:
             log(f"global_config = {global_config}")
 
         root_config = Config(
-            name         = "Root Config",
             this_file    = global_config.root_file,
             this_path    = global_config.root_path,
             mod_path     = global_config.root_path,
@@ -879,11 +890,11 @@ class App:
 
     def queue_pending_tasks(self):
         """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
-        tasks = self.pending_tasks
-        self.pending_tasks = []
-        for task in tasks:
+        for task in self.pending_tasks:
+            #print(f"Queueing task {hex(id(task))}")
             task.promise = asyncio.create_task(task.run_async())
-        return tasks
+            self.queued_tasks.append(task)
+        self.pending_tasks = []
 
     ########################################
 
@@ -897,12 +908,12 @@ class App:
         # tasks after awaiting each one. Because we're awaiting tasks in the order they were
         # created, this will effectively walk through all tasks in dependency order.
         time_a = time.perf_counter()
-        tasks = self.queue_pending_tasks()
-        while tasks:
-            task = tasks.pop(0)
+        self.queue_pending_tasks()
+        while self.queued_tasks:
+            task = self.queued_tasks.pop(0)
             if inspect.isawaitable(task.promise):
                 await task.promise
-            tasks.extend(self.queue_pending_tasks())
+            self.queue_pending_tasks()
         time_b = time.perf_counter()
         if global_config.debug or global_config.verbose:
             log(f"Running tasks took {time_b-time_a:.3f} seconds")
