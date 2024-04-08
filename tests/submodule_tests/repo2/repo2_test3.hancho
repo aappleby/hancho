@@ -1,2 +1,3 @@
 rules = build_config.include("{repo_path}/rules/repo2_test3_rules.hancho")
+
 task = rules.rule([], "repo2.txt")

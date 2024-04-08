@@ -9,9 +9,9 @@ main_o = Task(
   command_files = [],
   source_path   = Path.cwd(),
   source_files  = ["src/main.cpp"],
-  build_path    = Path.cwd(),
-  build_files   = ["build/tut01/src/main.o"],
-  build_deps    = ["build/tut01/src/main.d"],
+  build_path    = Path.cwd() / "build/tut01",
+  build_files   = ["src/main.o"],
+  build_deps    = ["src/main.d"],
 )
 
 util_o = Task(
@@ -21,9 +21,9 @@ util_o = Task(
   command_files = [],
   source_path   = Path.cwd(),
   source_files  = ["src/util.cpp"],
-  build_path    = Path.cwd(),
-  build_files   = ["build/tut01/src/util.o"],
-  build_deps    = ["build/tut01/src/util.d"],
+  build_path    = Path.cwd() / "build/tut01",
+  build_files   = ["src/util.o"],
+  build_deps    = ["src/util.d"],
 )
 
 app = Task(
@@ -33,7 +33,7 @@ app = Task(
   command_files = [],
   source_path   = Path.cwd(),
   source_files  = [main_o, util_o],
-  build_path    = Path.cwd(),
-  build_files   = ["build/tut01/app"],
+  build_path    = Path.cwd() / "build/tut01",
+  build_files   = ["app"],
   build_deps    = []
 )

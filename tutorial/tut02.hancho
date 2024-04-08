@@ -2,34 +2,34 @@
 from hancho import Config
 from pathlib import Path
 
-print(Path.cwd())
+print(build_config)
 
 config = Config(
   command_path  = Path.cwd(),
   command_files = [],
   source_path   = Path.cwd(),
-  build_path    = Path.cwd(),
+  build_path    = Path.cwd() / "build/tut02",
 )
 
 main_o = config.task(
   desc          = "Compile main.cpp",
   command       = "g++ -MMD -c src/main.cpp -o build/tut02/src/main.o",
   source_files  = ["src/main.cpp"],
-  build_files   = ["build/tut02/src/main.o"],
-  build_deps    = ["build/tut02/src/main.d"],
+  build_files   = ["src/main.o"],
+  build_deps    = ["src/main.d"],
 )
 
 util_o = config.task(
   desc          = "Compile util.cpp",
   command       = "g++ -MMD -c src/util.cpp -o build/tut02/src/util.o",
   source_files  = ["src/util.cpp"],
-  build_files   = ["build/tut02/src/util.o"],
-  build_deps    = ["build/tut02/src/util.d"],
+  build_files   = ["src/util.o"],
+  build_deps    = ["src/util.d"],
 )
 
 app = config.task(
   desc          = "Link main.o and util.o into app",
   command       = "g++ build/tut02/src/main.o build/tut02/src/util.o -o build/tut02/app",
   source_files  = [main_o, util_o],
-  build_files   = ["build/tut02/app"],
+  build_files   = ["app"],
 )

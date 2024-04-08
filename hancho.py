@@ -17,7 +17,7 @@ import time
 import types
 from pathlib import Path
 from glob import glob
-
+from enum import Enum
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -33,8 +33,6 @@ macro_regex = re.compile("^{[^}]*}$")
 
 # Matches macros inside a template string.
 template_regex = re.compile("{[^}]*}")
-
-dotdot_regex = re.compile("/[^/]+/\.\.")
 
 
 def log(message, *args, sameline=False, **kwargs):
@@ -184,19 +182,25 @@ class Encoder(json.JSONEncoder):
         if isinstance(o, Config):
             return f"{type(o).__name__} @ {hex(id(o))}"
         elif isinstance(o, Task):
-            return f"{type(o).__name__}({expand(o.config, o.config.desc)})"
+            return f"{type(o).__name__}({expand(o.task_config, o.task_config.desc)})"
         else:
             return str(o)
 
+class FieldState(Enum):
+    MISSING = "Missing Field"
 
 class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
     def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+        self.__dict__['_fields'] = dict(**kwargs)
 
     def __getitem__(self, key):
+        if key == "_fields":
+            return self._fields
         val = self.get(key, default = None)
+        if val is FieldState.MISSING:
+            raise KeyError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' was missing")
         if val is None:
             raise KeyError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' was never defined")
         return val
@@ -204,10 +208,10 @@ class Config:
     def __setitem__(self, key, val):
         if val is None:
             raise ValueError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' cannot be set to None")
-        self.__dict__[key] = val
+        self._fields[key] = val
 
     def __delitem__(self, key):
-        del self.__dict__[key]
+        del self._fields[key]
 
     def __getattr__(self, key):
         return self.__getitem__(key)
@@ -231,8 +235,8 @@ class Config:
         """
         Yields all config objects in the config graph in the order that we use them to resolve
         fields.
-        We iterate over sub-config objects in _reverse_ order so that newer sub-configs can
-        override older sub-configs.
+        We iterate over the queue in _reverse_ order so that newer sub-configs can override older
+        sub-configs.
         """
         queue = [(None, self)]
         done = set()
@@ -241,83 +245,107 @@ class Config:
             if named_config[1] not in done:
                 done.add(named_config[1])
                 yield named_config
-                for k, v in named_config[1].__dict__.items():
+                for k, v in named_config[1]._fields.items():
                     if isinstance(v, Config):
                         queue.append((k,v))
+
+    def flatten(self):
+        return [config for config in self]
 
     ########################################
 
     def to_string(self):
         name = f"{type(self).__name__} @ {hex(id(self))} "
-        return name + json.dumps(self.__dict__, indent=2, cls=Encoder)
+        return name + json.dumps(self._fields, indent=2, cls=Encoder)
 
     def __repr__(self):
         result = ""
         for named_config in self.named_iter():
-            result += named_config[0] + " = " if named_config[0] else ""
+            result += "." + named_config[0] + " = " if named_config[0] else ""
             result += named_config[1].to_string() + "\n"
         return result
 
     def to_dict(self):
         result = {}
-        for config in self:
-            for key, val in config.__dict__.items():
-                if key not in result and not isinstance(val, Config) and val is not None:
+        for config in reversed(self.flatten()):
+            for key, val in config._fields.items():
+                if not isinstance(val, Config) and val is not None:
                     result[key] = val
         return result
 
     def get(self, key, default=None, is_global = False):
         for config in self:
-            if (val := config.__dict__.get(key, None)) is not None:
+            if (val := config._fields.get(key, default)) is not None:
                 return val
         if is_global:
             return None
-        return global_config.get(key, default, True)
+        return global_config.get(key, default, is_global = True)
 
     def expand(self, variant):
         return expand(self, variant)
 
-    def flatten(self, variant):
-        return flatten(expand(self, variant))
-
     def collapse(self):
         return Config(**self.to_dict())
 
+    def clone(self):
+        return Config(**self._fields)
+
+    def merge(self, *args, **kwargs):
+        for arg in args:
+            if isinstance(arg, Config):
+                config = arg._fields
+            elif isinstance(arg, dict):
+                config = arg
+            else:
+                raise ValueError(f"Unnamed args to merge() must be Configs or Dicts - got '{arg}'")
+            self._fields.update(config)
+        self._fields.update(kwargs)
+        return self
+
     ########################################
 
-    def rule(self, **kwargs):
+    def rule(self, *args, **kwargs):
         """Returns a callable rule that uses this config blob (plus any kwargs)."""
-        return Rule(base=self, **kwargs)
+        return Rule(self, *args, **kwargs)
 
-    def task(self, source_files=None, build_files=None, **kwargs):
+    def task(self, source_files=None, build_files=None, *args, **kwargs):
         """Creates a task directly from this config object."""
-        name = kwargs.pop("name", "<no_name>")
-        return Task(
-            name=name,
-            rule=self,
-            source_files=source_files,
-            build_files=build_files,
-            **kwargs
-        )
+        kwargs.setdefault('name', "<no_name>")
+        if source_files is not None:
+            kwargs.setdefault('source_files', source_files)
+        if build_files is not None:
+            kwargs.setdefault('build_files', build_files)
+        return Task(self, *args, **kwargs)
 
-    def subrepo(self, subrepo_path, **kwargs):
-        subrepo_path = self.this_path / Path(self.expand(subrepo_path))
+    def subrepo(self, subrepo_path, *args, **kwargs):
+        subrepo_path = abs_path(self.expand(self.this_path) / self.expand(subrepo_path))
         subrepo_config = Config(
-            repo_path = subrepo_path.absolute(),
-            **kwargs,
+            name = "Repo Config",
+            repo_path = subrepo_path,
         )
+        subrepo_config.merge(*args, **kwargs)
         return subrepo_config
 
-    def include(self, hancho_file, **kwargs):
-        child_config = Config(base=self, **kwargs)
-        hancho_filepath = (self.this_path / self.expand(hancho_file)).absolute()
-        return app.load_module(child_config, hancho_filepath)
+    def include(self, hancho_file, *args, **kwargs):
+        hancho_filepath = abs_path(self.expand(self.this_path) / self.expand(hancho_file))
+        mod_config = self.clone(
+            name      = "Include Config",
+            this_file = hancho_filepath,
+            this_path = hancho_filepath.parent,
+        )
+        mod_config.merge(*args, **kwargs)
+        return app.load_module(mod_config, hancho_filepath)
 
-    def load(self, hancho_file, **kwargs):
-        hancho_filepath = abs_path(self.this_path / self.expand(hancho_file))
-        kwargs['this_path'] = hancho_filepath.parent
-        child_config = Config(base = self, **kwargs)
-        return app.load_module(child_config, hancho_filepath)
+    def load(self, hancho_file, *args, **kwargs):
+        hancho_filepath = abs_path(self.expand(self.this_path) / self.expand(hancho_file))
+        mod_config = self.clone(
+            name      = "Mod Config",
+            this_file = hancho_filepath,
+            this_path = hancho_filepath.parent,
+            mod_path  = hancho_filepath.parent,
+        )
+        mod_config.merge(*args, **kwargs)
+        return app.load_module(mod_config, hancho_filepath)
 
 ####################################################################################################
 
@@ -450,26 +478,40 @@ class Task:
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
 
-    def __init__(self, *, rule=None, **kwargs):
-        self.desc       = None
-        self.reason     = None
-        self.task_index = None
-        self.promise    = None
-        self.config = Config()
-        self.config.rule = app.root_repo_config if rule is None else rule
-        self.config.__dict__.update(**kwargs)
+    def __init__(self, *args, **kwargs):
+        self.desc        = None
+        self.reason      = None
+        self.task_index  = None
+        self.promise     = None
+
+        default_task_config = Config(
+            name          = "Task Config",
+            desc          = "{source_files} -> {build_files}",
+            command       = FieldState.MISSING,
+            command_path  = Path.cwd(),
+            command_files = [],
+            source_path   = Path.cwd(),
+            source_files  = FieldState.MISSING,
+            build_tag     = "",
+            build_dir     = "build",
+            build_path    = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
+            build_files   = FieldState.MISSING,
+            build_deps    = [],
+        )
+
+        self.task_config = default_task_config.merge(*args, **kwargs).collapse()
         app.tasks_total += 1
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        base = json.dumps(self.__dict__, indent=2, cls=Encoder)
-        return "task = " + base + "\nconfig = " + str(self.config)
+        dump = json.dumps(self.__dict__, indent=2, cls=Encoder)
+        return "task = " + dump + "\n.task_config = " + str(self.task_config)
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            await await_variant(self.config)
+            await await_variant(self.task_config)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -486,7 +528,7 @@ class Task:
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException:
-            if not self.config.quiet:
+            if not self.task_config.quiet:
                 log(color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
                 log(color())
@@ -500,24 +542,24 @@ class Task:
             return cancel
 
         finally:
-            if self.config.debug:
+            if self.task_config.debug:
                 log("")
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
         # Expand all the critical fields
-        self.desc          = expand(self.config, self.config.desc)
-        self.command       = flatten(expand(self.config, self.config.command))
-        self.command_path  = abs_path(expand(self.config, self.config.command_path))
-        self.command_files = abs_path(flatten(expand(self.config, self.config.abs_command_files)))
+        self.desc          = expand(self.task_config, self.task_config.desc)
+        self.command       = flatten(expand(self.task_config, self.task_config.command))
+        self.command_path  = abs_path(expand(self.task_config, self.task_config.command_path))
+        self.command_files = abs_path(flatten(expand(self.task_config, self.task_config.abs_command_files)))
+        self.source_path   = abs_path(expand(self.task_config, self.task_config.source_path))
+        self.source_files  = abs_path(flatten(expand(self.task_config, self.task_config.abs_source_files)))
+        self.build_path    = abs_path(expand(self.task_config, self.task_config.build_path), strict=False)
+        self.build_files   = abs_path(flatten(expand(self.task_config, self.task_config.abs_build_files)), strict=False)
+        self.build_deps    = abs_path(flatten(expand(self.task_config, self.task_config.abs_build_deps)), strict=False)
 
-        self.source_path   = abs_path(expand(self.config, self.config.source_path))
-        self.source_files  = abs_path(flatten(expand(self.config, self.config.abs_source_files)))
-
-        self.build_path    = abs_path(expand(self.config, self.config.build_path), strict=False)
-        self.build_files   = abs_path(flatten(expand(self.config, self.config.abs_build_files)), strict=False)
-        self.build_deps    = abs_path(flatten(expand(self.config, self.config.abs_build_deps)), strict=False)
+        print(self.build_files)
 
         if not str(self.build_path).startswith(str(global_config.root_path)):
             raise ValueError(f"Path error, build_path {self.build_path} is not under root_path {global_config.root_path}")
@@ -529,12 +571,12 @@ class Task:
             app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
-        if not self.config.dry_run:
+        if not self.task_config.dry_run:
             for abs_file in self.build_files:
                 abs_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
-        self.reason = self.needs_rerun(self.config.force)
+        self.reason = self.needs_rerun(self.task_config.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -573,19 +615,20 @@ class Task:
         for abs_depfile in self.build_deps:
             if not abs_depfile.exists():
                 continue
-            if self.config.debug:
+            if self.task_config.debug:
                 log(f"Found depfile {abs_depfile}")
             with open(abs_depfile, encoding="utf-8") as depfile:
                 deplines = None
-                if self.config.depformat == "msvc":
+                depformat = self.task_config.get('depformat', 'gcc')
+                if depformat == "msvc":
                     # MSVC /sourceDependencies json depfile
                     deplines = json.load(depfile)["Data"]["Includes"]
-                elif self.config.depformat == "gcc":
+                elif depformat == "gcc":
                     # GCC .d depfile
                     deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise ValueError(f"Invalid depformat {self.config.depformat}")
+                    raise ValueError(f"Invalid depformat {depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [self.command_path / d for d in deplines]
@@ -594,7 +637,7 @@ class Task:
                         return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
-        if self.config.debug:
+        if self.task_config.debug:
             log(f"Files {self.build_files} are up to date")
 
         # Empty string = no reason to rebuild
@@ -603,9 +646,10 @@ class Task:
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
+        job_count = self.task_config.get('job_count', 1)
         try:
             # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(self.config.job_count)
+            await app.acquire_jobs(job_count)
 
             # Jobs acquired, we are now runnable so grab a task index.
             app.task_counter += 1
@@ -614,30 +658,30 @@ class Task:
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
                 f"{color(128,255,196)}[{self.task_index}/{app.tasks_total}]{color()} {self.desc}",
-                sameline=not self.config.verbose,
+                sameline=not self.task_config.verbose,
             )
 
-            if self.config.verbose or self.config.debug:
+            if self.task_config.verbose or self.task_config.debug:
                 log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
-            if self.config.debug:
+            if self.task_config.debug:
                 log(self)
 
             result = []
             for exp_command in self.command:
-                if self.config.verbose or self.config.debug:
+                if self.task_config.verbose or self.task_config.debug:
                     sys.stdout.flush()
-                    rel_command_path = rel_path(self.command_path, self.config.root_path)
+                    rel_command_path = rel_path(self.command_path, self.task_config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
-                    log("(DRY RUN) " if self.config.dry_run else "", end="")
+                    log("(DRY RUN) " if self.task_config.dry_run else "", end="")
                     log(exp_command)
                 result = await self.run_command(exp_command)
         finally:
-            await app.release_jobs(self.config.job_count)
+            await app.release_jobs(job_count)
 
         # After the build, the deps files should exist if specified.
         for abs_file in self.build_deps:
-            if not abs_file.exists() and not self.config.dry_run:
+            if not abs_file.exists() and not self.task_config.dry_run:
                 raise NameError(f"Dep file {abs_file} wasn't created")
 
         # Check if the commands actually updated all the output files.
@@ -646,7 +690,7 @@ class Task:
         if (
             self.source_files
             and self.build_files
-            and not (self.config.dry_run or self.config.ext_build)
+            and not (self.task_config.dry_run or self.task_config.get('ext_build', False))
         ):
             if second_reason := self.needs_rerun():
                 raise ValueError(
@@ -660,7 +704,7 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # Early exit if this is just a dry run
-        if self.config.dry_run:
+        if self.task_config.dry_run:
             return self.build_files
 
         # Custom commands just get called and then early-out'ed.
@@ -688,7 +732,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if not self.config.quiet and (self.stdout or self.stderr):
+        if not self.task_config.quiet and (self.stdout or self.stderr):
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")
@@ -708,6 +752,15 @@ class Task:
 ####################################################################################################
 
 # fmt: off
+
+default_mod_config = Config(
+    name          = "Default Mod Config",
+    mod_file      = FieldState.MISSING,
+    mod_path      = FieldState.MISSING,
+    repo_path     = FieldState.MISSING,
+    root_path     = FieldState.MISSING,
+)
+
 helper_functions = Config(
     name = "Helper Functions",
     abs_path=abs_path,
@@ -725,8 +778,8 @@ helper_functions = Config(
 
 helper_macros = Config(
     name = "Helper Macros",
+
     repo_name  = "{repo_path.name if repo_path != root_path else ''}",
-    build_path = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
 
     rel_source_path   = "{rel_path(source_path, command_path)}",
     rel_build_path    = "{rel_path(build_path, command_path)}",
@@ -742,30 +795,12 @@ helper_macros = Config(
     rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
 )
 
-rule_defaults = Config(
-    name = "Rule Defaults",
-    desc = "{source_files} -> {build_files}",
-    job_count = 1,
-    depformat = "gcc",
-    ext_build = False,
-    repo_path = "{root_path}",
-    this_path = "{repo_path}",
-    source_path = "{this_path}",
-    command_path = "{root_path}",
-    command_files = [],
-    source_files = [],
-    build_tag = "",
-    build_dir = "build",
-    build_files = [],
-    build_deps = [],
+global_config = Config(
+    name             = "Global Config",
+    helper_functions = helper_functions,
+    helper_macros    = helper_macros,
 )
 
-global_config = Config(
-    name = "Global Config",
-    helper_functions = helper_functions,
-    helper_macros = helper_macros,
-    rule_defaults = rule_defaults,
-)
 # fmt: on
 
 ####################################################################################################
@@ -808,24 +843,19 @@ class App:
         if global_config.debug:
             log(f"global_config = {global_config}")
 
-        self.root_repo_config = Config(
-            name = "Root Repo Config",
-            repo_path = global_config.root_path,
-            this_path = global_config.root_path,
+        root_config = Config(
+            name         = "Root Config",
+            this_file    = global_config.root_file,
+            this_path    = global_config.root_path,
+            mod_path     = global_config.root_path,
+            repo_path    = global_config.root_path,
+            root_path    = global_config.root_path,
+            command_path = "{repo_path}",
+            source_path  = "{mod_path}",
+            build_path   = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
         )
 
-        self.root_mod_config = Config(
-            name = "Root Mod Config",
-            this_path = global_config.root_file.parent,
-            this_file = global_config.root_file,
-        )
-
-        build_config = Config(
-            repo_config = self.root_repo_config,
-            mod_config = self.root_mod_config
-        )
-
-        self.load_module(self.root_mod_config, global_config.root_file)
+        self.load_module(root_config, global_config.root_file)
         time_b = time.perf_counter()
 
         if global_config.debug or global_config.verbose:
@@ -976,14 +1006,13 @@ app = None
 
 def main():
 
-#    a = Config(debug = False, foo = 5)
-#    b = Config(a = a)
-#    c = Config(a = a)
-#    d = b + c
-#    d.foo = 2
+#    a = Config(foo = 1)
+#    a.merge(Config(bar = 2, baz = 3), baq = 2)
+#    a.merge({"foo": 7})
+#    #a.merge("adsf")
 #
 #    print("----------")
-#    print(d.to_dict())
+#    print(a)
 #    print("----------")
 #
 #    sys.exit(0)
@@ -1004,10 +1033,12 @@ def main():
 
     # Parse the command line
     (flags, unrecognized) = parser.parse_known_args()
-    flags.__dict__['root_file'] = Path(flags.__dict__['root_file']).absolute()
-    flags.__dict__['root_path'] = Path(flags.__dict__['root_path']).absolute()
+    flag_dict = flags.__dict__
+    flag_dict['root_file'] = Path(flag_dict['root_file']).absolute()
+    flag_dict['root_path'] = Path(flag_dict['root_path']).absolute()
+    flag_dict['repo_path'] = Path(flag_dict['root_path']).absolute()
 
-    global_config.config_flags = Config(name = "Config Flags", **flags.__dict__)
+    global_config.config_flags = Config(name = "Config Flags", **flag_dict)
 
     # Unrecognized command line parameters also become config fields if they are flag-like
     global_config.unrecognized_flags = Config(name = "Unrecognized Flags")

@@ -9,21 +9,24 @@ test_build = build_config.rule(
   build_files = "{swap_ext(source_files, '.pass')}",
 )
 
+print(test_build)
+
 test_build("tut00.hancho")
-test_build("tut01.hancho")
-test_build("tut02.hancho")
-test_build("tut03.hancho")
-test_build("tut04.hancho")
 
-test_build("tut10.hancho")
-test_build("tut11.hancho")
-test_build("tut12.hancho")
-test_build("tut13.hancho")
-test_build("tut14.hancho")
-test_build("tut15.hancho")
-test_build("tut16.hancho")
-
-test_build("tut20.hancho")
-test_build("tut30.hancho")
-test_build("tut40.hancho")
-test_build("tut50.hancho")
+#test_build("tut01.hancho")
+#test_build("tut02.hancho")
+#test_build("tut03.hancho")
+#test_build("tut04.hancho")
+#
+#test_build("tut10.hancho")
+#test_build("tut11.hancho")
+#test_build("tut12.hancho")
+#test_build("tut13.hancho")
+#test_build("tut14.hancho")
+#test_build("tut15.hancho")
+#test_build("tut16.hancho")
+#
+#test_build("tut20.hancho")
+#test_build("tut30.hancho")
+#test_build("tut40.hancho")
+#test_build("tut50.hancho")

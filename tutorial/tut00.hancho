@@ -9,7 +9,7 @@ Task(
   command_files = [],
   source_path   = Path.cwd(),
   source_files  = ["src/main.cpp", "src/util.cpp"],
-  build_path    = Path.cwd(),
-  build_files   = ["build/tut00/app"],
+  build_path    = Path.cwd() / "build/tut00",
+  build_files   = ["app"],
   build_deps    = [],
 )

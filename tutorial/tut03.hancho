@@ -6,29 +6,31 @@ config = Config(
   command_path  = Path.cwd(),
   command_files = [],
   source_path   = Path.cwd(),
-  build_path    = Path.cwd(),
+  build_path    = Path.cwd() / "build/tut03",
 )
 
-def compile_cpp(config, source, build_dir):
+def compile_cpp(source, config):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')
-  return config.task(
+  result = config.task(
     desc          = f"Compile {source}",
-    command       = f"g++ -MMD -c {source} -o {build_dir}/{obj}",
-    source_files  = [source],
-    build_files   = [f"{build_dir}/{obj}"],
-    build_deps    = [f"{build_dir}/{dep}"],
+    command       = f"g++ -MMD -c {source} -o {config.build_path / obj}",
+    source_files  = source,
+    build_files   = obj,
+    build_deps    = dep,
   )
+  print(result)
+  return result
 
-def link_cpp(config, tasks, build_dir, binary):
-  objs = [task.config.build_files[0] for task in tasks]
+def link_cpp(tasks, binary, config):
+  objs = [task.task_config.build_files for task in tasks]
   return config.task(
-    desc          = f"Link {' and '.join(objs)} into {build_dir}/{binary}",
-    command       = f"g++ {' '.join(objs)} -o {build_dir}/{binary}",
+    desc          = f"Link {' and '.join(objs)} into {config.build_path / binary}",
+    command       = f"g++ {' '.join(objs)} -o {config.build_path / binary}",
     source_files  = tasks,
-    build_files   = [f"{build_dir}/{binary}"],
+    build_files   = binary,
   )
 
-main_o = compile_cpp(config, "src/main.cpp", "build/tut03")
-util_o = compile_cpp(config, "src/util.cpp", "build/tut03")
-app = link_cpp(config, [main_o, util_o], "build/tut03", "app")
+main_o = compile_cpp("src/main.cpp", config)
+util_o = compile_cpp("src/util.cpp", config)
+app = link_cpp([main_o, util_o], "app", config)

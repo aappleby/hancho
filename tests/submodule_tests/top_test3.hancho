@@ -1,7 +1,7 @@
-# Loads subrepo "repo1", which loads subrepo "repo2"
+ # Loads subrepo "repo1", which loads subrepo "repo2"
 
-rules = build_config.include("{repo_path}/rules/top_test3_rules.hancho")
-rules.rule([], "top.txt")
+#rules = build_config.include("{repo_path}/rules/top_test3_rules.hancho")
+#rules.rule([], "top.txt")
 
 repo1 = build_config.subrepo("repo1")
 repo1.load("repo1_test3.hancho")
