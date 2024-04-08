@@ -285,9 +285,6 @@ class Config:
     def collapse(self):
         return Config(**self.to_dict())
 
-    def clone(self):
-        return Config(**self._fields)
-
     def merge(self, *args, **kwargs):
         for arg in args:
             if isinstance(arg, Config):
@@ -318,9 +315,18 @@ class Config:
             kwargs.setdefault('build_files', build_files)
         return Task(self, *args, **kwargs)
 
+    #default_mod_config = Config(
+    #    name          = "Mod Config",
+    #    mod_file      = MISSING,
+    #    mod_path      = MISSING,
+    #    repo_path     = MISSING,
+    #    root_path     = MISSING,
+    #)
+
     def subrepo(self, subrepo_path, *args, **kwargs):
         subrepo_path = abs_path(self.expand(self.this_path) / self.expand(subrepo_path))
         subrepo_config = Config(
+            self,
             name = "Repo Config",
             repo_path = subrepo_path,
         )
@@ -329,7 +335,8 @@ class Config:
 
     def include(self, hancho_file, *args, **kwargs):
         hancho_filepath = abs_path(self.expand(self.this_path) / self.expand(hancho_file))
-        mod_config = self.clone(
+        mod_config = Config(
+            self,
             name      = "Include Config",
             this_file = hancho_filepath,
             this_path = hancho_filepath.parent,
@@ -339,7 +346,8 @@ class Config:
 
     def load(self, hancho_file, *args, **kwargs):
         hancho_filepath = abs_path(self.expand(self.this_path) / self.expand(hancho_file))
-        mod_config = self.clone(
+        mod_config = Config(
+            self,
             name      = "Mod Config",
             this_file = hancho_filepath,
             this_path = hancho_filepath.parent,
@@ -353,12 +361,14 @@ class Config:
 class Rule(Config):
     """Rules are callable Configs that create a Task when called."""
 
-    def __call__(self, source_files=None, build_files=None, *args, **kwargs):
+    def __call__(self, source_files = None, build_files = None, **kwargs):
+        args = []
         if source_files is not None:
-            kwargs['source_files'] = source_files
+            args.append({'source_files': source_files})
         if build_files is not None:
-            kwargs['build_files'] = build_files
-        return Task(self, *args, **kwargs)
+            args.append({'build_files': build_files})
+        result = Task(self, *args, **kwargs)
+        return result
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -489,7 +499,7 @@ class Task:
             name          = "Task Config",
             desc          = "{source_files} -> {build_files}",
             command       = MISSING,
-            command_path  = Path.cwd(),
+            command_path  = "{repo_path}",
             command_files = [],
             source_path   = Path.cwd(),
             source_files  = MISSING,
@@ -550,6 +560,12 @@ class Task:
         """All the setup steps needed before we run a task."""
 
         # Expand all the critical fields
+
+        #print("==========")
+        #print(expand(self.task_config, "{abs_build_files}"))
+        #print(expand(self.task_config, "{command_path}"))
+        #print("==========")
+
         self.desc          = expand(self.task_config, self.task_config.desc)
         self.command       = flatten(expand(self.task_config, self.task_config.command))
         self.command_path  = abs_path(expand(self.task_config, self.task_config.command_path))
@@ -751,14 +767,6 @@ class Task:
 ####################################################################################################
 
 # fmt: off
-
-default_mod_config = Config(
-    name          = "Default Mod Config",
-    mod_file      = MISSING,
-    mod_path      = MISSING,
-    repo_path     = MISSING,
-    root_path     = MISSING,
-)
 
 helper_functions = Config(
     name = "Helper Functions",

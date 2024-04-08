@@ -1,11 +1,4 @@
-rules = build_config.include("{rules_path}/tut40_rules.hancho")
+# tutorial/tut40_src.hancho
 
-print("---------- tut40_src build_config")
-print(build_config)
-print("----------")
-
-rules.c_binary(
-  glob("*.cpp"),
-  "app",
-  config = build_config
-)
+rules = build_config.include("{repo_path}/tut40_rules.hancho")
+rules.c_binary(glob("*.cpp"), "app", config = build_config)
