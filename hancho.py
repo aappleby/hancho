@@ -324,7 +324,7 @@ class Config:
     #)
 
     def subrepo(self, subrepo_path, *args, **kwargs):
-        subrepo_path = abs_path(self.expand(self.this_path) / self.expand(subrepo_path))
+        subrepo_path = abs_path(Path(self.expand(self.this_path)) / self.expand(subrepo_path))
         subrepo_config = Config(
             self,
             name = "Repo Config",
@@ -334,7 +334,7 @@ class Config:
         return subrepo_config
 
     def include(self, hancho_file, *args, **kwargs):
-        hancho_filepath = abs_path(self.expand(self.this_path) / self.expand(hancho_file))
+        hancho_filepath = abs_path(Path(self.expand(self.this_path)) / self.expand(hancho_file))
         mod_config = Config(
             self,
             name      = "Include Config",
@@ -345,7 +345,7 @@ class Config:
         return app.load_module(mod_config, hancho_filepath)
 
     def load(self, hancho_file, *args, **kwargs):
-        hancho_filepath = abs_path(self.expand(self.this_path) / self.expand(hancho_file))
+        hancho_filepath = abs_path(Path(self.expand(self.this_path)) / self.expand(hancho_file))
         mod_config = Config(
             self,
             name      = "Mod Config",
