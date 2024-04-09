@@ -1,6 +1,7 @@
 # examples/meson/build.hancho
+from hancho import Config
 
-build_config.build_tag = "debug"
+build_config = build_config + Config(build_tag = "debug")
 
 compile = build_config.rule(
   desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",

@@ -1,4 +1,6 @@
-build_config.verbose = True
+from hancho import Config
+
+build_config = build_config + Config(verbose = True)
 
 build_config.task([], [], desc = "Run all tests",         command = "cd tests && rm -rf build && ./run_tests.py > /dev/null")
 build_config.task([], [], desc = "Build all tutorials",   command = "cd tutorial && rm -rf build && ../hancho.py --quiet")
