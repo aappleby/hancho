@@ -1,6 +1,7 @@
 import sys
+from hancho import Config
 
-build_config.foobar = "config.foobar"
+build_config = build_config + Config(foobar = "config.foobar")
 
 mod2 = build_config.load("config_child.hancho")
 

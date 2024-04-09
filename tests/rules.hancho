@@ -1,10 +1,11 @@
 import os
+from hancho import Config
 
 if os.name == 'nt':
-  build_config.depformat = "msvc"
+  build_config = build_config + Config(depformat = "msvc")
   compile_command = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}"
 elif os.name == 'posix':
-  build_config.depformat = "gcc"
+  build_config = build_config + Config(depformat = "gcc")
   compile_command = "gcc -MMD -c {rel_source_files} -o {rel_build_files}"
 else:
   compile_command = "<unknown OS>"

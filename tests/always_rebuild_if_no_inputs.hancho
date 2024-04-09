@@ -1,2 +1,5 @@
 rules = build_config.load("rules.hancho")
-rules.touch_outputs([], "result.txt")
+
+print(build_config)
+
+print(rules.touch_outputs([], "result.txt"))

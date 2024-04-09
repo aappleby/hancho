@@ -1,3 +1,4 @@
+from hancho import Config
 
 # We should inherit config.foobar from our parent module.
 
@@ -5,4 +6,4 @@ if build_config.get('foobar') is None:
   import sys
   sys.exit(-1)
 
-build_config.foobar = "this should not change config_parent.build_config.foobar"
+build_config = build_config + Config(foobar = "this should not change config_parent.build_config.foobar")

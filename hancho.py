@@ -198,139 +198,66 @@ class Encoder(json.JSONEncoder):
         else:
             return str(o)
 
-class Sentinel():
-    def __init__(self, name):
-        self.name = name
-    def __repr__(self):
-        return self.name
-MISSING = Sentinel("<Missing Field>")
+def to_dict(variant):
+    if isinstance(variant, dict):
+        return variant
+    if isinstance(variant, (list, tuple)):
+        result = {}
+        for item in variant:
+            result.update(to_dict(item))
+        return result
+    if isinstance(variant, Config):
+        return dict(variant._fields)
+    raise ValueError(f"Couldn't convert {variant} to dict")
 
 class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
 
     def __init__(self, *args, **kwargs):
-        self.__dict__['_fields'] = dict()
-        self.merge(*args, **kwargs)
+        fields = dict()
+        for arg in args:
+            fields.update(to_dict(arg))
+        fields.update(kwargs)
+        self.__dict__['_fields'] = fields
 
     def __getitem__(self, key):
-        if key == "_fields":
-            return self._fields
-        val = self.get(key, default = None)
-        if val is MISSING:
-            raise KeyError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' was missing")
-        if val is None:
-            raise KeyError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' was never defined")
-        return val
-
-    def __setitem__(self, key, val):
-        if val is None:
-            raise ValueError(f"{type(self).__name__} @ {id(self)} - Config key '{key}' cannot be set to None")
-        self._fields[key] = val
-
-    def __delitem__(self, key):
-        del self._fields[key]
+        return self.get(key)
 
     def __getattr__(self, key):
-        return self.__getitem__(key)
+        return self.get(key)
+
+    def __setitem__(self, key, val):
+        raise ValueError()
 
     def __setattr__(self, key, val):
-        self.__setitem__(key, val)
+        raise ValueError()
 
-    def __delattr__(self, key):
-        self.__delitem__(key)
+    def __delitem_(self, key):
+        raise ValueError()
+
+    def __delattr_(self, key):
+        raise ValueError()
+
+    def get(self, key, default = None):
+        if key in self._fields:
+            return self._fields.get(key, default)
+        if key in global_config._fields:
+            return global_config._fields.get(key, default)
+        if default is None:
+            raise ValueError(f"Could not find {key}")
+        return default
 
     def __add__(self, val):
-        return Config(lhs = self, rhs = val)
+        return type(val)(self, val)
 
     ########################################
-
-    def __iter__(self):
-        """
-        Yields (name, config) tuples for all configs in this one in the order that we use them to
-        resolve fields.
-        """
-        queue = [(None, self)]
-        done = set()
-        while(queue):
-            named_config = queue.pop()
-            if named_config[1] not in done:
-                done.add(named_config[1])
-                yield named_config
-                for k, v in named_config[1]._fields.items():
-                    if isinstance(v, Config):
-                        queue.append((k,v))
-
-    def flatten(self):
-        return [config for name, config in self]
-
-    ########################################
-
-    def to_string(self):
-        name = f"{type(self).__name__} @ {hex(id(self))} "
-        return name + json.dumps(self._fields, indent=2, cls=Encoder)
 
     def __repr__(self):
-        result = ""
-        for name, config in self:
-            result += "." + name + " = " if name else ""
-            result += config.to_string() + "\n"
-        return result
-
-    def to_dict(self):
-        """
-        We iterate over configs in _reverse_ order so that newer sub-configs can override older
-        sub-configs.
-        """
-        result = {}
-        for config in reversed(self.flatten()):
-            for key, val in config._fields.items():
-                if not isinstance(val, Config) and val is not None:
-                    result[key] = val
-        return result
-
-    def get(self, key, default=None, is_global = False):
-        result = None
-        for name, config in self:
-            if key not in config._fields:
-                continue
-            val = config._fields.get(key)
-            if val is None:
-                continue
-            elif val is MISSING:
-                result = val
-                continue
-            else:
-                result = val
-                break
-
-        if result is not None and result is not MISSING:
-            return result
-
-        if is_global:
-            return result
-
-        global_val = global_config.get(key, default, is_global = True)
+        name = f"{type(self).__name__} @ {hex(id(self))}\n"
+        return name + json.dumps(self._fields, indent=2, cls=Encoder)
 
     def expand(self, variant):
         return expand(self, variant)
-
-    def collapse(self):
-        return Config(**self.to_dict())
-
-    def merge(self, *args, **kwargs):
-        for arg in args:
-            if isinstance(arg, Config):
-                config = arg._fields
-            elif isinstance(arg, dict):
-                config = arg
-            else:
-                raise ValueError(f"Unnamed args to merge() must be Configs or Dicts - got '{arg}'")
-            self._fields.update(config)
-        self._fields.update(kwargs)
-        return self
-
-    def extend(self, *args, **kwargs):
-        return Config(self, *args, **kwargs)
 
     ########################################
 
@@ -342,43 +269,45 @@ class Config:
         """Creates a task directly from this config object."""
         kwargs.setdefault('name', "<no_name>")
         if source_files is not None:
-            kwargs.setdefault('source_files', source_files)
+            kwargs['source_files'] = source_files
         if build_files is not None:
-            kwargs.setdefault('build_files', build_files)
+            kwargs['build_files'] = build_files
         return Task(self, *args, **kwargs)
 
     def subrepo(self, subrepo_path, *args, **kwargs):
         subrepo_path = abs_path(Path(self.expand(self.this_path)) / self.expand(subrepo_path))
-        subrepo_config = Config(
+        return Config(
             self,
+            *args,
+            kwargs,
             name = "Repo Config",
             this_path = subrepo_path,
             repo_path = subrepo_path,
         )
-        subrepo_config.merge(*args, **kwargs)
-        return subrepo_config
 
     def include(self, hancho_file, *args, **kwargs):
         hancho_filepath = abs_path(Path(self.expand(self.this_path)) / self.expand(hancho_file))
         mod_config = Config(
             self,
+            *args,
+            kwargs,
             name      = "Include Config",
             this_file = hancho_filepath,
             this_path = hancho_filepath.parent,
         )
-        mod_config.merge(*args, **kwargs)
         return app.load_module(mod_config, hancho_filepath)
 
     def load(self, hancho_file, *args, **kwargs):
         hancho_filepath = abs_path(Path(self.expand(self.this_path)) / self.expand(hancho_file))
         mod_config = Config(
             self,
+            *args,
+            kwargs,
             name      = "Mod Config",
             this_file = hancho_filepath,
             this_path = hancho_filepath.parent,
             mod_path  = hancho_filepath.parent,
         )
-        mod_config.merge(*args, **kwargs)
         return app.load_module(mod_config, hancho_filepath)
 
 ####################################################################################################
@@ -392,8 +321,7 @@ class Rule(Config):
             args.append({'source_files': source_files})
         if build_files is not None:
             args.append({'build_files': build_files})
-        result = Task(self, *args, **kwargs)
-        return result
+        return Task(self, kwargs, *args)
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -434,7 +362,7 @@ def expand(config, variant):
         case _ if inspect.isfunction(variant):
             return variant
         case _:
-            raise ValueError(f"Don't know how to expand {type(variant)}='{variant}'")
+            raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
 def expand_template(config, template):
@@ -515,10 +443,10 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, *args, **kwargs):
-        default_task_config = Config(
+        defaults = Config(
             name          = "Task Config",
             desc          = "{source_files} -> {build_files}",
-            command       = MISSING,
+            command       = None,
             command_path  = "{repo_path}",
             command_files = [],
             source_path   = Path.cwd(),
@@ -534,17 +462,18 @@ class Task:
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
-        self.config = default_task_config.merge(*args, **kwargs).collapse()
+        self.config = Config(defaults, args, kwargs)
         self.action = Config()
         self.promise = None
+        self.reason = None
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
 
     def __repr__(self):
         result = ""
-        result += "task.config = " + str(self.config)
-        result += "task.action = " + str(self.action)
+        result += "task.config = " + str(self.config) + "\n"
+        result += "task.action = " + str(self.action) + "\n"
         result += "task.promise = " + str(self.promise)
         return result
 
@@ -555,16 +484,17 @@ class Task:
             await await_variant(self.config)
 
             if self.config.debug:
-                log(f"task.config = {self.config}", end = "")
+                log(f"task.config = {self.config}")
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
 
             if self.config.debug:
-                log(f"task.action = {self.action}", end = "")
+                log(f"task.action = {self.action}")
+                log(f"task.promise = {self.promise}")
 
             # Run the commands if we need to.
-            if self.action.reason:
+            if self.reason:
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
@@ -605,19 +535,23 @@ class Task:
 
         app.task_counter += 1
 
-        self.action.desc          = self.config.expand(self.config.desc)
-        self.action.command       = flatten(self.config.expand(self.config.command))
-        self.action.command_path  = abs_path(self.config.expand(self.config.command_path))
-        self.action.command_files = abs_path(flatten(self.config.expand(self.config.abs_command_files)))
-        self.action.source_path   = abs_path(self.config.expand(self.config.source_path))
-        self.action.source_files  = abs_path(flatten(self.config.expand(self.config.abs_source_files)))
-        self.action.build_path    = abs_path(self.config.expand(self.config.build_path), strict=False)
-        self.action.build_files   = abs_path(flatten(self.config.expand(self.config.abs_build_files)), strict=False)
-        self.action.build_deps    = abs_path(flatten(self.config.expand(self.config.abs_build_deps)), strict=False)
-        self.action.depformat     = self.config.get('depformat', 'gcc')
-        self.action.job_count     = self.config.get('job_count', 1)
-        self.action.ext_build     = self.config.get('ext_build', False)
-        self.action.task_index    = app.task_counter
+        self.action = Config(
+            desc          = self.config.expand(self.config.desc),
+            command       = flatten(self.config.expand(self.config.command)),
+            command_path  = abs_path(self.config.expand(self.config.command_path)),
+            command_files = abs_path(flatten(self.config.expand(self.config.abs_command_files))),
+            source_path   = abs_path(self.config.expand(self.config.source_path)),
+            source_files  = abs_path(flatten(self.config.expand(self.config.abs_source_files))),
+            build_path    = abs_path(self.config.expand(self.config.build_path), strict=False),
+            build_files   = abs_path(flatten(self.config.expand(self.config.abs_build_files)), strict=False),
+            build_deps    = abs_path(flatten(self.config.expand(self.config.abs_build_deps)), strict=False),
+            depformat     = self.config.get('depformat', 'gcc'),
+            job_count     = self.config.get('job_count', 1),
+            ext_build     = self.config.get('ext_build', False),
+            task_index    = app.task_counter,
+        )
+
+        #print(self.action)
 
         if not str(self.action.build_path).startswith(str(global_config.root_path)):
             raise ValueError(f"Path error, build_path {self.action.build_path} is not under root_path {global_config.root_path}")
@@ -634,7 +568,7 @@ class Task:
                 abs_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if we need a rebuild
-        self.action.reason = self.needs_rerun(self.config.force)
+        self.reason = self.needs_rerun(self.config.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -711,7 +645,7 @@ class Task:
             )
 
             if self.config.verbose or self.config.debug:
-                log(f"{color(128,128,128)}Reason: {self.action.reason}{color()}")
+                log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
 
             result = []
             for exp_command in self.action.command:
@@ -817,7 +751,6 @@ helper_functions = Config(
 
 helper_macros = Config(
     name = "Helper Macros",
-
     repo_name         = "{repo_path.name if repo_path != root_path else ''}",
     rel_source_path   = "{rel_path(source_path, command_path)}",
     rel_build_path    = "{rel_path(build_path, command_path)}",
@@ -832,10 +765,9 @@ helper_macros = Config(
 )
 
 global_config = Config(
-    name = "Global Config",
-
-    helper_functions = helper_functions,
-    helper_macros    = helper_macros,
+    {"name" : "Global Config"},
+    helper_functions,
+    helper_macros,
 )
 
 # fmt: on
@@ -966,13 +898,13 @@ class App:
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         # Look through our loaded modules and see if there's already a compatible one loaded.
-        new_initial_dict = build_config.to_dict()
+        new_initial_dict = build_config._fields
         reuse = None
         for mod in self.loaded_modules:
             if mod.__file__ != mod_filepath:
                 continue
 
-            old_initial_dict = mod.build_config.to_dict()
+            old_initial_dict = mod.build_config._fields
             # FIXME we just need to check that overlapping keys have matching values
             if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
@@ -1070,16 +1002,19 @@ def main():
     flag_dict['root_path'] = Path(flag_dict['root_path']).absolute()
     flag_dict['repo_path'] = Path(flag_dict['root_path']).absolute()
 
-    global_config.config_flags = Config(name = "Config Flags", **flag_dict)
+    global global_config
+    global_config = Config(global_config, flag_dict)
 
     # Unrecognized command line parameters also become config fields if they are flag-like
-    global_config.unrecognized_flags = Config(name = "Unrecognized Flags")
+    unrecognized_flags = {}
     for span in unrecognized:
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
             key = match.group(1)
             val = match.group(2)
             val = maybe_as_number(val) if val is not None else True
-            global_config.unrecognized_flags[key] = val
+            unrecognized_flags[key] = val
+
+    global_config = Config(global_config, unrecognized_flags)
 
     result = -1
     with Chdir(global_config.root_path):

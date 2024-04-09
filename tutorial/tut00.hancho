@@ -2,7 +2,7 @@
 import os
 from hancho import Task
 
-Task(
+foo = Task(
   desc          = "Compile main.cpp and util.cpp and link app",
   command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
   command_path  = os.getcwd(),

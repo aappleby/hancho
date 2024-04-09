@@ -8,7 +8,7 @@ common = Config(
   build_path    = os.getcwd() + "/build/tut12/",
 )
 
-compile = common.extend(
+compile = common + Config(
   desc        = "Compile {source_files}",
   command     = "g++ -MMD -c {source_files} -o {build_files}",
   build_files = "{join_path(build_path, swap_ext(source_files, '.o'))}",
@@ -23,7 +23,7 @@ util_o = compile.task(
   source_files = "src/util.cpp",
 )
 
-link = common.extend(
+link = common + Config(
   desc    = "Link {source_files} into {build_files}",
   command = "g++ {source_files} -o {build_path + build_files}",
 )

@@ -1,6 +1,7 @@
 # tutorial/tut16.hancho
+from hancho import Config
 
-build_config.build_tag = "tut16"
+build_config = build_config + Config(build_tag = "tut16")
 
 compile = build_config.rule(
   desc        = "Compile {rel_source_files}",
