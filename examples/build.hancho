@@ -1,0 +1,6 @@
+#build_config.load("hello_world/build.hancho")
+#build_config.load("meson/build.hancho")
+#build_config.load("subrepos/build.hancho")
+
+# needs source_path fix
+build_config.load("dynamic_dependencies/filelist/build.hancho")

@@ -211,7 +211,7 @@ def to_dict(variant):
     raise ValueError(f"Couldn't convert {variant} to dict")
 
 class Config:
-    """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
+    """Config is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
         fields = dict()
