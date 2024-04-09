@@ -78,7 +78,14 @@ def abs_path(path, strict=True):
 def rel_path(path1, path2):
     if isinstance(path1, list):
         return [rel_path(p, path2) for p in path1]
-    return Path(path1).relative_to(Path(path2))
+    # Generating relative paths in the presence of symlinks doesn't work with either
+    # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
+    # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
+    # should. What we really want is to just remove redundant cwd stuff off the beginning of the
+    # path, which we can do with simple string manipulation.
+    path1 = str(path1)
+    path2 = str(path2)
+    return path1.removeprefix(path2 + "/") if path1 != path2 else ""
 
 
 def join_path(*args):
@@ -191,7 +198,12 @@ class Encoder(json.JSONEncoder):
         else:
             return str(o)
 
-MISSING = "<Missing Field>"
+class Sentinel():
+    def __init__(self, name):
+        self.name = name
+    def __repr__(self):
+        return self.name
+MISSING = Sentinel("<Missing Field>")
 
 class Config:
     """Config is a 'bag of fields' that behaves sort of like a Javascript object."""
@@ -277,12 +289,27 @@ class Config:
         return result
 
     def get(self, key, default=None, is_global = False):
+        result = None
         for name, config in self:
-            if (val := config._fields.get(key, default)) is not None:
-                return val
+            if key not in config._fields:
+                continue
+            val = config._fields.get(key)
+            if val is None:
+                continue
+            elif val is MISSING:
+                result = val
+                continue
+            else:
+                result = val
+                break
+
+        if result is not None and result is not MISSING:
+            return result
+
         if is_global:
-            return None
-        return global_config.get(key, default, is_global = True)
+            return result
+
+        global_val = global_config.get(key, default, is_global = True)
 
     def expand(self, variant):
         return expand(self, variant)
@@ -320,19 +347,12 @@ class Config:
             kwargs.setdefault('build_files', build_files)
         return Task(self, *args, **kwargs)
 
-    #default_mod_config = Config(
-    #    name          = "Mod Config",
-    #    mod_file      = MISSING,
-    #    mod_path      = MISSING,
-    #    repo_path     = MISSING,
-    #    root_path     = MISSING,
-    #)
-
     def subrepo(self, subrepo_path, *args, **kwargs):
         subrepo_path = abs_path(Path(self.expand(self.this_path)) / self.expand(subrepo_path))
         subrepo_config = Config(
             self,
             name = "Repo Config",
+            this_path = subrepo_path,
             repo_path = subrepo_path,
         )
         subrepo_config.merge(*args, **kwargs)
@@ -475,9 +495,9 @@ def eval_macro(config, macro):
         else:
             result = eval(macro[1:-1], {}, config)
     except:
-        log(color(255, 255, 0))
+        log(color(255, 255, 0), end="")
         log(f"Expanding macro '{macro}' failed!")
-        log(color())
+        log(color(), end="")
         raise
     finally:
         app.expand_depth -= 1
@@ -495,7 +515,6 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, *args, **kwargs):
-        #print(f"Task.__init__ @ {hex(id(self))}")
         default_task_config = Config(
             name          = "Task Config",
             desc          = "{source_files} -> {build_files}",
@@ -512,11 +531,11 @@ class Task:
             order_only    = [],
         )
 
+        # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
+        # in an event loop yet
+
         self.config = default_task_config.merge(*args, **kwargs).collapse()
         self.action = Config()
-
-        # Note - We can't set promise = asyncio.create_task here, as we're not guaranteed to be in
-        # an event loop yet
         self.promise = None
 
         app.tasks_total += 1
@@ -533,10 +552,7 @@ class Task:
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            #print(f"Awaiting task {hex(id(self))}")
             await await_variant(self.config)
-
-            #print(f"Starting task {hex(id(self))}")
 
             if self.config.debug:
                 log(f"task.config = {self.config}", end = "")
@@ -587,6 +603,8 @@ class Task:
 
         # Expand all the critical fields
 
+        app.task_counter += 1
+
         self.action.desc          = self.config.expand(self.config.desc)
         self.action.command       = flatten(self.config.expand(self.config.command))
         self.action.command_path  = abs_path(self.config.expand(self.config.command_path))
@@ -599,10 +617,7 @@ class Task:
         self.action.depformat     = self.config.get('depformat', 'gcc')
         self.action.job_count     = self.config.get('job_count', 1)
         self.action.ext_build     = self.config.get('ext_build', False)
-
-        app.task_counter += 1
-        self.action.task_index = app.task_counter
-
+        self.action.task_index    = app.task_counter
 
         if not str(self.action.build_path).startswith(str(global_config.root_path)):
             raise ValueError(f"Path error, build_path {self.action.build_path} is not under root_path {global_config.root_path}")
@@ -736,7 +751,7 @@ class Task:
 
         # Early exit if this is just a dry run
         if self.action.dry_run:
-            return self.build_files
+            return self.action.build_files
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
@@ -786,6 +801,7 @@ class Task:
 
 helper_functions = Config(
     name = "Helper Functions",
+
     abs_path=abs_path,
     rel_path=rel_path,
     join_path=join_path,
@@ -802,16 +818,13 @@ helper_functions = Config(
 helper_macros = Config(
     name = "Helper Macros",
 
-    repo_name  = "{repo_path.name if repo_path != root_path else ''}",
-
+    repo_name         = "{repo_path.name if repo_path != root_path else ''}",
     rel_source_path   = "{rel_path(source_path, command_path)}",
     rel_build_path    = "{rel_path(build_path, command_path)}",
-
     abs_command_files = "{join_path(command_path, command_files)}",
     abs_source_files  = "{join_path(source_path, source_files)}",
     abs_build_files   = "{join_path(build_path, build_files)}",
     abs_build_deps    = "{join_path(build_path, build_deps)}",
-
     rel_command_files = "{rel_path(abs_command_files, command_path)}",
     rel_source_files  = "{rel_path(abs_source_files, command_path)}",
     rel_build_files   = "{rel_path(abs_build_files, command_path)}",
@@ -819,7 +832,8 @@ helper_macros = Config(
 )
 
 global_config = Config(
-    name             = "Global Config",
+    name = "Global Config",
+
     helper_functions = helper_functions,
     helper_macros    = helper_macros,
 )
@@ -855,7 +869,6 @@ class App:
         self.queued_tasks = []
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
-        pass
 
     ########################################
 
@@ -896,18 +909,15 @@ class App:
     def queue_pending_tasks(self):
         """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
 
-        if not self.pending_tasks:
-            return
+        if self.pending_tasks:
+            if global_config.shuffle:
+                log(f"Shufflin' {len(self.pending_tasks)} tasks")
+                random.shuffle(self.pending_tasks)
 
-        if global_config.shuffle:
-            log(f"Shufflin' {len(self.pending_tasks)} tasks")
-            random.shuffle(self.pending_tasks)
-
-        for task in self.pending_tasks:
-            #print(f"Queueing task {hex(id(task))}")
-            task.promise = asyncio.create_task(task.run_async())
-            self.queued_tasks.append(task)
-        self.pending_tasks = []
+            for task in self.pending_tasks:
+                task.promise = asyncio.create_task(task.run_async())
+                self.queued_tasks.append(task)
+            self.pending_tasks = []
 
     ########################################
 
@@ -920,6 +930,7 @@ class App:
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
         # tasks after awaiting each one. Because we're awaiting tasks in the order they were
         # created, this will effectively walk through all tasks in dependency order.
+
         time_a = time.perf_counter()
         self.queue_pending_tasks()
         while self.queued_tasks:
@@ -1015,15 +1026,15 @@ class App:
         self.jobs_lock.release()
 
     ########################################
+    # NOTE: The notify_all here is required because we don't know in advance which tasks will
+    # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
+    # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
+    # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
+    # rest will go back to sleep again, this will repeat for every call to release_jobs().
 
     async def release_jobs(self, count):
         """Returns 'count' jobs back to the job pool."""
 
-        # NOTE: The notify_all here is required because we don't know in advance which tasks will
-        # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
-        # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
-        # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
-        # rest will go back to sleep again, this will repeat for every call to release_jobs().
         await self.jobs_lock.acquire()
         self.jobs_available += count
         self.jobs_lock.notify_all()
@@ -1033,20 +1044,9 @@ class App:
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
-app = None
+app = App()
 
 def main():
-
-#    a = Config(foo = 1)
-#    a.merge(Config(bar = 2, baz = 3), baq = 2)
-#    a.merge({"foo": 7})
-#    #a.merge("adsf")
-#
-#    print("----------")
-#    print(a)
-#    print("----------")
-#
-#    sys.exit(0)
 
     # pylint: disable=line-too-long
     # fmt: off
@@ -1081,13 +1081,8 @@ def main():
             val = maybe_as_number(val) if val is not None else True
             global_config.unrecognized_flags[key] = val
 
-    #print(global_config)
-    #print(global_config.debug)
-
     result = -1
     with Chdir(global_config.root_path):
-        global app
-        app = App()
         result = app.main()
     sys.exit(result)
 

@@ -8,7 +8,7 @@ rule = build_config.rule(
 rule(
   "src/foo.c",
   "foo1.o",
-  build_path = Path.cwd( )/ "build"
+  build_path = Path.cwd()/ "build"
 )
 
 # Bad build_path

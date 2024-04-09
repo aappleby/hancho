@@ -1,0 +1,5 @@
+touch_outputs = build_config.rule(
+  command = "touch {rel_build_files}",
+)
+
+result_txt = touch_outputs([], build_config.output_filename)

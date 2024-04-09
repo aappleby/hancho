@@ -1,14 +1,7 @@
+# repo1_test3.hancho
+
 rules = build_config.include("{repo_path}/rules/repo1_test3_rules.hancho")
+repo1_txt = rules.rule([], "repo1.txt")
 
-blah = hancho.Task(
-  source_files = [],
-  build_files = "repo1.txt",
-  rule = rules.rule,
-  config = build_config,
-)
-
-print(blah)
-#print(rules.rule)
-
-#repo2 = build_config.subrepo("repo2")
-#repo2.load("repo2_test3.hancho")
+repo2 = build_config.subrepo("repo2")
+repo2.load("repo2_test3.hancho")

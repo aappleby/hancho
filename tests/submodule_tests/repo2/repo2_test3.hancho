@@ -1,3 +1,4 @@
-rules = build_config.include("{repo_path}/rules/repo2_test3_rules.hancho")
+# repo2_test3.hancho
 
-task = rules.rule([], "repo2.txt")
+rules = build_config.include("{repo_path}/rules/repo2_test3_rules.hancho")
+repo2_txt = rules.rule([], "repo2.txt")

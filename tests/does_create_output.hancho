@@ -1,2 +1,5 @@
-rules = build_config.load("rules.hancho")
-rules.touch_outputs([], "result.txt")
+touch_outputs = build_config.rule(
+  command = "touch {rel_build_files}"
+)
+
+result_txt = touch_outputs([], "result.txt")

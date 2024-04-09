@@ -1,8 +1,10 @@
 from pathlib import Path
 
 def sync_command(task):
-  Path(task.abs_build_files[0]).touch()
-  return task.abs_build_files
+  Path(task.action.build_files[0]).touch()
+  return task.action.build_files
 
-rule = build_config.rule(command = sync_command)
-rule(__file__, "result.txt")
+rule = build_config.rule(
+  command = sync_command
+)
+rule([], "result.txt")

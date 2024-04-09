@@ -10,6 +10,11 @@ import shutil
 import glob
 from pathlib import Path
 
+
+sys.path.append("..")
+import hancho
+from hancho import Config
+
 # tests still needed -
 # calling hancho in src dir
 # meta deps changed
@@ -59,6 +64,38 @@ def run_hancho(name):
 
 ################################################################################
 
+class TestConfig(unittest.TestCase):
+    """Test cases for weird things our Config objects can do"""
+
+    def setUp(self):
+        print()
+        print(f"Running {type(self).__name__}::{self._testMethodName}..", end="")
+        sys.stdout.flush()
+
+    def test_subconfig_lookup(self):
+        a = Config(
+            b = Config(
+                c = Config(
+                    d = 1
+                )
+            )
+        )
+        self.assertEqual(a.d, 1)
+
+    def test_missing(self):
+        # Reading a MISSING should raise a KeyError
+        a = Config(foo = hancho.MISSING)
+        with self.assertRaises(KeyError):
+            print(a.foo)
+
+        # But if it's overridden later, we should _not_ raise a KeyError
+        a = Config(foo = hancho.MISSING, bar = Config(foo = "present"))
+        print(a)
+        self.assertEqual("present", a.foo)
+
+
+################################################################################
+
 
 # pylint: disable=too-many-public-methods
 class TestHancho(unittest.TestCase):
@@ -67,7 +104,7 @@ class TestHancho(unittest.TestCase):
     def setUp(self):
         """Always wipe the build dir before a test"""
         print()
-        print(f"Running {self._testMethodName}..", end="")
+        print(f"Running {type(self).__name__}::{self._testMethodName}..", end="")
         shutil.rmtree("build", ignore_errors=True)
         sys.stdout.flush()
 
@@ -130,7 +167,7 @@ class TestHancho(unittest.TestCase):
 
     def test_bad_build_path(self):
         result = run_hancho("bad_build_path")
-        self.assertTrue("is not in the subpath of" in result.stderr)
+        self.assertTrue("is not under root_path" in result.stderr)
 
     def test_check_output(self):
         """A build rule that doesn't update one of its outputs should fail"""
@@ -150,7 +187,7 @@ class TestHancho(unittest.TestCase):
     def test_command_missing(self):
         """Rules with missing commands should fail"""
         result = run_hancho("command_missing")
-        self.assertTrue("Config key 'command' was never defined" in result.stderr)
+        self.assertTrue("Config key 'command' was missing" in result.stderr)
 
     def test_missing_field(self):
         """Missing fields should raise an error when expanded"""
@@ -279,10 +316,9 @@ class TestHancho(unittest.TestCase):
     def test_arbitrary_flags(self):
         """Passing arbitrary flags to Hancho should work"""
         os.system(
-            "python3 ../hancho.py --build_path=$(pwd)/build/some/other/dir --quiet "
-            + "does_create_output.hancho"
+            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
         )
-        self.assertTrue(path.exists("build/some/other/dir/result.txt"))
+        self.assertTrue(path.exists("build/flarp.txt"))
 
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
