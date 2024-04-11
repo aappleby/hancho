@@ -1,0 +1,4 @@
+import hancho
+
+rules = hancho.load(build_config, "{root_path}/rules/rules.hancho")
+util_o = rules.compile(build_config, source_files = "src/util.cpp")

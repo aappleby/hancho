@@ -16,7 +16,8 @@ import traceback
 import time
 import types
 import random
-from pathlib import Path
+import textwrap
+from os import path
 from glob import glob
 from enum import Enum
 
@@ -66,12 +67,18 @@ def log(message, *args, sameline=False, **kwargs):
     sys.stdout.flush()
 
 
-def abs_path(path, strict=True):
-    if isinstance(path, list):
-        return [abs_path(p, strict) for p in path]
-    result = Path(path).absolute()
-    if strict and not result.exists():
-        raise FileNotFoundError(path)
+def flatten(variant):
+    if isinstance(variant, list):
+        return [x for element in variant for x in flatten(element)]
+    return [variant]
+
+
+def abs_path(raw_path, strict=False):
+    if isinstance(raw_path, list):
+        return [abs_path(p, strict) for p in raw_path]
+    result = path.abspath(raw_path)
+    if strict and not path.exists(result):
+        raise FileNotFoundError(raw_path)
     return result
 
 
@@ -83,21 +90,23 @@ def rel_path(path1, path2):
     # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
     # should. What we really want is to just remove redundant cwd stuff off the beginning of the
     # path, which we can do with simple string manipulation.
-    path1 = str(path1)
-    path2 = str(path2)
     return path1.removeprefix(path2 + "/") if path1 != path2 else ""
 
 
 def join_path(*args):
-    """Returns an array of all possible concatenated paths from the given paths (or arrays of paths)."""
-    if len(args) > 2:
-        return join_path(args[0], join_path(*args[1:]))
-    if isinstance(args[0], list):
-        return [path for prefix in args[0] for path in join_path(prefix, args[1])]
-    if isinstance(args[1], list):
-        return [path for suffix in args[1] for path in join_path(args[0], suffix)]
-    return [Path(args[0]) / Path(args[1])]
-
+    """Returns all possible concatenated paths from the given paths (or arrays of paths)."""
+    match len(args):
+        case 0:
+            return ""
+        case 1:
+            return list(args)
+        case 2:
+            args0 = flatten(args[0])
+            args1 = flatten(args[1])
+            result = [path.join(arg0, arg1) for arg0 in args0 for arg1 in args1]
+            return result[0] if len(result) == 1 else result
+        case _:
+            return join_path(args[0], join_path(*args[1:]))
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -118,13 +127,13 @@ def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, list):
         return [swap_ext(n, new_ext) for n in name]
-    return Path(name).with_suffix(new_ext)
+    return path.splitext(name)[0] + new_ext
 
 
 def mtime(filename):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
-    return Path(filename).stat().st_mtime
+    return path.getmtime(filename)
 
 
 def maybe_as_number(text):
@@ -165,60 +174,108 @@ async def await_variant(variant):
             variant = await variant
     return variant
 
+####################################################################################################
 
-def flatten(variant):
-    if isinstance(variant, list):
-        return [x for element in variant for x in flatten(element)]
-    return [variant]
+def dump_object(o):
+    return f"{type(o).__name__} @ {hex(id(o))}"
 
+def dump_config(config):
+    class Encoder(json.JSONEncoder):
+        def default(self, o):
+            return dump_object(o)
+    return json.dumps(config.__dict__, indent=2, cls=Encoder)
 
-class Chdir:
-    """Based on Python 3.11's contextlib.py"""
-
-    def __init__(self, path):
-        self.path = path
-        self._old_cwd = []
-
-    def __enter__(self):
-        self._old_cwd.append(Path.cwd())
-        os.chdir(self.path)
-
-    def __exit__(self, *excinfo):
-        os.chdir(self._old_cwd.pop())
+def dump_task(task):
+    class Encoder(json.JSONEncoder):
+        def default(self, o):
+            if isinstance(o, Config):
+                return o.__dict__
+            return dump_object(o)
+    return json.dumps(task.__dict__, indent=2, cls=Encoder)
 
 ####################################################################################################
 
-class Encoder(json.JSONEncoder):
-    """Types the encoder doesn't understand just get stringified."""
-    def default(self, o):
-        if isinstance(o, Config):
-            return f"{type(o).__name__} @ {hex(id(o))}"
-        elif isinstance(o, Task):
-            return f"{type(o).__name__}({expand(o.config, o.config.desc)})"
-        else:
-            return str(o)
+def repo(config, repo_path, *args, **kwargs):
+    prefix = config.file_path
+    suffix = config.expand(repo_path)
+    repo_path = abs_path(path.join(prefix, suffix))
 
-def to_dict(variant):
-    if isinstance(variant, dict):
-        return variant
-    if isinstance(variant, (list, tuple)):
-        result = {}
-        for item in variant:
-            result.update(to_dict(item))
-        return result
-    if isinstance(variant, Config):
-        return dict(variant._fields)
-    raise ValueError(f"Couldn't convert {variant} to dict")
+    assert path.exists(repo_path) and path.isdir(repo_path)
+
+    repo_config = Config(
+        config,
+        *args,
+        kwargs,
+        repo_path = repo_path,
+        file_name = None,
+        file_path = repo_path,
+    )
+
+    return repo_config
+
+"""
+def include(config, file_name, *args, **kwargs):
+    prefix = config.expand(config.file_path)
+    suffix = config.expand(file_name)
+    file_name = abs_path(path.join(prefix, suffix))
+    file_path = path.dirname(file_name)
+
+    config = Config(
+        root_file    = root_file,
+        root_path    = root_path,
+
+        repo_name    = repo_name,
+        repo_path    = root_path,
+
+        command_path = "{default_command_path}",
+        source_path  = "{default_source_path}",
+        build_path   = "{default_build_path}",
+
+        file_name    = root_file,
+        file_path    = root_path,
+    )
+
+
+    config = app.root_config
+
+    assert path.exists(file_name) and path.isfile(file_name)
+
+    build_config = Config(
+        config,
+        *args,
+        kwargs,
+        file_name = file_name,
+        file_path = file_path,
+    )
+    return app.load_module(build_config)
+"""
+
+def load(config, file_name, *args, **kwargs):
+    prefix = config.expand(config.file_path)
+    suffix = config.expand(file_name)
+    file_name = abs_path(path.join(prefix, suffix))
+    file_path = path.dirname(file_name)
+
+    assert path.exists(file_name) and path.isfile(file_name)
+
+    build_config = Config(
+        config,
+        *args,
+        kwargs,
+        file_name = file_name,
+        file_path = file_path,
+    )
+    return app.load_module(build_config)
+
+####################################################################################################
 
 class Config:
     """Config is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
-        fields = dict()
         for arg in args:
-            fields.update(to_dict(arg))
-        fields.update(kwargs)
-        self.__dict__['_fields'] = fields
+            self.__dict__.update(arg.__dict__ if isinstance(arg, Config) else arg)
+        self.__dict__.update(kwargs)
 
     def __getitem__(self, key):
         return self.get(key)
@@ -226,102 +283,23 @@ class Config:
     def __getattr__(self, key):
         return self.get(key)
 
-    def __setitem__(self, key, val):
-        raise ValueError()
-
-    def __setattr__(self, key, val):
-        raise ValueError()
-
-    def __delitem_(self, key):
-        raise ValueError()
-
-    def __delattr_(self, key):
-        raise ValueError()
-
     def get(self, key, default = None):
-        if key in self._fields:
-            return self._fields.get(key, default)
-        if key in global_config._fields:
-            return global_config._fields.get(key, default)
+        if key in self.__dict__:
+            return self.__dict__.get(key, default)
+        if key in global_config.__dict__:
+            return global_config.__dict__.get(key, default)
         if default is None:
-            raise ValueError(f"Could not find {key}")
+            raise ValueError(f"Could not find key '{key}'")
         return default
 
-    def __add__(self, val):
-        return type(val)(self, val)
-
-    ########################################
-
     def __repr__(self):
-        name = f"{type(self).__name__} @ {hex(id(self))}\n"
-        return name + json.dumps(self._fields, indent=2, cls=Encoder)
+        return dump_config(self)
+
+    def __call__(self, *args, **kwargs):
+        return Task(self, *args, kwargs)
 
     def expand(self, variant):
         return expand(self, variant)
-
-    ########################################
-
-    def rule(self, *args, **kwargs):
-        """Returns a callable rule that uses this config blob (plus any kwargs)."""
-        return Rule(self, *args, **kwargs)
-
-    def task(self, source_files=None, build_files=None, *args, **kwargs):
-        """Creates a task directly from this config object."""
-        kwargs.setdefault('name', "<no_name>")
-        if source_files is not None:
-            kwargs['source_files'] = source_files
-        if build_files is not None:
-            kwargs['build_files'] = build_files
-        return Task(self, *args, **kwargs)
-
-    def subrepo(self, subrepo_path, *args, **kwargs):
-        subrepo_path = abs_path(Path(self.expand(self.this_path)) / self.expand(subrepo_path))
-        return Config(
-            self,
-            *args,
-            kwargs,
-            name = "Repo Config",
-            this_path = subrepo_path,
-            repo_path = subrepo_path,
-        )
-
-    def include(self, hancho_file, *args, **kwargs):
-        hancho_filepath = abs_path(Path(self.expand(self.this_path)) / self.expand(hancho_file))
-        mod_config = Config(
-            self,
-            *args,
-            kwargs,
-            name      = "Include Config",
-            this_file = hancho_filepath,
-            this_path = hancho_filepath.parent,
-        )
-        return app.load_module(mod_config, hancho_filepath)
-
-    def load(self, hancho_file, *args, **kwargs):
-        hancho_filepath = abs_path(Path(self.expand(self.this_path)) / self.expand(hancho_file))
-        mod_config = Config(
-            self,
-            *args,
-            kwargs,
-            name      = "Mod Config",
-            this_file = hancho_filepath,
-            this_path = hancho_filepath.parent,
-            mod_path  = hancho_filepath.parent,
-        )
-        return app.load_module(mod_config, hancho_filepath)
-
-####################################################################################################
-
-class Rule(Config):
-    """Rules are callable Configs that create a Task when called."""
-
-    def __call__(self, source_files = None, build_files = None, **kwargs):
-        args = []
-        if source_files is not None:
-            args.append({'source_files': source_files})
-        if build_files is not None:
-            args.append({'build_files': build_files})
-        return Task(self, kwargs, *args)
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -349,8 +327,6 @@ def expand(config, variant):
             raise variant
         case Task():
             return expand(config, variant.promise)
-        case Path():
-            return Path(expand(config, str(variant)))
         case list():
             return [expand(config, s) for s in variant]
         case str() if macro_regex.search(variant):
@@ -362,6 +338,7 @@ def expand(config, variant):
         case _ if inspect.isfunction(variant):
             return variant
         case _:
+            print("???")
             raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
@@ -444,38 +421,37 @@ class Task:
 
     def __init__(self, *args, **kwargs):
         defaults = Config(
-            name          = "Task Config",
             desc          = "{source_files} -> {build_files}",
+
             command       = None,
-            command_path  = "{repo_path}",
+            command_path  = "{default_command_path}",
             command_files = [],
-            source_path   = Path.cwd(),
+
+            source_path   = "{default_source_path}",
             source_files  = [],
+
             build_tag     = "",
             build_dir     = "build",
-            build_path    = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
+            build_path    = "{default_build_path}",
             build_files   = [],
             build_deps    = [],
+
             order_only    = [],
         )
 
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
-        self.config = Config(defaults, args, kwargs)
+        self.config = Config(defaults, *args, kwargs)
         self.action = Config()
-        self.promise = None
         self.reason = None
+        self.promise = None
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        result = ""
-        result += "task.config = " + str(self.config) + "\n"
-        result += "task.action = " + str(self.action) + "\n"
-        result += "task.promise = " + str(self.promise)
-        return result
+        return dump_task(self)
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -483,15 +459,11 @@ class Task:
             # Await everything awaitable in this task's rule.
             await await_variant(self.config)
 
-            if self.config.debug:
-                log(f"task.config = {self.config}")
-
             # Everything awaited, task_init runs synchronously.
             self.task_init()
 
             if self.config.debug:
-                log(f"task.action = {self.action}")
-                log(f"task.promise = {self.promise}")
+                log(f"{dump_object(self)} = {self}")
 
             # Run the commands if we need to.
             if self.reason:
@@ -504,7 +476,7 @@ class Task:
                 )
                 if self.config.verbose or self.config.debug:
                     log(f"{color(128,128,128)}Files {self.action.build_files} are up to date{color()}")
-                result = self.action.build_files
+                result = self.action.abs_build_files
                 app.tasks_skip += 1
 
             return result
@@ -524,10 +496,6 @@ class Task:
             app.tasks_cancel += 1
             return cancel
 
-        finally:
-            if self.config.debug:
-                log("")
-
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
@@ -535,37 +503,49 @@ class Task:
 
         app.task_counter += 1
 
-        self.action = Config(
-            desc          = self.config.expand(self.config.desc),
-            command       = flatten(self.config.expand(self.config.command)),
-            command_path  = abs_path(self.config.expand(self.config.command_path)),
-            command_files = abs_path(flatten(self.config.expand(self.config.abs_command_files))),
-            source_path   = abs_path(self.config.expand(self.config.source_path)),
-            source_files  = abs_path(flatten(self.config.expand(self.config.abs_source_files))),
-            build_path    = abs_path(self.config.expand(self.config.build_path), strict=False),
-            build_files   = abs_path(flatten(self.config.expand(self.config.abs_build_files)), strict=False),
-            build_deps    = abs_path(flatten(self.config.expand(self.config.abs_build_deps)), strict=False),
-            depformat     = self.config.get('depformat', 'gcc'),
-            job_count     = self.config.get('job_count', 1),
-            ext_build     = self.config.get('ext_build', False),
-            task_index    = app.task_counter,
-        )
+        config = self.config
+        action = self.action
 
-        #print(self.action)
+        action.desc          = config.expand(config.desc)
+        action.command       = flatten(config.expand(config.command))
+        action.depformat     = config.get('depformat', 'gcc')
+        action.job_count     = config.get('job_count', 1)
+        action.ext_build     = config.get('ext_build', False)
+        action.task_index    = app.task_counter
 
-        if not str(self.action.build_path).startswith(str(global_config.root_path)):
-            raise ValueError(f"Path error, build_path {self.action.build_path} is not under root_path {global_config.root_path}")
+        # FIXME we can probably ditch some of these, we really only need the abs ones
+        action.file_path     = config.expand(config.file_path)
+        action.command_path  = config.expand(config.command_path)
+        action.source_path   = config.expand(config.source_path)
+        action.build_path    = config.expand(config.build_path)
+
+        action.command_files = flatten(config.expand(config.command_files))
+        action.source_files  = flatten(config.expand(config.source_files))
+        action.build_files   = flatten(config.expand(config.build_files))
+        action.build_deps    = flatten(config.expand(config.build_deps))
+
+        action.abs_command_path  = abs_path(join_path(action.file_path, action.command_path))
+        action.abs_source_path   = abs_path(join_path(action.file_path, action.source_path))
+        action.abs_build_path    = abs_path(join_path(action.file_path, action.build_path))
+
+        action.abs_command_files = flatten(join_path(action.abs_command_path, action.command_files))
+        action.abs_source_files  = flatten(join_path(action.abs_source_path, action.source_files))
+        action.abs_build_files   = flatten(join_path(action.abs_build_path, action.build_files))
+        action.abs_build_deps    = flatten(join_path(action.abs_build_path, action.build_deps))
+
+        if not str(action.abs_build_path).startswith(str(config.root_path)):
+            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {config.root_path}")
 
         # Check for duplicate task outputs
-        for abs_file in self.action.build_files:
+        for abs_file in action.abs_build_files:
             if abs_file in app.all_build_files:
                 raise NameError(f"Multiple rules build {abs_file}!")
             app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
-        if not self.config.dry_run:
-            for abs_file in self.action.build_files:
-                abs_file.parent.mkdir(parents=True, exist_ok=True)
+        if not config.dry_run:
+            for abs_file in action.abs_build_files:
+                os.makedirs(path.dirname(abs_file), exist_ok=True)
 
         # Check if we need a rebuild
         self.reason = self.needs_rerun(self.config.force)
@@ -577,25 +557,25 @@ class Task:
         # pylint: disable=too-many-branches
 
         if force:
-            return f"Files {self.action.build_files} forced to rebuild"
-        if not self.action.source_files:
+            return f"Files {self.action.abs_build_files} forced to rebuild"
+        if not self.action.abs_source_files:
             return "Always rebuild a target with no inputs"
-        if not self.action.build_files:
+        if not self.action.abs_build_files:
             return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
-        for abs_file in self.action.build_files:
-            if not abs_file.exists():
+        for abs_file in self.action.abs_build_files:
+            if not path.exists(abs_file):
                 return f"Rebuilding because {abs_file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(mtime(f) for f in self.action.build_files)
+        min_out = min(mtime(f) for f in self.action.abs_build_files)
 
-        for abs_file in self.action.source_files:
+        for abs_file in self.action.abs_source_files:
             if mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
-        for abs_file in self.action.command_files:
+        for abs_file in self.action.abs_command_files:
             if mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
@@ -604,8 +584,8 @@ class Task:
                 return f"Rebuilding because {mod.__file__} has changed"
 
         # Check all dependencies in the depfile, if present.
-        for abs_depfile in self.action.build_deps:
-            if not abs_depfile.exists():
+        for abs_depfile in self.action.abs_build_deps:
+            if not path.exists(abs_depfile):
                 continue
             if self.config.debug:
                 log(f"Found depfile {abs_depfile}")
@@ -622,7 +602,7 @@ class Task:
                     raise ValueError(f"Invalid depformat {depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [self.action.command_path / d for d in deplines]
+                deplines = [path.join(self.action.abs_command_path, d) for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -651,7 +631,7 @@ class Task:
             for exp_command in self.action.command:
                 if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
-                    rel_command_path = rel_path(self.action.command_path, self.config.root_path)
+                    rel_command_path = rel_path(self.action.abs_command_path, self.config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -660,16 +640,16 @@ class Task:
             await app.release_jobs(self.action.job_count)
 
         # After the build, the deps files should exist if specified.
-        for abs_file in self.action.build_deps:
-            if not abs_file.exists() and not self.config.dry_run:
+        for abs_file in self.action.abs_build_deps:
+            if not path.exists(abs_file) and not self.config.dry_run:
                 raise NameError(f"Dep file {abs_file} wasn't created")
 
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
         if (
-            self.action.source_files
-            and self.action.build_files
+            self.action.abs_source_files
+            and self.action.abs_build_files
             and not (self.action.dry_run or self.action.ext_build)
         ):
             if second_reason := self.needs_rerun():
@@ -685,7 +665,7 @@ class Task:
 
         # Early exit if this is just a dry run
         if self.action.dry_run:
-            return self.action.build_files
+            return self.action.abs_build_files
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
@@ -701,7 +681,7 @@ class Task:
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd=self.action.command_path,
+            cwd=self.action.abs_command_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -727,49 +707,55 @@ class Task:
             )
 
         # Task passed, return the output file list
-        return self.action.build_files
+        return self.action.abs_build_files
 
 ####################################################################################################
 
 # fmt: off
-
-helper_functions = Config(
-    name = "Helper Functions",
-
-    abs_path=abs_path,
-    rel_path=rel_path,
-    join_path=join_path,
-    color=color,
-    glob=glob,
-    len=len,
-    Path=Path,
-    run_cmd=run_cmd,
-    swap_ext=swap_ext,
-    flatten=flatten,
-    print=print,
-)
-
-helper_macros = Config(
-    name = "Helper Macros",
-    repo_name         = "{repo_path.name if repo_path != root_path else ''}",
-    rel_source_path   = "{rel_path(source_path, command_path)}",
-    rel_build_path    = "{rel_path(build_path, command_path)}",
-    abs_command_files = "{join_path(command_path, command_files)}",
-    abs_source_files  = "{join_path(source_path, source_files)}",
-    abs_build_files   = "{join_path(build_path, build_files)}",
-    abs_build_deps    = "{join_path(build_path, build_deps)}",
-    rel_command_files = "{rel_path(abs_command_files, command_path)}",
-    rel_source_files  = "{rel_path(abs_source_files, command_path)}",
-    rel_build_files   = "{rel_path(abs_build_files, command_path)}",
-    rel_build_deps    = "{rel_path(abs_build_deps, command_path)}",
-)
-
 global_config = Config(
-    {"name" : "Global Config"},
-    helper_functions,
-    helper_macros,
-)
+    name = "Global Config",
 
+    abs_path  = abs_path,
+    rel_path  = rel_path,
+    join_path = join_path,
+    color     = color,
+    glob      = glob,
+    len       = len,
+    run_cmd   = run_cmd,
+    swap_ext  = swap_ext,
+    flatten   = flatten,
+    print     = print,
+    basename  = lambda x : path.basename(x),
+
+    repo_name         = "{basename(repo_path)}",
+
+    abs_command_path  = "{abs_path(join_path(file_path,   command_path))}",
+    abs_source_path   = "{abs_path(join_path(file_path,   source_path))}",
+    abs_build_path    = "{abs_path(join_path(file_path,   build_path))}",
+
+    abs_command_files = "{flatten(join_path(abs_command_path, command_files))}",
+    abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}",
+    abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}",
+    abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}",
+
+    rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}",
+    rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}",
+
+    rel_command_files = "{rel_path(abs_command_files, abs_command_path)}",
+    rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}",
+    rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}",
+    rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}",
+
+    nested_config = Config(foo = 1, bar = 2),
+
+    default_command_path = "{file_path}",
+    default_source_path  = "{file_path}",
+    default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}",
+
+    command_path = "{default_command_path}",
+    source_path  = "{default_source_path}",
+    build_path   = "{default_build_path}",
+)
 # fmt: on
 
 ####################################################################################################
@@ -780,8 +766,6 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.root_repo_config = None
-        self.root_mod_config = None
         self.repos = []
         self.loaded_modules = []
         self.all_build_files = set()
@@ -804,26 +788,28 @@ class App:
 
     ########################################
 
-    def main(self):
+    def main(self, root_path, root_file):
         """Our main() just handles command line args and delegates to async_main()"""
+
+        os.chdir(root_path)
+        root_file = abs_path(path.join(root_path, root_file))
+
+        repo_path = root_path
 
         time_a = time.perf_counter()
 
         if global_config.debug:
             log(f"global_config = {global_config}")
 
-        root_config = Config(
-            this_file    = global_config.root_file,
-            this_path    = global_config.root_path,
-            mod_path     = global_config.root_path,
-            repo_path    = global_config.root_path,
-            root_path    = global_config.root_path,
-            command_path = "{repo_path}",
-            source_path  = "{mod_path}",
-            build_path   = "{root_path/build_dir/build_tag/repo_name/rel_path(source_path, repo_path)}",
+        app.root_config = Config(
+            root_file    = root_file,
+            root_path    = root_path,
+            repo_path    = root_path,
+            file_name    = root_file,
+            file_path    = root_path,
         )
 
-        self.load_module(root_config, global_config.root_file)
+        self.load_module(app.root_config)
         time_b = time.perf_counter()
 
         if global_config.debug or global_config.verbose:
@@ -894,53 +880,59 @@ class App:
 
     ########################################
 
-    def load_module(self, build_config, mod_filepath):
+    def load_module(self, build_config):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
+        file_name = abs_path(build_config.expand(build_config.file_name))
+        file_path = path.dirname(file_name)
+
         # Look through our loaded modules and see if there's already a compatible one loaded.
-        new_initial_dict = build_config._fields
+        new_initial_dict = build_config.__dict__
         reuse = None
         for mod in self.loaded_modules:
-            if mod.__file__ != mod_filepath:
+            if mod.__file__ != file_name:
                 continue
 
-            old_initial_dict = mod.build_config._fields
+            old_initial_dict = mod.build_config.__dict__
             # FIXME we just need to check that overlapping keys have matching values
             if old_initial_dict | new_initial_dict == old_initial_dict:
                 if reuse is not None:
-                    raise RuntimeError(f"Module load for {mod_filepath} is ambiguous")
+                    raise RuntimeError(f"Module load for {file_name} is ambiguous")
                 reuse = mod
 
         if reuse:
             if global_config.debug or global_config.verbose:
-                log(color(255, 255, 128) + f"Reusing module {mod_filepath}" + color())
+                log(color(255, 255, 128) + f"Reusing module {file_name}" + color())
             return reuse
 
         if global_config.debug or global_config.verbose:
-            log(color(128,255,128) + f"Loading module {mod_filepath}" + color())
+            log(color(128,255,128) + f"Loading module {file_name}" + color())
 
         # There was no compatible module loaded, so make a new one.
-        with open(mod_filepath, encoding="utf-8") as file:
+        with open(file_name, encoding="utf-8") as file:
             source = file.read()
-            code = compile(source, mod_filepath, "exec", dont_inherit=True)
+            code = compile(source, file_name, "exec", dont_inherit=True)
 
-        module = type(sys)(mod_filepath.stem)
-        module.__file__ = mod_filepath
+        mod_name = path.splitext(path.basename(file_name))[0]
+        module = type(sys)(mod_name)
+        module.__file__ = file_name
         module.__builtins__ = builtins
-        module.self = module
-        module.hancho = sys.modules["hancho"]
         module.build_config = build_config
-        module.glob = glob
 
         self.loaded_modules.append(module)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        with Chdir(module.build_config.this_path):
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(file_path)
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
             types.FunctionType(code, module.__dict__)()
+        finally:
+            os.chdir(old_cwd)
+
 
         return module
 
@@ -997,13 +989,14 @@ def main():
 
     # Parse the command line
     (flags, unrecognized) = parser.parse_known_args()
-    flag_dict = flags.__dict__
-    flag_dict['root_file'] = Path(flag_dict['root_file']).absolute()
-    flag_dict['root_path'] = Path(flag_dict['root_path']).absolute()
-    flag_dict['repo_path'] = Path(flag_dict['root_path']).absolute()
 
-    global global_config
-    global_config = Config(global_config, flag_dict)
+    root_file = flags.__dict__.pop("root_file")
+    root_path = flags.__dict__.pop("root_path")
+
+    root_path = abs_path(root_path)
+    root_file = path.join(root_path, root_file)
+
+    global_config.__dict__.update(flags.__dict__)
 
     # Unrecognized command line parameters also become config fields if they are flag-like
     unrecognized_flags = {}
@@ -1014,11 +1007,10 @@ def main():
             val = maybe_as_number(val) if val is not None else True
             unrecognized_flags[key] = val
 
-    global_config = Config(global_config, unrecognized_flags)
+    global_config.__dict__.update(unrecognized_flags)
 
     result = -1
-    with Chdir(global_config.root_path):
-        result = app.main()
+    result = app.main(root_path, root_file)
     sys.exit(result)
 
 if __name__ == "__main__":

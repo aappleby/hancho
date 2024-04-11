@@ -1,19 +1,22 @@
-from pathlib import Path
+import os
+from os import path
 
 rule = build_config.rule(
   command = "echo {rel_source_files} && touch {rel_build_files}",
 )
 
+cwd = os.getcwd()
+
 # Good build_path
 rule(
   "src/foo.c",
   "foo1.o",
-  build_path = Path.cwd()/ "build"
+  build_path = path.join(cwd, "build")
 )
 
 # Bad build_path
 rule(
   "src/foo.c",
   "foo2.o",
-  build_path = Path.cwd().parent / "build"
+  build_path = path.join(path.split(cwd)[0], "build")
 )

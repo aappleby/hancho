@@ -1,10 +1,6 @@
-# tutorial/tut16.hancho
 import hancho
 
-build_config.build_tag = "tut16"
-
 compile = hancho.Config(
-  build_config,
   desc        = "Compile {rel_source_files}",
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   build_files = "{swap_ext(source_files, '.o')}",
@@ -12,11 +8,6 @@ compile = hancho.Config(
 )
 
 link = hancho.Config(
-  build_config,
   desc      = "Link {rel_source_files} into {rel_build_files}",
   command   = "g++ {rel_source_files} -o {rel_build_files}",
 )
-
-main_o = compile("src/main.cpp")
-util_o = compile("src/util.cpp")
-app = link([main_o, util_o], "app")

@@ -1,18 +1,17 @@
 # tutorial/tut04.hancho
-import os
-from hancho import Config
+import hancho
 
 import sys
 sys.path.append(".")
 import tut04_rules
 
-config = Config(
-  command_path  = os.getcwd(),
+build_config = hancho.Config(
+  command_path  = ".",
   command_files = [],
-  source_path   = os.getcwd(),
-  build_path    = os.getcwd() + "/build/tut04/",
+  source_path   = ".",
+  build_path    = "build/tut04",
 )
 
-main_o = tut04_rules.compile_cpp("src/main.cpp", config)
-util_o = tut04_rules.compile_cpp("src/util.cpp", config)
-app = tut04_rules.link_cpp([main_o, util_o], "app", config)
+main_o = tut04_rules.compile_cpp("src/main.cpp", build_config)
+util_o = tut04_rules.compile_cpp("src/util.cpp", build_config)
+app    = tut04_rules.link_cpp([main_o, util_o], "app", build_config)

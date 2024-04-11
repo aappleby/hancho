@@ -1,39 +1,38 @@
 # tutorial/tut01.hancho
-import os
-from hancho import Task
+import hancho
 
-main_o = Task(
+main_o = hancho.Task(
   desc          = "Compile main.cpp",
   command       = "g++ -MMD -c src/main.cpp -o build/tut01/src/main.o",
-  command_path  = os.getcwd(),
+  command_path  = ".",
   command_files = [],
-  source_path   = os.getcwd(),
+  source_path   = ".",
   source_files  = ["src/main.cpp"],
-  build_path    = os.getcwd() + "/build/tut01/",
+  build_path    = "build/tut01",
   build_files   = ["src/main.o"],
   build_deps    = ["src/main.d"],
 )
 
-util_o = Task(
+util_o = hancho.Task(
   desc          = "Compile util.cpp",
   command       = "g++ -MMD -c src/util.cpp -o build/tut01/src/util.o",
-  command_path  = os.getcwd(),
+  command_path  = ".",
   command_files = [],
-  source_path   = os.getcwd(),
+  source_path   = ".",
   source_files  = ["src/util.cpp"],
-  build_path    = os.getcwd() + "/build/tut01",
+  build_path    = "build/tut01",
   build_files   = ["src/util.o"],
   build_deps    = ["src/util.d"],
 )
 
-app = Task(
+app = hancho.Task(
   desc          = "Link main.o and util.o into app",
   command       = "g++ build/tut01/src/main.o build/tut01/src/util.o -o build/tut01/app",
-  command_path  = os.getcwd(),
+  command_path  = ".",
   command_files = [],
-  source_path   = os.getcwd(),
+  source_path   = ".",
   source_files  = [main_o, util_o],
-  build_path    = os.getcwd() + "/build/tut01",
+  build_path    = "build/tut01",
   build_files   = ["app"],
   build_deps    = []
 )

@@ -7,16 +7,17 @@ from glob import glob
 src_files = glob("src/*")
 
 random_touch = build_config.task(
-  desc = "Touch 3 random files in src/ - {build_files}",
+  desc = "Touch 3 random files in src/ - {source_files}",
   command = [
-    "touch {rel_build_files[0]}",
-    "touch {rel_build_files[1]}",
-    "touch {rel_build_files[2]}",
+    "touch {source_files[0]}",
+    "touch {source_files[1]}",
+    "touch {source_files[2]}",
   ],
-  build_files = random.sample(src_files, 3),
-  build_path = build_config.source_path,
+  command_path = build_config.file_path,
+  source_files = random.sample(src_files, 3),
 )
 
+"""
 def generate_filelist(task):
   with open(task.action.build_files[0], "w") as file:
     for f in random.sample(src_files, 3):
@@ -29,6 +30,7 @@ filelist_txt = build_config.task(
   command = generate_filelist,
   build_files = "filelist.txt",
 )
+"""
 
 """
 def generate_result(task):

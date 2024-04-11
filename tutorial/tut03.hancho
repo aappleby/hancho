@@ -1,35 +1,38 @@
 # tutorial/tut03.hancho
-import os
-from hancho import Config
+import hancho
 
-config = Config(
-  command_path  = os.getcwd(),
+build_config = hancho.Config(
+  command_path  = ".",
   command_files = [],
-  source_path   = os.getcwd(),
-  build_path    = os.getcwd() + "/build/tut03/",
+  source_path   = ".",
+  build_path    = "build/tut03",
 )
 
 def compile_cpp(source, config):
-  obj = config.build_path + source.replace('.cpp', '.o')
-  dep = config.build_path + source.replace('.cpp', '.d')
-  result = config.task(
+  build_path = config.build_path
+  obj = source.replace('.cpp', '.o')
+  dep = source.replace('.cpp', '.d')
+  return hancho.Task(
+    config,
     desc          = f"Compile {source}",
-    command       = f"g++ -MMD -c {source} -o {obj}",
+    command       = f"g++ -MMD -c {source} -o {build_path}/{obj}",
     source_files  = source,
     build_files   = obj,
     build_deps    = dep,
   )
-  return result
 
 def link_cpp(tasks, binary, config):
+  build_path = config.build_path
   objs = [task.config.build_files for task in tasks]
-  return config.task(
-    desc          = f"Link {' and '.join(objs)} into {config.build_path + binary}",
-    command       = f"g++ {' '.join(objs)} -o {config.build_path + binary}",
+  obj_paths = [f"{build_path}/{obj}" for obj in objs]
+  result = hancho.Task(
+    config,
+    desc          = f"Link {objs} into {binary}",
+    command       = f"g++ {' '.join(obj_paths)} -o {build_path}/{binary}",
     source_files  = tasks,
     build_files   = binary,
   )
 
-main_o = compile_cpp("src/main.cpp", config)
-util_o = compile_cpp("src/util.cpp", config)
-app = link_cpp([main_o, util_o], "app", config)
+main_o = compile_cpp("src/main.cpp", build_config)
+util_o = compile_cpp("src/util.cpp", build_config)
+link_cpp([main_o, util_o], "app", build_config)

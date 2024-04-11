@@ -1,15 +1,14 @@
 # tutorial/tut00.hancho
-import os
-from hancho import Task
+import hancho
 
-foo = Task(
+hancho.Task(
   desc          = "Compile main.cpp and util.cpp and link app",
   command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
-  command_path  = os.getcwd(),
+  command_path  = ".",
   command_files = [],
-  source_path   = os.getcwd(),
+  source_path   = ".",
   source_files  = ["src/main.cpp", "src/util.cpp"],
-  build_path    = os.getcwd() + "/build/tut00/",
+  build_path    = "build/tut00",
   build_files   = ["app"],
   build_deps    = [],
 )
