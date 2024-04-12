@@ -5,7 +5,7 @@ def compile_cpp(source, config):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')
   return hancho.Task(
-    config,
+    config        = config,
     desc          = f"Compile {source}",
     command       = f"g++ -MMD -c {source} -o {build_path}/{obj}",
     source_files  = source,
@@ -18,7 +18,7 @@ def link_cpp(tasks, binary, config):
   objs = [task.config.build_files for task in tasks]
   obj_paths = [f"{build_path}/{obj}" for obj in objs]
   result = hancho.Task(
-    config,
+    config        = config,
     desc          = f"Link {objs} into {binary}",
     command       = f"g++ {' '.join(obj_paths)} -o {build_path}/{binary}",
     source_files  = tasks,

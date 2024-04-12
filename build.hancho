@@ -1,8 +1,26 @@
-from hancho import Config
+import hancho
 
-build_config = build_config + Config(verbose = True)
+build_config.verbose = True
 
-build_config.task([], [], desc = "Run all tests",         command = "cd tests && rm -rf build && ./run_tests.py > /dev/null")
-build_config.task([], [], desc = "Build all tutorials",   command = "cd tutorial && rm -rf build && ../hancho.py --quiet")
-build_config.task([], [], desc = "Build hello_world",     command = "cd examples/hello_world && rm -rf build && ../../hancho.py --quiet")
-build_config.task([], [], desc = "Build gtk hello_world", command = "cd examples/meson && rm -rf build && ../../hancho.py --quiet")
+clean_build = hancho.Config(
+  desc = "Build {command_path}",
+  command = [
+    "rm -rf build",
+    "{root_path}/hancho.py --quiet"
+  ]
+)
+
+hancho.Task(clean_build, command_path = "tutorial")
+
+hancho.Task(clean_build, command_path = "examples/hello_world")
+
+hancho.Task(clean_build, command_path = "examples/meson")
+
+#hancho.Task(
+#  desc = "Run all tests",
+#  command_path = "tests",
+#  command = [
+#    "rm -rf build",
+#    "./run_tests.py > /dev/null"
+#  ]
+#)

@@ -246,10 +246,12 @@ def load(config, file_name, *args, **kwargs):
 class Config:
     """Config is just a 'bag of fields'."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, config = None, **kwargs):
         for arg in args:
             if arg is not None:
                 self.__dict__.update(arg.__dict__ if isinstance(arg, Config) else arg)
+        if config is not None:
+            self.__dict__.update(config.__dict__)
         self.__dict__.update(kwargs)
 
     def __getitem__(self, key):
@@ -268,15 +270,19 @@ class Config:
         return default
 
     def __repr__(self):
-        return dump_config(self)
+        return f"{dump_object(self)} = {dump_config(self)}"
 
-    def __call__(self, source_files, build_files = None, *, config = None):
-        kwargs = {}
+    def __call__(self, source_files = None, build_files = None, *args, config = None, **kwargs):
+        #kwargs = {}
+        if isinstance(source_files, Config):
+            raise ValueError("You've got a config where your source_files should be")
+        if isinstance(build_files, Config):
+            raise ValueError("You've got a config where your build_files should be")
         if source_files is not None:
             kwargs['source_files'] = source_files
         if build_files is not None:
             kwargs['build_files'] = build_files
-        return Task(self, config, kwargs)
+        return Task(self, *args, config, kwargs)
 
     def expand(self, variant):
         return expand(self, variant)
@@ -398,7 +404,7 @@ class Task:
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, config = None, **kwargs):
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
 
@@ -425,10 +431,13 @@ class Task:
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
-        self.config = Config(defaults, *args, kwargs)
+        self.config = Config(defaults, *args, config, kwargs)
         self.action = Config()
         self.reason = None
         self.promise = None
+
+        if self.config.command is None:
+            raise ValueError(f"Task has no command - {self}")
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
@@ -518,7 +527,7 @@ class Task:
         action.abs_build_deps    = flatten(join_path(action.abs_build_path, action.build_deps))
 
         if not str(action.abs_build_path).startswith(str(app.root_config.root_path)):
-            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root path {app.root_config.root_path}")
+            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {app.root_config.root_path}")
 
         # Check for duplicate task outputs
         for abs_file in action.abs_build_files:

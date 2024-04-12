@@ -9,7 +9,7 @@ build_config = hancho.Config(
 )
 
 main_o = hancho.Task(
-  build_config,
+  config        = build_config,
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   source_files  = "src/main.cpp",
@@ -18,7 +18,7 @@ main_o = hancho.Task(
 )
 
 util_o = hancho.Task(
-  build_config,
+  config        = build_config,
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   source_files  = "src/util.cpp",
@@ -27,7 +27,7 @@ util_o = hancho.Task(
 )
 
 app = hancho.Task(
-  build_config,
+  config        = build_config,
   desc          = "Link {source_files} into {build_files}",
   command       = "g++ {source_files} -o {build_path}/{build_files}",
   source_files  = [main_o, util_o],

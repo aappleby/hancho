@@ -11,7 +11,10 @@ rule = build_config.rule(
 
 slow_rule = build_config.rule(
   desc = "********** I am the slow task, I eat all the cores **********",
-  command = "touch {rel_build_files} && sleep 0.3",
+  command = [
+    "touch {rel_build_files}",
+    "sleep 0.3",
+  ]
 )
 
 for i in range(100):

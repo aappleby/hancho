@@ -1,9 +1,10 @@
 # examples/meson/build.hancho
-from hancho import Config
+import hancho
 
-build_config = build_config + Config(build_tag = "debug")
+build_config.build_tag = "debug"
 
-compile = build_config.rule(
+compile = hancho.Config(
+  build_config,
   desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
   includes  = [
@@ -25,7 +26,8 @@ compile = build_config.rule(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = build_config.rule(
+link = hancho.Config(
+  build_config,
   desc      = "Linking {rel_source_files} -> {rel_build_files}",
   command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
   link_opts = [
@@ -50,6 +52,8 @@ main_o = compile(
   ],
 )
 
-main = link(main_o, "demo",
+main = link(
+  main_o,
+  "demo",
   libs = ["{run_cmd('pkg-config gtk+-3.0 --libs')}"],
 )

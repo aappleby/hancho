@@ -1,8 +1,7 @@
 # tests/should_fail.hancho
+import hancho
 
-should_fail = build_config.rule(
+hancho.Task(
   desc = "This task should fail",
   command = "(exit 255)",
 )
-
-should_fail(__file__, [])
