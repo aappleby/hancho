@@ -168,12 +168,12 @@ class TestHancho(unittest.TestCase):
             in result.stderr
         )
 
-#    def test_missing_input(self):
-#        """We should fail if an input is missing"""
-#        result = run_hancho("missing_input")
-#        self.assertTrue("FileNotFoundError" in result.stderr)
-#        self.assertTrue("does_not_exist.txt" in result.stderr)
-#
+    def test_missing_input(self):
+        """We should fail if an input is missing"""
+        result = run_hancho("missing_input")
+        self.assertTrue("FileNotFoundError" in result.stderr)
+        self.assertTrue("does_not_exist.txt" in result.stderr)
+
 #    def test_missing_dep(self):
 #        """Missing dep should fail"""
 #        result = run_hancho("missing_dep")

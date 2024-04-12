@@ -230,7 +230,7 @@ def load(_file_name, **kwargs):
 ####################################################################################################
 
 class Config:
-    """Config is just a 'bag of fields'."""
+    """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
         self.update(*args, kwargs)
@@ -278,6 +278,7 @@ class Config:
         return self.update(val)
 
 class Rule(Config):
+    """A Rule is a Config that we can call like a function."""
     def __call__(self, source_files = None, build_files = None, **kwargs):
         new_config = Config(self)
         if source_files is not None:
@@ -306,7 +307,7 @@ class Rule(Config):
 # should suffice.
 
 
-def expand(config, variant):
+def expand(config, variant, fail_ok=False):
     """Expands all templates anywhere inside 'variant'."""
     match variant:
         case Config():
@@ -316,13 +317,13 @@ def expand(config, variant):
         case BaseException():
             raise variant
         case Task():
-            return expand(config, variant.promise)
+            return expand(config, variant.promise, fail_ok)
         case list():
             return [expand(config, s) for s in variant]
         case str() if macro_regex.search(variant):
-            return eval_macro(config, variant)
+            return eval_macro(config, variant, fail_ok)
         case str() if template_regex.search(variant):
-            return expand_template(config, variant)
+            return expand_template(config, variant, fail_ok)
         case int() | bool() | float() | str():
             return variant
         case _ if inspect.isfunction(variant):
@@ -331,7 +332,7 @@ def expand(config, variant):
             raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
-def expand_template(config, template):
+def expand_template(config, template, fail_ok=False):
     """Replaces all macros in template with their stringified values."""
     if config.debug_expansion:
         log(f"┏ Expand '{template}'")
@@ -344,7 +345,7 @@ def expand_template(config, template):
             result += template[0 : span.start()]
             try:
                 macro = template[span.start() : span.end()]
-                variant = eval_macro(config, macro)
+                variant = eval_macro(config, macro, fail_ok)
                 result += " ".join([str(s) for s in flatten(variant)])
             except:
                 log(color(255, 255, 0))
@@ -373,7 +374,6 @@ class Expander:
         return self.get(key)
 
     def get(self, key):
-        # FIXME Go back-to-front through the list of configs trying to expand the value
         result = None
         for config in reversed(self.configs):
             result = config.get(key, None)
@@ -385,19 +385,23 @@ class Expander:
         expanded = None
         for config in reversed(self.configs):
             try:
-                expanded = expand(config, result)
+                expanded = expand(config, result, fail_ok=True)
             except BaseException:
+                if config.debug_expansion:
+                    log(("┃" * app.expand_depth) + f"┗ <failed, retrying w/ parent config>")
                 pass
         if expanded is None:
             raise ValueError(f"Expander could not expand '{result}'")
 
         if isinstance(expanded, Config):
-            return Expander(list(self.configs).append(expanded))
+            new_configs = list(self.configs)
+            new_configs.append(expanded)
+            return Expander(new_configs)
 
         return expanded
 
 
-def eval_macro(config, macro):
+def eval_macro(config, macro, fail_ok=False):
     """Evaluates the contents of a "{macro}" string."""
     if app.expand_depth > MAX_EXPAND_DEPTH:
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
@@ -413,9 +417,12 @@ def eval_macro(config, macro):
         else:
             result = eval(macro[1:-1], {}, config)
     except:
-        log(color(255, 255, 0), end="")
-        log(f"Expanding macro '{macro}' failed!")
-        log(color(), end="")
+        # FIXME Template expansion failure is not an error if we're walking up the config chain
+        # while expanding a nested config
+        if not fail_ok:
+            log(color(255, 255, 0), end="")
+            log(f"Expanding macro '{macro}' failed!")
+            log(color(), end="")
         raise
     finally:
         app.expand_depth -= 1

@@ -1,21 +1,24 @@
 import os
-from hancho import Config
+import hancho
+import os
 
 if os.name == 'nt':
-  build_config = build_config + Config(depformat = "msvc")
-  compile_command = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}"
+  compile_cpp = hancho.Rule(
+    command     = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}",
+    build_files = "{swap_ext(source_files, '.o')}",
+    build_deps  = "{swap_ext(source_files, '.d')}",
+    depformat   = "gcc",
+  )
 elif os.name == 'posix':
-  build_config = build_config + Config(depformat = "gcc")
-  compile_command = "gcc -MMD -c {rel_source_files} -o {rel_build_files}"
+  compile_cpp = hancho.Rule(
+    command     = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
+    build_files = "{swap_ext(source_files, '.o')}",
+    build_deps  = "{swap_ext(source_files, '.d')}",
+    depformat   = "msvc",
+  )
 else:
-  compile_command = "<unknown OS>"
+  assert False
 
-compile_cpp = build_config.rule(
-  command   = compile_command,
-  build_files = "{swap_ext(source_files, '.o')}",
-  build_deps  = "{swap_ext(source_files, '.d')}",
-)
-
-touch_outputs = build_config.rule(
+touch_outputs = hancho.Rule(
   command = "touch {rel_build_files[0]}"
 )

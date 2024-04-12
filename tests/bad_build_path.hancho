@@ -1,6 +1,6 @@
 import hancho
 
-rule = hancho.Config(
+rule = hancho.Rule(
   command = [
     "echo {rel_source_files}",
     "touch {rel_build_files}",

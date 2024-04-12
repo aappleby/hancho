@@ -1,4 +1,5 @@
 # tests/missing_input.hancho
+import hancho
 
-rules = build_config.load("rules.hancho")
+rules = hancho.include("rules.hancho", **build_config)
 rules.touch_outputs("src/does_not_exist.txt", "missing_src.txt")
