@@ -10,11 +10,11 @@ clean_build = hancho.Config(
   ]
 )
 
-hancho.Task(clean_build, command_path = "tutorial")
+hancho.Task(command_path = "tutorial", **clean_build)
 
-hancho.Task(clean_build, command_path = "examples/hello_world")
+hancho.Task(command_path = "examples/hello_world", **clean_build)
 
-hancho.Task(clean_build, command_path = "examples/meson")
+hancho.Task(command_path = "examples/meson", **clean_build)
 
 #hancho.Task(
 #  desc = "Run all tests",

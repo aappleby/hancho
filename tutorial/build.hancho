@@ -4,7 +4,7 @@ import shutil
 
 shutil.rmtree("build", ignore_errors=True)
 
-test_build = hancho.Config(
+test_build = hancho.Rule(
   desc        = "{color(200, 200, 100)}Testing tutorial build '{rel_source_files}'{color()}",
   command     = [
     "python3 ../hancho.py -v -d {rel_source_files} > /dev/null",

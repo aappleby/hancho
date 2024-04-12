@@ -104,6 +104,32 @@ Our link task is also a lot smaller now:
 
 https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781/tutorial/tut02.hancho#L28-L33
 
+
+FIXME write a section for this -
+Different ways to merge Configs together:
+```
+# 1.
+#   compile = build_config | Config(...)
+
+#   compile = build_config.extend(...)
+#     I don't like this one as it implies that build_config could be doing something in addition to just the key merge
+
+#   compile = Config(..., **build_config)
+
+#   compile = Config(build_config, ...)
+
+#   compile = Config(build_config), compile.update(...)
+
+#   other = Config(...), compile = Config(build_config, other)
+
+#   compile = Config(build_config), compile |= Config(...)
+
+# main_o = (build_config | compile)(...)
+```
+
+
+
+
 ## ```tut03.hancho```: Generating ```Task```s with functions
 
 Hardcoding all our paths is a bad idea. Let's make a compile-task-generating function that uses Python's f-string syntax. If you're not familiar with f-strings, they are Python strings prefixed with ```f""``` that can use ```{bracketed expressions}``` to embed Python code inside the string. When the f-string is evaluated, Python will replace the contents of the ```{}```s with the value of the expressions inside them.

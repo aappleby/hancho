@@ -232,8 +232,8 @@ def load(_file_name, **kwargs):
 class Config:
     """Config is just a 'bag of fields'."""
 
-    def __init__(self, **kwargs):
-        self.update(kwargs)
+    def __init__(self, *args, **kwargs):
+        self.update(*args, kwargs)
 
     def __getitem__(self, key):
         return self.get(key)
@@ -253,21 +253,39 @@ class Config:
     def __repr__(self):
         return f"{dump_object(self)} = {dump_config(self)}"
 
-    def __call__(self, source_files = None, build_files = None, **kwargs):
-        if source_files is not None:
-            kwargs['source_files'] = source_files
-        if build_files is not None:
-            kwargs['build_files'] = build_files
-        return Task(**self, **kwargs)
-
-    def update(self, kwargs):
+    def update(self, *args, **kwargs):
+        for arg in args:
+            self.__dict__.update(arg)
         self.__dict__.update(kwargs)
+        return self
 
     def keys(self):
         return self.__dict__.keys()
 
     def expand(self, variant):
         return expand(self, variant)
+
+    def extend(self, *args, **kwargs):
+        return Config(self, *args, kwargs)
+
+    def task(self, *args, **kwargs):
+        return Task(self, *args, kwargs)
+
+    def __or__(self, val):
+        return type(val)(self, val)
+
+    def __ior__(self, val):
+        return self.update(val)
+
+class Rule(Config):
+    def __call__(self, source_files = None, build_files = None, **kwargs):
+        new_config = Config(self)
+        if source_files is not None:
+            new_config.source_files = source_files
+        if build_files is not None:
+            new_config.build_files = build_files
+        new_config.update(kwargs)
+        return Task(**new_config)
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -291,6 +309,10 @@ class Config:
 def expand(config, variant):
     """Expands all templates anywhere inside 'variant'."""
     match variant:
+        case Config():
+            return variant
+        case dict():
+            return variant
         case BaseException():
             raise variant
         case Task():
@@ -338,6 +360,42 @@ def expand_template(config, template):
         log(f"┗ '{result}'")
     return result
 
+class Expander:
+    """JIT template expansion for use in eval()."""
+
+    def __init__(self, configs):
+        self.configs = configs
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __getattr__(self, key):
+        return self.get(key)
+
+    def get(self, key):
+        # FIXME Go back-to-front through the list of configs trying to expand the value
+        result = None
+        for config in reversed(self.configs):
+            result = config.get(key, None)
+            if result is not None:
+                break
+        if result is None:
+            raise ValueError(f"Expander could not find key '{key}'")
+
+        expanded = None
+        for config in reversed(self.configs):
+            try:
+                expanded = expand(config, result)
+            except BaseException:
+                pass
+        if expanded is None:
+            raise ValueError(f"Expander could not expand '{result}'")
+
+        if isinstance(expanded, Config):
+            return Expander(list(self.configs).append(expanded))
+
+        return expanded
+
 
 def eval_macro(config, macro):
     """Evaluates the contents of a "{macro}" string."""
@@ -350,20 +408,8 @@ def eval_macro(config, macro):
     try:
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
-        class Expander:
-            """JIT template expansion for use in eval()."""
-
-            def __init__(self, config):
-                self.config = config
-
-            def __getitem__(self, key):
-                return expand(self, self.config[key])
-
-            def __getattr__(self, key):
-                return expand(self, self.config[key])
-
         if not isinstance(config, Expander):
-            result = eval(macro[1:-1], {}, Expander(config))
+            result = eval(macro[1:-1], {}, Expander([config]))
         else:
             result = eval(macro[1:-1], {}, config)
     except:
@@ -386,7 +432,7 @@ class Task:
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
 
@@ -413,8 +459,7 @@ class Task:
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
-        self.config = Config(**defaults)
-        self.config.update(kwargs)
+        self.config = Config(defaults, *args, kwargs)
         self.action = Config()
         self.reason = None
         self.promise = None
@@ -966,7 +1011,7 @@ def main():
     root_path = abs_path(root_path)
     root_file = path.join(root_path, root_file)
 
-    global_config.__dict__.update(flags.__dict__)
+    global_config.update(flags.__dict__)
 
     # Unrecognized command line parameters also become config fields if they are flag-like
     unrecognized_flags = {}
@@ -977,7 +1022,7 @@ def main():
             val = maybe_as_number(val) if val is not None else True
             unrecognized_flags[key] = val
 
-    global_config.__dict__.update(unrecognized_flags)
+    global_config.update(unrecognized_flags)
 
     result = -1
     result = app.main(root_path, root_file)

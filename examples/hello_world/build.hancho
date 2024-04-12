@@ -1,18 +1,18 @@
 # examples/hello_world/build.hancho
 import hancho
 
-compile = hancho.Config(
-  build_config,
+compile = hancho.Rule(
   desc        = "Compile {rel_source_files} -> {rel_build_files}",
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   build_files = "{swap_ext(rel_source_files, '.o')}",
   build_deps  = "{swap_ext(rel_source_files, '.d')}",
+  **build_config
 )
 
-link = hancho.Config(
-  build_config,
+link = hancho.Rule(
   desc    = "Link {rel_source_files} -> {rel_build_files}",
   command = "g++ {rel_source_files} -o {rel_build_files}",
+  **build_config
 )
 
 main_o = compile("main.cpp")

@@ -7,7 +7,7 @@ common = hancho.Config(
   build_path    = "build/tut14",
 )
 
-compile = hancho.Config(
+compile = hancho.Rule(
   desc        = "Compile {rel_source_files}",
   command     = "g++ -MMD -c {rel_source_files} -o {build_path}/{build_files}",
   build_files = "{swap_ext(source_files, '.o')}",
@@ -15,7 +15,7 @@ compile = hancho.Config(
   **common,
 )
 
-link = hancho.Config(
+link = hancho.Rule(
   desc    = "Link {rel_source_files} into {build_files}",
   command = "g++ {rel_source_files} -o {build_path}/{build_files}",
   **common,
