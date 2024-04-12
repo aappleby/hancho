@@ -248,7 +248,8 @@ class Config:
 
     def __init__(self, *args, **kwargs):
         for arg in args:
-            self.__dict__.update(arg.__dict__ if isinstance(arg, Config) else arg)
+            if arg is not None:
+                self.__dict__.update(arg.__dict__ if isinstance(arg, Config) else arg)
         self.__dict__.update(kwargs)
 
     def __getitem__(self, key):
@@ -275,7 +276,7 @@ class Config:
             kwargs['source_files'] = source_files
         if build_files is not None:
             kwargs['build_files'] = build_files
-        return Task(self, kwargs)
+        return Task(self, config, kwargs)
 
     def expand(self, variant):
         return expand(self, variant)

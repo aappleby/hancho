@@ -14,8 +14,5 @@ link = hancho.Config(
 )
 
 def c_binary(source_files, build_files, *, config = None):
-  objs = [
-    compile(file, config = config)
-    for file in source_files
-  ]
+  objs = [compile(file, config = config) for file in source_files]
   return link(objs, build_files, config = config)
