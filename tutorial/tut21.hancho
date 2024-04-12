@@ -13,8 +13,8 @@ link = hancho.Config(
   command = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
-build_config.build_tag = "tut21"
+build_config.repo_name = "tut21"
 
-main_o = compile(build_config, source_files = "src/main.cpp")
-util_o = compile(build_config, source_files = "src/util.cpp")
-app = link(build_config, source_files = [main_o, util_o], build_files = "app")
+main_o = compile("src/main.cpp", **build_config)
+util_o = compile("src/util.cpp", **build_config)
+app = link(source_files = [main_o, util_o], build_files = "app", **build_config)

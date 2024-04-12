@@ -8,31 +8,31 @@ common = hancho.Config(
 )
 
 compile = hancho.Config(
-  common,
   desc        = "Compile {source_files}",
   command     = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   build_files = "{swap_ext(source_files, '.o')}",
   build_deps  = "{swap_ext(source_files, '.d')}",
+  **common,
 )
 
 main_o = hancho.Task(
-  compile,
   source_files = "src/main.cpp",
+  **compile,
 )
 
 util_o = hancho.Task(
-  compile,
   source_files = "src/util.cpp",
+  **compile,
 )
 
 link = hancho.Config(
-  common,
   desc    = "Link {source_files} into {build_files}",
   command = "g++ {source_files} -o {build_path}/{build_files}",
+  **common,
 )
 
 app = hancho.Task(
-  link,
   source_files = [main_o, util_o],
   build_files  = "app",
+  **link,
 )

@@ -9,27 +9,27 @@ build_config = hancho.Config(
 )
 
 main_o = hancho.Task(
-  config        = build_config,
   desc          = "Compile main.cpp",
   command       = "g++ -MMD -c src/main.cpp -o build/tut02/src/main.o",
   source_files  = ["src/main.cpp"],
   build_files   = ["src/main.o"],
   build_deps    = ["src/main.d"],
+  **build_config,
 )
 
 util_o = hancho.Task(
-  config        = build_config,
   desc          = "Compile util.cpp",
   command       = "g++ -MMD -c src/util.cpp -o build/tut02/src/util.o",
   source_files  = ["src/util.cpp"],
   build_files   = ["src/util.o"],
   build_deps    = ["src/util.d"],
+  **build_config,
 )
 
 app = hancho.Task(
-  config        = build_config,
   desc          = "Link main.o and util.o into app",
   command       = "g++ build/tut02/src/main.o build/tut02/src/util.o -o build/tut02/app",
   source_files  = [main_o, util_o],
   build_files   = ["app"],
+  **build_config,
 )

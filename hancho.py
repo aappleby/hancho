@@ -195,64 +195,45 @@ def dump_task(task):
 
 ####################################################################################################
 
-def repo(config, repo_path, *args, **kwargs):
+def repo(_repo_path, **kwargs):
     prefix = config.file_path
-    suffix = config.expand(repo_path)
+    suffix = config.expand(_repo_path)
     repo_path = abs_path(path.join(prefix, suffix))
 
     assert path.exists(repo_path) and path.isdir(repo_path)
+    return Config(**kwargs, repo_path = repo_path, file_name = None, file_path = repo_path)
 
-    repo_config = Config(
-        config,
-        *args,
-        kwargs,
-        repo_path = repo_path,
-        file_name = None,
-        file_path = repo_path,
-    )
-
-    return repo_config
-
-def include(config, file_name):
-    prefix = config.expand(config.file_path)
-    suffix = config.expand(file_name)
-    file_name = abs_path(path.join(prefix, suffix))
+def include(_file_name, **kwargs):
+    config = Config(**kwargs)
+    file_name = abs_path(config.expand(_file_name))
     file_path = path.dirname(file_name)
-    build_config = Config(
-        file_name = file_name,
-        file_path = file_path,
-    )
-    return app.load_module(build_config, is_include = True)
 
-def load(config, file_name, *args, **kwargs):
+    assert path.exists(file_name) and path.isfile(file_name)
+    mod_config = Config()
+    mod_config.file_name = file_name
+    mod_config.file_path = file_path
+    return app.load_module(mod_config, is_include = True)
+
+def load(_file_name, **kwargs):
+    config = Config(**kwargs)
     prefix = config.expand(config.file_path)
-    suffix = config.expand(file_name)
+    suffix = config.expand(_file_name)
     file_name = abs_path(path.join(prefix, suffix))
     file_path = path.dirname(file_name)
 
     assert path.exists(file_name) and path.isfile(file_name)
-
-    build_config = Config(
-        config,
-        *args,
-        kwargs,
-        file_name = file_name,
-        file_path = file_path,
-    )
-    return app.load_module(build_config)
+    mod_config = Config(**kwargs)
+    mod_config.file_name = file_name
+    mod_config.file_path = file_path
+    return app.load_module(mod_config)
 
 ####################################################################################################
 
 class Config:
     """Config is just a 'bag of fields'."""
 
-    def __init__(self, *args, config = None, **kwargs):
-        for arg in args:
-            if arg is not None:
-                self.__dict__.update(arg.__dict__ if isinstance(arg, Config) else arg)
-        if config is not None:
-            self.__dict__.update(config.__dict__)
-        self.__dict__.update(kwargs)
+    def __init__(self, **kwargs):
+        self.update(kwargs)
 
     def __getitem__(self, key):
         return self.get(key)
@@ -272,17 +253,18 @@ class Config:
     def __repr__(self):
         return f"{dump_object(self)} = {dump_config(self)}"
 
-    def __call__(self, source_files = None, build_files = None, *args, config = None, **kwargs):
-        #kwargs = {}
-        if isinstance(source_files, Config):
-            raise ValueError("You've got a config where your source_files should be")
-        if isinstance(build_files, Config):
-            raise ValueError("You've got a config where your build_files should be")
+    def __call__(self, source_files = None, build_files = None, **kwargs):
         if source_files is not None:
             kwargs['source_files'] = source_files
         if build_files is not None:
             kwargs['build_files'] = build_files
-        return Task(self, *args, config, kwargs)
+        return Task(**self, **kwargs)
+
+    def update(self, kwargs):
+        self.__dict__.update(kwargs)
+
+    def keys(self):
+        return self.__dict__.keys()
 
     def expand(self, variant):
         return expand(self, variant)
@@ -404,7 +386,7 @@ class Task:
     # pylint: disable=too-many-instance-attributes
     # pylint: disable=attribute-defined-outside-init
 
-    def __init__(self, *args, config = None, **kwargs):
+    def __init__(self, **kwargs):
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
 
@@ -431,7 +413,8 @@ class Task:
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
-        self.config = Config(defaults, *args, config, kwargs)
+        self.config = Config(**defaults)
+        self.config.update(kwargs)
         self.action = Config()
         self.reason = None
         self.promise = None

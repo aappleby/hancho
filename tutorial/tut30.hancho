@@ -3,10 +3,6 @@ import hancho
 
 build_config.build_tag = "tut30"
 
-rules = hancho.include(build_config, "tut30_rules.hancho")
+rules = hancho.include("tut30_rules.hancho")
 
-app = rules.c_binary(
-  ["src/main.cpp", "src/util.cpp"],
-  "app",
-  config = build_config,
-)
+app = rules.c_binary(["src/main.cpp", "src/util.cpp"], "app", **build_config)
