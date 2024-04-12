@@ -1,5 +1,8 @@
 # tests/check_output.hancho
+import hancho
 
-check_output = build_config.rule(command = "echo foo > {rel_build_files[0]}")
-
-check_output(__file__, ["result.txt", "not_modified.txt"])
+hancho.Task(
+  command = "echo foo > {rel_build_files[0]}",
+  source_files = [],
+  build_files = ["result.txt", "not_modified.txt"]
+)

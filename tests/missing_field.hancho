@@ -1,3 +1,7 @@
 # tests/missing_field.hancho
+import hancho
 
-build_config.task([], "result.txt", command = "touch {build_files} {does_not_exist}")
+hancho.Task(
+  command = "touch {build_files} {does_not_exist}",
+  build_files = "result.txt",
+)

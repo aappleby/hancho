@@ -640,6 +640,12 @@ class Task:
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
+
+        for build_file in self.action.abs_build_files:
+            if not path.exists(build_file):
+                raise ValueError(f"Task '{self.action.desc}' did not create {build_file}!\n")
+
+
         if (
             self.action.abs_source_files
             and self.action.abs_build_files

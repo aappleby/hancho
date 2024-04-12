@@ -114,7 +114,7 @@ class TestHancho(unittest.TestCase):
 #            capture_output=True,
 #            cwd="submodule_tests",
 #        )
-#        self.assertTrue(Path("submodule_tests/build/top.txt").exists())
+#        self.assertTrue(Path("submodule_tests/build/submodule_tests/top.txt").exists())
 #        self.assertTrue(Path("submodule_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("submodule_tests/build/repo2/repo2.txt").exists())
 #
@@ -127,7 +127,7 @@ class TestHancho(unittest.TestCase):
 #            capture_output=True,
 #            cwd="submodule_tests",
 #        )
-#        self.assertTrue(Path("submodule_tests/build/top.txt").exists())
+#        self.assertTrue(Path("submodule_tests/build/submodule_tests/top.txt").exists())
 #        self.assertTrue(Path("submodule_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("submodule_tests/build/repo2/repo2.txt").exists())
 #
@@ -140,42 +140,34 @@ class TestHancho(unittest.TestCase):
 #            capture_output=True,
 #            cwd="submodule_tests",
 #        )
-#        self.assertTrue(Path("submodule_tests/build/top.txt").exists())
+#        self.assertTrue(Path("submodule_tests/build/submodule_tests/top.txt").exists())
 #        self.assertTrue(Path("submodule_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("submodule_tests/build/repo2/repo2.txt").exists())
 #
     def test_bad_build_path(self):
         result = run_hancho("bad_build_path")
         self.assertTrue("Path error" in result.stderr)
-#
-#    def test_check_output(self):
-#        """A build rule that doesn't update one of its outputs should fail"""
-#        result = run_hancho("check_output")
-#        self.assertTrue(Path("build/result.txt").exists())
-#        self.assertFalse(Path("build/not_modified.txt").exists())
-#        self.assertTrue("still needs rerun after running" in result.stderr)
-#
-#    def test_config_inheritance(self):
-#        """A module should inherit a config object extended from its parent, but should not be able
-#        to modify its parent's config object."""
-#        self.assertEqual(0, run_hancho("config_parent").returncode)
-#
-#        # This should fail because it was expecting inheritance from its parent.
-#        self.assertNotEqual(0, run_hancho("config_child").returncode)
-#
-#    def test_missing_command(self):
-#        """Rules with missing commands should fail"""
-#        result = run_hancho("command_missing")
-#        self.assertTrue("Don't know how to expand NoneType ='None'" in result.stderr)
-#
-#    def test_missing_field(self):
-#        """Missing fields should raise an error when expanded"""
-#        result = run_hancho("missing_field")
-#        self.assertTrue(
-#            "Could not find does_not_exist"
-#            in result.stderr
-#        )
-#
+
+    def test_check_output(self):
+        """A build rule that doesn't update one of its outputs should fail"""
+        result = run_hancho("check_output")
+        self.assertTrue(Path("build/tests/result.txt").exists())
+        self.assertFalse(Path("build/tests/not_modified.txt").exists())
+        self.assertTrue("did not create" in result.stderr)
+
+    def test_missing_command(self):
+        """Rules with missing commands should fail"""
+        result = run_hancho("command_missing")
+        self.assertTrue("Task has no command" in result.stderr)
+
+    def test_missing_field(self):
+        """Missing fields should raise an error when expanded"""
+        result = run_hancho("missing_field")
+        self.assertTrue(
+            "Could not find key 'does_not_exist'"
+            in result.stderr
+        )
+
 #    def test_missing_input(self):
 #        """We should fail if an input is missing"""
 #        result = run_hancho("missing_input")

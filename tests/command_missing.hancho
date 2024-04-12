@@ -1,4 +1,7 @@
 # tests/command_missing.hancho
+import hancho
 
-command_missing = build_config.rule()
-command_missing(__file__, "dummy.txt")
+hancho.Task(
+  source_files = __file__,
+  build_files = "dummy.txt",
+)
