@@ -41,7 +41,7 @@ def generate_result(task):
     command = "cat {rel_source_files} > {rel_build_files}",
     source_files = from_filelist,
     build_files = "result.txt",
-    order_only = [random_touch, filelist_txt],
+    other_files = [random_touch, filelist_txt],
   )
 
 result_txt = build_config.task(

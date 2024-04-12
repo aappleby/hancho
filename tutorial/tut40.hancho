@@ -1,5 +1,6 @@
 # tutorial/tut40.hancho
-from hancho import Config
+import hancho
 
-build_config = build_config + Config(build_tag = "tut40")
-build_config.load("src/tut40_src.hancho")
+build_config.build_tag = "tut40"
+
+hancho.load(build_config, "src/tut40_src.hancho")

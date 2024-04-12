@@ -1,4 +1,5 @@
 # tutorial/rules.hancho
+import hancho
 
 compile = hancho.Config(
   desc         = "Compile {rel_source_files} -> {rel_build_files}",
@@ -12,9 +13,9 @@ link = hancho.Config(
   command = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
-def c_binary(config, source_files, build_files):
+def c_binary(source_files, build_files, *, config = None):
   objs = [
-    compile(config, source_files = file)
+    compile(file, config = config)
     for file in source_files
   ]
-  return link(config, source_files=objs, build_files=build_files)
+  return link(objs, build_files, config = config)

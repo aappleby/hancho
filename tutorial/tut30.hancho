@@ -6,7 +6,7 @@ build_config.build_tag = "tut30"
 rules = hancho.include(build_config, "tut30_rules.hancho")
 
 app = rules.c_binary(
-  build_config,
-  source_files = ["src/main.cpp", "src/util.cpp"],
-  build_files  = "app",
+  ["src/main.cpp", "src/util.cpp"],
+  "app",
+  config = build_config,
 )

@@ -213,42 +213,16 @@ def repo(config, repo_path, *args, **kwargs):
 
     return repo_config
 
-"""
-def include(config, file_name, *args, **kwargs):
+def include(config, file_name):
     prefix = config.expand(config.file_path)
     suffix = config.expand(file_name)
     file_name = abs_path(path.join(prefix, suffix))
     file_path = path.dirname(file_name)
-
-    config = Config(
-        root_file    = root_file,
-        root_path    = root_path,
-
-        repo_name    = repo_name,
-        repo_path    = root_path,
-
-        command_path = "{default_command_path}",
-        source_path  = "{default_source_path}",
-        build_path   = "{default_build_path}",
-
-        file_name    = root_file,
-        file_path    = root_path,
-    )
-
-
-    config = app.root_config
-
-    assert path.exists(file_name) and path.isfile(file_name)
-
     build_config = Config(
-        config,
-        *args,
-        kwargs,
         file_name = file_name,
         file_path = file_path,
     )
-    return app.load_module(build_config)
-"""
+    return app.load_module(build_config, is_include = True)
 
 def load(config, file_name, *args, **kwargs):
     prefix = config.expand(config.file_path)
@@ -295,8 +269,13 @@ class Config:
     def __repr__(self):
         return dump_config(self)
 
-    def __call__(self, *args, **kwargs):
-        return Task(self, *args, kwargs)
+    def __call__(self, source_files, build_files = None, *, config = None):
+        kwargs = {}
+        if source_files is not None:
+            kwargs['source_files'] = source_files
+        if build_files is not None:
+            kwargs['build_files'] = build_files
+        return Task(self, kwargs)
 
     def expand(self, variant):
         return expand(self, variant)
@@ -338,7 +317,6 @@ def expand(config, variant):
         case _ if inspect.isfunction(variant):
             return variant
         case _:
-            print("???")
             raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
@@ -423,6 +401,10 @@ class Task:
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
 
+            root_path     = app.root_config.root_path,
+            repo_path     = app.root_config.root_path,
+            file_path     = os.getcwd(),
+
             command       = None,
             command_path  = "{default_command_path}",
             command_files = [],
@@ -436,7 +418,7 @@ class Task:
             build_files   = [],
             build_deps    = [],
 
-            order_only    = [],
+            other_files   = [],
         )
 
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
@@ -451,7 +433,7 @@ class Task:
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        return dump_task(self)
+        return f"{dump_object(self)} = {dump_task(self)}"
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -463,7 +445,7 @@ class Task:
             self.task_init()
 
             if self.config.debug:
-                log(f"{dump_object(self)} = {self}")
+                log(self)
 
             # Run the commands if we need to.
             if self.reason:
@@ -514,7 +496,8 @@ class Task:
         action.task_index    = app.task_counter
 
         # FIXME we can probably ditch some of these, we really only need the abs ones
-        action.file_path     = config.expand(config.file_path)
+
+        action.file_path     = config.file_path
         action.command_path  = config.expand(config.command_path)
         action.source_path   = config.expand(config.source_path)
         action.build_path    = config.expand(config.build_path)
@@ -533,8 +516,8 @@ class Task:
         action.abs_build_files   = flatten(join_path(action.abs_build_path, action.build_files))
         action.abs_build_deps    = flatten(join_path(action.abs_build_path, action.build_deps))
 
-        if not str(action.abs_build_path).startswith(str(config.root_path)):
-            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {config.root_path}")
+        if not str(action.abs_build_path).startswith(str(app.root_config.root_path)):
+            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root path {app.root_config.root_path}")
 
         # Check for duplicate task outputs
         for abs_file in action.abs_build_files:
@@ -631,7 +614,7 @@ class Task:
             for exp_command in self.action.command:
                 if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
-                    rel_command_path = rel_path(self.action.abs_command_path, self.config.root_path)
+                    rel_command_path = rel_path(self.action.abs_command_path, app.root_config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -880,30 +863,18 @@ class App:
 
     ########################################
 
-    def load_module(self, build_config):
+    def load_module(self, build_config, is_include = False):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        file_name = abs_path(build_config.expand(build_config.file_name))
-        file_path = path.dirname(file_name)
+        file_name = build_config.file_name
+        file_path = build_config.file_path
 
-        # Look through our loaded modules and see if there's already a compatible one loaded.
-        new_initial_dict = build_config.__dict__
-        reuse = None
-        for mod in self.loaded_modules:
-            if mod.__file__ != file_name:
-                continue
-
-            old_initial_dict = mod.build_config.__dict__
-            # FIXME we just need to check that overlapping keys have matching values
-            if old_initial_dict | new_initial_dict == old_initial_dict:
-                if reuse is not None:
-                    raise RuntimeError(f"Module load for {file_name} is ambiguous")
-                reuse = mod
-
-        if reuse:
-            if global_config.debug or global_config.verbose:
-                log(color(255, 255, 128) + f"Reusing module {file_name}" + color())
-            return reuse
+        # Dedupe includes
+        if is_include:
+            for mod in self.loaded_modules:
+                if mod.__file__ == file_name:
+                    log(color(255, 255, 128) + f"Reusing module {file_name}" + color())
+                    return mod
 
         if global_config.debug or global_config.verbose:
             log(color(128,255,128) + f"Loading module {file_name}" + color())

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+d#!/usr/bin/python3
 """Test cases for Hancho"""
 
 import sys
