@@ -50,7 +50,7 @@ main_app = link(files_in = main_o, files_out = "app")
 - In your top .hancho file, use ```thingy = load(root="my_submodule", file="component/thingy/build.hancho")```
 - Built files will appear in ```build/my_submodule/component/thingy/...```
 
-# Special fields in hancho.Rule()
+# Special fields in hancho.Command()
 
 - ```base``` (Default: ```config```)
     - The rule this rule inherits from. Reading missing fields from a ```rule``` will check ```rule.base``` for the field if there is one, otherwise the missing field will read as ```None```.

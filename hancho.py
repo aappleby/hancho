@@ -18,8 +18,7 @@ import types
 import random
 import textwrap
 from os import path
-from glob import glob
-from enum import Enum
+import glob
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -148,7 +147,7 @@ def maybe_as_number(text):
             return text
 
 
-async def await_variant(variant):
+async def _await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
     match variant:
         case asyncio.CancelledError():
@@ -161,47 +160,112 @@ async def await_variant(variant):
             # We don't recurse through subtasks because they should await themselves.
             if inspect.isawaitable(variant.promise):
                 promise = await variant.promise
-                variant.promise = await await_variant(promise)
+                variant.promise = await _await_variant(promise)
         case Config():
-            await await_variant(variant.__dict__)
+            await _await_variant(variant.__dict__)
         case dict():
             for key in variant:
-                variant[key] = await await_variant(variant[key])
+                variant[key] = await _await_variant(variant[key])
         case list():
             for index, value in enumerate(variant):
-                variant[index] = await await_variant(value)
+                variant[index] = await _await_variant(value)
         case _ if inspect.isawaitable(variant):
             variant = await variant
     return variant
 
 ####################################################################################################
 
-def dump_object(o):
+def _dump_object(o):
     return f"{type(o).__name__} @ {hex(id(o))}"
 
-def dump_config(config):
+def _dump_config(config):
     class Encoder(json.JSONEncoder):
         def default(self, o):
-            return dump_object(o)
+            return _dump_object(o)
     return json.dumps(config.__dict__, indent=2, cls=Encoder)
 
-def dump_task(task):
+def _dump_task(task):
     class Encoder(json.JSONEncoder):
         def default(self, o):
             if isinstance(o, Config):
                 return o.__dict__
-            return dump_object(o)
+            return _dump_object(o)
     return json.dumps(task.__dict__, indent=2, cls=Encoder)
 
 ####################################################################################################
 
-def repo(_repo_path, **kwargs):
-    prefix = config.file_path
-    suffix = config.expand(_repo_path)
-    repo_path = abs_path(path.join(prefix, suffix))
+class Config:
+    """A Config object is just a 'bag of fields'."""
 
-    assert path.exists(repo_path) and path.isdir(repo_path)
-    return Config(**kwargs, repo_path = repo_path, file_name = None, file_path = repo_path)
+    def __init__(self, *args, **kwargs):
+        self.update(*args, kwargs)
+
+    def __repr__(self):
+        return f"{_dump_object(self)} = {_dump_config(self)}"
+
+    def __or__(self, val):
+        return type(val)(self, val)
+
+    def __ior__(self, val):
+        return self.update(val)
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __getattr__(self, key):
+        return self.get(key)
+
+    def __setitem__(self, key, val):
+        self.__setattr__(key, val)
+
+    def get(self, key, default = None):
+        if key in self.__dict__:
+            return self.__dict__.get(key, default)
+        if key in global_config.__dict__:
+            return global_config.__dict__.get(key, default)
+        if default is None:
+            raise ValueError(f"Could not find key '{key}'")
+        return default
+
+    def update(self, *args, **kwargs):
+        for arg in args:
+            self.__dict__.update(arg)
+        self.__dict__.update(kwargs)
+        return self
+
+    def keys(self):
+        return self.__dict__.keys()
+
+    def expand(self, variant):
+        return expand(self, variant)
+
+class Command(Config):
+    """A Command is a Config that we can call like a function."""
+
+    def __init__(self, command, *args, **kwargs):
+        super().__init__(*args, **kwargs, command = command)
+
+    # FIXME should this have a mandatory "_command" arg?
+    def __call__(self, source_files = None, build_files = None, **kwargs):
+        new_config = Config(self)
+        if source_files is not None:
+            new_config.source_files = source_files
+        if build_files is not None:
+            new_config.build_files = build_files
+        new_config.update(kwargs)
+        return Task(**new_config)
+
+class Repo(Config):
+    def __init__(self, _repo_path, *args, **kwargs):
+        super().init(*args, **kwargs)
+        prefix = self.file_path
+        suffix = self.expand(_repo_path)
+        repo_path = abs_path(path.join(prefix, suffix))
+
+        assert path.exists(repo_path) and path.isdir(repo_path)
+        self.repo_path = repo_path
+        self.file_name = None
+        self.file_path = repo_path
 
 def include(_file_name, **kwargs):
     config = Config(**kwargs)
@@ -227,69 +291,16 @@ def load(_file_name, **kwargs):
     mod_config.file_path = file_path
     return app.load_module(mod_config)
 
-####################################################################################################
+class Module(Config):
+    pass
 
-class Config:
-    """A Config object is just a 'bag of fields'."""
+Config.Config   = lambda self, *args, **kwargs : Config(self, *args, kwargs)
+Config.Repo     = lambda self, repo_path, *args, **kwargs : Repo(repo_path, self, *args, **kwargs)
 
-    def __init__(self, *args, **kwargs):
-        self.update(*args, kwargs)
+Config.Command  = lambda self, command, *args, **kwargs : Command(command, self, *args, **kwargs)
+Command.Command = lambda self, command, *args, **kwargs : Command(command, self, *args, **kwargs)
 
-    def __repr__(self):
-        return f"{dump_object(self)} = {dump_config(self)}"
-
-    def __or__(self, val):
-        return type(val)(self, val)
-
-    def __ior__(self, val):
-        return self.update(val)
-
-    def __getitem__(self, key):
-        return self.get(key)
-
-    def __getattr__(self, key):
-        return self.get(key)
-
-    def get(self, key, default = None):
-        if key in self.__dict__:
-            return self.__dict__.get(key, default)
-        if key in global_config.__dict__:
-            return global_config.__dict__.get(key, default)
-        if default is None:
-            raise ValueError(f"Could not find key '{key}'")
-        return default
-
-    def update(self, *args, **kwargs):
-        for arg in args:
-            self.__dict__.update(arg)
-        self.__dict__.update(kwargs)
-        return self
-
-    def keys(self):
-        return self.__dict__.keys()
-
-    def expand(self, variant):
-        return expand(self, variant)
-
-    def config(self, *args, **kwargs):
-        return Config(self, *args, kwargs)
-
-    def rule(self, *args, **kwargs):
-        return Rule(self, *args, kwargs)
-
-    def task(self, *args, **kwargs):
-        return Task(self, *args, kwargs)
-
-class Rule(Config):
-    """A Rule is a Config that we can call like a function."""
-    def __call__(self, source_files = None, build_files = None, **kwargs):
-        new_config = Config(self)
-        if source_files is not None:
-            new_config.source_files = source_files
-        if build_files is not None:
-            new_config.build_files = build_files
-        new_config.update(kwargs)
-        return Task(**new_config)
+Config.Task = lambda self, *args, **kwargs : Task(self, *args, kwargs)
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -481,13 +492,13 @@ class Task:
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        return f"{dump_object(self)} = {dump_task(self)}"
+        return f"{_dump_object(self)} = {_dump_task(self)}"
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            await await_variant(self.config)
+            await _await_variant(self.config)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -756,7 +767,7 @@ global_config = Config(
     rel_path  = rel_path,
     join_path = join_path,
     color     = color,
-    glob      = glob,
+    glob      = glob.glob,
     len       = len,
     run_cmd   = run_cmd,
     swap_ext  = swap_ext,

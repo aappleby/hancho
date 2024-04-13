@@ -1,0 +1,10 @@
+import hancho
+
+print(build_config)
+
+hancho.Task(
+  command = "touch {rel_build_files}",
+  source_files = [],
+  build_files = "repo1.txt",
+  **build_config
+)

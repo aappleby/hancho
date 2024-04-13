@@ -3,7 +3,7 @@ import hancho
 
 build_config.build_tag = "tut20"
 
-compile = hancho.Rule(
+compile = hancho.Command(
   desc        = "Compile {rel_source_files}",
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   build_files = "{swap_ext(source_files, '.o')}",
@@ -11,7 +11,7 @@ compile = hancho.Rule(
   **build_config,
 )
 
-link = hancho.Rule(
+link = hancho.Command(
   desc    = "Link {rel_source_files} into {rel_build_files}",
   command = "g++ {rel_source_files} -o {rel_build_files}",
   **build_config,

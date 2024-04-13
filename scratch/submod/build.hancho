@@ -1,5 +1,6 @@
 import hancho
 
-rules = hancho.load(build_config, "{root_path}/rules/rules.hancho")
+foo = 1
 
-stuff_o = rules.compile(build_config, source_files = "src/stuff.cpp")
+#rules = hancho.load("{root_path}/rules/rules.hancho", **build_config)
+#stuff_o = rules.compile(build_config, source_files = "src/stuff.cpp")

@@ -3,7 +3,7 @@ import hancho
 
 build_config.build_tag = "debug"
 
-compile = hancho.Rule(
+compile = hancho.Command(
   desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
   includes  = [
@@ -25,7 +25,7 @@ compile = hancho.Rule(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = hancho.Rule(
+link = hancho.Command(
   desc      = "Linking {rel_source_files} -> {rel_build_files}",
   command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
   link_opts = [
