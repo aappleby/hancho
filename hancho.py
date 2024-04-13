@@ -16,7 +16,6 @@ import traceback
 import time
 import types
 import random
-import textwrap
 from os import path
 import glob
 
@@ -66,24 +65,24 @@ def log(message, *args, sameline=False, **kwargs):
     sys.stdout.flush()
 
 
-def flatten(variant):
+def _flatten(variant):
     if isinstance(variant, list):
-        return [x for element in variant for x in flatten(element)]
+        return [x for element in variant for x in _flatten(element)]
     return [variant]
 
 
-def abs_path(raw_path, strict=False):
+def _abs_path(raw_path, strict=False):
     if isinstance(raw_path, list):
-        return [abs_path(p, strict) for p in raw_path]
+        return [_abs_path(p, strict) for p in raw_path]
     result = path.abspath(raw_path)
     if strict and not path.exists(result):
         raise FileNotFoundError(raw_path)
     return result
 
 
-def rel_path(path1, path2):
+def _rel_path(path1, path2):
     if isinstance(path1, list):
-        return [rel_path(p, path2) for p in path1]
+        return [_rel_path(p, path2) for p in path1]
     # Generating relative paths in the presence of symlinks doesn't work with either
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
     # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
@@ -92,7 +91,7 @@ def rel_path(path1, path2):
     return path1.removeprefix(path2 + "/") if path1 != path2 else ""
 
 
-def join_path(*args):
+def _join_path(*args):
     """Returns all possible concatenated paths from the given paths (or arrays of paths)."""
     match len(args):
         case 0:
@@ -100,14 +99,14 @@ def join_path(*args):
         case 1:
             return list(args)
         case 2:
-            args0 = flatten(args[0])
-            args1 = flatten(args[1])
+            args0 = _flatten(args[0])
+            args1 = _flatten(args[1])
             result = [path.join(arg0, arg1) for arg0 in args0 for arg1 in args1]
             return result[0] if len(result) == 1 else result
         case _:
-            return join_path(args[0], join_path(*args[1:]))
+            return _join_path(args[0], _join_path(*args[1:]))
 
-def color(red=None, green=None, blue=None):
+def _color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
     if os.name == "nt":
@@ -220,6 +219,58 @@ class Config:
     def expand(self, variant):
         return expand(self, variant)
 
+    # fmt: off
+    config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
+    extend   = lambda self,            *args, **kwargs : Config(self, *args, kwargs)
+    repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
+    command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
+    task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
+    module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
+    include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
+    # fmt: on
+
+    # All static methods and fields are available to use in any template string.
+    # fmt: off
+    abs_path  = staticmethod(_abs_path)
+    rel_path  = staticmethod(_rel_path)
+    join_path = staticmethod(_join_path)
+    color     = staticmethod(_color)
+    glob      = staticmethod(glob.glob)
+    len       = staticmethod(len)
+    run_cmd   = staticmethod(_run_cmd)
+    swap_ext  = staticmethod(_swap_ext)
+    flatten   = staticmethod(_flatten)
+    print     = staticmethod(print)
+    basename  = staticmethod(path.basename)
+
+    repo_name         = "{basename(repo_path)}"
+
+    abs_command_path  = "{abs_path(join_path(file_path,   command_path))}"
+    abs_source_path   = "{abs_path(join_path(file_path,   source_path))}"
+    abs_build_path    = "{abs_path(join_path(file_path,   build_path))}"
+
+    abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
+    abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
+    abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}"
+    abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}"
+
+    rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}"
+    rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}"
+
+    rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
+    rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
+    rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
+    rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
+
+    default_command_path = "{file_path}"
+    default_source_path  = "{file_path}"
+    default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}"
+
+    command_path = "{default_command_path}"
+    source_path  = "{default_source_path}"
+    build_path   = "{default_build_path}"
+    # fmt: on
+
 #----------------------------------------
 
 class Command(Config):
@@ -228,7 +279,6 @@ class Command(Config):
     def __init__(self, command, *args, **kwargs):
         super().__init__(*args, **kwargs, command = command)
 
-    # FIXME should this have a mandatory "_command" arg?
     def __call__(self, source_files = None, build_files = None, **kwargs):
         if isinstance(build_files, Config):
             log("You've got a config in your build_files")
@@ -245,30 +295,30 @@ class Command(Config):
 #----------------------------------------
 
 def repo(config, _repo_path, *args, **kwargs):
-    repo_config = Repo(config, *args, **kwargs)
-    prefix = repo_config.file_path
-    suffix = repo_config.expand(_repo_path)
-    repo_path = abs_path(path.join(prefix, suffix))
-
-    assert path.exists(repo_path) and path.isdir(repo_path)
-    repo_config.repo_path = repo_path
-    repo_config.file_name = None
-    repo_config.file_path = repo_path
-    return repo_config
+    prefix = config.file_path
+    suffix = config.expand(_repo_path)
+    repo_path = _abs_path(path.join(prefix, suffix))
+    return Repo(
+        config,
+        *args,
+        **kwargs,
+        repo_path = repo_path,
+        file_name = None,
+        file_path = repo_path,
+    )
 
 def load(config, _file_name, is_include = False, *args, **kwargs):
-    mod_config = Include(config, *args, **kwargs) if is_include else Module(config, *args, **kwargs)
-
     prefix = config.expand(config.file_path)
     suffix = config.expand(_file_name)
-    file_name = abs_path(path.join(prefix, suffix))
+    file_name = _abs_path(path.join(prefix, suffix))
     file_path = path.dirname(file_name)
 
     if not is_include:
-        mod_config.file_name = file_name
-        mod_config.file_path = file_path
+        kwargs['file_name'] = file_name
+        kwargs['file_path'] = file_path
 
-        assert path.exists(file_name) and path.isfile(file_name)
+    mod_config = Module(config, *args, **kwargs)
+
     module = app.load_module(file_name, file_path, mod_config, is_include = True)
 
     # Module loaded, copy all its public stuff into this config
@@ -286,58 +336,6 @@ class Include(Config):
 
 class Module(Config):
     pass
-
-#----------------------------------------
-
-# fmt: off
-Config.config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
-Config.extend   = lambda self,            *args, **kwargs : Config(self, *args, kwargs)
-Config.repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
-Config.command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
-Config.task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
-Config.module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
-Config.include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
-
-Config.abs_path  = staticmethod(abs_path)
-Config.rel_path  = staticmethod(rel_path)
-Config.join_path = staticmethod(join_path)
-Config.color     = staticmethod(color)
-Config.glob      = staticmethod(glob.glob)
-Config.len       = staticmethod(len)
-Config.run_cmd   = staticmethod(_run_cmd)
-Config.swap_ext  = staticmethod(_swap_ext)
-Config.flatten   = staticmethod(flatten)
-Config.print     = staticmethod(print)
-Config.basename  = staticmethod(path.basename)
-
-Config.repo_name         = "{basename(repo_path)}"
-
-Config.abs_command_path  = "{abs_path(join_path(file_path,   command_path))}"
-Config.abs_source_path   = "{abs_path(join_path(file_path,   source_path))}"
-Config.abs_build_path    = "{abs_path(join_path(file_path,   build_path))}"
-
-Config.abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
-Config.abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
-Config.abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}"
-Config.abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}"
-
-Config.rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}"
-Config.rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}"
-
-Config.rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
-Config.rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
-Config.rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
-Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
-
-Config.default_command_path = "{file_path}"
-Config.default_source_path  = "{file_path}"
-Config.default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}"
-
-Config.command_path = "{default_command_path}"
-Config.source_path  = "{default_source_path}"
-Config.build_path   = "{default_build_path}"
-# fmt: on
-
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -382,7 +380,7 @@ def expand(config, variant, fail_ok=False):
         case _ if isinstance(variant, staticmethod):
             return variant
         case _:
-            log(f"{color(255, 0, 0)}Don't know how to expand {type(variant).__name__} ='{variant}'{color()}")
+            log(f"{_color(255, 0, 0)}Don't know how to expand {type(variant).__name__} ='{variant}'{_color()}")
             raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
@@ -400,12 +398,12 @@ def expand_template(config, template, fail_ok=False):
             try:
                 macro = template[span.start() : span.end()]
                 variant = eval_macro(config, macro, fail_ok)
-                result += " ".join([str(s) for s in flatten(variant)])
+                result += " ".join([str(s) for s in _flatten(variant)])
             except BaseError as err:
-                log(color(255, 255, 0))
+                log(_color(255, 255, 0))
                 log(err)
                 log(f"Expanding template '{old_template}' failed!")
-                log(color())
+                log(_color())
                 raise
             template = template[span.end() :]
         result += template
@@ -450,9 +448,7 @@ class Expander:
             raise ValueError(f"Expander could not expand '{result}'")
 
         if isinstance(expanded, Config):
-            new_configs = list(self.configs)
-            new_configs.append(expanded)
-            return Expander(new_configs)
+            return Expander(self.configs + [expanded])
 
         return expanded
 
@@ -469,17 +465,16 @@ def eval_macro(config, macro, fail_ok=False):
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
         if not isinstance(config, Expander):
-            result = eval(macro[1:-1], {}, Expander([config]))
-        else:
-            result = eval(macro[1:-1], {}, config)
+            config = Expander([config])
+        result = eval(macro[1:-1], {}, config)
     except BaseException as err:
         # FIXME Template expansion failure is not an error if we're walking up the config chain
         # while expanding a nested config
         if not fail_ok:
             log(err)
-            log(color(255, 255, 0), end="")
+            log(_color(255, 255, 0), end="")
             log(f"Expanding macro '{macro}' failed!")
-            log(color(), end="")
+            log(_color(), end="")
             raise err
     finally:
         app.expand_depth -= 1
@@ -555,11 +550,11 @@ class Task:
                 app.tasks_pass += 1
             else:
                 log(
-                    f"{color(128,196,255)}[{self.action.task_index}/{app.tasks_total}]{color()} {self.action.desc}",
+                    f"{_color(128,196,255)}[{self.action.task_index}/{app.tasks_total}]{_color()} {self.action.desc}",
                     sameline=not self.config.verbose,
                 )
                 if self.config.verbose or self.config.debug:
-                    log(f"{color(128,128,128)}Files {self.action.build_files} are up to date{color()}")
+                    log(f"{_color(128,128,128)}Files {self.action.build_files} are up to date{_color()}")
                 result = self.action.abs_build_files
                 app.tasks_skip += 1
 
@@ -568,9 +563,9 @@ class Task:
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException:
             if not self.config.quiet:
-                log(color(255, 128, 128))
+                log(_color(255, 128, 128))
                 traceback.print_exception(*sys.exc_info())
-                log(color())
+                log(_color())
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
@@ -591,7 +586,7 @@ class Task:
         action = self.action
 
         action.desc          = config.expand(config.desc)
-        action.command       = flatten(config.expand(config.command))
+        action.command       = _flatten(config.expand(config.command))
         action.depformat     = getattr(config, 'depformat', 'gcc')
         action.job_count     = getattr(config, 'job_count', 1)
         action.ext_build     = getattr(config, 'ext_build', False)
@@ -604,19 +599,19 @@ class Task:
         action.source_path   = config.expand(config.source_path)
         action.build_path    = config.expand(config.build_path)
 
-        action.command_files = flatten(config.expand(config.command_files))
-        action.source_files  = flatten(config.expand(config.source_files))
-        action.build_files   = flatten(config.expand(config.build_files))
-        action.build_deps    = flatten(config.expand(config.build_deps))
+        action.command_files = _flatten(config.expand(config.command_files))
+        action.source_files  = _flatten(config.expand(config.source_files))
+        action.build_files   = _flatten(config.expand(config.build_files))
+        action.build_deps    = _flatten(config.expand(config.build_deps))
 
-        action.abs_command_path  = abs_path(join_path(action.file_path, action.command_path))
-        action.abs_source_path   = abs_path(join_path(action.file_path, action.source_path))
-        action.abs_build_path    = abs_path(join_path(action.file_path, action.build_path))
+        action.abs_command_path  = _abs_path(_join_path(action.file_path, action.command_path))
+        action.abs_source_path   = _abs_path(_join_path(action.file_path, action.source_path))
+        action.abs_build_path    = _abs_path(_join_path(action.file_path, action.build_path))
 
-        action.abs_command_files = flatten(join_path(action.abs_command_path, action.command_files))
-        action.abs_source_files  = flatten(join_path(action.abs_source_path, action.source_files))
-        action.abs_build_files   = flatten(join_path(action.abs_build_path, action.build_files))
-        action.abs_build_deps    = flatten(join_path(action.abs_build_path, action.build_deps))
+        action.abs_command_files = _flatten(_join_path(action.abs_command_path, action.command_files))
+        action.abs_source_files  = _flatten(_join_path(action.abs_source_path, action.source_files))
+        action.abs_build_files   = _flatten(_join_path(action.abs_build_path, action.build_files))
+        action.abs_build_deps    = _flatten(_join_path(action.abs_build_path, action.build_deps))
 
         if not str(action.abs_build_path).startswith(str(app.root_config.root_path)):
             raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {app.root_config.root_path}")
@@ -705,19 +700,19 @@ class Task:
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
-                f"{color(128,255,196)}[{self.action.task_index}/{app.tasks_total}]{color()} {self.action.desc}",
+                f"{_color(128,255,196)}[{self.action.task_index}/{app.tasks_total}]{_color()} {self.action.desc}",
                 sameline=not self.config.verbose,
             )
 
             if self.config.verbose or self.config.debug:
-                log(f"{color(128,128,128)}Reason: {self.reason}{color()}")
+                log(f"{_color(128,128,128)}Reason: {self.reason}{_color()}")
 
             result = []
             for exp_command in self.action.command:
                 if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
-                    rel_command_path = rel_path(self.action.abs_command_path, app.root_config.root_path)
-                    log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
+                    rel_command_path = _rel_path(self.action.abs_command_path, app.root_config.root_path)
+                    log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
                 result = await self.run_command(exp_command)
@@ -906,11 +901,11 @@ class App:
             log(f"mtime calls:     {self.mtime_calls}")
 
         if self.tasks_fail:
-            log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
+            log(f"hancho: {_color(255, 128, 128)}BUILD FAILED{_color()}")
         elif self.tasks_pass:
-            log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
+            log(f"hancho: {_color(128, 255, 128)}BUILD PASSED{_color()}")
         else:
-            log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
+            log(f"hancho: {_color(128, 128, 255)}BUILD CLEAN{_color()}")
 
         return -1 if self.tasks_fail else 0
 
@@ -920,7 +915,7 @@ class App:
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         if config.debug or config.verbose:
-            log(color(128,255,128) + f"Loading module {file_name}" + color())
+            log(_color(128,255,128) + f"Loading module {file_name}" + _color())
 
         # There was no compatible module loaded, so make a new one.
         with open(file_name, encoding="utf-8") as file:
@@ -1005,7 +1000,7 @@ def main():
     root_file = flags.__dict__.pop("root_file")
     root_path = flags.__dict__.pop("root_path")
 
-    root_path = abs_path(root_path)
+    root_path = _abs_path(root_path)
     root_file = path.join(root_path, root_file)
 
     setattr(Config, "root_path", root_path)
