@@ -210,38 +210,7 @@ class Config:
         return self.update(val)
 
     def __getitem__(self, key):
-        return self.__getattribute__(key)
-
-    def __getattr__(self, key):
-        return self.get(key)
-
-#    def __setitem__(self, key, val):
-#        self.__setattr__(key, val)
-
-    def get(self, key, default = None):
-        #try:
-        #    if (result := getattr(self, key, default)) is not None:
-        #        return result
-        #except:
-        #    print("???")
-        #    sys.exit(0)
-        #print(key)
-
-        if key in self.__dict__:
-            result1 = self.__dict__.get(key, default)
-            result2 = getattr(self, key, default)
-            assert result1 == result2
-            return result1
-
-        if key in Config.__dict__:
-            result1 = Config.__dict__.get(key, default)
-            #result2 = getattr(self, key, default)
-            #assert result1 == result2
-            return result1
-
-        if default is None:
-            raise ValueError(f"Could not find key '{key}'")
-        return default
+        return getattr(self, key)
 
     def update(self, *args, **kwargs):
         for arg in args:
@@ -342,17 +311,17 @@ Config.Task     = lambda self, *args, **kwargs            : Task(self, *args, kw
 Config.Module   = lambda self, file_name, *args, **kwargs : Module(file_name, self, *args, kwargs)
 Config.Include  = lambda self, file_name, *args, **kwargs : Include(file_name, self, *args, kwargs)
 
-Config.abs_path  = abs_path
-Config.rel_path  = rel_path
-Config.join_path = join_path
-Config.color     = color
-Config.glob      = glob.glob
-Config.len       = len
-Config.run_cmd   = _run_cmd
-Config.swap_ext  = _swap_ext
-Config.flatten   = flatten
-Config.print     = print
-Config.basename  = lambda x : path.basename(x)
+Config.abs_path  = staticmethod(abs_path)
+Config.rel_path  = staticmethod(rel_path)
+Config.join_path = staticmethod(join_path)
+Config.color     = staticmethod(color)
+Config.glob      = staticmethod(glob.glob)
+Config.len       = staticmethod(len)
+Config.run_cmd   = staticmethod(_run_cmd)
+Config.swap_ext  = staticmethod(_swap_ext)
+Config.flatten   = staticmethod(flatten)
+Config.print     = staticmethod(print)
+Config.basename  = staticmethod(path.basename)
 
 Config.repo_name         = "{basename(repo_path)}"
 
@@ -425,6 +394,8 @@ def expand(config, variant, fail_ok=False):
             return variant
         case _ if inspect.isfunction(variant):
             return variant
+        case _ if isinstance(variant, staticmethod):
+            return variant
         case _:
             raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
@@ -473,7 +444,7 @@ class Expander:
     def get(self, key):
         result = None
         for config in reversed(self.configs):
-            result = config.get(key, None)
+            result = getattr(config, key, None)
             if result is not None:
                 break
         if result is None:
@@ -483,7 +454,8 @@ class Expander:
         for config in reversed(self.configs):
             try:
                 expanded = expand(config, result, fail_ok=True)
-            except BaseException:
+            except BaseException as err:
+                print(err)
                 if config.debug_expansion:
                     log(("┃" * app.expand_depth) + f"┗ <failed, retrying w/ parent config>")
                 pass
@@ -513,7 +485,8 @@ def eval_macro(config, macro, fail_ok=False):
             result = eval(macro[1:-1], {}, Expander([config]))
         else:
             result = eval(macro[1:-1], {}, config)
-    except:
+    except BaseException as err:
+        print(err)
         # FIXME Template expansion failure is not an error if we're walking up the config chain
         # while expanding a nested config
         if not fail_ok:
@@ -639,9 +612,9 @@ class Task:
 
         action.desc          = config.expand(config.desc)
         action.command       = flatten(config.expand(config.command))
-        action.depformat     = config.get('depformat', 'gcc')
-        action.job_count     = config.get('job_count', 1)
-        action.ext_build     = config.get('ext_build', False)
+        action.depformat     = getattr(config, 'depformat', 'gcc')
+        action.job_count     = getattr(config, 'job_count', 1)
+        action.ext_build     = getattr(config, 'ext_build', False)
         action.task_index    = app.task_counter
 
         # FIXME we can probably ditch some of these, we really only need the abs ones
