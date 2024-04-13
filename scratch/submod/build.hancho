@@ -1,6 +1,2 @@
-import hancho
-
-foo = 1
-
-#rules = hancho.load("{root_path}/rules/rules.hancho", **build_config)
-#stuff_o = rules.compile(build_config, source_files = "src/stuff.cpp")
+rules = hancho.Include("{root_path}/rules/rules.hancho")
+stuff_o = rules.compile("src/stuff.cpp")

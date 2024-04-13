@@ -38,7 +38,7 @@ template_regex = re.compile("{[^}]*}")
 
 def log(message, *args, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
-    if global_config.quiet:
+    if Config.quiet:
         return
 
     if not sys.stdout.isatty():
@@ -117,25 +117,25 @@ def color(red=None, green=None, blue=None):
     return f"\x1B[38;2;{red};{green};{blue}m"
 
 
-def run_cmd(cmd):
+def _run_cmd(cmd):
     """Runs a console command synchronously and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
-def swap_ext(name, new_ext):
+def _swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, list):
-        return [swap_ext(n, new_ext) for n in name]
+        return [_swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
 
 
-def mtime(filename):
+def _mtime(filename):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
     return path.getmtime(filename)
 
 
-def maybe_as_number(text):
+def _maybe_as_number(text):
     """Tries to convert a string to an int, then a float, then gives up. Used for ingesting
     unrecognized flag values."""
     try:
@@ -210,19 +210,35 @@ class Config:
         return self.update(val)
 
     def __getitem__(self, key):
-        return self.get(key)
+        return self.__getattribute__(key)
 
     def __getattr__(self, key):
         return self.get(key)
 
-    def __setitem__(self, key, val):
-        self.__setattr__(key, val)
+#    def __setitem__(self, key, val):
+#        self.__setattr__(key, val)
 
     def get(self, key, default = None):
+        #try:
+        #    if (result := getattr(self, key, default)) is not None:
+        #        return result
+        #except:
+        #    print("???")
+        #    sys.exit(0)
+        #print(key)
+
         if key in self.__dict__:
-            return self.__dict__.get(key, default)
-        if key in global_config.__dict__:
-            return global_config.__dict__.get(key, default)
+            result1 = self.__dict__.get(key, default)
+            result2 = getattr(self, key, default)
+            assert result1 == result2
+            return result1
+
+        if key in Config.__dict__:
+            result1 = Config.__dict__.get(key, default)
+            #result2 = getattr(self, key, default)
+            #assert result1 == result2
+            return result1
+
         if default is None:
             raise ValueError(f"Could not find key '{key}'")
         return default
@@ -239,6 +255,8 @@ class Config:
     def expand(self, variant):
         return expand(self, variant)
 
+#----------------------------------------
+
 class Command(Config):
     """A Command is a Config that we can call like a function."""
 
@@ -247,6 +265,10 @@ class Command(Config):
 
     # FIXME should this have a mandatory "_command" arg?
     def __call__(self, source_files = None, build_files = None, **kwargs):
+        if isinstance(build_files, Config):
+            log("You've got a config in your build_files")
+            assert False
+
         new_config = Config(self)
         if source_files is not None:
             new_config.source_files = source_files
@@ -255,9 +277,11 @@ class Command(Config):
         new_config.update(kwargs)
         return Task(**new_config)
 
+#----------------------------------------
+
 class Repo(Config):
     def __init__(self, _repo_path, *args, **kwargs):
-        super().init(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         prefix = self.file_path
         suffix = self.expand(_repo_path)
         repo_path = abs_path(path.join(prefix, suffix))
@@ -267,40 +291,99 @@ class Repo(Config):
         self.file_name = None
         self.file_path = repo_path
 
-def include(_file_name, **kwargs):
-    config = Config(**kwargs)
-    file_name = abs_path(config.expand(_file_name))
-    file_path = path.dirname(file_name)
+#----------------------------------------
 
-    assert path.exists(file_name) and path.isfile(file_name)
-    mod_config = Config()
-    mod_config.file_name = file_name
-    mod_config.file_path = file_path
-    return app.load_module(mod_config, is_include = True)
+class Include(Config):
+    def __init__(self, _file_name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-def load(_file_name, **kwargs):
-    config = Config(**kwargs)
-    prefix = config.expand(config.file_path)
-    suffix = config.expand(_file_name)
-    file_name = abs_path(path.join(prefix, suffix))
-    file_path = path.dirname(file_name)
+        prefix = self.expand(self.file_path)
+        suffix = self.expand(_file_name)
+        file_name = abs_path(path.join(prefix, suffix))
+        file_path = path.dirname(file_name)
 
-    assert path.exists(file_name) and path.isfile(file_name)
-    mod_config = Config(**kwargs)
-    mod_config.file_name = file_name
-    mod_config.file_path = file_path
-    return app.load_module(mod_config)
+        assert path.exists(file_name) and path.isfile(file_name)
+        mod_config = Config()
+
+        module = app.load_module(file_name, file_path, mod_config, is_include = True)
+        for key, val in module.__dict__.items():
+            if key.startswith("_") or key == "hancho":
+                continue
+            setattr(self, key, val)
+
+#----------------------------------------
 
 class Module(Config):
-    pass
+    def __init__(self, _file_name, *args, **kwargs):
+        super().__init__(self, *args, **kwargs)
+        prefix = self.expand(self.file_path)
+        suffix = self.expand(_file_name)
+        file_name = abs_path(path.join(prefix, suffix))
+        file_path = path.dirname(file_name)
 
-Config.Config   = lambda self, *args, **kwargs : Config(self, *args, kwargs)
+        assert path.exists(file_name) and path.isfile(file_name)
+        self.file_name = file_name
+        self.file_path = file_path
+        module = app.load_module(file_name, file_path, self, is_include = False)
+
+        # Module loaded, copy all its public stuff into this config
+        for key, val in module.__dict__.items():
+            if key.startswith("_") or key == "hancho":
+                continue
+            setattr(self, key, val)
+
+#----------------------------------------
+
+# fmt: off
+Config.Config   = lambda self, *args, **kwargs            : Config(self, *args, kwargs)
 Config.Repo     = lambda self, repo_path, *args, **kwargs : Repo(repo_path, self, *args, **kwargs)
+Config.Command  = lambda self, command, *args, **kwargs   : Command(command, self, *args, **kwargs)
+Config.Task     = lambda self, *args, **kwargs            : Task(self, *args, kwargs)
+Config.Module   = lambda self, file_name, *args, **kwargs : Module(file_name, self, *args, kwargs)
+Config.Include  = lambda self, file_name, *args, **kwargs : Include(file_name, self, *args, kwargs)
 
-Config.Command  = lambda self, command, *args, **kwargs : Command(command, self, *args, **kwargs)
-Command.Command = lambda self, command, *args, **kwargs : Command(command, self, *args, **kwargs)
+Config.abs_path  = abs_path
+Config.rel_path  = rel_path
+Config.join_path = join_path
+Config.color     = color
+Config.glob      = glob.glob
+Config.len       = len
+Config.run_cmd   = _run_cmd
+Config.swap_ext  = _swap_ext
+Config.flatten   = flatten
+Config.print     = print
+Config.basename  = lambda x : path.basename(x)
 
-Config.Task = lambda self, *args, **kwargs : Task(self, *args, kwargs)
+Config.repo_name         = "{basename(repo_path)}"
+
+Config.abs_command_path  = "{abs_path(join_path(file_path,   command_path))}"
+Config.abs_source_path   = "{abs_path(join_path(file_path,   source_path))}"
+Config.abs_build_path    = "{abs_path(join_path(file_path,   build_path))}"
+
+Config.abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
+Config.abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
+Config.abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}"
+Config.abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}"
+
+Config.rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}"
+Config.rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}"
+
+Config.rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
+Config.rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
+Config.rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
+Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
+
+Config.nested_config = Config(foo = 1, bar = 2)
+
+Config.default_command_path = "{file_path}"
+Config.default_source_path  = "{file_path}"
+Config.default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}"
+
+Config.command_path = "{default_command_path}"
+Config.source_path  = "{default_source_path}"
+Config.build_path   = "{default_build_path}"
+# fmt: on
+
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -480,6 +563,13 @@ class Task:
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
+        #print("========================================")
+        #import pprint
+        #print(self)
+        #pprint.pprint(args)
+        #pprint.pprint(kwargs)
+        #print("========================================")
+
         self.config = Config(defaults, *args, kwargs)
         self.action = Config()
         self.reason = None
@@ -611,18 +701,18 @@ class Task:
                 return f"Rebuilding because {abs_file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(mtime(f) for f in self.action.abs_build_files)
+        min_out = min(_mtime(f) for f in self.action.abs_build_files)
 
         for abs_file in self.action.abs_source_files:
-            if mtime(abs_file) >= min_out:
+            if _mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
         for abs_file in self.action.abs_command_files:
-            if mtime(abs_file) >= min_out:
+            if _mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
         for mod in app.loaded_modules:
-            if mtime(mod.__file__) >= min_out:
+            if _mtime(mod.__file__) >= min_out:
                 return f"Rebuilding because {mod.__file__} has changed"
 
         # Check all dependencies in the depfile, if present.
@@ -646,7 +736,7 @@ class Task:
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [path.join(self.action.abs_command_path, d) for d in deplines]
                 for abs_file in deplines:
-                    if mtime(abs_file) >= min_out:
+                    if _mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
@@ -759,55 +849,6 @@ class Task:
 
 ####################################################################################################
 
-# fmt: off
-global_config = Config(
-    name = "Global Config",
-
-    abs_path  = abs_path,
-    rel_path  = rel_path,
-    join_path = join_path,
-    color     = color,
-    glob      = glob.glob,
-    len       = len,
-    run_cmd   = run_cmd,
-    swap_ext  = swap_ext,
-    flatten   = flatten,
-    print     = print,
-    basename  = lambda x : path.basename(x),
-
-    repo_name         = "{basename(repo_path)}",
-
-    abs_command_path  = "{abs_path(join_path(file_path,   command_path))}",
-    abs_source_path   = "{abs_path(join_path(file_path,   source_path))}",
-    abs_build_path    = "{abs_path(join_path(file_path,   build_path))}",
-
-    abs_command_files = "{flatten(join_path(abs_command_path, command_files))}",
-    abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}",
-    abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}",
-    abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}",
-
-    rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}",
-    rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}",
-
-    rel_command_files = "{rel_path(abs_command_files, abs_command_path)}",
-    rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}",
-    rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}",
-    rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}",
-
-    nested_config = Config(foo = 1, bar = 2),
-
-    default_command_path = "{file_path}",
-    default_source_path  = "{file_path}",
-    default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}",
-
-    command_path = "{default_command_path}",
-    source_path  = "{default_source_path}",
-    build_path   = "{default_build_path}",
-)
-# fmt: on
-
-####################################################################################################
-
 class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
     global variables. :D"""
@@ -836,31 +877,25 @@ class App:
 
     ########################################
 
-    def main(self, root_path, root_file):
+    def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
-        os.chdir(root_path)
-        root_file = abs_path(path.join(root_path, root_file))
-
-        repo_path = root_path
+        os.chdir(Config.root_path)
 
         time_a = time.perf_counter()
 
-        if global_config.debug:
-            log(f"global_config = {global_config}")
+        if Config.debug:
+            log(f"global config = {Config}")
 
         app.root_config = Config(
-            root_file    = root_file,
-            root_path    = root_path,
-            repo_path    = root_path,
-            file_name    = root_file,
-            file_path    = root_path,
+            file_name    = Config.root_file,
+            file_path    = Config.root_path,
         )
 
-        self.load_module(app.root_config)
+        self.load_module(Config.root_file, Config.root_path, app.root_config, is_include = False)
         time_b = time.perf_counter()
 
-        if global_config.debug or global_config.verbose:
+        if Config.debug or Config.verbose:
             log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
@@ -876,7 +911,7 @@ class App:
         """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
 
         if self.pending_tasks:
-            if global_config.shuffle:
+            if Config.shuffle:
                 log(f"Shufflin' {len(self.pending_tasks)} tasks")
                 random.shuffle(self.pending_tasks)
 
@@ -890,7 +925,7 @@ class App:
     async def async_run_tasks(self):
         # Root module(s) loaded. Run all tasks in the queue until we run out.
 
-        self.jobs_available = global_config.jobs
+        self.jobs_available = Config.jobs
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
@@ -905,11 +940,11 @@ class App:
                 await task.promise
             self.queue_pending_tasks()
         time_b = time.perf_counter()
-        if global_config.debug or global_config.verbose:
+        if Config.debug or Config.verbose:
             log(f"Running tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        if global_config.debug:
+        if Config.debug:
             log(f"tasks total:     {self.tasks_total}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
@@ -928,20 +963,18 @@ class App:
 
     ########################################
 
-    def load_module(self, build_config, is_include = False):
+    def load_module(self, file_name, file_path, config, is_include = False):
         """Loads a Hancho module ***while chdir'd into its directory***"""
-
-        file_name = build_config.file_name
-        file_path = build_config.file_path
 
         # Dedupe includes
         if is_include:
             for mod in self.loaded_modules:
                 if mod.__file__ == file_name:
-                    log(color(255, 255, 128) + f"Reusing module {file_name}" + color())
+                    if Config.debug or Config.verbose:
+                        log(color(255, 255, 128) + f"Reusing module {file_name}" + color())
                     return mod
 
-        if global_config.debug or global_config.verbose:
+        if Config.debug or Config.verbose:
             log(color(128,255,128) + f"Loading module {file_name}" + color())
 
         # There was no compatible module loaded, so make a new one.
@@ -953,7 +986,7 @@ class App:
         module = type(sys)(mod_name)
         module.__file__ = file_name
         module.__builtins__ = builtins
-        module.build_config = build_config
+        module.hancho = config
 
         self.loaded_modules.append(module)
 
@@ -968,8 +1001,6 @@ class App:
             types.FunctionType(code, module.__dict__)()
         finally:
             os.chdir(old_cwd)
-
-
         return module
 
     ########################################
@@ -977,8 +1008,8 @@ class App:
     async def acquire_jobs(self, count):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > global_config.jobs:
-            raise ValueError(f"Nedd {count} jobs, but pool is {global_config.jobs}.")
+        if count > Config.jobs:
+            raise ValueError(f"Nedd {count} jobs, but pool is {Config.jobs}.")
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
@@ -1032,7 +1063,12 @@ def main():
     root_path = abs_path(root_path)
     root_file = path.join(root_path, root_file)
 
-    global_config.update(flags.__dict__)
+    setattr(Config, "root_path", root_path)
+    setattr(Config, "root_file", root_file)
+    setattr(Config, "repo_path", root_path)
+
+    for key, val in flags.__dict__.items():
+        setattr(Config, key, val)
 
     # Unrecognized command line parameters also become config fields if they are flag-like
     unrecognized_flags = {}
@@ -1040,13 +1076,11 @@ def main():
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
             key = match.group(1)
             val = match.group(2)
-            val = maybe_as_number(val) if val is not None else True
-            unrecognized_flags[key] = val
-
-    global_config.update(unrecognized_flags)
+            val = _maybe_as_number(val) if val is not None else True
+            setattr(Config, key, val)
 
     result = -1
-    result = app.main(root_path, root_file)
+    result = app.main()
     sys.exit(result)
 
 if __name__ == "__main__":

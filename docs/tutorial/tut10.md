@@ -52,7 +52,9 @@ The ```description``` and ```command``` fields of our compile tasks are now iden
 
 https://github.com/aappleby/hancho/blob/b895dd1792e4bcaa47c670fc0c139278e77a1b4f/tutorial/tut11.hancho#L13-L16
 
-Extending config objects works like prototypal inheritance in Javascript - if you refer to ```config.foo``` and ```config``` doesn't have its own ```foo```, it'll look for ```foo``` in the parent object and so on - up until it hits ```app.global_config```, which we haven't talked about yet.
+# FIXME this is all wrong
+
+Extending config objects works like prototypal inheritance in Javascript - if you refer to ```config.foo``` and ```config``` doesn't have its own ```foo```, it'll look for ```foo``` in the parent object and so on - up until it hits ```app.global config```, which we haven't talked about yet.
 
 That removes another two lines of task-independent stuff from our compile task:
 

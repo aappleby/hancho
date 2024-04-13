@@ -1,4 +1,8 @@
-import hancho
+print("Loading scratch/subrepo/build.hancho")
 
-rules = hancho.load(build_config, "{root_path}/rules/rules.hancho")
-util_o = rules.compile(build_config, source_files = "src/util.cpp")
+print(hancho)
+
+rules = hancho.Include("{root_path}/rules/rules.hancho")
+util_o = rules.compile("src/util.cpp", **hancho)
+
+print("Loaded scratch/subrepo/build.hancho")

@@ -1,39 +1,10 @@
-import hancho
 
-submod = hancho.load("submod/build.hancho", **build_config)
+rules = hancho.Include("{root_path}/rules/rules.hancho")
 
-import pprint
+main_o = rules.compile("src/main.cpp")
+test_o = rules.compile("src/test.cpp")
 
-pprint.pprint(submod)
-print()
-print()
-print()
-pprint.pprint(submod.__dict__)
+submod = hancho.Module("submod/build.hancho")
 
-print()
-print()
-print()
-
-submod_config = hancho.Config()
-
-for key, val in hancho.__dict__.items():
-  if key.startswith("_"):
-    continue
-  if isinstance(val, type(hancho)):
-    continue
-  submod_config[key] = val
-
-submod_config.update(build_config)
-
-print(submod_config)
-
-#rules = hancho.load(build_config, "{root_path}/rules/rules.hancho")
-#test_o = rules.compile(build_config, source_files="src/test.cpp")
-#main_o = rules.compile(build_config, source_files="src/main.cpp")
-#
-#submod = hancho.load(build_config, "submod/build.hancho")
-#
-#subrepo = hancho.repo(build_config, repo_path = "subrepo")
-#subrepo_mod = hancho.load(subrepo, file_name = "build.hancho")
-#
-#rules.link(build_config, source_files = [test_o, main_o, submod.stuff_o, subrepo_mod.util_o], build_files = "scratch_app")
+subrepo = hancho.Repo("subrepo")
+subrepo_mod = subrepo.Module("build.hancho")
