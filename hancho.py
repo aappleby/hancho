@@ -298,14 +298,8 @@ def repo(config, _repo_path, *args, **kwargs):
     prefix = config.file_path
     suffix = config.expand(_repo_path)
     repo_path = _abs_path(path.join(prefix, suffix))
-    return Repo(
-        config,
-        *args,
-        **kwargs,
-        repo_path = repo_path,
-        file_name = None,
-        file_path = repo_path,
-    )
+    repo = Repo(config, *args, **kwargs, repo_path = repo_path, file_name = None, file_path = repo_path)
+    return repo
 
 def load(config, _file_name, is_include = False, *args, **kwargs):
     prefix = config.expand(config.file_path)
@@ -373,21 +367,20 @@ def expand(config, variant, fail_ok=False):
             return eval_macro(config, variant, fail_ok)
         case str() if template_regex.search(variant):
             return expand_template(config, variant, fail_ok)
-        case int() | bool() | float() | str():
+        case int() | bool() | float() | str() | staticmethod():
             return variant
         case _ if inspect.isfunction(variant):
             return variant
-        case _ if isinstance(variant, staticmethod):
-            return variant
         case _:
-            log(f"{_color(255, 0, 0)}Don't know how to expand {type(variant).__name__} ='{variant}'{_color()}")
-            raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
+            message = f"{_color(255, 0, 0)}Don't know how to expand {type(variant).__name__} ='{variant}'{_color()}"
+            log(message)
+            raise ValueError(message)
 
 
 def expand_template(config, template, fail_ok=False):
     """Replaces all macros in template with their stringified values."""
     if config.debug_expansion:
-        log(f"┏ Expand '{template}'")
+        log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
 
     try:
         app.expand_depth += 1
@@ -400,18 +393,15 @@ def expand_template(config, template, fail_ok=False):
                 variant = eval_macro(config, macro, fail_ok)
                 result += " ".join([str(s) for s in _flatten(variant)])
             except BaseError as err:
-                log(_color(255, 255, 0))
-                log(err)
-                log(f"Expanding template '{old_template}' failed!")
-                log(_color())
-                raise
+                log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed! - {err}{_color()}")
+                raise err
             template = template[span.end() :]
         result += template
     finally:
         app.expand_depth -= 1
 
     if config.debug_expansion:
-        log(f"┗ '{result}'")
+        log(("┃" * app.expand_depth) + f"┗ '{result}'")
     return result
 
 class Expander:
@@ -442,7 +432,7 @@ class Expander:
             except BaseException as err:
                 print(err)
                 if config.debug_expansion:
-                    log(("┃" * app.expand_depth) + f"┗ <failed, retrying w/ parent config>")
+                    log(("┃" * app.expand_depth) + f"┣ <failed, retrying w/ parent config>")
                 pass
         if expanded is None:
             raise ValueError(f"Expander could not expand '{result}'")
@@ -468,13 +458,8 @@ def eval_macro(config, macro, fail_ok=False):
             config = Expander([config])
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
-        # FIXME Template expansion failure is not an error if we're walking up the config chain
-        # while expanding a nested config
         if not fail_ok:
-            log(err)
-            log(_color(255, 255, 0), end="")
-            log(f"Expanding macro '{macro}' failed!")
-            log(_color(), end="")
+            log(f"{_color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{_color()}")
             raise err
     finally:
         app.expand_depth -= 1
@@ -825,6 +810,49 @@ class App:
 
     ########################################
 
+    def parse_args(self):
+        # pylint: disable=line-too-long
+        # fmt: off
+        parser = argparse.ArgumentParser()
+        parser.add_argument("root_file",               default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
+        parser.add_argument("-C", "--chdir",           default=".", dest="root_path", type=str,     help="Change directory before starting the build")
+        parser.add_argument("-j", "--jobs",            default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-v", "--verbose",         default=False, action="store_true",          help="Print verbose build info")
+        parser.add_argument("-q", "--quiet",           default=False, action="store_true",          help="Mute all output")
+        parser.add_argument("-n", "--dry_run",         default=False, action="store_true",          help="Do not run commands")
+        parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
+        parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
+        parser.add_argument("-s", "--shuffle",         default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
+        parser.add_argument("-e", "--debug_expansion", default=False, action="store_true",          help="Debug template & macro expansion")
+        # fmt: on
+
+        # Parse the command line
+        (flags, unrecognized) = parser.parse_known_args()
+
+        root_file = flags.__dict__.pop("root_file")
+        root_path = flags.__dict__.pop("root_path")
+
+        root_path = _abs_path(root_path)
+        root_file = path.join(root_path, root_file)
+
+        setattr(Config, "root_path", root_path)
+        setattr(Config, "root_file", root_file)
+        setattr(Config, "repo_path", root_path)
+
+        for key, val in flags.__dict__.items():
+            setattr(Config, key, val)
+
+        # Unrecognized command line parameters also become config fields if they are flag-like
+        unrecognized_flags = {}
+        for span in unrecognized:
+            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+                key = match.group(1)
+                val = match.group(2)
+                val = _maybe_as_number(val) if val is not None else True
+                setattr(Config, key, val)
+
+    ########################################
+
     def main(self):
         """Our main() just handles command line args and delegates to async_main()"""
 
@@ -979,46 +1007,7 @@ app = App()
 
 def main():
 
-    # pylint: disable=line-too-long
-    # fmt: off
-    parser = argparse.ArgumentParser()
-    parser.add_argument("root_file",               default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
-    parser.add_argument("-C", "--chdir",           default=".", dest="root_path", type=str,     help="Change directory before starting the build")
-    parser.add_argument("-j", "--jobs",            default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
-    parser.add_argument("-v", "--verbose",         default=False, action="store_true",          help="Print verbose build info")
-    parser.add_argument("-q", "--quiet",           default=False, action="store_true",          help="Mute all output")
-    parser.add_argument("-n", "--dry_run",         default=False, action="store_true",          help="Do not run commands")
-    parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
-    parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
-    parser.add_argument("-s", "--shuffle",         default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
-    parser.add_argument("-e", "--debug_expansion", default=False, action="store_true",          help="Debug template & macro expansion")
-    # fmt: on
-
-    # Parse the command line
-    (flags, unrecognized) = parser.parse_known_args()
-
-    root_file = flags.__dict__.pop("root_file")
-    root_path = flags.__dict__.pop("root_path")
-
-    root_path = _abs_path(root_path)
-    root_file = path.join(root_path, root_file)
-
-    setattr(Config, "root_path", root_path)
-    setattr(Config, "root_file", root_file)
-    setattr(Config, "repo_path", root_path)
-
-    for key, val in flags.__dict__.items():
-        setattr(Config, key, val)
-
-    # Unrecognized command line parameters also become config fields if they are flag-like
-    unrecognized_flags = {}
-    for span in unrecognized:
-        if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-            key = match.group(1)
-            val = match.group(2)
-            val = _maybe_as_number(val) if val is not None else True
-            setattr(Config, key, val)
-
+    app.parse_args()
     result = -1
     result = app.main()
     sys.exit(result)
