@@ -1,6 +1,8 @@
-rules = build_config.load("rules.hancho")
-rules.touch_outputs(
-  "src/test.cpp",
-  "result.txt",
-  command_files = ["build/dummy.txt"]
+import hancho
+
+hancho.Task(
+  command = "touch {rel_build_files[0]}",
+  command_files = ["build/tests/dummy.txt"],
+  source_files = "src/test.cpp",
+  build_files = "result.txt",
 )

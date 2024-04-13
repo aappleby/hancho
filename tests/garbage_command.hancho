@@ -1,2 +1,7 @@
-garbage_command = build_config.rule(command  = "aklsjdflksjdlfkjldfk")
-garbage_command(__file__, "result.txt")
+import hancho
+
+hancho.Task(
+  command  = "aklsjdflksjdlfkjldfk",
+  source_files = __file__,
+  build_files = "result.txt",
+)

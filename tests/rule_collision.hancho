@@ -1,6 +1,14 @@
 """Multiple rules creating same output file = bad"""
+import hancho
 
-rule = build_config.rule(command = "touch {rel_build_files}")
+hancho.Task(
+  command = "touch {rel_build_files}",
+  source_files = __file__,
+  build_files = "colliding_output.txt",
+)
 
-taskA = rule(__file__, "colliding_output.txt")
-taskB = rule(__file__, "colliding_output.txt")
+hancho.Task(
+  command = "touch {rel_build_files}",
+  source_files = __file__,
+  build_files = "colliding_output.txt",
+)

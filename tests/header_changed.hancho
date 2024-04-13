@@ -1,2 +1,7 @@
-rules = build_config.load("rules.hancho")
-rules.compile_cpp("src/test.cpp")
+import hancho
+
+rules = hancho.load("rules.hancho", **build_config)
+rules.compile_cpp(
+  "src/test.cpp",
+  **build_config
+)

@@ -7,14 +7,14 @@ if os.name == 'nt':
     command     = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
-    depformat   = "gcc",
+    depformat   = "msvc",
   )
 elif os.name == 'posix':
   compile_cpp = hancho.Rule(
     command     = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
-    depformat   = "msvc",
+    depformat   = "gcc",
   )
 else:
   assert False

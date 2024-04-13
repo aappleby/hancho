@@ -111,7 +111,7 @@ Different ways to merge Configs together:
 # 1.
 #   compile = build_config | Config(...)
 
-#   compile = build_config.extend(...)
+#   compile = build_config.config(...)
 #     I don't like this one as it implies that build_config could be doing something in addition to just the key merge
 
 #   compile = Config(..., **build_config)

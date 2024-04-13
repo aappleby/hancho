@@ -1,13 +1,19 @@
-# tests/cancellation.hancho
+import hancho
 
-touch = build_config.rule(command = "touch {rel_build_files}")
+task_that_fails = hancho.Task(
+  command = "(exit 255)",
+  source_files = [],
+  build_files = "fail_result.txt"
+)
 
-fail = build_config.rule(command = "(exit 255)")
+task_that_passes = hancho.Task(
+  command = "touch {rel_build_files}",
+  source_files = [],
+  build_files = "pass_result.txt"
+)
 
-task_that_fails  = fail ([], "fail_result.txt")
-task_that_passes = touch([], "pass_result.txt")
-
-touch(
-  [task_that_fails, task_that_passes],
-  "should_not_be_created.txt"
+should_be_cancelled = hancho.Task(
+  command = "touch {rel_build_files}",
+  source_files = [task_that_fails, task_that_passes],
+  build_files = "should_not_be_created.txt"
 )

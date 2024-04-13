@@ -16,11 +16,11 @@ hancho.Task(command_path = "examples/hello_world", **clean_build)
 
 hancho.Task(command_path = "examples/meson", **clean_build)
 
-#hancho.Task(
-#  desc = "Run all tests",
-#  command_path = "tests",
-#  command = [
-#    "rm -rf build",
-#    "./run_tests.py > /dev/null"
-#  ]
-#)
+hancho.Task(
+  desc = "Run all tests",
+  command_path = "tests",
+  command = [
+    "rm -rf build",
+    "./run_tests.py > /dev/null"
+  ]
+)

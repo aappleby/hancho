@@ -1,2 +1,7 @@
-garbage_template = build_config.rule(command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}")
-garbage_template(__file__, "result.txt")
+import hancho
+
+hancho.Task(
+  command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}",
+  source_files = __file__,
+  build_files = "result.txt",
+)

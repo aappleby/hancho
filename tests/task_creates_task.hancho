@@ -1,9 +1,15 @@
-
-rule1 = build_config.rule(command = "touch {rel_build_files}")
+import hancho
 
 def callback(task):
-  rule1([], "dummy.txt")
+  hancho.Task(
+    command = "touch {rel_build_files}",
+    source_files = [],
+    build_files = "dummy.txt"
+  )
   return []
 
-rule2 = build_config.rule(command = callback)
-rule2([], [])
+hancho.Task(
+  command = callback,
+  source_files = [],
+  build_files = []
+)

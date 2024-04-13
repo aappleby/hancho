@@ -1,2 +1,7 @@
-doesnt_create_output = build_config.rule(command = ":")
-doesnt_create_output(__file__, "result.txt")
+import hancho
+
+hancho.Task(
+  command = ":",
+  source_files = __file__,
+  build_files = "result.txt"
+)

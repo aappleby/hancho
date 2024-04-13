@@ -235,6 +235,15 @@ class Config:
     def __init__(self, *args, **kwargs):
         self.update(*args, kwargs)
 
+    def __repr__(self):
+        return f"{dump_object(self)} = {dump_config(self)}"
+
+    def __or__(self, val):
+        return type(val)(self, val)
+
+    def __ior__(self, val):
+        return self.update(val)
+
     def __getitem__(self, key):
         return self.get(key)
 
@@ -250,9 +259,6 @@ class Config:
             raise ValueError(f"Could not find key '{key}'")
         return default
 
-    def __repr__(self):
-        return f"{dump_object(self)} = {dump_config(self)}"
-
     def update(self, *args, **kwargs):
         for arg in args:
             self.__dict__.update(arg)
@@ -265,17 +271,14 @@ class Config:
     def expand(self, variant):
         return expand(self, variant)
 
-    def extend(self, *args, **kwargs):
+    def config(self, *args, **kwargs):
         return Config(self, *args, kwargs)
+
+    def rule(self, *args, **kwargs):
+        return Rule(self, *args, kwargs)
 
     def task(self, *args, **kwargs):
         return Task(self, *args, kwargs)
-
-    def __or__(self, val):
-        return type(val)(self, val)
-
-    def __ior__(self, val):
-        return self.update(val)
 
 class Rule(Config):
     """A Rule is a Config that we can call like a function."""

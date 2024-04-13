@@ -293,7 +293,7 @@ is a better option for common fields that shouldn't be globally visible:
 
 ```py
 >>> base_rule = Rule(bar = "Hancho")
->>> rule = base_rule.extend(foo = "{bar}")
+>>> rule = base_rule.rule(foo = "{bar}")
 >>> expand("{foo}", rule)
 'Hancho'
 ```

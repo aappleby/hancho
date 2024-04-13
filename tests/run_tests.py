@@ -174,152 +174,152 @@ class TestHancho(unittest.TestCase):
         self.assertTrue("FileNotFoundError" in result.stderr)
         self.assertTrue("does_not_exist.txt" in result.stderr)
 
-#    def test_missing_dep(self):
-#        """Missing dep should fail"""
-#        result = run_hancho("missing_dep")
-#        self.assertTrue("FileNotFoundError" in result.stderr)
-#        self.assertTrue("missing_dep.txt" in result.stderr)
-#
-#    def test_expand_failed_to_terminate(self):
-#        """A recursive text template should cause an 'expand failed to terminate' error."""
-#        result = run_hancho("expand_failed_to_terminate")
-#        self.assertTrue(
-#            "RecursionError: Expanding '{flarp}' failed to terminate" in result.stderr
-#        )
-#
-#    def test_garbage_command(self):
-#        """Non-existent command line commands should cause Hancho to fail the build."""
-#        result = run_hancho("garbage_command")
-#        self.assertTrue(
-#            "ValueError: Command 'aklsjdflksjdlfkjldfk' exited with return code 127"
-#            in result.stderr
-#        )
-#
-#    def test_garbage_template(self):
-#        """Templates that can't be eval()d should cause Hancho to fail the build."""
-#        result = run_hancho("garbage_template")
-#        self.assertTrue("SyntaxError: invalid syntax" in result.stderr)
-#
-#    def test_rule_collision(self):
-#        """If multiple rules generate the same output file, that's an error."""
-#        result = run_hancho("rule_collision")
-#        self.assertTrue("NameError: Multiple rules build" in result.stderr)
-#
-#    def test_always_rebuild_if_no_inputs(self):
-#        """A rule with no inputs should always rebuild"""
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime1 = mtime("build/result.txt")
-#
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime2 = mtime("build/result.txt")
-#
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime3 = mtime("build/result.txt")
-#        self.assertLess(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_build_path_works(self):
-#        """Customizing build_path should put output files in build_path"""
-#        run_hancho("build_path_works")
-#        self.assertTrue(path.exists("build/build_path_works/result.txt"))
-#
-#    def test_dep_changed(self):
-#        """Changing a file in deps[] should trigger a rebuild"""
-#        os.makedirs("build", exist_ok=True)
-#        Path("build/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime1 = mtime("build/result.txt")
-#
-#        run_hancho("dep_changed")
-#        mtime2 = mtime("build/result.txt")
-#
-#        Path("build/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime3 = mtime("build/result.txt")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_does_create_output(self):
-#        """Output files should appear in build/ by default"""
-#        run_hancho("does_create_output")
-#        self.assertTrue(path.exists("build/result.txt"))
-#
-#    def test_doesnt_create_output(self):
-#        """Having a file mentioned in files_out should not magically create it"""
-#        run_hancho("doesnt_create_output")
-#        self.assertFalse(path.exists("build/result.txt"))
-#
-#    def test_header_changed(self):
-#        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
-#        run_hancho("header_changed")
-#        mtime1 = mtime("build/src/test.o")
-#
-#        run_hancho("header_changed")
-#        mtime2 = mtime("build/src/test.o")
-#
-#        Path("src/test.hpp").touch()
-#        run_hancho("header_changed")
-#        mtime3 = mtime("build/src/test.o")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_input_changed(self):
-#        """Changing a source file should trigger a rebuild"""
-#        run_hancho("input_changed")
-#        mtime1 = mtime("build/src/test.o")
-#
-#        run_hancho("input_changed")
-#        mtime2 = mtime("build/src/test.o")
-#
-#        Path("src/test.cpp").touch()
-#        run_hancho("input_changed")
-#        mtime3 = mtime("build/src/test.o")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_multiple_commands(self):
-#        """Rules with arrays of commands should run all of them"""
-#        run_hancho("multiple_commands")
-#        self.assertTrue(path.exists("build/foo.txt"))
-#        self.assertTrue(path.exists("build/bar.txt"))
-#        self.assertTrue(path.exists("build/baz.txt"))
-#
-#    def test_arbitrary_flags(self):
-#        """Passing arbitrary flags to Hancho should work"""
-#        os.system(
-#            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
-#        )
-#        self.assertTrue(path.exists("build/flarp.txt"))
-#
-#    def test_sync_command(self):
-#        """The 'command' field of rules should be OK handling a sync function"""
-#        run_hancho("sync_command")
-#        self.assertTrue(path.exists("build/result.txt"))
-#
-#    def test_cancellation(self):
-#        """A task that receives a cancellation exception should not run."""
-#        self.assertNotEqual(0, run_hancho("cancellation"))
-#        self.assertTrue(Path("build/pass_result.txt").exists())
-#        self.assertFalse(Path("build/fail_result.txt").exists())
-#        self.assertFalse(Path("build/should_not_be_created.txt").exists())
-#
-#    def test_task_creates_task(self):
-#        """Tasks using callbacks can create new tasks when they run."""
-#        result = run_hancho("task_creates_task")
-#        self.assertEqual(0, result.returncode)
-#        self.assertTrue(Path("build/dummy.txt").exists())
-#
-#    def test_tons_of_tasks(self):
-#        """We should be able to queue up 1000+ tasks at once."""
-#        result = run_hancho("tons_of_tasks")
-#        self.assertEqual(0, result.returncode)
-#        self.assertEqual(1000, len(glob.glob("build/*")))
-#
-#    def test_job_count(self):
-#        """We should be able to dispatch tasks that require various numbers of jobs/cores."""
-#        result = run_hancho("job_count")
-#        self.assertEqual(0, result.returncode)
-#        self.assertTrue(Path("build/slow_result.txt").exists())
+    def test_missing_dep(self):
+        """Missing dep should fail"""
+        result = run_hancho("missing_dep")
+        self.assertTrue("FileNotFoundError" in result.stderr)
+        self.assertTrue("missing_dep.txt" in result.stderr)
+
+    def test_expand_failed_to_terminate(self):
+        """A recursive text template should cause an 'expand failed to terminate' error."""
+        result = run_hancho("expand_failed_to_terminate")
+        self.assertTrue(
+            "Expander could not expand 'asdf {flarp}'" in result.stderr
+        )
+
+    def test_garbage_command(self):
+        """Non-existent command line commands should cause Hancho to fail the build."""
+        result = run_hancho("garbage_command")
+        self.assertTrue(
+            "ValueError: Command 'aklsjdflksjdlfkjldfk' exited with return code 127"
+            in result.stderr
+        )
+
+    def test_garbage_template(self):
+        """Templates that can't be eval()d should cause Hancho to fail the build."""
+        result = run_hancho("garbage_template")
+        self.assertTrue("SyntaxError: invalid syntax" in result.stderr)
+
+    def test_rule_collision(self):
+        """If multiple rules generate the same output file, that's an error."""
+        result = run_hancho("rule_collision")
+        self.assertTrue("NameError: Multiple rules build" in result.stderr)
+
+    def test_always_rebuild_if_no_inputs(self):
+        """A rule with no inputs should always rebuild"""
+        run_hancho("always_rebuild_if_no_inputs")
+        mtime1 = mtime("build/tests/result.txt")
+
+        run_hancho("always_rebuild_if_no_inputs")
+        mtime2 = mtime("build/tests/result.txt")
+
+        run_hancho("always_rebuild_if_no_inputs")
+        mtime3 = mtime("build/tests/result.txt")
+        self.assertLess(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_build_path_works(self):
+        """Customizing build_path should put output files in build_path"""
+        run_hancho("build_path_works")
+        self.assertTrue(path.exists("build/build_path_works/result.txt"))
+
+    def test_dep_changed(self):
+        """Changing a file in deps[] should trigger a rebuild"""
+        os.makedirs("build/tests", exist_ok=True)
+        Path("build/tests/dummy.txt").touch()
+        run_hancho("dep_changed")
+        mtime1 = mtime("build/tests/result.txt")
+
+        run_hancho("dep_changed")
+        mtime2 = mtime("build/tests/result.txt")
+
+        Path("build/tests/dummy.txt").touch()
+        run_hancho("dep_changed")
+        mtime3 = mtime("build/tests/result.txt")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_does_create_output(self):
+        """Output files should appear in build/ by default"""
+        run_hancho("does_create_output")
+        self.assertTrue(path.exists("build/tests/result.txt"))
+
+    def test_doesnt_create_output(self):
+        """Having a file mentioned in files_out should not magically create it"""
+        run_hancho("doesnt_create_output")
+        self.assertFalse(path.exists("build/tests/result.txt"))
+
+    def test_header_changed(self):
+        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
+        run_hancho("header_changed")
+        mtime1 = mtime("build/tests/src/test.o")
+
+        run_hancho("header_changed")
+        mtime2 = mtime("build/tests/src/test.o")
+
+        Path("src/test.hpp").touch()
+        run_hancho("header_changed")
+        mtime3 = mtime("build/tests/src/test.o")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_input_changed(self):
+        """Changing a source file should trigger a rebuild"""
+        run_hancho("input_changed")
+        mtime1 = mtime("build/tests/src/test.o")
+
+        run_hancho("input_changed")
+        mtime2 = mtime("build/tests/src/test.o")
+
+        Path("src/test.cpp").touch()
+        run_hancho("input_changed")
+        mtime3 = mtime("build/tests/src/test.o")
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_multiple_commands(self):
+        """Rules with arrays of commands should run all of them"""
+        run_hancho("multiple_commands")
+        self.assertTrue(path.exists("build/tests/foo.txt"))
+        self.assertTrue(path.exists("build/tests/bar.txt"))
+        self.assertTrue(path.exists("build/tests/baz.txt"))
+
+    def test_arbitrary_flags(self):
+        """Passing arbitrary flags to Hancho should work"""
+        os.system(
+            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
+        )
+        self.assertTrue(path.exists("build/tests/flarp.txt"))
+
+    def test_sync_command(self):
+        """The 'command' field of rules should be OK handling a sync function"""
+        run_hancho("sync_command")
+        self.assertTrue(path.exists("build/tests/result.txt"))
+
+    def test_cancellation(self):
+        """A task that receives a cancellation exception should not run."""
+        self.assertNotEqual(0, run_hancho("cancellation"))
+        self.assertTrue(Path("build/tests/pass_result.txt").exists())
+        self.assertFalse(Path("build/tests/fail_result.txt").exists())
+        self.assertFalse(Path("build/tests/should_not_be_created.txt").exists())
+
+    def test_task_creates_task(self):
+        """Tasks using callbacks can create new tasks when they run."""
+        result = run_hancho("task_creates_task")
+        self.assertEqual(0, result.returncode)
+        self.assertTrue(Path("build/tests/dummy.txt").exists())
+
+    def test_tons_of_tasks(self):
+        """We should be able to queue up 1000+ tasks at once."""
+        result = run_hancho("tons_of_tasks")
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(1000, len(glob.glob("build/tests/*")))
+
+    def test_job_count(self):
+        """We should be able to dispatch tasks that require various numbers of jobs/cores."""
+        result = run_hancho("job_count")
+        self.assertEqual(0, result.returncode)
+        self.assertTrue(Path("build/tests/slow_result.txt").exists())
 
 
 ################################################################################
