@@ -1,10 +1,10 @@
 
-rules = hancho.Include("{root_path}/rules/rules.hancho")
+rules = hancho.include("{root_path}/rules/rules.hancho")
 
 main_o = rules.compile("src/main.cpp")
 test_o = rules.compile("src/test.cpp")
 
-submod = hancho.Module("submod/build.hancho")
+submod = hancho.module("submod/build.hancho")
 
-subrepo = hancho.Repo("subrepo")
-subrepo_mod = subrepo.Module("build.hancho")
+subrepo = hancho.repo("subrepo")
+subrepo_mod = subrepo.module("build.hancho")

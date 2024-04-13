@@ -1,2 +1,2 @@
-rules = hancho.Include("{root_path}/rules/rules.hancho")
+rules = hancho.include("{root_path}/rules/rules.hancho")
 stuff_o = rules.compile("src/stuff.cpp")

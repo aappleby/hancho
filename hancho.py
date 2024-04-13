@@ -203,21 +203,17 @@ class Config:
     def __repr__(self):
         return f"{_dump_object(self)} = {_dump_config(self)}"
 
-    def __or__(self, val):
-        return type(val)(self, val)
-
-    def __ior__(self, val):
-        return self.update(val)
-
-    def __getitem__(self, key):
-        return getattr(self, key)
-
     def update(self, *args, **kwargs):
         for arg in args:
             self.__dict__.update(arg)
         self.__dict__.update(kwargs)
         return self
 
+    # required to use config as mapping in eval()
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    # required to support "self.__dict__.update(config)"
     def keys(self):
         return self.__dict__.keys()
 
@@ -248,68 +244,59 @@ class Command(Config):
 
 #----------------------------------------
 
+def repo(config, _repo_path, *args, **kwargs):
+    repo_config = Repo(config, *args, **kwargs)
+    prefix = repo_config.file_path
+    suffix = repo_config.expand(_repo_path)
+    repo_path = abs_path(path.join(prefix, suffix))
+
+    assert path.exists(repo_path) and path.isdir(repo_path)
+    repo_config.repo_path = repo_path
+    repo_config.file_name = None
+    repo_config.file_path = repo_path
+    return repo_config
+
+def load(config, _file_name, is_include = False, *args, **kwargs):
+    mod_config = Include(config, *args, **kwargs) if is_include else Module(config, *args, **kwargs)
+
+    prefix = config.expand(config.file_path)
+    suffix = config.expand(_file_name)
+    file_name = abs_path(path.join(prefix, suffix))
+    file_path = path.dirname(file_name)
+
+    if not is_include:
+        mod_config.file_name = file_name
+        mod_config.file_path = file_path
+
+        assert path.exists(file_name) and path.isfile(file_name)
+    module = app.load_module(file_name, file_path, mod_config, is_include = True)
+
+    # Module loaded, copy all its public stuff into this config
+    for key, val in module.__dict__.items():
+        if key.startswith("_") or key == "hancho":
+            continue
+        setattr(mod_config, key, val)
+    return mod_config
+
 class Repo(Config):
-    def __init__(self, _repo_path, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        prefix = self.file_path
-        suffix = self.expand(_repo_path)
-        repo_path = abs_path(path.join(prefix, suffix))
-
-        assert path.exists(repo_path) and path.isdir(repo_path)
-        self.repo_path = repo_path
-        self.file_name = None
-        self.file_path = repo_path
-
-#----------------------------------------
+    pass
 
 class Include(Config):
-    def __init__(self, _file_name, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        prefix = self.expand(self.file_path)
-        suffix = self.expand(_file_name)
-        file_name = abs_path(path.join(prefix, suffix))
-        file_path = path.dirname(file_name)
-
-        assert path.exists(file_name) and path.isfile(file_name)
-        mod_config = Config()
-
-        module = app.load_module(file_name, file_path, mod_config, is_include = True)
-        for key, val in module.__dict__.items():
-            if key.startswith("_") or key == "hancho":
-                continue
-            setattr(self, key, val)
-
-#----------------------------------------
+    pass
 
 class Module(Config):
-    def __init__(self, _file_name, *args, **kwargs):
-        super().__init__(self, *args, **kwargs)
-        prefix = self.expand(self.file_path)
-        suffix = self.expand(_file_name)
-        file_name = abs_path(path.join(prefix, suffix))
-        file_path = path.dirname(file_name)
-
-        assert path.exists(file_name) and path.isfile(file_name)
-        self.file_name = file_name
-        self.file_path = file_path
-        module = app.load_module(file_name, file_path, self, is_include = False)
-
-        # Module loaded, copy all its public stuff into this config
-        for key, val in module.__dict__.items():
-            if key.startswith("_") or key == "hancho":
-                continue
-            setattr(self, key, val)
+    pass
 
 #----------------------------------------
 
 # fmt: off
-Config.Config   = lambda self, *args, **kwargs            : Config(self, *args, kwargs)
-Config.Repo     = lambda self, repo_path, *args, **kwargs : Repo(repo_path, self, *args, **kwargs)
-Config.Command  = lambda self, command, *args, **kwargs   : Command(command, self, *args, **kwargs)
-Config.Task     = lambda self, *args, **kwargs            : Task(self, *args, kwargs)
-Config.Module   = lambda self, file_name, *args, **kwargs : Module(file_name, self, *args, kwargs)
-Config.Include  = lambda self, file_name, *args, **kwargs : Include(file_name, self, *args, kwargs)
+Config.config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
+Config.extend   = lambda self,            *args, **kwargs : Config(self, *args, kwargs)
+Config.repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
+Config.command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
+Config.task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
+Config.module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
+Config.include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
 
 Config.abs_path  = staticmethod(abs_path)
 Config.rel_path  = staticmethod(rel_path)
@@ -341,8 +328,6 @@ Config.rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
 Config.rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
 Config.rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
 Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
-
-Config.nested_config = Config(foo = 1, bar = 2)
 
 Config.default_command_path = "{file_path}"
 Config.default_source_path  = "{file_path}"
@@ -397,6 +382,7 @@ def expand(config, variant, fail_ok=False):
         case _ if isinstance(variant, staticmethod):
             return variant
         case _:
+            log(f"{color(255, 0, 0)}Don't know how to expand {type(variant).__name__} ='{variant}'{color()}")
             raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
@@ -415,8 +401,9 @@ def expand_template(config, template, fail_ok=False):
                 macro = template[span.start() : span.end()]
                 variant = eval_macro(config, macro, fail_ok)
                 result += " ".join([str(s) for s in flatten(variant)])
-            except:
+            except BaseError as err:
                 log(color(255, 255, 0))
+                log(err)
                 log(f"Expanding template '{old_template}' failed!")
                 log(color())
                 raise
@@ -486,14 +473,14 @@ def eval_macro(config, macro, fail_ok=False):
         else:
             result = eval(macro[1:-1], {}, config)
     except BaseException as err:
-        print(err)
         # FIXME Template expansion failure is not an error if we're walking up the config chain
         # while expanding a nested config
         if not fail_ok:
+            log(err)
             log(color(255, 255, 0), end="")
             log(f"Expanding macro '{macro}' failed!")
             log(color(), end="")
-        raise
+            raise err
     finally:
         app.expand_depth -= 1
 
@@ -535,13 +522,6 @@ class Task:
 
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
-
-        #print("========================================")
-        #import pprint
-        #print(self)
-        #pprint.pprint(args)
-        #pprint.pprint(kwargs)
-        #print("========================================")
 
         self.config = Config(defaults, *args, kwargs)
         self.action = Config()
@@ -939,15 +919,7 @@ class App:
     def load_module(self, file_name, file_path, config, is_include = False):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        # Dedupe includes
-        if is_include:
-            for mod in self.loaded_modules:
-                if mod.__file__ == file_name:
-                    if Config.debug or Config.verbose:
-                        log(color(255, 255, 128) + f"Reusing module {file_name}" + color())
-                    return mod
-
-        if Config.debug or Config.verbose:
+        if config.debug or config.verbose:
             log(color(128,255,128) + f"Loading module {file_name}" + color())
 
         # There was no compatible module loaded, so make a new one.
