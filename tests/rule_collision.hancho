@@ -1,5 +1,4 @@
 """Multiple rules creating same output file = bad"""
-import hancho
 
 hancho.Task(
   command = "touch {rel_build_files}",

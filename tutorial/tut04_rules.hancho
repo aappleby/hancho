@@ -1,5 +1,3 @@
-import hancho
-
 def compile_cpp(source, config):
   build_path = config.build_path
   obj = source.replace('.cpp', '.o')

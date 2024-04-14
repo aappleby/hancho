@@ -1,7 +1,6 @@
 # tests/should_pass.hancho
-import hancho
 
-hancho.Task(
+hancho.task(
   desc = "This task should pass",
   command = "(exit 0)",
 )

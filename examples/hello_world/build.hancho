@@ -1,18 +1,15 @@
 # examples/hello_world/build.hancho
-import hancho
 
-compile = hancho.Command(
+compile = hancho.command(
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   desc        = "Compile {rel_source_files} -> {rel_build_files}",
   build_files = "{swap_ext(rel_source_files, '.o')}",
   build_deps  = "{swap_ext(rel_source_files, '.d')}",
-  **build_config
 )
 
-link = hancho.Command(
+link = hancho.command(
   command = "g++ {rel_source_files} -o {rel_build_files}",
   desc    = "Link {rel_source_files} -> {rel_build_files}",
-  **build_config
 )
 
 main_o = compile("main.cpp")

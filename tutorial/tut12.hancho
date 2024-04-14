@@ -1,38 +1,25 @@
 # tutorial/tut12.hancho
-import hancho
 
-common = hancho.Config(
+common = hancho.extend(
   command_path  = ".",
   command_files = [],
   build_path    = "build/tut12",
 )
 
-compile = hancho.Config(
+compile = common.extend(
   desc        = "Compile {source_files}",
   command     = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   build_files = "{swap_ext(source_files, '.o')}",
   build_deps  = "{swap_ext(source_files, '.d')}",
-  **common,
 )
 
-main_o = hancho.Task(
-  source_files = "src/main.cpp",
-  **compile,
-)
+main_o = compile.Task(source_files = "src/main.cpp")
 
-util_o = hancho.Task(
-  source_files = "src/util.cpp",
-  **compile,
-)
+util_o = hancho.Task(source_files = "src/util.cpp")
 
-link = hancho.Config(
+link = common.extend(
   desc    = "Link {source_files} into {build_files}",
   command = "g++ {source_files} -o {build_path}/{build_files}",
-  **common,
 )
 
-app = hancho.Task(
-  source_files = [main_o, util_o],
-  build_files  = "app",
-  **link,
-)
+app = link.Task(source_files = [main_o, util_o], build_files  = "app")

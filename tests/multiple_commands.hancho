@@ -1,10 +1,9 @@
-
-multiple_commands = build_config.Command(
-  command = [
-    "echo foo > {rel_build_files[0]}",
-    "echo bar > {rel_build_files[1]}",
-    "echo baz > {rel_build_files[2]}"
-  ]
+multiple_commands = hancho.command(
+    [
+        "echo foo > {rel_build_files[0]}",
+        "echo bar > {rel_build_files[1]}",
+        "echo baz > {rel_build_files[2]}",
+    ]
 )
 
 multiple_commands(__file__, ["foo.txt", "bar.txt", "baz.txt"])

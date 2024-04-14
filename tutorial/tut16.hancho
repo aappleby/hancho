@@ -1,20 +1,17 @@
 # tutorial/tut16.hancho
-import hancho
 
-build_config.build_tag = "tut16"
+hancho.build_tag = "tut16"
 
-compile = hancho.Command(
-  desc        = "Compile {rel_source_files}",
+compile = hancho.command(
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
+  desc        = "Compile {rel_source_files}",
   build_files = "{swap_ext(source_files, '.o')}",
   build_deps  = "{swap_ext(source_files, '.d')}",
-  **build_config,
 )
 
-link = hancho.Command(
-  desc      = "Link {rel_source_files} into {rel_build_files}",
+link = hancho.command(
   command   = "g++ {rel_source_files} -o {rel_build_files}",
-  **build_config,
+  desc      = "Link {rel_source_files} into {rel_build_files}",
 )
 
 main_o = compile("src/main.cpp")

@@ -108,23 +108,17 @@ https://github.com/aappleby/hancho/blob/76db54866112e3847d17391f6cb27680297d2781
 FIXME write a section for this -
 Different ways to merge Configs together:
 ```
-# 1.
-#   compile = build_config | Config(...)
+#   compile = config | Config(...)
+#   compile = config.config(...)
+#     I don't like this one as it implies that config could be doing something in addition to just the key merge
+#   compile = Config(..., **config)
+#   compile = Config(config, ...)
+#   compile = Config(config), compile.update(...)
+#   other = Config(...), compile = Config(config, other)
+#   compile = Config(config), compile |= Config(...)
+#   compile = config.extend(...)
 
-#   compile = build_config.config(...)
-#     I don't like this one as it implies that build_config could be doing something in addition to just the key merge
-
-#   compile = Config(..., **build_config)
-
-#   compile = Config(build_config, ...)
-
-#   compile = Config(build_config), compile.update(...)
-
-#   other = Config(...), compile = Config(build_config, other)
-
-#   compile = Config(build_config), compile |= Config(...)
-
-# main_o = (build_config | compile)(...)
+# main_o = (config | compile)(...)
 ```
 
 

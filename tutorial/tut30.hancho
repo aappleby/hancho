@@ -1,8 +1,7 @@
 # tutorial/tut30.hancho
-import hancho
 
-build_config.build_tag = "tut30"
+hancho.build_tag = "tut30"
 
 rules = hancho.include("tut30_rules.hancho")
 
-app = rules.c_binary(["src/main.cpp", "src/util.cpp"], "app", **build_config)
+app = rules.c_binary(["src/main.cpp", "src/util.cpp"], "app")

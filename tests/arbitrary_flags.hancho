@@ -1,7 +1,6 @@
-import hancho
 
-hancho.Task(
+hancho.task(
   command = "touch {rel_build_files}",
   source_files = [],
-  build_files = build_config.output_filename,
+  build_files = hancho.output_filename,
 )

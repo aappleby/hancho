@@ -1,5 +1,2 @@
-rule = build_config.rule(
-  command = "touch {rel_build_files}",
-)
-
-rule([], "repo2.txt")
+touch = hancho.command("touch {rel_build_files}")
+touch([], "repo2.txt")

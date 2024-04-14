@@ -1,7 +1,6 @@
 # tests/check_output.hancho
-import hancho
 
-hancho.Task(
+hancho.task(
   command = "echo foo > {rel_build_files[0]}",
   source_files = [],
   build_files = ["result.txt", "not_modified.txt"]

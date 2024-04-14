@@ -1,7 +1,5 @@
-import hancho
-
 for i in range(1000):
-  hancho.Task(
+  hancho.task(
     desc = "I am task {index}",
     command = "echo {index} > {rel_build_files}",
     source_files = [],

@@ -1,8 +1,7 @@
 # tutorial/tut50.hancho - Async/await and custom commands
 import asyncio
-import hancho
 
-build_config.build_tag = "tut50"
+hancho.build_tag = "tut50"
 
 # Synchronous functions can be used in place of command strings.
 
@@ -17,7 +16,7 @@ def sync_callback(task):
   #print("Sync callback end")
   return task.action.build_files
 
-fast_task = hancho.Command(command = sync_callback, **build_config)
+fast_task = hancho.command(sync_callback)
 fast_task(["src/main.cpp"], ["fast1.txt", "fast2.txt", "fast3.txt"])
 
 # Asynchronous functions can also be used in place of command strings.
@@ -32,7 +31,7 @@ async def async_callback(task):
   #print("Async callback end")
   return task.action.build_files
 
-slow_task = hancho.Command(command = async_callback, **build_config)
+slow_task = hancho.command(async_callback)
 slow_task(["src/main.cpp"], ["slow1.txt", "slow2.txt", "slow3.txt"])
 
 # Promises that resolve to filenames can be used in place of actual filenames in rules.
@@ -43,5 +42,5 @@ async def slow_filename_promise():
   #print("Slow promise end")
   return ["src/main.cpp"]
 
-echo = hancho.Command(command = "echo {rel_source_files} > {rel_build_files}", **build_config)
+echo = hancho.command("echo {rel_source_files} > {rel_build_files}")
 echo([slow_filename_promise()], ["promise1.txt"])

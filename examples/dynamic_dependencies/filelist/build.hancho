@@ -2,18 +2,18 @@
 import random
 from glob import glob
 
-#build_config.verbose = True
+#hancho.verbose = True
 
 src_files = glob("src/*")
 
-random_touch = build_config.task(
+random_touch = hancho.task(
   desc = "Touch 3 random files in src/ - {source_files}",
   command = [
     "touch {source_files[0]}",
     "touch {source_files[1]}",
     "touch {source_files[2]}",
   ],
-  command_path = build_config.file_path,
+  command_path = hancho.file_path,
   source_files = random.sample(src_files, 3),
 )
 
@@ -25,7 +25,7 @@ def generate_filelist(task):
       file.write(str(f) + "\n")
   return task.action.build_files
 
-filelist_txt = build_config.task(
+filelist_txt = hancho.task(
   desc = "Write the names of 3 random files in src/ to {build_files}",
   command = generate_filelist,
   build_files = "filelist.txt",
@@ -36,7 +36,7 @@ filelist_txt = build_config.task(
 def generate_result(task):
   " ""Read build/filelist.txt and create a new task to cat those files together into result.txt"" "
   from_filelist = [f.strip() for f in open(task.action.source_files[0], "r").readlines()]
-  return build_config.task(
+  return hancho.task(
     desc = "Concatenate {rel_source_files} into {rel_build_files}",
     command = "cat {rel_source_files} > {rel_build_files}",
     source_files = from_filelist,
@@ -44,13 +44,13 @@ def generate_result(task):
     other_files = [random_touch, filelist_txt],
   )
 
-result_txt = build_config.task(
+result_txt = hancho.task(
   desc = "Read {rel_source_files} and use its contents to generate another task",
   command = generate_result,
   source_files = filelist_txt,
 )
 
-build_config.task(
+hancho.task(
   desc = "Print the contents of {rel_source_files}",
   command = "cat {rel_source_files}",
   source_files = result_txt,

@@ -1,35 +1,31 @@
 # tutorial/tut10.hancho - branches off from tut02.hancho
-import hancho
 
-build_config = hancho.Config(
+common = hancho.config(
   command_path  = ".",
   command_files = [],
   source_path   = ".",
   build_path    = "build/tut10",
 )
 
-main_o = hancho.Task(
+main_o = common.task(
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   source_files  = "src/main.cpp",
   build_files   = "src/main.o",
   build_deps    = "src/main.d",
-  **build_config,
 )
 
-util_o = hancho.Task(
+util_o = common.task(
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   source_files  = "src/util.cpp",
   build_files   = "src/util.o",
   build_deps    = "src/util.d",
-  **build_config,
 )
 
-app = hancho.Task(
+app = common.task(
   desc          = "Link {source_files} into {build_files}",
   command       = "g++ {source_files} -o {build_path}/{build_files}",
   source_files  = [main_o, util_o],
   build_files   = "app",
-  **build_config,
 )

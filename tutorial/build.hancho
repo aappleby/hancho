@@ -1,17 +1,15 @@
 # hancho/tutorial/build.hancho - Tests all the tutorials
-import hancho
 import shutil
 
 shutil.rmtree("build", ignore_errors=True)
 
-test_build = hancho.Command(
-  desc        = "{color(200, 200, 100)}Testing tutorial build '{rel_source_files}'{color()}",
+test_build = hancho.command(
   command     = [
     "python3 ../hancho.py -v -d {rel_source_files} > /dev/null",
     "echo pass > {rel_build_files}"
   ],
+  desc        = "{color(200, 200, 100)}Testing tutorial build '{rel_source_files}'{color()}",
   build_files = "{swap_ext(source_files, '.pass')}",
-  **build_config,
 )
 
 test_build("tut00.hancho")

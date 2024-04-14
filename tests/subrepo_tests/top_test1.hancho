@@ -1,9 +1,8 @@
 # Load both repos directly.
-import hancho
 
-print(build_config)
+print(hancho)
 
-print(build_config.Config(foo = 1))
+print(hancho.extend(foo = 1))
 
 #hancho.Task(
 #  command = "touch {rel_build_files}",
@@ -11,15 +10,15 @@ print(build_config.Config(foo = 1))
 #  build_files = "top.txt"
 #)
 
-#print(build_config)
+#print(hancho)
 #
-#repo1 = hancho.repo("repo1", **build_config)
+#repo1 = hancho.repo("repo1")
 #
 #print(repo1)
 
 #hancho.load("repo1_test1.hancho", **repo1)
 
-#repo2 = hancho.subrepo("repo1/repo2", **build_config)
+#repo2 = hancho.subrepo("repo1/repo2")
 #
 #
 #repo2.load("repo2_test1.hancho")

@@ -1,11 +1,10 @@
 # examples/meson/build.hancho
-import hancho
 
-build_config.build_tag = "debug"
+hancho.build_tag = "debug"
 
-compile = hancho.Command(
-  desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
+compile = hancho.command(
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
+  desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
   includes  = [
     "-I."
   ],
@@ -25,9 +24,9 @@ compile = hancho.Command(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = hancho.Command(
-  desc      = "Linking {rel_source_files} -> {rel_build_files}",
+link = hancho.command(
   command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
+  desc      = "Linking {rel_source_files} -> {rel_build_files}",
   link_opts = [
     "-Wl,--as-needed",
     "-Wl,--no-undefined",
@@ -42,12 +41,10 @@ main_o = compile(
   "main.c",
   includes = compile.includes + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}"],
   gcc_opts = compile.gcc_opts + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}"],
-  **build_config
 )
 
 main = link(
   main_o,
   "demo",
   libs = link.libs + ["{run_cmd('pkg-config gtk+-3.0 --libs')}"],
-  **build_config
 )

@@ -1,14 +1,12 @@
-import hancho
-
 def callback(task):
-  hancho.Task(
+  hancho.task(
     command = "touch {rel_build_files}",
     source_files = [],
     build_files = "dummy.txt"
   )
   return []
 
-hancho.Task(
+hancho.task(
   command = callback,
   source_files = [],
   build_files = []

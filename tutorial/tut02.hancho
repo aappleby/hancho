@@ -1,14 +1,13 @@
 # tutorial/tut02.hancho
-import hancho
 
-build_config = hancho.Config(
+common = hancho.extend(
   command_path  = ".",
   command_files = [],
   source_path   = ".",
   build_path    = "build/tut02",
 )
 
-main_o = build_config.Task(
+main_o = common.task(
   desc          = "Compile main.cpp",
   command       = "g++ -MMD -c src/main.cpp -o build/tut02/src/main.o",
   source_files  = ["src/main.cpp"],
@@ -16,7 +15,7 @@ main_o = build_config.Task(
   build_deps    = ["src/main.d"],
 )
 
-util_o = build_config.Task(
+util_o = common.task(
   desc          = "Compile util.cpp",
   command       = "g++ -MMD -c src/util.cpp -o build/tut02/src/util.o",
   source_files  = ["src/util.cpp"],
@@ -24,7 +23,7 @@ util_o = build_config.Task(
   build_deps    = ["src/util.d"],
 )
 
-app = build_config.Task(
+app = common.task(
   desc          = "Link main.o and util.o into app",
   command       = "g++ build/tut02/src/main.o build/tut02/src/util.o -o build/tut02/app",
   source_files  = [main_o, util_o],

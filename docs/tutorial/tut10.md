@@ -163,11 +163,13 @@ https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291
 This is about as far as we can go with templates for now - our build rules are now completely generic, and our tasks are all one-liners.
 
 ----------
-## ```tut16.hancho```: ```build_config``` and sensible defaults.
+## ```tut16.hancho```: ```hancho``` and sensible defaults.
 
-There are still a few lines we can remove from our build script by making use of some sensible default values that Hancho provides in a global config object called ```build_config```.
+# FIXME rewrite this it's obsolete
 
-Hancho creates a separate module-wide ```build_config``` object for each .hancho file it loads, and it contains default values for ```command_path```, ```source_path```, and ```build_path``` that will work for most projects. Or at least most of my projects, anyway - I wrote this thing for personal use, so the defaults are the defaults I wanted. Change them if you like. :D
+There are still a few lines we can remove from our build script by making use of some sensible default values that Hancho provides in a global config object called ```hancho```.
+
+Hancho creates a separate module-wide ```hancho``` object for each .hancho file it loads, and it contains default values for ```command_path```, ```source_path```, and ```build_path``` that will work for most projects. Or at least most of my projects, anyway - I wrote this thing for personal use, so the defaults are the defaults I wanted. Change them if you like. :D
 
 The ```build_path``` default is particularly interesting:
 
@@ -179,10 +181,10 @@ Unpacking this a bit:
 - ```build_tag``` is globally defined to be an empty string, but it can be set to whatever you want. For example, you might want to split your build directory up into separate ```debug``` and ```release``` trees using ```build_tag```.
 - ```rel_source_path``` is the same macro as we saw earlier - the source filenames, relative to ```command_path```.
 
-If we set ```build_config.build_tag``` to ```"tut16"``` and then use ```build_config``` in place of ```config```, we can ditch our ```config = Config(...``` object entirely. That in turn means we don't have to ```from hancho import Config``` or ```from pathlib import Path``` anymore either.
+If we set ```hancho.build_tag``` to ```"tut16"``` and then use ```hancho``` in place of ```config```, we can ditch our ```config = Config(...``` object entirely. That in turn means we don't have to ```from hancho import Config``` or ```from pathlib import Path``` anymore either.
 
 Here's the build file in its final form, for now:
 
 https://github.com/aappleby/hancho/blob/2986d94f0c48f089771c454fdf8111eb22f50291/tutorial/tut16.hancho#L1-L19
 
-That's not too shabby. There are more things we can do with ```build_config``` and it would be nice to move our two build rules to a separate ```rules.hancho``` file, but those are topics for Hancho Tutorial Chapter 2 (coming soon).
+That's not too shabby. There are more things we can do with ```hancho``` and it would be nice to move our two build rules to a separate ```rules.hancho``` file, but those are topics for Hancho Tutorial Chapter 2 (coming soon).

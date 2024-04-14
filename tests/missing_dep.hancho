@@ -1,5 +1,3 @@
-import hancho
-
 rules = hancho.include("rules.hancho")
 
 rules.touch_outputs(

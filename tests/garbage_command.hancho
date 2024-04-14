@@ -1,6 +1,5 @@
-import hancho
 
-hancho.Task(
+hancho.task(
   command  = "aklsjdflksjdlfkjldfk",
   source_files = __file__,
   build_files = "result.txt",

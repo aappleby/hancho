@@ -1,7 +1,6 @@
 # tests/expand_failed_to_terminate.hancho
-import hancho
 
-hancho.Task(
+hancho.task(
   command = "{flarp}",
   flarp = "asdf {flarp}",
   source_files = [],

@@ -1,8 +1,6 @@
-import hancho
+hancho.verbose = True
 
-build_config.verbose = True
-
-clean_build = hancho.Config(
+clean_build = hancho.extend(
   desc = "Build {command_path}",
   command = [
     "rm -rf build",
@@ -10,13 +8,13 @@ clean_build = hancho.Config(
   ]
 )
 
-hancho.Task(command_path = "tutorial", **clean_build)
+clean_build.Task(command_path = "tutorial")
 
-hancho.Task(command_path = "examples/hello_world", **clean_build)
+clean_build.Task(command_path = "examples/hello_world")
 
-hancho.Task(command_path = "examples/meson", **clean_build)
+clean_build.Task(command_path = "examples/meson")
 
-hancho.Task(
+hancho.task(
   desc = "Run all tests",
   command_path = "tests",
   command = [

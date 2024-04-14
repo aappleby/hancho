@@ -1,7 +1,6 @@
 # tests/command_missing.hancho
-import hancho
 
-hancho.Task(
+hancho.task(
   source_files = __file__,
   build_files = "dummy.txt",
 )

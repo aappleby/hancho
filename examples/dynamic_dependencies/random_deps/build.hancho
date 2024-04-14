@@ -4,14 +4,14 @@ import random
 
 all_deps  = [f"src/text{d}.txt" for d in range(0, 9)]
 
-build_config.task(
+hancho.task(
   command = "touch {build_files}",
   source_files = [],
   build_files = random.sample(all_deps, 3),
-  build_path = build_config.source_path,
+  build_path = hancho.source_path,
 )
 
-build_config.task(
+hancho.task(
   command = "cat {rel_source_files} > {rel_build_files}",
   source_files = random.sample(all_deps, 3),
   build_files = "result.txt",

@@ -1,5 +1,3 @@
 # top_test3_rules.hancho
 
-rule = build_config.rule(
-  command = "touch {rel_build_files}",
-)
+touch = hancho.rule("touch {rel_build_files}")

@@ -1,1 +1,1 @@
-myrepo = build_config.subrepo("myrepo")
+myrepo = hancho.subrepo("myrepo")
