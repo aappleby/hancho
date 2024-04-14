@@ -1,5 +1,5 @@
 # tutorial/tut40.hancho
 
-hancho.build_tag = "tut40"
+hancho.repo_name = "tut40"
 
-hancho.load("src/tut40_src.hancho")
+hancho.module("src/tut40_src.hancho")

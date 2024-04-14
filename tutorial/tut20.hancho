@@ -1,6 +1,6 @@
 # tutorial/tut20.hancho
 
-hancho.build_tag = "tut20"
+hancho.repo_name = "tut20"
 
 compile = hancho.command(
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",

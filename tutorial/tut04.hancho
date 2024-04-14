@@ -9,6 +9,6 @@ common = hancho.extend(
 
 tut04_rules = common.include("tut04_rules.hancho")
 
-main_o = tut04_rules.compile_cpp("src/main.cpp")
-util_o = tut04_rules.compile_cpp("src/util.cpp")
-app    = tut04_rules.link_cpp([main_o, util_o], "app")
+main_o = tut04_rules.compile_cpp("src/main.cpp", common)
+util_o = tut04_rules.compile_cpp("src/util.cpp", common)
+app    = tut04_rules.link_cpp([main_o, util_o], "app", common)

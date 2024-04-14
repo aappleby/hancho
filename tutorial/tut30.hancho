@@ -1,6 +1,6 @@
 # tutorial/tut30.hancho
 
-hancho.build_tag = "tut30"
+hancho.repo_name = "tut30"
 
 rules = hancho.include("tut30_rules.hancho")
 

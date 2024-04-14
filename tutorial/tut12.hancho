@@ -13,13 +13,13 @@ compile = common.extend(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-main_o = compile.Task(source_files = "src/main.cpp")
+main_o = compile.task(source_files = "src/main.cpp")
 
-util_o = hancho.Task(source_files = "src/util.cpp")
+util_o = compile.task(source_files = "src/util.cpp")
 
 link = common.extend(
   desc    = "Link {source_files} into {build_files}",
   command = "g++ {source_files} -o {build_path}/{build_files}",
 )
 
-app = link.Task(source_files = [main_o, util_o], build_files  = "app")
+app = link.task(source_files = [main_o, util_o], build_files  = "app")

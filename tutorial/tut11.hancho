@@ -12,13 +12,13 @@ compile = common.extend(
   command = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
 )
 
-main_o = compile.Task(
+main_o = compile.task(
   source_files = "src/main.cpp",
   build_files  = "src/main.o",
   build_deps   = "src/main.d",
 )
 
-util_o = compile.Task(
+util_o = compile.task(
   source_files = "src/util.cpp",
   build_files  = "src/util.o",
   build_deps   = "src/util.d",
@@ -29,7 +29,7 @@ link = common.extend(
   command = "g++ {source_files} -o {build_path}/{build_files}",
 )
 
-app = link.Task(
+app = link.task(
   source_files = [main_o, util_o],
   build_files  = "app",
 )
