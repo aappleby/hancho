@@ -227,23 +227,27 @@ class Config:
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
     module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
     include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
+    reset    = lambda self                             : app.reset()
+    build    = lambda self                             : app.build()
+
     # fmt: on
 
     # All static methods and fields are available to use in any template string.
     # fmt: off
-    abs_path  = staticmethod(_abs_path)
-    rel_path  = staticmethod(_rel_path)
-    join_path = staticmethod(_join_path)
-    color     = staticmethod(_color)
-    glob      = staticmethod(glob.glob)
-    len       = staticmethod(len)
-    run_cmd   = staticmethod(_run_cmd)
-    swap_ext  = staticmethod(_swap_ext)
-    flatten   = staticmethod(_flatten)
-    print     = staticmethod(print)
-    basename  = staticmethod(path.basename)
-
-    repo_name         = "{basename(repo_path)}"
+    root_file = "build.hancho"
+    root_path = os.getcwd()
+    repo_path = os.getcwd()
+    repo_name = ""
+    file_name = _join_path(os.getcwd(), "build.hancho")
+    file_path = os.getcwd()
+    jobs      = os.cpu_count()
+    verbose   = False
+    quiet     = False
+    dry_run   = False
+    debug     = False
+    force     = False
+    shuffle   = False
+    trace     = False
 
     abs_command_path  = "{abs_path(join_path(file_path,   command_path))}"
     abs_source_path   = "{abs_path(join_path(file_path,   source_path))}"
@@ -269,6 +273,18 @@ class Config:
     command_path = "{default_command_path}"
     source_path  = "{default_source_path}"
     build_path   = "{default_build_path}"
+
+    abs_path  = staticmethod(_abs_path)
+    rel_path  = staticmethod(_rel_path)
+    join_path = staticmethod(_join_path)
+    color     = staticmethod(_color)
+    glob      = staticmethod(glob.glob)
+    len       = staticmethod(len)
+    run_cmd   = staticmethod(_run_cmd)
+    swap_ext  = staticmethod(_swap_ext)
+    flatten   = staticmethod(_flatten)
+    print     = staticmethod(print)
+    basename  = staticmethod(path.basename)
     # fmt: on
 
 #----------------------------------------
@@ -379,7 +395,7 @@ def expand(config, variant, fail_ok=False):
 
 def expand_template(config, template, fail_ok=False):
     """Replaces all macros in template with their stringified values."""
-    if config.debug_expansion:
+    if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
 
     try:
@@ -400,7 +416,7 @@ def expand_template(config, template, fail_ok=False):
     finally:
         app.expand_depth -= 1
 
-    if config.debug_expansion:
+    if config.trace:
         log(("┃" * app.expand_depth) + f"┗ '{result}'")
     return result
 
@@ -430,8 +446,8 @@ class Expander:
             try:
                 expanded = expand(config, result, fail_ok=True)
             except BaseException as err:
-                print(err)
-                if config.debug_expansion:
+                log(err)
+                if config.trace:
                     log(("┃" * app.expand_depth) + f"┣ <failed, retrying w/ parent config>")
                 pass
         if expanded is None:
@@ -447,7 +463,7 @@ def eval_macro(config, macro, fail_ok=False):
     """Evaluates the contents of a "{macro}" string."""
     if app.expand_depth > MAX_EXPAND_DEPTH:
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
-    if config.debug_expansion:
+    if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
     app.expand_depth += 1
     # pylint: disable=eval-used
@@ -464,7 +480,7 @@ def eval_macro(config, macro, fail_ok=False):
     finally:
         app.expand_depth -= 1
 
-    if config.debug_expansion:
+    if config.trace:
         log(("┃" * app.expand_depth) + f"┗ {result}")
     return result
 
@@ -480,8 +496,8 @@ class Task:
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
 
-            root_path     = app.root_config.root_path,
-            repo_path     = app.root_config.root_path,
+            root_path     = Config.root_path,
+            repo_path     = Config.root_path,
             file_path     = os.getcwd(),
 
             command       = None,
@@ -598,8 +614,8 @@ class Task:
         action.abs_build_files   = _flatten(_join_path(action.abs_build_path, action.build_files))
         action.abs_build_deps    = _flatten(_join_path(action.abs_build_path, action.build_deps))
 
-        if not str(action.abs_build_path).startswith(str(app.root_config.root_path)):
-            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {app.root_config.root_path}")
+        if not str(action.abs_build_path).startswith(str(Config.root_path)):
+            raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {Config.root_path}")
 
         # Check for duplicate task outputs
         for abs_file in action.abs_build_files:
@@ -696,7 +712,7 @@ class Task:
             for exp_command in self.action.command:
                 if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
-                    rel_command_path = _rel_path(self.action.abs_command_path, app.root_config.root_path)
+                    rel_command_path = _rel_path(self.action.abs_command_path, Config.root_path)
                     log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
                     log(exp_command)
@@ -788,6 +804,9 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
+        self.reset()
+
+    def reset(self):
         self.repos = []
         self.loaded_modules = []
         self.all_build_files = set()
@@ -823,7 +842,7 @@ class App:
         parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
         parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
         parser.add_argument("-s", "--shuffle",         default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
-        parser.add_argument("-e", "--debug_expansion", default=False, action="store_true",          help="Debug template & macro expansion")
+        parser.add_argument("-e", "--trace",           default=False, action="store_true",          help="Trace template & macro expansion")
         # fmt: on
 
         # Parse the command line
@@ -854,25 +873,38 @@ class App:
     ########################################
 
     def main(self):
-        """Our main() just handles command line args and delegates to async_main()"""
-
+        self.parse_args()
         os.chdir(Config.root_path)
+        self.load_hanchos()
+        return self.build()
 
+    ########################################
+
+    def load_hanchos(self):
         time_a = time.perf_counter()
 
         if Config.debug:
-            log(f"global config = {Config}")
+            c = Config()
+            for key, val in Config.__dict__.items():
+                if not key.startswith("_"):
+                    setattr(c, key, val)
 
-        app.root_config = Config(
+            log(f"global config = {c}")
+
+        root_config = Config(
             file_name    = Config.root_file,
             file_path    = Config.root_path,
         )
 
-        self.load_module(Config.root_file, Config.root_path, app.root_config, is_include = False)
+        self.load_module(Config.root_file, Config.root_path, root_config, is_include = False)
         time_b = time.perf_counter()
 
         if Config.debug or Config.verbose:
             log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+
+    ########################################
+
+    def build(self):
 
         # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
         # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
@@ -1007,7 +1039,21 @@ app = App()
 
 def main():
 
-    app.parse_args()
+#    Config.verbose = True
+#
+#    hancho = Config(
+#        file_name    = Config.root_file,
+#        file_path    = Config.root_path,
+#    )
+#
+#    hancho.reset()
+#    hancho.task(command = "cat {rel_source_files} > {rel_build_files}", source_files = "tut00.hancho", build_files = "derp.txt")
+#    hancho.build()
+#
+#    hancho.reset()
+#    hancho.task(command = "echo Hello World")
+#    hancho.build()
+
     result = -1
     result = app.main()
     sys.exit(result)
