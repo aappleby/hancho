@@ -1,6 +1,0 @@
-# tests/should_fail.hancho
-
-hancho.task(
-  desc = "This task should fail",
-  command = "(exit 255)",
-)

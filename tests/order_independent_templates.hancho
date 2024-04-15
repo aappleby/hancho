@@ -1,3 +1,0 @@
-
-# have a template that calls a function with another templated argument
-# the templated argument should be expanded _before_ the function is called

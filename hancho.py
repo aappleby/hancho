@@ -34,12 +34,15 @@ macro_regex = re.compile("^{[^}]*}$")
 # Matches macros inside a template string.
 template_regex = re.compile("{[^}]*}")
 
+def log_line(message):
+    app.log += message
+    if not Config.quiet:
+        sys.stdout.write(message)
+        sys.stdout.flush()
+
 
 def log(message, *args, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
-    if Config.quiet:
-        return
-
     if not sys.stdout.isatty():
         sameline = False
 
@@ -55,14 +58,14 @@ def log(message, *args, sameline=False, **kwargs):
 
     if sameline:
         output = output[: os.get_terminal_size().columns - 1]
-        sys.stdout.write("\r" + output + "\x1B[K")
+        output = "\r" + output + "\x1B[K"
+        log_line(output)
     else:
         if app.line_dirty:
-            sys.stdout.write("\n")
-        sys.stdout.write(output)
+            log_line("\n")
+        log_line(output)
 
     app.line_dirty = sameline
-    sys.stdout.flush()
 
 
 def _flatten(variant):
@@ -109,7 +112,7 @@ def _join_path(*args):
 def _color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
-    if os.name == "nt":
+    if not Config.use_color or os.name == "nt":
         return ""
     if red is None:
         return "\x1B[0m"
@@ -248,6 +251,7 @@ class Config:
     force     = False
     shuffle   = False
     trace     = False
+    use_color = True
 
     abs_command_path  = "{abs_path(join_path(file_path,   command_path))}"
     abs_source_path   = "{abs_path(join_path(file_path,   source_path))}"
@@ -408,7 +412,8 @@ def expand_template(config, template, fail_ok=False):
                 macro = template[span.start() : span.end()]
                 variant = eval_macro(config, macro, fail_ok)
                 result += " ".join([str(s) for s in _flatten(variant)])
-            except BaseError as err:
+            except BaseException as err:
+                log(err)
                 log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed! - {err}{_color()}")
                 raise err
             template = template[span.end() :]
@@ -475,6 +480,7 @@ def eval_macro(config, macro, fail_ok=False):
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
         if not fail_ok:
+            log(err)
             log(f"{_color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{_color()}")
             raise err
     finally:
@@ -562,11 +568,11 @@ class Task:
             return result
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
-        except BaseException:
-            if not self.config.quiet:
-                log(_color(255, 128, 128))
-                traceback.print_exception(*sys.exc_info())
-                log(_color())
+        except BaseException as err:
+            log(_color(255, 128, 128))
+            log(err)
+            #traceback.print_exception(*sys.exc_info())
+            log(_color())
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
@@ -779,7 +785,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if not self.config.quiet and (self.stdout or self.stderr):
+        if self.stdout or self.stderr:
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")
@@ -826,6 +832,7 @@ class App:
         self.queued_tasks = []
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
+        self.log = ""
 
     ########################################
 
@@ -910,7 +917,11 @@ class App:
         # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
 
         # Run tasks until we're done with all of them.
-        result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
+        result = -1
+        try:
+            result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
+        except BaseException as err:
+            log(err)
         return result
 
     ########################################
@@ -931,7 +942,7 @@ class App:
     ########################################
 
     async def async_run_tasks(self):
-        # Root module(s) loaded. Run all tasks in the queue until we run out.
+        # Run all tasks in the queue until we run out.
 
         self.jobs_available = Config.jobs
 

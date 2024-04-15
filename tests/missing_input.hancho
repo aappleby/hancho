@@ -1,4 +1,0 @@
-# tests/missing_input.hancho
-
-rules = hancho.include("rules.hancho")
-rules.touch_outputs("src/does_not_exist.txt", "missing_src.txt")

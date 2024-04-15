@@ -1,6 +1,0 @@
-
-hancho.task(
-  command = "touch {rel_build_files}",
-  source_files = [],
-  build_files = hancho.output_filename,
-)

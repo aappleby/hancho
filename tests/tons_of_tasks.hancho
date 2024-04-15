@@ -1,8 +1,0 @@
-for i in range(1000):
-  hancho.task(
-    desc = "I am task {index}",
-    command = "echo {index} > {rel_build_files}",
-    source_files = [],
-    build_files = "dummy{index}.txt",
-    index = i
-  )
