@@ -24,7 +24,6 @@ from hancho import Config
 # copies
 # all the predefined directories need test cases
 # overriding in_dir/out_dir/work_dir need test cases
-# loading multiple copies of rules.hancho with different build_params to test module_key
 
 # min delta seems to be 4 msec on linux (wsl), 1 msec on windows?
 

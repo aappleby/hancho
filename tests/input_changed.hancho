@@ -1,2 +1,0 @@
-rules = hancho.load("rules.hancho")
-rules.compile_cpp("src/test.cpp")

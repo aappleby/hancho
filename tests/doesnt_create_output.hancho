@@ -1,5 +1,0 @@
-hancho.task(
-  command = ":",
-  source_files = __file__,
-  build_files = "result.txt"
-)

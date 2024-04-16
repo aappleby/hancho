@@ -819,9 +819,6 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.reset()
-
-    def reset(self):
         self.repos = []
         self.loaded_modules = []
         self.all_build_files = set()
@@ -845,6 +842,25 @@ class App:
 
     ########################################
 
+    def reset(self):
+        self.__init__()
+
+    ########################################
+
+    def main(self):
+        result = -1
+        old_cwd = os.getcwd()
+        try:
+            self.parse_args()
+            os.chdir(Config.root_path)
+            self.load_hanchos()
+            result = self.build()
+        finally:
+            os.chdir(old_cwd)
+        return result
+
+    ########################################
+
     def parse_args(self):
         # pylint: disable=line-too-long
         # fmt: off
@@ -862,20 +878,19 @@ class App:
         # fmt: on
 
         # Parse the command line
-        (flags, unrecognized) = parser.parse_known_args()
 
-        root_file = flags.__dict__.pop("root_file")
-        root_path = flags.__dict__.pop("root_path")
+        (flags, unrecognized) = parser.parse_known_args()
+        flags = flags.__dict__
+
+        root_path = flags["root_path"]
+        root_file = flags["root_file"]
 
         root_path = _abs_path(root_path)
         root_file = path.join(root_path, root_file)
 
-        setattr(Config, "root_path", root_path)
-        setattr(Config, "root_file", root_file)
-        setattr(Config, "repo_path", root_path)
-
-        for key, val in flags.__dict__.items():
-            setattr(Config, key, val)
+        flags["root_path"] = root_path
+        flags["root_file"] = root_file
+        flags["repo_path"] = root_path
 
         # Unrecognized command line parameters also become config fields if they are flag-like
         unrecognized_flags = {}
@@ -884,22 +899,13 @@ class App:
                 key = match.group(1)
                 val = match.group(2)
                 val = _maybe_as_number(val) if val is not None else True
-                setattr(Config, key, val)
+                unrecognized_flags[key] = val
 
-    ########################################
+        for key, val in flags.items():
+            setattr(Config, key, val)
 
-    def main(self):
-        result = -1
-        old_cwd = os.getcwd()
-        try:
-            self.parse_args()
-            os.chdir(Config.root_path)
-            self.load_hanchos()
-            result = self.build()
-        finally:
-            os.chdir(old_cwd)
-        return result
-
+        for key, val in unrecognized_flags.items():
+            setattr(Config, key, val)
 
     ########################################
 
@@ -968,13 +974,16 @@ class App:
         # created, this will effectively walk through all tasks in dependency order.
 
         time_a = time.perf_counter()
+
         self.queue_pending_tasks()
         while self.queued_tasks:
             task = self.queued_tasks.pop(0)
             if inspect.isawaitable(task.promise):
                 await task.promise
             self.queue_pending_tasks()
+
         time_b = time.perf_counter()
+
         if Config.debug or Config.verbose:
             log(f"Running tasks took {time_b-time_a:.3f} seconds")
 
@@ -1004,7 +1013,6 @@ class App:
         if config.debug or config.verbose:
             log(_color(128,255,128) + f"Loading module {file_name}" + _color())
 
-        # There was no compatible module loaded, so make a new one.
         with open(file_name, encoding="utf-8") as file:
             source = file.read()
             code = compile(source, file_name, "exec", dont_inherit=True)
