@@ -222,6 +222,8 @@ class Config:
     def expand(self, variant):
         return expand(self, variant)
 
+    # All static methods and fields are available to use in any template string.
+
     # fmt: off
     config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
     extend   = lambda self,            *args, **kwargs : Config(self, *args, kwargs)
@@ -235,16 +237,31 @@ class Config:
     build    = lambda self : app.build()
     get_log  = lambda self : app.log
 
-    # fmt: on
+    abs_path  = staticmethod(_abs_path)
+    rel_path  = staticmethod(_rel_path)
+    join_path = staticmethod(_join_path)
+    color     = staticmethod(_color)
+    glob      = staticmethod(glob.glob)
+    len       = staticmethod(len)
+    run_cmd   = staticmethod(_run_cmd)
+    swap_ext  = staticmethod(_swap_ext)
+    flatten   = staticmethod(_flatten)
+    print     = staticmethod(print)
+    basename  = staticmethod(path.basename)
 
-    # All static methods and fields are available to use in any template string.
-    # fmt: off
-    root_file = "build.hancho"
     root_path = os.getcwd()
+    root_name = "build.hancho"
+
     repo_path = os.getcwd()
     repo_name = ""
-    file_name = _join_path(os.getcwd(), "build.hancho")
+
     file_path = os.getcwd()
+    file_name = "build.hancho"
+
+    depformat = 'gcc'
+    job_count = 1
+    ext_build = False
+
     jobs      = os.cpu_count()
     verbose   = False
     quiet     = False
@@ -279,18 +296,6 @@ class Config:
     command_path = "{default_command_path}"
     source_path  = "{default_source_path}"
     build_path   = "{default_build_path}"
-
-    abs_path  = staticmethod(_abs_path)
-    rel_path  = staticmethod(_rel_path)
-    join_path = staticmethod(_join_path)
-    color     = staticmethod(_color)
-    glob      = staticmethod(glob.glob)
-    len       = staticmethod(len)
-    run_cmd   = staticmethod(_run_cmd)
-    swap_ext  = staticmethod(_swap_ext)
-    flatten   = staticmethod(_flatten)
-    print     = staticmethod(print)
-    basename  = staticmethod(path.basename)
     # fmt: on
 
 #----------------------------------------
@@ -316,26 +321,33 @@ class Command(Config):
 
 #----------------------------------------
 
+def normalize(path, filename):
+    return path.split(_abs_path(_join_path(path, filename)))
+
 def repo(config, _repo_path, *args, **kwargs):
-    prefix = config.file_path
-    suffix = config.expand(_repo_path)
-    repo_path = _abs_path(path.join(prefix, suffix))
-    repo = Repo(config, *args, **kwargs, repo_path = repo_path, file_name = None, file_path = repo_path)
+    repo_path = _abs_path(_join_path(config.file_path, _repo_path))
+    repo_name = path.basename(repo_path)
+
+    repo = Repo(
+        config,
+        *args,
+        **kwargs,
+        repo_path = repo_path,
+        file_path = repo_path,
+        file_name = "",
+    )
     return repo
 
 def load(config, _file_name, is_include = False, *args, **kwargs):
-    prefix = config.expand(config.file_path)
-    suffix = config.expand(_file_name)
-    file_name = _abs_path(path.join(prefix, suffix))
-    file_path = path.dirname(file_name)
-
-    if not is_include:
-        kwargs['file_name'] = file_name
-        kwargs['file_path'] = file_path
+    file_path, file_name = normalize(config.file_path, _file_name)
 
     mod_config = Module(config, *args, **kwargs)
 
-    module = app.load_module(file_name, file_path, mod_config, is_include = True)
+    if not is_include:
+        mod_config.file_path = file_path
+        mod_config.file_name = file_name
+
+    module = app.load_module(file_path, file_name, mod_config, is_include = True)
 
     # Module loaded, copy all its public stuff into this config
     for key, val in module.__dict__.items():
@@ -601,9 +613,9 @@ class Task:
 
         action.desc          = config.expand(config.desc)
         action.command       = _flatten(config.expand(config.command))
-        action.depformat     = getattr(config, 'depformat', 'gcc')
-        action.job_count     = getattr(config, 'job_count', 1)
-        action.ext_build     = getattr(config, 'ext_build', False)
+        action.depformat     = config.expand(config.depformat)
+        action.job_count     = config.expand(config.job_count)
+        action.ext_build     = config.expand(config.ext_build)
         action.task_index    = app.task_counter
 
         # FIXME we can probably ditch some of these, we really only need the abs ones
@@ -721,7 +733,6 @@ class Task:
 
             for exp_command in self.action.command:
                 if self.config.verbose or self.config.debug:
-                    sys.stdout.flush()
                     rel_command_path = _rel_path(self.action.abs_command_path, Config.root_path)
                     log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
                     log("(DRY RUN) " if self.config.dry_run else "", end="")
@@ -865,7 +876,7 @@ class App:
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("root_file",               default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
+        parser.add_argument("root_name",               default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
         parser.add_argument("-C", "--chdir",           default=".", dest="root_path", type=str,     help="Change directory before starting the build")
         parser.add_argument("-j", "--jobs",            default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-v", "--verbose",         default=False, action="store_true",          help="Print verbose build info")
@@ -882,15 +893,13 @@ class App:
         (flags, unrecognized) = parser.parse_known_args()
         flags = flags.__dict__
 
-        root_path = flags["root_path"]
-        root_file = flags["root_file"]
-
-        root_path = _abs_path(root_path)
-        root_file = path.join(root_path, root_file)
+        root_path = _abs_path(flags["root_path"])
+        root_name = flags["root_name"]
 
         flags["root_path"] = root_path
-        flags["root_file"] = root_file
+        flags["root_name"] = root_name
         flags["repo_path"] = root_path
+        flags["repo_name"] = ""
 
         # Unrecognized command line parameters also become config fields if they are flag-like
         unrecognized_flags = {}
@@ -917,15 +926,14 @@ class App:
             for key, val in Config.__dict__.items():
                 if not key.startswith("_"):
                     setattr(c, key, val)
-
             log(f"global config = {c}")
 
         root_config = Config(
-            file_name    = Config.root_file,
             file_path    = Config.root_path,
+            file_name    = Config.root_name,
         )
 
-        self.load_module(Config.root_file, Config.root_path, root_config, is_include = False)
+        self.load_module(Config.root_path, Config.root_name, root_config, is_include = False)
         time_b = time.perf_counter()
 
         if Config.debug or Config.verbose:
@@ -1007,8 +1015,14 @@ class App:
 
     ########################################
 
-    def load_module(self, file_name, file_path, config, is_include = False):
+    def load_module(self, file_path, file_name, config, is_include = False):
         """Loads a Hancho module ***while chdir'd into its directory***"""
+
+        # We must chdir()s into the .hancho file directory before running it so that
+        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+        # context here so there should be no other threads trying to change cwd.
+        old_cwd = os.getcwd()
+        os.chdir(file_path)
 
         if config.debug or config.verbose:
             log(_color(128,255,128) + f"Loading module {file_name}" + _color())
@@ -1017,7 +1031,7 @@ class App:
             source = file.read()
             code = compile(source, file_name, "exec", dont_inherit=True)
 
-        mod_name = path.splitext(path.basename(file_name))[0]
+        mod_name = path.splitext(file_name)[0]
         module = type(sys)(mod_name)
         module.__file__ = file_name
         module.__builtins__ = builtins
@@ -1025,12 +1039,7 @@ class App:
 
         self.loaded_modules.append(module)
 
-        # We must chdir()s into the .hancho file directory before running it so that
-        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-        # context here so there should be no other threads trying to change cwd.
-        old_cwd = os.getcwd()
         try:
-            os.chdir(file_path)
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
             types.FunctionType(code, module.__dict__)()
@@ -1072,26 +1081,5 @@ class App:
 
 app = App()
 
-def main():
-
-#    Config.verbose = True
-#
-#    hancho = Config(
-#        file_name    = Config.root_file,
-#        file_path    = Config.root_path,
-#    )
-#
-#    hancho.reset()
-#    hancho.task(command = "cat {rel_source_files} > {rel_build_files}", source_files = "tut00.hancho", build_files = "derp.txt")
-#    hancho.build()
-#
-#    hancho.reset()
-#    hancho.task(command = "echo Hello World")
-#    hancho.build()
-
-    result = -1
-    result = app.main()
-    sys.exit(result)
-
 if __name__ == "__main__":
-    main()
+    sys.exit(app.main())
