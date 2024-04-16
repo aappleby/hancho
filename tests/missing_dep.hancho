@@ -1,7 +1,0 @@
-rules = hancho.include("rules.hancho")
-
-rules.touch_outputs(
-  "src/test.cpp",
-  "result.txt",
-  command_files = ["missing_dep.txt"]
-)

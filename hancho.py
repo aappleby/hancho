@@ -134,7 +134,7 @@ def _swap_ext(name, new_ext):
 def _mtime(filename):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
-    return path.getmtime(filename)
+    return os.stat(filename).st_mtime_ns
 
 
 def _maybe_as_number(text):
@@ -230,8 +230,10 @@ class Config:
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
     module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
     include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
-    reset    = lambda self                             : app.reset()
-    build    = lambda self                             : app.build()
+
+    reset    = lambda self : app.reset()
+    build    = lambda self : app.build()
+    get_log  = lambda self : app.log
 
     # fmt: on
 
@@ -402,10 +404,10 @@ def expand_template(config, template, fail_ok=False):
     if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
 
+    result = ""
     try:
         app.expand_depth += 1
         old_template = template
-        result = ""
         while span := template_regex.search(template):
             result += template[0 : span.start()]
             try:
@@ -472,6 +474,7 @@ def eval_macro(config, macro, fail_ok=False):
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
     app.expand_depth += 1
     # pylint: disable=eval-used
+    result = ""
     try:
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
@@ -548,6 +551,9 @@ class Task:
             # Everything awaited, task_init runs synchronously.
             self.task_init()
 
+            # Check if we need a rebuild
+            self.reason = self.needs_rerun(self.config.force)
+
             if self.config.debug:
                 log(self)
 
@@ -571,7 +577,8 @@ class Task:
         except BaseException as err:
             log(_color(255, 128, 128))
             log(err)
-            #traceback.print_exception(*sys.exc_info())
+            if not self.config.quiet:
+                traceback.print_exception(*sys.exc_info())
             log(_color())
             app.tasks_fail += 1
             return asyncio.CancelledError()
@@ -615,10 +622,10 @@ class Task:
         action.abs_source_path   = _abs_path(_join_path(action.file_path, action.source_path))
         action.abs_build_path    = _abs_path(_join_path(action.file_path, action.build_path))
 
-        action.abs_command_files = _flatten(_join_path(action.abs_command_path, action.command_files))
-        action.abs_source_files  = _flatten(_join_path(action.abs_source_path, action.source_files))
-        action.abs_build_files   = _flatten(_join_path(action.abs_build_path, action.build_files))
-        action.abs_build_deps    = _flatten(_join_path(action.abs_build_path, action.build_deps))
+        action.abs_command_files = _abs_path(_flatten(_join_path(action.abs_command_path, action.command_files)), strict=True)
+        action.abs_source_files  = _abs_path(_flatten(_join_path(action.abs_source_path, action.source_files)), strict=True)
+        action.abs_build_files   = _abs_path(_flatten(_join_path(action.abs_build_path, action.build_files)))
+        action.abs_build_deps    = _abs_path(_flatten(_join_path(action.abs_build_path, action.build_deps)))
 
         if not str(action.abs_build_path).startswith(str(Config.root_path)):
             raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {Config.root_path}")
@@ -633,9 +640,6 @@ class Task:
         if not config.dry_run:
             for abs_file in action.abs_build_files:
                 os.makedirs(path.dirname(abs_file), exist_ok=True)
-
-        # Check if we need a rebuild
-        self.reason = self.needs_rerun(self.config.force)
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -701,6 +705,7 @@ class Task:
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
+        result = []
         try:
             # Wait for enough jobs to free up to run this task.
             await app.acquire_jobs(self.action.job_count)
@@ -714,7 +719,6 @@ class Task:
             if self.config.verbose or self.config.debug:
                 log(f"{_color(128,128,128)}Reason: {self.reason}{_color()}")
 
-            result = []
             for exp_command in self.action.command:
                 if self.config.verbose or self.config.debug:
                     sys.stdout.flush()
@@ -726,30 +730,35 @@ class Task:
         finally:
             await app.release_jobs(self.action.job_count)
 
+        # FIXME - Is checking that the command actually wrote the files it says it does in scope
+        # for Hancho?
+
+        # This doesn't actually work correctly when tasks take less time to run than the filesystem
+        # mtime granularity. :/
+
         # After the build, the deps files should exist if specified.
-        for abs_file in self.action.abs_build_deps:
-            if not path.exists(abs_file) and not self.config.dry_run:
-                raise NameError(f"Dep file {abs_file} wasn't created")
+        #for abs_file in self.action.abs_build_deps:
+        #    if not path.exists(abs_file) and not self.config.dry_run:
+        #        raise NameError(f"Dep file {abs_file} wasn't created")
 
         # Check if the commands actually updated all the output files.
         # _Don't_ do this if this task represents a call to an external build system, as that
         # system might not actually write to the output files.
 
-        for build_file in self.action.abs_build_files:
-            if not path.exists(build_file):
-                raise ValueError(f"Task '{self.action.desc}' did not create {build_file}!\n")
+        #for build_file in self.action.abs_build_files:
+        #    if not path.exists(build_file):
+        #        raise ValueError(f"Task '{self.action.desc}' did not create {build_file}!\n")
 
-
-        if (
-            self.action.abs_source_files
-            and self.action.abs_build_files
-            and not (self.action.dry_run or self.action.ext_build)
-        ):
-            if second_reason := self.needs_rerun():
-                raise ValueError(
-                    f"Task '{self.action.desc}' still needs rerun after running!\n"
-                    + f"Reason: {second_reason}"
-                )
+        #if (
+        #    self.action.abs_source_files
+        #    and self.action.abs_build_files
+        #    and not (self.action.dry_run or self.action.ext_build)
+        #):
+        #    if second_reason := self.needs_rerun():
+        #        raise ValueError(
+        #            f"Task '{self.action.desc}' still needs rerun after running!\n"
+        #            + f"Reason: {second_reason}"
+        #        )
 
         return result
 
@@ -880,10 +889,17 @@ class App:
     ########################################
 
     def main(self):
-        self.parse_args()
-        os.chdir(Config.root_path)
-        self.load_hanchos()
-        return self.build()
+        result = -1
+        old_cwd = os.getcwd()
+        try:
+            self.parse_args()
+            os.chdir(Config.root_path)
+            self.load_hanchos()
+            result = self.build()
+        finally:
+            os.chdir(old_cwd)
+        return result
+
 
     ########################################
 

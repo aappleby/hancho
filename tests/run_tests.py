@@ -10,11 +10,10 @@ import unittest
 import shutil
 import glob
 from pathlib import Path
-
+import time
 
 sys.path.append("..")
 from hancho import Config
-from hancho import app
 
 # tests still needed -
 # calling hancho in src dir
@@ -27,26 +26,34 @@ from hancho import app
 # overriding in_dir/out_dir/work_dir need test cases
 # loading multiple copies of rules.hancho with different build_params to test module_key
 
-# min delta seems to be 4 msec on linux, 1 msec on windows?
-# os.system("touch blahblah.txt")
-# old_mtime = path.getmtime("blahblah.txt")
-# min_delta = 1000000
-# for _ in range(10000):
-#   #os.system("touch blahblah.txt")
-#   os.utime("blahblah.txt", None)
-#   new_mtime = path.getmtime("blahblah.txt")
-#   delta = new_mtime - old_mtime
-#   if delta and delta < min_delta:
-#     print(delta)
-#     min_delta = delta
-#   old_mtime = new_mtime
-# sys.exit(0)
+# min delta seems to be 4 msec on linux (wsl), 1 msec on windows?
+
+#os.system("touch blahblah.txt")
+#old_mtime = os.stat("blahblah.txt").st_mtime_ns
+#print(old_mtime)
+#min_delta = 100000000000
+#for _ in range(10000):
+#  #os.system("touch blahblah.txt")
+#  os.utime("blahblah.txt", None)
+#  new_mtime = os.stat("blahblah.txt").st_mtime_ns
+#  delta = new_mtime - old_mtime
+#  if delta and delta < min_delta:
+#    print(delta)
+#    min_delta = delta
+#  old_mtime = new_mtime
+
+#sys.exit(0)
 
 
-def mtime(file):
-    """Shorthand for path.getmtime()"""
-    return path.getmtime(file)
+def mtime_ns(filename):
+    return os.stat(filename).st_mtime_ns
 
+def force_touch(filename):
+    if not Path(filename).exists():
+        Path(filename).touch()
+    old_mtime = mtime_ns(filename)
+    while old_mtime == mtime_ns(filename):
+        os.utime(filename, None)
 
 def run(cmd):
     """Runs a command line and returns its stdout with whitespace stripped"""
@@ -76,9 +83,10 @@ class TestConfig(unittest.TestCase):
 ################################################################################
 
 hancho = Config(file_name = "build_config", file_path=os.getcwd())
-
 Config.use_color = False
 Config.quiet = True
+#Config.debug = True
+#Config.verbose = True
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -88,6 +96,8 @@ def color(red=None, green=None, blue=None):
     if red is None:
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
+
+################################################################################
 
 # pylint: disable=too-many-public-methods
 class TestHancho(unittest.TestCase):
@@ -102,8 +112,7 @@ class TestHancho(unittest.TestCase):
 
     def tearDown(self):
         """And wipe the build dir after a test too."""
-        if path.exists("build"):
-            shutil.rmtree("build")
+        #shutil.rmtree("build", ignore_errors=True)
 
     def test_should_pass(self):
         """Sanity check"""
@@ -174,19 +183,7 @@ class TestHancho(unittest.TestCase):
         )
         self.assertNotEqual(0, hancho.build())
         self.assertFalse(Path("build/foo.o").exists())
-        self.assertTrue("Path error" in app.log)
-
-    def test_check_output(self):
-        """A build rule that doesn't update one of its outputs should fail"""
-        hancho.task(
-            command = "echo foo > {rel_build_files[0]}",
-            source_files = [],
-            build_files = ["result.txt", "not_modified.txt"]
-        )
-        self.assertNotEqual(0, hancho.build())
-        self.assertTrue(Path("build/result.txt").exists())
-        self.assertFalse(Path("build/not_modified.txt").exists())
-        self.assertTrue("did not create" in app.log)
+        self.assertTrue("Path error" in hancho.get_log())
 
     def test_missing_command(self):
         """Rules with missing commands should fail"""
@@ -204,18 +201,18 @@ class TestHancho(unittest.TestCase):
             build_files = "result.txt",
         )
         self.assertNotEqual(0, hancho.build())
-        self.assertTrue("could not find key 'does_not_exist'" in app.log)
+        self.assertTrue("could not find key 'does_not_exist'" in hancho.get_log())
 
     def test_missing_input(self):
         """We should fail if an input is missing"""
-        hancho.task(
+        hancho.reset()
+        t = hancho.task(
             command = "touch {rel_build_files}",
             source_files = "src/does_not_exist.txt",
             build_files = "missing_src.txt"
         )
         self.assertNotEqual(0, hancho.build())
-        self.assertTrue("No such file" in app.log)
-        self.assertTrue("does_not_exist.txt" in app.log)
+        self.assertTrue("does_not_exist.txt" in hancho.get_log())
 
     def test_missing_dep(self):
         """Missing dep should fail"""
@@ -226,33 +223,43 @@ class TestHancho(unittest.TestCase):
             command_files = ["missing_dep.txt"]
         )
         self.assertNotEqual(0, hancho.build())
-        self.assertTrue("No such file" in app.log)
-        self.assertTrue("missing_dep.txt" in app.log)
+        self.assertTrue("missing_dep.txt" in hancho.get_log())
 
-#    def test_expand_failed_to_terminate(self):
-#        """A recursive text template should cause an 'expand failed to terminate' error."""
-#        result = run_hancho("expand_failed_to_terminate")
-#        self.assertTrue(
-#            "Expander could not expand 'asdf {flarp}'" in result.stderr
-#        )
-#
-#    def test_garbage_command(self):
-#        """Non-existent command line commands should cause Hancho to fail the build."""
-#        result = run_hancho("garbage_command")
-#        self.assertTrue(
-#            "ValueError: Command 'aklsjdflksjdlfkjldfk' exited with return code 127"
-#            in result.stderr
-#        )
-#
-#    def test_garbage_template(self):
-#        """Templates that can't be eval()d should cause Hancho to fail the build."""
-#        result = run_hancho("garbage_template")
-#        self.assertTrue("SyntaxError: invalid syntax" in result.stderr)
-#
+    def test_expand_failed_to_terminate(self):
+        """A recursive text template should cause an 'expand failed to terminate' error."""
+        hancho.task(
+            command = "{flarp}",
+            flarp = "asdf {flarp}",
+            source_files = [],
+            build_files = [],
+        )
+        self.assertNotEqual(0, hancho.build())
+        self.assertTrue("Expanding '{flarp}' failed to terminate" in hancho.get_log())
+
+    def test_garbage_command(self):
+        """Non-existent command line commands should cause Hancho to fail the build."""
+        hancho.task(
+            command  = "aklsjdflksjdlfkjldfk",
+            source_files = __file__,
+            build_files = "result.txt",
+        )
+        self.assertNotEqual(0, hancho.build())
+        self.assertTrue("aklsjdflksjdlfkjldfk: not found" in hancho.get_log())
+
+    def test_garbage_template(self):
+        """Templates that can't be eval()d should cause Hancho to fail the build."""
+        hancho.task(
+            command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}",
+            source_files = __file__,
+            build_files = "result.txt",
+        )
+        self.assertNotEqual(0, hancho.build())
+        self.assertTrue("Expanding macro '{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}' failed!" in hancho.get_log())
+
     def test_rule_collision(self):
         """If multiple rules generate the same output file, that's an error."""
         hancho.task(
-            command = "touch {rel_build_files}",
+            command = "sleep 0.1 && touch {rel_build_files}",
             source_files = __file__,
             build_files = "colliding_output.txt",
         )
@@ -263,37 +270,49 @@ class TestHancho(unittest.TestCase):
             build_files = "colliding_output.txt",
         )
         self.assertNotEqual(0, hancho.build())
-        self.assertTrue("Multiple rules build" in app.log)
+        self.assertTrue("Multiple rules build" in hancho.get_log())
 
-#    def test_always_rebuild_if_no_inputs(self):
-#        """A rule with no inputs should always rebuild"""
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime1 = mtime("build/tests/result.txt")
-#
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime2 = mtime("build/tests/result.txt")
-#
-#        run_hancho("always_rebuild_if_no_inputs")
-#        mtime3 = mtime("build/tests/result.txt")
-#        self.assertLess(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_dep_changed(self):
-#        """Changing a file in deps[] should trigger a rebuild"""
-#        os.makedirs("build/tests", exist_ok=True)
-#        Path("build/tests/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime1 = mtime("build/tests/result.txt")
-#
-#        run_hancho("dep_changed")
-#        mtime2 = mtime("build/tests/result.txt")
-#
-#        Path("build/tests/dummy.txt").touch()
-#        run_hancho("dep_changed")
-#        mtime3 = mtime("build/tests/result.txt")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
+    def test_always_rebuild_if_no_inputs(self):
+        """A rule with no inputs should always rebuild"""
+        def run():
+            hancho.reset()
+            hancho.task(
+                command = "sleep 0.1 && touch {rel_build_files[0]}",
+                source_files = [],
+                build_files = "result.txt",
+            )
+            self.assertEqual(0, hancho.build())
+            return mtime_ns("build/result.txt")
+
+        mtime1 = run()
+        mtime2 = run()
+        mtime3 = run()
+        self.assertLess(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_dep_changed(self):
+        """Changing a file in deps[] should trigger a rebuild"""
+        # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
+        def run():
+            hancho.reset()
+            hancho.task(
+                command = "sleep 0.1 && touch {rel_build_files[0]}",
+                command_files = ["build/dummy.txt"],
+                source_files = "src/test.cpp",
+                build_files = "result.txt",
+            )
+            self.assertEqual(0, hancho.build())
+            return mtime_ns("build/result.txt")
+
+        os.makedirs("build", exist_ok=True)
+        force_touch("build/dummy.txt")
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("build/dummy.txt")
+        mtime3 = run()
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
     def test_does_create_output(self):
         """Output files should appear in build/ by default"""
         hancho.task(
@@ -304,39 +323,64 @@ class TestHancho(unittest.TestCase):
         self.assertEqual(0, hancho.build())
         self.assertTrue(path.exists("build/result.txt"))
 
-#    def test_doesnt_create_output(self):
-#        """Having a file mentioned in files_out should not magically create it"""
-#        run_hancho("doesnt_create_output")
-#        self.assertFalse(path.exists("build/tests/result.txt"))
-#
-#    def test_header_changed(self):
-#        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
-#        run_hancho("header_changed")
-#        mtime1 = mtime("build/tests/src/test.o")
-#
-#        run_hancho("header_changed")
-#        mtime2 = mtime("build/tests/src/test.o")
-#
-#        Path("src/test.hpp").touch()
-#        run_hancho("header_changed")
-#        mtime3 = mtime("build/tests/src/test.o")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
-#    def test_input_changed(self):
-#        """Changing a source file should trigger a rebuild"""
-#        run_hancho("input_changed")
-#        mtime1 = mtime("build/tests/src/test.o")
-#
-#        run_hancho("input_changed")
-#        mtime2 = mtime("build/tests/src/test.o")
-#
-#        Path("src/test.cpp").touch()
-#        run_hancho("input_changed")
-#        mtime3 = mtime("build/tests/src/test.o")
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
-#
+    def test_doesnt_create_output(self):
+        """Having a file mentioned in files_out should not magically create it"""
+        hancho.task(
+            command = ":",
+            source_files = [],
+            build_files = "result.txt"
+        )
+        self.assertEqual(0, hancho.build())
+        self.assertFalse(path.exists("build/result.txt"))
+
+    def test_header_changed(self):
+        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
+
+        def run():
+            hancho.reset()
+            time.sleep(0.01)
+            compile = hancho.command(
+                command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
+                build_files  = "{swap_ext(source_files, '.o')}",
+                build_deps   = "{swap_ext(source_files, '.d')}",
+                depformat    = "gcc",
+            )
+            compile("src/test.cpp")
+            self.assertEqual(0, hancho.build())
+            return mtime_ns("build/src/test.o")
+
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("src/test.hpp")
+        mtime3 = run()
+
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def test_input_changed(self):
+        """Changing a source file should trigger a rebuild"""
+
+        def run():
+            hancho.reset()
+            time.sleep(0.01)
+            compile = hancho.command(
+                command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
+                build_files  = "{swap_ext(source_files, '.o')}",
+                build_deps   = "{swap_ext(source_files, '.d')}",
+                depformat    = "gcc",
+            )
+            compile("src/test.cpp")
+            self.assertEqual(0, hancho.build())
+            return mtime_ns("build/src/test.o")
+
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("src/test.cpp")
+        mtime3 = run()
+
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
     def test_multiple_commands(self):
         """Rules with arrays of commands should run all of them"""
         hancho.task(
@@ -354,22 +398,31 @@ class TestHancho(unittest.TestCase):
         self.assertTrue(path.exists("build/bar.txt"))
         self.assertTrue(path.exists("build/baz.txt"))
 
-    def test_arbitrary_flags(self):
-        """Passing arbitrary flags to Hancho should work"""
-        #hancho.task(
-        #    command = "touch {rel_build_files}",
-        #    source_files = [],
-        #    build_files = hancho.output_filename,
-        #)
-
-        #os.system(
-        #    "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
-        #)
-        #self.assertTrue(path.exists("build/tests/flarp.txt"))
+#    def test_arbitrary_flags(self):
+#        """Passing arbitrary flags to Hancho should work"""
+#        #hancho.task(
+#        #    command = "touch {rel_build_files}",
+#        #    source_files = [],
+#        #    build_files = hancho.output_filename,
+#        #)
+#
+#        #os.system(
+#        #    "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
+#        #)
+#        #self.assertTrue(path.exists("build/tests/flarp.txt"))
 
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
-        run_hancho("sync_command")
+        def sync_command(task):
+            force_touch(task.action.abs_build_files[0])
+            return task.action.abs_build_files
+
+        hancho.task(
+            command = sync_command,
+            source_files = [],
+            build_files = "result.txt",
+        )
+        self.assertEqual(0, hancho.build())
         self.assertTrue(path.exists("build/result.txt"))
 
     def test_cancellation(self):

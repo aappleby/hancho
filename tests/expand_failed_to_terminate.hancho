@@ -1,8 +1,0 @@
-# tests/expand_failed_to_terminate.hancho
-
-hancho.task(
-  command = "{flarp}",
-  flarp = "asdf {flarp}",
-  source_files = [],
-  build_files = [],
-)

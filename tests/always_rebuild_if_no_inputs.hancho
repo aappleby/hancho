@@ -1,6 +1,0 @@
-
-hancho.task(
-  command = "touch {rel_build_files[0]}",
-  source_files = [],
-  build_files = "result.txt",
-)
