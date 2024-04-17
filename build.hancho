@@ -1,4 +1,7 @@
-hancho.verbose = True
+from hancho import Config
+Config.jobs = 1
+#Config.verbose = True
+#Config.debug = True
 
 clean_build = hancho.extend(
   desc = "Build {command_path}",
@@ -8,17 +11,15 @@ clean_build = hancho.extend(
   ]
 )
 
-clean_build.Task(command_path = "tutorial")
-
-clean_build.Task(command_path = "examples/hello_world")
-
-clean_build.Task(command_path = "examples/meson")
+clean_build.task(command_path = "tutorial")
+clean_build.task(command_path = "examples/hello_world")
+clean_build.task(command_path = "examples/meson")
 
 hancho.task(
   desc = "Run all tests",
   command_path = "tests",
   command = [
     "rm -rf build",
-    "./run_tests.py > /dev/null"
+    "./run_tests.py -q"
   ]
 )

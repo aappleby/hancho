@@ -104,7 +104,7 @@ class TestHancho(unittest.TestCase):
 
     def setUp(self):
         """Always wipe the build dir before a test"""
-        print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
+        #print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
         shutil.rmtree("build", ignore_errors=True)
         sys.stdout.flush()
         hancho.reset()
@@ -536,4 +536,5 @@ class TestHancho(unittest.TestCase):
 ################################################################################
 
 if __name__ == "__main__":
-    unittest.main(verbosity = 0)
+    #unittest.main(verbosity = 0)
+    unittest.main()
