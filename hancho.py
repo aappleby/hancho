@@ -226,9 +226,20 @@ class Config:
 
     # fmt: off
     config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
-    extend   = lambda self,            *args, **kwargs : Config(self, *args, kwargs)
+    extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
     repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
     command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
+
+    #command2  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
+    @staticmethod
+    def command2(command, *args, **kwargs):
+        result = Command(command, self, *args, **kwargs)
+        if hasattr(result, "file_path"):
+            delattr(result, "file_path")
+        if hasattr(result, "file_name"):
+            delattr(result, "file_name")
+        return result
+
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
     module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
     include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
@@ -342,7 +353,11 @@ def load(config, _file_name, is_include = False, *args, **kwargs):
 
     mod_config = Module(config, *args, **kwargs)
 
-    if not is_include:
+    if is_include:
+        #mod_config.file_path = file_path
+        #mod_config.file_name = file_name
+        pass
+    else:
         mod_config.file_path = file_path
         mod_config.file_name = file_name
 
@@ -974,16 +989,18 @@ class App:
         old_cwd = os.getcwd()
         os.chdir(file_path)
 
-        if config.debug or config.verbose:
-            log(_color(128,255,128) + f"Loading module {file_name}" + _color())
+        file_pathname = _join_path(file_path, file_name)
 
-        with open(file_name, encoding="utf-8") as file:
+        if config.debug or config.verbose:
+            log(_color(128,255,128) + f"Loading module {file_pathname}" + _color())
+
+        with open(file_pathname, encoding="utf-8") as file:
             source = file.read()
             code = compile(source, file_name, "exec", dont_inherit=True)
 
         mod_name = path.splitext(file_name)[0]
         module = type(sys)(mod_name)
-        module.__file__ = file_name
+        module.__file__ = file_pathname
         module.__builtins__ = builtins
         module.hancho = config
 
