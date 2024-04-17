@@ -123,6 +123,18 @@ class TestHancho(unittest.TestCase):
         hancho.task(command = "(exit 255)")
         self.assertNotEqual(0, hancho.build())
 
+    def test_subrepos1(self):
+        """Outputs from a subrepo should go in build/repo_name/..."""
+        repo = hancho.repo("subrepo")
+        task = repo.task(
+            command = "cat {rel_source_files} > {rel_build_files}",
+            source_files = "stuff.txt",
+            build_files = "repo.txt"
+        )
+        self.assertEqual(0, hancho.build())
+        self.assertTrue(Path("build/subrepo/repo.txt").exists())
+
+
 #    def test_subrepos1(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
 #        result = subprocess.run(
@@ -200,7 +212,7 @@ class TestHancho(unittest.TestCase):
             build_files = "result.txt",
         )
         self.assertNotEqual(0, hancho.build())
-        self.assertTrue("could not find key 'does_not_exist'" in hancho.get_log())
+        self.assertTrue("'Config' object has no attribute 'does_not_exist'" in hancho.get_log())
 
     def test_missing_input(self):
         """We should fail if an input is missing"""
@@ -399,16 +411,16 @@ class TestHancho(unittest.TestCase):
 
 #    def test_arbitrary_flags(self):
 #        """Passing arbitrary flags to Hancho should work"""
-#        #hancho.task(
-#        #    command = "touch {rel_build_files}",
-#        #    source_files = [],
-#        #    build_files = hancho.output_filename,
-#        #)
+#        hancho.task(
+#            command = "touch {rel_build_files}",
+#            source_files = [],
+#            build_files = hancho.output_filename,
+#        )
 #
-#        #os.system(
-#        #    "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
-#        #)
-#        #self.assertTrue(path.exists("build/tests/flarp.txt"))
+#        os.system(
+#            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
+#        )
+#        self.assertTrue(path.exists("build/tests/flarp.txt"))
 
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""

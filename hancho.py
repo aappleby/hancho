@@ -321,9 +321,6 @@ class Command(Config):
 
 #----------------------------------------
 
-def normalize(path, filename):
-    return path.split(_abs_path(_join_path(path, filename)))
-
 def repo(config, _repo_path, *args, **kwargs):
     repo_path = _abs_path(_join_path(config.file_path, _repo_path))
     repo_name = path.basename(repo_path)
@@ -333,13 +330,15 @@ def repo(config, _repo_path, *args, **kwargs):
         *args,
         **kwargs,
         repo_path = repo_path,
+        repo_name = repo_name,
         file_path = repo_path,
         file_name = "",
     )
     return repo
 
 def load(config, _file_name, is_include = False, *args, **kwargs):
-    file_path, file_name = normalize(config.file_path, _file_name)
+    _file_name = config.expand(_file_name)
+    file_path, file_name = path.split(_abs_path(_join_path(config.file_path, _file_name)))
 
     mod_config = Module(config, *args, **kwargs)
 
@@ -442,8 +441,8 @@ def expand_template(config, template, fail_ok=False):
 class Expander:
     """JIT template expansion for use in eval()."""
 
-    def __init__(self, configs):
-        self.configs = configs
+    def __init__(self, config):
+        self.config = config
 
     def __getitem__(self, key):
         return self.get(key)
@@ -452,30 +451,8 @@ class Expander:
         return self.get(key)
 
     def get(self, key):
-        result = None
-        for config in reversed(self.configs):
-            result = getattr(config, key, None)
-            if result is not None:
-                break
-        if result is None:
-            raise ValueError(f"Expander could not find key '{key}'")
-
-        expanded = None
-        for config in reversed(self.configs):
-            try:
-                expanded = expand(config, result, fail_ok=True)
-            except BaseException as err:
-                log(err)
-                if config.trace:
-                    log(("┃" * app.expand_depth) + f"┣ <failed, retrying w/ parent config>")
-                pass
-        if expanded is None:
-            raise ValueError(f"Expander could not expand '{result}'")
-
-        if isinstance(expanded, Config):
-            return Expander(self.configs + [expanded])
-
-        return expanded
+        expanded = expand(self.config, getattr(self.config, key))
+        return Expander(expanded) if isinstance(expanded, Config) else expanded
 
 
 def eval_macro(config, macro, fail_ok=False):
@@ -491,7 +468,7 @@ def eval_macro(config, macro, fail_ok=False):
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
         if not isinstance(config, Expander):
-            config = Expander([config])
+            config = Expander(config)
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
         if not fail_ok:
@@ -630,8 +607,8 @@ class Task:
         action.build_files   = _flatten(config.expand(config.build_files))
         action.build_deps    = _flatten(config.expand(config.build_deps))
 
-        action.abs_command_path  = _abs_path(_join_path(action.file_path, action.command_path))
-        action.abs_source_path   = _abs_path(_join_path(action.file_path, action.source_path))
+        action.abs_command_path  = _abs_path(_join_path(action.file_path, action.command_path), strict=True)
+        action.abs_source_path   = _abs_path(_join_path(action.file_path, action.source_path), strict=True)
         action.abs_build_path    = _abs_path(_join_path(action.file_path, action.build_path))
 
         action.abs_command_files = _abs_path(_flatten(_join_path(action.abs_command_path, action.command_files)), strict=True)
@@ -652,6 +629,7 @@ class Task:
         if not config.dry_run:
             for abs_file in action.abs_build_files:
                 os.makedirs(path.dirname(abs_file), exist_ok=True)
+
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -740,36 +718,6 @@ class Task:
                 result = await self.run_command(exp_command)
         finally:
             await app.release_jobs(self.action.job_count)
-
-        # FIXME - Is checking that the command actually wrote the files it says it does in scope
-        # for Hancho?
-
-        # This doesn't actually work correctly when tasks take less time to run than the filesystem
-        # mtime granularity. :/
-
-        # After the build, the deps files should exist if specified.
-        #for abs_file in self.action.abs_build_deps:
-        #    if not path.exists(abs_file) and not self.config.dry_run:
-        #        raise NameError(f"Dep file {abs_file} wasn't created")
-
-        # Check if the commands actually updated all the output files.
-        # _Don't_ do this if this task represents a call to an external build system, as that
-        # system might not actually write to the output files.
-
-        #for build_file in self.action.abs_build_files:
-        #    if not path.exists(build_file):
-        #        raise ValueError(f"Task '{self.action.desc}' did not create {build_file}!\n")
-
-        #if (
-        #    self.action.abs_source_files
-        #    and self.action.abs_build_files
-        #    and not (self.action.dry_run or self.action.ext_build)
-        #):
-        #    if second_reason := self.needs_rerun():
-        #        raise ValueError(
-        #            f"Task '{self.action.desc}' still needs rerun after running!\n"
-        #            + f"Reason: {second_reason}"
-        #        )
 
         return result
 
@@ -942,13 +890,12 @@ class App:
     ########################################
 
     def build(self):
-
-        # For some reason "result = asyncio.run(self.async_main())" might be breaking actions in
-        # Github, so I'm using get_event_loop().run_until_complete(). Seems to fix the issue.
-
-        # Run tasks until we're done with all of them.
+        """Run tasks until we're done with all of them."""
         result = -1
         try:
+            # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
+            # in Github, so I'm using get_event_loop().run_until_complete().
+            # Seems to fix the issue.
             result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         except BaseException as err:
             log(err)
@@ -1017,6 +964,9 @@ class App:
 
     def load_module(self, file_path, file_name, config, is_include = False):
         """Loads a Hancho module ***while chdir'd into its directory***"""
+
+        file_path = config.expand(file_path)
+        file_name = config.expand(file_name)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
