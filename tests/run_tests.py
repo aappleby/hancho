@@ -250,12 +250,12 @@ class TestHancho(unittest.TestCase):
     def test_garbage_command(self):
         """Non-existent command line commands should cause Hancho to fail the build."""
         hancho.task(
-            command  = "aklsjdflksjdlfkjldfk",
+            command = "aklsjdflksjdlfkjldfk",
             source_files = __file__,
             build_files = "result.txt",
         )
         self.assertNotEqual(0, hancho.build())
-        self.assertTrue("aklsjdflksjdlfkjldfk: not found" in hancho.get_log())
+        self.assertTrue("Command 'aklsjdflksjdlfkjldfk' exited with return code 127" in hancho.get_log())
 
     def test_garbage_template(self):
         """Templates that can't be eval()d should cause Hancho to fail the build."""

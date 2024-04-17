@@ -228,7 +228,7 @@ class Config:
     config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
     extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
     repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
-    command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
+    #command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
 
     #command2  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
     def command2(self, command, *args, **kwargs):
@@ -265,8 +265,8 @@ class Config:
     repo_path = os.getcwd()
     repo_name = ""
 
-    file_path = os.getcwd()
-    file_name = "build.hancho"
+    #file_path = os.getcwd()
+    #file_name = "build.hancho"
 
     depformat = 'gcc'
     job_count = 1
@@ -767,7 +767,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if self.stdout or self.stderr:
+        if (self.stdout or self.stderr) and not self.config.quiet:
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")
