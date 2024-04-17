@@ -231,8 +231,7 @@ class Config:
     command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
 
     #command2  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
-    @staticmethod
-    def command2(command, *args, **kwargs):
+    def command2(self, command, *args, **kwargs):
         result = Command(command, self, *args, **kwargs)
         if hasattr(result, "file_path"):
             delattr(result, "file_path")

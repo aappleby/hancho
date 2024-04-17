@@ -350,7 +350,7 @@ class TestHancho(unittest.TestCase):
         def run():
             hancho.reset()
             time.sleep(0.01)
-            compile = hancho.command(
+            compile = hancho.command2(
                 command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
                 build_files  = "{swap_ext(source_files, '.o')}",
                 build_deps   = "{swap_ext(source_files, '.d')}",
@@ -374,7 +374,7 @@ class TestHancho(unittest.TestCase):
         def run():
             hancho.reset()
             time.sleep(0.01)
-            compile = hancho.command(
+            compile = hancho.command2(
                 command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
                 build_files  = "{swap_ext(source_files, '.o')}",
                 build_deps   = "{swap_ext(source_files, '.d')}",

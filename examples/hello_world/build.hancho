@@ -1,13 +1,13 @@
 # examples/hello_world/build.hancho
 
-compile = hancho.command(
+compile = hancho.command2(
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   desc        = "Compile {rel_source_files} -> {rel_build_files}",
   build_files = "{swap_ext(rel_source_files, '.o')}",
   build_deps  = "{swap_ext(rel_source_files, '.d')}",
 )
 
-link = hancho.command(
+link = hancho.command2(
   command = "g++ {rel_source_files} -o {rel_build_files}",
   desc    = "Link {rel_source_files} -> {rel_build_files}",
 )

@@ -3,7 +3,7 @@ import shutil
 
 shutil.rmtree("build", ignore_errors=True)
 
-test_build = hancho.command(
+test_build = hancho.command2(
   command     = [
     "python3 ../hancho.py -v -d {rel_source_files} > /dev/null",
     "echo pass > {rel_build_files}"

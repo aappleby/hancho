@@ -1,6 +1,6 @@
 # Load repo1 from repo2
 
-touch = hancho.command("touch {rel_build_files}")
+touch = hancho.command2("touch {rel_build_files}")
 
 touch([], "top.txt")
 
