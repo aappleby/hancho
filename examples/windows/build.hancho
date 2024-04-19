@@ -2,14 +2,14 @@
 
 hancho.depformat = "msvc"
 
-compile = hancho.command2(
+compile = hancho.command(
   command   = "cl.exe /nologo /c {files_in} /sourceDependencies {depfile} /Fo:{files_out} > NUL",
   desc      = "Compile {files_in} -> {files_out}",
   files_out = "{swap_ext(files_in, '.o')}",
   depfile   = "{swap_ext(files_out, '.d')}",
 )
 
-link = hancho.command2(
+link = hancho.command(
   command   = "link.exe /nologo {libs} {files_in} /out:{files_out} > NUL",
   desc      = "Link {files_in} -> {files_out}",
   libs      = "user32.lib"

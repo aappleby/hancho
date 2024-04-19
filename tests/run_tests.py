@@ -81,7 +81,7 @@ class TestConfig(unittest.TestCase):
 
 ################################################################################
 
-hancho = Config(base_name = "build.hancho", base_path=os.getcwd())
+hancho = Config()
 Config.use_color = False
 Config.quiet = True
 #Config.debug = True
@@ -129,7 +129,8 @@ class TestHancho(unittest.TestCase):
         task = repo.task(
             command = "cat {rel_source_files} > {rel_build_files}",
             source_files = "stuff.txt",
-            build_files = "repo.txt"
+            build_files = "repo.txt",
+            base_path = os.path.abspath("subrepo")
         )
         self.assertEqual(0, hancho.build())
         self.assertTrue(Path("build/subrepo/repo.txt").exists())
@@ -198,12 +199,12 @@ class TestHancho(unittest.TestCase):
 
     def test_missing_command(self):
         """Rules with missing commands should fail"""
-        self.assertRaises(BaseException,
-            lambda: hancho.task(
-                source_files = __file__,
-                build_files = "dummy.txt",
-            )
+        hancho.task(
+            source_files = __file__,
+            build_files = "dummy.txt"
         )
+        result = hancho.build()
+        self.assertNotEqual(0, result)
 
     def test_missing_field(self):
         """Missing fields should raise an error when expanded"""
@@ -212,7 +213,6 @@ class TestHancho(unittest.TestCase):
             build_files = "result.txt",
         )
         result = hancho.build()
-        #print(hancho.get_log())
         self.assertNotEqual(0, result)
         self.assertTrue("'Config' object has no attribute 'does_not_exist'" in hancho.get_log())
 
@@ -262,7 +262,10 @@ class TestHancho(unittest.TestCase):
     def test_garbage_template(self):
         """Templates that can't be eval()d should cause Hancho to fail the build."""
         hancho.task(
-            command  = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}",
+            command = "echo {foo} asdfasdf",
+            foo     = "{bar}",
+            bar     = "{baz}",
+            baz     = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}",
             source_files = __file__,
             build_files = "result.txt",
         )
@@ -352,7 +355,7 @@ class TestHancho(unittest.TestCase):
         def run():
             hancho.reset()
             time.sleep(0.01)
-            compile = hancho.command2(
+            compile = hancho.command(
                 command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
                 build_files  = "{swap_ext(source_files, '.o')}",
                 build_deps   = "{swap_ext(source_files, '.d')}",
@@ -376,7 +379,7 @@ class TestHancho(unittest.TestCase):
         def run():
             hancho.reset()
             time.sleep(0.01)
-            compile = hancho.command2(
+            compile = hancho.command(
                 command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
                 build_files  = "{swap_ext(source_files, '.o')}",
                 build_deps   = "{swap_ext(source_files, '.d')}",

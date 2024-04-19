@@ -1,2 +1,2 @@
-touch = hancho.command2("touch {rel_build_files}")
+touch = hancho.command("touch {rel_build_files}")
 touch([], "repo2.txt")

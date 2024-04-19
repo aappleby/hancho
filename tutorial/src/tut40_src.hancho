@@ -1,5 +1,5 @@
 # tutorial/tut40_src.hancho
 from glob import glob
 
-rules = hancho.include("{repo_path}/tut40_rules.hancho")
+rules = hancho.load("{repo_path}/tut40_rules.hancho")
 rules.c_binary(glob("*.cpp"), "app")

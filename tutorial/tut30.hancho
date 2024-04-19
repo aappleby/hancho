@@ -2,6 +2,6 @@
 
 hancho.repo_name = "tut30"
 
-rules = hancho.include("tut30_rules.hancho")
+rules = hancho.load("tut30_rules.hancho")
 
 app = rules.c_binary(["src/main.cpp", "src/util.cpp"], "app")

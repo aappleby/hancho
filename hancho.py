@@ -24,16 +24,6 @@ import glob
 # that build.hancho and descendants don't try to load a second copy of Hancho.
 sys.modules["hancho"] = sys.modules[__name__]
 
-# The maximum number of recursion levels we will do to expand a macro.
-# Tests currently require MAX_EXPAND_DEPTH >= 6
-MAX_EXPAND_DEPTH = 20
-
-# Matches "{expression}" macros
-macro_regex = re.compile("^{[^}]*}$")
-
-# Matches macros inside a template string.
-template_regex = re.compile("{[^}]*}")
-
 def log_line(message):
     app.log += message
     if not Config.quiet:
@@ -202,6 +192,14 @@ class Config:
     def __init__(self, *args, **kwargs):
         self.update(*args, kwargs)
 
+    # required to use config as mapping in eval()
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    # required to support "**config"
+    def keys(self):
+        return self.__dict__.keys()
+
     def __repr__(self):
         return f"{_dump_object(self)} = {_dump_config(self)}"
 
@@ -218,101 +216,8 @@ class Config:
     def items(self):
         return self.__dict__.items()
 
-    # required to support "self.__dict__.update(config)"
-    def keys(self):
-        return self.__dict__.keys()
-
-    # required to use config as mapping in eval()
-    def __getitem__(self, key):
-        return getattr(self, key)
-
     def expand(self, variant):
         return expand(self, variant)
-
-    ####################
-    # All static methods and fields are available to use in any template string.
-
-    # fmt: off
-    config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
-    extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
-    repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
-    repo2    = lambda self, repo_path, *args, **kwargs : repo2(self, repo_path, *args, **kwargs)
-    #command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
-
-    #command2  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
-    def command2(self, command, *args, **kwargs):
-        result = Command(command, self, *args, **kwargs)
-        #if hasattr(result, "base_path"):
-        #    delattr(result, "base_path")
-        #if hasattr(result, "base_name"):
-        #    delattr(result, "base_name")
-        return result
-
-    task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
-    module   = lambda self, file_name, *args, **kwargs : load(self, file_name, False, *args, kwargs)
-    include  = lambda self, file_name, *args, **kwargs : load(self, file_name, True, *args, kwargs)
-
-    reset    = lambda self : app.reset()
-    build    = lambda self : app.build()
-    get_log  = lambda self : app.log
-
-    abs_path  = staticmethod(_abs_path)
-    rel_path  = staticmethod(_rel_path)
-    join_path = staticmethod(_join_path)
-    color     = staticmethod(_color)
-    glob      = staticmethod(glob.glob)
-    len       = staticmethod(len)
-    run_cmd   = staticmethod(_run_cmd)
-    swap_ext  = staticmethod(_swap_ext)
-    flatten   = staticmethod(_flatten)
-    print     = staticmethod(print)
-    basename  = staticmethod(path.basename)
-
-    root_path = os.getcwd()
-    root_name = "build.hancho"
-
-    repo_path = os.getcwd()
-    repo_name = ""
-
-    depformat = 'gcc'
-    job_count = 1
-    ext_build = False
-
-    jobs      = os.cpu_count()
-    verbose   = False
-    quiet     = False
-    dry_run   = False
-    debug     = False
-    force     = False
-    shuffle   = False
-    trace     = False
-    use_color = True
-
-    abs_command_path  = "{abs_path(join_path(base_path,   command_path))}"
-    abs_source_path   = "{abs_path(join_path(base_path,   source_path))}"
-    abs_build_path    = "{abs_path(join_path(base_path,   build_path))}"
-
-    abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
-    abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
-    abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}"
-    abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}"
-
-    rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}"
-    rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}"
-
-    rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
-    rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
-    rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
-    rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
-
-    default_command_path = "{base_path}"
-    default_source_path  = "{base_path}"
-    default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}"
-
-    command_path = "{default_command_path}"
-    source_path  = "{default_source_path}"
-    build_path   = "{default_build_path}"
-    # fmt: on
 
 #----------------------------------------
 
@@ -337,62 +242,6 @@ class Command(Config):
 
 #----------------------------------------
 
-def repo(config, _repo_path, *args, **kwargs):
-    repo_path = _abs_path(_join_path(config.base_path, _repo_path))
-    repo_name = path.basename(repo_path)
-
-    repo = Repo(
-        config,
-        *args,
-        **kwargs,
-        repo_path = repo_path,
-        repo_name = repo_name,
-        base_path = repo_path,
-        base_name = "",
-    )
-    return repo
-
-def repo2(config, _file_path, _file_name, *args, **kwargs):
-    _file_path = config.expand(_file_path)
-    _file_name = config.expand(_file_name)
-
-    repo_path = _abs_path(_join_path(config.base_path, _file_path))
-    repo_name = path.basename(repo_path)
-
-    _file_pathname = _abs_path(_join_path(repo_path, _file_name))
-
-    return load(
-        config,
-        _file_pathname,
-        is_include=False,
-        *args,
-        **kwargs,
-        repo_path = repo_path,
-        repo_name = repo_name,
-    )
-
-def load(config, _file_name, is_include = False, *args, **kwargs):
-    _file_name = config.expand(_file_name)
-    file_path, file_name = path.split(_abs_path(_join_path(config.base_path, _file_name)))
-
-    mod_config = Module(config, *args, **kwargs)
-
-    if is_include:
-        mod_config.base_path = config.base_path
-        mod_config.base_name = config.base_name
-    else:
-        mod_config.base_path = file_path
-        mod_config.base_name = file_name
-
-    module = app.load_module(file_path, file_name, mod_config, is_include = True)
-
-    # Module loaded, copy all its public stuff into this config
-    for key, val in module.__dict__.items():
-        if key.startswith("_") or key == "hancho":
-            continue
-        setattr(mod_config, key, val)
-    return mod_config
-
 class Repo(Config):
     pass
 
@@ -401,6 +250,41 @@ class Include(Config):
 
 class Module(Config):
     pass
+
+#----------------------------------------
+
+def repo(config, _repo_path, *args, **kwargs):
+    base_path = getattr(config, "base_path", app.topdir())
+    repo_path = config.expand(_repo_path)
+    repo_path = _abs_path(_join_path(base_path, repo_path))
+    repo_name = path.basename(repo_path)
+
+    repo = Repo(
+        config,
+        *args,
+        **kwargs,
+        repo_path = repo_path,
+        repo_name = repo_name,
+    )
+    return repo
+
+def load(config, _file_name, *args, **kwargs):
+    base_path = getattr(config, "base_path", app.topdir())
+    file_name = config.expand(_file_name)
+    file_path = _abs_path(_join_path(base_path, file_name))
+
+    file_name = path.basename(file_path)
+    file_path = path.dirname(file_path)
+
+    mod_config = Module(config, *args, **kwargs)
+
+    module = app.load_module(file_path, file_name, mod_config)
+
+    # Module loaded, copy all its public stuff into this config
+    for key, val in module.__dict__.items():
+        if not key.startswith("_"):
+            setattr(mod_config, key, val)
+    return mod_config
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -420,6 +304,15 @@ class Module(Config):
 # The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
 
+# The maximum number of recursion levels we will do to expand a macro.
+# Tests currently require MAX_EXPAND_DEPTH >= 6
+MAX_EXPAND_DEPTH = 20
+
+# Matches "{expression}" macros
+macro_regex = re.compile("^{[^}]*}$")
+
+# Matches macros inside a template string.
+template_regex = re.compile("{[^}]*}")
 
 def expand(config, variant, fail_ok=False):
     """Expands all templates anywhere inside 'variant'."""
@@ -443,9 +336,7 @@ def expand(config, variant, fail_ok=False):
         case _ if inspect.isfunction(variant):
             return variant
         case _:
-            message = f"{_color(255, 0, 0)}Don't know how to expand {type(variant).__name__} ='{variant}'{_color()}"
-            log(message)
-            raise ValueError(message)
+            raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
 
 
 def expand_template(config, template, fail_ok=False):
@@ -464,8 +355,7 @@ def expand_template(config, template, fail_ok=False):
                 variant = eval_macro(config, macro, fail_ok)
                 result += " ".join([str(s) for s in _flatten(variant)])
             except BaseException as err:
-                log(err)
-                log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed! - {err}{_color()}")
+                log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed!{_color()}")
                 raise err
             template = template[span.end() :]
         result += template
@@ -510,7 +400,6 @@ def eval_macro(config, macro, fail_ok=False):
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
         if not fail_ok:
-            log(err)
             log(f"{_color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{_color()}")
             raise err
     finally:
@@ -530,30 +419,19 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        import pprint
-        #pprint.pprint(args)
-        #pprint.pprint(kwargs)
-
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
-
-            root_path     = Config.root_path,
-            repo_path     = Config.root_path,
             base_path     = app.topdir(),
-
             command       = None,
-            command_path  = "{default_command_path}",
+            command_path  = "{base_path}",
             command_files = [],
-
-            source_path   = "{default_source_path}",
+            source_path   = "{base_path}",
             source_files  = [],
-
-            build_tag     = "",
             build_dir     = "build",
-            build_path    = "{default_build_path}",
+            build_tag     = "",
+            build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}",
             build_files   = [],
             build_deps    = [],
-
             other_files   = [],
         )
 
@@ -564,9 +442,6 @@ class Task:
         self.action = Config()
         self.reason = None
         self.promise = None
-
-        if self.config.command is None:
-            raise ValueError(f"Task has no command - {self}")
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
@@ -607,11 +482,7 @@ class Task:
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException as err:
-            log(_color(255, 128, 128))
-            log(err)
-            if not self.config.quiet:
-                traceback.print_exception(*sys.exc_info())
-            log(_color())
+            log(f"{_color(255, 128, 128)}{traceback.format_exc()}{_color()}")
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
@@ -821,8 +692,8 @@ class App:
 
     # pylint: disable=too-many-instance-attributes
     def __init__(self):
-        self.repos = []
         self.loaded_modules = []
+        self.dirstack = [os.getcwd()]
         self.all_build_files = set()
 
         self.tasks_total = 0
@@ -841,7 +712,6 @@ class App:
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
         self.log = ""
-        self.dirstack = [os.getcwd()]
 
     ########################################
 
@@ -933,12 +803,9 @@ class App:
                     setattr(c, key, val)
             log(f"global config = {c}")
 
-        root_config = Config(
-            base_path    = Config.root_path,
-            base_name    = Config.root_name,
-        )
+        root_config = Config()
 
-        self.load_module(Config.root_path, Config.root_name, root_config, is_include = False)
+        self.load_module(Config.root_path, Config.root_name, root_config)
         time_b = time.perf_counter()
 
         if Config.debug or Config.verbose:
@@ -955,7 +822,7 @@ class App:
             # Seems to fix the issue.
             result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         except BaseException as err:
-            log(err)
+            log(f"{_color(255, 128, 128)}{traceback.format_exc()}{_color()}")
         return result
 
     ########################################
@@ -1019,7 +886,7 @@ class App:
 
     ########################################
 
-    def load_module(self, file_path, file_name, config, is_include = False):
+    def load_module(self, file_path, file_name, config):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
         file_path = config.expand(file_path)
@@ -1082,6 +949,76 @@ class App:
         self.jobs_available += count
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
+
+####################################################################################################
+# All static methods and fields are available to use in any template string.
+
+# fmt: off
+Config.Command  = Command
+Config.Config   = Config
+Config.Include  = Include
+Config.Module   = Module
+Config.Repo     = Repo
+Config.Task     = Task
+
+Config.extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
+Config.repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
+Config.command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
+Config.task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
+Config.load     = lambda self, file_name, *args, **kwargs : load(self, file_name, *args, kwargs)
+
+Config.reset    = lambda self : app.reset()
+Config.build    = lambda self : app.build()
+Config.get_log  = lambda self : app.log
+
+Config.abs_path  = staticmethod(_abs_path)
+Config.rel_path  = staticmethod(_rel_path)
+Config.join_path = staticmethod(_join_path)
+Config.color     = staticmethod(_color)
+Config.glob      = staticmethod(glob.glob)
+Config.len       = staticmethod(len)
+Config.run_cmd   = staticmethod(_run_cmd)
+Config.swap_ext  = staticmethod(_swap_ext)
+Config.flatten   = staticmethod(_flatten)
+Config.print     = staticmethod(print)
+
+Config.root_path = os.getcwd()
+Config.root_name = "build.hancho"
+
+Config.repo_path = os.getcwd()
+Config.repo_name = ""
+
+Config.depformat = 'gcc'
+Config.job_count = 1
+Config.ext_build = False
+
+Config.jobs      = os.cpu_count()
+Config.verbose   = False
+Config.quiet     = False
+Config.dry_run   = False
+Config.debug     = False
+Config.force     = False
+Config.shuffle   = False
+Config.trace     = False
+Config.use_color = True
+
+Config.abs_command_path  = "{abs_path(join_path(base_path,   command_path))}"
+Config.abs_source_path   = "{abs_path(join_path(base_path,   source_path))}"
+Config.abs_build_path    = "{abs_path(join_path(base_path,   build_path))}"
+
+Config.abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
+Config.abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
+Config.abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}"
+Config.abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}"
+
+Config.rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}"
+Config.rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}"
+
+Config.rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
+Config.rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
+Config.rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
+Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
+# fmt: on
 
 ####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a

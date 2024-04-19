@@ -16,7 +16,7 @@ def sync_callback(task):
   #print("Sync callback end")
   return task.action.build_files
 
-fast_task = hancho.command2(sync_callback)
+fast_task = hancho.command(sync_callback)
 fast_task(["src/main.cpp"], ["fast1.txt", "fast2.txt", "fast3.txt"])
 
 # Asynchronous functions can also be used in place of command strings.
@@ -31,7 +31,7 @@ async def async_callback(task):
   #print("Async callback end")
   return task.action.build_files
 
-slow_task = hancho.command2(async_callback)
+slow_task = hancho.command(async_callback)
 slow_task(["src/main.cpp"], ["slow1.txt", "slow2.txt", "slow3.txt"])
 
 # Promises that resolve to filenames can be used in place of actual filenames in rules.
@@ -42,5 +42,5 @@ async def slow_filename_promise():
   #print("Slow promise end")
   return ["src/main.cpp"]
 
-echo = hancho.command2("echo {rel_source_files} > {rel_build_files}")
+echo = hancho.command("echo {rel_source_files} > {rel_build_files}")
 echo([slow_filename_promise()], ["promise1.txt"])

@@ -1,5 +1,10 @@
 # tutorial/tut00.hancho
 
+print(hancho)
+
+import pprint
+pprint.pprint(dir(hancho))
+
 hancho.task(
   desc          = "Compile main.cpp and util.cpp and link app",
   command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",

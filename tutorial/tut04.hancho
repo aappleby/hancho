@@ -7,7 +7,7 @@ common = hancho.extend(
   build_path    = "build/tut04",
 )
 
-tut04_rules = common.include("tut04_rules.hancho")
+tut04_rules = common.load("tut04_rules.hancho")
 
 main_o = tut04_rules.compile_cpp("src/main.cpp", common)
 util_o = tut04_rules.compile_cpp("src/util.cpp", common)

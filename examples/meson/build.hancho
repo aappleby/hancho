@@ -2,7 +2,7 @@
 
 hancho.build_tag = "debug"
 
-compile = hancho.command2(
+compile = hancho.command(
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
   desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
   includes  = [
@@ -24,7 +24,7 @@ compile = hancho.command2(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = hancho.command2(
+link = hancho.command(
   command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
   desc      = "Linking {rel_source_files} -> {rel_build_files}",
   link_opts = [

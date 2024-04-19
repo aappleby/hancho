@@ -2,4 +2,4 @@
 
 hancho.repo_name = "tut40"
 
-hancho.module("src/tut40_src.hancho")
+hancho.load("src/tut40_src.hancho")
