@@ -207,36 +207,45 @@ class Config:
 
     def update(self, *args, **kwargs):
         for arg in args:
-            self.__dict__.update(arg)
-        self.__dict__.update(kwargs)
+            self.merge(arg)
+        self.merge(kwargs)
         return self
 
-    # required to use config as mapping in eval()
-    def __getitem__(self, key):
-        return getattr(self, key)
+    def merge(self, _dict):
+        for key, val in _dict.items():
+            setattr(self, key, val)
+
+    def items(self):
+        return self.__dict__.items()
 
     # required to support "self.__dict__.update(config)"
     def keys(self):
         return self.__dict__.keys()
 
+    # required to use config as mapping in eval()
+    def __getitem__(self, key):
+        return getattr(self, key)
+
     def expand(self, variant):
         return expand(self, variant)
 
+    ####################
     # All static methods and fields are available to use in any template string.
 
     # fmt: off
     config   = lambda self,            *args, **kwargs : Config(*args, kwargs)
     extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
     repo     = lambda self, repo_path, *args, **kwargs : repo(self, repo_path, *args, **kwargs)
+    repo2    = lambda self, repo_path, *args, **kwargs : repo2(self, repo_path, *args, **kwargs)
     #command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
 
     #command2  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
     def command2(self, command, *args, **kwargs):
         result = Command(command, self, *args, **kwargs)
-        if hasattr(result, "file_path"):
-            delattr(result, "file_path")
-        if hasattr(result, "file_name"):
-            delattr(result, "file_name")
+        #if hasattr(result, "base_path"):
+        #    delattr(result, "base_path")
+        #if hasattr(result, "base_name"):
+        #    delattr(result, "base_name")
         return result
 
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
@@ -265,9 +274,6 @@ class Config:
     repo_path = os.getcwd()
     repo_name = ""
 
-    #file_path = os.getcwd()
-    #file_name = "build.hancho"
-
     depformat = 'gcc'
     job_count = 1
     ext_build = False
@@ -282,9 +288,9 @@ class Config:
     trace     = False
     use_color = True
 
-    abs_command_path  = "{abs_path(join_path(file_path,   command_path))}"
-    abs_source_path   = "{abs_path(join_path(file_path,   source_path))}"
-    abs_build_path    = "{abs_path(join_path(file_path,   build_path))}"
+    abs_command_path  = "{abs_path(join_path(base_path,   command_path))}"
+    abs_source_path   = "{abs_path(join_path(base_path,   source_path))}"
+    abs_build_path    = "{abs_path(join_path(base_path,   build_path))}"
 
     abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
     abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
@@ -299,8 +305,8 @@ class Config:
     rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
     rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
 
-    default_command_path = "{file_path}"
-    default_source_path  = "{file_path}"
+    default_command_path = "{base_path}"
+    default_source_path  = "{base_path}"
     default_build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}"
 
     command_path = "{default_command_path}"
@@ -332,7 +338,7 @@ class Command(Config):
 #----------------------------------------
 
 def repo(config, _repo_path, *args, **kwargs):
-    repo_path = _abs_path(_join_path(config.file_path, _repo_path))
+    repo_path = _abs_path(_join_path(config.base_path, _repo_path))
     repo_name = path.basename(repo_path)
 
     repo = Repo(
@@ -341,24 +347,42 @@ def repo(config, _repo_path, *args, **kwargs):
         **kwargs,
         repo_path = repo_path,
         repo_name = repo_name,
-        file_path = repo_path,
-        file_name = "",
+        base_path = repo_path,
+        base_name = "",
     )
     return repo
 
+def repo2(config, _file_path, _file_name, *args, **kwargs):
+    _file_path = config.expand(_file_path)
+    _file_name = config.expand(_file_name)
+
+    repo_path = _abs_path(_join_path(config.base_path, _file_path))
+    repo_name = path.basename(repo_path)
+
+    _file_pathname = _abs_path(_join_path(repo_path, _file_name))
+
+    return load(
+        config,
+        _file_pathname,
+        is_include=False,
+        *args,
+        **kwargs,
+        repo_path = repo_path,
+        repo_name = repo_name,
+    )
+
 def load(config, _file_name, is_include = False, *args, **kwargs):
     _file_name = config.expand(_file_name)
-    file_path, file_name = path.split(_abs_path(_join_path(config.file_path, _file_name)))
+    file_path, file_name = path.split(_abs_path(_join_path(config.base_path, _file_name)))
 
     mod_config = Module(config, *args, **kwargs)
 
     if is_include:
-        #mod_config.file_path = file_path
-        #mod_config.file_name = file_name
-        pass
+        mod_config.base_path = config.base_path
+        mod_config.base_name = config.base_name
     else:
-        mod_config.file_path = file_path
-        mod_config.file_name = file_name
+        mod_config.base_path = file_path
+        mod_config.base_name = file_name
 
     module = app.load_module(file_path, file_name, mod_config, is_include = True)
 
@@ -505,12 +529,17 @@ class Task:
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, *args, **kwargs):
+
+        import pprint
+        #pprint.pprint(args)
+        #pprint.pprint(kwargs)
+
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
 
             root_path     = Config.root_path,
             repo_path     = Config.root_path,
-            file_path     = os.getcwd(),
+            base_path     = app.topdir(),
 
             command       = None,
             command_path  = "{default_command_path}",
@@ -611,7 +640,7 @@ class Task:
 
         # FIXME we can probably ditch some of these, we really only need the abs ones
 
-        action.file_path     = config.file_path
+        action.base_path     = config.base_path
         action.command_path  = config.expand(config.command_path)
         action.source_path   = config.expand(config.source_path)
         action.build_path    = config.expand(config.build_path)
@@ -621,9 +650,9 @@ class Task:
         action.build_files   = _flatten(config.expand(config.build_files))
         action.build_deps    = _flatten(config.expand(config.build_deps))
 
-        action.abs_command_path  = _abs_path(_join_path(action.file_path, action.command_path), strict=True)
-        action.abs_source_path   = _abs_path(_join_path(action.file_path, action.source_path), strict=True)
-        action.abs_build_path    = _abs_path(_join_path(action.file_path, action.build_path))
+        action.abs_command_path  = _abs_path(_join_path(action.base_path, action.command_path), strict=True)
+        action.abs_source_path   = _abs_path(_join_path(action.base_path, action.source_path), strict=True)
+        action.abs_build_path    = _abs_path(_join_path(action.base_path, action.build_path))
 
         action.abs_command_files = _abs_path(_flatten(_join_path(action.abs_command_path, action.command_files)), strict=True)
         action.abs_source_files  = _abs_path(_flatten(_join_path(action.abs_source_path, action.source_files)), strict=True)
@@ -812,6 +841,21 @@ class App:
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
         self.log = ""
+        self.dirstack = [os.getcwd()]
+
+    ########################################
+
+    def pushdir(self, path):
+        path = _abs_path(path, strict=True)
+        self.dirstack.append(path)
+        os.chdir(path)
+
+    def popdir(self):
+        self.dirstack.pop()
+        os.chdir(self.dirstack[-1])
+
+    def topdir(self):
+        return self.dirstack[-1]
 
     ########################################
 
@@ -822,14 +866,13 @@ class App:
 
     def main(self):
         result = -1
-        old_cwd = os.getcwd()
         try:
             self.parse_args()
-            os.chdir(Config.root_path)
+            self.pushdir(Config.root_path)
             self.load_hanchos()
             result = self.build()
         finally:
-            os.chdir(old_cwd)
+            self.popdir()
         return result
 
     ########################################
@@ -891,8 +934,8 @@ class App:
             log(f"global config = {c}")
 
         root_config = Config(
-            file_path    = Config.root_path,
-            file_name    = Config.root_name,
+            base_path    = Config.root_path,
+            base_name    = Config.root_name,
         )
 
         self.load_module(Config.root_path, Config.root_name, root_config, is_include = False)
@@ -985,8 +1028,7 @@ class App:
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        old_cwd = os.getcwd()
-        os.chdir(file_path)
+        app.pushdir(file_path)
 
         file_pathname = _join_path(file_path, file_name)
 
@@ -1010,7 +1052,7 @@ class App:
             # pylint: disable=not-callable
             types.FunctionType(code, module.__dict__)()
         finally:
-            os.chdir(old_cwd)
+            app.popdir()
         return module
 
     ########################################

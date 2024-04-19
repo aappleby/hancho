@@ -81,7 +81,7 @@ class TestConfig(unittest.TestCase):
 
 ################################################################################
 
-hancho = Config(file_name = "build_config", file_path=os.getcwd())
+hancho = Config(base_name = "build.hancho", base_path=os.getcwd())
 Config.use_color = False
 Config.quiet = True
 #Config.debug = True
@@ -179,7 +179,7 @@ class TestHancho(unittest.TestCase):
             command = "touch {rel_build_files}",
             source_files = "src/foo.c",
             build_files = "foo.o",
-            build_path = "{file_path}/build"
+            build_path = "{base_path}/build"
         )
         self.assertEqual(0, hancho.build())
         self.assertTrue(Path("build/foo.o").exists())
@@ -190,7 +190,7 @@ class TestHancho(unittest.TestCase):
             command = "touch {rel_build_files}",
             source_files = "src/foo.c",
             build_files = "foo.o",
-            build_path = "{file_path}/../build"
+            build_path = "{base_path}/../build"
         )
         self.assertNotEqual(0, hancho.build())
         self.assertFalse(Path("build/foo.o").exists())
@@ -211,7 +211,9 @@ class TestHancho(unittest.TestCase):
             command = "touch {build_files} {does_not_exist}",
             build_files = "result.txt",
         )
-        self.assertNotEqual(0, hancho.build())
+        result = hancho.build()
+        #print(hancho.get_log())
+        self.assertNotEqual(0, result)
         self.assertTrue("'Config' object has no attribute 'does_not_exist'" in hancho.get_log())
 
     def test_missing_input(self):
