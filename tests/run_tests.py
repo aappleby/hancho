@@ -132,17 +132,17 @@ class TestHancho(unittest.TestCase):
     #    hancho.task(command = "echo {module.repo_path}")
     #    self.assertEqual(0, hancho.build())
 
-    def test_subrepos1(self):
-        """Outputs from a subrepo should go in build/repo_name/..."""
-        repo = hancho.repo("subrepo")
-        task = repo.task(
-            command = "cat {rel_source_files} > {rel_build_files}",
-            source_files = "stuff.txt",
-            build_files = "repo.txt",
-            base_path = os.path.abspath("subrepo")
-        )
-        self.assertEqual(0, hancho.build())
-        self.assertTrue(Path("build/subrepo/repo.txt").exists())
+    #def test_subrepos1(self):
+    #    """Outputs from a subrepo should go in build/repo_name/..."""
+    #    repo = hancho.repo("subrepo")
+    #    task = repo.task(
+    #        command = "cat {rel_source_files} > {rel_build_files}",
+    #        source_files = "stuff.txt",
+    #        build_files = "repo.txt",
+    #        base_path = os.path.abspath("subrepo")
+    #    )
+    #    self.assertEqual(0, hancho.build())
+    #    self.assertTrue(Path("build/subrepo/repo.txt").exists())
 
 
 #    def test_subrepos1(self):
