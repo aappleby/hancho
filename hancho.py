@@ -422,13 +422,7 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        #self.modstack.append(Config(
-        #    root_path = os.getcwd(),
-        #    root_name = "",
-        #    repo_path = os.getcwd(),
-        #    repo_name = "",
-        #    base_path = os.getcwd()
-        #))
+        #print(app.topmod().hancho)
 
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
@@ -711,17 +705,21 @@ class App:
     def __init__(self):
         self.loaded_modules = []
         self.dirstack = [os.getcwd()]
+        self.modstack = []
 
         # We're adding a 'fake' module to the top of the mod stack so that applications that import
         # Hancho directly don't try to read modstack[-1] from an empty stack
-        self.modstack = []
-        self.modstack.append(Config(
-            root_path = os.getcwd(),
-            root_name = "",
-            repo_path = os.getcwd(),
-            repo_name = "",
-            base_path = os.getcwd()
-        ))
+        fake_hancho = Config()
+
+        fake_module = type(sys)("fake_module")
+        fake_module.hancho    = Config()
+        fake_module.root_path = os.getcwd()
+        fake_module.root_name = ""
+        fake_module.repo_path = os.getcwd()
+        fake_module.repo_name = ""
+        fake_module.base_path = os.getcwd()
+        fake_module.hancho.module = fake_module
+        self.modstack.append(fake_module)
 
         self.all_build_files = set()
 

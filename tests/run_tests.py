@@ -83,6 +83,7 @@ class TestConfig(unittest.TestCase):
 ################################################################################
 
 hancho = Config()
+hancho.module = app.modstack[-1]
 Config.use_color = False
 Config.quiet = True
 #Config.debug = True
@@ -124,6 +125,10 @@ class TestHancho(unittest.TestCase):
         """Sanity check"""
         hancho.task(command = "(exit 255)")
         self.assertNotEqual(0, hancho.build())
+
+    def test_module_in_template(self):
+        hancho.task(command = "echo {module.root_path}")
+        self.assertEqual(0, hancho.build())
 
     def test_subrepos1(self):
         """Outputs from a subrepo should go in build/repo_name/..."""
