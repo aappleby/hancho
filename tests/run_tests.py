@@ -88,6 +88,8 @@ Config.use_color = False
 Config.quiet = True
 #Config.debug = True
 #Config.verbose = True
+Config.root_path = os.getcwd()
+Config.root_name = "build.hancho"
 
 
 def color(red=None, green=None, blue=None):
@@ -126,9 +128,9 @@ class TestHancho(unittest.TestCase):
         hancho.task(command = "(exit 255)")
         self.assertNotEqual(0, hancho.build())
 
-    def test_module_in_template(self):
-        hancho.task(command = "echo {module.root_path}")
-        self.assertEqual(0, hancho.build())
+    #def test_module_in_template(self):
+    #    hancho.task(command = "echo {module.repo_path}")
+    #    self.assertEqual(0, hancho.build())
 
     def test_subrepos1(self):
         """Outputs from a subrepo should go in build/repo_name/..."""

@@ -15,3 +15,5 @@ link = hancho.command(
 def c_binary(source_files, build_files, **kwargs):
   objs = [compile(file) for file in source_files]
   return link(objs, build_files)
+
+hancho.c_binary = c_binary
