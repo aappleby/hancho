@@ -14,6 +14,7 @@ import time
 
 sys.path.append("..")
 from hancho import Config
+from hancho import app
 
 # tests still needed -
 # calling hancho in src dir
@@ -86,6 +87,7 @@ Config.use_color = False
 Config.quiet = True
 #Config.debug = True
 #Config.verbose = True
+
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -218,7 +220,6 @@ class TestHancho(unittest.TestCase):
 
     def test_missing_input(self):
         """We should fail if an input is missing"""
-        hancho.reset()
         t = hancho.task(
             command = "touch {rel_build_files}",
             source_files = "src/does_not_exist.txt",

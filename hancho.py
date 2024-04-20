@@ -254,7 +254,7 @@ class Module(Config):
 #----------------------------------------
 
 def repo(config, _repo_path, *args, **kwargs):
-    base_path = getattr(config, "base_path", app.topdir())
+    base_path = getattr(config, "base_path", app.topmod().base_path)
     repo_path = config.expand(_repo_path)
     repo_path = _abs_path(_join_path(base_path, repo_path))
     repo_name = path.basename(repo_path)
@@ -269,7 +269,7 @@ def repo(config, _repo_path, *args, **kwargs):
     return repo
 
 def load(config, _file_name, *args, **kwargs):
-    base_path = getattr(config, "base_path", app.topdir())
+    base_path = getattr(config, "base_path", app.topmod().base_path)
     file_name = config.expand(_file_name)
     file_path = _abs_path(_join_path(base_path, file_name))
 
@@ -332,6 +332,9 @@ def expand(config, variant, fail_ok=False):
         case str() if template_regex.search(variant):
             return expand_template(config, variant, fail_ok)
         case int() | bool() | float() | str() | staticmethod():
+            return variant
+        # FIXME is there a better way to match modules?
+        case _ if isinstance(variant, type(sys)):
             return variant
         case _ if inspect.isfunction(variant):
             return variant
@@ -419,9 +422,23 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
+        #self.modstack.append(Config(
+        #    root_path = os.getcwd(),
+        #    root_name = "",
+        #    repo_path = os.getcwd(),
+        #    repo_name = "",
+        #    base_path = os.getcwd()
+        #))
+
         defaults = Config(
             desc          = "{source_files} -> {build_files}",
-            base_path     = app.topdir(),
+
+            root_path     = app.topmod().root_path,
+            root_name     = app.topmod().root_name,
+            repo_path     = app.topmod().repo_path,
+            repo_name     = app.topmod().repo_name,
+            base_path     = app.topmod().base_path,
+
             command       = None,
             command_path  = "{base_path}",
             command_files = [],
@@ -530,7 +547,7 @@ class Task:
         action.abs_build_files   = _abs_path(_flatten(_join_path(action.abs_build_path, action.build_files)))
         action.abs_build_deps    = _abs_path(_flatten(_join_path(action.abs_build_path, action.build_deps)))
 
-        if not str(action.abs_build_path).startswith(str(Config.root_path)):
+        if not str(action.abs_build_path).startswith(str(config.root_path)):
             raise ValueError(f"Path error, build_path {action.abs_build_path} is not under root_path {Config.root_path}")
 
         # Check for duplicate task outputs
@@ -694,6 +711,18 @@ class App:
     def __init__(self):
         self.loaded_modules = []
         self.dirstack = [os.getcwd()]
+
+        # We're adding a 'fake' module to the top of the mod stack so that applications that import
+        # Hancho directly don't try to read modstack[-1] from an empty stack
+        self.modstack = []
+        self.modstack.append(Config(
+            root_path = os.getcwd(),
+            root_name = "",
+            repo_path = os.getcwd(),
+            repo_name = "",
+            base_path = os.getcwd()
+        ))
+
         self.all_build_files = set()
 
         self.tasks_total = 0
@@ -726,6 +755,9 @@ class App:
 
     def topdir(self):
         return self.dirstack[-1]
+
+    def topmod(self):
+        return self.modstack[-1]
 
     ########################################
 
@@ -892,11 +924,6 @@ class App:
         file_path = config.expand(file_path)
         file_name = config.expand(file_name)
 
-        # We must chdir()s into the .hancho file directory before running it so that
-        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-        # context here so there should be no other threads trying to change cwd.
-        app.pushdir(file_path)
-
         file_pathname = _join_path(file_path, file_name)
 
         if config.debug or config.verbose:
@@ -910,15 +937,30 @@ class App:
         module = type(sys)(mod_name)
         module.__file__ = file_pathname
         module.__builtins__ = builtins
-        module.hancho = config
+
+        module.hancho    = config
+        module.root_path = config.root_path
+        module.root_name = config.root_name
+        module.repo_path = config.repo_path
+        module.repo_name = config.repo_name
+        module.base_path = file_path
+
+        config.module = module
 
         self.loaded_modules.append(module)
 
         try:
+            # We must chdir()s into the .hancho file directory before running it so that
+            # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+            # context here so there should be no other threads trying to change cwd.
+            app.pushdir(file_path)
+            self.modstack.append(module)
+
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
             types.FunctionType(code, module.__dict__)()
         finally:
+            self.modstack.pop()
             app.popdir()
         return module
 
@@ -982,11 +1024,11 @@ Config.swap_ext  = staticmethod(_swap_ext)
 Config.flatten   = staticmethod(_flatten)
 Config.print     = staticmethod(print)
 
-Config.root_path = os.getcwd()
-Config.root_name = "build.hancho"
+#Config.root_path = os.getcwd()
+#Config.root_name = "build.hancho"
 
-Config.repo_path = os.getcwd()
-Config.repo_name = ""
+#Config.repo_path = os.getcwd()
+#Config.repo_name = ""
 
 Config.depformat = 'gcc'
 Config.job_count = 1
