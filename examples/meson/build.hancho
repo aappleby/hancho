@@ -1,7 +1,5 @@
 # examples/meson/build.hancho
 
-hancho.build_tag = "debug"
-
 compile = hancho.command(
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
   desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",

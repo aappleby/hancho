@@ -7,8 +7,6 @@ hancho.repo_name = "tut50"
 
 def sync_callback(task):
   #print("Sync callback begin")
-  print(task.action.abs_build_files)
-  print(task.action.abs_build_files)
   for abs_file in task.action.abs_build_files:
     #print(f"Writing {abs_file}")
     with open(abs_file, 'w', encoding="utf-8") as file:

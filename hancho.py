@@ -18,6 +18,7 @@ import types
 import random
 from os import path
 import glob
+import resource
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -240,12 +241,29 @@ class Config:
     def default_callback(config):
         return Task(**config)
 
+    @staticmethod
+    def merge_source_params(*args, **kwargs):
+        source_files = None
+        build_files = None
+        if len(args) > 0 and isinstance(args[0], (str,list)):
+            source_files = args[0]
+            args = args[1:]
+        if len(args) > 0 and isinstance(args[0], (str,list)):
+            build_files = args[0]
+            args = args[1:]
+        if source_files is not None:
+            kwargs.setdefault("source_files", source_files)
+        if build_files is not None:
+            kwargs.setdefault("build_files", build_files)
+        config = Config(self, *args, kwargs)
+
     def __call__(self, source_files = None, build_files = None, **kwargs):
         if source_files is not None:
             kwargs.setdefault("source_files", source_files)
         if build_files is not None:
             kwargs.setdefault("build_files", build_files)
         config = Config(self, kwargs)
+        #config = Config(self)
         callback = config.pop("callback", self.default_callback)
         return callback(config)
 
@@ -498,6 +516,8 @@ class Task:
         action = self.action
 
         app.task_counter += 1
+        if app.task_counter > 1000:
+            sys.exit(-1)
         action.task_index = app.task_counter
 
         # Expand all the critical fields
@@ -619,7 +639,9 @@ class Task:
             if self.config.verbose or self.config.debug:
                 log(f"{_color(128,128,128)}Reason: {self.reason}{_color()}")
 
-            for exp_command in _flatten(self.action.command):
+            commands = _flatten(self.action.command)
+            #print(commands)
+            for exp_command in commands:
                 if self.config.verbose or self.config.debug:
                     rel_command_path = _rel_path(self.action.abs_command_path, Config.root_path)
                     log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
@@ -650,13 +672,17 @@ class Task:
             raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=self.action.abs_command_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        (stdout_data, stderr_data) = await proc.communicate()
+        try:
+            #print("Creating thread")
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd=self.action.abs_command_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            (stdout_data, stderr_data) = await proc.communicate()
+        except RuntimeError:
+            sys.exit(-1)
 
         self.stdout = stdout_data.decode()
         self.stderr = stderr_data.decode()
@@ -769,6 +795,7 @@ class App:
         parser.add_argument("-v", "--verbose",         default=False, action="store_true",          help="Print verbose build info")
         parser.add_argument("-q", "--quiet",           default=False, action="store_true",          help="Mute all output")
         parser.add_argument("-n", "--dry_run",         default=False, action="store_true",          help="Do not run commands")
+        #parser.add_argument("-n", "--dry_run",         default=True, action="store_true",          help="Do not run commands")
         parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
         parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
         parser.add_argument("-s", "--shuffle",         default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
@@ -1044,4 +1071,7 @@ Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
 app = App()
 
 if __name__ == "__main__":
+    # Limit NPROC so we don't accidentally forkbomb ourself
+    # ok that's not right it's a global limit per userid...
+    #resource.setrlimit(resource.RLIMIT_NPROC, (os.cpu_count() * 8, os.cpu_count() * 8))
     sys.exit(app.main())

@@ -1,25 +1,10 @@
-from hancho import Config
-Config.jobs = 1
-#Config.verbose = True
-#Config.debug = True
-
-clean_build = hancho.extend(
-  desc = "Build {command_path}",
-  command = [
-    "rm -rf build",
-    "{root_path}/hancho.py --quiet"
-  ]
-)
-
-clean_build.task(command_path = "tutorial")
-clean_build.task(command_path = "examples/hello_world")
-clean_build.task(command_path = "examples/meson")
+hancho.load("tutorial/build.hancho", force = True)
+hancho.load("examples/hello_world/build.hancho", force = True)
+hancho.load("examples/meson/build.hancho", force = True)
 
 hancho.task(
   desc = "Run all tests",
   command_path = "tests",
-  command = [
-    "rm -rf build",
-    "./run_tests.py -q"
-  ]
+  command = ["./run_tests.py -q"],
+  force = True
 )
