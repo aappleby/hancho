@@ -184,6 +184,9 @@ def _dump_task(task):
             return _dump_object(o)
     return json.dumps(task.__dict__, indent=2, cls=Encoder)
 
+class Sentinel:
+    pass
+
 ####################################################################################################
 
 class Config:
@@ -209,8 +212,11 @@ class Config:
     def __repr__(self):
         return f"{_dump_object(self)} = {_dump_config(self)}"
 
-    def pop(self, *args, **kwargs):
-        return self.__dict__.pop(*args, **kwargs)
+    def pop(self, key, val = Sentinel()):
+        if not isinstance(val, Sentinel):
+            return self.__dict__.pop(key, val)
+        else:
+            return self.__dict__.pop(key)
 
     def items(self):
         return self.__dict__.items()
@@ -219,10 +225,8 @@ class Config:
         return expand(self, variant)
 
     extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
-    command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, kwargs)
-
-    def generator(self, generate, *args, **kwargs):
-        return Generator(self, *args, kwargs, generate = generate)
+    command  = lambda self, command,   *args, **kwargs : Command(self, *args, kwargs, command = command)
+    callback = lambda self, callback,  *args, **kwargs : Command(self, *args, kwargs, callback = callback)
 
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
     load     = lambda self, file_name, *args, **kwargs : load(self, file_name, *args, kwargs)
@@ -232,43 +236,31 @@ class Config:
     build    = lambda self : app.build()
     get_log  = lambda self : app.log
 
+    @staticmethod
+    def default_callback(config):
+        return Task(**config)
+
+    def __call__(self, source_files = None, build_files = None, **kwargs):
+        if source_files is not None:
+            kwargs.setdefault("source_files", source_files)
+        if build_files is not None:
+            kwargs.setdefault("build_files", build_files)
+        config = Config(self, kwargs)
+        callback = config.pop("callback", self.default_callback)
+        return callback(config)
 
 #----------------------------------------
 
 class Command(Config):
     """A Command is a Config that we can call like a function."""
+    pass
 
-    def __init__(self, command, *args, **kwargs):
-        super().__init__(*args, **kwargs, command = command)
-
-    def __call__(self, source_files = None, build_files = None, **kwargs):
-        if isinstance(source_files, Config):
-            log("You've got a config in your source_files")
-            assert False
-        if isinstance(build_files, Config):
-            log("You've got a config in your build_files")
-            assert False
-
-        if source_files is not None:
-            kwargs.setdefault("source_files", source_files)
-        if build_files is not None:
-            kwargs.setdefault("build_files", build_files)
-
-        new_config = Config(self, kwargs)
-        return Task(**new_config)
 
 #----------------------------------------
 
 class Generator(Config):
     """A Generator is a Config that creates Tasks when called."""
-
-    def __call__(self, source_files = None, build_files = None, **kwargs):
-        if source_files is not None:
-            kwargs.setdefault("source_files", source_files)
-        if build_files is not None:
-            kwargs.setdefault("build_files", build_files)
-        new_config = Config(self, kwargs)
-        return self.generate(new_config)
+    pass
 
 #----------------------------------------
 
@@ -331,9 +323,6 @@ macro_regex = re.compile("^{[^}]*}$")
 
 # Matches macros inside a template string.
 template_regex = re.compile("{[^}]*}")
-
-class Sentinel:
-    pass
 
 def expand(config, variant, fail_ok=False):
     """Expands all templates anywhere inside 'variant'."""
