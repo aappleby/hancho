@@ -294,29 +294,22 @@ template_regex = re.compile("{[^}]*}")
 def expand(config, variant, fail_ok=False):
     """Expands all templates anywhere inside 'variant'."""
     match variant:
-        case Config():
-            return variant
-        case dict():
-            return variant
-        case BaseException():
-            raise variant
-        case Task():
-            return expand(config, variant.promise, fail_ok)
-        case list():
-            return [expand(config, s) for s in variant]
         case str() if macro_regex.search(variant):
             return eval_macro(config, variant, fail_ok)
         case str() if template_regex.search(variant):
             return expand_template(config, variant, fail_ok)
-        case int() | bool() | float() | str() | staticmethod():
-            return variant
-        # FIXME is there a better way to match modules?
-        case _ if isinstance(variant, type(sys)):
-            return variant
-        case _ if inspect.isfunction(variant):
-            return variant
+        case list():
+            return [expand(config, s) for s in variant]
+        case Config():
+            return Expander(variant)
+        case dict():
+            return Expander(Config(variant))
+        case Task():
+            return expand(config, variant.promise, fail_ok)
+        case BaseException():
+            raise variant
         case _:
-            raise ValueError(f"Don't know how to expand {type(variant).__name__} ='{variant}'")
+            return variant
 
 
 def expand_template(config, template, fail_ok=False):
@@ -369,14 +362,16 @@ def eval_macro(config, macro, fail_ok=False):
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
     if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
+
+    if not isinstance(config, Expander):
+        config = Expander(config)
+
     app.expand_depth += 1
     # pylint: disable=eval-used
     result = ""
     try:
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
-        if not isinstance(config, Expander):
-            config = Expander(config)
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
         if not fail_ok:
