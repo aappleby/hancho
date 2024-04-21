@@ -81,7 +81,7 @@ def _rel_path(path1, path2):
     # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
     # should. What we really want is to just remove redundant cwd stuff off the beginning of the
     # path, which we can do with simple string manipulation.
-    return path1.removeprefix(path2 + "/") if path1 != path2 else ""
+    return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
 
 def _join_path(*args):
@@ -190,7 +190,13 @@ class Config:
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
-        self.update(*args, kwargs)
+        for arg in args:
+            for key, val in arg.items():
+                if val is not None:
+                    setattr(self, key, val)
+        for key, val in kwargs.items():
+            if val is not None:
+                setattr(self, key, val)
 
     # required to use config as mapping in eval()
     def __getitem__(self, key):
@@ -203,21 +209,29 @@ class Config:
     def __repr__(self):
         return f"{_dump_object(self)} = {_dump_config(self)}"
 
-    def update(self, *args, **kwargs):
-        self.merge(*args, kwargs)
-        return self
-
-    def merge(self, *args):
-        for arg in args:
-            for key, val in arg.items():
-                setattr(self, key, val)
-        return self
+    def pop(self, *args, **kwargs):
+        return self.__dict__.pop(*args, **kwargs)
 
     def items(self):
         return self.__dict__.items()
 
     def expand(self, variant):
         return expand(self, variant)
+
+    extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
+    command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, kwargs)
+
+    def generator(self, generate, *args, **kwargs):
+        return Generator(self, *args, kwargs, generate = generate)
+
+    task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
+    load     = lambda self, file_name, *args, **kwargs : load(self, file_name, *args, kwargs)
+    repo     = lambda self, file_name, *args, **kwargs : repo(self, file_name, *args, kwargs)
+
+    reset    = lambda self : app.reset()
+    build    = lambda self : app.build()
+    get_log  = lambda self : app.log
+
 
 #----------------------------------------
 
@@ -228,37 +242,64 @@ class Command(Config):
         super().__init__(*args, **kwargs, command = command)
 
     def __call__(self, source_files = None, build_files = None, **kwargs):
+        if isinstance(source_files, Config):
+            log("You've got a config in your source_files")
+            assert False
         if isinstance(build_files, Config):
             log("You've got a config in your build_files")
             assert False
 
-        new_config = Config(self)
         if source_files is not None:
-            new_config.source_files = source_files
+            kwargs.setdefault("source_files", source_files)
         if build_files is not None:
-            new_config.build_files = build_files
-        new_config.update(kwargs)
+            kwargs.setdefault("build_files", build_files)
+
+        new_config = Config(self, kwargs)
         return Task(**new_config)
 
 #----------------------------------------
 
+class Generator(Config):
+    """A Generator is a Config that creates Tasks when called."""
+
+    def __call__(self, source_files = None, build_files = None, **kwargs):
+        if source_files is not None:
+            kwargs.setdefault("source_files", source_files)
+        if build_files is not None:
+            kwargs.setdefault("build_files", build_files)
+        new_config = Config(self, kwargs)
+        return self.generate(new_config)
+
+#----------------------------------------
+
 def load(config, file_name, *args, **kwargs):
-    repo_path = config.expand(getattr(config, "repo_path", app.topmod().repo_path))
-    repo_name = config.expand(getattr(config, "repo_name", app.topmod().repo_name))
-    base_path = config.expand(getattr(config, "base_path", app.topmod().base_path))
-    file_name = config.expand(file_name)
+    mod_config = Config(config, *args, kwargs)
 
-    repo_path = _abs_path(_join_path(base_path, repo_path))
-    file_pathname = _abs_path(_join_path(base_path, file_name))
-
-    mod_config = Config(config, *args, **kwargs)
+    file_name = mod_config.expand(file_name)
+    abs_file_path = _join_path(app.topmod().base_path, file_name)
 
     module = app.load_module(
-        repo_path = repo_path,
-        repo_name = repo_name,
-        file_path = path.dirname(file_pathname),
-        file_name = path.basename(file_pathname),
-        config = mod_config,
+        repo_path = app.topmod().repo_path,
+        repo_name = app.topmod().repo_name,
+        file_path = path.dirname(abs_file_path),
+        file_name = path.basename(abs_file_path),
+        config    = mod_config,
+    )
+
+    return mod_config
+
+def repo(config, file_name, *args, **kwargs):
+    mod_config = Config(config, *args, kwargs)
+
+    file_name = mod_config.expand(file_name)
+    abs_file_path = _join_path(app.topmod().base_path, file_name)
+
+    module = app.load_module(
+        repo_path = path.dirname(abs_file_path),
+        repo_name = path.basename(path.dirname(abs_file_path)),
+        file_path = path.dirname(abs_file_path),
+        file_name = path.basename(abs_file_path),
+        config    = mod_config,
     )
 
     return mod_config
@@ -291,6 +332,9 @@ macro_regex = re.compile("^{[^}]*}$")
 # Matches macros inside a template string.
 template_regex = re.compile("{[^}]*}")
 
+class Sentinel:
+    pass
+
 def expand(config, variant, fail_ok=False):
     """Expands all templates anywhere inside 'variant'."""
     match variant:
@@ -308,6 +352,8 @@ def expand(config, variant, fail_ok=False):
             return expand(config, variant.promise, fail_ok)
         case BaseException():
             raise variant
+        case Sentinel():
+            raise ValueError("Tried to expand a Sentinel")
         case _:
             return variant
 
@@ -344,16 +390,16 @@ class Expander:
 
     def __init__(self, config):
         self.config = config
+        self.trace = config.trace
 
-    def __getitem__(self, key):
-        return self.get(key)
-
-    def __getattr__(self, key):
-        return self.get(key)
+    __getitem__ = lambda self, key: self.get(key)
+    __getattr__ = lambda self, key: self.get(key)
 
     def get(self, key):
-        expanded = expand(self.config, getattr(self.config, key))
-        return Expander(expanded) if isinstance(expanded, Config) else expanded
+        val = getattr(self.config, key)
+        if self.trace:
+            log(("┃" * app.expand_depth) + f" Read '{key}' = '{val}'")
+        return expand(self.config, val)
 
 
 def eval_macro(config, macro, fail_ok=False):
@@ -945,7 +991,7 @@ class App:
 
 default_task_config = Config(
     desc          = "{source_files} -> {build_files}",
-    command       = None,
+    command       = Sentinel(),
     command_path  = "{base_path}",
     command_files = [],
     source_path   = "{base_path}",
@@ -962,15 +1008,6 @@ Config.Command  = Command
 Config.Config   = Config
 Config.Task     = Task
 
-Config.extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
-Config.command  = lambda self, command,   *args, **kwargs : Command(command, self, *args, **kwargs)
-Config.task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
-Config.load     = lambda self, file_name, *args, **kwargs : load(self, file_name, *args, kwargs)
-
-Config.reset    = lambda self : app.reset()
-Config.build    = lambda self : app.build()
-Config.get_log  = lambda self : app.log
-
 Config.abs_path  = staticmethod(_abs_path)
 Config.rel_path  = staticmethod(_rel_path)
 Config.join_path = staticmethod(_join_path)
@@ -981,6 +1018,7 @@ Config.run_cmd   = staticmethod(_run_cmd)
 Config.swap_ext  = staticmethod(_swap_ext)
 Config.flatten   = staticmethod(_flatten)
 Config.print     = staticmethod(print)
+Config.log       = staticmethod(log)
 
 Config.jobs      = os.cpu_count()
 Config.verbose   = False
