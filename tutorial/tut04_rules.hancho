@@ -21,5 +21,5 @@ def link_cpp(tasks, binary, config):
     build_files   = binary,
   )
 
-hancho.compile_cpp = compile_cpp
-hancho.link_cpp = link_cpp
+export.compile_cpp = compile_cpp
+export.link_cpp = link_cpp

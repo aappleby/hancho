@@ -19,6 +19,7 @@ import random
 from os import path
 import glob
 import resource
+from types import MappingProxyType
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -100,6 +101,12 @@ def _join_path(*args):
         case _:
             return _join_path(args[0], _join_path(*args[1:]))
 
+def _join_prefix(prefix, strings):
+    return [prefix+str(s) for s in _flatten(strings)]
+
+def _join_suffix(strings, suffix):
+    return [str(s)+suffix for s in _flatten(strings)]
+
 def _color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
@@ -168,22 +175,52 @@ async def _await_variant(variant):
 
 ####################################################################################################
 
-def _dump_object(o):
-    return f"{type(o).__name__} @ {hex(id(o))}"
+class Dumper:
+    def __init__(self, max_depth = 2):
+        self.depth = 0
+        self.max_depth = max_depth
 
-def _dump_config(config):
-    class Encoder(json.JSONEncoder):
-        def default(self, o):
-            return _dump_object(o)
-    return json.dumps(config.__dict__, indent=2, cls=Encoder)
+    def indent(self):
+        return "  " * self.depth
 
-def _dump_task(task):
-    class Encoder(json.JSONEncoder):
-        def default(self, o):
-            if isinstance(o, Config):
-                return o.__dict__
-            return _dump_object(o)
-    return json.dumps(task.__dict__, indent=2, cls=Encoder)
+    def dump(self, variant):
+        match variant:
+            case Task() | Config():
+                return f"{type(variant).__name__} @ {hex(id(variant))} " + self.dump(variant.__dict__)
+            case list():
+                return self.dump_list(variant)
+            case dict() | MappingProxyType():
+                return self.dump_dict(variant)
+            case str():
+                return '"' + str(variant) + '"'
+            case _:
+                return str(variant)
+
+    def dump_list(self, l):
+        self.depth += 1
+        result = "["
+        for val in l:
+            if len(l) > 1:
+                result += "\n" + self.indent()
+            result += self.dump(val)
+            result += ", "
+        self.depth -= 1
+        if len(l) > 1:
+            result += "\n" + self.indent()
+        result += "]"
+        return result
+
+    def dump_dict(self, d):
+        if self.depth == self.max_depth:
+            return "{...}"
+        result = "{\n"
+        self.depth += 1
+        for key, val in d.items():
+            result += self.indent() + f"{key} = {self.dump(val)},\n"
+        self.depth -= 1
+        result += self.indent() + "}"
+        return result
+
 
 class Sentinel:
     pass
@@ -195,23 +232,27 @@ class Config:
 
     def __init__(self, *args, **kwargs):
         for arg in args:
-            for key, val in arg.items():
-                if val is not None:
-                    setattr(self, key, val)
-        for key, val in kwargs.items():
-            if val is not None:
-                setattr(self, key, val)
+            self.update(arg)
+        self.update(kwargs)
 
     # required to use config as mapping in eval()
     def __getitem__(self, key):
         return getattr(self, key)
 
+    def __repr__(self):
+        return Dumper(1).dump(self)
+
+    def __add__(self, other):
+        return Config(self, other)
+
+    def update(self, kwargs):
+        for key, val in kwargs.items():
+            if val is not None:
+                setattr(self, key, val)
+
     # required to support "**config"
     def keys(self):
         return self.__dict__.keys()
-
-    def __repr__(self):
-        return f"{_dump_object(self)} = {_dump_config(self)}"
 
     def pop(self, key, val = Sentinel()):
         if not isinstance(val, Sentinel):
@@ -230,8 +271,8 @@ class Config:
     callback = lambda self, callback,  *args, **kwargs : Command(self, *args, kwargs, callback = callback)
 
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
-    load     = lambda self, file_name, *args, **kwargs : load(self, file_name, *args, kwargs)
-    repo     = lambda self, file_name, *args, **kwargs : repo(self, file_name, *args, kwargs)
+    load     = lambda self, file_name, *args, **kwargs : load_file(self, file_name, False, *args, kwargs)
+    repo     = lambda self, file_name, *args, **kwargs : load_file(self, file_name, True, *args, kwargs)
 
     reset    = lambda self : app.reset()
     build    = lambda self : app.build()
@@ -241,29 +282,25 @@ class Config:
     def default_callback(config):
         return Task(**config)
 
-    @staticmethod
-    def merge_source_params(*args, **kwargs):
+    def merge_source_params(self, *args, **kwargs):
         source_files = None
         build_files = None
-        if len(args) > 0 and isinstance(args[0], (str,list)):
-            source_files = args[0]
-            args = args[1:]
-        if len(args) > 0 and isinstance(args[0], (str,list)):
-            build_files = args[0]
-            args = args[1:]
+        if len(args) > 0:
+            if isinstance(args[0], (str,list,Task)) or args[0] is None:
+                source_files = args[0]
+                args = args[1:]
+        if len(args) > 0:
+            if isinstance(args[0], (str,list,Task)) or args[0] is None:
+                build_files = args[0]
+                args = args[1:]
         if source_files is not None:
             kwargs.setdefault("source_files", source_files)
         if build_files is not None:
             kwargs.setdefault("build_files", build_files)
-        config = Config(self, *args, kwargs)
+        return Config(self, *args, kwargs)
 
-    def __call__(self, source_files = None, build_files = None, **kwargs):
-        if source_files is not None:
-            kwargs.setdefault("source_files", source_files)
-        if build_files is not None:
-            kwargs.setdefault("build_files", build_files)
-        config = Config(self, kwargs)
-        #config = Config(self)
+    def __call__(self, *args, **kwargs):
+        config = self.merge_source_params(*args, **kwargs)
         callback = config.pop("callback", self.default_callback)
         return callback(config)
 
@@ -282,37 +319,18 @@ class Generator(Config):
 
 #----------------------------------------
 
-def load(config, file_name, *args, **kwargs):
+def load_file(config, file_name, as_repo, *args, **kwargs):
     mod_config = Config(config, *args, kwargs)
 
     file_name = mod_config.expand(file_name)
     abs_file_path = _join_path(app.topmod().base_path, file_name)
 
-    module = app.load_module(
-        repo_path = app.topmod().repo_path,
-        repo_name = app.topmod().repo_name,
-        file_path = path.dirname(abs_file_path),
-        file_name = path.basename(abs_file_path),
-        config    = mod_config,
-    )
+    repo_path = path.dirname(abs_file_path) if as_repo else app.topmod().repo_path
+    repo_name = path.basename(repo_path) if as_repo else app.topmod().repo_name
+    file_path = path.dirname(abs_file_path)
+    file_name = path.basename(abs_file_path)
 
-    return mod_config
-
-def repo(config, file_name, *args, **kwargs):
-    mod_config = Config(config, *args, kwargs)
-
-    file_name = mod_config.expand(file_name)
-    abs_file_path = _join_path(app.topmod().base_path, file_name)
-
-    module = app.load_module(
-        repo_path = path.dirname(abs_file_path),
-        repo_name = path.basename(path.dirname(abs_file_path)),
-        file_path = path.dirname(abs_file_path),
-        file_name = path.basename(abs_file_path),
-        config    = mod_config,
-    )
-
-    return mod_config
+    return app.load_module(repo_path, repo_name, file_path, file_name, mod_config)
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -460,11 +478,13 @@ class Task:
         self.reason = None
         self.promise = None
 
+        self.config.loaded_modules = list(app.loaded_modules)
+
         app.tasks_total += 1
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        return f"{_dump_object(self)} = {_dump_task(self)}"
+        return Dumper(2).dump(self)
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -486,12 +506,12 @@ class Task:
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
-                log(
-                    f"{_color(128,196,255)}[{self.action.task_index}/{app.tasks_total}]{_color()} {self.action.desc}",
-                    sameline=not self.config.verbose,
-                )
-                if self.config.verbose or self.config.debug:
-                    log(f"{_color(128,128,128)}Files {self.action.abs_build_files} are up to date{_color()}")
+                #if self.config.verbose or self.config.debug:
+                #    log(
+                #        f"{_color(128,196,255)}[{self.action.task_index}/{app.tasks_total}]{_color()} {self.action.desc}",
+                #        sameline=not self.config.verbose,
+                #    )
+                #    log(f"{_color(128,128,128)}Files {self.action.abs_build_files} are up to date{_color()}")
                 result = self.action.abs_build_files
                 app.tasks_skip += 1
 
@@ -587,7 +607,8 @@ class Task:
             if _mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
-        for mod in app.loaded_modules:
+        #for mod in app.loaded_modules:
+        for mod in self.config.loaded_modules:
             if _mtime(mod.__file__) >= min_out:
                 return f"Rebuilding because {mod.__file__} has changed"
 
@@ -829,24 +850,21 @@ class App:
         time_a = time.perf_counter()
 
         if Config.debug:
-            c = Config()
-            for key, val in Config.__dict__.items():
-                if not key.startswith("_"):
-                    setattr(c, key, val)
-            log(f"global config = {c}")
+            log(f"global_config = {Dumper().dump(Config.__dict__)}")
 
         root_config = Config()
         self.load_module(
             repo_path=root_config.root_path,
-            repo_name="",
+            repo_name=path.basename(root_config.root_path),
             file_path=root_config.root_path,
             file_name=root_config.root_name,
             config=root_config
         )
         time_b = time.perf_counter()
 
-        if Config.debug or Config.verbose:
-            log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+        #if Config.debug or Config.verbose:
+        #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+        log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
     ########################################
 
@@ -938,8 +956,10 @@ class App:
 
         file_pathname = _join_path(file_path, file_name)
 
-        if config.debug or config.verbose:
-            log(_color(128,255,128) + f"Loading module {file_pathname}" + _color())
+        #if config.debug or config.verbose:
+        #    log(_color(128,255,128) + f"Loading module {file_pathname}" + _color())
+        log(("┃ " * (len(app.modstack) - 1)), end="")
+        log(_color(128,255,128) + f"Loading module {file_pathname}" + _color())
 
         with open(file_pathname, encoding="utf-8") as file:
             source = file.read()
@@ -951,6 +971,7 @@ class App:
         module.__builtins__ = builtins
 
         module.hancho = config
+        module.export = Config()
         module.repo_path = repo_path
         module.repo_name = repo_name
         module.base_path = file_path
@@ -970,7 +991,7 @@ class App:
         finally:
             self.modstack.pop()
             app.popdir()
-        return module
+        return module.export
 
     ########################################
 
@@ -1035,6 +1056,11 @@ Config.swap_ext  = staticmethod(_swap_ext)
 Config.flatten   = staticmethod(_flatten)
 Config.print     = staticmethod(print)
 Config.log       = staticmethod(log)
+Config.path      = path
+
+Config.join_prefix = staticmethod(_join_prefix)
+Config.join_suffix = staticmethod(_join_suffix)
+
 
 Config.jobs      = os.cpu_count()
 Config.verbose   = False
