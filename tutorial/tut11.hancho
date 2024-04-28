@@ -1,6 +1,6 @@
 # tutorial/tut11.hancho
 
-common = hancho.Config(
+common = hancho.raw.Config(
   command_path  = ".",
   command_files = [],
   source_path   = ".",

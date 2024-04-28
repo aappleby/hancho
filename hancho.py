@@ -177,46 +177,61 @@ async def _await_variant(variant):
 
 class Dumper:
     def __init__(self, max_depth = 2):
+        self.tabs = 0
         self.depth = 0
         self.max_depth = max_depth
 
     def indent(self):
-        return "  " * self.depth
+        return "  " * self.tabs
 
     def dump(self, variant):
+        result = ""
         match variant:
-            case Task() | Config():
-                return f"{type(variant).__name__} @ {hex(id(variant))} " + self.dump(variant.__dict__)
+            case Task():
+                result = f"{type(variant).__name__} @ {hex(id(variant))} "
+                if self.depth >= self.max_depth:
+                    result += "{...}"
+                else:
+                    result += self.dump(variant.__dict__)
+            case Config():
+                result = f"{type(variant).__name__} @ {hex(id(variant))} "
+                if self.depth >= self.max_depth:
+                    result += "{...}"
+                else:
+                    result += self.dump(variant.__dict__)
             case list():
-                return self.dump_list(variant)
+                result = self.dump_list(variant)
             case dict() | MappingProxyType():
-                return self.dump_dict(variant)
+                result = self.dump_dict(variant)
             case str():
-                return '"' + str(variant) + '"'
+                result = '"' + str(variant) + '"'
             case _:
-                return str(variant)
+                result = str(variant)
+        return result
 
     def dump_list(self, l):
-        self.depth += 1
         result = "["
+        self.depth += 1
+        self.tabs += 1
         for val in l:
-            if len(l) > 1:
+            if len(l) > 0:
                 result += "\n" + self.indent()
             result += self.dump(val)
             result += ", "
         self.depth -= 1
-        if len(l) > 1:
+        self.tabs -= 1
+        if len(l) > 0:
             result += "\n" + self.indent()
         result += "]"
         return result
 
     def dump_dict(self, d):
-        if self.depth == self.max_depth:
-            return "{...}"
         result = "{\n"
         self.depth += 1
+        self.tabs += 1
         for key, val in d.items():
             result += self.indent() + f"{key} = {self.dump(val)},\n"
+        self.tabs -= 1
         self.depth -= 1
         result += self.indent() + "}"
         return result
@@ -242,8 +257,12 @@ class Config:
     def __repr__(self):
         return Dumper(1).dump(self)
 
+    def __iadd__(self, other):
+        self.update(other)
+        return self
+
     def __add__(self, other):
-        return Config(self, other)
+        return type(other)(self, other)
 
     def update(self, kwargs):
         for key, val in kwargs.items():
@@ -268,7 +287,7 @@ class Config:
 
     extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
     command  = lambda self, command,   *args, **kwargs : Command(self, *args, kwargs, command = command)
-    callback = lambda self, callback,  *args, **kwargs : Command(self, *args, kwargs, callback = callback)
+    generator = lambda self, generator,  *args, **kwargs : Command(self, *args, kwargs, generator = generator)
 
     task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
     load     = lambda self, file_name, *args, **kwargs : load_file(self, file_name, False, *args, kwargs)
@@ -279,7 +298,7 @@ class Config:
     get_log  = lambda self : app.log
 
     @staticmethod
-    def default_callback(config):
+    def default_generator(config):
         return Task(**config)
 
     def merge_source_params(self, *args, **kwargs):
@@ -301,8 +320,8 @@ class Config:
 
     def __call__(self, *args, **kwargs):
         config = self.merge_source_params(*args, **kwargs)
-        callback = config.pop("callback", self.default_callback)
-        return callback(config)
+        generator = config.pop("generator", self.default_generator)
+        return generator(config)
 
 #----------------------------------------
 
@@ -484,7 +503,7 @@ class Task:
         app.pending_tasks.append(self)
 
     def __repr__(self):
-        return Dumper(2).dump(self)
+        return Dumper(3).dump(self)
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -534,6 +553,8 @@ class Task:
 
         config = self.config
         action = self.action
+
+        config.source_files = _flatten(config.source_files)
 
         app.task_counter += 1
         if app.task_counter > 1000:
@@ -1041,9 +1062,11 @@ default_task_config = Config(
     other_files   = [],
 )
 
-Config.Command  = Command
-Config.Config   = Config
-Config.Task     = Task
+Config.raw = Config(
+    Command = Command,
+    Config  = Config,
+    Task    = Task,
+)
 
 Config.abs_path  = staticmethod(_abs_path)
 Config.rel_path  = staticmethod(_rel_path)
@@ -1057,6 +1080,7 @@ Config.flatten   = staticmethod(_flatten)
 Config.print     = staticmethod(print)
 Config.log       = staticmethod(log)
 Config.path      = path
+Config.re        = re
 
 Config.join_prefix = staticmethod(_join_prefix)
 Config.join_suffix = staticmethod(_join_suffix)
@@ -1071,6 +1095,8 @@ Config.force     = False
 Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
+
+Config.first_source = "{flatten(source_files)[0]}"
 
 Config.abs_command_path  = "{abs_path(join_path(base_path,   command_path))}"
 Config.abs_source_path   = "{abs_path(join_path(base_path,   source_path))}"
