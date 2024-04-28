@@ -246,10 +246,6 @@ class Config:
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
-        #print("Config.__init__")
-        #print(args)
-        #print(kwargs)
-
         filtered_args = []
         source_files = Sentinel()
         build_files = Sentinel()
@@ -284,9 +280,6 @@ class Config:
     def __iadd__(self, other):
         self.update(other)
         return self
-
-    def __add__(self, other):
-        return type(self if issubclass(type(self), type(other)) else other)(self, other)
 
     def update(self, kwargs):
         for key, val in kwargs.items():
@@ -326,27 +319,6 @@ class Config:
 
     def __call__(self, *args, **kwargs):
         return Task(self, *args, **kwargs)
-
-#    def merge_source_params(self, *args, **kwargs):
-#        source_files = None
-#        build_files = None
-#        if len(args) > 0:
-#            if isinstance(args[0], (str,list,Task)) or args[0] is None:
-#                source_files = args[0]
-#                args = args[1:]
-#        if len(args) > 0:
-#            if isinstance(args[0], (str,list,Task)) or args[0] is None:
-#                build_files = args[0]
-#                args = args[1:]
-#        if source_files is not None:
-#            kwargs.setdefault("source_files", source_files)
-#        if build_files is not None:
-#            kwargs.setdefault("build_files", build_files)
-#        return Config(self, *args, **kwargs)
-#
-#    def __call__(self, *args, **kwargs):
-#        config = self.merge_source_params(*args, **kwargs)
-#        return config.generator()
 
 #----------------------------------------
 
@@ -496,10 +468,6 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        #print("Task.__init__")
-        #print(args)
-        #print(kwargs)
-
         path_config = Config(
             repo_path = app.topmod().repo_path,
             repo_name = app.topmod().repo_name,
@@ -510,7 +478,7 @@ class Task:
 
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
-        self.config = default_task_config + path_config + task_config
+        self.config = Config(default_task_config, path_config, task_config)
         self.action = Config()
         self.reason = None
         self.promise = None
@@ -1137,7 +1105,4 @@ Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
 app = App()
 
 if __name__ == "__main__":
-    # Limit NPROC so we don't accidentally forkbomb ourself
-    # ok that's not right it's a global limit per userid...
-    #resource.setrlimit(resource.RLIMIT_NPROC, (os.cpu_count() * 8, os.cpu_count() * 8))
     sys.exit(app.main())

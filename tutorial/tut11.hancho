@@ -7,7 +7,8 @@ common = hancho.Config(
   build_path    = "build/tut11",
 )
 
-compile = common + hancho.Config(
+compile = hancho.Config(
+  common,
   desc    = "Compile {source_files}",
   command = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
 )
@@ -26,7 +27,8 @@ util_o = hancho.Task(
   build_deps   = "src/util.d",
 )
 
-link = common + hancho.Config(
+link = hancho.Config(
+  common,
   desc    = "Link {source_files} into {build_files}",
   command = "g++ {source_files} -o {build_path}/{build_files}",
 )

@@ -1,6 +1,6 @@
 # examples/meson/build.hancho
 
-compile = hancho.command(
+compile = hancho.Config(
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
   desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
   includes  = [
@@ -22,7 +22,7 @@ compile = hancho.command(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = hancho.command(
+link = hancho.Config(
   command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
   desc      = "Linking {rel_source_files} -> {rel_build_files}",
   link_opts = [
