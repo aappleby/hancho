@@ -1,0 +1,3 @@
+# tutorial/tut41_src.hancho
+
+hancho.c_binary(hancho, hancho.glob("*.cpp"), "app")

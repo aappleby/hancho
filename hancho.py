@@ -286,7 +286,7 @@ class Config:
         return self
 
     def __add__(self, other):
-        return type(other)(self, other)
+        return type(self if issubclass(type(self), type(other)) else other)(self, other)
 
     def update(self, kwargs):
         for key, val in kwargs.items():
