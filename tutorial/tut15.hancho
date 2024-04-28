@@ -1,19 +1,19 @@
 # tutorial/tut15.hancho
 
-common = hancho.extend(
+common = hancho.Config(
   command_path  = ".",
   command_files = [],
   build_path    = "build/tut15",
 )
 
-compile = common.command(
+compile = common + hancho.Config(
   desc        = "Compile {rel_source_files}",
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   build_files = "{swap_ext(source_files, '.o')}",
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = common.command(
+link = common + hancho.Config(
   desc    = "Link {rel_source_files} into {rel_build_files}",
   command = "g++ {rel_source_files} -o {rel_build_files}",
 )

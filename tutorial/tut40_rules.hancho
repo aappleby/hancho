@@ -1,19 +1,19 @@
-# tutorial/rules.hancho
+# tutorial/tut40_rules.hancho
 
-compile = hancho.command(
+compile = hancho.Config(
   desc         = "Compile {rel_source_files} -> {rel_build_files}",
   command      = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   build_files  = "{swap_ext(source_files, '.o')}",
   build_deps   = "{swap_ext(source_files, '.d')}",
 )
 
-link = hancho.command(
+link = hancho.Config(
   desc    = "Link {rel_source_files} -> {rel_build_files}",
   command = "g++ {rel_source_files} -o {rel_build_files}",
 )
 
-def c_binary(source_files, build_files):
-  objs = [compile(file) for file in source_files]
-  return link(objs, build_files)
+def c_binary(config, source_files, build_files):
+  objs = [compile(config, file) for file in source_files]
+  return link(config, objs, build_files)
 
 export.c_binary = c_binary

@@ -1,19 +1,19 @@
 # tutorial/tut16.hancho
 
-hancho.repo_name = "tut16"
+config = hancho.Config(repo_name = "tut16")
 
-compile = hancho.command(
+compile = hancho.Config(
   command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
   desc        = "Compile {rel_source_files}",
   build_files = "{swap_ext(source_files, '.o')}",
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-link = hancho.command(
+link = hancho.Config(
   command   = "g++ {rel_source_files} -o {rel_build_files}",
   desc      = "Link {rel_source_files} into {rel_build_files}",
 )
 
-main_o = compile("src/main.cpp")
-util_o = compile("src/util.cpp")
-app = link([main_o, util_o], "app")
+main_o = compile(config, "src/main.cpp")
+util_o = compile(config, "src/util.cpp")
+app = link(config, [main_o, util_o], "app")

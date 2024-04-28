@@ -246,7 +246,31 @@ class Config:
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
+        #print("Config.__init__")
+        #print(args)
+        #print(kwargs)
+
+        filtered_args = []
+        source_files = Sentinel()
+        build_files = Sentinel()
+
         for arg in args:
+            if isinstance(arg, Config):
+                filtered_args.append(arg)
+            else:
+                if isinstance(source_files, Sentinel):
+                    source_files = arg
+                elif isinstance(build_files, Sentinel):
+                    build_files = arg
+                else:
+                    raise ValueError("Too many non-config args")
+
+        if not isinstance(source_files, Sentinel):
+            kwargs.setdefault("source_files", source_files)
+        if not isinstance(build_files, Sentinel):
+            kwargs.setdefault("build_files", build_files)
+
+        for arg in filtered_args:
             self.update(arg)
         self.update(kwargs)
 
@@ -285,61 +309,49 @@ class Config:
     def expand(self, variant):
         return expand(self, variant)
 
-    extend   = lambda self,            *args, **kwargs : type(self)(self, *args, kwargs)
-    command  = lambda self, command,   *args, **kwargs : Command(self, *args, kwargs, command = command)
-    generator = lambda self, generator,  *args, **kwargs : Command(self, *args, kwargs, generator = generator)
+    def load(self, file_name, *args, **kwargs):
+        return load_file(file_name, False, *args, **kwargs)
 
-    task     = lambda self,            *args, **kwargs : Task(self, *args, kwargs)
-    load     = lambda self, file_name, *args, **kwargs : load_file(self, file_name, False, *args, kwargs)
-    repo     = lambda self, file_name, *args, **kwargs : load_file(self, file_name, True, *args, kwargs)
+    def repo(self, file_name, *args, **kwargs):
+        return load_file(file_name, True, *args, **kwargs)
 
-    reset    = lambda self : app.reset()
-    build    = lambda self : app.build()
-    get_log  = lambda self : app.log
+    def reset(self):
+        return app.reset()
 
-    @staticmethod
-    def default_generator(config):
-        return Task(**config)
+    def build(self):
+        return app.build()
 
-    def merge_source_params(self, *args, **kwargs):
-        source_files = None
-        build_files = None
-        if len(args) > 0:
-            if isinstance(args[0], (str,list,Task)) or args[0] is None:
-                source_files = args[0]
-                args = args[1:]
-        if len(args) > 0:
-            if isinstance(args[0], (str,list,Task)) or args[0] is None:
-                build_files = args[0]
-                args = args[1:]
-        if source_files is not None:
-            kwargs.setdefault("source_files", source_files)
-        if build_files is not None:
-            kwargs.setdefault("build_files", build_files)
-        return Config(self, *args, kwargs)
+    def get_log(self):
+        return app.log
 
     def __call__(self, *args, **kwargs):
-        config = self.merge_source_params(*args, **kwargs)
-        generator = config.pop("generator", self.default_generator)
-        return generator(config)
+        return Task(self, *args, **kwargs)
+
+#    def merge_source_params(self, *args, **kwargs):
+#        source_files = None
+#        build_files = None
+#        if len(args) > 0:
+#            if isinstance(args[0], (str,list,Task)) or args[0] is None:
+#                source_files = args[0]
+#                args = args[1:]
+#        if len(args) > 0:
+#            if isinstance(args[0], (str,list,Task)) or args[0] is None:
+#                build_files = args[0]
+#                args = args[1:]
+#        if source_files is not None:
+#            kwargs.setdefault("source_files", source_files)
+#        if build_files is not None:
+#            kwargs.setdefault("build_files", build_files)
+#        return Config(self, *args, **kwargs)
+#
+#    def __call__(self, *args, **kwargs):
+#        config = self.merge_source_params(*args, **kwargs)
+#        return config.generator()
 
 #----------------------------------------
 
-class Command(Config):
-    """A Command is a Config that we can call like a function."""
-    pass
-
-
-#----------------------------------------
-
-class Generator(Config):
-    """A Generator is a Config that creates Tasks when called."""
-    pass
-
-#----------------------------------------
-
-def load_file(config, file_name, as_repo, *args, **kwargs):
-    mod_config = Config(config, *args, kwargs)
+def load_file(file_name, as_repo, *args, **kwargs):
+    mod_config = Config(*args, **kwargs)
 
     file_name = mod_config.expand(file_name)
     abs_file_path = _join_path(app.topmod().base_path, file_name)
@@ -484,15 +496,21 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
+        #print("Task.__init__")
+        #print(args)
+        #print(kwargs)
+
         path_config = Config(
             repo_path = app.topmod().repo_path,
             repo_name = app.topmod().repo_name,
             base_path = app.topmod().base_path,
         )
 
+        task_config = Config(*args, **kwargs)
+
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
-        self.config = Config(default_task_config, path_config, *args, kwargs)
+        self.config = default_task_config + path_config + task_config
         self.action = Config()
         self.reason = None
         self.promise = None
@@ -831,17 +849,16 @@ class App:
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("root_name",               default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
-        parser.add_argument("-C", "--chdir",           default=".", dest="root_path", type=str,     help="Change directory before starting the build")
-        parser.add_argument("-j", "--jobs",            default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
-        parser.add_argument("-v", "--verbose",         default=False, action="store_true",          help="Print verbose build info")
-        parser.add_argument("-q", "--quiet",           default=False, action="store_true",          help="Mute all output")
-        parser.add_argument("-n", "--dry_run",         default=False, action="store_true",          help="Do not run commands")
-        #parser.add_argument("-n", "--dry_run",         default=True, action="store_true",          help="Do not run commands")
-        parser.add_argument("-d", "--debug",           default=False, action="store_true",          help="Print debugging information")
-        parser.add_argument("-f", "--force",           default=False, action="store_true",          help="Force rebuild of everything")
-        parser.add_argument("-s", "--shuffle",         default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
-        parser.add_argument("-t", "--trace",           default=False, action="store_true",          help="Trace template & macro expansion")
+        parser.add_argument("root_name",       default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
+        parser.add_argument("-C", "--chdir",   default=".", dest="root_path", type=str,     help="Change directory before starting the build")
+        parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-v", "--verbose", default=False, action="store_true",          help="Print verbose build info")
+        parser.add_argument("-q", "--quiet",   default=False, action="store_true",          help="Mute all output")
+        parser.add_argument("-n", "--dry_run", default=False, action="store_true",          help="Do not run commands")
+        parser.add_argument("-d", "--debug",   default=False, action="store_true",          help="Print debugging information")
+        parser.add_argument("-f", "--force",   default=False, action="store_true",          help="Force rebuild of everything")
+        parser.add_argument("-s", "--shuffle", default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
+        parser.add_argument("-t", "--trace",   default=False, action="store_true",          help="Trace template & macro expansion")
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args()
@@ -1062,11 +1079,8 @@ default_task_config = Config(
     other_files   = [],
 )
 
-Config.raw = Config(
-    Command = Command,
-    Config  = Config,
-    Task    = Task,
-)
+Config.Config    = Config
+Config.Task      = Task
 
 Config.abs_path  = staticmethod(_abs_path)
 Config.rel_path  = staticmethod(_rel_path)

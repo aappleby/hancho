@@ -1,3 +1,6 @@
 # tutorial/tut40_src.hancho
 
-hancho.rules.c_binary(hancho.glob("*.cpp"), "app")
+config = hancho.config
+rules  = hancho.rules
+
+rules.c_binary(config, hancho.glob("*.cpp"), "app")

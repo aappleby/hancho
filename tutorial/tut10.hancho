@@ -1,13 +1,14 @@
 # tutorial/tut10.hancho - branches off from tut02.hancho
 
-common = hancho.raw.Config(
+common = hancho.Config(
   command_path  = ".",
   command_files = [],
   source_path   = ".",
   build_path    = "build/tut10",
 )
 
-main_o = common.task(
+main_o = hancho.Task(
+  common,
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   source_files  = "src/main.cpp",
@@ -15,7 +16,8 @@ main_o = common.task(
   build_deps    = "src/main.d",
 )
 
-util_o = common.task(
+util_o = hancho.Task(
+  common,
   desc          = "Compile {source_files}",
   command       = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
   source_files  = "src/util.cpp",
@@ -23,7 +25,8 @@ util_o = common.task(
   build_deps    = "src/util.d",
 )
 
-app = common.task(
+app = hancho.Task(
+  common,
   desc          = "Link {source_files} into {build_files}",
   command       = "g++ {source_files} -o {build_path}/{build_files}",
   source_files  = [main_o, util_o],

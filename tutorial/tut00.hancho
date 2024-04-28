@@ -1,6 +1,6 @@
 # tutorial/tut00.hancho
 
-hancho.task(
+hancho.Task(
   desc          = "Compile main.cpp and util.cpp and link app",
   command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
   command_path  = ".",

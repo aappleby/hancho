@@ -1,6 +1,6 @@
 # tutorial/tut01.hancho
 
-main_o = hancho.task(
+main_o = hancho.Task(
   desc          = "Compile main.cpp",
   command       = "g++ -MMD -c src/main.cpp -o build/tut01/src/main.o",
   command_path  = ".",
@@ -12,7 +12,7 @@ main_o = hancho.task(
   build_deps    = ["src/main.d"],
 )
 
-util_o = hancho.task(
+util_o = hancho.Task(
   desc          = "Compile util.cpp",
   command       = "g++ -MMD -c src/util.cpp -o build/tut01/src/util.o",
   command_path  = ".",
@@ -24,7 +24,7 @@ util_o = hancho.task(
   build_deps    = ["src/util.d"],
 )
 
-app = hancho.task(
+app = hancho.Task(
   desc          = "Link main.o and util.o into app",
   command       = "g++ build/tut01/src/main.o build/tut01/src/util.o -o build/tut01/app",
   command_path  = ".",

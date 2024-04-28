@@ -1,35 +1,38 @@
 # tutorial/tut11.hancho
 
-common = hancho.raw.Config(
+common = hancho.Config(
   command_path  = ".",
   command_files = [],
   source_path   = ".",
   build_path    = "build/tut11",
 )
 
-compile = common.extend(
+compile = common + hancho.Config(
   desc    = "Compile {source_files}",
   command = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
 )
 
-main_o = compile.task(
+main_o = hancho.Task(
+  compile,
   source_files = "src/main.cpp",
   build_files  = "src/main.o",
   build_deps   = "src/main.d",
 )
 
-util_o = compile.task(
+util_o = hancho.Task(
+  compile,
   source_files = "src/util.cpp",
   build_files  = "src/util.o",
   build_deps   = "src/util.d",
 )
 
-link = common.extend(
+link = common + hancho.Config(
   desc    = "Link {source_files} into {build_files}",
   command = "g++ {source_files} -o {build_path}/{build_files}",
 )
 
-app = link.task(
+app = hancho.Task(
+  link,
   source_files = [main_o, util_o],
   build_files  = "app",
 )
