@@ -14,6 +14,8 @@ link = hancho.Config(
   desc      = "Link {rel_source_files} into {rel_build_files}",
 )
 
-main_o = compile(config, "src/main.cpp")
-util_o = compile(config, "src/util.cpp")
-app = link(config, [main_o, util_o], "app")
+# we CAN pull on our dependencies, we just need to not schedule the promises up front
+
+main_o = compile(config, source_files = "src/main.cpp")
+util_o = compile(config, source_files = "src/util.cpp")
+app = link(config, source_files = [main_o, util_o], build_files = "app")

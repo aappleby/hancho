@@ -480,14 +480,13 @@ class Task(Config):
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
 
-        self._loaded_modules = list(app.loaded_modules)
-
         self.update(default_task_config)
         self.update(path_config)
         self.update(task_config)
 
-        self._reason = None
+        #self._reason = None
         self._promise = None
+        self._loaded_modules = list(app.loaded_modules)
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
@@ -518,12 +517,6 @@ class Task(Config):
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
-                #if self.verbose or self.debug:
-                #    log(
-                #        f"{_color(128,196,255)}[{self.task_index}/{app.tasks_total}]{_color()} {self.desc}",
-                #        sameline=not self.verbose,
-                #    )
-                #    log(f"{_color(128,128,128)}Files {self._build_files} are up to date{_color()}")
                 result = self._build_files
                 app.tasks_skip += 1
 
@@ -547,7 +540,7 @@ class Task(Config):
         app.task_counter += 1
         if app.task_counter > 1000:
             sys.exit(-1)
-        self.task_index = app.task_counter
+        self._task_index = app.task_counter
 
         # Expand all the critical fields
         self._desc          = self.expand(self.desc)
@@ -661,7 +654,7 @@ class Task(Config):
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
-                f"{_color(128,255,196)}[{self.task_index}/{app.tasks_total}]{_color()} {self._desc}",
+                f"{_color(128,255,196)}[{self._task_index}/{app.tasks_total}]{_color()} {self._desc}",
                 sameline=not self.verbose,
             )
 
@@ -810,6 +803,7 @@ class App:
             result = self.build()
         finally:
             self.popdir()
+        print()
         return result
 
     ########################################
