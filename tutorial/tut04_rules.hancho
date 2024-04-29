@@ -13,7 +13,7 @@ def compile_cpp(source, config):
 
 def link_cpp(tasks, binary, config):
   build_path = config.build_path
-  objs = [task.config.build_files for task in tasks]
+  objs = [task.config2.build_files for task in tasks]
   obj_paths = [f"{build_path}/{obj}" for obj in objs]
   result = hancho.Task(
     config,

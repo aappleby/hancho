@@ -86,20 +86,18 @@ def _rel_path(path1, path2):
     return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
 
-def _join_path(*args):
-    """Returns all possible concatenated paths from the given paths (or arrays of paths)."""
-    match len(args):
-        case 0:
-            return ""
-        case 1:
-            return list(args)
-        case 2:
-            args0 = _flatten(args[0])
-            args1 = _flatten(args[1])
-            result = [path.join(arg0, arg1) for arg0 in args0 for arg1 in args1]
-            return result[0] if len(result) == 1 else result
-        case _:
-            return _join_path(args[0], _join_path(*args[1:]))
+def _join_path2(path1, path2, *args):
+    if len(args):
+        return [_join_path(path1, p) for p in _join_path(path2, *args)]
+    if isinstance(path1, list):
+        return [_join_path(p, path2) for p in _flatten(path1)]
+    if isinstance(path2, list):
+        return [_join_path(path1, p) for p in _flatten(path2)]
+    return path.join(path1, path2)
+
+def _join_path(path1, path2, *args):
+    result = _join_path2(path1, path2, *args)
+    return _flatten(result) if isinstance(result, list) else result
 
 def _join_prefix(prefix, strings):
     return [prefix+str(s) for s in _flatten(strings)]
@@ -378,6 +376,7 @@ def expand(config, variant, fail_ok=False):
             return Expander(Config(variant))
         case Task():
             return expand(config, variant.promise, fail_ok)
+            #return variant
         case BaseException():
             raise variant
         case Sentinel():
@@ -400,6 +399,8 @@ def expand_template(config, template, fail_ok=False):
             try:
                 macro = template[span.start() : span.end()]
                 variant = eval_macro(config, macro, fail_ok)
+                if isinstance(variant, Task):
+                    variant = expand(config, variant.promise, fail_ok)
                 result += " ".join([str(s) for s in _flatten(variant)])
             except BaseException as err:
                 log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed!{_color()}")
@@ -478,12 +479,12 @@ class Task:
 
         # Note - We can't set promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
-        self.config = Config(default_task_config, path_config, task_config)
+        self.config2 = Config(default_task_config, path_config, task_config)
         self.action = Config()
         self.reason = None
         self.promise = None
 
-        self.config.loaded_modules = list(app.loaded_modules)
+        self.config2.loaded_modules = list(app.loaded_modules)
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
@@ -495,15 +496,15 @@ class Task:
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            await _await_variant(self.config)
+            await _await_variant(self.config2)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
 
             # Check if we need a rebuild
-            self.reason = self.needs_rerun(self.config.force)
+            self.reason = self.needs_rerun(self.config2.force)
 
-            if self.config.debug:
+            if self.config2.debug:
                 log(self)
 
             # Run the commands if we need to.
@@ -511,10 +512,10 @@ class Task:
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
-                #if self.config.verbose or self.config.debug:
+                #if self.config2.verbose or self.config2.debug:
                 #    log(
                 #        f"{_color(128,196,255)}[{self.action.task_index}/{app.tasks_total}]{_color()} {self.action.desc}",
-                #        sameline=not self.config.verbose,
+                #        sameline=not self.config2.verbose,
                 #    )
                 #    log(f"{_color(128,128,128)}Files {self.action.abs_build_files} are up to date{_color()}")
                 result = self.action.abs_build_files
@@ -537,10 +538,10 @@ class Task:
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        config = self.config
+        config2 = self.config2
         action = self.action
 
-        config.source_files = _flatten(config.source_files)
+        config2.source_files = _flatten(config2.source_files)
 
         app.task_counter += 1
         if app.task_counter > 1000:
@@ -548,13 +549,13 @@ class Task:
         action.task_index = app.task_counter
 
         # Expand all the critical fields
-        action.desc              = config.expand(config.desc)
-        action.command           = config.expand(config.command)
-        action.abs_command_path  = config.expand(config.abs_command_path)
-        action.abs_command_files = config.expand(config.abs_command_files)
-        action.abs_source_files  = config.expand(config.abs_source_files)
-        action.abs_build_files   = config.expand(config.abs_build_files)
-        action.abs_build_deps    = config.expand(config.abs_build_deps)
+        action.desc              = config2.expand(config2.desc)
+        action.command           = config2.expand(config2.command)
+        action.abs_command_path  = config2.expand(config2.abs_command_path)
+        action.abs_command_files = config2.expand(config2.abs_command_files)
+        action.abs_source_files  = config2.expand(config2.abs_source_files)
+        action.abs_build_files   = config2.expand(config2.abs_build_files)
+        action.abs_build_deps    = config2.expand(config2.abs_build_deps)
 
         # Check for missing input files/paths
         if not path.exists(action.abs_command_path):
@@ -580,7 +581,7 @@ class Task:
             app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
-        if not config.dry_run:
+        if not config2.dry_run:
             for abs_file in action.abs_build_files:
                 os.makedirs(path.dirname(abs_file), exist_ok=True)
 
@@ -615,17 +616,17 @@ class Task:
                 return f"Rebuilding because {abs_file} has changed"
 
         #for mod in app.loaded_modules:
-        for mod in self.config.loaded_modules:
+        for mod in self.config2.loaded_modules:
             if _mtime(mod.__file__) >= min_out:
                 return f"Rebuilding because {mod.__file__} has changed"
 
         # Check all dependencies in the depfile, if present.
-        depformat = getattr(self.config, "depformat", "gcc")
+        depformat = getattr(self.config2, "depformat", "gcc")
 
         for abs_depfile in self.action.abs_build_deps:
             if not path.exists(abs_depfile):
                 continue
-            if self.config.debug:
+            if self.config2.debug:
                 log(f"Found depfile {abs_depfile}")
             with open(abs_depfile, encoding="utf-8") as depfile:
                 deplines = None
@@ -653,7 +654,7 @@ class Task:
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
         result = []
-        job_count = getattr(self.config, "job_count", 1)
+        job_count = getattr(self.config2, "job_count", 1)
         try:
             # Wait for enough jobs to free up to run this task.
             await app.acquire_jobs(job_count)
@@ -661,19 +662,19 @@ class Task:
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
                 f"{_color(128,255,196)}[{self.action.task_index}/{app.tasks_total}]{_color()} {self.action.desc}",
-                sameline=not self.config.verbose,
+                sameline=not self.config2.verbose,
             )
 
-            if self.config.verbose or self.config.debug:
+            if self.config2.verbose or self.config2.debug:
                 log(f"{_color(128,128,128)}Reason: {self.reason}{_color()}")
 
             commands = _flatten(self.action.command)
             #print(commands)
             for exp_command in commands:
-                if self.config.verbose or self.config.debug:
+                if self.config2.verbose or self.config2.debug:
                     rel_command_path = _rel_path(self.action.abs_command_path, Config.root_path)
                     log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
-                    log("(DRY RUN) " if self.config.dry_run else "", end="")
+                    log("(DRY RUN) " if self.config2.dry_run else "", end="")
                     log(exp_command)
                 result = await self.run_command(exp_command)
         finally:
@@ -717,7 +718,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if (self.stdout or self.stderr) and not self.config.quiet:
+        if (self.stdout or self.stderr) and not self.config2.quiet:
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")
