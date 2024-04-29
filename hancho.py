@@ -249,7 +249,7 @@ class Config:
         build_files = Sentinel()
 
         for arg in args:
-            if isinstance(arg, Config):
+            if isinstance(arg, Config) and not isinstance(arg, Task):
                 filtered_args.append(arg)
             else:
                 if isinstance(source_files, Sentinel):
@@ -370,13 +370,13 @@ def expand(config, variant, fail_ok=False):
             return expand_template(config, variant, fail_ok)
         case list():
             return [expand(config, s) for s in variant]
+        case Task():
+            return expand(config, variant._promise, fail_ok)
+            #return variant
         case Config():
             return Expander(variant)
         case dict():
             return Expander(Config(variant))
-        case Task():
-            return expand(config, variant._promise, fail_ok)
-            #return variant
         case BaseException():
             raise variant
         case Sentinel():
@@ -461,7 +461,7 @@ def eval_macro(config, macro, fail_ok=False):
 
 ####################################################################################################
 
-class Task:
+class Task(Config):
     """Calling a Rule creates a Task."""
 
     # pylint: disable=too-many-instance-attributes
@@ -479,12 +479,15 @@ class Task:
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
-        self.config2 = Config(default_task_config, path_config, task_config)
-        #self.action = Config()
+
+        self._loaded_modules = list(app.loaded_modules)
+
+        self.update(default_task_config)
+        self.update(path_config)
+        self.update(task_config)
+
         self._reason = None
         self._promise = None
-
-        self.config2.loaded_modules = list(app.loaded_modules)
 
         app.tasks_total += 1
         app.pending_tasks.append(self)
@@ -496,15 +499,18 @@ class Task:
         """Entry point for async task stuff, handles exceptions generated during task execution."""
         try:
             # Await everything awaitable in this task's rule.
-            await _await_variant(self.config2)
+            _promise = self._promise
+            self._promise = None
+            await _await_variant(self.__dict__)
+            self._promise = _promise
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
 
             # Check if we need a rebuild
-            self._reason = self.needs_rerun(self.config2.force)
+            self._reason = self.needs_rerun(self.force)
 
-            if self.config2.debug:
+            if self.debug:
                 log(self)
 
             # Run the commands if we need to.
@@ -512,10 +518,10 @@ class Task:
                 result = await self.run_commands()
                 app.tasks_pass += 1
             else:
-                #if self.config2.verbose or self.config2.debug:
+                #if self.verbose or self.debug:
                 #    log(
                 #        f"{_color(128,196,255)}[{self.task_index}/{app.tasks_total}]{_color()} {self.desc}",
-                #        sameline=not self.config2.verbose,
+                #        sameline=not self.verbose,
                 #    )
                 #    log(f"{_color(128,128,128)}Files {self._build_files} are up to date{_color()}")
                 result = self._build_files
@@ -538,23 +544,19 @@ class Task:
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        config2 = self.config2
-
-        config2.source_files = _flatten(config2.source_files)
-
         app.task_counter += 1
         if app.task_counter > 1000:
             sys.exit(-1)
         self.task_index = app.task_counter
 
         # Expand all the critical fields
-        self._desc          = config2.expand(config2.desc)
-        self._command       = config2.expand(config2.command)
-        self._command_path  = config2.expand(config2.abs_command_path)
-        self._command_files = config2.expand(config2.abs_command_files)
-        self._source_files  = config2.expand(config2.abs_source_files)
-        self._build_files   = config2.expand(config2.abs_build_files)
-        self._build_deps    = config2.expand(config2.abs_build_deps)
+        self._desc          = self.expand(self.desc)
+        self._command       = self.expand(self.command)
+        self._command_path  = self.expand(self.abs_command_path)
+        self._command_files = self.expand(self.abs_command_files)
+        self._source_files  = self.expand(self.abs_source_files)
+        self._build_files   = self.expand(self.abs_build_files)
+        self._build_deps    = self.expand(self.abs_build_deps)
 
         # Check for missing input files/paths
         if not path.exists(self._command_path):
@@ -580,7 +582,7 @@ class Task:
             app.all_build_files.add(abs_file)
 
         # Make sure our output directories exist
-        if not config2.dry_run:
+        if not self.dry_run:
             for abs_file in self._build_files:
                 os.makedirs(path.dirname(abs_file), exist_ok=True)
 
@@ -614,18 +616,17 @@ class Task:
             if _mtime(abs_file) >= min_out:
                 return f"Rebuilding because {abs_file} has changed"
 
-        #for mod in app.loaded_modules:
-        for mod in self.config2.loaded_modules:
+        for mod in self._loaded_modules:
             if _mtime(mod.__file__) >= min_out:
                 return f"Rebuilding because {mod.__file__} has changed"
 
         # Check all dependencies in the depfile, if present.
-        depformat = getattr(self.config2, "depformat", "gcc")
+        depformat = getattr(self, "depformat", "gcc")
 
         for abs_depfile in self._build_deps:
             if not path.exists(abs_depfile):
                 continue
-            if self.config2.debug:
+            if self.debug:
                 log(f"Found depfile {abs_depfile}")
             with open(abs_depfile, encoding="utf-8") as depfile:
                 deplines = None
@@ -653,7 +654,7 @@ class Task:
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
         result = []
-        job_count = getattr(self.config2, "job_count", 1)
+        job_count = getattr(self, "job_count", 1)
         try:
             # Wait for enough jobs to free up to run this task.
             await app.acquire_jobs(job_count)
@@ -661,19 +662,19 @@ class Task:
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
                 f"{_color(128,255,196)}[{self.task_index}/{app.tasks_total}]{_color()} {self._desc}",
-                sameline=not self.config2.verbose,
+                sameline=not self.verbose,
             )
 
-            if self.config2.verbose or self.config2.debug:
+            if self.verbose or self.debug:
                 log(f"{_color(128,128,128)}Reason: {self._reason}{_color()}")
 
             commands = _flatten(self._command)
             #print(commands)
             for _command in commands:
-                if self.config2.verbose or self.config2.debug:
+                if self.verbose or self.debug:
                     rel_command_path = _rel_path(self._command_path, Config.root_path)
                     log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
-                    log("(DRY RUN) " if self.config2.dry_run else "", end="")
+                    log("(DRY RUN) " if self.dry_run else "", end="")
                     log(_command)
                 result = await self.run_command(_command)
         finally:
@@ -685,7 +686,7 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # Early exit if this is just a dry run
-        if self.config2.dry_run:
+        if self.dry_run:
             return self._build_files
 
         # Custom commands just get called and then early-out'ed.
@@ -717,7 +718,7 @@ class Task:
         self.returncode = proc.returncode
 
         # Print command output if needed
-        if (self.stdout or self.stderr) and not self.config2.quiet:
+        if (self.stdout or self.stderr) and not self.quiet:
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")

@@ -219,7 +219,7 @@ class TestHancho(unittest.TestCase):
         )
         result = hancho.build()
         self.assertNotEqual(0, result)
-        self.assertTrue("'Config' object has no attribute 'does_not_exist'" in hancho.get_log())
+        self.assertTrue("object has no attribute 'does_not_exist'" in hancho.get_log())
 
     def test_missing_input(self):
         """We should fail if an input is missing"""
