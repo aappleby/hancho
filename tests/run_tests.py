@@ -434,8 +434,8 @@ class TestHancho(unittest.TestCase):
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
         def sync_command(task):
-            force_touch(task.action.abs_build_files[0])
-            return task.action.abs_build_files
+            force_touch(task._build_files[0])
+            return task._build_files
 
         hancho.Task(
             command = sync_command,
