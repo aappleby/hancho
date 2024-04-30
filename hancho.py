@@ -151,14 +151,7 @@ async def _await_variant(variant):
         case asyncio.CancelledError():
             raise variant
         case Task():
-            # If the task hasn't been queued yet, queue it now before we await it.
-            if variant._promise is None:
-                app.queue_pending_tasks()
-
-            # We don't recurse through subtasks because they should await themselves.
-            if inspect.isawaitable(variant._promise):
-                _promise = await variant._promise
-                variant._promise = await _await_variant(_promise)
+            await variant.wait_for_done()
         case Config():
             await _await_variant(variant.__dict__)
         case dict():
@@ -167,8 +160,9 @@ async def _await_variant(variant):
         case list():
             for index, value in enumerate(variant):
                 variant[index] = await _await_variant(value)
-        case _ if inspect.isawaitable(variant):
-            variant = await variant
+        case _:
+            if inspect.isawaitable(variant):
+                variant = await variant
     return variant
 
 ####################################################################################################
@@ -244,27 +238,7 @@ class Config:
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
-        filtered_args = []
-        source_files = Sentinel()
-        build_files = Sentinel()
-
         for arg in args:
-            if isinstance(arg, Config) and not isinstance(arg, Task):
-                filtered_args.append(arg)
-            else:
-                if isinstance(source_files, Sentinel):
-                    source_files = arg
-                elif isinstance(build_files, Sentinel):
-                    build_files = arg
-                else:
-                    raise ValueError("Too many non-config args")
-
-        if not isinstance(source_files, Sentinel):
-            kwargs.setdefault("source_files", source_files)
-        if not isinstance(build_files, Sentinel):
-            kwargs.setdefault("build_files", build_files)
-
-        for arg in filtered_args:
             self.update(arg)
         self.update(kwargs)
 
@@ -275,13 +249,14 @@ class Config:
     def __repr__(self):
         return Dumper(1).dump(self)
 
-    def __iadd__(self, other):
-        self.update(other)
-        return self
-
     def update(self, kwargs):
         for key, val in kwargs.items():
             if val is not None:
+                setattr(self, key, val)
+
+    def defaults(self, kwargs):
+        for key, val in kwargs.items():
+            if not key in self.__dict__:
                 setattr(self, key, val)
 
     # required to support "**config"
@@ -337,9 +312,9 @@ def load_file(file_name, as_repo, *args, **kwargs):
 # The template expansion / macro evaluation code requires some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings, templates, callbacks,
-# etcetera. So, when we need to produce a flat list of files from whatever was passed to
-# source_files, we need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always
-# turn that thing into a flat list of files.
+# etcetera. So, when we need to produce a flat list of files from whatever was passed to in_*, we
+# need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn that thing
+# into a flat list of files.
 #
 # We also need to ensure that if anything in this process throws an exception (or if an exception
 # was passed into a rule due to a previous rule failing) that we always propagate the exception up
@@ -461,11 +436,36 @@ def eval_macro(config, macro, fail_ok=False):
 
 ####################################################################################################
 
+def collect_variant(variant):
+    result = []
+    match variant:
+        case asyncio.CancelledError():
+            raise variant
+        case Task():
+            result.append(collect_files(variant, "out_"))
+        case Config():
+            result.append(collect_variant(variant.__dict__))
+        case dict():
+            for key, val in variant.items():
+                result.append(collect_variant(val))
+        case list():
+            for val in variant:
+                result.append(collect_variant(val))
+        case str():
+            result.append(variant)
+    return result
+
+def collect_files(config, prefix):
+    result = []
+    for key, val in config.items():
+        if key.startswith(prefix) and key != prefix + "path":
+            result.append(collect_variant(val))
+    return _flatten(result)
+
+####################################################################################################
+
 class Task(Config):
     """Calling a Rule creates a Task."""
-
-    # pylint: disable=too-many-instance-attributes
-    # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, *args, **kwargs):
 
@@ -475,33 +475,60 @@ class Task(Config):
             base_path = app.topmod().base_path,
         )
 
-        task_config = Config(*args, **kwargs)
+        super().__init__(default_task_config, path_config, *args, **kwargs)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
-
-        self.update(default_task_config)
-        self.update(path_config)
-        self.update(task_config)
-
-        #self._reason = None
+        self._reason = None
+        self._lock = True
         self._promise = None
         self._loaded_modules = list(app.loaded_modules)
-
-        app.tasks_total += 1
         app.pending_tasks.append(self)
+
+    def __getattribute__(self, key):
+        if key.startswith("out_") and self._lock:
+            return self.get_async(key)
+        else:
+            return super().__getattribute__(key)
+
+    async def get_async(self, key):
+        print(f"About to wait_for_done() for {key}")
+        await self.wait_for_done()
+        print(f"Finished wait_for_done() {key}")
+        return self.__dict__[key]
+
+    def run(self):
+        if self._promise is None:
+            print(f"create_task Task@{hex(id(self))}")
+            app.tasks_total += 1
+            self._promise = asyncio.create_task(self.run_async())
+            app.queued_tasks.append(self)
+
+    async def wait_for_done(self):
+        if not self._promise:
+            self.run()
+        if not self._promise.done():
+            await self._promise
 
     def __repr__(self):
         return Dumper(3).dump(self)
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
+        #print(f"Task @ {hex(id(self))} start")
+
         try:
-            # Await everything awaitable in this task's rule.
-            _promise = self._promise
-            self._promise = None
-            await _await_variant(self.__dict__)
-            self._promise = _promise
+
+            self._lock = False
+            # Await everything awaitable in this task.
+
+            #print(f"Task @ {hex(id(self))} awaiting")
+            for key, val in self.__dict__.items():
+                if key != "_promise":
+                    self.__dict__[key] = await _await_variant(val)
+            #print(f"Task @ {hex(id(self))} awaiting done")
+
+            print(self)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -509,18 +536,15 @@ class Task(Config):
             # Check if we need a rebuild
             self._reason = self.needs_rerun(self.force)
 
-            if self.debug:
-                log(self)
+            #if self.debug:
+            #    log(self)
 
             # Run the commands if we need to.
             if self._reason:
-                result = await self.run_commands()
+                await self.run_commands()
                 app.tasks_pass += 1
             else:
-                result = self._build_files
                 app.tasks_skip += 1
-
-            return result
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException as err:
@@ -534,6 +558,8 @@ class Task(Config):
             app.tasks_cancel += 1
             return cancel
 
+        #print(f"Task @ {hex(id(self))} done")
+
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
@@ -543,41 +569,52 @@ class Task(Config):
         self._task_index = app.task_counter
 
         # Expand all the critical fields
-        self._desc          = self.expand(self.desc)
-        self._command       = self.expand(self.command)
-        self._command_path  = self.expand(self.abs_command_path)
-        self._command_files = self.expand(self.abs_command_files)
-        self._source_files  = self.expand(self.abs_source_files)
-        self._build_files   = self.expand(self.abs_build_files)
-        self._build_deps    = self.expand(self.abs_build_deps)
+        self._desc         = self.expand(self.desc)
+        self._command      = self.expand(self.command)
+        self._base_path    = self.expand(self.base_path)
+        self._build_path   = _abs_path(_join_path(self._base_path, self.expand(self.build_path)))
+        self._command_path = _abs_path(_join_path(self._base_path, self.expand(self.command_path)))
+
+        self._in_files  = self.expand(collect_files(self.__dict__, "in_"))
+        self._in_files  = _abs_path(_flatten(_join_path(self._base_path, self._in_files)))
+
+        self._out_files = self.expand(collect_files(self.__dict__, "out_"))
+        self._out_files = _abs_path(_flatten(_join_path(self._build_path, self._out_files)))
+
+        self._dep_files = self.expand(collect_files(self.__dict__, "dep_"))
+        self._dep_files = _abs_path(_flatten(_join_path(self._build_path, self._dep_files)))
+
+        #print(self.expand(self.build_path))
+        #print(self)
+        #sys.exit(0)
+
+        #print(f"_in_files  {self._in_files}")
+        #print(f"_out_files {self._out_files}")
+        #print(f"_dep_files {self._dep_files}")
 
         # Check for missing input files/paths
         if not path.exists(self._command_path):
             raise FileNotFoundError(self._command_path)
 
-        for file in self._command_files:
-            if not path.exists(file):
-                raise FileNotFoundError(file)
-
-        for file in self._source_files:
+        for file in self._in_files:
             if not path.exists(file):
                 raise FileNotFoundError(file)
 
         # Check that all build files would end up under root_path
-        for file in self._build_files:
+        for file in self._out_files:
             if not file.startswith(Config.root_path):
-                raise ValueError(f"Path error, build_path {file} is not under root_path {Config.root_path}")
+                raise ValueError(f"Path error, output file {file} is not under root_path {Config.root_path}")
 
         # Check for duplicate task outputs
-        for abs_file in self._build_files:
-            if abs_file in app.all_build_files:
-                raise NameError(f"Multiple rules build {abs_file}!")
-            app.all_build_files.add(abs_file)
+        for file in self._out_files:
+            if file in app.all_out_files:
+                raise NameError(f"Multiple rules build {file}!")
+            app.all_out_files.add(file)
 
         # Make sure our output directories exist
         if not self.dry_run:
-            for abs_file in self._build_files:
-                os.makedirs(path.dirname(abs_file), exist_ok=True)
+            for file in self._out_files:
+                os.makedirs(path.dirname(file), exist_ok=True)
 
 
     def needs_rerun(self, force=False):
@@ -587,27 +624,26 @@ class Task(Config):
         # pylint: disable=too-many-branches
 
         if force:
-            return f"Files {self._build_files} forced to rebuild"
-        if not self._source_files:
+            return f"Files {self._out_files} forced to rebuild"
+        if not self._in_files:
             return "Always rebuild a target with no inputs"
-        if not self._build_files:
+        if not self._out_files:
             return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
-        for abs_file in self._build_files:
-            if not path.exists(abs_file):
-                return f"Rebuilding because {abs_file} is missing"
+        for file in self._out_files:
+            if not path.exists(file):
+                return f"Rebuilding because {file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(_mtime(f) for f in self._build_files)
+        min_out = min(_mtime(f) for f in self._out_files)
 
-        for abs_file in self._source_files:
-            if _mtime(abs_file) >= min_out:
-                return f"Rebuilding because {abs_file} has changed"
+        if _mtime(__file__) >= min_out:
+            return f"Rebuilding because hancho.py has changed"
 
-        for abs_file in self._command_files:
-            if _mtime(abs_file) >= min_out:
-                return f"Rebuilding because {abs_file} has changed"
+        for file in self._in_files:
+            if _mtime(file) >= min_out:
+                return f"Rebuilding because {file} has changed"
 
         for mod in self._loaded_modules:
             if _mtime(mod.__file__) >= min_out:
@@ -616,12 +652,12 @@ class Task(Config):
         # Check all dependencies in the depfile, if present.
         depformat = getattr(self, "depformat", "gcc")
 
-        for abs_depfile in self._build_deps:
-            if not path.exists(abs_depfile):
+        for depfile in self._dep_files:
+            if not path.exists(depfile):
                 continue
             if self.debug:
-                log(f"Found depfile {abs_depfile}")
-            with open(abs_depfile, encoding="utf-8") as depfile:
+                log(f"Found depfile {depfile}")
+            with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
                 if depformat == "msvc":
                     # MSVC /sourceDependencies json depfile
@@ -647,7 +683,8 @@ class Task(Config):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
         result = []
-        job_count = getattr(self, "job_count", 1)
+        job_count = self.__dict__.get("job_count", 1)
+
         try:
             # Wait for enough jobs to free up to run this task.
             await app.acquire_jobs(job_count)
@@ -680,7 +717,7 @@ class Task(Config):
 
         # Early exit if this is just a dry run
         if self.dry_run:
-            return self._build_files
+            return
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
@@ -695,7 +732,7 @@ class Task(Config):
 
         # Create the subprocess via asyncio and then await the result.
         try:
-            #print("Creating thread")
+            print(f"Task {hex(id(self))} subprocess start '{command}'")
             proc = await asyncio.create_subprocess_shell(
                 command,
                 cwd=self._command_path,
@@ -703,6 +740,7 @@ class Task(Config):
                 stderr=asyncio.subprocess.PIPE,
             )
             (stdout_data, stderr_data) = await proc.communicate()
+            print(f"Task {hex(id(self))} subprocess done '{command}'")
         except RuntimeError:
             sys.exit(-1)
 
@@ -724,9 +762,6 @@ class Task(Config):
             raise ValueError(
                 f"Command '{command}' exited with return code {self.returncode}"
             )
-
-        # Task passed, return the output file list
-        return self._build_files
 
 ####################################################################################################
 
@@ -751,7 +786,7 @@ class App:
         fake_module.base_path = os.getcwd()
         self.modstack.append(fake_module)
 
-        self.all_build_files = set()
+        self.all_out_files = set()
 
         self.tasks_total = 0
         self.tasks_pass = 0
@@ -892,8 +927,7 @@ class App:
                 random.shuffle(self.pending_tasks)
 
             for task in self.pending_tasks:
-                task._promise = asyncio.create_task(task.run_async())
-                self.queued_tasks.append(task)
+                task.run()
             self.pending_tasks = []
 
     ########################################
@@ -1028,18 +1062,12 @@ class App:
 # fmt: off
 
 default_task_config = Config(
-    desc          = "{source_files} -> {build_files}",
+    desc          = "<no desc>",
     command       = Sentinel(),
     command_path  = "{base_path}",
-    command_files = [],
-    source_path   = "{base_path}",
-    source_files  = [],
     build_dir     = "build",
     build_tag     = "",
-    build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(abs_source_path, repo_path)}",
-    build_files   = [],
-    build_deps    = [],
-    other_files   = [],
+    build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
 )
 
 Config.Config    = Config
@@ -1062,7 +1090,6 @@ Config.re        = re
 Config.join_prefix = staticmethod(_join_prefix)
 Config.join_suffix = staticmethod(_join_suffix)
 
-
 Config.jobs      = os.cpu_count()
 Config.verbose   = False
 Config.quiet     = False
@@ -1073,24 +1100,17 @@ Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
 
-Config.first_source = "{flatten(source_files)[0]}"
+#Config.abs_in_path   = "{abs_path(join_path(base_path, in_path))}"
+#Config.abs_out_path  = "{abs_path(join_path(base_path, out_path))}"
 
-Config.abs_command_path  = "{abs_path(join_path(base_path,   command_path))}"
-Config.abs_source_path   = "{abs_path(join_path(base_path,   source_path))}"
-Config.abs_build_path    = "{abs_path(join_path(base_path,   build_path))}"
+#Config.abs_in_files  = "{flatten(join_path(abs_in_path,  in_files))}"
+#Config.abs_out_files = "{flatten(join_path(abs_out_path, out_files))}"
 
-Config.abs_command_files = "{flatten(join_path(abs_command_path, command_files))}"
-Config.abs_source_files  = "{flatten(join_path(abs_source_path,  source_files))}"
-Config.abs_build_files   = "{flatten(join_path(abs_build_path,   build_files))}"
-Config.abs_build_deps    = "{flatten(join_path(abs_build_path,   build_deps))}"
+#Config.rel_in_path   = "{rel_path(abs_in_path,   abs_command_path)}"
+#Config.rel_out_path  = "{rel_path(abs_out_path,  abs_command_path)}"
 
-Config.rel_source_path   = "{rel_path(abs_source_path,   abs_command_path)}"
-Config.rel_build_path    = "{rel_path(abs_build_path,    abs_command_path)}"
-
-Config.rel_command_files = "{rel_path(abs_command_files, abs_command_path)}"
-Config.rel_source_files  = "{rel_path(abs_source_files,  abs_command_path)}"
-Config.rel_build_files   = "{rel_path(abs_build_files,   abs_command_path)}"
-Config.rel_build_deps    = "{rel_path(abs_build_deps,    abs_command_path)}"
+#Config.rel_in_files  = "{rel_path(abs_in_files,  abs_command_path)}"
+#Config.rel_out_files = "{rel_path(abs_out_files, abs_command_path)}"
 # fmt: on
 
 ####################################################################################################

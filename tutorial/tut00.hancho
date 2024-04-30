@@ -1,13 +1,28 @@
 # tutorial/tut00.hancho
 
-hancho.Task(
-  desc          = "Compile main.cpp and util.cpp and link app",
-  command       = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
-  command_path  = ".",
-  command_files = [],
-  source_path   = ".",
-  source_files  = ["src/main.cpp", "src/util.cpp"],
-  build_path    = "build/tut00",
-  build_files   = ["app"],
-  build_deps    = [],
+#task = hancho.Task(
+#  desc    = "Compile main.cpp and util.cpp and link app",
+#  command = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
+#  in_src  = ["src/main.cpp", "src/util.cpp"],
+#  out_bin = ["build/tut00/app"],
+#)
+#
+#print(task.out_bin)
+
+task1 = hancho.Task(
+  command = "sleep 1 && touch {build_path}/{out_bin}",
+  build_path = "build/tut00",
+  out_bin = "blah.txt",
 )
+
+task2 = hancho.Task(
+  command = "echo {asdf}",
+  asdf = task1.get_async("out_bin")
+)
+
+print(f"Task 1 @ {hex(id(task1))}")
+print(f"Task 2 @ {hex(id(task2))}")
+
+#print(task2)
+
+#print(task1)

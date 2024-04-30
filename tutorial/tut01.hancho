@@ -1,37 +1,24 @@
 # tutorial/tut01.hancho
 
 main_o = hancho.Task(
-  desc          = "Compile main.cpp",
-  command       = "g++ -MMD -c src/main.cpp -o build/tut01/src/main.o",
-  command_path  = ".",
-  command_files = [],
-  source_path   = ".",
-  source_files  = ["src/main.cpp"],
-  build_path    = "build/tut01",
-  build_files   = ["src/main.o"],
-  build_deps    = ["src/main.d"],
+  desc    = "Compile main.cpp",
+  command = "g++ -MMD -c src/main.cpp -o build/tut01/src/main.o",
+  in_src  = ["src/main.cpp"],
+  out_obj = ["src/main.o"],
+  dep_obj = ["src/main.d"],
 )
 
 util_o = hancho.Task(
-  desc          = "Compile util.cpp",
-  command       = "g++ -MMD -c src/util.cpp -o build/tut01/src/util.o",
-  command_path  = ".",
-  command_files = [],
-  source_path   = ".",
-  source_files  = ["src/util.cpp"],
-  build_path    = "build/tut01",
-  build_files   = ["src/util.o"],
-  build_deps    = ["src/util.d"],
+  desc    = "Compile util.cpp",
+  command = "g++ -MMD -c src/util.cpp -o build/tut01/src/util.o",
+  in_src  = ["src/util.cpp"],
+  out_obj = ["build/tut01/src/util.o"],
+  dep_obj = ["build/tut01/src/util.d"],
 )
 
 app = hancho.Task(
-  desc          = "Link main.o and util.o into app",
-  command       = "g++ build/tut01/src/main.o build/tut01/src/util.o -o build/tut01/app",
-  command_path  = ".",
-  command_files = [],
-  source_path   = ".",
-  source_files  = [main_o, util_o],
-  build_path    = "build/tut01",
-  build_files   = ["app"],
-  build_deps    = []
+  desc    = "Link main.o and util.o into app",
+  command = "g++ build/tut01/src/main.o build/tut01/src/util.o -o build/tut01/app",
+  in_objs = [main_o.out_obj, util_o.out_obj],
+  out_bin = ["build/tut01/app"],
 )
