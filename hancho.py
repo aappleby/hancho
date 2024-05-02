@@ -247,7 +247,7 @@ class Config:
         return getattr(self, key)
 
     def __repr__(self):
-        return Dumper(1).dump(self)
+        return Dumper(2).dump(self)
 
     def update(self, kwargs):
         for key, val in kwargs.items():
@@ -292,6 +292,10 @@ class Config:
 
     def __call__(self, *args, **kwargs):
         return Task(self, *args, **kwargs)
+
+    def rel(self, path):
+        return _rel_path(path, self.expand(self.command_path))
+
 
 #----------------------------------------
 
@@ -346,8 +350,8 @@ def expand(config, variant, fail_ok=False):
         case list():
             return [expand(config, s) for s in variant]
         case Task():
-            return expand(config, variant._promise, fail_ok)
-            #return variant
+            #return expand(config, variant._promise, fail_ok)
+            return variant
         case Config():
             return Expander(variant)
         case dict():
@@ -436,31 +440,74 @@ def eval_macro(config, macro, fail_ok=False):
 
 ####################################################################################################
 
-def collect_variant(variant):
+def collect_variant(variant, prefix):
     result = []
     match variant:
         case asyncio.CancelledError():
             raise variant
         case Task():
-            result.append(collect_files(variant, "out_"))
+            result.append(collect_variant(variant.__dict__, prefix))
         case Config():
-            result.append(collect_variant(variant.__dict__))
+            result.append(collect_variant(variant.__dict__, prefix))
         case dict():
             for key, val in variant.items():
-                result.append(collect_variant(val))
+                if key.startswith(prefix) and key != prefix + "path":
+                    result.append(collect_variant(val, prefix))
         case list():
             for val in variant:
-                result.append(collect_variant(val))
+                result.append(collect_variant(val, prefix))
         case str():
             result.append(variant)
     return result
 
 def collect_files(config, prefix):
-    result = []
-    for key, val in config.items():
-        if key.startswith(prefix) and key != prefix + "path":
-            result.append(collect_variant(val))
-    return _flatten(result)
+    return _flatten(collect_variant(config, prefix))
+
+####################################################################################################
+
+def expand_variant(variant, config):
+    match variant:
+        case asyncio.CancelledError():
+            raise variant
+        case Config():
+            expand_variant(variant.__dict__, config)
+        case dict():
+            for key, val in variant.items():
+                variant[key] = expand_variant(val, config)
+        case list():
+            for index, value in enumerate(variant):
+                variant[index] = expand_variant(value, config)
+        case str():
+            variant = config.expand(variant)
+    return variant
+
+def expand_files(task, prefix):
+    for key, val in task.__dict__.items():
+        if key.startswith(prefix):
+            task.__dict__[key] = expand_variant(val, task)
+
+####################################################################################################
+
+def normalize_variant(variant, base_path):
+    match variant:
+        case asyncio.CancelledError():
+            raise variant
+        case Config():
+            normalize_variant(variant.__dict__, base_path)
+        case dict():
+            for key, val in variant.items():
+                variant[key] = normalize_variant(val, base_path)
+        case list():
+            for i, val in enumerate(variant):
+                variant[i] = normalize_variant(val, base_path)
+        case str():
+            variant = _abs_path(_join_path(base_path, variant))
+    return variant
+
+def normalize_files(task, prefix, base_path):
+    for key, val in task.__dict__.items():
+        if key.startswith(prefix):
+            task.__dict__[key] = normalize_variant(val, base_path)
 
 ####################################################################################################
 
@@ -492,14 +539,14 @@ class Task(Config):
             return super().__getattribute__(key)
 
     async def get_async(self, key):
-        print(f"About to wait_for_done() for {key}")
+        #print(f"About to wait_for_done() for {key}")
         await self.wait_for_done()
-        print(f"Finished wait_for_done() {key}")
+        #print(f"Finished wait_for_done() {key}")
         return self.__dict__[key]
 
     def run(self):
         if self._promise is None:
-            print(f"create_task Task@{hex(id(self))}")
+            #print(f"create_task Task@{hex(id(self))}")
             app.tasks_total += 1
             self._promise = asyncio.create_task(self.run_async())
             app.queued_tasks.append(self)
@@ -513,22 +560,25 @@ class Task(Config):
     def __repr__(self):
         return Dumper(3).dump(self)
 
+    async def await_everything(self):
+        #print(f"Task {hex(id(self))} awaiting")
+        for key, val in self.__dict__.items():
+            if key != "_promise":
+                self.__dict__[key] = await _await_variant(val)
+        #print(f"Task {hex(id(self))} awaiting done")
+
+    #-----------------------------------------------------------------------------------------------
+
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
-        #print(f"Task @ {hex(id(self))} start")
+
+        if self.debug:
+            log(f"Task {hex(id(self))} start")
 
         try:
-
             self._lock = False
             # Await everything awaitable in this task.
-
-            #print(f"Task @ {hex(id(self))} awaiting")
-            for key, val in self.__dict__.items():
-                if key != "_promise":
-                    self.__dict__[key] = await _await_variant(val)
-            #print(f"Task @ {hex(id(self))} awaiting done")
-
-            print(self)
+            await self.await_everything()
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -536,15 +586,17 @@ class Task(Config):
             # Check if we need a rebuild
             self._reason = self.needs_rerun(self.force)
 
-            #if self.debug:
-            #    log(self)
-
             # Run the commands if we need to.
             if self._reason:
                 await self.run_commands()
                 app.tasks_pass += 1
             else:
                 app.tasks_skip += 1
+
+            for file in self._out_files:
+                if not path.exists(file):
+                    raise FileNotFoundError(f"Could not find output {file}")
+
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException as err:
@@ -558,39 +610,42 @@ class Task(Config):
             app.tasks_cancel += 1
             return cancel
 
-        #print(f"Task @ {hex(id(self))} done")
+        finally:
+            if self.debug:
+                log(f"Task {hex(id(self))} done")
+
+    #-----------------------------------------------------------------------------------------------
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
+
+        print(self)
 
         app.task_counter += 1
         if app.task_counter > 1000:
             sys.exit(-1)
         self._task_index = app.task_counter
 
+        self.command_path = _abs_path(self.expand(self.command_path))
+        self.in_path      = _abs_path(self.expand(self.in_path))
+        self.out_path     = _abs_path(self.expand(self.out_path))
+
+        normalize_files(self, "in_",  self.in_path)
+        normalize_files(self, "out_", self.out_path)
+        normalize_files(self, "dep_", self.out_path)
+
         # Expand all the critical fields
         self._desc         = self.expand(self.desc)
         self._command      = self.expand(self.command)
-        self._base_path    = self.expand(self.base_path)
-        self._build_path   = _abs_path(_join_path(self._base_path, self.expand(self.build_path)))
-        self._command_path = _abs_path(_join_path(self._base_path, self.expand(self.command_path)))
+        self._command_path = _abs_path(_join_path(self.base_path, self.command_path))
 
-        self._in_files  = self.expand(collect_files(self.__dict__, "in_"))
-        self._in_files  = _abs_path(_flatten(_join_path(self._base_path, self._in_files)))
-
-        self._out_files = self.expand(collect_files(self.__dict__, "out_"))
-        self._out_files = _abs_path(_flatten(_join_path(self._build_path, self._out_files)))
-
-        self._dep_files = self.expand(collect_files(self.__dict__, "dep_"))
-        self._dep_files = _abs_path(_flatten(_join_path(self._build_path, self._dep_files)))
+        self._in_files  = _flatten(collect_files(self.__dict__, "in_"))
+        self._out_files = _flatten(collect_files(self.__dict__, "out_"))
+        self._dep_files = _flatten(collect_files(self.__dict__, "dep_"))
 
         #print(self.expand(self.build_path))
-        #print(self)
+        print(self)
         #sys.exit(0)
-
-        #print(f"_in_files  {self._in_files}")
-        #print(f"_out_files {self._out_files}")
-        #print(f"_dep_files {self._dep_files}")
 
         # Check for missing input files/paths
         if not path.exists(self._command_path):
@@ -616,6 +671,7 @@ class Task(Config):
             for file in self._out_files:
                 os.makedirs(path.dirname(file), exist_ok=True)
 
+    #-----------------------------------------------------------------------------------------------
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -679,6 +735,8 @@ class Task(Config):
         # Empty string = no reason to rebuild
         return ""
 
+    #-----------------------------------------------------------------------------------------------
+
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
@@ -711,6 +769,8 @@ class Task(Config):
             await app.release_jobs(job_count)
 
         return result
+
+    #-----------------------------------------------------------------------------------------------
 
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
@@ -1097,8 +1157,11 @@ Config.dry_run   = False
 Config.debug     = False
 Config.force     = False
 Config.shuffle   = False
-Config.trace     = False
+Config.trace     = True
 Config.use_color = True
+
+Config.in_path  = "{base_path}"
+Config.out_path = "{build_path}"
 
 #Config.abs_in_path   = "{abs_path(join_path(base_path, in_path))}"
 #Config.abs_out_path  = "{abs_path(join_path(base_path, out_path))}"

@@ -1,0 +1,40 @@
+
+named_source = hancho.Task(
+  command = "(exit 0)",
+  foo = "foo.txt",
+  bar = "bar.txt",
+  build_files = "asdf.txt"
+)
+
+print(named_source.config.command)
+
+hancho.Task(
+  command = "echo aaa {named_source}",
+  named_source = named_source
+)
+
+
+
+
+#output1 = hancho.Task(
+#  command = [
+#    "cat {rel_source_files.foo} > {rel_build_files.foo_obj}",
+#    "cat {rel_source_files.bar} > {rel_build_files.bar_obj}"
+#  ],
+#  source_files = Config(
+#    foo = "foo.txt",
+#    bar = "bar.txt"
+#  ),
+#  build_files = Config(
+#    foo_obj = "{swap_ext(source_files[0], '.obj')}",
+#    bar_obj = "{swap_ext(source_files[1], '.obj')}",
+#  )
+#)
+#
+#hancho.Task(
+#  command = [
+#    "echo {source_files.foo_obj}",
+#    "echo {source_files.bar_obj}",
+#  ],
+#  source_files = output1
+#)
