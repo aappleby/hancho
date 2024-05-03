@@ -1,12 +1,18 @@
 # tutorial/tut00.hancho
 
-task = hancho.Task(
-  desc     = "Compile main.cpp and util.cpp and link app",
-  command  = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
+#task = hancho.Task(
+#  desc     = "Compile main.cpp and util.cpp and link app",
+#  command  = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
+#
+#  in_path  = "src",
+#  in_src   = ["main.cpp", "util.cpp"],
+#
+#  out_path = "build/tut00",
+#  out_bin  = "app",
+#)
 
-  in_path  = "src",
-  in_src   = ["main.cpp", "util.cpp"],
-
-  out_path = "build/tut00",
-  out_bin  = "app",
+hancho.Task(
+  command  = [
+    "mkdir -p build/tut00 && g++ src/main.cpp src/util.cpp -o build/tut00/app",
+  ]
 )

@@ -1,21 +1,18 @@
 # tutorial/tut16.hancho
 
-config = hancho.Config(repo_name = "tut16")
-
 compile = hancho.Config(
-  command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
-  desc        = "Compile {rel_source_files}",
-  build_files = "{swap_ext(source_files, '.o')}",
-  build_deps  = "{swap_ext(source_files, '.d')}",
+  desc    = "Compile {rel(in_src)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  dep_gcc = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.Config(
-  command   = "g++ {rel_source_files} -o {rel_build_files}",
-  desc      = "Link {rel_source_files} into {rel_build_files}",
+  desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
-# we CAN pull on our dependencies, we just need to not schedule the promises up front
-
-main_o = compile(config, source_files = "src/main.cpp")
-util_o = compile(config, source_files = "src/util.cpp")
-app = link(config, source_files = [main_o, util_o], build_files = "app")
+config = hancho.Config(repo_name = "tut16")
+main_o = compile(config, in_src = "src/main.cpp")
+util_o = compile(config, in_src = "src/util.cpp")
+app    = link(config, in_objs = [main_o, util_o], out_bin = "app")

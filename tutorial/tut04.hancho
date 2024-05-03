@@ -1,10 +1,8 @@
 # tutorial/tut04.hancho
 
 common = hancho.Config(
-  command_path  = ".",
-  command_files = [],
-  source_path   = ".",
-  build_path    = "build/tut04",
+  in_path  = ".",
+  out_path = "build/tut04",
 )
 
 tut04_rules = hancho.load("tut04_rules.hancho")

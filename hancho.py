@@ -296,7 +296,6 @@ class Config:
     def rel(self, path):
         return _rel_path(path, self.expand(self.command_path))
 
-
 #----------------------------------------
 
 def load_file(file_name, as_repo, *args, **kwargs):
@@ -340,13 +339,119 @@ macro_regex = re.compile("^{[^}]*}$")
 # Matches macros inside a template string.
 template_regex = re.compile("{[^}]*}")
 
+#----------------------------------------
+
+class Expander:
+    """JIT template expansion for use in eval()."""
+
+    def __init__(self, config):
+        self.config = config
+        self.trace = config.trace
+
+    __getitem__ = lambda self, key: self.get(key)
+    __getattr__ = lambda self, key: self.get(key)
+
+    def get(self, key):
+        val = getattr(self.config, key)
+        if self.trace:
+            log(("┃" * app.expand_depth) + f" Read '{key}' = '{val}'")
+        return expand(self.config, val)
+
+#----------------------------------------
+
+def expand_template(config, template):
+    """Replaces all macros in template with their stringified values."""
+
+    #if not isinstance(config, Expander):
+    #    config = Expander(config)
+
+    if config.trace:
+        log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
+
+    result = ""
+    try:
+        app.expand_depth += 1
+        old_template = template
+        while span := template_regex.search(template):
+            result += template[0 : span.start()]
+            try:
+                macro = template[span.start() : span.end()]
+                variant = expand(config, eval_macro(config, macro))
+                result += " ".join([str(s) for s in _flatten(variant)])
+            except BaseException as err:
+                log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed!{_color()}")
+                raise err
+            template = template[span.end() :]
+        result += template
+    finally:
+        app.expand_depth -= 1
+
+    if config.trace:
+        log(("┃" * app.expand_depth) + f"┗ '{result}'")
+    return result
+
+#----------------------------------------
+
+def eval_macro(config, macro):
+    """Evaluates the contents of a "{macro}" string."""
+
+    if app.expand_depth > MAX_EXPAND_DEPTH:
+        raise RecursionError(f"Expanding '{macro}' failed to terminate")
+    if config.trace:
+        log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
+    if not isinstance(config, Expander):
+        config = Expander(config)
+
+    app.expand_depth += 1
+    # pylint: disable=eval-used
+    result = ""
+    try:
+        # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
+        # paths and stuff, which will break.
+        result = eval(macro[1:-1], {}, config)
+    except BaseException as err:
+        log(f"{_color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{_color()}")
+        raise err
+    finally:
+        app.expand_depth -= 1
+
+    if config.trace:
+        log(("┃" * app.expand_depth) + f"┗ {result}")
+    return result
+
+#----------------------------------------
+
+def expand(config, variant):
+    """Expands all templates anywhere inside 'variant'."""
+
+    match variant:
+        case BaseException():
+            raise variant
+        case str() if macro_regex.search(variant):
+            variant = expand(config, eval_macro(config, variant))
+        case str() if template_regex.search(variant):
+            variant = expand_template(config, variant)
+        case Task():
+            variant = variant._out_files
+            variant = variant[0] if len(variant) == 1 else variant
+        case Config():
+            expand(variant, variant.__dict__)
+        case list():
+            for i, val in enumerate(variant):
+                variant[i] = expand(config, val)
+        case dict():
+            for key, val in variant.items():
+                variant[key] = expand(config, val)
+        case Sentinel():
+            raise ValueError("Tried to expand a Sentinel")
+    return variant
 
 ####################################################################################################
 
 def collect_variant(variant, prefix):
     result = []
     match variant:
-        case asyncio.CancelledError():
+        case BaseException():
             raise variant
         case Task():
             result.append(collect_variant(variant.__dict__, prefix))
@@ -368,26 +473,30 @@ def collect_files(config, prefix):
 
 ####################################################################################################
 
-def normalize_variant(variant, base_path):
+def normalize_variant(config, variant, base_path):
     match variant:
-        case asyncio.CancelledError():
+        case BaseException():
             raise variant
         case Config():
-            normalize_variant(variant.__dict__, base_path)
+            normalize_variant(config, variant.__dict__, base_path)
         case dict():
             for key, val in variant.items():
-                variant[key] = normalize_variant(val, base_path)
+                variant[key] = normalize_variant(config, val, base_path)
         case list():
             for i, val in enumerate(variant):
-                variant[i] = normalize_variant(val, base_path)
+                variant[i] = normalize_variant(config, val, base_path)
         case str():
+            #variant = config.expand(variant)
             variant = _abs_path(_join_path(base_path, variant))
     return variant
 
-def normalize_files(task, prefix, base_path):
-    for key, val in task.__dict__.items():
+def normalize_files(config, prefix, base_path):
+    for key, val in config.__dict__.items():
         if key.startswith(prefix):
-            task.__dict__[key] = normalize_variant(val, base_path)
+            config.__dict__[key] = expand(config, val)
+    #for key, val in config.__dict__.items():
+    #    if key.startswith(prefix):
+    #        config.__dict__[key] = normalize_variant(config, val, base_path)
 
 ####################################################################################################
 
@@ -499,37 +608,42 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        if self.debug:
-            print(self)
 
         app.task_counter += 1
         if app.task_counter > 1000:
             sys.exit(-1)
         self._task_index = app.task_counter
 
-#        self._desc         = self.expand(self.desc)
-#        self._command      = self.expand(self.command)
-#
-#        self.command_path = _abs_path(self.expand(self.command_path))
-#        self.in_path      = _abs_path(self.expand(self.in_path))
-#        self.out_path     = _abs_path(self.expand(self.out_path))
-#
+        if self.debug:
+            log(f"Task before expand: {self}")
 
+        # Expand the in and out paths first
+        self.in_path  = _abs_path(_join_path(self.base_path, self.expand(self.in_path)))
+        self.out_path = _abs_path(_join_path(self.base_path, self.expand(self.out_path)))
+
+        # Then expand the in_/out_/dep_ groups and prepend in/out path to them.
+
+        for key, val in self.__dict__.items():
+            if key.startswith("in_") or key.startswith("out_") or key.startswith("dep_"):
+                self.__dict__[key] = expand(self, val)
+
+        for key, val in self.__dict__.items():
+            if key.startswith("in_"):
+                self.__dict__[key] = _abs_path(_join_path(self.in_path, val))
+
+        for key, val in self.__dict__.items():
+            if key.startswith("out_") or key.startswith("dep_"):
+                self.__dict__[key] = _abs_path(_join_path(self.out_path, val))
+
+        # Then expand everything else
         expand(self, self.__dict__)
-
-
-        normalize_files(self, "in_",  self.in_path)
-        normalize_files(self, "out_", self.out_path)
-        normalize_files(self, "dep_", self.out_path)
 
         self._in_files  = _flatten(collect_files(self.__dict__, "in_"))
         self._out_files = _flatten(collect_files(self.__dict__, "out_"))
         self._dep_files = _flatten(collect_files(self.__dict__, "dep_"))
 
         if self.debug:
-            print(self)
-
-        #sys.exit(0)
+            log(f"Task after expand: {self}")
 
         # Check for missing input files/paths
         if not path.exists(self.command_path):
@@ -1014,6 +1128,8 @@ default_task_config = Config(
     build_dir     = "build",
     build_tag     = "",
     build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
+    in_path       = "{base_path}",
+    out_path      = "{build_path}",
 )
 
 Config.Config    = Config
@@ -1043,12 +1159,8 @@ Config.dry_run   = False
 Config.debug     = False
 Config.force     = False
 Config.shuffle   = False
-#Config.trace     = True
 Config.trace     = False
 Config.use_color = True
-
-Config.in_path  = "{base_path}"
-Config.out_path = "{build_path}"
 
 #Config.abs_in_path   = "{abs_path(join_path(base_path, in_path))}"
 #Config.abs_out_path  = "{abs_path(join_path(base_path, out_path))}"
@@ -1064,118 +1176,6 @@ Config.out_path = "{build_path}"
 # fmt: on
 
 ####################################################################################################
-
-class Expander:
-    """JIT template expansion for use in eval()."""
-
-    def __init__(self, config):
-        self.config = config
-        self.trace = config.trace
-
-    __getitem__ = lambda self, key: self.get(key)
-    __getattr__ = lambda self, key: self.get(key)
-
-    def get(self, key):
-        val = getattr(self.config, key)
-        if self.trace:
-            log(("┃" * app.expand_depth) + f" Read '{key}' = '{val}'")
-        return expand(self.config, val)
-
-####################################################################################################
-
-def expand_template(config, template):
-    """Replaces all macros in template with their stringified values."""
-
-    #if not isinstance(config, Expander):
-    #    config = Expander(config)
-
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
-
-    result = ""
-    try:
-        app.expand_depth += 1
-        old_template = template
-        while span := template_regex.search(template):
-            result += template[0 : span.start()]
-            try:
-                macro = template[span.start() : span.end()]
-                variant = expand(config, eval_macro(config, macro))
-                result += " ".join([str(s) for s in _flatten(variant)])
-            except BaseException as err:
-                log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed!{_color()}")
-                raise err
-            template = template[span.end() :]
-        result += template
-    finally:
-        app.expand_depth -= 1
-
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┗ '{result}'")
-    return result
-
-####################################################################################################
-
-def eval_macro(config, macro):
-    """Evaluates the contents of a "{macro}" string."""
-
-    if app.expand_depth > MAX_EXPAND_DEPTH:
-        raise RecursionError(f"Expanding '{macro}' failed to terminate")
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
-    if not isinstance(config, Expander):
-        config = Expander(config)
-
-    app.expand_depth += 1
-    # pylint: disable=eval-used
-    result = ""
-    try:
-        # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
-        # paths and stuff, which will break.
-        result = eval(macro[1:-1], {}, config)
-    except BaseException as err:
-        log(f"{_color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{_color()}")
-        raise err
-    finally:
-        app.expand_depth -= 1
-
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┗ {result}")
-    return result
-
-####################################################################################################
-
-def expand(config, variant):
-    """Expands all templates anywhere inside 'variant'."""
-
-    match variant:
-        case str() if macro_regex.search(variant):
-            return expand(config, eval_macro(config, variant))
-        case str() if template_regex.search(variant):
-            return expand_template(config, variant)
-        case Task():
-            variant = variant._out_files
-            if len(variant) == 1:
-                variant = variant[0]
-        case Config():
-            expand(variant, variant.__dict__)
-        case list():
-            for i, val in enumerate(variant):
-                variant[i] = expand(config, val)
-        case dict():
-            for key, val in variant.items():
-                #print(f"Expanding {key} = {val}")
-                #if key != "_promise":
-                variant[key] = expand(config, val)
-                #else:
-                #    print(type(val))
-        case BaseException():
-            raise variant
-        case Sentinel():
-            raise ValueError("Tried to expand a Sentinel")
-    return variant
-
-####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
@@ -1183,29 +1183,3 @@ app = App()
 
 if __name__ == "__main__":
     sys.exit(app.main())
-
-"""
-test = Config(
-    zot = "aaa",
-    baz = "{zot}",
-    bar = "{baz}",
-    foo = "{bar}",
-)
-
-print(test)
-expand(test)
-print(test)
-
-
-test2 = Config(
-    foo = "{baz.b}",
-    baz = Config(
-        a = "narp",
-        b = "{a + '1'}",
-    )
-)
-
-print(test2)
-expand(test2)
-print(test2)
-"""

@@ -1,25 +1,23 @@
 # tutorial/tut13.hancho
 
 common = hancho.Config(
-  command_path  = ".",
-  command_files = [],
-  build_path    = "build/tut13",
+  out_path = "build/tut13",
 )
 
 compile = hancho.Config(
   common,
-  desc        = "Compile {source_files}",
-  command     = "g++ -MMD -c {source_files} -o {build_path}/{build_files}",
-  build_files = "{swap_ext(source_files, '.o')}",
-  build_deps  = "{swap_ext(source_files, '.d')}",
+  desc    = "Compile {in_src}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  dep_gcc = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.Config(
   common,
-  desc    = "Link {source_files} into {build_files}",
-  command = "g++ {source_files} -o {build_path}/{build_files}",
+  desc    = "Link {in_objs} into {out_bin}",
+  command = "g++ {in_objs} -o {out_bin}",
 )
 
-main_o = hancho.Task(compile, "src/main.cpp")
-util_o = hancho.Task(compile, "src/util.cpp")
-app    = hancho.Task(link, [main_o, util_o], "app")
+main_o = hancho.Task(compile, in_src = "src/main.cpp")
+util_o = hancho.Task(compile, in_src = "src/util.cpp")
+app    = hancho.Task(link, in_objs = [main_o, util_o], out_bin = "app")
