@@ -20,4 +20,4 @@ class CBinary(hancho.Config):
         objs = [compile(config, file) for file in source_files]
         return link(config, objs, build_files)
 
-export.c_binary = CBinary()
+exports.c_binary = CBinary()

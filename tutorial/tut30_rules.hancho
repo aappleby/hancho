@@ -16,4 +16,4 @@ def c_binary(config, source_files, build_files):
   objs = [compile(config, file) for file in source_files]
   return link(config, objs, build_files)
 
-export.c_binary = c_binary
+exports.c_binary = c_binary

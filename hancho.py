@@ -20,6 +20,7 @@ from os import path
 import glob
 import resource
 from types import MappingProxyType
+import copy
 
 # If we were launched directly, a reference to this module is already in
 # sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
@@ -203,14 +204,14 @@ class Dumper:
 
     def dump_list(self, l):
         result = "["
-        self.depth += 1
+        #self.depth += 1
         self.tabs += 1
         for val in l:
             if len(l) > 0:
                 result += "\n" + self.indent()
             result += self.dump(val)
             result += ", "
-        self.depth -= 1
+        #self.depth -= 1
         self.tabs -= 1
         if len(l) > 0:
             result += "\n" + self.indent()
@@ -244,7 +245,21 @@ class Config:
 
     # required to use config as mapping in eval()
     def __getitem__(self, key):
-        return getattr(self, key)
+        return self.__getattr__(key)
+
+    def __setitem__(self, key, val):
+        return self.__setattr__(key, val)
+
+    def __setattr__(self, key, val):
+        # FIXME we should handle this better, more than 1 level deep and deal with the
+        # "cannot pickle 'module' object" issue
+        if isinstance(val, (list|dict|tuple)):
+            try:
+                val = val.copy()
+            except:
+                print(val)
+                sys.exit(0)
+        return super().__setattr__(key, val)
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -291,7 +306,11 @@ class Config:
         return app.log
 
     def __call__(self, *args, **kwargs):
-        return Task(self, *args, **kwargs)
+        custom_call = getattr(self, "call", None)
+        if custom_call is not None:
+            return custom_call(self, *args, **kwargs)
+        else:
+            return Task(self, *args, **kwargs)
 
     def rel(self, path):
         return _rel_path(path, self.expand(self.command_path))
@@ -518,7 +537,7 @@ class Task(Config):
         self._reason = None
         self._lock = True
         self._promise = None
-        self._loaded_modules = list(app.loaded_modules)
+        self._loaded_modules = [m.__file__ for m in app.loaded_modules]
         app.pending_tasks.append(self)
 
     def __getattribute__(self, key):
@@ -547,7 +566,7 @@ class Task(Config):
             await self._promise
 
     def __repr__(self):
-        return Dumper(2).dump(self)
+        return Dumper(1).dump(self)
 
     async def await_everything(self):
         #print(f"Task {hex(id(self))} awaiting")
@@ -582,9 +601,9 @@ class Task(Config):
             else:
                 app.tasks_skip += 1
 
-            for file in self._out_files:
-                if not path.exists(file):
-                    raise FileNotFoundError(f"Could not find output {file}")
+            #for file in self._out_files:
+            #    if not path.exists(file):
+            #        raise FileNotFoundError(f"Could not find output {file}")
 
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
@@ -608,10 +627,9 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-
         app.task_counter += 1
         if app.task_counter > 1000:
-            sys.exit(-1)
+            raise ValueError("Too many tasks, are we stuck in a loop?")
         self._task_index = app.task_counter
 
         if self.debug:
@@ -621,7 +639,7 @@ class Task(Config):
         self.in_path  = _abs_path(_join_path(self.base_path, self.expand(self.in_path)))
         self.out_path = _abs_path(_join_path(self.base_path, self.expand(self.out_path)))
 
-        # Then expand the in_/out_/dep_ groups and prepend in/out path to them.
+        # Then expand the in_/out_/deps groups and prepend in/out path to them.
 
         for key, val in self.__dict__.items():
             if key.startswith("in_") or key.startswith("out_") or key.startswith("dep_"):
@@ -635,12 +653,12 @@ class Task(Config):
             if key.startswith("out_") or key.startswith("dep_"):
                 self.__dict__[key] = _abs_path(_join_path(self.out_path, val))
 
-        # Then expand everything else
-        expand(self, self.__dict__)
-
         self._in_files  = _flatten(collect_files(self.__dict__, "in_"))
         self._out_files = _flatten(collect_files(self.__dict__, "out_"))
         self._dep_files = _flatten(collect_files(self.__dict__, "dep_"))
+
+        # Then expand everything else
+        expand(self, self.__dict__)
 
         if self.debug:
             log(f"Task after expand: {self}")
@@ -702,8 +720,8 @@ class Task(Config):
                 return f"Rebuilding because {file} has changed"
 
         for mod in self._loaded_modules:
-            if _mtime(mod.__file__) >= min_out:
-                return f"Rebuilding because {mod.__file__} has changed"
+            if _mtime(mod) >= min_out:
+                return f"Rebuilding because {mod} has changed"
 
         # Check all dependencies in the depfile, if present.
         depformat = getattr(self, "depformat", "gcc")
@@ -719,14 +737,14 @@ class Task(Config):
                     # MSVC /sourceDependencies json depfile
                     deplines = json.load(depfile)["Data"]["Includes"]
                 elif depformat == "gcc":
-                    # GCC .d depfile
+                    # GCC -MMD .d depfile
                     deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
                     raise ValueError(f"Invalid depformat {depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [path.join(self._command_path, d) for d in deplines]
+                deplines = [path.join(self.command_path, d) for d in deplines]
                 for abs_file in deplines:
                     if _mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -792,7 +810,8 @@ class Task(Config):
 
         # Create the subprocess via asyncio and then await the result.
         try:
-            #print(f"Task {hex(id(self))} subprocess start '{command}'")
+            if self.debug:
+                log(f"Task {hex(id(self))} subprocess start '{command}'")
             proc = await asyncio.create_subprocess_shell(
                 command,
                 cwd=self.command_path,
@@ -800,7 +819,8 @@ class Task(Config):
                 stderr=asyncio.subprocess.PIPE,
             )
             (stdout_data, stderr_data) = await proc.communicate()
-            #print(f"Task {hex(id(self))} subprocess done '{command}'")
+            if self.debug:
+                log(f"Task {hex(id(self))} subprocess done '{command}'")
         except RuntimeError:
             sys.exit(-1)
 
@@ -1065,8 +1085,9 @@ class App:
         module.__file__ = file_pathname
         module.__builtins__ = builtins
 
-        module.hancho = config
-        module.export = Config()
+        module.hancho  = config
+        module.imports = config
+        module.exports = Config()
         module.repo_path = repo_path
         module.repo_name = repo_name
         module.base_path = file_path
@@ -1086,7 +1107,7 @@ class App:
         finally:
             self.modstack.pop()
             app.popdir()
-        return module.export
+        return module.exports
 
     ########################################
 
@@ -1122,7 +1143,7 @@ class App:
 # fmt: off
 
 default_task_config = Config(
-    desc          = "<no desc>",
+    desc          = "{rel(_in_files)} -> {rel(_out_files)}",
     command       = Sentinel(),
     command_path  = "{base_path}",
     build_dir     = "build",

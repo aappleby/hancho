@@ -23,5 +23,5 @@ def link_cpp(tasks, binary, config):
     build_files   = binary,
   )
 
-export.compile_cpp = compile_cpp
-export.link_cpp = link_cpp
+exports.compile_cpp = compile_cpp
+exports.link_cpp = link_cpp
