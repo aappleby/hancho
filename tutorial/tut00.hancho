@@ -14,5 +14,6 @@
 hancho.Task(
   command  = [
     "mkdir -p build/tut00 && g++ src/main.cpp src/util.cpp -o build/tut00/app",
-  ]
+  ],
+  blarp = (1, 2, 3)
 )

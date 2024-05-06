@@ -146,26 +146,6 @@ def _maybe_as_number(text):
             return text
 
 
-async def _await_variant(variant):
-    """Recursively replaces every awaitable in the variant with its awaited value."""
-    match variant:
-        case asyncio.CancelledError():
-            raise variant
-        case Task():
-            await variant.wait_for_done()
-        case Config():
-            await _await_variant(variant.__dict__)
-        case dict():
-            for key in variant:
-                variant[key] = await _await_variant(variant[key])
-        case list():
-            for index, value in enumerate(variant):
-                variant[index] = await _await_variant(value)
-        case _:
-            if inspect.isawaitable(variant):
-                variant = await variant
-    return variant
-
 ####################################################################################################
 
 class Dumper:
@@ -229,6 +209,7 @@ class Dumper:
         result += self.indent() + "}"
         return result
 
+####################################################################################################
 
 class Sentinel:
     pass
@@ -249,17 +230,6 @@ class Config:
 
     def __setitem__(self, key, val):
         return self.__setattr__(key, val)
-
-    def __setattr__(self, key, val):
-        # FIXME we should handle this better, more than 1 level deep and deal with the
-        # "cannot pickle 'module' object" issue
-        if isinstance(val, (list|dict|tuple)):
-            try:
-                val = val.copy()
-            except:
-                print(val)
-                sys.exit(0)
-        return super().__setattr__(key, val)
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -315,7 +285,7 @@ class Config:
     def rel(self, path):
         return _rel_path(path, self.expand(self.command_path))
 
-#----------------------------------------
+####################################################################################################
 
 def load_file(file_name, as_repo, *args, **kwargs):
     mod_config = Config(*args, **kwargs)
@@ -441,29 +411,31 @@ def eval_macro(config, macro):
 #----------------------------------------
 
 def expand(config, variant):
-    """Expands all templates anywhere inside 'variant'."""
-
+    """Expands all templates anywhere inside 'variant', making deep copies where needed so we don't
+    expand someone else's data."""
+    result = None
     match variant:
         case BaseException():
             raise variant
         case str() if macro_regex.search(variant):
-            variant = expand(config, eval_macro(config, variant))
+            result = expand(config, eval_macro(config, variant))
         case str() if template_regex.search(variant):
-            variant = expand_template(config, variant)
-        case Task():
-            variant = variant._out_files
-            variant = variant[0] if len(variant) == 1 else variant
-        case Config():
-            expand(variant, variant.__dict__)
+            result = expand_template(config, variant)
         case list():
-            for i, val in enumerate(variant):
-                variant[i] = expand(config, val)
+            result = [expand(config, val) for val in variant]
         case dict():
+            result = {}
             for key, val in variant.items():
-                variant[key] = expand(config, val)
+                result[key] = expand(config, val)
         case Sentinel():
             raise ValueError("Tried to expand a Sentinel")
-    return variant
+        case str() | int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task():
+            result = variant
+        case _:
+            print(f"Don't know how to expand a {type(variant)}")
+            sys.exit(-1)
+            #result = variant
+    return result
 
 ####################################################################################################
 
@@ -492,30 +464,22 @@ def collect_files(config, prefix):
 
 ####################################################################################################
 
-def normalize_variant(config, variant, base_path):
+async def _await_variant(variant):
+    """Recursively replaces every awaitable in the variant with its awaited value."""
+
+    while inspect.isawaitable(variant):
+        variant = await variant
+
     match variant:
         case BaseException():
             raise variant
-        case Config():
-            normalize_variant(config, variant.__dict__, base_path)
-        case dict():
-            for key, val in variant.items():
-                variant[key] = normalize_variant(config, val, base_path)
-        case list():
-            for i, val in enumerate(variant):
-                variant[i] = normalize_variant(config, val, base_path)
-        case str():
-            #variant = config.expand(variant)
-            variant = _abs_path(_join_path(base_path, variant))
+        case Task():
+            variant = await variant.get_outputs()
+            variant = await _await_variant(variant)
+        case Config() | dict() | list():
+            for key, val in enumerate(variant):
+                variant[key] = await _await_variant(val)
     return variant
-
-def normalize_files(config, prefix, base_path):
-    for key, val in config.__dict__.items():
-        if key.startswith(prefix):
-            config.__dict__[key] = expand(config, val)
-    #for key, val in config.__dict__.items():
-    #    if key.startswith(prefix):
-    #        config.__dict__[key] = normalize_variant(config, val, base_path)
 
 ####################################################################################################
 
@@ -546,34 +510,32 @@ class Task(Config):
         else:
             return super().__getattribute__(key)
 
+    async def get_outputs(self):
+        if not self._promise:
+            self.run()
+        if not self._promise.done():
+            result = await self._promise
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+        return self._out_files
+
     async def get_async(self, key):
-        #print(f"About to wait_for_done() for {key}")
-        await self.wait_for_done()
-        #print(f"Finished wait_for_done() {key}")
+        await self.get_outputs()
         return self.__dict__[key]
 
     def run(self):
         if self._promise is None:
-            #print(f"create_task Task@{hex(id(self))}")
             app.tasks_total += 1
             self._promise = asyncio.create_task(self.run_async())
             app.queued_tasks.append(self)
-
-    async def wait_for_done(self):
-        if not self._promise:
-            self.run()
-        if not self._promise.done():
-            await self._promise
 
     def __repr__(self):
         return Dumper(1).dump(self)
 
     async def await_everything(self):
-        #print(f"Task {hex(id(self))} awaiting")
         for key, val in self.__dict__.items():
             if key != "_promise":
                 self.__dict__[key] = await _await_variant(val)
-        #print(f"Task {hex(id(self))} awaiting done")
 
     #-----------------------------------------------------------------------------------------------
 
@@ -601,10 +563,11 @@ class Task(Config):
             else:
                 app.tasks_skip += 1
 
-            #for file in self._out_files:
-            #    if not path.exists(file):
-            #        raise FileNotFoundError(f"Could not find output {file}")
-
+        # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
+        # downstream tasks.
+        except asyncio.CancelledError as cancel:
+            app.tasks_cancel += 1
+            return cancel
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException as err:
@@ -612,15 +575,11 @@ class Task(Config):
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
-        # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
-        # downstream tasks.
-        except asyncio.CancelledError as cancel:
-            app.tasks_cancel += 1
-            return cancel
-
         finally:
             if self.debug:
                 log(f"Task {hex(id(self))} done")
+
+        return self._out_files
 
     #-----------------------------------------------------------------------------------------------
 
@@ -635,30 +594,38 @@ class Task(Config):
         if self.debug:
             log(f"Task before expand: {self}")
 
-        # Expand the in and out paths first
-        self.in_path  = _abs_path(_join_path(self.base_path, self.expand(self.in_path)))
-        self.out_path = _abs_path(_join_path(self.base_path, self.expand(self.out_path)))
+        # Expand the command, in, and out paths first
+        self.command_path = _abs_path(_join_path(self.base_path, self.expand(self.command_path)))
+        self.in_path      = _abs_path(_join_path(self.base_path, self.expand(self.in_path)))
+        self.out_path     = _abs_path(_join_path(self.base_path, self.expand(self.out_path)))
 
-        # Then expand the in_/out_/deps groups and prepend in/out path to them.
-
+        # Then expand the in_/out_/deps groups
         for key, val in self.__dict__.items():
             if key.startswith("in_") or key.startswith("out_") or key.startswith("dep_"):
                 self.__dict__[key] = expand(self, val)
 
+        # Prepend the in/out path to the filenames
         for key, val in self.__dict__.items():
-            if key.startswith("in_"):
+            if key.startswith("in_") and isinstance(val, str):
                 self.__dict__[key] = _abs_path(_join_path(self.in_path, val))
 
         for key, val in self.__dict__.items():
-            if key.startswith("out_") or key.startswith("dep_"):
+            if (key.startswith("out_") or key.startswith("dep_")) and isinstance(val, str):
                 self.__dict__[key] = _abs_path(_join_path(self.out_path, val))
 
+        # Collect up the finalized filenames in all groups
         self._in_files  = _flatten(collect_files(self.__dict__, "in_"))
         self._out_files = _flatten(collect_files(self.__dict__, "out_"))
         self._dep_files = _flatten(collect_files(self.__dict__, "dep_"))
 
+        # And now we can expand the command.
+        self.command = self.expand(self.command)
+
         # Then expand everything else
-        expand(self, self.__dict__)
+        # FIXME maybe we shouldn't do this?
+        #expand(self, self.__dict__)
+        #for key, val in self.items():
+        #    self[key] = expand(self, val)
 
         if self.debug:
             log(f"Task after expand: {self}")
