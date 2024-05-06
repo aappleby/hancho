@@ -476,7 +476,10 @@ async def _await_variant(variant):
         case Task():
             variant = await variant.get_outputs()
             variant = await _await_variant(variant)
-        case Config() | dict() | list():
+        case Config() | dict():
+            for key, val in variant.items():
+                variant[key] = await _await_variant(val)
+        case list():
             for key, val in enumerate(variant):
                 variant[key] = await _await_variant(val)
     return variant
