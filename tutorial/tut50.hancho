@@ -1,41 +1,42 @@
 # tutorial/tut50.hancho - Async/await and custom commands
 import asyncio
+import hancho
 
 # Synchronous functions can be used in place of command strings.
 
 def sync_callback(task):
   #print("Sync callback begin")
-  for abs_file in task._build_files:
+  for abs_file in task.out_txts:
     #print(f"Writing {abs_file}")
     with open(abs_file, 'w', encoding="utf-8") as file:
       file.write("hello world")
   #print("Sync callback end")
-  return task._build_files
+  return task._out_files
 
 fast_task = hancho.Task(
-  source_files = ["src/main.cpp"],
-  build_files  = ["fast1.txt", "fast2.txt", "fast3.txt"],
-  repo_name    = "tut50",
-  command      = sync_callback
+  command   = sync_callback,
+  in_src    = ["src/main.cpp"],
+  out_txts  = ["fast1.txt", "fast2.txt", "fast3.txt"],
+  repo_name = "tut50",
 )
 
 # Asynchronous functions can also be used in place of command strings.
 
 async def async_callback(task):
   #print("Async callback begin")
-  for abs_file in task._build_files:
+  for abs_file in task.out_txts:
     #print(f"Writing {abs_file}")
     with open(abs_file, 'w', encoding="utf-8") as file:
       file.write("hello world")
     await asyncio.sleep(0.1)
   #print("Async callback end")
-  return task._build_files
+  return task._out_files
 
 slow_task = hancho.Task(
-  source_files = ["src/main.cpp"],
-  build_files  = ["slow1.txt", "slow2.txt", "slow3.txt"],
-  repo_name    = "tut50",
-  command      = async_callback,
+  command   = async_callback,
+  in_src    = ["src/main.cpp"],
+  out_txts  = ["slow1.txt", "slow2.txt", "slow3.txt"],
+  repo_name = "tut50",
 )
 
 # Promises that resolve to filenames can be used in place of actual filenames in rules.
@@ -47,8 +48,8 @@ async def slow_filename_promise():
   return ["src/main.cpp"]
 
 echo_task = hancho.Task(
-  source_files = [slow_filename_promise()],
-  build_files  = ["promise1.txt"],
-  repo_name    = "tut50",
-  command      = "echo {rel_source_files} > {rel_build_files}",
+  command = "echo {rel(in_src)} > {rel(out_txt)}",
+  in_src  = [slow_filename_promise()],
+  out_txt = ["promise1.txt"],
+  repo_name = "tut50",
 )

@@ -1,5 +1,7 @@
 # tutorial/tut15.hancho
 
+import hancho
+
 common = hancho.Config(
   out_path = "build/tut15",
 )

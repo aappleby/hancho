@@ -61,9 +61,9 @@ def log(message, *args, sameline=False, **kwargs):
     app.line_dirty = sameline
 
 
-def _flatten(variant):
+def flatten(variant):
     if isinstance(variant, list):
-        return [x for element in variant for x in _flatten(element)]
+        return [x for element in variant for x in flatten(element)]
     return [variant]
 
 
@@ -91,20 +91,20 @@ def _join_path2(path1, path2, *args):
     if len(args):
         return [_join_path(path1, p) for p in _join_path(path2, *args)]
     if isinstance(path1, list):
-        return [_join_path(p, path2) for p in _flatten(path1)]
+        return [_join_path(p, path2) for p in flatten(path1)]
     if isinstance(path2, list):
-        return [_join_path(path1, p) for p in _flatten(path2)]
+        return [_join_path(path1, p) for p in flatten(path2)]
     return path.join(path1, path2)
 
 def _join_path(path1, path2, *args):
     result = _join_path2(path1, path2, *args)
-    return _flatten(result) if isinstance(result, list) else result
+    return flatten(result) if isinstance(result, list) else result
 
 def _join_prefix(prefix, strings):
-    return [prefix+str(s) for s in _flatten(strings)]
+    return [prefix+str(s) for s in flatten(strings)]
 
 def _join_suffix(strings, suffix):
-    return [str(s)+suffix for s in _flatten(strings)]
+    return [str(s)+suffix for s in flatten(strings)]
 
 def _color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -248,32 +248,17 @@ class Config:
     def keys(self):
         return self.__dict__.keys()
 
+    def items(self):
+        return self.__dict__.items()
+
     def pop(self, key, val = Sentinel()):
         if not isinstance(val, Sentinel):
             return self.__dict__.pop(key, val)
         else:
             return self.__dict__.pop(key)
 
-    def items(self):
-        return self.__dict__.items()
-
     def expand(self, variant):
-        return expand(self, variant)
-
-    def load(self, file_name, *args, **kwargs):
-        return load_file(file_name, False, *args, **kwargs)
-
-    def repo(self, file_name, *args, **kwargs):
-        return load_file(file_name, True, *args, **kwargs)
-
-    def reset(self):
-        return app.reset()
-
-    def build(self):
-        return app.build()
-
-    def get_log(self):
-        return app.log
+        return expand_variant(self, variant)
 
     def __call__(self, *args, **kwargs):
         custom_call = getattr(self, "call", None)
@@ -299,6 +284,21 @@ def load_file(file_name, as_repo, *args, **kwargs):
     file_name = path.basename(abs_file_path)
 
     return app.load_module(repo_path, repo_name, file_path, file_name, mod_config)
+
+def load(file_name, *args, **kwargs):
+    return load_file(file_name, False, *args, **kwargs)
+
+def repo(file_name, *args, **kwargs):
+    return load_file(file_name, True, *args, **kwargs)
+
+def reset():
+    return app.reset()
+
+def build():
+    return app.build()
+
+def get_log():
+    return app.log
 
 ####################################################################################################
 # The template expansion / macro evaluation code requires some explanation.
@@ -344,15 +344,12 @@ class Expander:
         val = getattr(self.config, key)
         if self.trace:
             log(("┃" * app.expand_depth) + f" Read '{key}' = '{val}'")
-        return expand(self.config, val)
+        return self.config.expand(val)
 
 #----------------------------------------
 
 def expand_template(config, template):
     """Replaces all macros in template with their stringified values."""
-
-    #if not isinstance(config, Expander):
-    #    config = Expander(config)
 
     if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
@@ -365,8 +362,9 @@ def expand_template(config, template):
             result += template[0 : span.start()]
             try:
                 macro = template[span.start() : span.end()]
-                variant = expand(config, eval_macro(config, macro))
-                result += " ".join([str(s) for s in _flatten(variant)])
+                variant = eval_macro(config, macro)
+                variant = config.expand(variant)
+                result += " ".join([str(s) for s in flatten(variant)])
             except BaseException as err:
                 log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed!{_color()}")
                 raise err
@@ -388,6 +386,8 @@ def eval_macro(config, macro):
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
     if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
+
+    # Wrap the config in an Expander if it isn't already wrapped.
     if not isinstance(config, Expander):
         config = Expander(config)
 
@@ -410,57 +410,36 @@ def eval_macro(config, macro):
 
 #----------------------------------------
 
-def expand(config, variant):
+def expand_variant(config, variant):
     """Expands all templates anywhere inside 'variant', making deep copies where needed so we don't
     expand someone else's data."""
     result = None
     match variant:
         case BaseException():
             raise variant
-        case str() if macro_regex.search(variant):
-            result = expand(config, eval_macro(config, variant))
-        case str() if template_regex.search(variant):
-            result = expand_template(config, variant)
+        case str():
+            if macro_regex.search(variant):
+                result = eval_macro(config, variant)
+                result = config.expand(result)
+            elif template_regex.search(variant):
+                result = expand_template(config, variant)
+            else:
+                result = variant
         case list():
-            result = [expand(config, val) for val in variant]
+            result = [config.expand(val) for val in variant]
         case dict():
             result = {}
             for key, val in variant.items():
-                result[key] = expand(config, val)
+                result[key] = config.expand(val)
         case Sentinel():
             raise ValueError("Tried to expand a Sentinel")
-        case str() | int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task():
+        case int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task() | types.MethodType():
             result = variant
         case _:
             print(f"Don't know how to expand a {type(variant)}")
             sys.exit(-1)
             #result = variant
     return result
-
-####################################################################################################
-
-def collect_variant(variant, prefix):
-    result = []
-    match variant:
-        case BaseException():
-            raise variant
-        case Task():
-            result.append(collect_variant(variant.__dict__, prefix))
-        case Config():
-            result.append(collect_variant(variant.__dict__, prefix))
-        case dict():
-            for key, val in variant.items():
-                if key.startswith(prefix) and key != prefix + "path":
-                    result.append(collect_variant(val, prefix))
-        case list():
-            for val in variant:
-                result.append(collect_variant(val, prefix))
-        case str():
-            result.append(variant)
-    return result
-
-def collect_files(config, prefix):
-    return _flatten(collect_variant(config, prefix))
 
 ####################################################################################################
 
@@ -482,9 +461,28 @@ async def _await_variant(variant):
         case list():
             for key, val in enumerate(variant):
                 variant[key] = await _await_variant(val)
+
     return variant
 
 ####################################################################################################
+
+def visit_variant(key, val, visitor):
+    match val:
+        case BaseException():
+            raise val
+        case Config() | dict():
+            for key2, val2 in variant.items():
+                val[key2] = visit_variant(key2, val2, visitor)
+        case list():
+            for key2, val2 in enumerate(val):
+                val[key2] = visit_variant(key2, val2, visitor)
+        case _:
+            val = visitor(key, val)
+    return val
+
+####################################################################################################
+
+from functools import partial
 
 class Task(Config):
     """Calling a Rule creates a Task."""
@@ -504,6 +502,7 @@ class Task(Config):
         self._reason = None
         self._lock = True
         self._promise = None
+        self._cancelled = False
         self._loaded_modules = [m.__file__ for m in app.loaded_modules]
         app.pending_tasks.append(self)
 
@@ -535,23 +534,23 @@ class Task(Config):
     def __repr__(self):
         return Dumper(1).dump(self)
 
-    async def await_everything(self):
-        for key, val in self.__dict__.items():
-            if key != "_promise":
-                self.__dict__[key] = await _await_variant(val)
-
     #-----------------------------------------------------------------------------------------------
 
     async def run_async(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
+
+        if self._cancelled:
+            return asyncio.CancelledError()
 
         if self.debug:
             log(f"Task {hex(id(self))} start")
 
         try:
             self._lock = False
-            # Await everything awaitable in this task.
-            await self.await_everything()
+            # Await everything awaitable in this task except the task's own promise.
+            for key, val in self.__dict__.items():
+                if key != "_promise":
+                    self.__dict__[key] = await _await_variant(val)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -602,33 +601,46 @@ class Task(Config):
         self.in_path      = _abs_path(_join_path(self.base_path, self.expand(self.in_path)))
         self.out_path     = _abs_path(_join_path(self.base_path, self.expand(self.out_path)))
 
-        # Then expand the in_/out_/deps groups
+        # We _must_ expand first before prepending paths or paths will break
+        # prefix + swap(abs_path) != abs(prefix + swap(path))
         for key, val in self.__dict__.items():
             if key.startswith("in_") or key.startswith("out_") or key.startswith("dep_"):
-                self.__dict__[key] = expand(self, val)
+                self.__dict__[key] = self.expand(val)
 
         # Prepend the in/out path to the filenames
-        for key, val in self.__dict__.items():
-            if key.startswith("in_") and isinstance(val, str):
-                self.__dict__[key] = _abs_path(_join_path(self.in_path, val))
+        self._in_files = []
+        self._out_files = []
+        self._dep_files = []
+
+        def handle_in_path(key, val):
+            if isinstance(val, str):
+                val = _abs_path(_join_path(self.in_path, val))
+                self._in_files.append(val)
+            return val
+
+        def handle_out_path(key, val):
+            if isinstance(val, str):
+                val = _abs_path(_join_path(self.out_path, val))
+                self._out_files.append(val)
+            return val
+
+        def handle_dep_path(key, val):
+            if isinstance(val, str):
+                val = _abs_path(_join_path(self.out_path, val))
+                self._dep_files.append(val)
+            return val
 
         for key, val in self.__dict__.items():
-            if (key.startswith("out_") or key.startswith("dep_")) and isinstance(val, str):
-                self.__dict__[key] = _abs_path(_join_path(self.out_path, val))
-
-        # Collect up the finalized filenames in all groups
-        self._in_files  = _flatten(collect_files(self.__dict__, "in_"))
-        self._out_files = _flatten(collect_files(self.__dict__, "out_"))
-        self._dep_files = _flatten(collect_files(self.__dict__, "dep_"))
+            if key.startswith("in_") and key != "in_path":
+                self.__dict__[key] = visit_variant(key, val, handle_in_path)
+            if key.startswith("out_") and key != "out_path":
+                self.__dict__[key] = visit_variant(key, val, handle_out_path)
+            if key.startswith("dep_") and key != "dep_path":
+                self.__dict__[key] = visit_variant(key, val, handle_dep_path)
 
         # And now we can expand the command.
         self.command = self.expand(self.command)
-
-        # Then expand everything else
-        # FIXME maybe we shouldn't do this?
-        #expand(self, self.__dict__)
-        #for key, val in self.items():
-        #    self[key] = expand(self, val)
+        self.desc = self.expand(self.desc)
 
         if self.debug:
             log(f"Task after expand: {self}")
@@ -666,9 +678,7 @@ class Task(Config):
         # pylint: disable=too-many-branches
 
         if force:
-            #return f"Files {self._out_files} forced to rebuild"
-            # FIXME
-            return "Forced to rebuild"
+            return f"Files {self._out_files} forced to rebuild"
         if not self._in_files:
             return "Always rebuild a target with no inputs"
         if not self._out_files:
@@ -744,7 +754,7 @@ class Task(Config):
             if self.verbose or self.debug:
                 log(f"{_color(128,128,128)}Reason: {self._reason}{_color()}")
 
-            commands = _flatten(self.command)
+            commands = flatten(self.command)
             #print(commands)
             for command in commands:
                 if self.verbose or self.debug:
@@ -1055,7 +1065,7 @@ class App:
         module.__file__ = file_pathname
         module.__builtins__ = builtins
 
-        module.hancho  = config
+        #module.hancho  = config
         module.imports = config
         module.exports = Config()
         module.repo_path = repo_path
@@ -1134,7 +1144,7 @@ Config.glob      = staticmethod(glob.glob)
 Config.len       = staticmethod(len)
 Config.run_cmd   = staticmethod(_run_cmd)
 Config.swap_ext  = staticmethod(_swap_ext)
-Config.flatten   = staticmethod(_flatten)
+Config.flatten   = staticmethod(flatten)
 Config.print     = staticmethod(print)
 Config.log       = staticmethod(log)
 Config.path      = path
@@ -1153,17 +1163,6 @@ Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
 
-#Config.abs_in_path   = "{abs_path(join_path(base_path, in_path))}"
-#Config.abs_out_path  = "{abs_path(join_path(base_path, out_path))}"
-
-#Config.abs_in_files  = "{flatten(join_path(abs_in_path,  in_files))}"
-#Config.abs_out_files = "{flatten(join_path(abs_out_path, out_files))}"
-
-#Config.rel_in_path   = "{rel_path(abs_in_path,   abs_command_path)}"
-#Config.rel_out_path  = "{rel_path(abs_out_path,  abs_command_path)}"
-
-#Config.rel_in_files  = "{rel_path(abs_in_files,  abs_command_path)}"
-#Config.rel_out_files = "{rel_path(abs_out_files, abs_command_path)}"
 # fmt: on
 
 ####################################################################################################

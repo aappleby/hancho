@@ -1,5 +1,7 @@
 # tutorial/tut30.hancho
 
+import hancho
+
 config = hancho.Config(repo_name = "tut30")
 
 rules = hancho.load("tut30_rules.hancho")

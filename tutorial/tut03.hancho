@@ -1,5 +1,7 @@
 # tutorial/tut03.hancho
 
+import hancho
+
 def compile_cpp(source, config):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')

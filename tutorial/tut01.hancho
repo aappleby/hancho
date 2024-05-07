@@ -1,5 +1,7 @@
 # tutorial/tut01.hancho
 
+import hancho
+
 main_o = hancho.Task(
   desc     = "Compile main.cpp",
   command  = "g++ -MMD -c src/main.cpp -o build/tut01/main.o",

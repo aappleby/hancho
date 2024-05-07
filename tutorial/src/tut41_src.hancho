@@ -1,3 +1,9 @@
 # tutorial/tut41_src.hancho
 
-hancho.c_binary(hancho, hancho.glob("*.cpp"), "app")
+import hancho
+import glob
+
+config = imports.config
+rules  = imports.rules
+
+rules.c_binary(config, in_srcs = glob.glob("*.cpp"), out_bin = "app")
