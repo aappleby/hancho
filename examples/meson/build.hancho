@@ -1,8 +1,10 @@
 # examples/meson/build.hancho
 
+import hancho
+
 compile = hancho.Config(
-  command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel_source_files} -o {rel_build_files}",
-  desc      = "Compiling {rel_source_files} -> {rel_build_files} ({build_tag})",
+  desc      = "Compiling {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+  command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel(in_src)} -o {rel(out_obj)}",
   includes  = [
     "-I."
   ],
@@ -18,13 +20,13 @@ compile = hancho.Config(
     "-Wall",
     "-Winvalid-pch"
   ],
-  build_files = "{swap_ext(source_files, '.o')}",
-  build_deps  = "{swap_ext(source_files, '.d')}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  dep_gcc  = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.Config(
-  command   = "gcc {rel_source_files} -o {rel_build_files} {link_opts}",
-  desc      = "Linking {rel_source_files} -> {rel_build_files}",
+  command   = "gcc {rel(in_objs)} -o {rel(out_bin)} {link_opts}",
+  desc      = "Linking {rel(in_objs)} -> {rel(out_bin)}",
   link_opts = [
     "-Wl,--as-needed",
     "-Wl,--no-undefined",
@@ -36,13 +38,13 @@ link = hancho.Config(
 )
 
 main_o = compile(
-  "main.c",
+  in_src = "main.c",
   includes = compile.includes + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}"],
   gcc_opts = compile.gcc_opts + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}"],
 )
 
 main = link(
-  main_o,
-  "demo",
+  in_objs = main_o,
+  out_bin = "demo",
   libs = link.libs + ["{run_cmd('pkg-config gtk+-3.0 --libs')}"],
 )

@@ -2,29 +2,29 @@
 
 """Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
 
+from os import path
+from types import MappingProxyType
 import argparse
 import asyncio
 import builtins
+import copy
+import glob
 import inspect
 import io
 import json
 import os
+import random
 import re
+import resource
 import subprocess
 import sys
-import traceback
 import time
+import traceback
 import types
-import random
-from os import path
-import glob
-import resource
-from types import MappingProxyType
-import copy
 
-# If we were launched directly, a reference to this module is already in
-# sys.modules[__name__]. Stash another reference in sys.modules["hancho"] so
-# that build.hancho and descendants don't try to load a second copy of Hancho.
+# If we were launched directly, a reference to this module is already in sys.modules[__name__].
+# Stash another reference in sys.modules["hancho"] so that build.hancho and descendants don't try
+# to load a second copy of Hancho.
 sys.modules["hancho"] = sys.modules[__name__]
 
 def log_line(message):
@@ -62,23 +62,33 @@ def log(message, *args, sameline=False, **kwargs):
 
 
 def flatten(variant):
+    if isinstance(variant, Task):
+        variant = variant._out_files
+
     if isinstance(variant, list):
         return [x for element in variant for x in flatten(element)]
     return [variant]
 
 
-def _abs_path(raw_path, strict=False):
+def abs_path(raw_path, strict=False):
+    if isinstance(raw_path, Task):
+        raw_path = raw_path._out_files
     if isinstance(raw_path, list):
-        return [_abs_path(p, strict) for p in raw_path]
+        return [abs_path(p, strict) for p in raw_path]
+
     result = path.abspath(raw_path)
     if strict and not path.exists(result):
         raise FileNotFoundError(raw_path)
     return result
 
 
-def _rel_path(path1, path2):
+def rel_path(path1, path2):
+    if isinstance(path1, Task):
+        path1 = path1._out_files
+
     if isinstance(path1, list):
-        return [_rel_path(p, path2) for p in path1]
+        return [rel_path(p, path2) for p in path1]
+
     # Generating relative paths in the presence of symlinks doesn't work with either
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
     # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
@@ -87,26 +97,31 @@ def _rel_path(path1, path2):
     return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
 
-def _join_path2(path1, path2, *args):
+def join_path2(path1, path2, *args):
+    if isinstance(path1, Task):
+        path1 = path1._out_files
+    if isinstance(path2, Task):
+        path2 = path2._out_files
+
     if len(args):
-        return [_join_path(path1, p) for p in _join_path(path2, *args)]
+        return [join_path(path1, p) for p in join_path(path2, *args)]
     if isinstance(path1, list):
-        return [_join_path(p, path2) for p in flatten(path1)]
+        return [join_path(p, path2) for p in flatten(path1)]
     if isinstance(path2, list):
-        return [_join_path(path1, p) for p in flatten(path2)]
+        return [join_path(path1, p) for p in flatten(path2)]
     return path.join(path1, path2)
 
-def _join_path(path1, path2, *args):
-    result = _join_path2(path1, path2, *args)
+def join_path(path1, path2, *args):
+    result = join_path2(path1, path2, *args)
     return flatten(result) if isinstance(result, list) else result
 
-def _join_prefix(prefix, strings):
+def join_prefix(prefix, strings):
     return [prefix+str(s) for s in flatten(strings)]
 
-def _join_suffix(strings, suffix):
+def join_suffix(strings, suffix):
     return [str(s)+suffix for s in flatten(strings)]
 
-def _color(red=None, green=None, blue=None):
+def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
     if not Config.use_color or os.name == "nt":
@@ -116,25 +131,25 @@ def _color(red=None, green=None, blue=None):
     return f"\x1B[38;2;{red};{green};{blue}m"
 
 
-def _run_cmd(cmd):
+def run_cmd(cmd):
     """Runs a console command synchronously and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
-def _swap_ext(name, new_ext):
+def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, list):
-        return [_swap_ext(n, new_ext) for n in name]
+        return [swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
 
 
-def _mtime(filename):
+def mtime(filename):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
     return os.stat(filename).st_mtime_ns
 
 
-def _maybe_as_number(text):
+def maybe_as_number(text):
     """Tries to convert a string to an int, then a float, then gives up. Used for ingesting
     unrecognized flag values."""
     try:
@@ -268,7 +283,7 @@ class Config:
             return Task(self, *args, **kwargs)
 
     def rel(self, path):
-        return _rel_path(path, self.expand(self.command_path))
+        return rel_path(path, self.expand(self.command_path))
 
 ####################################################################################################
 
@@ -276,7 +291,7 @@ def load_file(file_name, as_repo, *args, **kwargs):
     mod_config = Config(*args, **kwargs)
 
     file_name = mod_config.expand(file_name)
-    abs_file_path = _join_path(app.topmod().base_path, file_name)
+    abs_file_path = join_path(app.topmod().base_path, file_name)
 
     repo_path = path.dirname(abs_file_path) if as_repo else app.topmod().repo_path
     repo_name = path.basename(repo_path) if as_repo else app.topmod().repo_name
@@ -361,12 +376,11 @@ def expand_template(config, template):
         while span := template_regex.search(template):
             result += template[0 : span.start()]
             try:
-                macro = template[span.start() : span.end()]
+                macro   = template[span.start() : span.end()]
                 variant = eval_macro(config, macro)
-                variant = config.expand(variant)
-                result += " ".join([str(s) for s in flatten(variant)])
+                result += stringify_variant(config, variant)
             except BaseException as err:
-                log(f"{_color(255, 255, 0)}Expanding template '{old_template}' failed!{_color()}")
+                log(f"{color(255, 255, 0)}Expanding template '{old_template}' failed!{color()}")
                 raise err
             template = template[span.end() :]
         result += template
@@ -387,19 +401,18 @@ def eval_macro(config, macro):
     if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
 
-    # Wrap the config in an Expander if it isn't already wrapped.
-    if not isinstance(config, Expander):
-        config = Expander(config)
-
     app.expand_depth += 1
-    # pylint: disable=eval-used
     result = ""
     try:
         # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
         # paths and stuff, which will break.
+        if not isinstance(config, Expander):
+            config = Expander(config)
+
+        # pylint: disable=eval-used
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
-        log(f"{_color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{_color()}")
+        log(f"{color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{color()}")
         raise err
     finally:
         app.expand_depth -= 1
@@ -410,40 +423,53 @@ def eval_macro(config, macro):
 
 #----------------------------------------
 
-def expand_variant(config, variant):
-    """Expands all templates anywhere inside 'variant', making deep copies where needed so we don't
-    expand someone else's data."""
-    result = None
+def stringify_variant(config, variant):
     match variant:
         case BaseException():
             raise variant
-        case str():
-            if macro_regex.search(variant):
-                result = eval_macro(config, variant)
-                result = config.expand(result)
-            elif template_regex.search(variant):
-                result = expand_template(config, variant)
-            else:
-                result = variant
+        case Task():
+            return stringify_variant(config, variant._out_files)
+        case str() if macro_regex.search(variant):
+            variant = eval_macro(config, variant)
+            return stringify_variant(config, variant)
+        case str() if template_regex.search(variant):
+            return expand_template(config, variant)
         case list():
-            result = [config.expand(val) for val in variant]
+            variant = [stringify_variant(config, val) for val in variant]
+            return " ".join(variant)
+        case int() | float() | str():
+            return str(variant)
+    raise ValueError(f"Don't know how to stringify a {type(variant)} = {str(variant)}")
+
+#----------------------------------------
+
+def expand_variant(config, variant):
+    """Expands all templates anywhere inside 'variant', making deep copies where needed so we don't
+    expand someone else's data."""
+    match variant:
+        case BaseException():
+            raise variant
+        case str() if macro_regex.search(variant):
+            variant = eval_macro(config, variant)
+            return expand_variant(config, variant)
+        case str() if template_regex.search(variant):
+            return expand_template(config, variant)
+        case list():
+            return [config.expand(val) for val in variant]
         case dict():
             result = {}
             for key, val in variant.items():
                 result[key] = config.expand(val)
-        case Sentinel():
-            raise ValueError("Tried to expand a Sentinel")
-        case int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task() | types.MethodType():
-            result = variant
-        case _:
-            print(f"Don't know how to expand a {type(variant)}")
-            sys.exit(-1)
-            #result = variant
-    return result
+            return result
+        # Maybe FIXME - we have to catch these cases because Expander tries to expand _everything_
+        case str() | int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task() | types.MethodType() | types.ModuleType() | Task():
+        #case str() | int() | float() | Task():
+            return variant
+    raise ValueError(f"Don't know how to expand a {type(variant)} = {str(variant)}")
 
 ####################################################################################################
 
-async def _await_variant(variant):
+async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
 
     while inspect.isawaitable(variant):
@@ -453,15 +479,13 @@ async def _await_variant(variant):
         case BaseException():
             raise variant
         case Task():
-            variant = await variant.get_outputs()
-            variant = await _await_variant(variant)
+            await variant.get_outputs()
         case Config() | dict():
             for key, val in variant.items():
-                variant[key] = await _await_variant(val)
+                variant[key] = await await_variant(val)
         case list():
             for key, val in enumerate(variant):
-                variant[key] = await _await_variant(val)
-
+                variant[key] = await await_variant(val)
     return variant
 
 ####################################################################################################
@@ -470,8 +494,11 @@ def visit_variant(key, val, visitor):
     match val:
         case BaseException():
             raise val
+        case Task():
+            for key2, val2 in enumerate(val._out_files):
+                val._out_files[key2] = visit_variant(key2, val2, visitor)
         case Config() | dict():
-            for key2, val2 in variant.items():
+            for key2, val2 in val.items():
                 val[key2] = visit_variant(key2, val2, visitor)
         case list():
             for key2, val2 in enumerate(val):
@@ -481,8 +508,6 @@ def visit_variant(key, val, visitor):
     return val
 
 ####################################################################################################
-
-from functools import partial
 
 class Task(Config):
     """Calling a Rule creates a Task."""
@@ -497,20 +522,16 @@ class Task(Config):
 
         super().__init__(default_task_config, path_config, *args, **kwargs)
 
+        if self.debug:
+            print("debug")
+
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
         self._reason = None
-        self._lock = True
         self._promise = None
         self._cancelled = False
         self._loaded_modules = [m.__file__ for m in app.loaded_modules]
         app.pending_tasks.append(self)
-
-    def __getattribute__(self, key):
-        if key.startswith("out_") and self._lock:
-            return self.get_async(key)
-        else:
-            return super().__getattribute__(key)
 
     async def get_outputs(self):
         if not self._promise:
@@ -520,10 +541,6 @@ class Task(Config):
             if isinstance(result, asyncio.CancelledError):
                 raise result
         return self._out_files
-
-    async def get_async(self, key):
-        await self.get_outputs()
-        return self.__dict__[key]
 
     def run(self):
         if self._promise is None:
@@ -546,11 +563,10 @@ class Task(Config):
             log(f"Task {hex(id(self))} start")
 
         try:
-            self._lock = False
             # Await everything awaitable in this task except the task's own promise.
             for key, val in self.__dict__.items():
                 if key != "_promise":
-                    self.__dict__[key] = await _await_variant(val)
+                    self.__dict__[key] = await await_variant(val)
 
             # Everything awaited, task_init runs synchronously.
             self.task_init()
@@ -573,7 +589,7 @@ class Task(Config):
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except BaseException as err:
-            log(f"{_color(255, 128, 128)}{traceback.format_exc()}{_color()}")
+            log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
             app.tasks_fail += 1
             return asyncio.CancelledError()
 
@@ -597,9 +613,9 @@ class Task(Config):
             log(f"Task before expand: {self}")
 
         # Expand the command, in, and out paths first
-        self.command_path = _abs_path(_join_path(self.base_path, self.expand(self.command_path)))
-        self.in_path      = _abs_path(_join_path(self.base_path, self.expand(self.in_path)))
-        self.out_path     = _abs_path(_join_path(self.base_path, self.expand(self.out_path)))
+        self.command_path = abs_path(join_path(self.base_path, self.expand(self.command_path)))
+        self.in_path      = abs_path(join_path(self.base_path, self.expand(self.in_path)))
+        self.out_path     = abs_path(join_path(self.base_path, self.expand(self.out_path)))
 
         # We _must_ expand first before prepending paths or paths will break
         # prefix + swap(abs_path) != abs(prefix + swap(path))
@@ -614,19 +630,19 @@ class Task(Config):
 
         def handle_in_path(key, val):
             if isinstance(val, str):
-                val = _abs_path(_join_path(self.in_path, val))
+                val = abs_path(join_path(self.in_path, val))
                 self._in_files.append(val)
             return val
 
         def handle_out_path(key, val):
             if isinstance(val, str):
-                val = _abs_path(_join_path(self.out_path, val))
+                val = abs_path(join_path(self.out_path, val))
                 self._out_files.append(val)
             return val
 
         def handle_dep_path(key, val):
             if isinstance(val, str):
-                val = _abs_path(_join_path(self.out_path, val))
+                val = abs_path(join_path(self.out_path, val))
                 self._dep_files.append(val)
             return val
 
@@ -639,8 +655,8 @@ class Task(Config):
                 self.__dict__[key] = visit_variant(key, val, handle_dep_path)
 
         # And now we can expand the command.
-        self.command = self.expand(self.command)
         self.desc = self.expand(self.desc)
+        self.command = self.expand(self.command)
 
         if self.debug:
             log(f"Task after expand: {self}")
@@ -690,17 +706,17 @@ class Task(Config):
                 return f"Rebuilding because {file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(_mtime(f) for f in self._out_files)
+        min_out = min(mtime(f) for f in self._out_files)
 
-        if _mtime(__file__) >= min_out:
+        if mtime(__file__) >= min_out:
             return f"Rebuilding because hancho.py has changed"
 
         for file in self._in_files:
-            if _mtime(file) >= min_out:
+            if mtime(file) >= min_out:
                 return f"Rebuilding because {file} has changed"
 
         for mod in self._loaded_modules:
-            if _mtime(mod) >= min_out:
+            if mtime(mod) >= min_out:
                 return f"Rebuilding because {mod} has changed"
 
         # Check all dependencies in the depfile, if present.
@@ -726,7 +742,7 @@ class Task(Config):
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [path.join(self.command_path, d) for d in deplines]
                 for abs_file in deplines:
-                    if _mtime(abs_file) >= min_out:
+                    if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
 
         # All checks passed; we don't need to rebuild this output.
@@ -747,19 +763,19 @@ class Task(Config):
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
-                f"{_color(128,255,196)}[{self._task_index}/{app.tasks_total}]{_color()} {self.desc}",
+                f"{color(128,255,196)}[{self._task_index}/{app.tasks_total}]{color()} {self.desc}",
                 sameline=not self.verbose,
             )
 
             if self.verbose or self.debug:
-                log(f"{_color(128,128,128)}Reason: {self._reason}{_color()}")
+                log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
             commands = flatten(self.command)
             #print(commands)
             for command in commands:
                 if self.verbose or self.debug:
-                    rel_command_path = _rel_path(self.command_path, Config.root_path)
-                    log(f"{_color(128,128,255)}{rel_command_path}$ {_color()}", end="")
+                    rel_command_path = rel_path(self.command_path, Config.root_path)
+                    log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.dry_run else "", end="")
                     log(command)
                 result = await self.run_command(command)
@@ -868,16 +884,13 @@ class App:
     ########################################
 
     def pushdir(self, path):
-        path = _abs_path(path, strict=True)
+        path = abs_path(path, strict=True)
         self.dirstack.append(path)
         os.chdir(path)
 
     def popdir(self):
         self.dirstack.pop()
         os.chdir(self.dirstack[-1])
-
-    def topdir(self):
-        return self.dirstack[-1]
 
     def topmod(self):
         return self.modstack[-1]
@@ -922,7 +935,7 @@ class App:
         (flags, unrecognized) = parser.parse_known_args()
         flags = flags.__dict__
         # Root path must be absolute.
-        flags["root_path"] = _abs_path(flags["root_path"])
+        flags["root_path"] = abs_path(flags["root_path"])
 
         # Unrecognized command line parameters also become global Config fields if they are
         # flag-like
@@ -931,7 +944,7 @@ class App:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
-                val = _maybe_as_number(val) if val is not None else True
+                val = maybe_as_number(val) if val is not None else True
                 unrecognized_flags[key] = val
 
         for key, val in flags.items():
@@ -973,7 +986,7 @@ class App:
             # Seems to fix the issue.
             result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         except BaseException as err:
-            log(f"{_color(255, 128, 128)}{traceback.format_exc()}{_color()}")
+            log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
         return result
 
     ########################################
@@ -1013,8 +1026,8 @@ class App:
 
         time_b = time.perf_counter()
 
-        if Config.debug or Config.verbose:
-            log(f"Running tasks took {time_b-time_a:.3f} seconds")
+        #if Config.debug or Config.verbose:
+        log(f"Running tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
         if Config.debug:
@@ -1026,11 +1039,11 @@ class App:
             log(f"mtime calls:     {self.mtime_calls}")
 
         if self.tasks_fail:
-            log(f"hancho: {_color(255, 128, 128)}BUILD FAILED{_color()}")
+            log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
         elif self.tasks_pass:
-            log(f"hancho: {_color(128, 255, 128)}BUILD PASSED{_color()}")
+            log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
         else:
-            log(f"hancho: {_color(128, 128, 255)}BUILD CLEAN{_color()}")
+            log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
 
         return -1 if self.tasks_fail else 0
 
@@ -1049,12 +1062,11 @@ class App:
         assert path.isabs(file_path)
         assert not path.isabs(file_name)
 
-        file_pathname = _join_path(file_path, file_name)
+        file_pathname = join_path(file_path, file_name)
 
         #if config.debug or config.verbose:
-        #    log(_color(128,255,128) + f"Loading module {file_pathname}" + _color())
         log(("┃ " * (len(app.modstack) - 1)), end="")
-        log(_color(128,255,128) + f"Loading module {file_pathname}" + _color())
+        log(color(128,255,128) + f"Loading module {file_pathname}" + color())
 
         with open(file_pathname, encoding="utf-8") as file:
             source = file.read()
@@ -1065,7 +1077,6 @@ class App:
         module.__file__ = file_pathname
         module.__builtins__ = builtins
 
-        #module.hancho  = config
         module.imports = config
         module.exports = Config()
         module.repo_path = repo_path
@@ -1133,25 +1144,22 @@ default_task_config = Config(
     out_path      = "{build_path}",
 )
 
-Config.Config    = Config
-Config.Task      = Task
-
-Config.abs_path  = staticmethod(_abs_path)
-Config.rel_path  = staticmethod(_rel_path)
-Config.join_path = staticmethod(_join_path)
-Config.color     = staticmethod(_color)
+Config.abs_path  = staticmethod(abs_path)
+Config.rel_path  = staticmethod(rel_path)
+Config.join_path = staticmethod(join_path)
+Config.color     = staticmethod(color)
 Config.glob      = staticmethod(glob.glob)
 Config.len       = staticmethod(len)
-Config.run_cmd   = staticmethod(_run_cmd)
-Config.swap_ext  = staticmethod(_swap_ext)
+Config.run_cmd   = staticmethod(run_cmd)
+Config.swap_ext  = staticmethod(swap_ext)
 Config.flatten   = staticmethod(flatten)
 Config.print     = staticmethod(print)
 Config.log       = staticmethod(log)
 Config.path      = path
 Config.re        = re
 
-Config.join_prefix = staticmethod(_join_prefix)
-Config.join_suffix = staticmethod(_join_suffix)
+Config.join_prefix = staticmethod(join_prefix)
+Config.join_suffix = staticmethod(join_suffix)
 
 Config.jobs      = os.cpu_count()
 Config.verbose   = False

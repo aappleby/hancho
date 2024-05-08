@@ -4,10 +4,10 @@ import hancho
 
 shutil.rmtree("build", ignore_errors=True)
 
-#hancho.load("tut00.hancho")
-#hancho.load("tut01.hancho")
-#hancho.load("tut02.hancho")
-#hancho.load("tut03.hancho")
+hancho.load("tut00.hancho")
+hancho.load("tut01.hancho")
+hancho.load("tut02.hancho")
+hancho.load("tut03.hancho")
 #hancho.load("tut04.hancho") broken, obsolete
 
 hancho.load("tut10.hancho")

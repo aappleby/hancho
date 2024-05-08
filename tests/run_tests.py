@@ -13,8 +13,9 @@ from pathlib import Path
 import time
 
 sys.path.append("..")
-from hancho import Config
-from hancho import app
+import hancho
+#from hancho import Config
+#from hancho import app
 
 # tests still needed -
 # calling hancho in src dir
@@ -82,14 +83,14 @@ class TestConfig(unittest.TestCase):
 
 ################################################################################
 
-hancho = Config()
-hancho.module = app.modstack[-1]
-Config.use_color = False
-Config.quiet = True
-#Config.debug = True
-#Config.verbose = True
-Config.root_path = os.getcwd()
-Config.root_name = "build.hancho"
+#hancho = Config()
+#hancho.module = app.modstack[-1]
+hancho.Config.use_color = False
+hancho.Config.quiet = True
+#hancho.Config.debug = True
+#hancho.Config.verbose = True
+hancho.Config.root_path = os.getcwd()
+hancho.Config.root_name = "build.hancho"
 
 
 def color(red=None, green=None, blue=None):
@@ -182,21 +183,21 @@ class TestHancho(unittest.TestCase):
 
     def test_good_build_path(self):
         hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = "src/foo.c",
-            build_files = "foo.o",
-            build_path = "{base_path}/build"
+            command  = "touch {rel(out_obj)}",
+            in_src   = "src/foo.c",
+            out_path = "{base_path}/build/narp",
+            out_obj  = "foo.o",
         )
         self.assertEqual(0, hancho.build())
-        self.assertTrue(Path("build/foo.o").exists())
+        self.assertTrue(Path("build/narp/foo.o").exists())
         hancho.reset()
 
     def test_bad_build_path(self):
         hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = "src/foo.c",
-            build_files = "foo.o",
-            build_path = "{base_path}/../build"
+            command  = "touch {rel(out_obj)}",
+            in_src   = "src/foo.c",
+            out_path = "{base_path}/../build",
+            out_obj  = "foo.o",
         )
         self.assertNotEqual(0, hancho.build())
         self.assertFalse(Path("build/foo.o").exists())
@@ -224,31 +225,33 @@ class TestHancho(unittest.TestCase):
     def test_missing_input(self):
         """We should fail if an input is missing"""
         t = hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = "src/does_not_exist.txt",
-            build_files = "missing_src.txt"
+            command = "touch {rel(out_obj)}",
+            in_src  = "src/does_not_exist.txt",
+            out_obj = "missing_src.txt"
         )
         self.assertNotEqual(0, hancho.build())
+        self.assertTrue("FileNotFoundError" in hancho.get_log())
         self.assertTrue("does_not_exist.txt" in hancho.get_log())
 
     def test_missing_dep(self):
         """Missing dep should fail"""
         hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = "src/test.cpp",
-            build_files = "result.txt",
-            command_files = ["missing_dep.txt"]
+            command = "touch {rel(out_obj)}",
+            in_src  = "src/test.cpp",
+            in_dep  = ["missing_dep.txt"],
+            out_obj = "result.txt",
         )
         self.assertNotEqual(0, hancho.build())
+        self.assertTrue("FileNotFoundError" in hancho.get_log())
         self.assertTrue("missing_dep.txt" in hancho.get_log())
 
     def test_expand_failed_to_terminate(self):
         """A recursive text template should cause an 'expand failed to terminate' error."""
         hancho.Task(
             command = "{flarp}",
-            flarp = "asdf {flarp}",
-            source_files = [],
-            build_files = [],
+            in_src  = [],
+            out_obj = [],
+            flarp   = "asdf {flarp}",
         )
         self.assertNotEqual(0, hancho.build())
         self.assertTrue("Expanding '{flarp}' failed to terminate" in hancho.get_log())
@@ -257,8 +260,8 @@ class TestHancho(unittest.TestCase):
         """Non-existent command line commands should cause Hancho to fail the build."""
         hancho.Task(
             command = "aklsjdflksjdlfkjldfk",
-            source_files = __file__,
-            build_files = "result.txt",
+            in_src  = __file__,
+            out_obj = "result.txt",
         )
         self.assertNotEqual(0, hancho.build())
         self.assertTrue("Command 'aklsjdflksjdlfkjldfk' exited with return code 127" in hancho.get_log())
@@ -270,8 +273,8 @@ class TestHancho(unittest.TestCase):
             foo     = "{bar}",
             bar     = "{baz}",
             baz     = "{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}",
-            source_files = __file__,
-            build_files = "result.txt",
+            in_src  = __file__,
+            out_obj = "result.txt",
         )
         self.assertNotEqual(0, hancho.build())
         self.assertTrue("Expanding macro '{aklsjd*^@&#^$@)!()@$*)(flksjdlfkjldfk}' failed!" in hancho.get_log())
@@ -279,15 +282,14 @@ class TestHancho(unittest.TestCase):
     def test_rule_collision(self):
         """If multiple rules generate the same output file, that's an error."""
         hancho.Task(
-            command = "sleep 0.1 && touch {rel_build_files}",
-            source_files = __file__,
-            build_files = "colliding_output.txt",
+            command = "sleep 0.1 && touch {rel(out_obj)}",
+            in_src  = __file__,
+            out_obj = "colliding_output.txt",
         )
-
         hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = __file__,
-            build_files = "colliding_output.txt",
+            command = "touch {rel(out_obj)}",
+            in_src  = __file__,
+            out_obj = "colliding_output.txt",
         )
         self.assertNotEqual(0, hancho.build())
         self.assertTrue("Multiple rules build" in hancho.get_log())
@@ -297,9 +299,9 @@ class TestHancho(unittest.TestCase):
         def run():
             hancho.reset()
             hancho.Task(
-                command = "sleep 0.1 && touch {rel_build_files[0]}",
-                source_files = [],
-                build_files = "result.txt",
+                command = "sleep 0.1 && touch {rel(out_obj)}",
+                in_src  = [],
+                out_obj = "result.txt",
             )
             self.assertEqual(0, hancho.build())
             return mtime_ns("build/result.txt")
@@ -316,10 +318,10 @@ class TestHancho(unittest.TestCase):
         def run():
             hancho.reset()
             hancho.Task(
-                command = "sleep 0.1 && touch {rel_build_files[0]}",
-                command_files = ["build/dummy.txt"],
-                source_files = "src/test.cpp",
-                build_files = "result.txt",
+                command = "sleep 0.1 && touch {rel(out_obj)}",
+                in_temp = ["build/dummy.txt"],
+                in_src  = "src/test.cpp",
+                out_obj = "result.txt",
             )
             self.assertEqual(0, hancho.build())
             return mtime_ns("build/result.txt")
@@ -336,9 +338,9 @@ class TestHancho(unittest.TestCase):
     def test_does_create_output(self):
         """Output files should appear in build/ by default"""
         hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = [],
-            build_files = "result.txt",
+            command = "touch {rel(out_obj)}",
+            in_src  = [],
+            out_obj = "result.txt",
         )
         self.assertEqual(0, hancho.build())
         self.assertTrue(path.exists("build/result.txt"))
@@ -347,8 +349,8 @@ class TestHancho(unittest.TestCase):
         """Having a file mentioned in files_out should not magically create it"""
         hancho.Task(
             command = ":",
-            source_files = [],
-            build_files = "result.txt"
+            in_src  = [],
+            out_obj = "result.txt"
         )
         self.assertEqual(0, hancho.build())
         self.assertFalse(path.exists("build/result.txt"))
@@ -360,12 +362,11 @@ class TestHancho(unittest.TestCase):
             hancho.reset()
             time.sleep(0.01)
             compile = hancho.Config(
-                command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
-                build_files  = "{swap_ext(source_files, '.o')}",
-                build_deps   = "{swap_ext(source_files, '.d')}",
-                depformat    = "gcc",
+                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                out_obj = "{swap_ext(in_src, '.o')}",
+                dep_gcc = "{swap_ext(in_src, '.d')}",
             )
-            compile("src/test.cpp")
+            compile(in_src = "src/test.cpp")
             self.assertEqual(0, hancho.build())
             return mtime_ns("build/src/test.o")
 
@@ -384,12 +385,11 @@ class TestHancho(unittest.TestCase):
             hancho.reset()
             time.sleep(0.01)
             compile = hancho.Config(
-                command      = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
-                build_files  = "{swap_ext(source_files, '.o')}",
-                build_deps   = "{swap_ext(source_files, '.d')}",
-                depformat    = "gcc",
+                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                out_obj = "{swap_ext(in_src, '.o')}",
+                dep_gcc = "{swap_ext(in_src, '.d')}",
             )
-            compile("src/test.cpp")
+            compile(in_src = "src/test.cpp")
             self.assertEqual(0, hancho.build())
             return mtime_ns("build/src/test.o")
 
@@ -405,12 +405,14 @@ class TestHancho(unittest.TestCase):
         """Rules with arrays of commands should run all of them"""
         hancho.Task(
             command = [
-                "echo foo > {rel_build_files[0]}",
-                "echo bar > {rel_build_files[1]}",
-                "echo baz > {rel_build_files[2]}",
+                "echo foo > {rel(out_foo)}",
+                "echo bar > {rel(out_bar)}",
+                "echo baz > {rel(out_baz)}",
             ],
-            source_files = __file__,
-            build_files = ["foo.txt", "bar.txt", "baz.txt"]
+            in_src  = __file__,
+            out_foo = "foo.txt",
+            out_bar = "bar.txt",
+            out_baz = "baz.txt",
         )
 
         self.assertEqual(0, hancho.build())
@@ -418,29 +420,28 @@ class TestHancho(unittest.TestCase):
         self.assertTrue(path.exists("build/bar.txt"))
         self.assertTrue(path.exists("build/baz.txt"))
 
-#    def test_arbitrary_flags(self):
-#        """Passing arbitrary flags to Hancho should work"""
-#        hancho.Task(
-#            command = "touch {rel_build_files}",
-#            source_files = [],
-#            build_files = hancho.output_filename,
-#        )
-#
-#        os.system(
-#            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
-#        )
-#        self.assertTrue(path.exists("build/tests/flarp.txt"))
+##    def test_arbitrary_flags(self):
+##        """Passing arbitrary flags to Hancho should work"""
+##        hancho.Task(
+##            command = "touch {rel_build_files}",
+##            source_files = [],
+##            build_files = hancho.output_filename,
+##        )
+##
+##        os.system(
+##            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
+##        )
+##        self.assertTrue(path.exists("build/tests/flarp.txt"))
 
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
         def sync_command(task):
-            force_touch(task._build_files[0])
-            return task._build_files
+            force_touch(task.out_obj)
 
         hancho.Task(
             command = sync_command,
-            source_files = [],
-            build_files = "result.txt",
+            in_src  = [],
+            out_obj = "result.txt",
         )
         self.assertEqual(0, hancho.build())
         self.assertTrue(path.exists("build/result.txt"))
@@ -449,20 +450,20 @@ class TestHancho(unittest.TestCase):
         """A task that receives a cancellation exception should not run."""
         task_that_fails = hancho.Task(
             command = "(exit 255)",
-            source_files = [],
-            build_files = "fail_result.txt"
+            in_src  = [],
+            out_obj = "fail_result.txt",
         )
 
         task_that_passes = hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = [],
-            build_files = "pass_result.txt"
+            command = "touch {rel(out_obj)}",
+            in_src  = [],
+            out_obj = "pass_result.txt",
         )
 
         should_be_cancelled = hancho.Task(
-            command = "touch {rel_build_files}",
-            source_files = [task_that_fails, task_that_passes],
-            build_files = "should_not_be_created.txt"
+            command = "touch {rel(out_obj)}",
+            in_src  = [task_that_fails, task_that_passes],
+            out_obj = "should_not_be_created.txt",
         )
 
         self.assertNotEqual(0, hancho.build())
@@ -474,16 +475,16 @@ class TestHancho(unittest.TestCase):
         """Tasks using callbacks can create new tasks when they run."""
         def callback(task):
             hancho.Task(
-                command = "touch {rel_build_files}",
-                source_files = [],
-                build_files = "dummy.txt"
+                command = "touch {rel(out_obj)}",
+                in_src  = [],
+                out_obj = "dummy.txt"
             )
             return []
 
         hancho.Task(
             command = callback,
-            source_files = [],
-            build_files = []
+            in_src  = [],
+            out_obj = []
         )
 
         self.assertEqual(0, hancho.build())
@@ -493,11 +494,11 @@ class TestHancho(unittest.TestCase):
         """We should be able to queue up 1000+ tasks at once."""
         for i in range(1000):
             hancho.Task(
-                desc = "I am task {index}",
-                command = "echo {index} > {rel_build_files}",
-                source_files = [],
-                build_files = "dummy{index}.txt",
-                index = i
+                desc    = "I am task {index}",
+                command = "echo {index} > {rel(out_obj)}",
+                in_src  = [],
+                out_obj = "dummy{index}.txt",
+                index   = i
             )
         self.assertEqual(0, hancho.build())
         self.assertEqual(1000, len(glob.glob("build/*")))
@@ -509,10 +510,10 @@ class TestHancho(unittest.TestCase):
 
         for i in range(100):
             hancho.Task(
-                desc = "I am task {index}, I use {job_count} cores",
+                desc    = "I am task {index}, I use {job_count} cores",
                 command = "(exit 0)",
-                source_files = [],
-                build_files = [],
+                in_src  = [],
+                out_obj = [],
                 job_count = random.randrange(1, os.cpu_count() + 1),
                 index = i
             )
@@ -520,20 +521,20 @@ class TestHancho(unittest.TestCase):
         hancho.Task(
             desc = "********** I am the slow task, I eat all the cores **********",
             command = [
-                "touch {rel_build_files}",
+                "touch {rel(out_obj)}",
                 "sleep 0.3",
             ],
             job_count = os.cpu_count(),
-            source_files = [],
-            build_files = "slow_result.txt",
+            in_src  = [],
+            out_obj = "slow_result.txt",
         )
 
         for i in range(100):
             hancho.Task(
                 desc = "I am task {index}, I use {job_count} cores",
                 command = "(exit 0)",
-                source_files = [],
-                build_files = [],
+                in_src  = [],
+                out_obj = [],
                 job_count = random.randrange(1, os.cpu_count() + 1),
                 index = 100 + i
             )

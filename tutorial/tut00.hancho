@@ -4,8 +4,8 @@ import os
 import hancho
 
 task = hancho.Task(
-  desc         = "Compile main.cpp and util.cpp and link app",
-  command      = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
+  desc     = "Compile main.cpp and util.cpp and link app",
+  command  = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
 
   in_path  = "src",
   in_src   = ["main.cpp", "util.cpp"],

@@ -1,17 +1,19 @@
 # examples/hello_world/build.hancho
 
+import hancho
+
 compile = hancho.Config(
-  command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
-  desc        = "Compile {rel_source_files} -> {rel_build_files}",
-  build_files = "{swap_ext(rel_source_files, '.o')}",
-  build_deps  = "{swap_ext(rel_source_files, '.d')}",
+  desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  dep_gcc = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.Config(
-  command = "g++ {rel_source_files} -o {rel_build_files}",
-  desc    = "Link {rel_source_files} -> {rel_build_files}",
+  desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
-main_o = compile("main.cpp")
-util_o = compile("util.cpp")
-main_app = link([main_o, util_o], "app")
+main_o = compile(in_src = "main.cpp")
+util_o = compile(in_src = "util.cpp")
+main_app = link(in_objs = [main_o, util_o], out_bin = "app")
