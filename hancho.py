@@ -138,6 +138,8 @@ def run_cmd(cmd):
 
 def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
+    if isinstance(name, Task):
+        name = name._out_files
     if isinstance(name, list):
         return [swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
