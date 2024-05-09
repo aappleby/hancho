@@ -327,7 +327,7 @@ def get_log():
 #
 # We also need to ensure that if anything in this process throws an exception (or if an exception
 # was passed into a rule due to a previous rule failing) that we always propagate the exception up
-# to Task.run_async, where it will be handled and propagated to other Tasks.
+# to Task.task_main, where it will be handled and propagated to other Tasks.
 #
 # The result of this is that the functions here are mutually recursive in a way that can lead to
 # confusing callstacks, but that should handle every possible case of stuff inside other stuff.
@@ -480,8 +480,10 @@ async def await_variant(variant):
     match variant:
         case BaseException():
             raise variant
+        case Promise():
+            variant = await variant.get()
         case Task():
-            await variant.get_outputs()
+            await variant.run_async()
         case Config() | dict():
             for key, val in variant.items():
                 variant[key] = await await_variant(val)
@@ -511,6 +513,17 @@ def visit_variant(key, val, visitor):
 
 ####################################################################################################
 
+class Promise:
+    def __init__(self, task, field):
+        self.task = task
+        self.field = field
+
+    async def get(self):
+        await self.task.run_async()
+        return self.task.__dict__[self.field]
+
+####################################################################################################
+
 class Task(Config):
     """Calling a Rule creates a Task."""
 
@@ -524,42 +537,33 @@ class Task(Config):
 
         super().__init__(default_task_config, path_config, *args, **kwargs)
 
-        if self.debug:
-            print("debug")
-
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
         self._reason = None
         self._promise = None
-        self._cancelled = False
         self._loaded_modules = [m.__file__ for m in app.loaded_modules]
         app.pending_tasks.append(self)
 
-    async def get_outputs(self):
-        if not self._promise:
-            self.run()
-        if not self._promise.done():
-            result = await self._promise
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-        return self._out_files
-
-    def run(self):
+    def run_sync(self):
         if self._promise is None:
             app.tasks_total += 1
-            self._promise = asyncio.create_task(self.run_async())
+            self._promise = asyncio.create_task(self.task_main())
             app.queued_tasks.append(self)
+
+    async def run_async(self):
+        self.run_sync()
+        return await self._promise
+
+    def promise(self, field):
+        return Promise(self, field)
 
     def __repr__(self):
         return Dumper(1).dump(self)
 
     #-----------------------------------------------------------------------------------------------
 
-    async def run_async(self):
+    async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
-
-        if self._cancelled:
-            return asyncio.CancelledError()
 
         if self.debug:
             log(f"Task {hex(id(self))} start")
@@ -1002,7 +1006,7 @@ class App:
                 random.shuffle(self.pending_tasks)
 
             for task in self.pending_tasks:
-                task.run()
+                task.run_sync()
             self.pending_tasks = []
 
     ########################################
