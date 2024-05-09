@@ -62,9 +62,6 @@ def log(message, *args, sameline=False, **kwargs):
 
 
 def flatten(variant):
-    if isinstance(variant, Task):
-        variant = variant._out_files
-
     if isinstance(variant, list):
         return [x for element in variant for x in flatten(element)]
     return [variant]
@@ -180,13 +177,13 @@ class Dumper:
             case Task():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
-                    result += "{...}"
+                    result += f"{{name = '{variant.expand(variant.name)}', ...}}"
                 else:
                     result += self.dump(variant.__dict__)
             case Config():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
-                    result += "{...}"
+                    result += f"{{name = '{variant.expand(variant.name)}', ...}}"
                 else:
                     result += self.dump(variant.__dict__)
             case list():
@@ -681,10 +678,11 @@ class Task(Config):
                 raise ValueError(f"Path error, output file {file} is not under root_path {Config.root_path}")
 
         # Check for duplicate task outputs
-        for file in self._out_files:
-            if file in app.all_out_files:
-                raise NameError(f"Multiple rules build {file}!")
-            app.all_out_files.add(file)
+        if not self.meta:
+            for file in self._out_files:
+                if file in app.all_out_files:
+                    raise NameError(f"Multiple rules build {file}!")
+                app.all_out_files.add(file)
 
         # Make sure our output directories exist
         if not self.dry_run:
@@ -1168,6 +1166,7 @@ Config.join_prefix = staticmethod(join_prefix)
 Config.join_suffix = staticmethod(join_suffix)
 
 Config.jobs      = os.cpu_count()
+Config.name      = "<no name>"
 Config.verbose   = False
 Config.quiet     = False
 Config.dry_run   = False
@@ -1176,6 +1175,7 @@ Config.force     = False
 Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
+Config.meta      = False
 
 # fmt: on
 
