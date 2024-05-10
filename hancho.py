@@ -177,13 +177,13 @@ class Dumper:
             case Task():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
-                    result += f"{{name = '{variant.expand(variant.name)}', ...}}"
+                    result += f"{{name = '{variant.name}', ...}}"
                 else:
                     result += self.dump(variant.__dict__)
             case Config():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
-                    result += f"{{name = '{variant.expand(variant.name)}', ...}}"
+                    result += f"{{name = '{variant.name}', ...}}"
                 else:
                     result += self.dump(variant.__dict__)
             case list():
@@ -238,13 +238,6 @@ class Config:
             self.update(arg)
         self.update(kwargs)
 
-    # required to use config as mapping in eval()
-    def __getitem__(self, key):
-        return self.__getattr__(key)
-
-    def __setitem__(self, key, val):
-        return self.__setattr__(key, val)
-
     def __repr__(self):
         return Dumper(2).dump(self)
 
@@ -257,10 +250,6 @@ class Config:
         for key, val in kwargs.items():
             if not key in self.__dict__:
                 setattr(self, key, val)
-
-    # required to support "**config"
-    def keys(self):
-        return self.__dict__.keys()
 
     def items(self):
         return self.__dict__.items()
@@ -277,9 +266,10 @@ class Config:
     def __call__(self, *args, **kwargs):
         custom_call = getattr(self, "call", None)
         if custom_call is not None:
-            return custom_call(self, *args, **kwargs)
-        else:
-            return Task(self, *args, **kwargs)
+            args = Config(self, *args, **kwargs).__dict__
+            return custom_call(**args)
+
+        return Task(self, *args, **kwargs)
 
     def rel(self, path):
         return rel_path(path, self.expand(self.command_path))
@@ -479,6 +469,7 @@ async def await_variant(variant):
             raise variant
         case Promise():
             variant = await variant.get()
+            variant = await await_variant(variant)
         case Task():
             await variant.run_async()
         case Config() | dict():
@@ -511,13 +502,18 @@ def visit_variant(key, val, visitor):
 ####################################################################################################
 
 class Promise:
-    def __init__(self, task, field):
+    def __init__(self, task, *args):
         self.task = task
-        self.field = field
+        self.args = args
 
     async def get(self):
         await self.task.run_async()
-        return self.task.__dict__[self.field]
+        if len(self.args) == 0:
+            return self.task._out_files
+        elif len(self.args) == 1:
+            return self.task.__dict__[self.args[0]]
+        else:
+            return [self.task.__dict__[field] for field in args]
 
 ####################################################################################################
 
@@ -551,8 +547,8 @@ class Task(Config):
         self.run_sync()
         return await self._promise
 
-    def promise(self, field):
-        return Promise(self, field)
+    def promise(self, *args):
+        return Promise(self, *args)
 
     def __repr__(self):
         return Dumper(1).dump(self)
@@ -678,11 +674,11 @@ class Task(Config):
                 raise ValueError(f"Path error, output file {file} is not under root_path {Config.root_path}")
 
         # Check for duplicate task outputs
-        if not self.meta:
-            for file in self._out_files:
-                if file in app.all_out_files:
-                    raise NameError(f"Multiple rules build {file}!")
-                app.all_out_files.add(file)
+        #if not self.meta:
+        #    for file in self._out_files:
+        #        if file in app.all_out_files:
+        #            raise NameError(f"Multiple rules build {file}!")
+        #        app.all_out_files.add(file)
 
         # Make sure our output directories exist
         if not self.dry_run:
@@ -758,12 +754,14 @@ class Task(Config):
     async def run_commands(self):
         """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
 
-        result = []
         job_count = self.__dict__.get("job_count", 1)
 
         try:
+            # FIXME how should we handle metatasks consuming jobs?
+
             # Wait for enough jobs to free up to run this task.
-            await app.acquire_jobs(job_count)
+            if not self.meta:
+                await app.acquire_jobs(job_count)
 
             # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
             log(
@@ -775,18 +773,16 @@ class Task(Config):
                 log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
             commands = flatten(self.command)
-            #print(commands)
             for command in commands:
                 if self.verbose or self.debug:
                     rel_command_path = rel_path(self.command_path, Config.root_path)
                     log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
                     log("(DRY RUN) " if self.dry_run else "", end="")
                     log(command)
-                result = await self.run_command(command)
+                await self.run_command(command)
         finally:
-            await app.release_jobs(job_count)
-
-        return result
+            if not self.meta:
+                await app.release_jobs(job_count)
 
     #-----------------------------------------------------------------------------------------------
 
@@ -799,10 +795,14 @@ class Task(Config):
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            result = command(self)
-            if inspect.isawaitable(result):
-                result = await result
-            return result
+            try:
+                app.pushdir(self.command_path)
+                result = command(self)
+                while inspect.isawaitable(result):
+                    result = await result
+            finally:
+                app.popdir()
+            return
 
         # Non-string non-callable commands are not valid
         if not isinstance(command, str):
@@ -839,9 +839,7 @@ class Task(Config):
 
         # Task complete, check the task return code
         if self.returncode:
-            raise ValueError(
-                f"Command '{command}' exited with return code {self.returncode}"
-            )
+            raise ValueError(f"Command '{command}' exited with return code {self.returncode}")
 
 ####################################################################################################
 

@@ -14,10 +14,8 @@ link = hancho.Config(
   command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
-def c_binary(self, *args, **kwargs):
-    config = hancho.Config(self, *args, **kwargs)
-    in_srcs = config.pop("in_srcs")
-    out_bin = config.pop("out_bin")
+def c_binary(*, in_srcs, out_bin, **kwargs):
+    config = hancho.Config(**kwargs)
     objs = [compile(config, in_src = file) for file in in_srcs]
     return link(config, in_objs = objs, out_bin = out_bin)
 
