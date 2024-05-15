@@ -21,6 +21,7 @@ import sys
 import time
 import traceback
 import types
+from enum import IntEnum
 
 # If we were launched directly, a reference to this module is already in sys.modules[__name__].
 # Stash another reference in sys.modules["hancho"] so that build.hancho and descendants don't try
@@ -60,6 +61,22 @@ def log(message, *args, sameline=False, **kwargs):
 
     app.line_dirty = sameline
 
+first_line_block = True
+def line_block(lines):
+    count = len(lines)
+    global first_line_block
+    if not first_line_block:
+        print(f"\x1b[{count}A")
+    else:
+        first_line_block = False
+    for y in range(count):
+        if (y > 0): print()
+        line = lines[y]
+        if line is not None:
+            line = line[: os.get_terminal_size().columns - 20]
+        print(line, end="")
+        print("\x1b[K", end="")
+        sys.stdout.flush()
 
 def flatten(variant):
     if isinstance(variant, list):
@@ -235,41 +252,48 @@ class Config:
 
     def __init__(self, *args, **kwargs):
         for arg in args:
-            self.update(arg)
-        self.update(kwargs)
+            self.__dict__.update(arg)
+        self.__dict__.update(kwargs)
 
-    def __repr__(self):
-        return Dumper(2).dump(self)
+    #----------------------------------------
 
-    def update(self, kwargs):
-        for key, val in kwargs.items():
-            if val is not None:
-                setattr(self, key, val)
+    def __getitem__(self, key):
+        return self.__dict__.get(key)
 
-    def defaults(self, kwargs):
-        for key, val in kwargs.items():
-            if not key in self.__dict__:
-                setattr(self, key, val)
+    def __getattr__(self, key):
+        return self.__dict__.get(key)
+
+    def get(self, *args):
+        return self.__dict__.get(*args)
 
     def items(self):
         return self.__dict__.items()
 
-    def pop(self, key, val = Sentinel()):
-        if not isinstance(val, Sentinel):
-            return self.__dict__.pop(key, val)
-        else:
-            return self.__dict__.pop(key)
+    def keys(self):
+        return self.__dict__.keys()
+
+    def pop(self, *args):
+        return self.__dict__.pop(*args)
+
+    def update(self, kwargs):
+        return self.__dict__.update(kwargs)
+
+    def values(self):
+        return self.__dict__.values()
+
+    #----------------------------------------
+
+    def __repr__(self):
+        return Dumper(1).dump(self)
 
     def expand(self, variant):
         return expand_variant(self, variant)
 
     def __call__(self, *args, **kwargs):
-        custom_call = getattr(self, "call", None)
-        if custom_call is not None:
-            args = Config(self, *args, **kwargs).__dict__
-            return custom_call(**args)
-
-        return Task(self, *args, **kwargs)
+        if custom_call := getattr(self, "call", None):
+            return custom_call(**Config(self, *args, **kwargs))
+        else:
+            return Task(self, *args, **kwargs)
 
     def rel(self, path):
         return rel_path(path, self.expand(self.command_path))
@@ -458,6 +482,23 @@ def expand_variant(config, variant):
 
 ####################################################################################################
 
+def get_awaitables(variant, result):
+    if inspect.isawaitable(variant):
+        result.append(variant)
+        return
+
+    match variant:
+        case Promise():
+            get_awaitables(variant.task, result)
+        case Task():
+            result.append(variant.await_done())
+        case Config() | dict():
+            for key, val in variant.items():
+                get_awaitables(val, result)
+        case list():
+            for key, val in enumerate(variant):
+                get_awaitables(val, result)
+
 async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
 
@@ -471,7 +512,7 @@ async def await_variant(variant):
             variant = await variant.get()
             variant = await await_variant(variant)
         case Task():
-            await variant.run_async()
+            await variant.await_done()
         case Config() | dict():
             for key, val in variant.items():
                 variant[key] = await await_variant(val)
@@ -507,7 +548,7 @@ class Promise:
         self.args = args
 
     async def get(self):
-        await self.task.run_async()
+        await self.task.await_done()
         if len(self.args) == 0:
             return self.task._out_files
         elif len(self.args) == 1:
@@ -517,8 +558,21 @@ class Promise:
 
 ####################################################################################################
 
+class TaskState(IntEnum):
+    DECLARED = 0
+    QUEUED = 1
+    STARTED = 2
+    AWAITING_INPUTS = 3
+    AWAITING_JOBS = 4
+    RUNNING_COMMANDS = 5
+    FINISHED = 6
+
+####################################################################################################
+
+
 class Task(Config):
     """Calling a Rule creates a Task."""
+
 
     def __init__(self, *args, **kwargs):
 
@@ -532,19 +586,26 @@ class Task(Config):
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
+        self._state = TaskState.DECLARED
+        #self._task_index = -1
         self._reason = None
         self._promise = None
         self._loaded_modules = [m.__file__ for m in app.loaded_modules]
-        app.pending_tasks.append(self)
+        app.all_tasks.append(self)
 
-    def run_sync(self):
-        if self._promise is None:
-            app.tasks_total += 1
-            self._promise = asyncio.create_task(self.task_main())
+    def queue(self):
+        if self._state is TaskState.DECLARED:
             app.queued_tasks.append(self)
+            self._state = TaskState.QUEUED
 
-    async def run_async(self):
-        self.run_sync()
+    def start(self):
+        if self._state is TaskState.QUEUED or self._state is TaskState.DECLARED:
+            self._promise = asyncio.create_task(self.task_main())
+            self._state = TaskState.STARTED
+            app.tasks_started += 1
+
+    async def await_done(self):
+        self.start()
         return await self._promise
 
     def promise(self, *args):
@@ -558,24 +619,80 @@ class Task(Config):
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        if self.debug:
-            log(f"Task {hex(id(self))} start")
-
         try:
             # Await everything awaitable in this task except the task's own promise.
+
+            assert self._state is TaskState.STARTED
+            awaitables = []
+            for key, val in self.__dict__.items():
+                if key != "_promise":
+                    get_awaitables(val, awaitables)
+
+            self._state = TaskState.AWAITING_INPUTS
+            await asyncio.gather(*awaitables)
+
             for key, val in self.__dict__.items():
                 if key != "_promise":
                     self.__dict__[key] = await await_variant(val)
 
+            if self.debug:
+                log(f"Task {hex(id(self))} start")
+
             # Everything awaited, task_init runs synchronously.
             self.task_init()
+
+            # Early-out if this is a no-op task
+            if self.command is None:
+                self._state = TaskState.FINISHED
+                return
 
             # Check if we need a rebuild
             self._reason = self.needs_rerun(self.force)
 
             # Run the commands if we need to.
             if self._reason:
-                await self.run_commands()
+
+                try:
+                    # Wait for enough jobs to free up to run this task.
+                    job_count = self.__dict__.get("job_count", 1)
+                    self._state = TaskState.AWAITING_JOBS
+                    await app.acquire_jobs(job_count, self.desc)
+
+                    self._state = TaskState.RUNNING_COMMANDS
+                    # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
+
+                    hist = [0, 0, 0, 0, 0, 0, 0]
+                    for t in app.all_tasks:
+                        hist[int(t._state)] += 1
+
+                    app.tasks_running += 1
+                    #self._task_index = app.tasks_running
+
+                    log(
+                        f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
+                        sameline=not self.verbose,
+                    )
+
+                    if self.verbose or self.debug:
+                        log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
+
+                    #line_block(app.job_slots)
+                    #for line in app.job_slots:
+                    #    print(line)
+
+                    commands = flatten(self.command)
+                    for command in commands:
+                        if self.verbose or self.debug:
+                            rel_command_path = rel_path(self.command_path, Config.root_path)
+                            log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
+                            log("(DRY RUN) " if self.dry_run else "", end="")
+                            log(command)
+                        if not self.dry_run:
+                            await self.run_command(command)
+                finally:
+                    await app.release_jobs(job_count, self.desc)
+
+
                 app.tasks_pass += 1
             else:
                 app.tasks_skip += 1
@@ -593,6 +710,7 @@ class Task(Config):
             return asyncio.CancelledError()
 
         finally:
+            self._state = TaskState.FINISHED
             if self.debug:
                 log(f"Task {hex(id(self))} done")
 
@@ -603,15 +721,10 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        app.task_counter += 1
-        if app.task_counter > 1000:
-            raise ValueError("Too many tasks, are we stuck in a loop?")
-        self._task_index = app.task_counter
-
         if self.debug:
             log(f"Task before expand: {self}")
 
-        # Expand the command, in, and out paths first
+        # Expand the in and out paths first
         self.command_path = abs_path(join_path(self.base_path, self.expand(self.command_path)))
         self.in_path      = abs_path(join_path(self.base_path, self.expand(self.in_path)))
         self.out_path     = abs_path(join_path(self.base_path, self.expand(self.out_path)))
@@ -674,11 +787,11 @@ class Task(Config):
                 raise ValueError(f"Path error, output file {file} is not under root_path {Config.root_path}")
 
         # Check for duplicate task outputs
-        #if not self.meta:
-        #    for file in self._out_files:
-        #        if file in app.all_out_files:
-        #            raise NameError(f"Multiple rules build {file}!")
-        #        app.all_out_files.add(file)
+        if self.command:
+            for file in self._out_files:
+                if file in app.all_out_files:
+                    raise NameError(f"Multiple rules build {file}!")
+                app.all_out_files.add(file)
 
         # Make sure our output directories exist
         if not self.dry_run:
@@ -721,6 +834,14 @@ class Task(Config):
 
         # Check all dependencies in the depfile, if present.
         depformat = getattr(self, "depformat", "gcc")
+        if depformat is None:
+            depformat = "gcc"
+        #depformat = self.__dict__.get("depformat", "gcc")
+
+        if depformat is None:
+            print(self)
+            sys.exit(-1)
+
 
         for depfile in self._dep_files:
             if not path.exists(depfile):
@@ -751,57 +872,14 @@ class Task(Config):
 
     #-----------------------------------------------------------------------------------------------
 
-    async def run_commands(self):
-        """Grabs a lock on the jobs needed to run this task's commands, then runs all of them."""
-
-        job_count = self.__dict__.get("job_count", 1)
-
-        try:
-            # FIXME how should we handle metatasks consuming jobs?
-
-            # Wait for enough jobs to free up to run this task.
-            if not self.meta:
-                await app.acquire_jobs(job_count)
-
-            # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
-            log(
-                f"{color(128,255,196)}[{self._task_index}/{app.tasks_total}]{color()} {self.desc}",
-                sameline=not self.verbose,
-            )
-
-            if self.verbose or self.debug:
-                log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
-
-            commands = flatten(self.command)
-            for command in commands:
-                if self.verbose or self.debug:
-                    rel_command_path = rel_path(self.command_path, Config.root_path)
-                    log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
-                    log("(DRY RUN) " if self.dry_run else "", end="")
-                    log(command)
-                await self.run_command(command)
-        finally:
-            if not self.meta:
-                await app.release_jobs(job_count)
-
-    #-----------------------------------------------------------------------------------------------
-
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        # Early exit if this is just a dry run
-        if self.dry_run:
-            return
-
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            try:
-                app.pushdir(self.command_path)
-                result = command(self)
-                while inspect.isawaitable(result):
-                    result = await result
-            finally:
-                app.popdir()
+            result = command(self)
+            while inspect.isawaitable(result):
+                result = await result
             return
 
         # Non-string non-callable commands are not valid
@@ -866,21 +944,25 @@ class App:
 
         self.all_out_files = set()
 
-        self.tasks_total = 0
         self.tasks_pass = 0
         self.tasks_fail = 0
         self.tasks_skip = 0
         self.tasks_cancel = 0
-        self.task_counter = 0
 
         self.mtime_calls = 0
         self.line_dirty = False
         self.expand_depth = 0
 
-        self.pending_tasks = []
+        self.tasks_started = 0
+        self.tasks_running = 0
+        self.all_tasks = []
         self.queued_tasks = []
+        self.started_tasks = []
+        self.finished_tasks = []
+
         self.jobs_available = os.cpu_count()
         self.jobs_lock = asyncio.Condition()
+        self.job_slots = [None] * self.jobs_available
         self.log = ""
 
     ########################################
@@ -910,9 +992,26 @@ class App:
             self.parse_args()
             self.pushdir(Config.root_path)
             self.load_hanchos()
+
+            if Config.root_target:
+                target_regex = re.compile(Config.root_target)
+                for task in self.all_tasks:
+                    if target_regex.search(task.name):
+                        log(f"Queueing task '{task.name}'")
+                        task.queue()
+            else:
+                for task in self.all_tasks:
+                    task.queue()
+
             result = self.build()
         finally:
             self.popdir()
+
+
+#        for t in app.all_tasks:
+#            if t.command is None:
+#                print(t)
+
         print()
         return result
 
@@ -922,14 +1021,17 @@ class App:
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("root_name",       default="build.hancho", type=str, nargs="?", help="The name of the .hancho file(s) to build")
-        parser.add_argument("-C", "--chdir",   default=".", dest="root_path", type=str,     help="Change directory before starting the build")
+
+        parser.add_argument("root_target",     default="",             type=str, nargs="?",        help="The name of the .hancho file(s) to build")
+        parser.add_argument("-f", "--file",    default="build.hancho", type=str, dest="root_name", help="The name of the .hancho file(s) to build")
+        parser.add_argument("-C", "--chdir",   default=".",            type=str, dest="root_path", help="Change directory before starting the build")
+
         parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-v", "--verbose", default=False, action="store_true",          help="Print verbose build info")
         parser.add_argument("-q", "--quiet",   default=False, action="store_true",          help="Mute all output")
         parser.add_argument("-n", "--dry_run", default=False, action="store_true",          help="Do not run commands")
         parser.add_argument("-d", "--debug",   default=False, action="store_true",          help="Print debugging information")
-        parser.add_argument("-f", "--force",   default=False, action="store_true",          help="Force rebuild of everything")
+        parser.add_argument(      "--force",   default=False, action="store_true",          help="Force rebuild of everything")
         parser.add_argument("-s", "--shuffle", default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
         parser.add_argument("-t", "--trace",   default=False, action="store_true",          help="Trace template & macro expansion")
         # fmt: on
@@ -993,17 +1095,17 @@ class App:
 
     ########################################
 
-    def queue_pending_tasks(self):
-        """Creates an asyncio.Task for each task in the pending list and clears the pending list."""
+    def start_queued_tasks(self):
+        """Creates an asyncio.Task for each task in the queue and clears the queue."""
 
-        if self.pending_tasks:
-            if Config.shuffle:
-                log(f"Shufflin' {len(self.pending_tasks)} tasks")
-                random.shuffle(self.pending_tasks)
+        if Config.shuffle:
+            log(f"Shufflin' {len(self.queued_tasks)} tasks")
+            random.shuffle(self.queued_tasks)
 
-            for task in self.pending_tasks:
-                task.run_sync()
-            self.pending_tasks = []
+        while self.queued_tasks:
+            task = self.queued_tasks.pop(0)
+            task.start()
+            self.started_tasks.append(task)
 
     ########################################
 
@@ -1011,6 +1113,7 @@ class App:
         # Run all tasks in the queue until we run out.
 
         self.jobs_available = Config.jobs
+        self.job_slots = ["[----]"] * self.jobs_available
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
@@ -1019,21 +1122,23 @@ class App:
 
         time_a = time.perf_counter()
 
-        self.queue_pending_tasks()
-        while self.queued_tasks:
-            task = self.queued_tasks.pop(0)
-            if inspect.isawaitable(task._promise):
-                await task._promise
-            self.queue_pending_tasks()
+        self.start_queued_tasks()
+        while self.started_tasks:
+            task = self.started_tasks.pop(0)
+            await task._promise
+            self.finished_tasks.append(task)
+            self.start_queued_tasks()
 
         time_b = time.perf_counter()
 
         #if Config.debug or Config.verbose:
-        log(f"Running tasks took {time_b-time_a:.3f} seconds")
+        log("")
+        log(f"Running {len(app.all_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        if Config.debug:
-            log(f"tasks total:     {self.tasks_total}")
+        #if Config.debug:
+        if Config.verbose:
+            log(f"tasks total:     {len(self.all_tasks)}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
             log(f"tasks skipped:   {self.tasks_skip}")
@@ -1104,7 +1209,7 @@ class App:
 
     ########################################
 
-    async def acquire_jobs(self, count):
+    async def acquire_jobs(self, count, desc):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
         if count > Config.jobs:
@@ -1112,6 +1217,13 @@ class App:
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
+
+        slots_remaining = count
+        for i, val in enumerate(self.job_slots):
+            if val == "[----]" and slots_remaining:
+                self.job_slots[i] = desc
+                slots_remaining -= 1
+
         self.jobs_available -= count
         self.jobs_lock.release()
 
@@ -1122,11 +1234,18 @@ class App:
     # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
     # rest will go back to sleep again, this will repeat for every call to release_jobs().
 
-    async def release_jobs(self, count):
+    async def release_jobs(self, count, desc):
         """Returns 'count' jobs back to the job pool."""
 
         await self.jobs_lock.acquire()
         self.jobs_available += count
+
+        slots_remaining = count
+        for i, val in enumerate(self.job_slots):
+            if val == desc:
+                self.job_slots[i] = "[----]"
+                slots_remaining -= 1
+
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
 
@@ -1137,10 +1256,9 @@ class App:
 
 default_task_config = Config(
     desc          = "{rel(_in_files)} -> {rel(_out_files)}",
-    command       = Sentinel(),
+    command       = None,
     command_path  = "{base_path}",
     build_dir     = "build",
-    build_tag     = "",
     build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
     in_path       = "{base_path}",
     out_path      = "{build_path}",
@@ -1164,7 +1282,8 @@ Config.join_prefix = staticmethod(join_prefix)
 Config.join_suffix = staticmethod(join_suffix)
 
 Config.jobs      = os.cpu_count()
-Config.name      = "<no name>"
+Config.name      = ""
+Config.build_tag = ""
 Config.verbose   = False
 Config.quiet     = False
 Config.dry_run   = False
@@ -1173,7 +1292,6 @@ Config.force     = False
 Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
-Config.meta      = False
 
 # fmt: on
 
@@ -1185,3 +1303,13 @@ app = App()
 
 if __name__ == "__main__":
     sys.exit(app.main())
+
+"""
+import time
+
+for i in range(20):
+    lines = [f"i {i} y {random.randrange(0,1000)}" for y in range(8)]
+    line_block(lines, i == 0)
+    time.sleep(0.1)
+print()
+"""

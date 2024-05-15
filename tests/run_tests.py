@@ -348,7 +348,7 @@ class TestHancho(unittest.TestCase):
     def test_doesnt_create_output(self):
         """Having a file mentioned in files_out should not magically create it"""
         hancho.Task(
-            command = ":",
+            command = None,
             in_src  = [],
             out_obj = "result.txt"
         )
