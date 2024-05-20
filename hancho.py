@@ -401,8 +401,8 @@ def expand_template(config, template):
                 variant = eval_macro(config, macro)
                 result += stringify_variant(config, variant)
             except BaseException as err:
-                log(f"{color(255, 255, 0)}Expanding template '{old_template}' failed!{color()}")
-                raise err
+                result += template[span.start() : span.end()]
+
             template = template[span.end() :]
         result += template
     finally:
@@ -433,8 +433,9 @@ def eval_macro(config, macro):
         # pylint: disable=eval-used
         result = eval(macro[1:-1], {}, config)
     except BaseException as err:
-        log(f"{color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{color()}")
-        raise err
+        result = macro
+        #log(f"{color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{color()}")
+        #raise err
     finally:
         app.expand_depth -= 1
 
