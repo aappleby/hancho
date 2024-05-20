@@ -370,8 +370,11 @@ class Expander:
         self.config = config
         self.trace = config.trace
 
-    __getitem__ = lambda self, key: self.get(key)
-    __getattr__ = lambda self, key: self.get(key)
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __getattr__(self, key):
+        return self.get(key)
 
     def get(self, key):
         val = getattr(self.config, key)
@@ -449,8 +452,10 @@ def stringify_variant(config, variant):
         case Task():
             return stringify_variant(config, variant._out_files)
         case str() if macro_regex.search(variant):
-            variant = eval_macro(config, variant)
-            return stringify_variant(config, variant)
+            new_variant = eval_macro(config, variant)
+            if variant == new_variant:
+                return variant
+            return stringify_variant(config, new_variant)
         case str() if template_regex.search(variant):
             return expand_template(config, variant)
         case list():
@@ -469,8 +474,11 @@ def expand_variant(config, variant):
         case BaseException():
             raise variant
         case str() if macro_regex.search(variant):
-            variant = eval_macro(config, variant)
-            return expand_variant(config, variant)
+            new_variant = eval_macro(config, variant)
+            if variant == new_variant:
+                # Can't expand further
+                return new_variant
+            return expand_variant(config, new_variant)
         case str() if template_regex.search(variant):
             return expand_template(config, variant)
         case list():
@@ -483,6 +491,8 @@ def expand_variant(config, variant):
         # Maybe FIXME - we have to catch these cases because Expander tries to expand _everything_
         case str() | int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task() | types.MethodType() | types.ModuleType() | Task():
         #case str() | int() | float() | Task():
+            return variant
+        case Config():
             return variant
     raise ValueError(f"Don't know how to expand a {type(variant)} = {str(variant)}")
 
@@ -1312,3 +1322,16 @@ app = App()
 
 if __name__ == "__main__":
     sys.exit(app.main())
+
+"""
+bar = Config(
+    a = "{c}"
+)
+
+foo = Config(
+    b = bar,
+    c = "asdf"
+)
+
+print(foo.expand("{b.a}"))
+"""
