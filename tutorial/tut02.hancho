@@ -13,7 +13,7 @@ main_o = hancho.Task(
   command = "g++ -MMD -c src/main.cpp -o build/tut02/main.o",
   in_src  = "main.cpp",
   out_obj = "main.o",
-  dep_obj = "main.d",
+  depfile = "main.d",
 )
 
 util_o = hancho.Task(
@@ -22,7 +22,7 @@ util_o = hancho.Task(
   command = "g++ -MMD -c src/util.cpp -o build/tut02/util.o",
   in_src  = "util.cpp",
   out_obj = "util.o",
-  dep_obj = "util.d",
+  depfile = "util.d",
 )
 
 app = hancho.Task(

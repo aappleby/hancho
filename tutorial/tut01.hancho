@@ -11,7 +11,7 @@ main_o = hancho.Task(
 
   out_path = "build/tut01",
   out_obj  = "main.o",
-  dep_obj  = "main.d",
+  depfile  = "main.d",
 )
 
 util_o = hancho.Task(
@@ -23,7 +23,7 @@ util_o = hancho.Task(
 
   out_path = "build/tut01",
   out_obj  = "util.o",
-  dep_obj  = "util.d",
+  depfile  = "util.d",
 )
 
 app = hancho.Task(

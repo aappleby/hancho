@@ -295,8 +295,16 @@ class Config:
         else:
             return Task(self, *args, **kwargs)
 
+    def extend(self, *args, **kwargs):
+        return Config(self, args, **kwargs)
+
     def rel(self, path):
         return rel_path(path, self.expand(self.command_path))
+
+    def stem(self, p):
+        if isinstance(p, Task):
+            p = p._out_files[0]
+        return path.splitext(path.basename(p))[0]
 
 ####################################################################################################
 
@@ -545,7 +553,7 @@ def visit_variant(key, val, visitor):
 class Promise:
     def __init__(self, task, *args):
         self.task = task
-        self.args = args
+        self.args = args if len(args) > 0 else ("_out_files")
 
     async def get(self):
         await self.task.await_done()
@@ -587,11 +595,11 @@ class Task(Config):
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
         self._state = TaskState.DECLARED
-        #self._task_index = -1
         self._reason = None
         self._promise = None
         self._loaded_modules = [m.__file__ for m in app.loaded_modules]
         app.all_tasks.append(self)
+        self._task_index = len(app.all_tasks)
 
     def queue(self):
         if self._state is TaskState.DECLARED:
@@ -613,6 +621,16 @@ class Task(Config):
 
     def __repr__(self):
         return Dumper(1).dump(self)
+
+    #-----------------------------------------------------------------------------------------------
+
+    def print_status(self):
+        # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
+        log(
+            #f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
+            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.desc}",
+            sameline=not self.verbose,
+        )
 
     #-----------------------------------------------------------------------------------------------
 
@@ -661,17 +679,8 @@ class Task(Config):
                     self._state = TaskState.RUNNING_COMMANDS
                     # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
 
-                    hist = [0, 0, 0, 0, 0, 0, 0]
-                    for t in app.all_tasks:
-                        hist[int(t._state)] += 1
-
                     app.tasks_running += 1
-                    #self._task_index = app.tasks_running
-
-                    log(
-                        f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
-                        sameline=not self.verbose,
-                    )
+                    self.print_status()
 
                     if self.verbose or self.debug:
                         log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
@@ -732,13 +741,12 @@ class Task(Config):
         # We _must_ expand first before prepending paths or paths will break
         # prefix + swap(abs_path) != abs(prefix + swap(path))
         for key, val in self.__dict__.items():
-            if key.startswith("in_") or key.startswith("out_") or key.startswith("dep_"):
+            if key.startswith("in_") or key.startswith("out_") or key == "depfile":
                 self.__dict__[key] = self.expand(val)
 
         # Prepend the in/out path to the filenames
         self._in_files = []
         self._out_files = []
-        self._dep_files = []
 
         def handle_in_path(key, val):
             if isinstance(val, str):
@@ -752,19 +760,11 @@ class Task(Config):
                 self._out_files.append(val)
             return val
 
-        def handle_dep_path(key, val):
-            if isinstance(val, str):
-                val = abs_path(join_path(self.out_path, val))
-                self._dep_files.append(val)
-            return val
-
         for key, val in self.__dict__.items():
             if key.startswith("in_") and key != "in_path":
                 self.__dict__[key] = visit_variant(key, val, handle_in_path)
             if key.startswith("out_") and key != "out_path":
                 self.__dict__[key] = visit_variant(key, val, handle_out_path)
-            if key.startswith("dep_") and key != "dep_path":
-                self.__dict__[key] = visit_variant(key, val, handle_dep_path)
 
         # And now we can expand the command.
         self.desc = self.expand(self.desc)
@@ -833,19 +833,10 @@ class Task(Config):
                 return f"Rebuilding because {mod} has changed"
 
         # Check all dependencies in the depfile, if present.
+        depfile   = getattr(self, "depfile", None)
         depformat = getattr(self, "depformat", "gcc")
-        if depformat is None:
-            depformat = "gcc"
-        #depformat = self.__dict__.get("depformat", "gcc")
 
-        if depformat is None:
-            print(self)
-            sys.exit(-1)
-
-
-        for depfile in self._dep_files:
-            if not path.exists(depfile):
-                continue
+        if depfile is not None and path.exists(self.depfile):
             if self.debug:
                 log(f"Found depfile {depfile}")
             with open(depfile, encoding="utf-8") as depfile:
@@ -890,12 +881,14 @@ class Task(Config):
         try:
             if self.debug:
                 log(f"Task {hex(id(self))} subprocess start '{command}'")
+
             proc = await asyncio.create_subprocess_shell(
                 command,
                 cwd=self.command_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+
             (stdout_data, stderr_data) = await proc.communicate()
             if self.debug:
                 log(f"Task {hex(id(self))} subprocess done '{command}'")
@@ -906,8 +899,18 @@ class Task(Config):
         self.stderr = stderr_data.decode()
         self.returncode = proc.returncode
 
-        # Print command output if needed
-        if (self.stdout or self.stderr) and not self.quiet:
+        command_pass = (self.returncode == 0) != self.should_fail
+
+        if self.is_test:
+            result = open(self.out_log, "w")
+            result.write("-----stderr-----\n")
+            result.write(self.stderr)
+            result.write("-----stdout-----\n")
+            result.write(self.stdout)
+            result.close()
+
+        if not command_pass:
+            self.print_status()
             if self.stderr:
                 log("-----stderr-----")
                 log(self.stderr, end="")
@@ -915,9 +918,9 @@ class Task(Config):
                 log("-----stdout-----")
                 log(self.stdout, end="")
 
-        # Task complete, check the task return code
-        if self.returncode:
-            raise ValueError(f"Command '{command}' exited with return code {self.returncode}")
+        if not command_pass:
+            raise ValueError(self.returncode)
+
 
 ####################################################################################################
 
@@ -996,7 +999,17 @@ class App:
             if Config.root_target:
                 target_regex = re.compile(Config.root_target)
                 for task in self.all_tasks:
-                    if target_regex.search(task.name):
+                    queue_task = False
+                    for name in flatten(task.name):
+                        if target_regex.search(name):
+                            queue_task = True
+                    for desc in flatten(task.desc):
+                        if target_regex.search(desc):
+                            queue_task = True
+                    for tag in flatten(task.tags):
+                        if target_regex.search(tag):
+                            queue_task = True
+                    if queue_task:
                         log(f"Queueing task '{task.name}'")
                         task.queue()
             else:
@@ -1006,11 +1019,6 @@ class App:
             result = self.build()
         finally:
             self.popdir()
-
-
-#        for t in app.all_tasks:
-#            if t.command is None:
-#                print(t)
 
         print()
         return result
@@ -1284,6 +1292,7 @@ Config.join_suffix = staticmethod(join_suffix)
 Config.jobs      = os.cpu_count()
 Config.name      = ""
 Config.build_tag = ""
+Config.tags      = []
 Config.verbose   = False
 Config.quiet     = False
 Config.dry_run   = False
@@ -1292,6 +1301,8 @@ Config.force     = False
 Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
+Config.should_fail = False
+Config.is_test = False
 
 # fmt: on
 
@@ -1303,13 +1314,3 @@ app = App()
 
 if __name__ == "__main__":
     sys.exit(app.main())
-
-"""
-import time
-
-for i in range(20):
-    lines = [f"i {i} y {random.randrange(0,1000)}" for y in range(8)]
-    line_block(lines, i == 0)
-    time.sleep(0.1)
-print()
-"""

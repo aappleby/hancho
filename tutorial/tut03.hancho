@@ -11,7 +11,7 @@ def compile_cpp(source, config):
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = source,
     out_obj = obj,
-    dep_obj = dep,
+    depfile = dep,
   )
 
 def link_cpp(tasks, binary, config):

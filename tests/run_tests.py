@@ -364,7 +364,7 @@ class TestHancho(unittest.TestCase):
             compile = hancho.Config(
                 command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj = "{swap_ext(in_src, '.o')}",
-                dep_gcc = "{swap_ext(in_src, '.d')}",
+                depfile = "{swap_ext(in_src, '.d')}",
             )
             compile(in_src = "src/test.cpp")
             self.assertEqual(0, hancho.build())
@@ -387,7 +387,7 @@ class TestHancho(unittest.TestCase):
             compile = hancho.Config(
                 command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj = "{swap_ext(in_src, '.o')}",
-                dep_gcc = "{swap_ext(in_src, '.d')}",
+                depfile = "{swap_ext(in_src, '.d')}",
             )
             compile(in_src = "src/test.cpp")
             self.assertEqual(0, hancho.build())

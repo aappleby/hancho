@@ -13,7 +13,7 @@ main_o = hancho.Task(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/main.cpp",
   out_obj = "src/main.o",
-  dep_gcc = "src/main.d",
+  depfile = "src/main.d",
 )
 
 util_o = hancho.Task(
@@ -22,7 +22,7 @@ util_o = hancho.Task(
   command  = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src   = "src/util.cpp",
   out_obj  = "src/util.o",
-  dep_gcc  = "src/util.d",
+  depfile  = "src/util.d",
 )
 
 app = hancho.Task(

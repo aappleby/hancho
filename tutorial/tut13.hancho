@@ -11,7 +11,7 @@ compile = hancho.Config(
   desc    = "Compile {in_src}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   out_obj = "{swap_ext(in_src, '.o')}",
-  dep_gcc = "{swap_ext(in_src, '.d')}",
+  depfile = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.Config(
