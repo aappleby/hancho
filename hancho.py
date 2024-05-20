@@ -258,13 +258,10 @@ class Config:
     #----------------------------------------
 
     def __getitem__(self, key):
-        return self.__dict__.get(key)
+        return self.__dict__[key]
 
     def __getattr__(self, key):
-        return self.__dict__.get(key)
-
-    def get(self, *args):
-        return self.__dict__.get(*args)
+        return self.__dict__[key]
 
     def items(self):
         return self.__dict__.items()
@@ -290,7 +287,7 @@ class Config:
         return expand_variant(self, variant)
 
     def __call__(self, *args, **kwargs):
-        if custom_call := getattr(self, "call", None):
+        if custom_call := self.__dict__.get("call", None):
             return custom_call(**Config(self, *args, **kwargs))
         else:
             return Task(self, *args, **kwargs)
