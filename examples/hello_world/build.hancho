@@ -2,18 +2,8 @@
 
 import hancho
 
-compile = hancho.Config(
-  desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
-  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-  out_obj = "{swap_ext(in_src, '.o')}",
-  depfile = "{swap_ext(in_src, '.d')}",
-)
+rules = hancho.load("{repo_path}/rules.hancho")
 
-link = hancho.Config(
-  desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
-  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
-)
-
-main_o = compile(in_src = "main.cpp")
-util_o = compile(in_src = "util.cpp")
-main_app = link(in_objs = [main_o, util_o], out_bin = "app")
+main_o = rules.compile_cpp(in_src = "main.cpp")
+util_o = rules.compile_cpp(in_src = "util.cpp")
+main_app = rules.link_cpp_bin(in_objs = [main_o, util_o], out_bin = "app")

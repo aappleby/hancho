@@ -2,6 +2,9 @@
 
 import hancho
 
+rules = hancho.load("{repo_path}/rules.hancho")
+
+"""
 compile = hancho.Config(
   desc      = "Compiling {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
   command   = "gcc {includes} {gcc_opts} {defines} {warnings} -c {rel(in_src)} -o {rel(out_obj)}",
@@ -36,15 +39,16 @@ link = hancho.Config(
   ],
   libs = [],
 )
+"""
 
-main_o = compile(
+main_o = rules.compile_cpp(
   in_src = "main.c",
-  includes = compile.includes + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}"],
-  gcc_opts = compile.gcc_opts + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}"],
+  includes = rules.compile_cpp.includes  + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}"],
+  gcc_opts = rules.compile_cpp.cpp_flags + ["{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}"],
 )
 
-main = link(
+main = rules.link_cpp_bins(
   in_objs = main_o,
   out_bin = "demo",
-  libs = link.libs + ["{run_cmd('pkg-config gtk+-3.0 --libs')}"],
+  sys_libs = rules.link.sys_libs + ["{run_cmd('pkg-config gtk+-3.0 --libs')}"],
 )

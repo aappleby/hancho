@@ -1,12 +1,12 @@
 import hancho
 
 hancho.load("tutorial/build.hancho", force = True)
-hancho.load("examples/hello_world/build.hancho", force = True)
-hancho.load("examples/meson/build.hancho", force = True)
+#hancho.load("examples/hello_world/build.hancho", force = True)
+#hancho.load("examples/meson/build.hancho", force = True)
 
-hancho.Task(
-  desc = "Run all tests",
-  command_path = "tests",
-  command = ["./run_tests.py -q"],
-  force = True
-)
+#hancho.Task(
+#  desc = "Run all tests",
+#  command_path = "tests",
+#  command = ["./run_tests.py -q"],
+#  force = True
+#)

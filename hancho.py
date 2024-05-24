@@ -260,12 +260,7 @@ class Config:
     def __getitem__(self, key):
         return self.__dict__[key]
 
-    def __getattr__(self, key):
-        return self.__dict__[key]
-
-    def items(self):
-        return self.__dict__.items()
-
+    # required to use Config as a mapping
     def keys(self):
         return self.__dict__.keys()
 
@@ -274,9 +269,6 @@ class Config:
 
     def update(self, kwargs):
         return self.__dict__.update(kwargs)
-
-    def values(self):
-        return self.__dict__.values()
 
     #----------------------------------------
 
@@ -302,6 +294,55 @@ class Config:
         if isinstance(p, Task):
             p = p._out_files[0]
         return path.splitext(path.basename(p))[0]
+
+####################################################################################################
+# All static methods and fields are available to use in any template string.
+
+# fmt: off
+
+default_task_config = Config(
+    desc          = "{rel(_in_files)} -> {rel(_out_files)}",
+    command       = None,
+    command_path  = "{base_path}",
+    build_dir     = "build",
+    build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
+    in_path       = "{base_path}",
+    out_path      = "{build_path}",
+)
+
+Config.abs_path  = staticmethod(abs_path)
+Config.rel_path  = staticmethod(rel_path)
+Config.join_path = staticmethod(join_path)
+Config.color     = staticmethod(color)
+Config.glob      = staticmethod(glob.glob)
+Config.len       = staticmethod(len)
+Config.run_cmd   = staticmethod(run_cmd)
+Config.swap_ext  = staticmethod(swap_ext)
+Config.flatten   = staticmethod(flatten)
+Config.print     = staticmethod(print)
+Config.log       = staticmethod(log)
+Config.path      = path
+Config.re        = re
+
+Config.join_prefix = staticmethod(join_prefix)
+Config.join_suffix = staticmethod(join_suffix)
+
+Config.jobs      = os.cpu_count()
+Config.name      = ""
+Config.build_tag = ""
+Config.tags      = []
+Config.verbose   = False
+Config.quiet     = False
+Config.dry_run   = False
+Config.debug     = False
+Config.force     = False
+Config.shuffle   = False
+Config.trace     = False
+Config.use_color = True
+Config.should_fail = False
+Config.is_test = False
+
+# fmt: on
 
 ####################################################################################################
 
@@ -380,7 +421,7 @@ class Expander:
         val = getattr(self.config, key)
         if self.trace:
             log(("┃" * app.expand_depth) + f" Read '{key}' = '{val}'")
-        return self.config.expand(val)
+        return expand_variant(self.config, val)
 
 #----------------------------------------
 
@@ -424,20 +465,20 @@ def eval_macro(config, macro):
 
     app.expand_depth += 1
     result = ""
-    try:
-        # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
-        # paths and stuff, which will break.
-        if not isinstance(config, Expander):
-            config = Expander(config)
 
+    # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
+    # paths and stuff, which will break.
+    if not isinstance(config, Expander):
+        config = Expander(config)
+
+    result = macro
+    try:
         # pylint: disable=eval-used
         result = eval(macro[1:-1], {}, config)
-    except BaseException as err:
-        result = macro
-        #log(f"{color(255, 255, 0)}Expanding macro '{macro}' failed! - {err}{color()}")
-        #raise err
-    finally:
-        app.expand_depth -= 1
+    except:
+        pass
+
+    app.expand_depth -= 1
 
     if config.trace:
         log(("┃" * app.expand_depth) + f"┗ {result}")
@@ -447,17 +488,8 @@ def eval_macro(config, macro):
 
 def stringify_variant(config, variant):
     match variant:
-        case BaseException():
-            raise variant
         case Task():
             return stringify_variant(config, variant._out_files)
-        case str() if macro_regex.search(variant):
-            new_variant = eval_macro(config, variant)
-            if variant == new_variant:
-                return variant
-            return stringify_variant(config, new_variant)
-        case str() if template_regex.search(variant):
-            return expand_template(config, variant)
         case list():
             variant = [stringify_variant(config, val) for val in variant]
             return " ".join(variant)
@@ -471,14 +503,11 @@ def expand_variant(config, variant):
     """Expands all templates anywhere inside 'variant', making deep copies where needed so we don't
     expand someone else's data."""
     match variant:
-        case BaseException():
-            raise variant
         case str() if macro_regex.search(variant):
             new_variant = eval_macro(config, variant)
-            if variant == new_variant:
-                # Can't expand further
-                return new_variant
-            return expand_variant(config, new_variant)
+            if variant != new_variant:
+                new_variant = expand_variant(config, new_variant)
+            return new_variant
         case str() if template_regex.search(variant):
             return expand_template(config, variant)
         case list():
@@ -561,7 +590,7 @@ def visit_variant(key, val, visitor):
 class Promise:
     def __init__(self, task, *args):
         self.task = task
-        self.args = args if len(args) > 0 else ("_out_files")
+        self.args = args
 
     async def get(self):
         await self.task.await_done()
@@ -636,7 +665,7 @@ class Task(Config):
         # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
         log(
             #f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
-            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.desc}",
+            f"{color(128,255,196)}[{app.tasks_running}/{self._task_index}/{app.tasks_started}]{color()} {self.desc}",
             sameline=not self.verbose,
         )
 
@@ -676,43 +705,42 @@ class Task(Config):
             self._reason = self.needs_rerun(self.force)
 
             # Run the commands if we need to.
-            if self._reason:
+            if not self._reason:
+                app.tasks_skip += 1
+            else:
+                # Wait for enough jobs to free up to run this task.
+                job_count = self.__dict__.get("job_count", 1)
+                self._state = TaskState.AWAITING_JOBS
+                await app.acquire_jobs(job_count, self.desc)
+
+                self._state = TaskState.RUNNING_COMMANDS
+                # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
+
+                app.tasks_running += 1
+                self.print_status()
+
+                if self.verbose or self.debug:
+                    log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
+
+                #line_block(app.job_slots)
+                #for line in app.job_slots:
+                #    print(line)
+
+                commands = flatten(self.command)
 
                 try:
-                    # Wait for enough jobs to free up to run this task.
-                    job_count = self.__dict__.get("job_count", 1)
-                    self._state = TaskState.AWAITING_JOBS
-                    await app.acquire_jobs(job_count, self.desc)
-
-                    self._state = TaskState.RUNNING_COMMANDS
-                    # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
-
-                    app.tasks_running += 1
-                    self.print_status()
-
-                    if self.verbose or self.debug:
-                        log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
-
-                    #line_block(app.job_slots)
-                    #for line in app.job_slots:
-                    #    print(line)
-
-                    commands = flatten(self.command)
                     for command in commands:
                         if self.verbose or self.debug:
-                            rel_command_path = rel_path(self.command_path, Config.root_path)
-                            log(f"{color(128,128,255)}{rel_command_path}$ {color()}", end="")
-                            log("(DRY RUN) " if self.dry_run else "", end="")
+                            log(color(128,128,255), end="")
+                            if self.dry_run: log("(DRY RUN) ", end="")
+                            log(f"{rel_path(self.command_path, Config.root_path)}$ ", end="")
+                            log(color(), end="")
                             log(command)
                         if not self.dry_run:
                             await self.run_command(command)
                 finally:
                     await app.release_jobs(job_count, self.desc)
-
-
                 app.tasks_pass += 1
-            else:
-                app.tasks_skip += 1
 
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
         # downstream tasks.
@@ -845,7 +873,8 @@ class Task(Config):
         depformat = getattr(self, "depformat", "gcc")
 
         if depfile is not None and path.exists(self.depfile):
-            if self.debug:
+            #if self.debug:
+            if True:
                 log(f"Found depfile {depfile}")
             with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
@@ -1106,7 +1135,10 @@ class App:
             # Seems to fix the issue.
             result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         except BaseException as err:
-            log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
+            log(color(255, 128, 128), end = "")
+            log("Build failed:")
+            log(traceback.format_exc())
+            log(color(), end="")
         return result
 
     ########################################
@@ -1266,55 +1298,6 @@ class App:
         self.jobs_lock.release()
 
 ####################################################################################################
-# All static methods and fields are available to use in any template string.
-
-# fmt: off
-
-default_task_config = Config(
-    desc          = "{rel(_in_files)} -> {rel(_out_files)}",
-    command       = None,
-    command_path  = "{base_path}",
-    build_dir     = "build",
-    build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
-    in_path       = "{base_path}",
-    out_path      = "{build_path}",
-)
-
-Config.abs_path  = staticmethod(abs_path)
-Config.rel_path  = staticmethod(rel_path)
-Config.join_path = staticmethod(join_path)
-Config.color     = staticmethod(color)
-Config.glob      = staticmethod(glob.glob)
-Config.len       = staticmethod(len)
-Config.run_cmd   = staticmethod(run_cmd)
-Config.swap_ext  = staticmethod(swap_ext)
-Config.flatten   = staticmethod(flatten)
-Config.print     = staticmethod(print)
-Config.log       = staticmethod(log)
-Config.path      = path
-Config.re        = re
-
-Config.join_prefix = staticmethod(join_prefix)
-Config.join_suffix = staticmethod(join_suffix)
-
-Config.jobs      = os.cpu_count()
-Config.name      = ""
-Config.build_tag = ""
-Config.tags      = []
-Config.verbose   = False
-Config.quiet     = False
-Config.dry_run   = False
-Config.debug     = False
-Config.force     = False
-Config.shuffle   = False
-Config.trace     = False
-Config.use_color = True
-Config.should_fail = False
-Config.is_test = False
-
-# fmt: on
-
-####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
@@ -1323,15 +1306,11 @@ app = App()
 if __name__ == "__main__":
     sys.exit(app.main())
 
-"""
-bar = Config(
-    a = "{c}"
-)
-
-foo = Config(
-    b = bar,
-    c = "asdf"
-)
-
-print(foo.expand("{b.a}"))
-"""
+#foo = Config(
+#    a = "yyy {b} yyy",
+#    b = "xxx {c} xxx",
+#    c = "www {d} www",
+#    d = "asdf"
+#)
+#
+#print(foo.expand("zzz {a} zzz"))

@@ -1,0 +1,256 @@
+import hancho
+
+cpp_config = hancho.Config(
+  compiler   = "g++",
+  arch       = "",
+  cpp_std    = "-std=gnu++2a",
+  build_type = "-g -O0",
+  c_flags    = [],
+  cpp_flags  = ["-fdiagnostics-color=always"],
+
+  #defines   = [
+  #  "-D_FILE_OFFSET_BITS=64"
+  #],
+  #warnings  = [
+  #  "-Wall",
+  #  "-Winvalid-pch"
+  #],
+
+  warnings   = [],
+  defines    = [],
+  includes   = ["."],
+
+  joined_warnings  = "{join_prefix('-W', warnings)}",
+  joined_defines   = "{join_prefix('-D', defines)}",
+  joined_includes  = "{join_prefix('-I', includes)}",
+
+  linker     = "g++",
+  link_flags = [],
+  sys_libs   = [],
+
+  joined_sys_libs  = "{join_prefix('-l', sys_libs)}",
+)
+
+compile_cpp = hancho.Config(
+  cpp_config,
+  desc     = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+  command  = "{compiler} {arch} {cpp_std} {build_type} {cpp_flags} {joined_warnings} {joined_defines} {joined_includes} -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj  = "{swap_ext(in_src, '.o')}",
+  depfile  = "{swap_ext(in_src, '.d')}",
+)
+
+link_cpp_lib = hancho.Config(
+  cpp_config,
+  desc    = "Bundling C++ lib {rel(out_lib)}",
+  command = "ar rcs {rel(out_lib)} {rel(in_objs)}",
+  in_objs = [],
+  out_lib = [],
+)
+
+link_cpp_bin = hancho.Config(
+  cpp_config,
+  desc = "Linking C++ bin {rel(out_bin)}",
+  command = "{linker} {link_flags} {linker_group} {joined_sys_libs} -o {rel(out_bin)}",
+  linker_group = [
+    "-Wl,--as-needed",
+    "-Wl,--no-undefined",
+    "-Wl,--start-group",
+    "{rel(in_objs)}",
+    "{rel(in_libs)}",
+    "-Wl,--end-group",
+  ],
+  in_objs = [],
+  in_libs = [],
+  out_bin = [],
+)
+
+exports.compile_cpp = compile_cpp
+exports.link_cpp_bin = link_cpp_bin
+
+"""
+rv_compile = rv_base.extend(
+  compiler   = "riscv64-unknown-elf-gcc",
+  arch       = "-march=rv32i -mabi=ilp32 -mstrict-align",
+  arch      = "-march=rv32i -mabi=ilp32 -mstrict-align",
+  cpp_std    = "-std=gnu++2a",
+  build_type = "-g -Os",
+)
+
+rv_link = rv_base.extend(
+  linker = "riscv64-unknown-elf-gcc",
+
+  sys_libs = ["gcc"],
+  link_flags = [
+    "-nostdlib",
+    "-nostartfiles",
+    "-Wl,-T {linkerscript}",
+  ],
+  in_ld = "link.ld",
+)
+"""
+
+####################################################################################################
+
+def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], out_bin, **kwargs):
+  objs = [
+    compile_cpp(kwargs, in_src = file) for file in hancho.flatten(in_srcs)
+  ]
+  bin = link_cpp_bin(
+    kwargs,
+    name = name,
+    in_objs = [objs, in_objs, in_libs],
+    out_bin = out_bin
+  )
+  return bin
+
+exports.cpp_bin = hancho.Config(call = cpp_bin)
+
+####################################################################################################
+
+def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], out_lib, **kwargs):
+  objs = [
+    compile_cpp(kwargs, in_src = file) for file in hancho.flatten(in_srcs)
+  ]
+  lib = link_cpp_lib(
+    kwargs,
+    name = name,
+    in_objs = [objs, in_objs, in_libs],
+    out_lib = out_lib
+  )
+  return lib
+
+exports.cpp_lib = hancho.Config(call = cpp_lib)
+
+####################################################################################################
+
+exports.make = hancho.Config(
+  command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
+  make_path   = "{path.dirname(in_makefile)}",
+  make_file   = "{path.basename(in_makefile)}",
+  flags       = "--quiet",
+  in_makefile = None,
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+base = hancho.Config(
+  toolchain  = "x86_64-linux-gnu",
+  build_type = "-g -O0",
+  warnings   = "-Wunused-variable -Werror",
+  defines    = "-DCONFIG_DEBUG",
+  cpp_std    = "-std=gnu++2a",
+  includes   = "-I. -I{repo_path} -I{repo_path}/symlinks -I{repo_path}/symlinks/metrolib -I{repo_path}/symlinks/metron ",
+)
+
+exports.check_cpp = base.extend(
+  desc    = "Syntax checking {rel(in_src)}",
+  command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {rel(in_src)} && touch {rel(out_ok)}",
+  in_src  = [],
+  out_ok  = "{in_src}.ok",
+  depfile = "{swap_ext(in_src, '.d')}",
+)
+
+exports.compile_cpp = base.extend(
+  desc    = "Compiling C++ {rel(in_src)} => {rel(out_obj)}",
+  command = "{toolchain}-g++ -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {rel(in_src)} -o {rel(out_obj)}",
+  in_src  = [],
+  out_obj = "{swap_ext(in_src, '.o')}",
+  depfile = "{swap_ext(in_src, '.d')}",
+)
+
+exports.compile_c = base.extend(
+  desc    = "Compiling C {rel(in_src)} => {rel(out_obj)}",
+  command = "{toolchain}-gcc -MMD {warnings} {build_type} {includes} {defines} -c {rel(in_src)} -o {rel(out_obj)}",
+  in_src  = [],
+  out_obj = "{swap_ext(in_src, '.o')}",
+  depfile = "{swap_ext(in_src, '.d')}",
+)
+
+exports.link_c_lib = base.extend(
+  desc    = "Bundling {rel(out_lib)}",
+  command = "ar rcs {rel(in_objs)} {rel(out_lib)}",
+  in_objs = [],
+  out_lib = [],
+)
+
+exports.link_c_bin  = base.extend(
+  desc    = "Linking {rel(out_bin)}",
+  command = "{toolchain}-g++ -g -Wl,--as-needed -Wl,--no-undefined -Wl,--start-group {rel(in_objs)} {rel(in_libs)} {sys_libs} -Wl,--end-group -o {rel(out_bin)}",
+  in_objs = [],
+  in_libs = [],
+  sys_libs = [],
+  out_bin = [],
+)
+
+def cpp_binary(in_srcs, out_bin, **kwargs):
+  objs = [exports.compile_cpp(in_src = file, **kwargs) for file in in_srcs]
+  return exports.link_c_bin(in_obs = objs, out_bin = out_bin, **kwargs)
+
+def cpp_lib(in_srcs, out_bin, **kwargs):
+  objs = [exports.compile_cpp(in_src = file, **kwargs) for file in in_srcs]
+  return exports.link_c_lib(in_obs = objs, out_bin = out_bin, **kwargs)
+
+def c_lib(in_srcs, out_bin, **kwargs):
+  objs = [exports.compile_c(in_src = file, **kwargs) for file in in_srcs]
+  return exports.link_c_lib(in_obs = objs, out_bin = out_bin, **kwargs)
+
+exports.cpp_binary = cpp_binary
+exports.cpp_lib = cpp_lib
+exports.c_lib = c_lib
+
+exports.rv_base = hancho.Config(
+  arch = "-march=rv32i -mabi=ilp32 -mstrict-align",
+)
+
+exports.rv_compile = exports.rv_base.extend(
+  command = "riscv64-unknown-elf-gcc {opts} -c {rel(in_src)} -o {rel(out_obj)}",
+  opts    = "{arch} -g -Os -std=gnu++2a  -MMD",
+  in_src  = [],
+  out_obj = "{swap_ext(in_src, '.o')}",
+  depfile = "{swap_ext(in_src, '.d')}",
+)
+
+exports.rv_link = exports.rv_base.extend(
+  command = "riscv64-unknown-elf-gcc {arch} -nostdlib -nostartfiles -Wl,-T {in_ld} -lgcc {rel(in_objs)} {rel(in_libs)} -o {rel(out_bin)}",
+  in_ld   = "{root_dir}/pinwheel/tools/pinwheel.ld",
+  in_objs = [],
+  in_libs = [],
+  out_bin = [],
+)
+
+
+exports.metron = hancho.Config(
+  command = "{repo_path}/symlinks/metron/build/debug/metron/metron/metron -q -v -e -c {in_src} -o {out_sv}",
+  depfile = "{swap_ext(in_src, '.d')}",
+  in_src  = [],
+  out_sv  = "{swap_ext(in_src, '.sv')}",
+)
+
+exports.sv2v = hancho.Config(
+  command = "symlinks/sv2v/bin/sv2v {includes} {in_src} -w {out_v}",
+  in_src  = [],
+  out_v   = "{in_src}.2.v",
+)
+"""
