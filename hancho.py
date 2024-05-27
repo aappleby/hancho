@@ -439,7 +439,9 @@ def expand_template(config, template):
             result += template[0 : span.start()]
             try:
                 macro   = template[span.start() : span.end()]
-                variant = eval_macro(config, macro)
+                # This needs to be expand_variant so we keep expanding until we can't or we have
+                # nothing left ot expand.
+                variant = expand_variant(config, macro)
                 result += stringify_variant(config, variant)
             except BaseException as err:
                 result += template[span.start() : span.end()]
@@ -635,8 +637,10 @@ class Task(Config):
         self._reason = None
         self._promise = None
         self._loaded_modules = [m.__file__ for m in app.loaded_modules]
-        app.all_tasks.append(self)
-        self._task_index = len(app.all_tasks)
+
+        if not self.command is None:
+            app.all_tasks.append(self)
+            self._task_index = len(app.all_tasks)
 
     def queue(self):
         if self._state is TaskState.DECLARED:
@@ -647,7 +651,8 @@ class Task(Config):
         if self._state is TaskState.QUEUED or self._state is TaskState.DECLARED:
             self._promise = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
-            app.tasks_started += 1
+            if not self.command is None:
+                app.tasks_started += 1
 
     async def await_done(self):
         self.start()
@@ -665,7 +670,8 @@ class Task(Config):
         # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
         log(
             #f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
-            f"{color(128,255,196)}[{app.tasks_running}/{self._task_index}/{app.tasks_started}]{color()} {self.desc}",
+            #{self._task_index}/
+            f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
             sameline=not self.verbose,
         )
 
@@ -698,6 +704,8 @@ class Task(Config):
 
             # Early-out if this is a no-op task
             if self.command is None:
+                #app.tasks_running += 1
+                #app.tasks_pass += 1
                 self._state = TaskState.FINISHED
                 return
 
@@ -706,7 +714,7 @@ class Task(Config):
 
             # Run the commands if we need to.
             if not self._reason:
-                app.tasks_skip += 1
+                app.task_skipped += 1
             else:
                 # Wait for enough jobs to free up to run this task.
                 job_count = self.__dict__.get("job_count", 1)
@@ -986,7 +994,7 @@ class App:
 
         self.tasks_pass = 0
         self.tasks_fail = 0
-        self.tasks_skip = 0
+        self.task_skipped = 0
         self.tasks_cancel = 0
 
         self.mtime_calls = 0
@@ -1130,10 +1138,14 @@ class App:
         """Run tasks until we're done with all of them."""
         result = -1
         try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = asyncio.run(self.async_run_tasks())
+
             # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
             # in Github, so I'm using get_event_loop().run_until_complete().
             # Seems to fix the issue.
-            result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
+            #result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         except BaseException as err:
             log(color(255, 128, 128), end = "")
             log("Build failed:")
@@ -1189,7 +1201,7 @@ class App:
             log(f"tasks total:     {len(self.all_tasks)}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
-            log(f"tasks skipped:   {self.tasks_skip}")
+            log(f"tasks skipped:   {self.task_skipped}")
             log(f"tasks cancelled: {self.tasks_cancel}")
             log(f"mtime calls:     {self.mtime_calls}")
 
