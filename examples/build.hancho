@@ -1,6 +1,0 @@
-#hancho.load("hello_world/build.hancho")
-#hancho.load("meson/build.hancho")
-#hancho.load("subrepos/build.hancho")
-
-# needs source_path fix
-hancho.load("dynamic_dependencies/filelist/build.hancho")

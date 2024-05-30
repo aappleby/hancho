@@ -1,5 +1,3 @@
-# examples/hello_world/build.hancho
-
 import hancho
 
 rules = hancho.load("{repo_path}/rules.hancho")

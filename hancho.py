@@ -310,6 +310,10 @@ default_task_config = Config(
     out_path      = "{build_path}",
 )
 
+Config.repo_path = os.getcwd()
+Config.repo_name = ""
+Config.base_path = os.getcwd()
+
 Config.abs_path  = staticmethod(abs_path)
 Config.rel_path  = staticmethod(rel_path)
 Config.join_path = staticmethod(join_path)
@@ -350,10 +354,10 @@ def load_file(file_name, as_repo, *args, **kwargs):
     mod_config = Config(*args, **kwargs)
 
     file_name = mod_config.expand(file_name)
-    abs_file_path = join_path(app.topmod().base_path, file_name)
+    abs_file_path = join_path(Config.base_path, file_name)
 
-    repo_path = path.dirname(abs_file_path) if as_repo else app.topmod().repo_path
-    repo_name = path.basename(repo_path) if as_repo else app.topmod().repo_name
+    repo_path = path.dirname(abs_file_path) if as_repo else Config.repo_path
+    repo_name = path.basename(repo_path) if as_repo else Config.repo_name
     file_path = path.dirname(abs_file_path)
     file_name = path.basename(abs_file_path)
 
@@ -624,9 +628,9 @@ class Task(Config):
     def __init__(self, *args, **kwargs):
 
         path_config = Config(
-            repo_path = app.topmod().repo_path,
-            repo_name = app.topmod().repo_name,
-            base_path = app.topmod().base_path,
+            repo_path = Config.repo_path,
+            repo_name = Config.repo_name,
+            base_path = Config.base_path,
         )
 
         super().__init__(default_task_config, path_config, *args, **kwargs)
@@ -981,14 +985,13 @@ class App:
 
         # We're adding a 'fake' module to the top of the mod stack so that applications that import
         # Hancho directly don't try to read modstack[-1] from an empty stack
-        fake_hancho = Config()
+        #fake_module = type(sys)("fake_module")
 
-        fake_module = type(sys)("fake_module")
-        fake_module.hancho    = Config()
-        fake_module.repo_path = os.getcwd()
-        fake_module.repo_name = ""
-        fake_module.base_path = os.getcwd()
-        self.modstack.append(fake_module)
+        Config.repo_path = os.getcwd()
+        Config.repo_name = ""
+        Config.base_path = os.getcwd()
+
+        #self.modstack.append(fake_module)
 
         self.all_out_files = set()
 
@@ -1246,9 +1249,6 @@ class App:
 
         module.imports = config
         module.exports = Config()
-        module.repo_path = repo_path
-        module.repo_name = repo_name
-        module.base_path = file_path
 
         self.loaded_modules.append(module)
 
@@ -1259,10 +1259,23 @@ class App:
             app.pushdir(file_path)
             self.modstack.append(module)
 
+            old_repo_path = Config.repo_path
+            old_repo_name = Config.repo_name
+            old_file_path = Config.base_path
+
+            Config.repo_path = repo_path
+            Config.repo_name = repo_name
+            Config.base_path = file_path
+
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
             types.FunctionType(code, module.__dict__)()
         finally:
+
+            Config.repo_path = old_repo_path
+            Config.repo_name = old_repo_name
+            Config.base_path = old_file_path
+
             self.modstack.pop()
             app.popdir()
         return module.exports

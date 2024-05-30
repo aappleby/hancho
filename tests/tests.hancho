@@ -1,0 +1,7 @@
+import hancho
+
+hancho.Task(
+  name = "testsuite",
+  desc = "Run all tests",
+  command = ["./run_tests.py -q"],
+)

@@ -23,5 +23,3 @@ hancho.load("tut30.hancho")
 hancho.load("tut40.hancho")
 hancho.load("tut41.hancho")
 #hancho.load("tut50.hancho") # broken
-
-#hancho.load("tut60.hancho")
