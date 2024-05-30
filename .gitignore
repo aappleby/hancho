@@ -2,4 +2,5 @@ bin
 obj
 gen
 build
+dist
 __pycache__

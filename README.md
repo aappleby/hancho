@@ -1,4 +1,4 @@
-# ![Logo](docs/hancho_small.png) Hancho
+# ![Logo](https://github.com/aappleby/hancho/blob/main/docs/hancho_small.png?raw=true) Hancho
 
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
@@ -23,15 +23,28 @@ Hancho should suffice for small to medium sized projects.
 [Some Additional Documentation Here](docs)
 
 ## Updates
-
+ - 2024-03-28 - The v010 branch now has visualization of template and macro expansion which you can enable via ```--debug_expansion```. It produces diagrams like this:
+```
+┏ Eval '{join_path(build_path, build_files)}'
+┃┏ Eval '{start_path/build_dir/build_tag/rel_source_path}'
+┃┃┏ Eval '{rel_path(source_path, command_path)}'
+┃┃┃┏ Eval '{start_path}'
+┃┃┃┗ /home/user/hancho/tutorial
+┃┃┗ .
+┃┗ /home/user/hancho/tutorial/build/tut16
+┗ [PosixPath('/home/user/hancho/tutorial/build/tut16/app')]
+```
+ - 2024-03-28 - WIP tutorial for the redesigned Hancho is in the v010 branch here - https://github.com/aappleby/hancho/tree/v010/docs/tutorial
+ - 2024-03-22
+   - I'm working on a v0.1.0 branch that will rework the way paths/files/directories and template expansion works.
+   - The current setup is fine for my personal projects, but I've gotten feedback that it's unintuitive for other use cases - for example, moving a Rule invocation from top-level into a function and then calling that function from another file can change how file paths are interpreted.
+   - Similarly, template expansion is currently order-dependent in a few cases - expanding {"a": {"print(b)"}, "b": "{c}", "c": "foo"} can print either "{c}" or "foo" depending on whether "a" or "b" are expanded first.
+   - The revised version will fix both those issues but will probably break some existing builds, hence the version bump.
  - 2024-03-19 - Hancho v0.0.5
    - Special dir-related fields are now start_dir, root_dir, leaf_dir, work_dir, and build_dir
    - Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho")
    - Each Hancho module now gets its own 'config' object extended from its parent module (or global_config). This prevents submodules from accidentally changing global fields that their parent modules use while still allowing sharing of configuration across files.
- - 2024-03-13 - Tasks can now 'reserve' jobs so that commands that themselves use many jobs (like Ninja) can block until the jobs are free. See the [job_count](tests/job_count.hancho) test for details.
- - 2024-03-13 - Code cleaned up to be more standard Python style and reduce linter complaints. Added 'rule_dir' field to each Rule that stores the directory of the file that created the rule.
- - 2024-03-12 - Handling of paths is more flexible now (and will be documented shortly). Calling a Rule now returns a Task object. All the task-running code is now in Task instead of Rule.
-
+ 
 ## Installation
 
 ``` bash
@@ -102,7 +115,10 @@ hancho: BUILD CLEAN
 
 ## Old Updates
 
-- 2024-03-07 - Tests should run on Windows now. Added a Windows build example. Promises are now valid as inputs to any template.
-- 2024-03-04 - Cleaned up pylint & formatting issues in hancho.py and test.py. Hancho.py is now over 500 lines if you include whitespace and comments :D.
-- 2024-03-04 - Unrecognized '--key=value' command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
-- 2024-03-02 - Initial release. Some test cases yet to be written.
+ - 2024-03-13 - Tasks can now 'reserve' jobs so that commands that themselves use many jobs (like Ninja) can block until the jobs are free. See the [job_count](tests/job_count.hancho) test for details.
+ - 2024-03-13 - Code cleaned up to be more standard Python style and reduce linter complaints. Added 'rule_dir' field to each Rule that stores the directory of the file that created the rule.
+ - 2024-03-12 - Handling of paths is more flexible now (and will be documented shortly). Calling a Rule now returns a Task object. All the task-running code is now in Task instead of Rule.
+ - 2024-03-07 - Tests should run on Windows now. Added a Windows build example. Promises are now valid as inputs to any template.
+ - 2024-03-04 - Cleaned up pylint & formatting issues in hancho.py and test.py. Hancho.py is now over 500 lines if you include whitespace and comments :D.
+ - 2024-03-04 - Unrecognized '--key=value' command line flags are now merged into the global config object. This allows you to do things like "hancho.py --build_dir=some/other/dir" which could be annoying otherwise.
+ - 2024-03-02 - Initial release. Some test cases yet to be written.
