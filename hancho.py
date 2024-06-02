@@ -295,6 +295,9 @@ class Config:
             p = p._out_files[0]
         return path.splitext(path.basename(p))[0]
 
+class Command(Config):
+    pass
+
 ####################################################################################################
 # All static methods and fields are available to use in any template string.
 
