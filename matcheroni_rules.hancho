@@ -52,23 +52,7 @@ def c_library(*args, in_srcs = [], in_objs = [], out_lib, **kwargs):
   objs = compile_srcs(config, in_srcs=in_srcs)
   return link_c_lib(objs + in_objs, out_lib, config)
 
-def c_test(*args, in_srcs = [], in_objs = [], out_bin, **kwargs):
-  config = hancho.Config(*args, **kwargs)
-  objs = compile_srcs(config, in_srcs = in_srcs)
-  bin = link_c_bin(objs + in_objs, out_bin, config)
-  result = hancho.Task(
-    config,
-    desc     = "Running test {rel(in_test)}",
-    command  = "{in_test} {args}",
-    in_test  = bin,
-    out_log  = "{in_test}.test",
-    args     = "",
-    is_test = True
-  )
-  return result
-
 #-------------------------------------------------------------------------------
 
 exports.c_binary  = c_binary
 exports.c_library = c_library
-exports.c_test    = c_test

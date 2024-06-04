@@ -12,15 +12,15 @@ compile_cpp = hancho.Config(
   build_type = "-g -O0",
   cpp_flags  = ["-fdiagnostics-color=always"],
   warnings   = [],
-  joined_warnings  = "{join_prefix('-W', warnings)}",
   defines    = [],
-  joined_defines   = "{join_prefix('-D', defines)}",
   includes   = ["."],
-  joined_includes  = "{join_prefix('-I', includes)}",
-  in_src = [],
+  in_src     = [],
+  out_obj    = "{swap_ext(in_src, '.o')}",
+  depfile    = "{swap_ext(in_src, '.d')}",
 
-  out_obj  = "{swap_ext(in_src, '.o')}",
-  depfile  = "{swap_ext(in_src, '.d')}",
+  joined_warnings  = "{join_prefix('-W', warnings)}",
+  joined_defines   = "{join_prefix('-D', defines)}",
+  joined_includes  = "{join_prefix('-I', includes)}",
 )
 
 link_cpp_lib = hancho.Config(
@@ -119,6 +119,34 @@ exports.cpp_lib = hancho.Config(call = cpp_lib)
 ####################################################################################################
 # Makefiles
 
+make = hancho.Config(
+  command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
+  make_path   = "{path.dirname(in_makefile)}",
+  make_file   = "{path.basename(in_makefile)}",
+  flags       = "--quiet",
+)
+
+def call_make(*, in_makefile, **kwargs):
+  return make(in_makefile = in_makefile, **kwargs)
+
+exports.make = hancho.Config(call = call_make)
+
+
+
+"""
+def call_make(*args, in_makefile, flags = "--quiet", **kwargs):
+  config = hancho.Config(*args, **kwargs)
+  make_path = path.dirname(in_makefile)
+  make_file = path.basename(in_makefile)
+  return hancho.Task(
+    command = f"make -C {make_path} -f {make_file} {flags} > /dev/null",
+    in_makefile = in_makefile
+  )
+
+exports.make = hancho.Config(call = call_make)
+"""
+
+"""
 exports.make = hancho.Config(
   command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
   make_path   = "{path.dirname(in_makefile)}",
@@ -126,6 +154,7 @@ exports.make = hancho.Config(
   flags       = "--quiet",
   in_makefile = None,
 )
+"""
 
 
 
@@ -138,6 +167,25 @@ exports.make = hancho.Config(
 
 
 
+
+
+
+def c_test(*args, in_srcs = [], in_objs = [], out_bin, **kwargs):
+  config = hancho.Config(*args, **kwargs)
+  objs = [compile_cpp(config, in_src = src) for src in hancho.flatten(in_srcs)]
+  bin = link_cpp_bin(config, in_objs = [objs, in_objs], out_bin = out_bin)
+  result = hancho.Task(
+    config,
+    desc     = "Running test {rel(in_test)}",
+    command  = "{in_test} {args}",
+    in_test  = bin,
+    out_log  = "{in_test}.test",
+    args     = "",
+    is_test = True
+  )
+  return result
+
+exports.c_test    = c_test
 
 
 

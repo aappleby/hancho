@@ -594,6 +594,26 @@ def visit_variant(key, val, visitor):
             val = visitor(key, val)
     return val
 
+
+def visit_variant2(key, val, visitor):
+    val = visitor(key, val)
+    match val:
+        case Task():
+            for key2, val2 in enumerate(val._out_files):
+                visit_variant2(key2, val2, visitor)
+        case Config() | dict():
+            for key2, val2 in val.items():
+                visit_variant2(key2, val2, visitor)
+        case list():
+            for key2, val2 in enumerate(val):
+                visit_variant2(key2, val2, visitor)
+
+def check_for_sentinel(val):
+    def visitor(key, val):
+        if isinstance(val, Sentinel):
+            raise ValueError(f"Key {key} has val = Sentinel")
+    visit_variant2(None, val, visitor)
+
 ####################################################################################################
 
 class Promise:
