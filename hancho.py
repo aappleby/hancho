@@ -123,6 +123,9 @@ def join_path2(path1, path2, *args):
         return [join_path(p, path2) for p in flatten(path1)]
     if isinstance(path2, list):
         return [join_path(path1, p) for p in flatten(path2)]
+
+    if not path2:
+        raise ValueError(f"Cannot join '{path1}' with '{type(path2)}' == '{path2}'")
     return path.join(path1, path2)
 
 def join_path(path1, path2, *args):
@@ -278,11 +281,11 @@ class Config:
     def expand(self, variant):
         return expand_variant(self, variant)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, **kwargs):
         if custom_call := self.__dict__.get("call", None):
-            return custom_call(**Config(self, *args, **kwargs))
+            return custom_call(**Config(self, **kwargs))
         else:
-            return Task(self, *args, **kwargs)
+            return Task(self, **kwargs)
 
     def extend(self, *args, **kwargs):
         return Config(self, args, **kwargs)

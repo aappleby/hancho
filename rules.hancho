@@ -3,7 +3,7 @@ import hancho
 ####################################################################################################
 # C++
 
-compile_cpp = hancho.Config(
+compile_cpp = hancho.Command(
   desc     = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
   command  = "{compiler} {arch} {cpp_std} {build_type} {cpp_flags} {joined_warnings} {joined_defines} {joined_includes} -MMD -c {rel(in_src)} -o {rel(out_obj)}",
   compiler   = "g++",
@@ -23,35 +23,36 @@ compile_cpp = hancho.Config(
   joined_includes  = "{join_prefix('-I', includes)}",
 )
 
-link_cpp_lib = hancho.Config(
+link_cpp_lib = hancho.Command(
   desc    = "Bundling C++ lib {rel(out_lib)}",
   command = "ar rcs {rel(out_lib)} {rel(in_objs)}",
   in_objs = [],
   out_lib = [],
 )
 
-link_cpp_bin = hancho.Config(
-  desc = "Linking C++ bin {rel(out_bin)}",
-  command = "{linker} {linker_group} {link_flags} {joined_sys_libs} -o {rel(out_bin)}",
-  linker = "g++",
-  link_flags = [],
-  linker_group = [
-    "-Wl,--as-needed",
-    "-Wl,--no-undefined",
-    "-Wl,--start-group",
-    "{rel(in_objs)}",
-    "{rel(in_libs)}",
-    "-Wl,--end-group",
-  ],
-  in_objs = [],
-  in_libs = [],
-  sys_libs   = [],
-  joined_sys_libs  = "{join_prefix('-l', sys_libs)}",
-  out_bin = [],
-)
+def link_cpp_bin(*, name, out_bin = "{name}", **kwargs):
+  base = hancho.Command(
+    desc = "Linking C++ bin {rel(out_bin)}",
+    command = "{linker} {linker_group} {link_flags} {joined_sys_libs} -o {rel(out_bin)}",
+    linker = "g++",
+    link_flags = [],
+    linker_group = [
+      "-Wl,--as-needed",
+      "-Wl,--no-undefined",
+      "-Wl,--start-group",
+      "{rel(in_objs)}",
+      "{rel(in_libs)}",
+      "-Wl,--end-group",
+    ],
+    in_objs = [],
+    in_libs = [],
+    sys_libs   = [],
+    joined_sys_libs  = "{join_prefix('-l', sys_libs)}",
+  )
+  return base(name = name, **kwargs)
 
 exports.compile_cpp = compile_cpp
-exports.link_cpp_lib = link_cpp_lib
+exports.link_cpp_lib = hancho.Command(call = link_cpp_lib)
 exports.link_cpp_bin = link_cpp_bin
 
 """
@@ -77,15 +78,15 @@ rv_link = link_cpp_bin.extend(
 
 #----------------------------------------
 
-def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], out_bin, **kwargs):
+def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], out_bin = "{name}", **kwargs):
   objs = [
-    compile_cpp(kwargs, in_src = file) for file in hancho.flatten(in_srcs)
+    compile_cpp(in_src = file, **kwargs) for file in hancho.flatten(in_srcs)
   ]
   bin = link_cpp_bin(
-    kwargs,
     name = name,
     in_objs = [objs, in_objs, in_libs],
-    out_bin = out_bin
+    out_bin = out_bin,
+    **kwargs,
   )
   return bin
 
@@ -93,15 +94,15 @@ exports.cpp_bin = hancho.Config(call = cpp_bin)
 
 #----------------------------------------
 
-def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], out_lib, **kwargs):
+def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], out_lib = "{name}", **kwargs):
   objs = [
-    compile_cpp(kwargs, in_src = file) for file in hancho.flatten(in_srcs)
+    compile_cpp(in_src = file, **kwargs) for file in hancho.flatten(in_srcs)
   ]
   lib = link_cpp_lib(
-    kwargs,
     name = name,
     in_objs = [objs, in_objs, in_libs],
-    out_lib = out_lib
+    out_lib = out_lib,
+    **kwargs,
   )
   return lib
 
@@ -119,7 +120,7 @@ exports.cpp_lib = hancho.Config(call = cpp_lib)
 ####################################################################################################
 # Makefiles
 
-make = hancho.Config(
+make = hancho.Command(
   command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
   make_path   = "{path.dirname(in_makefile)}",
   make_file   = "{path.basename(in_makefile)}",
@@ -170,22 +171,28 @@ exports.make = hancho.Config(
 
 
 
-def c_test(*args, in_srcs = [], in_objs = [], out_bin, **kwargs):
-  config = hancho.Config(*args, **kwargs)
-  objs = [compile_cpp(config, in_src = src) for src in hancho.flatten(in_srcs)]
-  bin = link_cpp_bin(config, in_objs = [objs, in_objs], out_bin = out_bin)
-  result = hancho.Task(
-    config,
-    desc     = "Running test {rel(in_test)}",
-    command  = "{in_test} {args}",
-    in_test  = bin,
-    out_log  = "{in_test}.test",
-    args     = "",
-    is_test = True
-  )
-  return result
+def c_test(*, name, in_srcs = [], in_objs = [], in_libs = [], out_bin = "{name}", **kwargs):
+  objs = [compile_cpp(in_src = src, **kwargs) for src in hancho.flatten(in_srcs)]
 
-exports.c_test    = c_test
+  bin = link_cpp_bin(
+    name = name,
+    in_objs = [objs, in_objs, in_libs],
+    out_bin = out_bin,
+    **kwargs
+  )
+
+  run_test = hancho.Command(
+    desc    = "Running test {rel(in_test)}",
+    command = "{in_test} {args}",
+    in_test = None,
+    out_log = "{in_test}.test",
+    args    = "",
+    is_test = True,
+  )
+
+  return run_test(in_test = bin)
+
+exports.c_test = hancho.Command(call = c_test)
 
 
 
