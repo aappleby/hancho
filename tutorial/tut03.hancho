@@ -6,21 +6,21 @@ def compile_cpp(source, config):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')
   return hancho.Task(
-    config,
     desc    = "Compile {in_src}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = source,
     out_obj = obj,
     depfile = dep,
+    **config,
   )
 
 def link_cpp(tasks, binary, config):
   result = hancho.Task(
-    config,
     desc    = "Link {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = tasks,
     out_bin = binary,
+    **config,
   )
 
 common = hancho.Config(

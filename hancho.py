@@ -35,7 +35,7 @@ def log_line(message):
         sys.stdout.flush()
 
 
-def log(message, *args, sameline=False, **kwargs):
+def log(message, *, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
     if not sys.stdout.isatty():
         sameline = False
@@ -44,7 +44,7 @@ def log(message, *args, sameline=False, **kwargs):
         kwargs.setdefault("end", "")
 
     output = io.StringIO()
-    print(message, *args, file=output, **kwargs)
+    print(message, file=output, **kwargs)
     output = output.getvalue()
 
     if not output:
@@ -253,10 +253,8 @@ class Sentinel:
 class Config:
     """A Config object is just a 'bag of fields'."""
 
-    def __init__(self, *args, **kwargs):
-        for arg in args:
-            self.__dict__.update(arg)
-        self.__dict__.update(kwargs)
+    def __init__(self, **kwargs):
+        self.update(kwargs)
 
     #----------------------------------------
 
@@ -267,11 +265,12 @@ class Config:
     def keys(self):
         return self.__dict__.keys()
 
-    def pop(self, *args):
-        return self.__dict__.pop(*args)
+    def pop(self, field):
+        return self.__dict__.pop(field)
 
-    def update(self, kwargs):
-        return self.__dict__.update(kwargs)
+    def update(self, mapping):
+        self.__dict__.update(mapping)
+        return self
 
     #----------------------------------------
 
@@ -281,14 +280,10 @@ class Config:
     def expand(self, variant):
         return expand_variant(self, variant)
 
-    def __call__(self, **kwargs):
-        if custom_call := self.__dict__.get("call", None):
-            return custom_call(**Config(self, **kwargs))
-        else:
-            return Task(self, **kwargs)
-
-    def extend(self, *args, **kwargs):
-        return Config(self, args, **kwargs)
+    def extend(self, **kwargs):
+        result = type(self)(**self)
+        result.update(kwargs)
+        return result
 
     def rel(self, path):
         return rel_path(path, self.expand(self.command_path))
@@ -298,8 +293,28 @@ class Config:
             p = p._out_files[0]
         return path.splitext(path.basename(p))[0]
 
+####################################################################################################
+
 class Command(Config):
-    pass
+    def __init__(self, func_or_config = None, **kwargs):
+        if callable(func_or_config):
+            super().__init__(call = func_or_config)
+        elif func_or_config:
+            super().__init__(**func_or_config)
+        else:
+            super().__init__()
+        self.update(kwargs)
+
+    def __call__(self, *args, **kwargs):
+        merged = Config(**self)
+        for arg in args:
+            merged.update(arg)
+        merged.update(kwargs)
+        if custom_call := self.__dict__.get("call", None):
+            merged.pop("call")
+            return custom_call(**merged)
+        else:
+            return Task(**merged)
 
 ####################################################################################################
 # All static methods and fields are available to use in any template string.
@@ -356,8 +371,8 @@ Config.is_test = False
 
 ####################################################################################################
 
-def load_file(file_name, as_repo, *args, **kwargs):
-    mod_config = Config(*args, **kwargs)
+def load_file(file_name, as_repo, **kwargs):
+    mod_config = Config(**kwargs)
 
     file_name = mod_config.expand(file_name)
     abs_file_path = join_path(Config.base_path, file_name)
@@ -369,11 +384,11 @@ def load_file(file_name, as_repo, *args, **kwargs):
 
     return app.load_module(repo_path, repo_name, file_path, file_name, mod_config)
 
-def load(file_name, *args, **kwargs):
-    return load_file(file_name, False, *args, **kwargs)
+def load(file_name, **kwargs):
+    return load_file(file_name, False, **kwargs)
 
-def repo(file_name, *args, **kwargs):
-    return load_file(file_name, True, *args, **kwargs)
+def repo(file_name, **kwargs):
+    return load_file(file_name, True, **kwargs)
 
 def reset():
     return app.reset()
@@ -653,13 +668,13 @@ class Task(Config):
 
     def __init__(self, *args, **kwargs):
 
-        path_config = Config(
-            repo_path = Config.repo_path,
-            repo_name = Config.repo_name,
-            base_path = Config.base_path,
-        )
-
-        super().__init__(default_task_config, path_config, *args, **kwargs)
+        self.repo_path = Config.repo_path
+        self.repo_name = Config.repo_name
+        self.base_path = Config.base_path
+        self.update(default_task_config)
+        for arg in args:
+            self.update(arg)
+        self.update(kwargs)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
@@ -1065,8 +1080,9 @@ class App:
 
     def main(self):
         result = -1
+        self.parse_args()
+
         try:
-            self.parse_args()
             self.pushdir(Config.root_path)
             self.load_hanchos()
 

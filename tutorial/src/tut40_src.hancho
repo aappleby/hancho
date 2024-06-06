@@ -6,6 +6,10 @@ import glob
 config = imports.config
 rules  = imports.rules
 
-bin = rules.c_binary(config, glob.glob("*.cpp"), "app")
+bin = rules.c_binary(
+  in_srcs = glob.glob("*.cpp"),
+  out_bin = "app",
+  **config
+)
 
 exports.bin = bin

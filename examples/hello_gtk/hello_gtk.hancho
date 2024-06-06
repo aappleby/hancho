@@ -5,7 +5,7 @@ rules = hancho.load("{repo_path}/rules.hancho")
 main_o = rules.compile_cpp(
   in_src = "main.c",
   cpp_flags = [
-    rules.compile_cpp.cpp_flags,
+    "-fdiagnostics-color=always",
     "-fpermissive",
     "{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}",
     "{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}",
@@ -13,10 +13,9 @@ main_o = rules.compile_cpp(
 )
 
 main = rules.link_cpp_bin(
+  name = "hello_gtk",
   in_objs = main_o,
-  out_bin = "hello_gtk",
   link_flags = [
-    rules.link_cpp_bin.link_flags,
     "{run_cmd('pkg-config gtk+-3.0 --libs')}"
   ],
 )

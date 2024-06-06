@@ -6,16 +6,16 @@ common = hancho.Config(
   out_path = "build/tut15",
 )
 
-compile = hancho.Config(
-  common,
+compile = hancho.Command(
+  **common,
   desc    = "Compile {rel(in_src)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
   out_obj = "{swap_ext(in_src, '.o')}",
   depfile = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Config(
-  common,
+link = hancho.Command(
+  **common,
   desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
   command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )

@@ -2,21 +2,20 @@
 
 import hancho
 
-compile = hancho.Config(
+compile = hancho.Command(
   desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
   out_obj = "{swap_ext(in_src, '.o')}",
   depfile = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Config(
+link = hancho.Command(
   desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
   command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
 def c_binary(*, in_srcs, out_bin, **kwargs):
-    config = hancho.Config(**kwargs)
-    objs = [compile(config, in_src = file) for file in in_srcs]
-    return link(config, in_objs = objs, out_bin = out_bin)
+    objs = [compile(in_src = file, **kwargs) for file in in_srcs]
+    return link(in_objs = objs, out_bin = out_bin, **kwargs)
 
-exports.c_binary = hancho.Config(call = c_binary)
+exports.c_binary = hancho.Command(c_binary)

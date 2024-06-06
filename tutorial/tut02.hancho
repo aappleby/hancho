@@ -8,27 +8,27 @@ common = hancho.Config(
 )
 
 main_o = hancho.Task(
-  common,
   desc    = "Compile main.cpp",
   command = "g++ -MMD -c src/main.cpp -o build/tut02/main.o",
   in_src  = "main.cpp",
   out_obj = "main.o",
   depfile = "main.d",
+  **common,
 )
 
 util_o = hancho.Task(
-  common,
   desc    = "Compile util.cpp",
   command = "g++ -MMD -c src/util.cpp -o build/tut02/util.o",
   in_src  = "util.cpp",
   out_obj = "util.o",
   depfile = "util.d",
+  **common,
 )
 
 app = hancho.Task(
-  common,
   desc    = "Link main.o and util.o into app",
   command = "g++ build/tut02/main.o build/tut02/util.o -o build/tut02/app",
   in_obj  = [main_o, util_o],
   out_bin = "app",
+  **common,
 )

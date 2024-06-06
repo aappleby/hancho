@@ -2,19 +2,19 @@
 
 import hancho
 
-compile = hancho.Config(
+compile = hancho.Command(
   desc    = "Compile {rel(in_src)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
   out_obj = "{swap_ext(in_src, '.o')}",
   depfile = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Config(
+link = hancho.Command(
   desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
   command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
 config = hancho.Config(repo_name = "tut16")
-main_o = compile(config, in_src = "src/main.cpp")
-util_o = compile(config, in_src = "src/util.cpp")
-app    = link(config, in_objs = [main_o, util_o], out_bin = "app")
+main_o = compile(**config, in_src = "src/main.cpp")
+util_o = compile(**config, in_src = "src/util.cpp")
+app    = link(**config, in_objs = [main_o, util_o], out_bin = "app")

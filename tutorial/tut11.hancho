@@ -8,33 +8,33 @@ common = hancho.Config(
 )
 
 compile = hancho.Config(
-  common,
   desc    = "Compile {in_src}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
+  **common,
 )
 
 main_o = hancho.Task(
-  compile,
+  **compile,
   in_src  = "src/main.cpp",
   out_obj = "src/main.o",
   depfile = "src/main.d",
 )
 
 util_o = hancho.Task(
-  compile,
+  **compile,
   in_src  = "src/util.cpp",
   out_obj = "src/util.o",
   depfile = "src/util.d",
 )
 
 link = hancho.Config(
-  common,
+  **common,
   desc    = "Link {in_objs} into {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
 )
 
 app = hancho.Task(
-  link,
+  **link,
   in_objs = [main_o, util_o],
   out_bin = "app",
 )
