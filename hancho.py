@@ -296,13 +296,15 @@ class Config:
 ####################################################################################################
 
 class Command(Config):
-    def __init__(self, func_or_config = None, **kwargs):
+    def __init__(self, func_or_config = None, *args, **kwargs):
         if callable(func_or_config):
             super().__init__(call = func_or_config)
         elif func_or_config:
             super().__init__(**func_or_config)
         else:
             super().__init__()
+        for arg in args:
+            self.update(arg)
         self.update(kwargs)
 
     def __call__(self, *args, **kwargs):
@@ -395,6 +397,9 @@ def reset():
 
 def build():
     return app.build()
+
+def build_all():
+    return app.build_all()
 
 def get_log():
     return app.log
@@ -838,12 +843,16 @@ class Task(Config):
         self._out_files = []
 
         def handle_in_path(key, val):
+            if val is None:
+                raise ValueError(f"Key {key} was None")
             if isinstance(val, str):
                 val = abs_path(join_path(self.in_path, val))
                 self._in_files.append(val)
             return val
 
         def handle_out_path(key, val):
+            if val is None:
+                raise ValueError(f"Key {key} was None")
             if isinstance(val, str):
                 val = abs_path(join_path(self.out_path, val))
                 self._out_files.append(val)
@@ -867,11 +876,15 @@ class Task(Config):
             raise FileNotFoundError(self.command_path)
 
         for file in self._in_files:
+            if file is None:
+                raise ValueErorr("_in_files contained a None")
             if not path.exists(file):
                 raise FileNotFoundError(file)
 
         # Check that all build files would end up under root_path
         for file in self._out_files:
+            if file is None:
+                raise ValueErorr("_out_files contained a None")
             if not file.startswith(Config.root_path):
                 raise ValueError(f"Path error, output file {file} is not under root_path {Config.root_path}")
 
@@ -1197,6 +1210,11 @@ class App:
             log(traceback.format_exc())
             log(color(), end="")
         return result
+
+    def build_all(self):
+        for task in self.all_tasks:
+            task.queue()
+        return self.build()
 
     ########################################
 

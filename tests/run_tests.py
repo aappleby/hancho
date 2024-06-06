@@ -122,17 +122,15 @@ class TestHancho(unittest.TestCase):
     def test_dummy(self):
         self.assertEqual(0, 0)
 
-#    def test_should_pass(self):
-#        """Sanity check"""
-#        hancho.Task(command = "(exit 0)")
-#        self.assertEqual(0, hancho.build())
+    def test_should_pass(self):
+        """Sanity check"""
+        hancho.Task(command = "(exit 0)")
+        self.assertEqual(0, hancho.build_all())
 
     def test_should_fail(self):
         """Sanity check"""
-        hancho.Task(command = "jhasdkj;lafskdjf", verbose = True)
-        result = hancho.build()
-        print(f"log '{hancho.get_log()}'")
-        #self.assertNotEqual(0, result)
+        hancho.Task(command = "echo skldjlksdlfj && (exit 255)", debug = True)
+        self.assertNotEqual(0, hancho.build_all())
 
 
     #def test_subrepos1(self):
@@ -187,28 +185,28 @@ class TestHancho(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
 
-#    def test_good_build_path(self):
-#        hancho.Task(
-#            command  = "touch {rel(out_obj)}",
-#            in_src   = "src/foo.c",
-#            out_path = "{base_path}/build/narp",
-#            out_obj  = "foo.o",
-#        )
-#        self.assertEqual(0, hancho.build())
-#        self.assertTrue(Path("build/narp/foo.o").exists())
-#        hancho.reset()
+    def test_good_build_path(self):
+        hancho.Task(
+            command  = "touch {rel(out_obj)}",
+            in_src   = "src/foo.c",
+            out_path = "{base_path}/build/narp",
+            out_obj  = "foo.o",
+        )
+        self.assertEqual(0, hancho.build_all())
+        self.assertTrue(Path("build/narp/foo.o").exists())
+        hancho.reset()
 
-#    def test_bad_build_path(self):
-#        hancho.Task(
-#            command  = "touch {rel(out_obj)}",
-#            in_src   = "src/foo.c",
-#            out_path = "{base_path}/../build",
-#            out_obj  = "foo.o",
-#        )
-#        self.assertNotEqual(0, hancho.build())
-#        self.assertFalse(Path("build/foo.o").exists())
-#        self.assertTrue("Path error" in hancho.get_log())
-#
+    def test_bad_build_path(self):
+        hancho.Task(
+            command  = "touch {rel(out_obj)}",
+            in_src   = "src/foo.c",
+            out_path = "{base_path}/../build",
+            out_obj  = "foo.o",
+        )
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertFalse(Path("build/foo.o").exists())
+        self.assertTrue("Path error" in hancho.get_log())
+
 #    def test_missing_command(self):
 #        """Rules with missing commands should fail"""
 #        hancho.Task(
