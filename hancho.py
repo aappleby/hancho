@@ -399,7 +399,8 @@ def build():
     return app.build()
 
 def build_all():
-    return app.build_all()
+    result = app.build_all()
+    return result
 
 def get_log():
     return app.log
@@ -411,10 +412,6 @@ def get_log():
 # etcetera. So, when we need to produce a flat list of files from whatever was passed to in_*, we
 # need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn that thing
 # into a flat list of files.
-#
-# We also need to ensure that if anything in this process throws an exception (or if an exception
-# was passed into a rule due to a previous rule failing) that we always propagate the exception up
-# to Task.task_main, where it will be handled and propagated to other Tasks.
 #
 # The result of this is that the functions here are mutually recursive in a way that can lead to
 # confusing callstacks, but that should handle every possible case of stuff inside other stuff.
@@ -462,24 +459,15 @@ def expand_template(config, template):
         log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
 
     result = ""
-    try:
-        app.expand_depth += 1
-        old_template = template
-        while span := template_regex.search(template):
-            result += template[0 : span.start()]
-            try:
-                macro   = template[span.start() : span.end()]
-                # This needs to be expand_variant so we keep expanding until we can't or we have
-                # nothing left ot expand.
-                variant = expand_variant(config, macro)
-                result += stringify_variant(config, variant)
-            except BaseException as err:
-                result += template[span.start() : span.end()]
-
-            template = template[span.end() :]
-        result += template
-    finally:
-        app.expand_depth -= 1
+    while span := template_regex.search(template):
+        result += template[0 : span.start()]
+        macro = template[span.start() : span.end()]
+        # This needs to be expand_variant so we keep expanding until we can't or we have
+        # nothing left ot expand.
+        variant = expand_variant(config, macro)
+        result += stringify_variant(config, variant)
+        template = template[span.end() :]
+    result += template
 
     if config.trace:
         log(("┃" * app.expand_depth) + f"┗ '{result}'")
@@ -488,14 +476,17 @@ def expand_template(config, template):
 #----------------------------------------
 
 def eval_macro(config, macro):
-    """Evaluates the contents of a "{macro}" string."""
+    """
+    Evaluates the contents of a "{macro}" string.
+    If eval throws an exception, the macro is returned unchanged.
+    If eval_macro recurses more than MAX_EXPAND_DEPTH times, it throws a RecursionError.
+    """
 
     if app.expand_depth > MAX_EXPAND_DEPTH:
         raise RecursionError(f"Expanding '{macro}' failed to terminate")
     if config.trace:
         log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
 
-    app.expand_depth += 1
     result = ""
 
     # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
@@ -503,14 +494,16 @@ def eval_macro(config, macro):
     if not isinstance(config, Expander):
         config = Expander(config)
 
-    result = macro
     try:
         # pylint: disable=eval-used
+        app.expand_depth += 1
         result = eval(macro[1:-1], {}, config)
-    except:
-        pass
-
-    app.expand_depth -= 1
+    except BaseException as err:
+        if isinstance(err, RecursionError):
+            raise
+        result = macro
+    finally:
+        app.expand_depth -= 1
 
     if config.trace:
         log(("┃" * app.expand_depth) + f"┗ {result}")
@@ -1195,11 +1188,10 @@ class App:
     def build(self):
         """Run tasks until we're done with all of them."""
         result = -1
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             result = asyncio.run(self.async_run_tasks())
-
             # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
             # in Github, so I'm using get_event_loop().run_until_complete().
             # Seems to fix the issue.
@@ -1209,6 +1201,7 @@ class App:
             log("Build failed:")
             log(traceback.format_exc())
             log(color(), end="")
+        loop.close()
         return result
 
     def build_all(self):
@@ -1399,3 +1392,21 @@ if __name__ == "__main__":
 #)
 #
 #print(foo.expand("zzz {a} zzz"))
+
+
+#blah = Config(
+#    command = "{flarp}",
+#    in_src  = [],
+#    out_obj = [],
+#    flarp   = "asdf {flarp}",
+#)
+#
+#print(len(blah.expand("{command}")))
+#print(app.expand_depth)
+
+
+
+#bar = Config(a = "{clonk}", b = "flab")
+#foo = Config(bar = bar, b = "{bar.a}", clonk = "{bar.b}")
+#
+#print(foo.expand("{b}"))
