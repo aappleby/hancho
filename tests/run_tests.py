@@ -452,6 +452,7 @@ class TestHancho(unittest.TestCase):
                 in_src  = [],
                 out_obj = "dummy.txt"
             )
+            # FIXME these should auto-queue
             new_task.queue()
             return []
 
