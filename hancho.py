@@ -857,6 +857,9 @@ class Task(Config):
             if key.startswith("out_") and key != "out_path":
                 self.__dict__[key] = visit_variant(key, val, handle_out_path)
 
+        if "depfile" in self.__dict__:
+            self.depfile = join_path(self.out_path, self.depfile)
+
         # And now we can expand the command.
         self.desc = self.expand(self.desc)
         self.command = self.expand(self.command)
@@ -931,7 +934,7 @@ class Task(Config):
         depfile   = getattr(self, "depfile", None)
         depformat = getattr(self, "depformat", "gcc")
 
-        if depfile is not None and path.exists(self.depfile):
+        if depfile is not None and path.exists(depfile):
             #if self.debug:
             if True:
                 log(f"Found depfile {depfile}")
@@ -1005,7 +1008,7 @@ class Task(Config):
             result.write(self.stdout)
             result.close()
 
-        if not command_pass:
+        if Config.verbose or not command_pass or self.stderr:
             self.print_status()
             if self.stderr:
                 log("-----stderr-----")

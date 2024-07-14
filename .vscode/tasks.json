@@ -6,8 +6,7 @@
     {
       "label": "Test build",
       "type": "shell",
-      "command": "rm -rf bin obj && ./build.py --verbose --debug && bin/main",
-      //"command": "./hancho.py -v",
+      "command": "./hancho.py -v",
       "problemMatcher": [],
       "group": {
         "kind": "build",

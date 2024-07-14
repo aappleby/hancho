@@ -13,7 +13,17 @@
       "args": ["-f", "-j1", "tut00.hancho"],
       "console": "integratedTerminal",
       "justMyCode": false,
-      //"preLaunchTask": "Wipe build",
+      "preLaunchTask": "Wipe build",
+    },
+    {
+      "name": "Hancho Test Suite",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "run_tests.py",
+      "cwd": "${workspaceFolder}/tests",
+      "args": ["TestHancho.test_header_changed"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
     },
   ]
 }

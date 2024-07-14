@@ -326,30 +326,28 @@ class TestHancho(unittest.TestCase):
         self.assertEqual(0, hancho.build_all())
         self.assertFalse(path.exists("build/result.txt"))
 
-# failing?
+    def test_header_changed(self):
+        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
 
-#    def test_header_changed(self):
-#        """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
-#
-#        def run():
-#            hancho.reset()
-#            time.sleep(0.01)
-#            compile = hancho.Command(
-#                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-#                out_obj = "{swap_ext(in_src, '.o')}",
-#                depfile = "{swap_ext(in_src, '.d')}",
-#            )
-#            compile(in_src = "src/test.cpp")
-#            self.assertEqual(0, hancho.build_all())
-#            return mtime_ns("build/src/test.o")
-#
-#        mtime1 = run()
-#        mtime2 = run()
-#        force_touch("src/test.hpp")
-#        mtime3 = run()
-#
-#        self.assertEqual(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
+        def run():
+            hancho.reset()
+            time.sleep(0.01)
+            compile = hancho.Command(
+                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                out_obj = "{swap_ext(in_src, '.o')}",
+                depfile = "{swap_ext(in_src, '.d')}",
+            )
+            compile(in_src = "src/test.cpp")
+            self.assertEqual(0, hancho.build_all())
+            return mtime_ns("build/src/test.o")
+
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("src/test.hpp")
+        mtime3 = run()
+
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
 
     def test_input_changed(self):
         """Changing a source file should trigger a rebuild"""
