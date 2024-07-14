@@ -935,8 +935,7 @@ class Task(Config):
         depformat = getattr(self, "depformat", "gcc")
 
         if depfile is not None and path.exists(depfile):
-            #if self.debug:
-            if True:
+            if self.debug:
                 log(f"Found depfile {depfile}")
             with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
