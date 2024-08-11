@@ -1,4 +1,5 @@
 import hancho
+import os
 
 ####################################################################################################
 # Utils
@@ -22,7 +23,7 @@ if os.name == 'nt':
     depformat   = "msvc",
   )
 elif os.name == 'posix':
-  exports.compile_cpp = hancho.command(
+  exports.compile_cpp = hancho.Command(
     command     = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
@@ -30,9 +31,6 @@ elif os.name == 'posix':
   )
 else:
   assert False
-
-"""
-
 """
 
 def link_c_bin(in_objs, out_bin, *args, **kwargs):
@@ -47,23 +45,21 @@ def link_c_bin(in_objs, out_bin, *args, **kwargs):
 
 #-------------------------------------------------------------------------------
 
-def compile_srcs(*args, in_srcs, **kwargs):
-  config  = hancho.Config(*args, **kwargs)
-  command = hancho.Command(
-    desc     = "Compiling {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
-    command  = "g++ {cpp_std} {gcc_opt} {warnings} {includes} {defines} -c {rel(in_src)} -o {rel(out_obj)}",
-    cpp_std  = "-std=c++20",
-    gcc_opt  = "{'-O3' if build_tag == 'release' else '-g -O0'} -MMD",
-    warnings = "-Wall -Werror -Wno-unused-variable -Wno-unused-local-typedefs -Wno-unused-but-set-variable",
-    includes = "-I{repo_path}",
-    defines  = "",
-    out_obj  = "{swap_ext(in_src, '.o')}",
-    depfile  = "{swap_ext(in_src, '.d')}",
-    **kwargs,
-  )
-  return [command(config, in_src = file, **kwargs) for file in hancho.flatten(in_srcs)]
-
-"""
+#def compile_srcs(*args, in_srcs, **kwargs):
+#  config  = hancho.Config(*args, **kwargs)
+#  command = hancho.Command(
+#    desc     = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+#    command  = "g++ {cpp_std} {gcc_opt} {warnings} {includes} {defines} -c {rel(in_src)} -o {rel(out_obj)}",
+#    cpp_std  = "-std=c++20",
+#    gcc_opt  = "{'-O3' if build_tag == 'release' else '-g -O0'} -MMD",
+#    warnings = "-Wall -Werror -Wno-unused-variable -Wno-unused-local-typedefs -Wno-unused-but-set-variable",
+#    includes = "-I{repo_path}",
+#    defines  = "",
+#    out_obj  = "{swap_ext(in_src, '.o')}",
+#    depfile  = "{swap_ext(in_src, '.d')}",
+#    **kwargs,
+#  )
+#  return [command(config, in_src = file, **kwargs) for file in hancho.flatten(in_srcs)]
 
 cpp_config = hancho.Config(
   toolchain  = "x86_64-linux-gnu",
@@ -107,7 +103,7 @@ exports.link_cpp_lib = hancho.Command(
   desc    = "Bundling C++ lib {rel(out_lib)}",
   command = "ar rcs {rel(out_lib)} {rel(in_objs)}",
   in_objs = None,
-  out_lib = "{name}",
+  out_lib = "{name}.a",
 )
 
 #----------------------------------------
@@ -132,12 +128,11 @@ exports.link_cpp_bin = hancho.Command(
 
 #----------------------------------------
 
-def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], out_bin = "{name}", **kwargs):
-  objs = [compile_cpp(in_src = file, **kwargs) for file in hancho.flatten(in_srcs)]
-  return link_cpp_bin(
+def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], **kwargs):
+  objs = [exports.compile_cpp(in_src = file, **kwargs) for file in hancho.flatten(in_srcs)]
+  return exports.link_cpp_bin(
     name = name,
     in_objs = [objs, in_objs, in_libs],
-    out_bin = out_bin,
     **kwargs,
   )
 
@@ -145,12 +140,11 @@ exports.cpp_bin = hancho.Command(cpp_bin)
 
 #----------------------------------------
 
-def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], out_lib = "{name}", **kwargs):
-  objs = [compile_cpp(in_src = file, **kwargs) for file in hancho.flatten(in_srcs)]
-  return link_cpp_lib(
+def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], **kwargs):
+  objs = [exports.compile_cpp(in_src = file, **kwargs) for file in hancho.flatten(in_srcs)]
+  return exports.link_cpp_lib(
     name = name,
     in_objs = [objs, in_objs, in_libs],
-    out_lib = out_lib,
     **kwargs,
   )
 
@@ -188,23 +182,23 @@ exports.make = hancho.Command(
 # Tests
 
 run_test = hancho.Command(
-  desc    = "Running test {rel(in_test)}",
-  command = "{in_test} {args}",
-  in_test = None,
-  out_log = "{in_test}.test",
-  args    = "",
-  is_test = True,
+  desc     = "Running test {rel(in_test)}",
+  command  = "{in_test} {args} && touch {out_pass}",
+  in_test  = None,
+  args     = "",
+  out_pass = "{in_test}.pass",
+  save_log = True,
+  out_log  = "{in_test}.log",
 )
 
-def c_test(*, name, in_srcs = [], in_objs = [], in_libs = [], out_bin = "{name}", **kwargs):
-  objs = [compile_cpp(in_src = src, **kwargs) for src in hancho.flatten(in_srcs)]
-  bin = link_cpp_bin(
+def c_test(*, name, in_srcs = [], in_objs = [], in_libs = [], **kwargs):
+  objs = [exports.compile_cpp(kwargs, in_src = src) for src in hancho.flatten(in_srcs)]
+  bin = exports.link_cpp_bin(
+    kwargs,
     name = name,
     in_objs = [objs, in_objs, in_libs],
-    out_bin = out_bin,
-    **kwargs
   )
-  return run_test(in_test = bin)
+  return run_test(kwargs, in_test = bin)
 
 exports.c_test = hancho.Command(c_test)
 

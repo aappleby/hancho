@@ -253,7 +253,9 @@ class Sentinel:
 class Config:
     """A Config object is just a 'bag of fields'."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, *args, **kwargs):
+        for arg in args:
+            self.update(arg)
         self.update(kwargs)
 
     #----------------------------------------
@@ -366,15 +368,16 @@ Config.force     = False
 Config.shuffle   = False
 Config.trace     = False
 Config.use_color = True
+
 Config.should_fail = False
-Config.is_test = False
+Config.save_log    = False
 
 # fmt: on
 
 ####################################################################################################
 
-def load_file(file_name, as_repo, **kwargs):
-    mod_config = Config(**kwargs)
+def load_file(file_name, as_repo, args, kwargs):
+    mod_config = Config(*args, **kwargs)
 
     file_name = mod_config.expand(file_name)
     abs_file_path = join_path(Config.base_path, file_name)
@@ -386,11 +389,11 @@ def load_file(file_name, as_repo, **kwargs):
 
     return app.load_module(repo_path, repo_name, file_path, file_name, mod_config)
 
-def load(file_name, **kwargs):
-    return load_file(file_name, False, **kwargs)
+def load(file_name, *args, **kwargs):
+    return load_file(file_name, as_repo=False, args=args, kwargs=kwargs)
 
-def repo(file_name, **kwargs):
-    return load_file(file_name, True, **kwargs)
+def repo(file_name, *args, **kwargs):
+    return load_file(file_name, as_repo=True, args=args, kwargs=kwargs)
 
 def reset():
     return app.reset()
@@ -999,7 +1002,7 @@ class Task(Config):
 
         command_pass = (self.returncode == 0) != self.should_fail
 
-        if self.is_test:
+        if self.save_log:
             result = open(self.out_log, "w")
             result.write("-----stderr-----\n")
             result.write(self.stderr)
@@ -1007,9 +1010,9 @@ class Task(Config):
             result.write(self.stdout)
             result.close()
 
-        if Config.verbose or not command_pass or self.stderr:
+        if self.verbose or not command_pass or self.stderr:
             self.print_status()
-            if self.stderr:
+            if self.stderr and not self.should_fail:
                 log("-----stderr-----")
                 log(self.stderr, end="")
             if self.stdout:
