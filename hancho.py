@@ -28,6 +28,11 @@ from enum import IntEnum
 # to load a second copy of Hancho.
 sys.modules["hancho"] = sys.modules[__name__]
 
+#---------------------------------------------------------------------------------------------------
+# Logging stuff
+
+first_line_block = True
+
 def log_line(message):
     app.log += message
     if not Config.quiet:
@@ -61,7 +66,6 @@ def log(message, *, sameline=False, **kwargs):
 
     app.line_dirty = sameline
 
-first_line_block = True
 def line_block(lines):
     count = len(lines)
     global first_line_block
@@ -78,15 +82,17 @@ def line_block(lines):
         print("\x1b[K", end="")
         sys.stdout.flush()
 
-def flatten(variant):
-    if isinstance(variant, list):
-        return [x for element in variant for x in flatten(element)]
-    return [variant]
+#---------------------------------------------------------------------------------------------------
+# Path manipulation
 
+def unwrap_path(variant):
+    if isinstance(variant, (Task, Expander)):
+        variant = variant._out_files
+    return variant
 
 def abs_path(raw_path, strict=False):
-    if isinstance(raw_path, Task):
-        raw_path = raw_path._out_files
+    raw_path = unwrap_path(raw_path)
+
     if isinstance(raw_path, list):
         return [abs_path(p, strict) for p in raw_path]
 
@@ -95,10 +101,9 @@ def abs_path(raw_path, strict=False):
         raise FileNotFoundError(raw_path)
     return result
 
-
 def rel_path(path1, path2):
-    if isinstance(path1, Task):
-        path1 = path1._out_files
+    path1 = unwrap_path(path1)
+    path2 = unwrap_path(path2)
 
     if isinstance(path1, list):
         return [rel_path(p, path2) for p in path1]
@@ -110,12 +115,13 @@ def rel_path(path1, path2):
     # path, which we can do with simple string manipulation.
     return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
+def join_path(path1, path2, *args):
+    result = join_path2(path1, path2, *args)
+    return flatten(result) if isinstance(result, list) else result
 
 def join_path2(path1, path2, *args):
-    if isinstance(path1, Task):
-        path1 = path1._out_files
-    if isinstance(path2, Task):
-        path2 = path2._out_files
+    path1 = unwrap_path(path1)
+    path2 = unwrap_path(path2)
 
     if len(args):
         return [join_path(path1, p) for p in join_path(path2, *args)]
@@ -128,9 +134,13 @@ def join_path2(path1, path2, *args):
         raise ValueError(f"Cannot join '{path1}' with '{type(path2)}' == '{path2}'")
     return path.join(path1, path2)
 
-def join_path(path1, path2, *args):
-    result = join_path2(path1, path2, *args)
-    return flatten(result) if isinstance(result, list) else result
+#---------------------------------------------------------------------------------------------------
+# Helper methods
+
+def flatten(variant):
+    if isinstance(variant, list):
+        return [x for element in variant for x in flatten(element)]
+    return [variant]
 
 def join_prefix(prefix, strings):
     return [prefix+str(s) for s in flatten(strings)]
@@ -147,11 +157,9 @@ def color(red=None, green=None, blue=None):
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
 
-
 def run_cmd(cmd):
     """Runs a console command synchronously and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
-
 
 def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
@@ -161,12 +169,10 @@ def swap_ext(name, new_ext):
         return [swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
 
-
 def mtime(filename):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
     return os.stat(filename).st_mtime_ns
-
 
 def maybe_as_number(text):
     """Tries to convert a string to an int, then a float, then gives up. Used for ingesting
@@ -178,7 +184,6 @@ def maybe_as_number(text):
             return float(text)
         except ValueError:
             return text
-
 
 ####################################################################################################
 
@@ -245,23 +250,22 @@ class Dumper:
 
 ####################################################################################################
 
-class Sentinel:
-    pass
-
-####################################################################################################
-
 class Config:
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
-        for arg in args:
-            self.update(arg)
-        self.update(kwargs)
+        self.merge(args, kwargs)
 
     #----------------------------------------
 
+    def items(self):
+        return self.__dict__.items()
+
     def __getitem__(self, key):
         return self.__dict__[key]
+
+    def __setitem__(self, key, val):
+        self.__dict__[key] = val
 
     # required to use Config as a mapping
     def keys(self):
@@ -270,8 +274,14 @@ class Config:
     def pop(self, field):
         return self.__dict__.pop(field)
 
-    def update(self, mapping):
-        self.__dict__.update(mapping)
+    def merge(self, *args, **kwargs):
+        for arg in args:
+            if isinstance(arg, (tuple, list)):
+                for item in arg:
+                    self.merge(item)
+            elif arg is not None:
+                self.__dict__.update(arg)
+        self.__dict__.update(kwargs)
         return self
 
     #----------------------------------------
@@ -280,15 +290,15 @@ class Config:
         return Dumper(1).dump(self)
 
     def expand(self, variant):
-        return expand_variant(self, variant)
+        return expand_variant(Expander(self), variant)
 
-    def extend(self, **kwargs):
-        result = type(self)(**self)
-        result.update(kwargs)
+    def extend(self, *args, **kwargs):
+        result = type(self)(self)
+        result.merge(args, kwargs)
         return result
 
     def rel(self, path):
-        return rel_path(path, self.expand(self.command_path))
+        return rel_path(path, expand_variant(self, self.command_path))
 
     def stem(self, p):
         if isinstance(p, Task):
@@ -300,28 +310,20 @@ class Config:
 class Command(Config):
     def __init__(self, func_or_config = None, *args, **kwargs):
         if callable(func_or_config):
-            super().__init__(call = func_or_config)
-        elif func_or_config:
-            super().__init__(**func_or_config)
+            super().__init__(args, kwargs, call = func_or_config)
         else:
-            super().__init__()
-        for arg in args:
-            self.update(arg)
-        self.update(kwargs)
+            super().__init__(func_or_config, args, kwargs)
 
     def __call__(self, *args, **kwargs):
-        merged = Config(**self)
-        for arg in args:
-            merged.update(arg)
-        merged.update(kwargs)
+        merged = Config(self, args, kwargs)
         if custom_call := self.__dict__.get("call", None):
             merged.pop("call")
             return custom_call(**merged)
         else:
-            return Task(**merged)
+            return Task(merged)
 
 ####################################################################################################
-# All static methods and fields are available to use in any template string.
+# All static methods and fields are available to use in any macro.
 
 # fmt: off
 
@@ -408,37 +410,129 @@ def build_all():
 def get_log():
     return app.log
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ####################################################################################################
-# The template expansion / macro evaluation code requires some explanation.
+# Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
+# power.
 #
-# We do not necessarily know in advance how the users will nest strings, templates, callbacks,
-# etcetera. So, when we need to produce a flat list of files from whatever was passed to in_*, we
-# need to do a bunch of dynamic-dispatch-type stuff to ensure that we can always turn that thing
-# into a flat list of files.
+# The code here requires some explanation.
+#
+# We do not necessarily know in advance how the users will nest strings, macros, callbacks,
+# etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we always
+# end up with flat strings.
 #
 # The result of this is that the functions here are mutually recursive in a way that can lead to
 # confusing callstacks, but that should handle every possible case of stuff inside other stuff.
 #
 # The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
+#
+# Also - TEFINAE - Text Expansion Failure Is Not An Error. Config objects can contain macros that
+# are not expandable inside the config. This allows config objects nested inside other configs to
+# contain templates that can only be expanded in the context of the outer config, and things will
+# still Just Work.
 
 # The maximum number of recursion levels we will do to expand a macro.
 # Tests currently require MAX_EXPAND_DEPTH >= 6
 MAX_EXPAND_DEPTH = 20
 
-# Matches "{expression}" macros
-macro_regex = re.compile("^{[^}]*}$")
+# Matches macros inside a string.
+macro_regex = re.compile("{[^{}]*}")
 
-# Matches macros inside a template string.
-template_regex = re.compile("{[^}]*}")
+#----------------------------------------
+# Helper methods
+
+def trace_prefix(expander):
+    """ Prints the left-side trellis of the expansion traces. """
+    assert isinstance(expander, Expander)
+    return hex(id(expander.config)) + ": " + ("┃ " * app.expand_depth)
+
+def trace_variant(variant):
+    """ Prints the right-side values of the expansion traces. """
+    if callable(variant):
+        return f"Callable @ {hex(id(variant))}"
+    elif isinstance(variant, Config):
+        return f"Config @ {hex(id(variant))}'"
+    elif isinstance(variant, Expander):
+        return f"Expander @ {hex(id(variant.config))}'"
+    else:
+        return f"'{variant}'"
+
+def expand_inc():
+    """ Increments the current expansion recursion depth. """
+    app.expand_depth += 1
+    if app.expand_depth > MAX_EXPAND_DEPTH:
+        raise RecursionError(f"Text expansion failed to terminate")
+
+def expand_dec():
+    """ Decrements the current expansion recursion depth. """
+    app.expand_depth -= 1
+    if app.expand_depth < 0:
+        raise RecursionError(f"Text expand_inc/dec unbalanced")
+
+def stringify_variant(variant):
+    """ Converts any type into an expansion-compatible string. """
+    match variant:
+        case Task():
+            return stringify_variant(variant._out_files)
+        case list():
+            variant = [stringify_variant(val) for val in variant]
+            return " ".join(variant)
+        case _:
+            return str(variant)
 
 #----------------------------------------
 
 class Expander:
-    """JIT template expansion for use in eval()."""
+    """ Wraps a Config object and expands all fields read from it. """
 
     def __init__(self, config):
         self.config = config
+        # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         self.trace = config.trace
 
     def __getitem__(self, key):
@@ -448,110 +542,176 @@ class Expander:
         return self.get(key)
 
     def get(self, key):
-        val = getattr(self.config, key)
+        try:
+            val = getattr(self.config, key)
+        except Exception as err:
+            if self.trace:
+                log(trace_prefix(self) + f"Read '{key}' failed")
+            raise err
+
         if self.trace:
-            log(("┃" * app.expand_depth) + f" Read '{key}' = '{val}'")
-        return expand_variant(self.config, val)
+            log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
+        val = expand_variant(self, val)
+        return val
 
 #----------------------------------------
 
-def expand_template(config, template):
-    """Replaces all macros in template with their stringified values."""
+def expand_text(expander, text):
+    """ Replaces all macros in 'text' with their expanded, stringified values. """
 
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┏ Expand '{template}'")
+    if not macro_regex.search(text):
+        return text
 
+    if expander.trace:
+        log(trace_prefix(expander) + f"┏ expand_text '{text}'")
+    expand_inc()
+
+    #==========
+
+    temp = text
     result = ""
-    while span := template_regex.search(template):
-        result += template[0 : span.start()]
-        macro = template[span.start() : span.end()]
-        # This needs to be expand_variant so we keep expanding until we can't or we have
-        # nothing left ot expand.
-        variant = expand_variant(config, macro)
-        result += stringify_variant(config, variant)
-        template = template[span.end() :]
-    result += template
+    while span := macro_regex.search(temp):
+        result += temp[0 : span.start()]
+        macro = temp[span.start() : span.end()]
+        variant = expand_macro(expander, macro)
+        result += stringify_variant(variant)
+        temp = temp[span.end() :]
+    result += temp
 
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┗ '{result}'")
+    #==========
+
+    expand_dec()
+    if expander.trace:
+        log(trace_prefix(expander) + f"┗ expand_text '{text}' = '{result}'")
+
+    # If expansion changed the text, try to expand it again.
+    if result != text:
+        result = expand_text(expander, result)
+
     return result
 
 #----------------------------------------
 
-def eval_macro(config, macro):
-    """
-    Evaluates the contents of a "{macro}" string.
-    If eval throws an exception, the macro is returned unchanged.
-    If eval_macro recurses more than MAX_EXPAND_DEPTH times, it throws a RecursionError.
-    """
+def expand_macro(expander, macro):
+    """ Evaluates the contents of a "{macro}" string. If eval throws an exception, the macro is
+    returned unchanged. """
 
-    if app.expand_depth > MAX_EXPAND_DEPTH:
-        raise RecursionError(f"Expanding '{macro}' failed to terminate")
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┏ Eval '{macro}'")
+    assert isinstance(expander, Expander)
 
-    result = ""
+    if expander.trace:
+        log(trace_prefix(expander) + f"┏ expand_macro '{macro}'")
+    expand_inc()
 
-    # We must pass the JIT expanded config to eval() otherwise we'll try and join unexpanded
-    # paths and stuff, which will break.
-    if not isinstance(config, Expander):
-        config = Expander(config)
+    #==========
+
+    result = macro
+    failed = False
 
     try:
-        # pylint: disable=eval-used
-        app.expand_depth += 1
-        result = eval(macro[1:-1], {}, config)
-    except BaseException as err:
-        if isinstance(err, RecursionError):
-            raise
-        result = macro
-    finally:
-        app.expand_depth -= 1
+        result = eval(macro[1:-1], {}, expander) # pylint: disable=eval-used
+    except Exception as err:
+        failed = True
 
-    if config.trace:
-        log(("┃" * app.expand_depth) + f"┗ {result}")
+    #==========
+
+    expand_dec()
+    if expander.trace:
+        if failed:
+            log(trace_prefix(expander) + f"┗ expand_macro '{macro}' failed")
+        else:
+            log(trace_prefix(expander) + f"┗ expand_macro '{macro}' = {result}")
     return result
 
 #----------------------------------------
 
-def stringify_variant(config, variant):
-    match variant:
-        case Task():
-            return stringify_variant(config, variant._out_files)
-        case list():
-            variant = [stringify_variant(config, val) for val in variant]
-            return " ".join(variant)
-        case int() | float() | str():
-            return str(variant)
-    raise ValueError(f"Don't know how to stringify a {type(variant)} = {str(variant)}")
+def expand_variant(expander, variant):
+    """ Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
+    expand someone else's data. """
 
-#----------------------------------------
+    # This level of tracing is too spammy to be useful.
+    #if expander.trace:
+    #   log(trace_config(expander) + f"┏ expand_variant {trace_variant(variant)}")
+    #expand_inc()
 
-def expand_variant(config, variant):
-    """Expands all templates anywhere inside 'variant', making deep copies where needed so we don't
-    expand someone else's data."""
+    #==========
+
     match variant:
-        case str() if macro_regex.search(variant):
-            new_variant = eval_macro(config, variant)
-            if variant != new_variant:
-                new_variant = expand_variant(config, new_variant)
-            return new_variant
-        case str() if template_regex.search(variant):
-            return expand_template(config, variant)
+        case str():
+            result = expand_text(expander, variant)
         case list():
-            return [config.expand(val) for val in variant]
+            result = [expand_variant(expander, val) for val in variant]
         case dict():
-            result = {}
-            for key, val in variant.items():
-                result[key] = config.expand(val)
-            return result
-        # Maybe FIXME - we have to catch these cases because Expander tries to expand _everything_
-        case str() | int() | float() | types.FunctionType() | types.NoneType() | asyncio.Task() | types.MethodType() | types.ModuleType() | Task():
-        #case str() | int() | float() | Task():
-            return variant
+            result = {expand_variant(expander, key): expand_variant(expander, val) for key, val in variant.items()}
         case Config():
-            return variant
-    raise ValueError(f"Don't know how to expand a {type(variant)} = {str(variant)}")
+            result = Expander(variant)
+        case _:
+            result = variant
+
+    #==========
+
+    #expand_dec()
+    #if expander.trace:
+    #    log(trace_config(expander) + f"┗ expand_variant {trace_variant(variant)} = {trace_variant(result)}")
+
+    return result
+
+####################################################################################################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ####################################################################################################
 
@@ -579,7 +739,7 @@ async def await_variant(variant):
         variant = await variant
 
     match variant:
-        case BaseException():
+        case Exception():
             raise variant
         case Promise():
             variant = await variant.get()
@@ -598,7 +758,7 @@ async def await_variant(variant):
 
 def visit_variant(key, val, visitor):
     match val:
-        case BaseException():
+        case Exception():
             raise val
         case Task():
             for key2, val2 in enumerate(val._out_files):
@@ -612,26 +772,6 @@ def visit_variant(key, val, visitor):
         case _:
             val = visitor(key, val)
     return val
-
-
-def visit_variant2(key, val, visitor):
-    val = visitor(key, val)
-    match val:
-        case Task():
-            for key2, val2 in enumerate(val._out_files):
-                visit_variant2(key2, val2, visitor)
-        case Config() | dict():
-            for key2, val2 in val.items():
-                visit_variant2(key2, val2, visitor)
-        case list():
-            for key2, val2 in enumerate(val):
-                visit_variant2(key2, val2, visitor)
-
-def check_for_sentinel(val):
-    def visitor(key, val):
-        if isinstance(val, Sentinel):
-            raise ValueError(f"Key {key} has val = Sentinel")
-    visit_variant2(None, val, visitor)
 
 ####################################################################################################
 
@@ -664,18 +804,14 @@ class TaskState(IntEnum):
 
 
 class Task(Config):
-    """Calling a Rule creates a Task."""
-
+    """Calling a Command creates a Task."""
 
     def __init__(self, *args, **kwargs):
 
         self.repo_path = Config.repo_path
         self.repo_name = Config.repo_name
         self.base_path = Config.base_path
-        self.update(default_task_config)
-        for arg in args:
-            self.update(arg)
-        self.update(kwargs)
+        self.merge(default_task_config, args, kwargs)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
@@ -803,7 +939,7 @@ class Task(Config):
             return cancel
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
-        except BaseException as err:
+        except Exception as err:
             log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
             app.tasks_fail += 1
             return asyncio.CancelledError()
@@ -1142,7 +1278,7 @@ class App:
         parser.add_argument("-d", "--debug",   default=False, action="store_true",          help="Print debugging information")
         parser.add_argument(      "--force",   default=False, action="store_true",          help="Force rebuild of everything")
         parser.add_argument("-s", "--shuffle", default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
-        parser.add_argument("-t", "--trace",   default=False, action="store_true",          help="Trace template & macro expansion")
+        parser.add_argument("-t", "--trace",   default=False, action="store_true",          help="Trace all text expansion")
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args()
@@ -1201,7 +1337,7 @@ class App:
             # in Github, so I'm using get_event_loop().run_until_complete().
             # Seems to fix the issue.
             #result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
-        except BaseException as err:
+        except Exception as err:
             log(color(255, 128, 128), end = "")
             log("Build failed:")
             log(traceback.format_exc())
@@ -1280,10 +1416,10 @@ class App:
     def load_module(self, repo_path, repo_name, file_path, file_name, config):
         """Loads a Hancho module ***while chdir'd into its directory***"""
 
-        assert not template_regex.search(repo_path)
-        assert not template_regex.search(repo_name)
-        assert not template_regex.search(file_path)
-        assert not template_regex.search(file_name)
+        assert not macro_regex.search(repo_path)
+        assert not macro_regex.search(repo_name)
+        assert not macro_regex.search(file_path)
+        assert not macro_regex.search(file_name)
 
         assert path.isabs(repo_path)
         assert not path.isabs(repo_name)
