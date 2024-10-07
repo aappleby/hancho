@@ -55,31 +55,61 @@ options:
 ## Simple Example
 
 examples/hello_world/build.hancho
+```python
+import hancho
 
-https://github.com/aappleby/hancho/blob/bff89ebdc69af000d3586c130cee744fabdc523c/examples/hello_world/build.hancho#L1-L24
+compile_cpp = hancho.Command(
+  desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)}",
+  command = "g++ -c {rel(in_src)} -o {rel(out_obj)}",
+  in_src  = None,
+  out_obj = "{swap_ext(in_src, '.o')}",
+  depfile = "{swap_ext(in_src, '.d')}",
+)
+
+link_cpp_bin = hancho.Command(
+  desc    = "Linking C++ bin {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+  in_objs = None,
+  out_bin = None,
+)
+
+main_o = compile_cpp(in_src = "main.cpp")
+util_o = compile_cpp(in_src = "util.cpp")
+
+main_app = link_cpp_bin(
+  in_objs = [main_o, util_o],
+  out_bin = "hello_world",
+)
+```
 
 examples/hello_world/main.cpp
+```cpp
+// examples/hello_world/main.cpp
+#include <stdio.h>
 
-https://github.com/aappleby/hancho/blob/bff89ebdc69af000d3586c130cee744fabdc523c/examples/hello_world/main.cpp#L1-L9
+int blah();
+
+int main(int argc, char** argv) {
+  printf("Hello World %d\n", blah());
+  return 0;
+}
+```
 
 ```sh
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
 Loading module /home/user/hancho/examples/hello_world/build.hancho
 Loading .hancho files took 0.000 seconds
-[1/3] Compiling C++ main.cpp -> build/hello_world/main.o ()
+[1/3] Compiling C++ main.cpp -> build/hello_world/main.o
 Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/main.o is missing
 .$ g++ -c main.cpp -o build/hello_world/main.o
-[2/3] Compiling C++ util.cpp -> build/hello_world/util.o ()
+[2/3] Compiling C++ util.cpp -> build/hello_world/util.o
 Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/util.o is missing
 .$ g++ -c util.cpp -o build/hello_world/util.o
-[2/3] Compiling C++ util.cpp -> build/hello_world/util.o ()
-[2/3] Compiling C++ main.cpp -> build/hello_world/main.o ()
 [3/3] Linking C++ bin build/hello_world/hello_world
 Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/hello_world is missing
 .$ g++ build/hello_world/main.o build/hello_world/util.o -o build/hello_world/hello_world
-[3/3] Linking C++ bin build/hello_world/hello_world
 
-Running 3 tasks took 0.043 seconds
+Running 3 tasks took 0.044 seconds
 tasks total:     3
 tasks passed:    3
 tasks failed:    0

@@ -1150,11 +1150,12 @@ class Task(Config):
             result.close()
 
         if self.verbose or not command_pass or self.stderr:
-            self.print_status()
             if self.stderr and not self.should_fail:
+                self.print_status()
                 log("-----stderr-----")
                 log(self.stderr, end="")
             if self.stdout:
+                self.print_status()
                 log("-----stdout-----")
                 log(self.stdout, end="")
 

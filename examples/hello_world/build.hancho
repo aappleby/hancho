@@ -1,7 +1,7 @@
 import hancho
 
 compile_cpp = hancho.Command(
-  desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+  desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)}",
   command = "g++ -c {rel(in_src)} -o {rel(out_obj)}",
   in_src  = None,
   out_obj = "{swap_ext(in_src, '.o')}",
