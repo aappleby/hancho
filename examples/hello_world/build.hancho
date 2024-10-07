@@ -1,0 +1,24 @@
+import hancho
+
+compile_cpp = hancho.Command(
+  desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+  command = "g++ -c {rel(in_src)} -o {rel(out_obj)}",
+  in_src  = None,
+  out_obj = "{swap_ext(in_src, '.o')}",
+  depfile = "{swap_ext(in_src, '.d')}",
+)
+
+link_cpp_bin = hancho.Command(
+  desc    = "Linking C++ bin {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+  in_objs = None,
+  out_bin = None,
+)
+
+main_o = compile_cpp(in_src = "main.cpp")
+util_o = compile_cpp(in_src = "util.cpp")
+
+main_app = link_cpp_bin(
+  in_objs = [main_o, util_o],
+  out_bin = "hello_world",
+)
