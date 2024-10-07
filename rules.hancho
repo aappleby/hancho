@@ -81,7 +81,7 @@ default_toolchain = hancho.Config(
 )
 
 riscv64_toolchain = hancho.Config(
-  arch = "riscv64",
+  arch     = "riscv64",
   compiler = "riscv64-unknown-elf-g++",
   linker   = "riscv64-unknown-elf-g++",
 )
@@ -93,7 +93,7 @@ riscv64_toolchain = hancho.Config(
 #  arch       = "-march=rv32i -mabi=ilp32 -mstrict-align",
 #  cpp_std    = "-std=gnu++2a",
 #  build_type = "-g -Os",
-#  link_flags = [
+#  flags = [
 #    "-nostdlib",
 #    "-nostartfiles",
 #    "-Wl,-T {linkerscript}",
@@ -156,8 +156,8 @@ link_cpp_bin = hancho.Command(
   out_bin = "{name}",
 
   toolchain = default_toolchain,
-  command = "{toolchain.linker} {linker_group} {link_flags} {joined_sys_libs} -o {rel(out_bin)}",
-  link_flags = [],
+  command = "{toolchain.linker} {linker_group} {flags} {joined_sys_libs} -o {rel(out_bin)}",
+  flags = [],
   linker_group = [
     "-Wl,--as-needed",
     "-Wl,--no-undefined",

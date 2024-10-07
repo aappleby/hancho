@@ -2,7 +2,7 @@ import hancho
 
 hancho.load("hello_world/hello_world.hancho")
 hancho.load("hello_gtk/hello_gtk.hancho")
-#hancho.load("subrepos/build.hancho")
+hancho.load("subrepos/build.hancho")
 
 # needs source_path fix
-#hancho.load("dynamic_dependencies/filelist/build.hancho")
+hancho.load("dynamic_dependencies/filelist/build.hancho")

@@ -517,6 +517,8 @@ def expand_dec():
 def stringify_variant(variant):
     """ Converts any type into an expansion-compatible string. """
     match variant:
+        case Expander():
+            return stringify_variant(variant.config)
         case Task():
             return stringify_variant(variant._out_files)
         case list():
@@ -739,13 +741,14 @@ async def await_variant(variant):
         variant = await variant
 
     match variant:
-        case Exception():
+        case Exception() | asyncio.CancelledError():
             raise variant
         case Promise():
             variant = await variant.get()
             variant = await await_variant(variant)
         case Task():
-            await variant.await_done()
+            variant = await variant.await_done()
+            variant = await await_variant(variant)
         case Config() | dict():
             for key, val in variant.items():
                 variant[key] = await await_variant(val)
