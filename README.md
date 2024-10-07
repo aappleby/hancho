@@ -25,6 +25,71 @@ Hancho should suffice for small to medium sized projects.
 ## Updates
  - 2024-10-06 - The main branch has been updated to v020, which is what I've been using for personal projects all year. It changes a _lot_ of stuff compared to v010 and previous, and the documentation and tutorials are currently outdated.
 
+## Installation
+
+``` bash
+user@host:~$ wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
+user@host:~$ chmod +x hancho.py
+user@host:~$ ./hancho.py --help
+usage: hancho.py [-h] [-f ROOT_NAME] [-C ROOT_PATH] [-j JOBS] [-v] [-q] [-n] [-d] [--force] [-s] [-t] [root_target]
+
+positional arguments:
+  root_target           The name of the .hancho file(s) to build
+
+options:
+  -h, --help            show this help message and exit
+  -f ROOT_NAME, --file ROOT_NAME
+                        The name of the .hancho file(s) to build
+  -C ROOT_PATH, --chdir ROOT_PATH
+                        Change directory before starting the build
+  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count)
+  -v, --verbose         Print verbose build info
+  -q, --quiet           Mute all output
+  -n, --dry_run         Do not run commands
+  -d, --debug           Print debugging information
+  --force               Force rebuild of everything
+  -s, --shuffle         Shuffle task order to shake out dependency issues
+  -t, --trace           Trace all text expansion
+```
+
+## Simple Example
+
+examples/hello_world/build.hancho
+
+https://github.com/aappleby/hancho/blob/bff89ebdc69af000d3586c130cee744fabdc523c/examples/hello_world/build.hancho#L1-L24
+
+examples/hello_world/main.cpp
+
+https://github.com/aappleby/hancho/blob/bff89ebdc69af000d3586c130cee744fabdc523c/examples/hello_world/main.cpp#L1-L9
+
+```sh
+user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
+Loading module /home/user/hancho/examples/hello_world/build.hancho
+Loading .hancho files took 0.000 seconds
+[1/3] Compiling C++ main.cpp -> build/hello_world/main.o ()
+Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/main.o is missing
+.$ g++ -c main.cpp -o build/hello_world/main.o
+[2/3] Compiling C++ util.cpp -> build/hello_world/util.o ()
+Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/util.o is missing
+.$ g++ -c util.cpp -o build/hello_world/util.o
+[2/3] Compiling C++ util.cpp -> build/hello_world/util.o ()
+[2/3] Compiling C++ main.cpp -> build/hello_world/main.o ()
+[3/3] Linking C++ bin build/hello_world/hello_world
+Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/hello_world is missing
+.$ g++ build/hello_world/main.o build/hello_world/util.o -o build/hello_world/hello_world
+[3/3] Linking C++ bin build/hello_world/hello_world
+
+Running 3 tasks took 0.043 seconds
+tasks total:     3
+tasks passed:    3
+tasks failed:    0
+tasks skipped:   0
+tasks cancelled: 0
+mtime calls:     0
+hancho: BUILD PASSED
+```
+
+## Old Updates
  - 2024-03-28 - The v010 branch now has visualization of template and macro expansion which you can enable via ```--debug_expansion```. It produces diagrams like this:
 ```
 ┏ Eval '{join_path(build_path, build_files)}'
@@ -46,77 +111,6 @@ Hancho should suffice for small to medium sized projects.
    - Special dir-related fields are now start_dir, root_dir, leaf_dir, work_dir, and build_dir
    - Hancho files in a submodule can be loaded via load(root="submodule/path", file="build.hancho")
    - Each Hancho module now gets its own 'config' object extended from its parent module (or global_config). This prevents submodules from accidentally changing global fields that their parent modules use while still allowing sharing of configuration across files.
- 
-## Installation
-
-``` bash
-user@host:~$ wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
-user@host:~$ chmod +x hancho.py
-user@host:~$ ./hancho.py --help
-usage: hancho.py [-h] [-C CHDIR] [-j JOBS] [-v] [-q] [-n] [-d] [-f] [filename]
-
-positional arguments:
-  filename              The name of the .hancho file to build
-
-options:
-  -h, --help            show this help message and exit
-  -C CHDIR, --chdir CHDIR
-                        Change directory first
-  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count)
-  -v, --verbose         Print verbose build info
-  -q, --quiet           Mute all output
-  -n, --dryrun          Do not run commands
-  -d, --debug           Print debugging information
-  -f, --force           Force rebuild of everything
-```
-
-## Simple Example
-```py
-# examples/hello_world/build.hancho
-
-compile = hancho.command(
-  command     = "g++ -MMD -c {files_in} -o {files_out}",
-  desc        = "Compile {files_in} -> {files_out}",
-  build_files = "{swap_ext(files_in, '.o')}",
-  build_deps  = "{swap_ext(files_out, '.d')}",
-)
-
-link = hancho.command(
-  command = "g++ {files_in} -o {files_out}",
-  desc    = "Link {files_in} -> {files_out}",
-)
-
-main_o = compile("main.cpp")
-main_app = link(main_o, "app")
-```
-```cpp
-// examples/hello_world/main.cpp
-#include <stdio.h>
-
-int main(int argc, char** argv) {
-  printf("Hello World\n");
-  return 0;
-}
-```
-```sh
-user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
-[1/2] Compile main.cpp -> build/main.o
-Reason: Rebuilding ['build/main.o'] because some are missing
-g++ -MMD -c main.cpp -o build/main.o
-[2/2] Link build/main.o -> build/app
-Reason: Rebuilding ['build/app'] because some are missing
-g++ build/main.o -o build/app
-hancho: BUILD PASSED
-
-user@host:~/hancho/examples/hello_world$ build/app
-Hello World
-
-user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
-hancho: BUILD CLEAN
-```
-
-## Old Updates
-
  - 2024-03-13 - Tasks can now 'reserve' jobs so that commands that themselves use many jobs (like Ninja) can block until the jobs are free. See the [job_count](tests/job_count.hancho) test for details.
  - 2024-03-13 - Code cleaned up to be more standard Python style and reduce linter complaints. Added 'rule_dir' field to each Rule that stores the directory of the file that created the rule.
  - 2024-03-12 - Handling of paths is more flexible now (and will be documented shortly). Calling a Rule now returns a Task object. All the task-running code is now in Task instead of Rule.
