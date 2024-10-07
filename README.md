@@ -23,6 +23,8 @@ Hancho should suffice for small to medium sized projects.
 [Some Additional Documentation Here](docs)
 
 ## Updates
+ - 2024-10-06 - The main branch has been updated to v020, which is what I've been using for personal projects all year. It changes a _lot_ of stuff compared to v010 and previous, and the documentation and tutorials are currently outdated.
+
  - 2024-03-28 - The v010 branch now has visualization of template and macro expansion which you can enable via ```--debug_expansion```. It produces diagrams like this:
 ```
 ┏ Eval '{join_path(build_path, build_files)}'
