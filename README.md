@@ -31,15 +31,14 @@ Hancho should suffice for small to medium sized projects.
 user@host:~$ wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
 user@host:~$ chmod +x hancho.py
 user@host:~$ ./hancho.py --help
-usage: hancho.py [-h] [-f ROOT_NAME] [-C ROOT_PATH] [-j JOBS] [-v] [-q] [-n] [-d] [--force] [-s] [-t] [root_target]
+usage: hancho.py [-h] [-f ROOT_NAME] [-C ROOT_PATH] [-j JOBS] [-v] [-q] [-n] [-d] [--force] [-s] [-t] [target]
 
 positional arguments:
-  root_target           The name of the .hancho file(s) to build
+  target                A regex that selects the targets to build. Defaults to all targets.
 
 options:
   -h, --help            show this help message and exit
-  -f ROOT_NAME, --file ROOT_NAME
-                        The name of the .hancho file(s) to build
+  -f FILE, --file FILE  The name of the .hancho file(s) to build
   -C ROOT_PATH, --chdir ROOT_PATH
                         Change directory before starting the build
   -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count)

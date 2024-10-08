@@ -2,13 +2,13 @@
 
 """Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
 
-# root_path  = Path Hancho was started in, or the one specified by -C
-# repo_path  = Path Hancho was started in, or the path passed to the most recent hancho.repo(...)
-# base_path  = os.getcwd() when the task was created
-# build_path = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
+# root_path    = Path Hancho was started in, or the one specified by -C
+# repo_path    = Path Hancho was started in, or the path passed to the most recent hancho.repo(...)
+# base_path    = os.getcwd() when the task was created
 
+# build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
 # command_path = "{base_path}",
-# [in_path]      = "{base_path}",
+# in_path      = "{base_path}",
 # out_path     = "{build_path}",
 
 from os import path
@@ -16,7 +16,6 @@ from types import MappingProxyType
 import argparse
 import asyncio
 import builtins
-import copy
 import glob
 import inspect
 import io
@@ -24,7 +23,6 @@ import json
 import os
 import random
 import re
-import resource
 import subprocess
 import sys
 import time
@@ -317,6 +315,8 @@ class Config:
 ####################################################################################################
 
 class Command(Config):
+    # FIXME - are we still using this func_or_config stuff?
+
     def __init__(self, func_or_config = None, *args, **kwargs):
         if callable(func_or_config):
             super().__init__(args, kwargs, call = func_or_config)
@@ -336,32 +336,22 @@ class Command(Config):
 
 # fmt: off
 
-default_task_config = Config(
-    desc          = "{rel(_in_files)} -> {rel(_out_files)}",
-    command       = None,
-    command_path  = "{base_path}",
-    build_dir     = "build",
-    build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
-    in_path       = "{base_path}",
-    out_path      = "{build_path}",
-)
+Config.root_path = os.getcwd()
+Config.root_file = "build.hancho"
+Config.repo_path = os.getcwd()
+Config.repo_name = ""
+Config.base_path = os.getcwd()
 
-Config.abs_path  = staticmethod(abs_path)
-Config.rel_path  = staticmethod(rel_path)
-Config.join_path = staticmethod(join_path)
-Config.color     = staticmethod(color)
-Config.glob      = staticmethod(glob.glob)
-Config.len       = staticmethod(len)
-Config.run_cmd   = staticmethod(run_cmd)
-Config.swap_ext  = staticmethod(swap_ext)
-Config.flatten   = staticmethod(flatten)
-Config.print     = staticmethod(print)
-Config.log       = staticmethod(log)
-Config.path      = path
-Config.re        = re
+Config.desc          = "{rel(_in_files)} -> {rel(_out_files)}"
 
-Config.join_prefix = staticmethod(join_prefix)
-Config.join_suffix = staticmethod(join_suffix)
+Config.command       = None
+Config.command_path  = "{base_path}"
+
+Config.build_dir     = "build"
+Config.build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}"
+
+Config.in_path       = "{base_path}"
+Config.out_path      = "{build_path}"
 
 Config.jobs      = os.cpu_count()
 Config.name      = ""
@@ -378,6 +368,22 @@ Config.use_color = True
 
 Config.should_fail = False
 Config.save_log    = False
+
+Config.abs_path    = staticmethod(abs_path)
+Config.rel_path    = staticmethod(rel_path)
+Config.join_path   = staticmethod(join_path)
+Config.color       = staticmethod(color)
+Config.glob        = staticmethod(glob.glob)
+Config.len         = staticmethod(len)
+Config.run_cmd     = staticmethod(run_cmd)
+Config.swap_ext    = staticmethod(swap_ext)
+Config.flatten     = staticmethod(flatten)
+Config.print       = staticmethod(print)
+Config.log         = staticmethod(log)
+Config.path        = path
+Config.re          = re
+Config.join_prefix = staticmethod(join_prefix)
+Config.join_suffix = staticmethod(join_suffix)
 
 # fmt: on
 
@@ -511,13 +517,13 @@ def expand_inc():
     """ Increments the current expansion recursion depth. """
     app.expand_depth += 1
     if app.expand_depth > MAX_EXPAND_DEPTH:
-        raise RecursionError(f"Text expansion failed to terminate")
+        raise RecursionError("Text expansion failed to terminate")
 
 def expand_dec():
     """ Decrements the current expansion recursion depth. """
     app.expand_depth -= 1
     if app.expand_depth < 0:
-        raise RecursionError(f"Text expand_inc/dec unbalanced")
+        raise RecursionError("Text expand_inc/dec unbalanced")
 
 def stringify_variant(variant):
     """ Converts any type into an expansion-compatible string. """
@@ -616,7 +622,7 @@ def expand_macro(expander, macro):
 
     try:
         result = eval(macro[1:-1], {}, expander) # pylint: disable=eval-used
-    except Exception as err:
+    except Exception: # pylint: disable=broad-exception-caught
         failed = True
 
     #==========
@@ -819,7 +825,8 @@ class Task(Config):
         self.repo_path = Config.repo_path
         self.repo_name = Config.repo_name
         self.base_path = os.getcwd()
-        self.merge(default_task_config, args, kwargs)
+        self.merge(args)
+        self.merge(kwargs)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
@@ -1185,16 +1192,6 @@ class App:
         self.dirstack = [os.getcwd()]
         self.modstack = []
 
-        # We're adding a 'fake' module to the top of the mod stack so that applications that import
-        # Hancho directly don't try to read modstack[-1] from an empty stack
-        #fake_module = type(sys)("fake_module")
-
-        Config.repo_path = os.getcwd()
-        Config.repo_name = ""
-        Config.base_path = os.getcwd()
-
-        #self.modstack.append(fake_module)
-
         self.all_out_files = set()
 
         self.tasks_pass = 0
@@ -1229,9 +1226,6 @@ class App:
         self.dirstack.pop()
         os.chdir(self.dirstack[-1])
 
-    def topmod(self):
-        return self.modstack[-1]
-
     ########################################
 
     def reset(self):
@@ -1245,10 +1239,28 @@ class App:
 
         try:
             self.pushdir(Config.root_path)
-            self.load_hanchos()
 
-            if Config.root_target:
-                target_regex = re.compile(Config.root_target)
+            time_a = time.perf_counter()
+
+            if Config.debug:
+                log(f"global_config = {Dumper().dump(Config.__dict__)}")
+
+            root_config = Config()
+            self.load_module(
+                repo_path = root_config.root_path,
+                repo_name = path.basename(root_config.root_path),
+                file_path = root_config.root_path,
+                file_name = root_config.root_file,
+                config    = root_config
+            )
+            time_b = time.perf_counter()
+
+            #if Config.debug or Config.verbose:
+            #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+            log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+
+            if Config.target:
+                target_regex = re.compile(Config.target)
                 for task in self.all_tasks:
                     queue_task = False
                     for name in flatten(task.name):
@@ -1280,33 +1292,43 @@ class App:
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-
-        parser.add_argument("root_target",     default="",             type=str, nargs="?",        help="The name of the .hancho file(s) to build")
-        parser.add_argument("-f", "--file",    default="build.hancho", type=str, dest="root_name", help="The name of the .hancho file(s) to build")
-        parser.add_argument("-C", "--chdir",   default=".",            type=str, dest="root_path", help="Change directory before starting the build")
-
-        parser.add_argument("-j", "--jobs",    default=os.cpu_count(), type=int,            help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("target",          default=None, nargs="?", type=str,           help="A regex that selects the targets to build. Defaults to all targets.")
+        parser.add_argument("-f", "--file",    default="build.hancho",  type=str,           help="The name of the .hancho file(s) to build")
+        parser.add_argument("-C", "--dir",     default=os.getcwd(),     type=str,           help="Change directory before starting the build")
+        parser.add_argument("-j", "--jobs",    default=os.cpu_count(),  type=int,           help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-v", "--verbose", default=False, action="store_true",          help="Print verbose build info")
         parser.add_argument("-q", "--quiet",   default=False, action="store_true",          help="Mute all output")
         parser.add_argument("-n", "--dry_run", default=False, action="store_true",          help="Do not run commands")
         parser.add_argument("-d", "--debug",   default=False, action="store_true",          help="Print debugging information")
-        parser.add_argument(      "--force",   default=False, action="store_true",          help="Force rebuild of everything")
         parser.add_argument("-s", "--shuffle", default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
         parser.add_argument("-t", "--trace",   default=False, action="store_true",          help="Trace all text expansion")
+        parser.add_argument(      "--force",   default=False, action="store_true",          help="Force rebuild of everything")
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args()
         flags = flags.__dict__
-        # Root path must be absolute.
-        flags["root_path"] = abs_path(flags["root_path"])
 
-        Config.root_path = os.getcwd()
-        Config.repo_path = os.getcwd()
-        #Config.repo_name = ""
-        #Config.repo_path = os.getcwd()
-        #Config.repo_name = ""
+        root_dir  = abs_path(flags['dir']) # Root path must be absolute.
+        root_file = flags['file']
+        root_path = os.path.join(root_dir, root_file)
+        #print(root_dir)
+        #print(root_file)
+        #print(root_path)
+        
+        Config.root_path = root_dir
+        Config.root_file = root_file
+        Config.repo_path = Config.root_path
+        Config.repo_name = ""
 
-        Config.jobs = flags['jobs']
+        Config.target  = flags['target']
+        Config.jobs    = flags['jobs']
+        Config.verbose = flags['verbose']
+        Config.quiet   = flags['quiet']
+        Config.dry_run = flags['dry_run']
+        Config.debug   = flags['debug']
+        Config.force   = flags['force']
+        Config.shuffle = flags['shuffle']
+        Config.trace   = flags['trace']
 
         for key, val in flags.items():
             setattr(Config, key, val)
@@ -1323,28 +1345,6 @@ class App:
 
         for key, val in unrecognized_flags.items():
             setattr(Config, key, val)
-
-    ########################################
-
-    def load_hanchos(self):
-        time_a = time.perf_counter()
-
-        if Config.debug:
-            log(f"global_config = {Dumper().dump(Config.__dict__)}")
-
-        root_config = Config()
-        self.load_module(
-            repo_path=root_config.root_path,
-            repo_name=path.basename(root_config.root_path),
-            file_path=root_config.root_path,
-            file_name=root_config.root_name,
-            config=root_config
-        )
-        time_b = time.perf_counter()
-
-        #if Config.debug or Config.verbose:
-        #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
-        log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
     ########################################
 
@@ -1465,6 +1465,11 @@ class App:
 
         module.imports = config
         module.exports = Config()
+
+        module.repo_path = repo_path
+        module.repo_name = repo_name
+        module.file_path = file_path
+        module.file_name = file_name
 
         self.loaded_modules.append(module)
 

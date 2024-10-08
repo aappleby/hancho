@@ -89,9 +89,6 @@ hancho.Config.use_color = False
 hancho.Config.quiet = True
 #hancho.Config.debug = True
 #hancho.Config.verbose = True
-hancho.Config.root_path = os.getcwd()
-hancho.Config.root_name = "build.hancho"
-
 
 def color(red=None, green=None, blue=None):
   """Converts RGB color to ANSI format string."""
