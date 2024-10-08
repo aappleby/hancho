@@ -1,0 +1,3 @@
+import hancho
+
+hancho.load("filelist/build.hancho")

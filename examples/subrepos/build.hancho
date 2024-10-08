@@ -1,1 +1,5 @@
-myrepo = hancho.subrepo("myrepo")
+import hancho
+
+assert hancho.Config.repo_path.endswith("/hancho")
+
+myrepo = hancho.repo("myrepo/build.hancho")

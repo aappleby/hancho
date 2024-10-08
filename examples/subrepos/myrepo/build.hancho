@@ -1,1 +1,3 @@
-print(hancho)
+import hancho
+
+assert hancho.Config.repo_path.endswith("hancho/examples/subrepos/myrepo")

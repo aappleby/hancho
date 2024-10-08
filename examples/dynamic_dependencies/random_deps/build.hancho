@@ -1,7 +1,9 @@
 # Touches 3 random source files, then cats 3 random source files into build/result.txt
 
+import hancho
 import random
 
+"""
 all_deps  = [f"src/text{d}.txt" for d in range(0, 9)]
 
 hancho.task(
@@ -16,3 +18,4 @@ hancho.task(
   source_files = random.sample(all_deps, 3),
   build_files = "result.txt",
 )
+"""

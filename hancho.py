@@ -2,6 +2,16 @@
 
 """Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
 
+# base_path
+# build_path
+# file_path
+# repo_path
+# root_path
+
+# command_path
+# in_path
+# out_path
+
 from os import path
 from types import MappingProxyType
 import argparse
@@ -1108,7 +1118,12 @@ class Task(Config):
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
+            #print("DJFJFJFJFJFJ")
+            #print(self.command_path)
+            #print("DJFJFJFJFJFJ")
+            app.pushdir(self.command_path)
             result = command(self)
+            app.popdir()
             while inspect.isawaitable(result):
                 result = await result
             return
