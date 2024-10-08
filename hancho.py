@@ -2,15 +2,14 @@
 
 """Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
 
-# base_path
-# build_path
-# file_path
-# repo_path
-# root_path
+# root_path  = Path Hancho was started in, or the one specified by -C
+# repo_path  = Path Hancho was started in, or the path passed to the most recent hancho.repo(...)
+# base_path  = os.getcwd() when the task was created
+# build_path = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
 
-# command_path
-# in_path
-# out_path
+# command_path = "{base_path}",
+# [in_path]      = "{base_path}",
+# out_path     = "{build_path}",
 
 from os import path
 from types import MappingProxyType
@@ -347,10 +346,6 @@ default_task_config = Config(
     out_path      = "{build_path}",
 )
 
-Config.repo_path = os.getcwd()
-Config.repo_name = ""
-Config.base_path = os.getcwd()
-
 Config.abs_path  = staticmethod(abs_path)
 Config.rel_path  = staticmethod(rel_path)
 Config.join_path = staticmethod(join_path)
@@ -392,7 +387,7 @@ def load_file(file_name, as_repo, args, kwargs):
     mod_config = Config(*args, **kwargs)
 
     file_name = mod_config.expand(file_name)
-    abs_file_path = join_path(Config.base_path, file_name)
+    abs_file_path = join_path(os.getcwd(), file_name)
 
     repo_path = path.dirname(abs_file_path) if as_repo else Config.repo_path
     repo_name = path.basename(repo_path) if as_repo else Config.repo_name
@@ -823,7 +818,7 @@ class Task(Config):
 
         self.repo_path = Config.repo_path
         self.repo_name = Config.repo_name
-        self.base_path = Config.base_path
+        self.base_path = os.getcwd()
         self.merge(default_task_config, args, kwargs)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
@@ -1305,6 +1300,17 @@ class App:
         # Root path must be absolute.
         flags["root_path"] = abs_path(flags["root_path"])
 
+        Config.root_path = os.getcwd()
+        Config.repo_path = os.getcwd()
+        #Config.repo_name = ""
+        #Config.repo_path = os.getcwd()
+        #Config.repo_name = ""
+
+        Config.jobs = flags['jobs']
+
+        for key, val in flags.items():
+            setattr(Config, key, val)
+
         # Unrecognized command line parameters also become global Config fields if they are
         # flag-like
         unrecognized_flags = {}
@@ -1314,9 +1320,6 @@ class App:
                 val = match.group(2)
                 val = maybe_as_number(val) if val is not None else True
                 unrecognized_flags[key] = val
-
-        for key, val in flags.items():
-            setattr(Config, key, val)
 
         for key, val in unrecognized_flags.items():
             setattr(Config, key, val)
@@ -1474,11 +1477,9 @@ class App:
 
             old_repo_path = Config.repo_path
             old_repo_name = Config.repo_name
-            old_file_path = Config.base_path
 
             Config.repo_path = repo_path
             Config.repo_name = repo_name
-            Config.base_path = file_path
 
             # Why Pylint thinks this is not callable is a mystery.
             # pylint: disable=not-callable
@@ -1487,7 +1488,6 @@ class App:
 
             Config.repo_path = old_repo_path
             Config.repo_name = old_repo_name
-            Config.base_path = old_file_path
 
             self.modstack.pop()
             app.popdir()
@@ -1543,30 +1543,3 @@ app = App()
 
 if __name__ == "__main__":
     sys.exit(app.main())
-
-#foo = Config(
-#    a = "yyy {b} yyy",
-#    b = "xxx {c} xxx",
-#    c = "www {d} www",
-#    d = "asdf"
-#)
-#
-#print(foo.expand("zzz {a} zzz"))
-
-
-#blah = Config(
-#    command = "{flarp}",
-#    in_src  = [],
-#    out_obj = [],
-#    flarp   = "asdf {flarp}",
-#)
-#
-#print(len(blah.expand("{command}")))
-#print(app.expand_depth)
-
-
-
-#bar = Config(a = "{clonk}", b = "flab")
-#foo = Config(bar = bar, b = "{bar.a}", clonk = "{bar.b}")
-#
-#print(foo.expand("{b}"))

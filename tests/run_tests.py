@@ -140,7 +140,7 @@ class TestHancho(unittest.TestCase):
   #        command = "cat {rel_source_files} > {rel_build_files}",
   #        source_files = "stuff.txt",
   #        build_files = "repo.txt",
-  #        base_path = os.path.abspath("subrepo")
+  #        b*ase_path = os.path.abspath("subrepo")
   #    )
   #    self.assertEqual(0, hancho.build_all())
   #    self.assertTrue(Path("build/subrepo/repo.txt").exists())
@@ -189,7 +189,7 @@ class TestHancho(unittest.TestCase):
     hancho.Task(
       command  = "touch {rel(out_obj)}",
       in_src   = "src/foo.c",
-      out_path = "{base_path}/build/narp",
+      out_path = "{repo_path}/build/narp",
       out_obj  = "foo.o",
     )
     self.assertEqual(0, hancho.build_all())
@@ -199,7 +199,7 @@ class TestHancho(unittest.TestCase):
     hancho.Task(
       command  = "touch {rel(out_obj)}",
       in_src   = "src/foo.c",
-      out_path = "{base_path}/../build",
+      out_path = "{repo_path}/../build",
       out_obj  = "foo.o",
     )
     self.assertNotEqual(0, hancho.build_all())
