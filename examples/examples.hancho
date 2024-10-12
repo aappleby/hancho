@@ -1,6 +1,6 @@
 import hancho
 
-hancho.load("hello_world/hello_world.hancho")
+hancho.load("hello_world/build.hancho")
 hancho.load("hello_gtk/hello_gtk.hancho")
 hancho.load("subrepos/build.hancho")
 
