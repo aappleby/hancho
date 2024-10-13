@@ -1,5 +1,19 @@
-import hancho
 
-assert hancho.Config.repo_path.endswith("/hancho")
+repo_name = "asdf"
+
+print(f"repo dir  '{hancho.repo_dir}'")
+print(f"repo name '{hancho.repo_name}'")
 
 myrepo = hancho.repo("myrepo/build.hancho")
+
+main_o = hancho.task(
+  command = "g++ -c {in_src} -o {out_obj}",
+  in_src = "main.cpp",
+  out_obj = "{swap_ext(in_src, '.o')}"
+)
+
+hancho.task(
+  command = "g++ {in_obj} -o {out_bin}",
+  in_obj = [main_o, myrepo.util_o],
+  out_bin = "main"
+)

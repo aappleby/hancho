@@ -1,7 +1,5 @@
 # examples/hello_world/build.hancho
 
-import hancho
-
 compile_cpp = hancho.Command(
   desc    = "Compiling C++ {in_src} -> {out_obj}",
   command = "g++ -c {in_src} -o {out_obj}",

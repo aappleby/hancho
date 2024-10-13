@@ -1,7 +1,5 @@
 # tutorial/tut30_rules.hancho
 
-import hancho
-
 compile = hancho.Command(
   desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",

@@ -1,38 +1,25 @@
 # tutorial/tut01.hancho
 
-import hancho
-
-main_o = hancho.Task(
+main_o = hancho.task(
   desc     = "Compile main.cpp",
-  command  = "g++ -MMD -c src/main.cpp -o build/tut01/main.o",
-
-  in_path  = "src",
-  in_src   = "main.cpp",
-
-  out_path = "build/tut01",
+  command  = "g++ -MMD -c {in_src} -o {out_obj}",
+  in_src   = "src/main.cpp",
   out_obj  = "main.o",
   depfile  = "main.d",
 )
 
-util_o = hancho.Task(
+util_o = hancho.task(
   desc     = "Compile util.cpp",
   command  = "g++ -MMD -c src/util.cpp -o build/tut01/util.o",
 
-  in_path  = "src",
-  in_src   = "util.cpp",
-
-  out_path = "build/tut01",
+  in_src   = "src/util.cpp",
   out_obj  = "util.o",
   depfile  = "util.d",
 )
 
-app = hancho.Task(
+app = hancho.task(
   desc     = "Link main.o and util.o into app",
   command  = "g++ build/tut01/main.o build/tut01/util.o -o build/tut01/app",
-
-  in_path  = "build/tut01",
   in_objs  = [main_o, util_o],
-
-  out_path = "build/tut01",
-  out_bin  = "app",
+  out_bin  = "build/tut01/app",
 )

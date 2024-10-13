@@ -1,15 +1,17 @@
 # tutorial/tut00.hancho
 
-import os
-import hancho
+#hancho.repo_name = "tut00"
 
-task = hancho.Task(
-  desc     = "Compile main.cpp and util.cpp and link app",
-  command  = "g++ src/main.cpp src/util.cpp -o build/tut00/app",
-
-  in_path  = "src",
-  in_src   = ["main.cpp", "util.cpp"],
-
-  out_path = "build/tut00",
-  out_bin  = "app",
+blep = hancho.task(
+  desc = "lkasjdf",
+  command  = [
+    "mkdir -p build",
+    "g++ {in_src} -o {out_bin}",
+  ],
+  in_src = ["src/main.cpp", "src/util.cpp"],
+  out_bin = "tut00_app",
 )
+
+
+print(hancho)
+print(hancho.exports)

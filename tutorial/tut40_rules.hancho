@@ -1,7 +1,5 @@
 # tutorial/tut40_rules.hancho
 
-import hancho
-
 compile = hancho.Command(
   desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
@@ -18,4 +16,4 @@ def c_binary(*, in_srcs, out_bin, **kwargs):
   objs = [compile(in_src = file, **kwargs) for file in in_srcs]
   return link(in_objs = objs, out_bin = out_bin, **kwargs)
 
-exports.c_binary = hancho.Command(c_binary)
+exports.c_binary = hancho.Command(call = c_binary)

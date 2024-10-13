@@ -2,15 +2,6 @@
 
 """Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
 
-# root_path    = Path Hancho was started in, or the one specified by -C
-# repo_path    = Path Hancho was started in, or the path passed to the most recent hancho.repo(...)
-# base_path    = os.getcwd() when the task was created
-
-# build_path   = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}",
-# command_path = "{base_path}",
-# in_path      = "{base_path}",
-# out_path     = "{build_path}",
-
 from os import path
 from types import MappingProxyType
 import argparse
@@ -304,54 +295,39 @@ class Config:
         result.merge(args, kwargs)
         return result
 
-    def rel(self, path):
-        return rel_path(path, expand_variant(self, self.command_path))
-
-    def stem(self, p):
-        if isinstance(p, Task):
-            p = p._out_files[0]
-        return path.splitext(path.basename(p))[0]
-
 ####################################################################################################
+# A Command is a 'callable' config. It can wrap a function, or can contain a command string.
 
 class Command(Config):
-    # FIXME - are we still using this func_or_config stuff?
 
-    def __init__(self, func_or_config = None, *args, **kwargs):
-        if callable(func_or_config):
-            super().__init__(args, kwargs, call = func_or_config)
-        else:
-            super().__init__(func_or_config, args, kwargs)
+    def __init__(self, *args, **kwargs):
+        callbacks = [arg for arg in args if callable(arg)]
+        configs   = [arg for arg in args if not callable(arg)]
+        if len(callbacks):
+            if len(callbacks) > 1:
+                raise ValueError("Multiple callbacks passed to Command()")
+            kwargs["call"] = callbacks[0]
+        super().__init__(*configs, **kwargs)
 
     def __call__(self, *args, **kwargs):
         merged = Config(self, args, kwargs)
-        if custom_call := self.__dict__.get("call", None):
+        if custom_call := merged.__dict__.get("call", None):
             merged.pop("call")
             return custom_call(**merged)
-        else:
-            return Task(merged)
+        return Task(merged)
 
 ####################################################################################################
 # All static methods and fields are available to use in any macro.
 
 # fmt: off
 
-Config.root_path = os.getcwd()
-Config.root_file = "build.hancho"
-Config.repo_path = os.getcwd()
-Config.repo_name = ""
-Config.base_path = os.getcwd()
+Config.root_dir  = None
 
 Config.desc          = "{rel(_in_files)} -> {rel(_out_files)}"
-
 Config.command       = None
-Config.command_path  = "{base_path}"
 
-Config.build_dir     = "build"
-Config.build_path    = "{root_path}/{build_dir}/{build_tag}/{repo_name}/{rel_path(base_path, repo_path)}"
-
-Config.in_path       = "{base_path}"
-Config.out_path      = "{build_path}"
+Config.build_name = "build"
+Config.build_dir  = "{root_dir}/{build_name}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
 
 Config.jobs      = os.cpu_count()
 Config.name      = ""
@@ -386,85 +362,6 @@ Config.join_prefix = staticmethod(join_prefix)
 Config.join_suffix = staticmethod(join_suffix)
 
 # fmt: on
-
-####################################################################################################
-
-def load_file(file_name, as_repo, args, kwargs):
-    mod_config = Config(*args, **kwargs)
-
-    file_name = mod_config.expand(file_name)
-    abs_file_path = join_path(os.getcwd(), file_name)
-
-    repo_path = path.dirname(abs_file_path) if as_repo else Config.repo_path
-    repo_name = path.basename(repo_path) if as_repo else Config.repo_name
-    file_path = path.dirname(abs_file_path)
-    file_name = path.basename(abs_file_path)
-
-    return app.load_module(repo_path, repo_name, file_path, file_name, mod_config)
-
-def load(file_name, *args, **kwargs):
-    return load_file(file_name, as_repo=False, args=args, kwargs=kwargs)
-
-def repo(file_name, *args, **kwargs):
-    return load_file(file_name, as_repo=True, args=args, kwargs=kwargs)
-
-def reset():
-    return app.reset()
-
-def build():
-    return app.build()
-
-def build_all():
-    result = app.build_all()
-    return result
-
-def get_log():
-    return app.log
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
@@ -670,64 +567,6 @@ def expand_variant(expander, variant):
 
 ####################################################################################################
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-####################################################################################################
-
 def get_awaitables(variant, result):
     if inspect.isawaitable(variant):
         result.append(variant)
@@ -821,10 +660,14 @@ class Task(Config):
     """Calling a Command creates a Task."""
 
     def __init__(self, *args, **kwargs):
+        super().__init__()
 
-        self.repo_path = Config.repo_path
-        self.repo_name = Config.repo_name
-        self.base_path = os.getcwd()
+        self.repo_dir   = app.get_repo_dir()
+        self.repo_name  = app.get_repo_name()
+        self.task_dir   = os.getcwd()
+        self.build_dir  = Config.build_dir
+        self.depfile    = None
+
         self.merge(args)
         self.merge(kwargs)
 
@@ -860,6 +703,9 @@ class Task(Config):
 
     def __repr__(self):
         return Dumper(1).dump(self)
+
+    def rel(self, sub_path):
+        return rel_path(sub_path, expand_variant(self, self.task_dir))
 
     #-----------------------------------------------------------------------------------------------
 
@@ -938,7 +784,7 @@ class Task(Config):
                         if self.verbose or self.debug:
                             log(color(128,128,255), end="")
                             if self.dry_run: log("(DRY RUN) ", end="")
-                            log(f"{rel_path(self.command_path, Config.root_path)}$ ", end="")
+                            log(f"{rel_path(self.task_dir, Config.root_dir)}$ ", end="")
                             log(color(), end="")
                             log(command)
                         if not self.dry_run:
@@ -954,7 +800,7 @@ class Task(Config):
             return cancel
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
-        except Exception as err:
+        except Exception:
             log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
             app.tasks_fail += 1
             return asyncio.CancelledError()
@@ -972,28 +818,27 @@ class Task(Config):
         """All the setup steps needed before we run a task."""
 
         if self.debug:
-            log(f"Task before expand: {self}")
+            log(f"\nTask before expand: {self}")
 
         # Expand the in and out paths first
-        self.command_path = abs_path(join_path(self.base_path, self.expand(self.command_path)))
-        self.in_path      = abs_path(join_path(self.base_path, self.expand(self.in_path)))
-        self.out_path     = abs_path(join_path(self.base_path, self.expand(self.out_path)))
+        self.task_dir  = abs_path(self.expand(self.task_dir))
+        self.build_dir = abs_path(self.expand(self.build_dir))
 
-        # We _must_ expand first before prepending paths or paths will break
+        # We _must_ expand first before prepending directories or paths will break
         # prefix + swap(abs_path) != abs(prefix + swap(path))
         for key, val in self.__dict__.items():
             if key.startswith("in_") or key.startswith("out_") or key == "depfile":
                 self.__dict__[key] = self.expand(val)
 
         # Prepend the in/out path to the filenames
-        self._in_files = []
+        self._in_files  = []
         self._out_files = []
 
         def handle_in_path(key, val):
             if val is None:
                 raise ValueError(f"Key {key} was None")
             if isinstance(val, str):
-                val = abs_path(join_path(self.in_path, val))
+                val = abs_path(join_path(self.task_dir, val))
                 self._in_files.append(val)
             return val
 
@@ -1001,42 +846,44 @@ class Task(Config):
             if val is None:
                 raise ValueError(f"Key {key} was None")
             if isinstance(val, str):
-                val = abs_path(join_path(self.out_path, val))
+                val = abs_path(join_path(self.build_dir, val))
                 self._out_files.append(val)
             return val
 
         for key, val in self.__dict__.items():
-            if key.startswith("in_") and key != "in_path":
+            if key.startswith("in_"):
                 self.__dict__[key] = visit_variant(key, val, handle_in_path)
-            if key.startswith("out_") and key != "out_path":
+            if key.startswith("out_"):
                 self.__dict__[key] = visit_variant(key, val, handle_out_path)
 
         if "depfile" in self.__dict__:
-            self.depfile = join_path(self.out_path, self.depfile)
+            depfile = self.depfile
+            if depfile is not None:
+                self.depfile = join_path(self.build_dir, depfile)
 
         # And now we can expand the command.
         self.desc = self.expand(self.desc)
         self.command = self.expand(self.command)
 
         if self.debug:
-            log(f"Task after expand: {self}")
+            log(f"\nTask after expand: {self}")
 
         # Check for missing input files/paths
-        if not path.exists(self.command_path):
-            raise FileNotFoundError(self.command_path)
+        if not path.exists(self.task_dir):
+            raise FileNotFoundError(self.task_dir)
 
         for file in self._in_files:
             if file is None:
-                raise ValueErorr("_in_files contained a None")
+                raise ValueError("_in_files contained a None")
             if not path.exists(file):
                 raise FileNotFoundError(file)
 
-        # Check that all build files would end up under root_path
+        # Check that all build files would end up under root_dir
         for file in self._out_files:
             if file is None:
-                raise ValueErorr("_out_files contained a None")
-            if not file.startswith(Config.root_path):
-                raise ValueError(f"Path error, output file {file} is not under root_path {Config.root_path}")
+                raise ValueError("_out_files contained a None")
+            if not file.startswith(Config.root_dir):
+                raise ValueError(f"Path error, output file {file} is not under root_dir {Config.root_dir}")
 
         # Check for duplicate task outputs
         if self.command:
@@ -1104,7 +951,7 @@ class Task(Config):
                     raise ValueError(f"Invalid depformat {depformat}")
 
                 # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [path.join(self.command_path, d) for d in deplines]
+                deplines = [path.join(self.task_dir, d) for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -1120,10 +967,7 @@ class Task(Config):
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            #print("DJFJFJFJFJFJ")
-            #print(self.command_path)
-            #print("DJFJFJFJFJFJ")
-            app.pushdir(self.command_path)
+            app.pushdir(self.task_dir)
             result = command(self)
             app.popdir()
             while inspect.isawaitable(result):
@@ -1141,7 +985,7 @@ class Task(Config):
 
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd=self.command_path,
+                cwd=self.task_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1179,6 +1023,34 @@ class Task(Config):
         if not command_pass:
             raise ValueError(self.returncode)
 
+####################################################################################################
+
+class Context(Config):
+    def __init__(self, *args, **kwargs):
+        #self.repo_name = None
+        #self.repo_dir = None
+        self.Config = Config
+        self.Command = Command
+        self.flatten = flatten
+        self.Task = Task
+        super().__init__(*args, **kwargs)
+
+    def config(self, *args, **kwargs):
+        return Config(*args, **kwargs)
+
+    def task(self, *args, **kwargs):
+        return Task(self, *args, **kwargs)
+    
+    def log(self, *args, **kwargs):
+        return log(*args, **kwargs)
+
+    def load(self, file_name, *args, **kwargs):
+        #return load(*args, **kwargs)
+        return app.load_file(file_name, *args, as_repo=False, **kwargs)
+    
+    def repo(self, *args, **kwargs):
+        return repo(*args, **kwargs)
+
 
 ####################################################################################################
 
@@ -1186,7 +1058,8 @@ class App:
     """The application state. Mostly here so that the linter will stop complaining about my use of
     global variables. :D"""
 
-    # pylint: disable=too-many-instance-attributes
+    ########################################
+
     def __init__(self):
         self.loaded_modules = []
         self.dirstack = [os.getcwd()]
@@ -1215,80 +1088,13 @@ class App:
         self.job_slots = [None] * self.jobs_available
         self.log = ""
 
-    ########################################
-
-    def pushdir(self, path):
-        path = abs_path(path, strict=True)
-        self.dirstack.append(path)
-        os.chdir(path)
-
-    def popdir(self):
-        self.dirstack.pop()
-        os.chdir(self.dirstack[-1])
-
-    ########################################
-
     def reset(self):
-        self.__init__()
+        self.__init__() # pylint: disable=unnecessary-dunder-call
 
     ########################################
 
     def main(self):
         result = -1
-        self.parse_args()
-
-        try:
-            self.pushdir(Config.root_path)
-
-            time_a = time.perf_counter()
-
-            if Config.debug:
-                log(f"global_config = {Dumper().dump(Config.__dict__)}")
-
-            root_config = Config()
-            self.load_module(
-                repo_path = root_config.root_path,
-                repo_name = path.basename(root_config.root_path),
-                file_path = root_config.root_path,
-                file_name = root_config.root_file,
-                config    = root_config
-            )
-            time_b = time.perf_counter()
-
-            #if Config.debug or Config.verbose:
-            #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
-            log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
-
-            if Config.target:
-                target_regex = re.compile(Config.target)
-                for task in self.all_tasks:
-                    queue_task = False
-                    for name in flatten(task.name):
-                        if target_regex.search(name):
-                            queue_task = True
-                    for desc in flatten(task.desc):
-                        if target_regex.search(desc):
-                            queue_task = True
-                    for tag in flatten(task.tags):
-                        if target_regex.search(tag):
-                            queue_task = True
-                    if queue_task:
-                        log(f"Queueing task '{task.name}'")
-                        task.queue()
-            else:
-                for task in self.all_tasks:
-                    task.queue()
-
-            result = self.build()
-        finally:
-            self.popdir()
-
-        print()
-        return result
-
-    ########################################
-
-    def parse_args(self):
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
@@ -1309,16 +1115,14 @@ class App:
         flags = flags.__dict__
 
         root_dir  = abs_path(flags['dir']) # Root path must be absolute.
-        root_file = flags['file']
-        root_path = os.path.join(root_dir, root_file)
-        #print(root_dir)
-        #print(root_file)
-        #print(root_path)
         
-        Config.root_path = root_dir
-        Config.root_file = root_file
-        Config.repo_path = Config.root_path
-        Config.repo_name = ""
+        assert path.isdir(root_dir)
+        os.chdir(root_dir)
+        
+        root_file = flags['file']
+        assert path.isfile(root_file)
+        
+        Config.root_dir  = root_dir
 
         Config.target  = flags['target']
         Config.jobs    = flags['jobs']
@@ -1346,6 +1150,152 @@ class App:
         for key, val in unrecognized_flags.items():
             setattr(Config, key, val)
 
+        #========================================
+
+        if Config.debug:
+            log(f"global_config = {Dumper().dump(Config.__dict__)}")
+
+        time_a = time.perf_counter()
+        self.load_module(
+            path.join(root_dir, root_file),
+            Config(repo_dir = root_dir, repo_name = "")
+        )
+        time_b = time.perf_counter()
+
+        #if Config.debug or Config.verbose:
+        #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+        log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+
+        #========================================
+
+        if Config.target:
+            target_regex = re.compile(Config.target)
+            for task in self.all_tasks:
+                queue_task = False
+                for name in flatten(task.name):
+                    if target_regex.search(name):
+                        queue_task = True
+                for desc in flatten(task.desc):
+                    if target_regex.search(desc):
+                        queue_task = True
+                for tag in flatten(task.tags):
+                    if target_regex.search(tag):
+                        queue_task = True
+                if queue_task:
+                    log(f"Queueing task '{task.name}'")
+                    task.queue()
+        else:
+            for task in self.all_tasks:
+                task.queue()
+
+        result = self.build()
+        
+        #========================================
+
+        print()
+        return result
+
+    ########################################
+
+    def load_module(self, mod_path, imports):
+        """Loads a Hancho module ***while chdir'd into its directory***"""
+
+        assert not macro_regex.search(mod_path)
+        assert path.isabs(mod_path)
+        assert path.isfile(mod_path)
+
+        #if config.debug or config.verbose:
+        log(("┃ " * (len(app.modstack) - 1)), end="")
+        log(color(128,255,128) + f"Loading module {mod_path}" + color())
+
+        with open(mod_path, encoding="utf-8") as file:
+            source = file.read()
+            code = compile(source, mod_path, "exec", dont_inherit=True)
+
+        mod_name = path.splitext(path.basename(mod_path))[0]
+        module = type(sys)(mod_name)
+        module.__file__ = mod_path
+        module.__builtins__ = builtins
+
+        exports = Config()
+
+        module.hancho = Context(imports, exports = exports)
+        module.imports = imports
+        module.exports = exports
+
+        self.loaded_modules.append(module)
+
+        self.modstack.append(module)
+
+        # We must chdir()s into the .hancho file directory before running it so that
+        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+        # context here so there should be no other threads trying to change cwd.
+        app.pushdir(path.dirname(mod_path))
+
+        # Why Pylint thinks this is not callable is a mystery.
+        # pylint: disable=not-callable
+        types.FunctionType(code, module.__dict__)()
+
+        # And now we chdir back out.
+        app.popdir()
+
+        self.modstack.pop()
+        
+        return exports
+
+    ########################################
+
+    def load_file(self, file_name, as_repo, *args, **kwargs):
+        mod_config = Config(*args, **kwargs)
+        old_repo_dir  = self.get_repo_dir()
+        old_repo_name = self.get_repo_name()
+
+        mod_config.repo_dir = old_repo_dir
+        mod_config.repo_name = old_repo_name
+        file_name = mod_config.expand(file_name)
+        file_path = join_path(os.getcwd(), file_name)
+
+        if as_repo:
+            new_repo_dir  = path.dirname(file_path)
+            new_repo_name = path.basename(new_repo_dir)
+        else:
+            new_repo_dir = old_repo_dir
+            new_repo_name = old_repo_name
+
+        assert path.isfile(file_path)
+
+        mod_config.repo_dir = new_repo_dir
+        mod_config.repo_name = new_repo_name
+
+        return self.load_module(file_path, mod_config)
+
+    ########################################
+
+    def pushdir(self, new_dir):
+        new_dir = abs_path(new_dir, strict=True)
+        self.dirstack.append(new_dir)
+        os.chdir(new_dir)
+
+    def popdir(self):
+        self.dirstack.pop()
+        os.chdir(self.dirstack[-1])
+
+    ########################################
+
+    def get_repo_dir(self):
+        if not len(self.modstack):
+            return None
+        result = self.modstack[-1].imports.repo_dir
+        assert path.isdir(result)
+        return result
+
+    def get_repo_name(self):
+        if not len(self.modstack):
+            return None
+        result = self.modstack[-1].imports.repo_name
+        assert isinstance(result, str) or result is None
+        return result
+
     ########################################
 
     def build(self):
@@ -1359,7 +1309,7 @@ class App:
             # in Github, so I'm using get_event_loop().run_until_complete().
             # Seems to fix the issue.
             #result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
-        except Exception as err:
+        except Exception:
             log(color(255, 128, 128), end = "")
             log("Build failed:")
             log(traceback.format_exc())
@@ -1435,71 +1385,6 @@ class App:
 
     ########################################
 
-    def load_module(self, repo_path, repo_name, file_path, file_name, config):
-        """Loads a Hancho module ***while chdir'd into its directory***"""
-
-        assert not macro_regex.search(repo_path)
-        assert not macro_regex.search(repo_name)
-        assert not macro_regex.search(file_path)
-        assert not macro_regex.search(file_name)
-
-        assert path.isabs(repo_path)
-        assert not path.isabs(repo_name)
-        assert path.isabs(file_path)
-        assert not path.isabs(file_name)
-
-        file_pathname = join_path(file_path, file_name)
-
-        #if config.debug or config.verbose:
-        log(("┃ " * (len(app.modstack) - 1)), end="")
-        log(color(128,255,128) + f"Loading module {file_pathname}" + color())
-
-        with open(file_pathname, encoding="utf-8") as file:
-            source = file.read()
-            code = compile(source, file_name, "exec", dont_inherit=True)
-
-        mod_name = path.splitext(file_name)[0]
-        module = type(sys)(mod_name)
-        module.__file__ = file_pathname
-        module.__builtins__ = builtins
-
-        module.imports = config
-        module.exports = Config()
-
-        module.repo_path = repo_path
-        module.repo_name = repo_name
-        module.file_path = file_path
-        module.file_name = file_name
-
-        self.loaded_modules.append(module)
-
-        try:
-            # We must chdir()s into the .hancho file directory before running it so that
-            # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-            # context here so there should be no other threads trying to change cwd.
-            app.pushdir(file_path)
-            self.modstack.append(module)
-
-            old_repo_path = Config.repo_path
-            old_repo_name = Config.repo_name
-
-            Config.repo_path = repo_path
-            Config.repo_name = repo_name
-
-            # Why Pylint thinks this is not callable is a mystery.
-            # pylint: disable=not-callable
-            types.FunctionType(code, module.__dict__)()
-        finally:
-
-            Config.repo_path = old_repo_path
-            Config.repo_name = old_repo_name
-
-            self.modstack.pop()
-            app.popdir()
-        return module.exports
-
-    ########################################
-
     async def acquire_jobs(self, count, desc):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
@@ -1539,6 +1424,27 @@ class App:
 
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
+
+####################################################################################################
+# Global Hancho methods that delegate to the app
+
+def load(file_name, *args, **kwargs):
+    return app.load_file(file_name, *args, as_repo=False, **kwargs)
+
+def repo(file_name, *args, **kwargs):
+    return app.load_file(file_name, *args, as_repo=True, **kwargs)
+
+def reset():
+    return app.reset()
+
+def build():
+    return app.build()
+
+def build_all():
+    return app.build_all()
+
+def get_log():
+    return app.log
 
 ####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a

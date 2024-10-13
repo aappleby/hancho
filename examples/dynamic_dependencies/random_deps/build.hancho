@@ -1,6 +1,5 @@
 # Touches 3 random source files, then cats 3 random source files into build/result.txt
 
-import hancho
 import random
 
 """

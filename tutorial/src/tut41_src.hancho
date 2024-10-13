@@ -1,6 +1,5 @@
 # tutorial/tut41_src.hancho
 
-import hancho
 import glob
 
 config = imports.config

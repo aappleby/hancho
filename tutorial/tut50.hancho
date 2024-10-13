@@ -1,6 +1,5 @@
 # tutorial/tut50.hancho - Async/await and custom commands
 import asyncio
-import hancho
 
 # Synchronous functions can be used in place of command strings.
 

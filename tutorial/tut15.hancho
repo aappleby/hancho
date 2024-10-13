@@ -1,25 +1,17 @@
 # tutorial/tut15.hancho
 
-import hancho
-
-common = hancho.Config(
-  out_path = "build/tut15",
-)
-
-compile = hancho.Command(
-  **common,
+cpp_compile = hancho.Command(
   desc    = "Compile {rel(in_src)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-  out_obj = "{swap_ext(in_src, '.o')}",
-  depfile = "{swap_ext(in_src, '.d')}",
+  out_obj = "build/tut15/{swap_ext(in_src, '.o')}",
+  depfile = "build/tut15/{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Command(
-  **common,
+cpp_link = hancho.Command(
   desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
   command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
-main_o = compile(in_src = "src/main.cpp")
-util_o = compile(in_src = "src/util.cpp")
-app    = link(in_objs = [main_o, util_o], out_bin = "app")
+main_o = cpp_compile(in_src = "src/main.cpp")
+util_o = cpp_compile(in_src = "src/util.cpp")
+app    = cpp_link(in_objs = [main_o, util_o], out_bin = "build/tut15/app")

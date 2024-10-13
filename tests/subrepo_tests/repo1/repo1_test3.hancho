@@ -1,6 +1,6 @@
 # repo1_test3.hancho
 
-rules = hancho.include("{repo_path}/rules/repo1_test3_rules.hancho")
+rules = hancho.include("{repo_dir}/rules/repo1_test3_rules.hancho")
 repo1_txt = rules.rule([], "repo1.txt")
 
 repo2 = hancho.subrepo("repo2")

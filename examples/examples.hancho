@@ -1,6 +1,4 @@
-import hancho
-
 hancho.load("hello_world/build.hancho")
 hancho.load("hello_gtk/build.hancho")
 hancho.load("subrepos/build.hancho")
-#hancho.load("dynamic_dependencies/build.hancho")
+hancho.load("dynamic_dependencies/build.hancho")

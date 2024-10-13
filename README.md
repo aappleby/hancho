@@ -56,9 +56,7 @@ options:
 ```python
 # examples/hello_world/build.hancho
 
-import hancho
-
-compile_cpp = hancho.Command(
+compile_cpp = hancho.command(
   desc    = "Compiling C++ {in_src} -> {out_obj}",
   command = "g++ -c {in_src} -o {out_obj}",
   in_src  = None,
@@ -66,7 +64,7 @@ compile_cpp = hancho.Command(
   depfile = "{swap_ext(in_src, '.d')}",
 )
 
-link_cpp_bin = hancho.Command(
+link_cpp_bin = hancho.command(
   desc    = "Linking C++ bin {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
   in_objs = None,
@@ -120,17 +118,7 @@ hancho: BUILD PASSED
 ```
 
 ## Old Updates
- - 2024-03-28 - The v010 branch now has visualization of template and macro expansion which you can enable via ```--debug_expansion```. It produces diagrams like this:
-```
-┏ Eval '{join_path(build_path, build_files)}'
-┃┏ Eval '{start_path/build_dir/build_tag/rel_source_path}'
-┃┃┏ Eval '{rel_path(source_path, command_path)}'
-┃┃┃┏ Eval '{start_path}'
-┃┃┃┗ /home/user/hancho/tutorial
-┃┃┗ .
-┃┗ /home/user/hancho/tutorial/build/tut16
-┗ [PosixPath('/home/user/hancho/tutorial/build/tut16/app')]
-```
+ - 2024-03-28 - The v010 branch now has visualization of template and macro expansion which you can enable via ```--debug_expansion```
  - 2024-03-28 - WIP tutorial for the redesigned Hancho is in the v010 branch here - https://github.com/aappleby/hancho/tree/v010/docs/tutorial
  - 2024-03-22
    - I'm working on a v0.1.0 branch that will rework the way paths/files/directories and template expansion works.

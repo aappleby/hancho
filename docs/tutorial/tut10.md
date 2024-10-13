@@ -120,9 +120,9 @@ It works fine, but having absolute paths like ```/home/user/hancho/tutorial/buil
 
 Like the builtin functions ```joinpath``` and ```swap_ext```, Hancho includes some builtin macros (just named templates without surrounding text) that you can use in your templates.
 
-In particular, ```rel_source_files``` will give us our ```source_files``` field with all the filenames changed to be relative to ```command_path```, the directory where our command is running.
+In particular, ```rel_source_files``` will give us our ```source_files``` field with all the filenames changed to be relative to ```task_path```, the directory where our command is running.
 
-The ```rel_source_files``` macro is defined as ```"{relpath(abs_source_files, command_path)}"```, and ```abs_source_files``` is defined as ```"{joinpath(source_path, source_files)}"```. The macro joins the absolute ```source_path``` with our filenames, then removes the ```command_path``` prefix if present. If ```command_path``` _isn't_ present (say we're pulling in the files from some remote directory), the ```relpath``` will do nothing and we'll still have absolute filenames.
+The ```rel_source_files``` macro is defined as ```"{relpath(abs_source_files, task_path)}"```, and ```abs_source_files``` is defined as ```"{joinpath(source_path, source_files)}"```. The macro joins the absolute ```source_path``` with our filenames, then removes the ```task_path``` prefix if present. If ```task_path``` _isn't_ present (say we're pulling in the files from some remote directory), the ```relpath``` will do nothing and we'll still have absolute filenames.
 
 Note that ```abspath``` and ```relpath``` are not necessarily identical to Python's ```os.path.abspath``` or ```Path.relative_to()``` - they need to operate on arrays of filenames, and we need to be slightly more careful about how we add and remove path pieces when symlinks are involved (you may not be using symlinks in your repos, but I find them helpful).
 
@@ -169,7 +169,7 @@ This is about as far as we can go with templates for now - our build rules are n
 
 There are still a few lines we can remove from our build script by making use of some sensible default values that Hancho provides in a global config object called ```hancho```.
 
-Hancho creates a separate module-wide ```hancho``` object for each .hancho file it loads, and it contains default values for ```command_path```, ```source_path```, and ```build_path``` that will work for most projects. Or at least most of my projects, anyway - I wrote this thing for personal use, so the defaults are the defaults I wanted. Change them if you like. :D
+Hancho creates a separate module-wide ```hancho``` object for each .hancho file it loads, and it contains default values for ```task_path```, ```source_path```, and ```build_path``` that will work for most projects. Or at least most of my projects, anyway - I wrote this thing for personal use, so the defaults are the defaults I wanted. Change them if you like. :D
 
 The ```build_path``` default is particularly interesting:
 
@@ -179,7 +179,7 @@ Unpacking this a bit:
 - ```start_path``` is globally defined as the path to the directory you ran ```python3 hancho.py``` in.
 - ```build_dir``` is globally defined to be ```"build"``` by default, as doing out-of-tree builds is generally preferred over in-tree builds.
 - ```build_tag``` is globally defined to be an empty string, but it can be set to whatever you want. For example, you might want to split your build directory up into separate ```debug``` and ```release``` trees using ```build_tag```.
-- ```rel_source_path``` is the same macro as we saw earlier - the source filenames, relative to ```command_path```.
+- ```rel_source_path``` is the same macro as we saw earlier - the source filenames, relative to ```task_path```.
 
 If we set ```hancho.build_tag``` to ```"tut16"``` and then use ```hancho``` in place of ```config```, we can ditch our ```config = Config(...``` object entirely. That in turn means we don't have to ```from hancho import Config``` or ```from pathlib import Path``` anymore either.
 

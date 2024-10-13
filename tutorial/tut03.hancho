@@ -1,33 +1,24 @@
 # tutorial/tut03.hancho
 
-import hancho
-
-def compile_cpp(source, config):
-  obj = source.replace('.cpp', '.o')
-  dep = source.replace('.cpp', '.d')
-  return hancho.Task(
+def compile_cpp(source):
+  obj = "build/tut03/" + source.replace('.cpp', '.o')
+  dep = "build/tut03/" + source.replace('.cpp', '.d')
+  return hancho.task(
     desc    = "Compile {in_src}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = source,
     out_obj = obj,
     depfile = dep,
-    **config,
   )
 
-def link_cpp(tasks, binary, config):
-  result = hancho.Task(
+def link_cpp(tasks, binary):
+  return hancho.task(
     desc    = "Link {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = tasks,
     out_bin = binary,
-    **config,
   )
 
-common = hancho.Config(
-  in_path  = "src",
-  out_path = "build/tut03",
-)
-
-main_o = compile_cpp("main.cpp", common)
-util_o = compile_cpp("util.cpp", common)
-link_cpp([main_o, util_o], "app", common)
+main_o = compile_cpp("src/main.cpp")
+util_o = compile_cpp("src/util.cpp")
+link_cpp([main_o, util_o], "build/tut003/app")
