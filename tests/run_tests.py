@@ -459,25 +459,26 @@ class TestHancho(unittest.TestCase):
     self.assertTrue(path.exists("build/bar.txt"))
     self.assertTrue(path.exists("build/baz.txt"))
 
-###    def test_arbitrary_flags(self):
-###        """Passing arbitrary flags to Hancho should work"""
-###        self.ctx.new_task(
-###            command = "touch {rel_build_files}",
-###            source_files = [],
-###            build_files = ctx.output_filename,
-###        )
-###
-###        os.system(
-###            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
-###        )
-###        self.assertTrue(path.exists("build/tests/flarp.txt"))
+  def test_arbitrary_flags(self):
+    """Passing arbitrary flags to Hancho should work"""
+    ctx = self.create_ctx("--quiet --flarpy=flarp.txt")
+    self.assertEqual("flarp.txt", ctx.flarpy)
+
+    ctx.new_task(
+      command = "touch {out_file}",
+      source_files = [],
+      out_file = ctx.flarpy,
+    )
+    self.assertEqual(0, hancho.app.build_all())
+    self.assertTrue(path.exists("build/flarp.txt"))
 
   def test_sync_command(self):
     """The 'command' field of rules should be OK handling a sync function"""
+    ctx = self.create_ctx("--quiet")
+
     def sync_command(task):
       force_touch(task.out_obj)
 
-    ctx = self.create_ctx("--quiet")
     ctx.new_task(
       command = sync_command,
       in_src  = [],
@@ -486,30 +487,28 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(path.exists("build/result.txt"))
 
-##    def test_cancellation(self):
-##        """A task that receives a cancellation exception should not run."""
-##        task_that_fails = self.ctx.new_task(
-##            command = "(exit 255)",
-##            in_src  = [],
-##            out_obj = "fail_result.txt",
-##        )
-##
-##        task_that_passes = self.ctx.new_task(
-##            command = "touch {rel(out_obj)}",
-##            in_src  = [],
-##            out_obj = "pass_result.txt",
-##        )
-##
-##        should_be_cancelled = self.ctx.new_task(
-##            command = "touch {rel(out_obj)}",
-##            in_src  = [task_that_fails, task_that_passes],
-##            out_obj = "should_not_be_created.txt",
-##        )
-##
-##        self.assertNotEqual(0, hancho.app.build_all())
-##        self.assertTrue(Path("build/pass_result.txt").exists())
-##        self.assertFalse(Path("build/fail_result.txt").exists())
-##        self.assertFalse(Path("build/should_not_be_created.txt").exists())
+  def test_cancellation(self):
+    """A task that receives a cancellation exception should not run."""
+    ctx = self.create_ctx("--quiet")
+    task_that_fails = ctx.new_task(
+      command = "(exit 255)",
+      in_src  = [],
+      out_obj = "fail_result.txt",
+    )
+    task_that_passes = ctx.new_task(
+      command = "touch {rel(out_obj)}",
+      in_src  = [],
+      out_obj = "pass_result.txt",
+    )
+    should_be_cancelled = ctx.new_task(
+      command = "touch {rel(out_obj)}",
+      in_src  = [task_that_fails, task_that_passes],
+      out_obj = "should_not_be_created.txt",
+    )
+    self.assertNotEqual(0, hancho.app.build_all())
+    self.assertTrue(Path("build/pass_result.txt").exists())
+    self.assertFalse(Path("build/fail_result.txt").exists())
+    self.assertFalse(Path("build/should_not_be_created.txt").exists())
 
   def test_task_creates_task(self):
     """Tasks using callbacks can create new tasks when they run."""
