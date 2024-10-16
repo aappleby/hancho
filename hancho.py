@@ -266,6 +266,9 @@ class Config:
     def items(self):
         return self.__dict__.items()
 
+    def __contains__(self, key):
+        return key in self.__dict__
+
     def __getitem__(self, key):
         return self.__dict__[key]
 
@@ -641,6 +644,9 @@ class TaskState(IntEnum):
 class Task(Config):
     """Calling a Command creates a Task."""
 
+    name        = None
+    desc        = "{rel(_in_files)} -> {rel(_out_files)}"
+
     def __init__(self, *args, **kwargs):
         super().__init__()
 
@@ -656,11 +662,9 @@ class Task(Config):
         #force = False,
         #trace = False,
 
-        self.name        = None
-        self.desc        = "{rel(_in_files)} -> {rel(_out_files)}"
-        self.tags        = []
-        self.command     = None
-        self.jobs        = None
+        #self.tags        = []
+        #self.command     = None
+        #self.jobs        = None
         self.depfile     = None
 
         self.root_dir    = None
@@ -688,8 +692,10 @@ class Task(Config):
         self.merge(args)
         self.merge(kwargs)
 
-        assert path.isdir(self.root_dir)
-        assert path.isdir(self.repo_dir)
+        #assert path.isdir(self.root_dir)
+        #assert path.isdir(self.repo_dir)
+
+        assert self.command is not None
         assert self.task_dir is not None
         assert self.build_dir is not None
 
@@ -751,14 +757,14 @@ class Task(Config):
 
             assert self._state is TaskState.STARTED
             awaitables = []
-            for key, val in self.__dict__.items():
+            for key, val in self.items():
                 if key != "_promise":
                     get_awaitables(val, awaitables)
 
             self._state = TaskState.AWAITING_INPUTS
             await asyncio.gather(*awaitables)
 
-            for key, val in self.__dict__.items():
+            for key, val in self.items():
                 if key != "_promise":
                     self.__dict__[key] = await await_variant(val)
 
@@ -879,10 +885,8 @@ class Task(Config):
             if key.startswith("out_"):
                 self.__dict__[key] = visit_variant(key, val, handle_out_path)
 
-        if "depfile" in self.__dict__:
-            depfile = self.depfile
-            if depfile is not None:
-                self.depfile = join_path(self.build_dir, depfile)
+        if "depfile" in self.__dict__ and self.depfile is not None:
+            self.depfile = join_path(self.build_dir, self.depfile)
 
         # And now we can expand the command.
         self.desc = self.expand(self.desc)
@@ -905,8 +909,9 @@ class Task(Config):
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
-            if not file.startswith(self.root_dir):
-                raise ValueError(f"Path error, output file {file} is not under root_dir {self.root_dir}")
+            if "root_dir" in self.__dict__ and self.root_dir is not None:
+                if not file.startswith(self.root_dir):
+                    raise ValueError(f"Path error, output file {file} is not under root_dir {self.root_dir}")
 
         # Check for duplicate task outputs
         if self.command:

@@ -20,10 +20,7 @@ import hancho
 # meta deps changed
 # transitive dependencies
 # dry run not creating files/dirs
-# loading a module directly and then via "../foo.hancho" should not load two
-# copies
 # all the predefined directories need test cases
-# overriding in_dir/out_dir/work_dir need test cases
 
 # min delta seems to be 4 msec on linux (wsl), 1 msec on windows?
 
@@ -79,12 +76,6 @@ class TestConfig(unittest.TestCase):
 
 ################################################################################
 
-#hancho.module = app.modstack[-1]
-#hancho.app.use_color = False
-#hancho.app.quiet = True
-#hancho.app.debug = True
-#hancho.app.verbose = True
-
 def color(red=None, green=None, blue=None):
   """Converts RGB color to ANSI format string."""
   # Color strings don't work in Windows console, so don't emit them.
@@ -108,23 +99,6 @@ class TestHancho(unittest.TestCase):
     shutil.rmtree("build", ignore_errors=True)
     hancho.app.reset()
     hancho.app.quiet = True
-
-#    test_dir  = os.getcwd()
-#    test_path = os.path.join(test_dir, "build.hancho")
-#
-#    self.ctx = hancho.Hancho(
-#      root_dir    = test_dir,
-#      root_path   = test_path,
-#      repo_dir    = test_dir,
-#      repo_name   = "",
-#      hancho_path = test_path,
-#      mod_dir     = test_dir,
-#      mod_name    = "build",
-#      verbose     = False,
-#      debug       = False,
-#      force       = False,
-#      trace       = False,
-#    )
 
   def create_ctx(self, commandline):
     argv = commandline.split()
@@ -233,6 +207,20 @@ class TestHancho(unittest.TestCase):
     self.assertNotEqual(0, hancho.app.build_all())
     self.assertFalse(Path("build/foo.o").exists())
     self.assertTrue("Path error" in hancho.app.log)
+
+  #----------------------------------------
+
+  def test_raw_task(self):
+    ctx = self.create_ctx("--quiet")
+    task = ctx.Task(
+      command   = "touch {rel(out_obj)}",
+      in_src    = "src/foo.c",
+      out_obj   = "foo.o",
+      task_dir  = os.getcwd(),
+      build_dir = "build"
+    )
+    self.assertEqual(0, hancho.app.build_all())
+    self.assertTrue(Path("build/foo.o").exists())
 
   #----------------------------------------
 
@@ -378,7 +366,7 @@ class TestHancho(unittest.TestCase):
     """Having a file mentioned in files_out should not magically create it"""
     ctx = self.create_ctx("--quiet")
     ctx.new_task(
-      command = None,
+      command = "echo",
       in_src  = [],
       out_obj = "result.txt"
     )
