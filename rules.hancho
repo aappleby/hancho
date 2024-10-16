@@ -3,7 +3,7 @@ import os
 ####################################################################################################
 # Utils
 
-exports.touch_outputs = hancho.Command(
+touch_outputs = hancho.new_command(
   command = "touch {in_files}",
   in_files = None,
 )
@@ -15,7 +15,7 @@ exports.touch_outputs = hancho.Command(
 
 """
 if os.name == 'nt':
-  exports.compile_cpp = hancho.command(
+  exports.compile_cpp = hancho.new_command(
     command     = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
@@ -34,13 +34,13 @@ else:
 
 #-------------------------------------------------------------------------------
 
-default_toolchain = hancho.Config(
+default_toolchain = hancho.new_config(
   arch     = "x86-64",
   compiler = "x86_64-linux-gnu-g++",
   linker   = "x86_64-linux-gnu-g++",
 )
 
-riscv64_toolchain = hancho.Config(
+riscv64_toolchain = hancho.new_config(
   arch     = "riscv64",
   compiler = "riscv64-unknown-elf-g++",
   linker   = "riscv64-unknown-elf-g++",
@@ -65,7 +65,7 @@ riscv64_toolchain = hancho.Config(
 
 #----------------------------------------
 
-compile_cpp = hancho.Command(
+compile_cpp = hancho.new_command(
   name    = None,
   desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
 
@@ -95,7 +95,7 @@ compile_cpp = hancho.Command(
 
 #----------------------------------------
 
-link_cpp_lib = hancho.Command(
+link_cpp_lib = hancho.new_command(
   name    = None,
   desc    = "Bundling C++ lib {rel(out_lib)}",
 
@@ -107,7 +107,7 @@ link_cpp_lib = hancho.Command(
 
 #----------------------------------------
 
-link_cpp_bin = hancho.Command(
+link_cpp_bin = hancho.new_command(
   name    = None,
   desc    = "Linking C++ bin {rel(out_bin)}",
 
@@ -131,16 +131,12 @@ link_cpp_bin = hancho.Command(
   joined_sys_libs  = "{join_prefix('-l', sys_libs)}",
 )
 
-exports.compile_cpp  = compile_cpp
-exports.link_cpp_lib = link_cpp_lib
-exports.link_cpp_bin = link_cpp_bin
-
 #----------------------------------------
 
-def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, lib_config = None):
+def _cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, lib_config = None):
   objs = [
     compile_cpp(cpp_config, in_src = file)
-    for file in hancho.flatten(in_srcs)
+    for file in flatten(in_srcs)
   ]
   return link_cpp_lib(
     lib_config,
@@ -148,10 +144,10 @@ def cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None
     in_objs = [objs, in_objs, in_libs],
   )
 
-def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, bin_config = None):
+def _cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, bin_config = None):
   objs = [
     compile_cpp(cpp_config, in_src = file)
-    for file in hancho.flatten(in_srcs)
+    for file in flatten(in_srcs)
   ]
   return link_cpp_bin(
     bin_config,
@@ -159,14 +155,14 @@ def cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None
     in_objs = [objs, in_objs, in_libs],
   )
 
-exports.cpp_lib = hancho.Command(call = cpp_lib)
-exports.cpp_bin = hancho.Command(call = cpp_bin)
+cpp_lib = hancho.new_command(call = _cpp_lib)
+cpp_bin = hancho.new_command(call = _cpp_bin)
 
 ####################################################################################################
 # Makefiles
 
-def make(*, make_config = None, in_makefile):
-  command = hancho.Command(
+def _make(*, make_config = None, in_makefile):
+  command = hancho.new_command(
     command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
     make_path   = "{path.dirname(in_makefile)}",
     make_file   = "{path.basename(in_makefile)}",
@@ -174,31 +170,30 @@ def make(*, make_config = None, in_makefile):
   )
   command(make_config, in_makefile = in_makefile)
 
-exports.make = hancho.Command(call = make)
+make = hancho.new_command(call = _make)
 
 ####################################################################################################
 # Tests
 
-run_test = hancho.Command(
+run_test = hancho.new_command(
   desc     = "Running test {rel(in_test)}",
   command  = "{in_test} {args} && touch {out_pass}",
   in_test  = None,
   args     = "",
   out_pass = "{in_test}.pass",
-  save_log = True,
-  out_log  = "{in_test}.log",
+  log_path = "{in_test}.log",
 )
 
-def cpp_test(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, bin_config = None, test_config = None):
-  objs = [exports.compile_cpp(cpp_config, in_src = src) for src in hancho.flatten(in_srcs)]
-  bin = exports.link_cpp_bin(
+def _cpp_test(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, bin_config = None, test_config = None):
+  objs = [compile_cpp(cpp_config, in_src = src) for src in flatten(in_srcs)]
+  bin = link_cpp_bin(
     bin_config,
     name = name,
     in_objs = [objs, in_objs, in_libs],
   )
   return run_test(test_config, in_test = bin)
 
-exports.cpp_test = hancho.Command(call = cpp_test)
+cpp_test = hancho.new_command(call = _cpp_test)
 
 
 """
@@ -234,7 +229,7 @@ check_cpp = base.command(
   build_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-metron = hancho.command(
+metron = hancho.new_command(
   command   = "{repo_dir}/symlinks/metron/build/metron/metron -q -v -e -c {source_files} -o {build_files}",
   depfile   = "{swap_ext(source_files, '.d')}",
   build_files = "{swap_ext(source_files, '.sv')}",

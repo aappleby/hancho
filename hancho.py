@@ -33,7 +33,7 @@ first_line_block = True
 
 def log_line(message):
     app.log += message
-    if not Config.quiet:
+    if not app.quiet:
         sys.stdout.write(message)
         sys.stdout.flush()
 
@@ -149,8 +149,8 @@ def join_suffix(strings, suffix):
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
-    if not Config.use_color or os.name == "nt":
-        return ""
+    #if not Config.use_color or os.name == "nt":
+    #    return ""
     if red is None:
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
@@ -206,7 +206,11 @@ class Dumper:
             case Config():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
-                    result += f"{{name = '{variant.name}', ...}}"
+                    result += "{...}"
+                    #if "name" in variant:
+                    #    result += f"{{name = '{variant.name}', ...}}"
+                    #else:
+                    #    result += "{...}"
                 else:
                     result += self.dump(variant.__dict__)
             case list():
@@ -254,6 +258,9 @@ class Config:
     def __init__(self, *args, **kwargs):
         self.merge(args, kwargs)
 
+    def clone(self):
+        return type(self)(self)
+    
     #----------------------------------------
 
     def items(self):
@@ -295,6 +302,27 @@ class Config:
         result.merge(args, kwargs)
         return result
 
+    ####################################################################################################
+    # All static methods and fields are available to use in any macro.
+
+    # fmt: off
+    abs_path    = staticmethod(abs_path)
+    rel_path    = staticmethod(rel_path)
+    join_path   = staticmethod(join_path)
+    color       = staticmethod(color)
+    glob        = staticmethod(glob.glob)
+    len         = staticmethod(len)
+    run_cmd     = staticmethod(run_cmd)
+    swap_ext    = staticmethod(swap_ext)
+    flatten     = staticmethod(flatten)
+    print       = staticmethod(print)
+    log         = staticmethod(log)
+    path        = path
+    re          = re
+    join_prefix = staticmethod(join_prefix)
+    join_suffix = staticmethod(join_suffix)
+    # fmt: on
+
 ####################################################################################################
 # A Command is a 'callable' config. It can wrap a function, or can contain a command string.
 
@@ -315,53 +343,6 @@ class Command(Config):
             merged.pop("call")
             return custom_call(**merged)
         return Task(merged)
-
-####################################################################################################
-# All static methods and fields are available to use in any macro.
-
-# fmt: off
-
-Config.root_dir  = None
-
-Config.desc          = "{rel(_in_files)} -> {rel(_out_files)}"
-Config.command       = None
-
-Config.build_name = "build"
-Config.build_dir  = "{root_dir}/{build_name}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
-
-Config.jobs      = os.cpu_count()
-Config.name      = ""
-Config.build_tag = ""
-Config.tags      = []
-Config.verbose   = False
-Config.quiet     = False
-Config.dry_run   = False
-Config.debug     = False
-Config.force     = False
-Config.shuffle   = False
-Config.trace     = False
-Config.use_color = True
-
-Config.should_fail = False
-Config.save_log    = False
-
-Config.abs_path    = staticmethod(abs_path)
-Config.rel_path    = staticmethod(rel_path)
-Config.join_path   = staticmethod(join_path)
-Config.color       = staticmethod(color)
-Config.glob        = staticmethod(glob.glob)
-Config.len         = staticmethod(len)
-Config.run_cmd     = staticmethod(run_cmd)
-Config.swap_ext    = staticmethod(swap_ext)
-Config.flatten     = staticmethod(flatten)
-Config.print       = staticmethod(print)
-Config.log         = staticmethod(log)
-Config.path        = path
-Config.re          = re
-Config.join_prefix = staticmethod(join_prefix)
-Config.join_suffix = staticmethod(join_suffix)
-
-# fmt: on
 
 ####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
@@ -414,6 +395,7 @@ def expand_inc():
     """ Increments the current expansion recursion depth. """
     app.expand_depth += 1
     if app.expand_depth > MAX_EXPAND_DEPTH:
+        log("Text expansion failed to terminate")
         raise RecursionError("Text expansion failed to terminate")
 
 def expand_dec():
@@ -662,21 +644,61 @@ class Task(Config):
     def __init__(self, *args, **kwargs):
         super().__init__()
 
-        self.repo_dir   = app.get_repo_dir()
-        self.repo_name  = app.get_repo_name()
-        self.task_dir   = os.getcwd()
-        self.build_dir  = Config.build_dir
-        self.depfile    = None
+        #root_dir = "/home/aappleby/repos/hancho",
+        #root_path = "/home/aappleby/repos/hancho/build.hancho",
+        #repo_dir = "/home/aappleby/repos/hancho",
+        #repo_name = "tut00",
+        #hancho_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+        #mod_name = "tut00",
+        #mod_dir = "/home/aappleby/repos/hancho/tutorial",
+        #verbose = False,
+        #debug = False,
+        #force = False,
+        #trace = False,
+
+        self.name        = None
+        self.desc        = "{rel(_in_files)} -> {rel(_out_files)}"
+        self.tags        = []
+        self.command     = None
+        self.jobs        = None
+        self.depfile     = None
+
+        self.root_dir    = None
+        self.root_path   = None
+        self.repo_dir    = None
+        self.repo_name   = None
+        self.hancho_path = None
+        self.mod_name    = None
+        self.mod_dir     = None
+        self.log_path    = None
+
+        self.build_dir   = "{root_dir}/{build_name}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
+        self.build_name  = "build"
+        self.build_tag   = ""
+        self.task_dir    = "{mod_dir}"
+
+        self.verbose     = False
+        self.debug       = False
+        self.force       = False
+        self.trace       = False
+        self.should_fail = False
+
+        #self.use_color   = True
 
         self.merge(args)
         self.merge(kwargs)
+
+        assert path.isdir(self.root_dir)
+        assert path.isdir(self.repo_dir)
+        assert self.task_dir is not None
+        assert self.build_dir is not None
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
         self._state = TaskState.DECLARED
         self._reason = None
         self._promise = None
-        self._loaded_modules = [m.__file__ for m in app.loaded_modules]
+        self._loaded_files = [m.hancho.hancho_path for m in app.loaded_modules]
 
         if not self.command is None:
             app.all_tasks.append(self)
@@ -696,6 +718,7 @@ class Task(Config):
 
     async def await_done(self):
         self.start()
+        assert self._promise is not None
         return await self._promise
 
     def promise(self, *args):
@@ -783,11 +806,11 @@ class Task(Config):
                     for command in commands:
                         if self.verbose or self.debug:
                             log(color(128,128,255), end="")
-                            if self.dry_run: log("(DRY RUN) ", end="")
-                            log(f"{rel_path(self.task_dir, Config.root_dir)}$ ", end="")
+                            if app.dry_run: log("(DRY RUN) ", end="")
+                            log(f"{rel_path(self.task_dir, self.root_dir)}$ ", end="")
                             log(color(), end="")
                             log(command)
-                        if not self.dry_run:
+                        if not app.dry_run:
                             await self.run_command(command)
                 finally:
                     await app.release_jobs(job_count, self.desc)
@@ -882,8 +905,8 @@ class Task(Config):
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
-            if not file.startswith(Config.root_dir):
-                raise ValueError(f"Path error, output file {file} is not under root_dir {Config.root_dir}")
+            if not file.startswith(self.root_dir):
+                raise ValueError(f"Path error, output file {file} is not under root_dir {self.root_dir}")
 
         # Check for duplicate task outputs
         if self.command:
@@ -893,7 +916,7 @@ class Task(Config):
                 app.all_out_files.add(file)
 
         # Make sure our output directories exist
-        if not self.dry_run:
+        if not app.dry_run:
             for file in self._out_files:
                 os.makedirs(path.dirname(file), exist_ok=True)
 
@@ -927,9 +950,9 @@ class Task(Config):
             if mtime(file) >= min_out:
                 return f"Rebuilding because {file} has changed"
 
-        for mod in self._loaded_modules:
-            if mtime(mod) >= min_out:
-                return f"Rebuilding because {mod} has changed"
+        for mod_filename in self._loaded_files:
+            if mtime(mod_filename) >= min_out:
+                return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the depfile, if present.
         depfile   = getattr(self, "depfile", None)
@@ -970,8 +993,9 @@ class Task(Config):
             app.pushdir(self.task_dir)
             result = command(self)
             app.popdir()
-            while inspect.isawaitable(result):
-                result = await result
+            #while inspect.isawaitable(result):
+            #    result = await result
+            self._out_files.append(result)
             return
 
         # Non-string non-callable commands are not valid
@@ -1002,55 +1026,147 @@ class Task(Config):
 
         command_pass = (self.returncode == 0) != self.should_fail
 
-        if self.save_log:
-            result = open(self.out_log, "w")
-            result.write("-----stderr-----\n")
-            result.write(self.stderr)
-            result.write("-----stdout-----\n")
-            result.write(self.stdout)
-            result.close()
+        if 'log_path' in self.__dict__:
+            if self.log_path is not None:
+                print(self)
+                result = open(self.log_path, "w")
+                result.write("-----stderr-----\n")
+                result.write(self.stderr)
+                result.write("-----stdout-----\n")
+                result.write(self.stdout)
+                result.close()
 
-        if self.verbose or not command_pass or self.stderr:
-            if self.stderr and not self.should_fail:
-                self.print_status()
-                log("-----stderr-----")
-                log(self.stderr, end="")
+        #if self.verbose or not command_pass or self.stderr:
+        if self.verbose or not command_pass:
+            self.print_status()
             if self.stdout:
-                self.print_status()
                 log("-----stdout-----")
                 log(self.stdout, end="")
+            if self.stderr:
+                log("-----stderr-----")
+                log(self.stderr, end="")
 
         if not command_pass:
             raise ValueError(self.returncode)
 
 ####################################################################################################
 
-class Context(Config):
+class Hancho(Config):
     def __init__(self, *args, **kwargs):
-        #self.repo_name = None
-        #self.repo_dir = None
-        self.Config = Config
-        self.Command = Command
-        self.flatten = flatten
-        self.Task = Task
         super().__init__(*args, **kwargs)
 
-    def config(self, *args, **kwargs):
-        return Config(*args, **kwargs)
+    def new_config(self, *args, **kwargs):
+        return Config(self, *args, **kwargs)
 
-    def task(self, *args, **kwargs):
+    def new_command(self, *args, **kwargs):
+        return Command(self, *args, **kwargs)
+
+    def new_task(self, *args, **kwargs):
         return Task(self, *args, **kwargs)
-    
-    def log(self, *args, **kwargs):
-        return log(*args, **kwargs)
 
-    def load(self, file_name, *args, **kwargs):
-        #return load(*args, **kwargs)
-        return app.load_file(file_name, *args, as_repo=False, **kwargs)
-    
-    def repo(self, *args, **kwargs):
-        return repo(*args, **kwargs)
+    def normalize_path(self, file_path):
+        file_path = self.expand(file_path)
+        assert isinstance(file_path, str)
+        assert not macro_regex.search(file_path)
 
+        file_path = path.join(os.getcwd(), file_path)
+        assert path.isabs(file_path)
+        assert path.isfile(file_path)
+
+        return file_path
+
+    def include(self, hancho_path, *args, **kwargs):
+        hancho_path = self.normalize_path(hancho_path)
+        new_hancho = Hancho(
+            self,
+            hancho_path = hancho_path,
+        )
+        new_hancho.merge(args)
+        new_hancho.merge(kwargs)
+
+        return new_hancho._load_module()
+
+    def load(self, hancho_path, *args, **kwargs):
+        hancho_path = self.normalize_path(hancho_path)
+        new_hancho = Hancho(
+            self,
+            mod_name    = path.splitext(path.basename(hancho_path))[0],
+            mod_dir     = path.dirname(hancho_path),
+            hancho_path = hancho_path,
+        )
+        new_hancho.merge(args)
+        new_hancho.merge(kwargs)
+
+        return new_hancho._load_module()
+
+    def repo(self, hancho_path, *args, **kwargs):
+        hancho_path = self.normalize_path(hancho_path)
+        new_hancho = Hancho(
+            self,
+            repo_name   = path.basename(path.dirname(hancho_path)),
+            repo_dir    = path.dirname(hancho_path),
+            mod_name    = path.splitext(path.basename(hancho_path))[0],
+            mod_dir     = path.dirname(hancho_path),
+            hancho_path = hancho_path,
+        )
+        new_hancho.merge(args)
+        new_hancho.merge(kwargs)
+
+        return new_hancho._load_module()
+
+    def _load_module(self):
+        #if config.debug or config.verbose:
+        log(("┃ " * (len(app.modstack))), end="")
+        log(color(128,255,128) + f"Loading {self.hancho_path}" + color())
+
+        new_module = Module(hancho = self)
+        app.loaded_modules.append(new_module)
+        app.modstack.append(new_module)
+
+        # We must chdir()s into the .hancho file directory before running it so that
+        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
+        # context here so there should be no other threads trying to change cwd.
+        app.pushdir(path.dirname(self.hancho_path))
+
+        with open(self.hancho_path, encoding="utf-8") as file:
+            #print(self.__dict__)
+            # FIXME need to explicitly define the globals - should be self + some explicit list of staticmethods, etc
+            exec(
+                file.read(),
+                new_module.__dict__, 
+                new_module.__dict__
+            ) # pylint: disable=exec-used
+
+        # The exec() function adds __builtins__, remove it now that we're done exec'ing.
+        del new_module.__builtins__
+
+        # And now we chdir back out.
+        app.popdir()
+        app.modstack.pop()
+
+        return new_module
+
+
+    Config = Config
+    Command = Command
+    Task = Task
+
+    #def get_log(self):
+    #    return app.log
+
+    #def reset(self):
+    #    return app.reset()
+
+    #def build(self):
+    #    return app.build()
+
+    #def build_all(self):
+    #    return app.build_all()
+
+####################################################################################################
+
+class Module(Config):
+    pass
 
 ####################################################################################################
 
@@ -1061,6 +1177,17 @@ class App:
     ########################################
 
     def __init__(self):
+        self.verbose   = False
+        self.debug     = False
+        self.force     = False
+        self.trace     = False
+        self.shuffle   = False
+        self.use_color = True
+        self.quiet     = False
+        self.dry_run   = False
+        self.jobs      = os.cpu_count()
+        self.target    = None
+
         self.loaded_modules = []
         self.dirstack = [os.getcwd()]
         self.modstack = []
@@ -1075,6 +1202,7 @@ class App:
         self.mtime_calls = 0
         self.line_dirty = False
         self.expand_depth = 0
+        self.shuffle = False
 
         self.tasks_started = 0
         self.tasks_running = 0
@@ -1093,51 +1221,63 @@ class App:
 
     ########################################
 
-    def main(self):
-        result = -1
+    def create_root_hancho(self, argv):
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("target",          default=None, nargs="?", type=str,           help="A regex that selects the targets to build. Defaults to all targets.")
-        parser.add_argument("-f", "--file",    default="build.hancho",  type=str,           help="The name of the .hancho file(s) to build")
-        parser.add_argument("-C", "--dir",     default=os.getcwd(),     type=str,           help="Change directory before starting the build")
-        parser.add_argument("-j", "--jobs",    default=os.cpu_count(),  type=int,           help="Run N jobs in parallel (default = cpu_count)")
-        parser.add_argument("-v", "--verbose", default=False, action="store_true",          help="Print verbose build info")
-        parser.add_argument("-q", "--quiet",   default=False, action="store_true",          help="Mute all output")
-        parser.add_argument("-n", "--dry_run", default=False, action="store_true",          help="Do not run commands")
-        parser.add_argument("-d", "--debug",   default=False, action="store_true",          help="Print debugging information")
-        parser.add_argument("-s", "--shuffle", default=False, action="store_true",          help="Shuffle task order to shake out dependency issues")
-        parser.add_argument("-t", "--trace",   default=False, action="store_true",          help="Trace all text expansion")
-        parser.add_argument(      "--force",   default=False, action="store_true",          help="Force rebuild of everything")
+        parser.add_argument("target",            default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
+
+        parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
+        parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
+
+        parser.add_argument("-v", "--verbose",   default=False, action="store_true",  help="Print verbose build info")
+        parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
+        parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
+        parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
+
+        parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
+        parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
+        parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
+        parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
         # fmt: on
 
-        (flags, unrecognized) = parser.parse_known_args()
+        (flags, unrecognized) = parser.parse_known_args(argv)
         flags = flags.__dict__
 
-        root_dir  = abs_path(flags['dir']) # Root path must be absolute.
-        
-        assert path.isdir(root_dir)
-        os.chdir(root_dir)
-        
-        root_file = flags['file']
-        assert path.isfile(root_file)
-        
-        Config.root_dir  = root_dir
+        # These flags are app-wide and not context-wide.
+        app_flags = ['shuffle', 'use_color', 'quiet', 'dry_run', 'jobs', 'target']
+        for flag in app_flags:
+            setattr(app, flag, flags[flag])
+            del flags[flag]
 
-        Config.target  = flags['target']
-        Config.jobs    = flags['jobs']
-        Config.verbose = flags['verbose']
-        Config.quiet   = flags['quiet']
-        Config.dry_run = flags['dry_run']
-        Config.debug   = flags['debug']
-        Config.force   = flags['force']
-        Config.shuffle = flags['shuffle']
-        Config.trace   = flags['trace']
+        setattr(app, 'verbose', flags['verbose'])
+        setattr(app, 'debug',   flags['debug'])
+        setattr(app, 'force',   flags['force'])
+        setattr(app, 'trace',   flags['trace'])
 
-        for key, val in flags.items():
-            setattr(Config, key, val)
+        root_dir  = path.abspath(flags['root_dir']) # Root path must be absolute.
 
-        # Unrecognized command line parameters also become global Config fields if they are
+        root_path = path.join(root_dir, flags['root_file'])
+
+        root_hancho = Hancho(
+            root_dir    = root_dir,
+            root_path   = root_path,
+
+            repo_dir    = root_dir,
+            repo_name   = "",
+
+            hancho_path = root_path,
+            mod_dir     = root_dir,
+            mod_name    = path.splitext(path.basename(root_path))[0],
+
+            verbose     = flags['verbose'],
+            debug       = flags['debug'],
+            force       = flags['force'],
+            trace       = flags['trace'],
+        )
+
+        # Unrecognized command line parameters also become global config fields if they are
         # flag-like
         unrecognized_flags = {}
         for span in unrecognized:
@@ -1148,28 +1288,39 @@ class App:
                 unrecognized_flags[key] = val
 
         for key, val in unrecognized_flags.items():
-            setattr(Config, key, val)
+            setattr(root_hancho, key, val)
 
         #========================================
 
-        if Config.debug:
-            log(f"global_config = {Dumper().dump(Config.__dict__)}")
+        if root_hancho.debug:
+            log(f"root_hancho = {Dumper().dump(root_hancho.__dict__)}")
+        return root_hancho
 
+    ########################################
+
+    def main(self):
         time_a = time.perf_counter()
-        self.load_module(
-            path.join(root_dir, root_file),
-            Config(repo_dir = root_dir, repo_name = "")
-        )
+        
+        root_hancho = self.create_root_hancho(sys.argv[1:])
+
+        assert path.isabs(root_hancho.root_dir)
+        assert path.isdir(root_hancho.root_dir)
+        assert path.isabs(root_hancho.root_path)
+        assert path.isfile(root_hancho.root_path)
+        os.chdir(root_hancho.root_dir)
+
+        root_module = root_hancho._load_module()
+
         time_b = time.perf_counter()
 
-        #if Config.debug or Config.verbose:
+        #if root_config.debug or root_config.verbose:
         #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         #========================================
 
-        if Config.target:
-            target_regex = re.compile(Config.target)
+        if app.target:
+            target_regex = re.compile(app.target)
             for task in self.all_tasks:
                 queue_task = False
                 for name in flatten(task.name):
@@ -1189,85 +1340,12 @@ class App:
                 task.queue()
 
         result = self.build()
-        
+
         #========================================
 
         print()
         return result
 
-    ########################################
-
-    def load_module(self, mod_path, imports):
-        """Loads a Hancho module ***while chdir'd into its directory***"""
-
-        assert not macro_regex.search(mod_path)
-        assert path.isabs(mod_path)
-        assert path.isfile(mod_path)
-
-        #if config.debug or config.verbose:
-        log(("┃ " * (len(app.modstack) - 1)), end="")
-        log(color(128,255,128) + f"Loading module {mod_path}" + color())
-
-        with open(mod_path, encoding="utf-8") as file:
-            source = file.read()
-            code = compile(source, mod_path, "exec", dont_inherit=True)
-
-        mod_name = path.splitext(path.basename(mod_path))[0]
-        module = type(sys)(mod_name)
-        module.__file__ = mod_path
-        module.__builtins__ = builtins
-
-        exports = Config()
-
-        module.hancho = Context(imports, exports = exports)
-        module.imports = imports
-        module.exports = exports
-
-        self.loaded_modules.append(module)
-
-        self.modstack.append(module)
-
-        # We must chdir()s into the .hancho file directory before running it so that
-        # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-        # context here so there should be no other threads trying to change cwd.
-        app.pushdir(path.dirname(mod_path))
-
-        # Why Pylint thinks this is not callable is a mystery.
-        # pylint: disable=not-callable
-        types.FunctionType(code, module.__dict__)()
-
-        # And now we chdir back out.
-        app.popdir()
-
-        self.modstack.pop()
-        
-        return exports
-
-    ########################################
-
-    def load_file(self, file_name, as_repo, *args, **kwargs):
-        mod_config = Config(*args, **kwargs)
-        old_repo_dir  = self.get_repo_dir()
-        old_repo_name = self.get_repo_name()
-
-        mod_config.repo_dir = old_repo_dir
-        mod_config.repo_name = old_repo_name
-        file_name = mod_config.expand(file_name)
-        file_path = join_path(os.getcwd(), file_name)
-
-        if as_repo:
-            new_repo_dir  = path.dirname(file_path)
-            new_repo_name = path.basename(new_repo_dir)
-        else:
-            new_repo_dir = old_repo_dir
-            new_repo_name = old_repo_name
-
-        assert path.isfile(file_path)
-
-        mod_config.repo_dir = new_repo_dir
-        mod_config.repo_name = new_repo_name
-
-        return self.load_module(file_path, mod_config)
 
     ########################################
 
@@ -1327,7 +1405,7 @@ class App:
     def start_queued_tasks(self):
         """Creates an asyncio.Task for each task in the queue and clears the queue."""
 
-        if Config.shuffle:
+        if app.shuffle:
             log(f"Shufflin' {len(self.queued_tasks)} tasks")
             random.shuffle(self.queued_tasks)
 
@@ -1341,7 +1419,7 @@ class App:
     async def async_run_tasks(self):
         # Run all tasks in the queue until we run out.
 
-        self.jobs_available = Config.jobs
+        self.jobs_available = app.jobs
         self.job_slots = ["[----]"] * self.jobs_available
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
@@ -1366,7 +1444,7 @@ class App:
 
         # Done, print status info if needed
         #if Config.debug:
-        if Config.verbose:
+        if app.verbose:
             log(f"tasks total:     {len(self.all_tasks)}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
@@ -1388,8 +1466,8 @@ class App:
     async def acquire_jobs(self, count, desc):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > Config.jobs:
-            raise ValueError(f"Nedd {count} jobs, but pool is {Config.jobs}.")
+        if count > app.jobs:
+            raise ValueError(f"Nedd {count} jobs, but pool is {app.jobs}.")
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
@@ -1426,31 +1504,18 @@ class App:
         self.jobs_lock.release()
 
 ####################################################################################################
-# Global Hancho methods that delegate to the app
-
-def load(file_name, *args, **kwargs):
-    return app.load_file(file_name, *args, as_repo=False, **kwargs)
-
-def repo(file_name, *args, **kwargs):
-    return app.load_file(file_name, *args, as_repo=True, **kwargs)
-
-def reset():
-    return app.reset()
-
-def build():
-    return app.build()
-
-def build_all():
-    return app.build_all()
-
-def get_log():
-    return app.log
-
-####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
 app = App()
 
 if __name__ == "__main__":
+
+    #context = Config(_locals = 2)
+    #print(context)
+    #source = """import os\nasdf = 100\nprint(_locals)"""
+    #exec(source, None, context)
+    #print(context)
+
     sys.exit(app.main())
+    pass

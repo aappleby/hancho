@@ -1,5 +1,5 @@
-hancho.Config.force = True
+#hancho.force = True
 
 hancho.load("tutorial/tutorial.hancho")
-#hancho.load("examples/examples.hancho")
-#hancho.load("tests/tests.hancho")
+hancho.load("examples/examples.hancho")
+hancho.load("tests/tests.hancho")

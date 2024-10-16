@@ -1,5 +1,5 @@
 
-rules = hancho.include("{root_path}/rules/rules.hancho")
+rules = hancho.include("{root_dir}/rules/rules.hancho")
 
 main_o = rules.compile("src/main.cpp")
 test_o = rules.compile("src/test.cpp")

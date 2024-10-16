@@ -1,5 +1,7 @@
-hancho.Task(
+# tests/tests.hancho
+
+hancho.new_task(
   name = "testsuite",
   desc = "Run all tests",
-  command = ["./run_tests.py -q"],
+  command = ["./run_tests.py"],
 )

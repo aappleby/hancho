@@ -21,7 +21,7 @@
       "request": "launch",
       "program": "run_tests.py",
       "cwd": "${workspaceFolder}/tests",
-      "args": ["TestHancho.test_header_changed"],
+      //"args": ["TestHancho.test_header_changed"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },

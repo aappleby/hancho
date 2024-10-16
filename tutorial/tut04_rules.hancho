@@ -1,27 +1,20 @@
-def compile_cpp(source, config):
-  build_path = config.build_path
+# tutorial/tut04_rules.hancho
+
+def compile_cpp(source):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')
-  return hancho.Task(
-    config,
-    desc          = f"Compile {source}",
-    command       = f"g++ -MMD -c {source} -o {build_path}/{obj}",
-    source_files  = source,
-    build_files   = obj,
-    build_deps    = dep,
+  return hancho.new_task(
+    desc    = "Compile {in_src}",
+    command = "g++ -MMD -c {in_src} -o {out_obj}",
+    in_src  = source,
+    out_obj = obj,
+    depfile = dep,
   )
 
-def link_cpp(tasks, binary, config):
-  build_path = config.build_path
-  objs = [task.build_files for task in tasks]
-  obj_paths = [f"{build_path}/{obj}" for obj in objs]
-  result = hancho.Task(
-    config,
-    desc          = f"Link {objs} into {binary}",
-    command       = f"g++ {' '.join(obj_paths)} -o {build_path}/{binary}",
-    source_files  = tasks,
-    build_files   = binary,
+def link_cpp(tasks, binary):
+  return hancho.new_task(
+    desc    = "Link {out_bin}",
+    command = "g++ {in_objs} -o {out_bin}",
+    in_objs = tasks,
+    out_bin = binary,
   )
-
-exports.compile_cpp = compile_cpp
-exports.link_cpp = link_cpp

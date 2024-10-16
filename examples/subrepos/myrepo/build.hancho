@@ -1,11 +1,7 @@
+# examples/subrepos/myrepo/build.hancho
 
-print(f"subrepo dir  '{hancho.repo_dir}'")
-print(f"subrepo name '{hancho.repo_name}'")
-
-util_o = hancho.Task(
+util_o = hancho.new_task(
   command = "g++ -c {in_src} -o {out_obj}",
   in_src = "util.cpp",
   out_obj = "{swap_ext(in_src, '.o')}"
 )
-
-exports.util_o = util_o

@@ -1,4 +1,4 @@
-rules = hancho.load("{repo_dir}/rules.hancho")
+rules = hancho.include("{repo_dir}/rules.hancho")
 
 main_o = rules.compile_cpp(
   in_src = "main.c",
