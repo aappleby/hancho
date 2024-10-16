@@ -471,20 +471,21 @@ class TestHancho(unittest.TestCase):
 ###            "python3 ../hancho.py --output_filename=flarp.txt --quiet arbitrary_flags.hancho"
 ###        )
 ###        self.assertTrue(path.exists("build/tests/flarp.txt"))
-#
-#  def test_sync_command(self):
-#    """The 'command' field of rules should be OK handling a sync function"""
-#    def sync_command(task):
-#      force_touch(task.out_obj)
-#
-#    self.ctx.new_task(
-#      command = sync_command,
-#      in_src  = [],
-#      out_obj = "result.txt",
-#    )
-#    self.assertEqual(0, hancho.app.build_all())
-#    self.assertTrue(path.exists("build/result.txt"))
-#
+
+  def test_sync_command(self):
+    """The 'command' field of rules should be OK handling a sync function"""
+    def sync_command(task):
+      force_touch(task.out_obj)
+
+    ctx = self.create_ctx("--quiet")
+    ctx.new_task(
+      command = sync_command,
+      in_src  = [],
+      out_obj = "result.txt",
+    )
+    self.assertEqual(0, hancho.app.build_all())
+    self.assertTrue(path.exists("build/result.txt"))
+
 ##    def test_cancellation(self):
 ##        """A task that receives a cancellation exception should not run."""
 ##        task_that_fails = self.ctx.new_task(
@@ -509,79 +510,82 @@ class TestHancho(unittest.TestCase):
 ##        self.assertTrue(Path("build/pass_result.txt").exists())
 ##        self.assertFalse(Path("build/fail_result.txt").exists())
 ##        self.assertFalse(Path("build/should_not_be_created.txt").exists())
-#
-#  def test_task_creates_task(self):
-#    """Tasks using callbacks can create new tasks when they run."""
-#    def callback(task):
-#      new_task = self.ctx.new_task(
-#        command = "touch {rel(out_obj)}",
-#        in_src  = [],
-#        out_obj = "dummy.txt"
-#      )
-#      # FIXME these should auto-queue
-#      new_task.queue()
-#      return []
-#
-#    self.ctx.new_task(
-#      command = callback,
-#      in_src  = [],
-#      out_obj = []
-#    )
-#
-#    self.assertEqual(0, hancho.app.build_all())
-#    self.assertTrue(Path("build/dummy.txt").exists())
-#
-#  def test_tons_of_tasks(self):
-#    """We should be able to queue up 1000+ tasks at once."""
-#    for i in range(1000):
-#      self.ctx.new_task(
-#        desc    = "I am task {index}",
-#        command = "echo {index} > {rel(out_obj)}",
-#        in_src  = [],
-#        out_obj = "dummy{index}.txt",
-#        index   = i
-#      )
-#    self.assertEqual(0, hancho.app.build_all())
-#    self.assertEqual(1000, len(glob.glob("build/*")))
-#
-#  def test_job_count(self):
-#    """We should be able to dispatch tasks that require various numbers of jobs/cores."""
-#    # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
-#    # another batch of 100 tasks that use random numbers of cores.
-#
-#    for i in range(100):
-#      self.ctx.new_task(
-#        desc    = "I am task {index}, I use {job_count} cores",
-#        command = "(exit 0)",
-#        in_src  = [],
-#        out_obj = [],
-#        job_count = random.randrange(1, os.cpu_count() + 1),
-#        index = i
-#      )
-#
-#    self.ctx.new_task(
-#      desc = "********** I am the slow task, I eat all the cores **********",
-#      command = [
-#        "touch {rel(out_obj)}",
-#        "sleep 0.3",
-#      ],
-#      job_count = os.cpu_count(),
-#      in_src  = [],
-#      out_obj = "slow_result.txt",
-#    )
-#
-#    for i in range(100):
-#      self.ctx.new_task(
-#        desc = "I am task {index}, I use {job_count} cores",
-#        command = "(exit 0)",
-#        in_src  = [],
-#        out_obj = [],
-#        job_count = random.randrange(1, os.cpu_count() + 1),
-#        index = 100 + i
-#      )
-#
-#    self.assertEqual(0, hancho.app.build_all())
-#    self.assertTrue(Path("build/slow_result.txt").exists())
+
+  def test_task_creates_task(self):
+    """Tasks using callbacks can create new tasks when they run."""
+    ctx = self.create_ctx("--quiet")
+    def callback(task):
+      new_task = ctx.new_task(
+        command = "touch {rel(out_obj)}",
+        in_src  = [],
+        out_obj = "dummy.txt"
+      )
+      # FIXME these should auto-queue
+      new_task.queue()
+      return []
+
+    ctx.new_task(
+      command = callback,
+      in_src  = [],
+      out_obj = []
+    )
+
+    self.assertEqual(0, hancho.app.build_all())
+    self.assertTrue(Path("build/dummy.txt").exists())
+
+  def test_tons_of_tasks(self):
+    """We should be able to queue up 1000+ tasks at once."""
+    ctx = self.create_ctx("--quiet")
+    for i in range(1000):
+      ctx.new_task(
+        desc    = "I am task {index}",
+        command = "echo {index} > {rel(out_obj)}",
+        in_src  = [],
+        out_obj = "dummy{index}.txt",
+        index   = i
+      )
+    self.assertEqual(0, hancho.app.build_all())
+    self.assertEqual(1000, len(glob.glob("build/*")))
+
+  def test_job_count(self):
+    """We should be able to dispatch tasks that require various numbers of jobs/cores."""
+    # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
+    # another batch of 100 tasks that use random numbers of cores.
+    ctx = self.create_ctx("--quiet")
+
+    for i in range(100):
+      ctx.new_task(
+        desc    = "I am task {index}, I use {job_count} cores",
+        command = "(exit 0)",
+        in_src  = [],
+        out_obj = [],
+        job_count = random.randrange(1, os.cpu_count() + 1),
+        index = i
+      )
+
+    ctx.new_task(
+      desc = "********** I am the slow task, I eat all the cores **********",
+      command = [
+        "touch {rel(out_obj)}",
+        "sleep 0.3",
+      ],
+      job_count = os.cpu_count(),
+      in_src  = [],
+      out_obj = "slow_result.txt",
+    )
+
+    for i in range(100):
+      ctx.new_task(
+        desc = "I am task {index}, I use {job_count} cores",
+        command = "(exit 0)",
+        in_src  = [],
+        out_obj = [],
+        job_count = random.randrange(1, os.cpu_count() + 1),
+        index = 100 + i
+      )
+
+    self.assertEqual(0, hancho.app.build_all())
+    self.assertTrue(Path("build/slow_result.txt").exists())
 
 ####################################################################################################
 
