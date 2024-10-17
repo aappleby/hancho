@@ -431,7 +431,7 @@ class Expander:
     def __init__(self, config):
         self.config = config
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self.trace = config.trace
+        self.trace = config.get('trace', False)
 
     def __getitem__(self, key):
         return self.get(key)
@@ -689,7 +689,7 @@ class Task(Config):
         #self.verbose     = False
         self.debug       = False
         #self.force       = False
-        self.trace       = False
+        #self.trace       = False
         self.should_fail = False
 
         #self.use_color   = True
@@ -1188,7 +1188,7 @@ class App:
         self.verbose   = False
         self.debug     = False
         #self.force     = False
-        self.trace     = False
+        #self.trace     = False
         self.shuffle   = False
         self.use_color = True
         self.quiet     = False
