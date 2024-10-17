@@ -282,6 +282,9 @@ class Config:
     def pop(self, field):
         return self.__dict__.pop(field)
 
+    def get(self, field, default):
+        return self.__dict__.get(field, default)
+
     def merge(self, *args, **kwargs):
         for arg in args:
             if isinstance(arg, (tuple, list)):
@@ -342,7 +345,7 @@ class Command(Config):
 
     def __call__(self, *args, **kwargs):
         merged = Config(self, args, kwargs)
-        if custom_call := merged.__dict__.get("call", None):
+        if custom_call := merged.get("call", None):
             merged.pop("call")
             return custom_call(**merged)
         return Task(merged)
@@ -437,12 +440,14 @@ class Expander:
         return self.get(key)
 
     def get(self, key):
+        # FIXME - I don't remember why this has to be getattr(), but if I change it it stops
+        # working.
         try:
             val = getattr(self.config, key)
-        except Exception as err:
+        except KeyError:
             if self.trace:
                 log(trace_prefix(self) + f"Read '{key}' failed")
-            raise err
+            raise
 
         if self.trace:
             log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
@@ -623,9 +628,9 @@ class Promise:
         if len(self.args) == 0:
             return self.task._out_files
         elif len(self.args) == 1:
-            return self.task.__dict__[self.args[0]]
+            return self.task[self.args[0]]
         else:
-            return [self.task.__dict__[field] for field in args]
+            return [self.task[field] for field in args]
 
 ####################################################################################################
 
@@ -665,7 +670,7 @@ class Task(Config):
         #self.tags        = []
         #self.command     = None
         #self.jobs        = None
-        self.depfile     = None
+        self.c_deps      = None
 
         self.root_dir    = None
         self.root_path   = None
@@ -789,7 +794,7 @@ class Task(Config):
                 app.task_skipped += 1
             else:
                 # Wait for enough jobs to free up to run this task.
-                job_count = self.__dict__.get("job_count", 1)
+                job_count = self.get("job_count", 1)
                 self._state = TaskState.AWAITING_JOBS
                 await app.acquire_jobs(job_count, self.desc)
 
@@ -855,8 +860,8 @@ class Task(Config):
 
         # We _must_ expand first before prepending directories or paths will break
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-        for key, val in self.__dict__.items():
-            if key.startswith("in_") or key.startswith("out_") or key == "depfile":
+        for key, val in self.items():
+            if key.startswith("in_") or key.startswith("out_") or key == "c_deps":
                 self.__dict__[key] = self.expand(val)
 
         # Prepend the in/out path to the filenames
@@ -879,14 +884,14 @@ class Task(Config):
                 self._out_files.append(val)
             return val
 
-        for key, val in self.__dict__.items():
+        for key, val in self.items():
             if key.startswith("in_"):
-                self.__dict__[key] = visit_variant(key, val, handle_in_path)
+                self[key] = visit_variant(key, val, handle_in_path)
             if key.startswith("out_"):
-                self.__dict__[key] = visit_variant(key, val, handle_out_path)
+                self[key] = visit_variant(key, val, handle_out_path)
 
-        if "depfile" in self.__dict__ and self.depfile is not None:
-            self.depfile = join_path(self.build_dir, self.depfile)
+        if self.get("c_deps", None) is not None:
+            self.c_deps = join_path(self.build_dir, self.c_deps)
 
         # And now we can expand the command.
         self.desc = self.expand(self.desc)
@@ -909,7 +914,7 @@ class Task(Config):
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
-            if "root_dir" in self.__dict__ and self.root_dir is not None:
+            if self.get("root_dir", None) is not None:
                 if not file.startswith(self.root_dir):
                     raise ValueError(f"Path error, output file {file} is not under root_dir {self.root_dir}")
 
@@ -959,26 +964,26 @@ class Task(Config):
             if mtime(mod_filename) >= min_out:
                 return f"Rebuilding because {mod_filename} has changed"
 
-        # Check all dependencies in the depfile, if present.
-        depfile   = getattr(self, "depfile", None)
-        depformat = getattr(self, "depformat", "gcc")
+        # Check all dependencies in the C dependencies file, if present.
+        c_deps = self.get("c_deps", None)
+        c_depformat = self.get("c_depformat", "gcc")
 
-        if depfile is not None and path.exists(depfile):
+        if c_deps is not None and path.exists(c_deps):
             if self.debug:
-                log(f"Found depfile {depfile}")
-            with open(depfile, encoding="utf-8") as depfile:
+                log(f"Found C dependencies file {c_deps}")
+            with open(c_deps, encoding="utf-8") as c_deps:
                 deplines = None
-                if depformat == "msvc":
-                    # MSVC /sourceDependencies json depfile
-                    deplines = json.load(depfile)["Data"]["Includes"]
-                elif depformat == "gcc":
-                    # GCC -MMD .d depfile
-                    deplines = depfile.read().split()
+                if c_depformat == "msvc":
+                    # MSVC /sourceDependencies json c_deps
+                    deplines = json.load(c_deps)["Data"]["Includes"]
+                elif c_depformat == "gcc":
+                    # GCC -MMD .d c_deps
+                    deplines = c_deps.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise ValueError(f"Invalid depformat {depformat}")
+                    raise ValueError(f"Invalid dependency file format {c_depformat}")
 
-                # The contents of the depfile are RELATIVE TO THE WORKING DIRECTORY
+                # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [path.join(self.task_dir, d) for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
@@ -1031,15 +1036,14 @@ class Task(Config):
 
         command_pass = (self.returncode == 0) != self.should_fail
 
-        if 'log_path' in self.__dict__:
-            if self.log_path is not None:
-                print(self)
-                result = open(self.log_path, "w")
-                result.write("-----stderr-----\n")
-                result.write(self.stderr)
-                result.write("-----stdout-----\n")
-                result.write(self.stdout)
-                result.close()
+        if log_path := self.get('log_path', None) is not None:
+            print(self)
+            result = open(log_path, "w")
+            result.write("-----stderr-----\n")
+            result.write(self.stderr)
+            result.write("-----stdout-----\n")
+            result.write(self.stdout)
+            result.close()
 
         #if self.verbose or not command_pass or self.stderr:
         if self.verbose or not command_pass:
@@ -1134,7 +1138,6 @@ class Hancho(Config):
         app.pushdir(path.dirname(self.hancho_path))
 
         with open(self.hancho_path, encoding="utf-8") as file:
-            #print(self.__dict__)
             # FIXME need to explicitly define the globals - should be self + some explicit list of staticmethods, etc
             exec(
                 file.read(),
@@ -1298,7 +1301,7 @@ class App:
         #========================================
 
         if root_hancho.debug:
-            log(f"root_hancho = {Dumper().dump(root_hancho.__dict__)}")
+            log(f"root_hancho = {Dumper().dump(root_hancho)}")
         return root_hancho
 
     ########################################

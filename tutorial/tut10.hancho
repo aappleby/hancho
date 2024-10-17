@@ -5,15 +5,15 @@ main_o = hancho.task(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/main.cpp",
   out_obj = "build/tut10/src/main.o",
-  depfile = "build/tut10/src/main.d",
+  c_deps  = "build/tut10/src/main.d",
 )
 
 util_o = hancho.task(
-  desc     = "Compile {in_src}",
-  command  = "g++ -MMD -c {in_src} -o {out_obj}",
-  in_src   = "src/util.cpp",
-  out_obj  = "build/tut10/src/util.o",
-  depfile  = "build/tut10/src/util.d",
+  desc    = "Compile {in_src}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  in_src  = "src/util.cpp",
+  out_obj = "build/tut10/src/util.o",
+  c_deps  = "build/tut10/src/util.d",
 )
 
 app = hancho.task(

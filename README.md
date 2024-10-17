@@ -61,7 +61,7 @@ compile_cpp = hancho.command(
   command = "g++ -c {in_src} -o {out_obj}",
   in_src  = None,
   out_obj = "{swap_ext(in_src, '.o')}",
-  depfile = "{swap_ext(in_src, '.d')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
 link_cpp_bin = hancho.command(

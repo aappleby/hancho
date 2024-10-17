@@ -363,7 +363,7 @@ class TestHancho(unittest.TestCase):
   #----------------------------------------
 
   def test_doesnt_create_output(self):
-    """Having a file mentioned in files_out should not magically create it"""
+    """Having a file mentioned in out_obj should not magically create it"""
     ctx = self.create_ctx("--quiet")
     ctx.new_task(
       command = "echo",
@@ -376,7 +376,7 @@ class TestHancho(unittest.TestCase):
   #----------------------------------------
 
   def test_header_changed(self):
-    """Changing a header file tracked in the GCC depfile should trigger a rebuild"""
+    """Changing a header file tracked in the GCC dependencies file should trigger a rebuild"""
     ctx = self.create_ctx("--quiet")
     def run():
       hancho.app.reset()
@@ -385,7 +385,7 @@ class TestHancho(unittest.TestCase):
       compile = ctx.new_command(
         command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
         out_obj = "{swap_ext(in_src, '.o')}",
-        depfile = "{swap_ext(in_src, '.d')}",
+        c_deps  = "{swap_ext(in_src, '.d')}",
       )
       compile(in_src = "src/test.cpp")
       self.assertEqual(0, hancho.app.build_all())
@@ -411,7 +411,7 @@ class TestHancho(unittest.TestCase):
       compile = ctx.new_command(
         command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
         out_obj = "{swap_ext(in_src, '.o')}",
-        depfile = "{swap_ext(in_src, '.d')}",
+        c_deps  = "{swap_ext(in_src, '.d')}",
       )
       compile(in_src = "src/test.cpp")
       self.assertEqual(0, hancho.app.build_all())

@@ -39,34 +39,28 @@ Assuming we have GCC installed, compiling it from the command line is
 straightforward:
 
 ```shell
-user@host:~/hancho/tutorial$ mkdir -p build/tut0
-user@host:~/hancho/tutorial$ g++ src/main.cpp src/util.cpp -o build/tut0/app
-user@host:~/hancho/tutorial$ build/tut0/app
+user@host:~/hancho/tutorial$ mkdir -p build
+user@host:~/hancho/tutorial$ g++ src/main.cpp src/util.cpp -o build/app
+user@host:~/hancho/tutorial$ build/app
 Hello World 42
 ```
 
 Here's how we run the same command in Hancho:
 
 ```py
-# tutorial/tut0.hancho
-from hancho import *
+# tutorial/tut00.hancho
 
-rule = Rule(
-  command = "g++ {files_in} -o {files_out}",
+hancho.new_task(
+  desc    = "Compile {in_src} -> {out_bin}",
+  command = "g++ {in_src} -o {out_bin}",
+  in_src  = ["src/main.cpp", "src/util.cpp"],
+  out_bin = "app",
 )
-
-rule(
-  files_in = ["src/main.cpp", "src/util.cpp"],
-  files_out = "tut0/app"
-)
-
-# Note: The files_in and files_out keywords are optional, this also works:
-# rule(["src/main.cpp", "src/util.cpp"], "tut0/app")
 ```
 
 Hancho build files are just Python modules ending in .hancho, with minor
 modifications. In this build file we define a ```Rule``` that contains a
-```command``` with two template variables ```files_in``` and ```files_out```,
+```command``` with two template variables ```in_*``` and ```out_*```,
 and then we call the rule and give it our source files and our output filename.
 
 Hancho then does the fill-in-the-blanks for us and runs the command, which we
@@ -84,7 +78,7 @@ Hello World 42
 ```
 
 If we run Hancho a second time, nothing will happen because nothing in
-```files_in``` has changed.
+```in_*``` has changed.
 
 ```shell
 user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
@@ -127,13 +121,13 @@ running a build.
 from hancho import *
 
 compile = Rule(
-  desc = "Compile {files_in} -> {files_out}",
-  command = "g++ -c {files_in} -o {files_out}",
+  desc = "Compile {in_src} -> {out_obj}",
+  command = "g++ -c {in_src} -o {out_obj}",
 )
 
 link = Rule(
-  desc = "Link {files_in} -> {files_out}",
-  command = "g++ {files_in} -o {files_out}",
+  desc = "Link {in_objs} -> {out_bin}",
+  command = "g++ {in_objs} -o {out_bin}",
 )
 
 main_o = compile("src/main.cpp", "tut1/src/main.o")
@@ -173,8 +167,8 @@ g++ build/tut1/src/main.o build/tut1/src/util.o -o build/tut1/app
 ```
 
 However, if we modify the header file ```util.hpp``` the build is ***not***
-updated, as Hancho is only checking the dependencies declared by ```files_in```
-and ```files_out```. We'll fix that in a minute.
+updated, as Hancho is only checking the dependencies declared by ```in_*```
+and ```out_*```. We'll fix that in a minute.
 
 ```shell
 user@host:~/hancho/tutorial$ touch src/util.hpp
@@ -188,14 +182,14 @@ So what exactly are ```main_o``` and ```util_o```? They are ***promises***
 of filenames that the rule generated, or None if the rule failed for some
 reason.
 
-Hancho will ```await``` all promises that are passed to ```files_in``` before
+Hancho will ```await``` all promises that are passed to ```in_*``` before
 running the rule.
 
-Hancho will also skip running a rule if everything in the rule's ```files_out```
-is newer than the rule's ```files_in```.
+Hancho will also skip running a rule if everything in the rule's ```out_*```
+is newer than the rule's ```in_*```.
 
 You might have noticed that we seem to be inconsistent about whether
-```files_in``` and ```files_out``` are single strings, arrays of strings,
+```in_*``` and ```out_*``` are single strings, arrays of strings,
 nested arrays of promises, or whatnot. Hancho doesn't actually care - it will
 ```await``` anything that needs awaiting and will flatten out nested lists or
 wrap single strings in ```[]```s as needed. By the time the rule runs,
@@ -205,7 +199,7 @@ everything will be a flat array of strings. Using that array in a
 At this point our build works, but we're still missing some steps we need to use
 this for real: we need to generate and handle GCC's dependency files so we can
 catch modified header files, and we need a better way to define our build
-directory - hardcoding it in ```files_out``` isn't going to work for larger
+directory - hardcoding it in ```out_*``` isn't going to work for larger
 projects.
 
 
@@ -325,7 +319,7 @@ our build further.
 
 First things first - we want all our build output for each tutorial to go into a
 separate directory so the output of each tutorial doesn't collide and we don't have
-to specify it in every ```files_out```. Hancho defines a special rule field
+to specify it in every ```out_*```. Hancho defines a special rule field
  ```build_dir``` that is prepended to all output filenames if present and
  defaults to ```build```. To specify a custom ```build_dir``` for all rules in
  our build, we can set it on the global ```config``` object.
@@ -335,13 +329,13 @@ dependency file ```main.d``` alongside the compiled ```main.o``` that contains a
 list of all the header files ```main.cpp``` depends on. We can use this in
 Hancho to ensure that our source files are recompiled whenever a header file
 they depend on changes. Like ```build_dir```, the special rule field
-```depfile``` accepts the name of the generated depfile. If the depfile exists
+```c_deps``` accepts the name of the generated dependency file. If the dependency file exists
 during the build, Hancho will use its contents when deciding if a rule
 needs to be rebuilt.
 
-It would be nice if we didn't have to specify ```files_out``` and ```depfile```
+It would be nice if we didn't have to specify ```out_*``` and ```c_deps```
 every time we call ```compile```. To do that, we can use the ```swap_ext```
-builtin to generically define ```files_out``` and ```depfile``` in the
+builtin to generically define ```out_*``` and ```c_deps``` in the
 ```compile``` rule. Then we don't need to specify them at all when calling
 ```compile```.
 
@@ -353,15 +347,15 @@ from hancho import *
 config.build_dir = "build/tut2"
 
 compile = Rule(
-  desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -MMD -c {files_in} -o {files_out}",
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
+  desc      = "Compile {in_*} -> {out_*}",
+  command   = "g++ -MMD -c {in_*} -o {out_*}",
+  out_* = "{swap_ext(in_*, '.o')}",
+  c_deps   = "{swap_ext(out_*, '.d')}",
 )
 
 link = Rule(
-  desc      = "Link {files_in} -> {files_out}",
-  command   = "g++ {files_in} -o {files_out}",
+  desc      = "Link {in_*} -> {out_*}",
+  command   = "g++ {in_*} -o {out_*}",
 )
 
 main_o = compile("src/main.cpp")
@@ -476,20 +470,20 @@ But what is ```rules.c_binary```? It's a helper function in ```rules.hancho```:
 from hancho import *
 
 compile = Rule(
-  desc      = "Compile {files_in} -> {files_out}",
-  command   = "g++ -MMD -c {files_in} -o {files_out}",
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile   = "{swap_ext(files_out, '.d')}",
+  desc      = "Compile {in_*} -> {out_*}",
+  command   = "g++ -MMD -c {in_*} -o {out_*}",
+  out_* = "{swap_ext(in_*, '.o')}",
+  c_deps = "{swap_ext(out_*, '.d')}",
 )
 
 link = Rule(
-  desc      = "Link {files_in} -> {files_out}",
-  command   = "g++ {files_in} -o {files_out}",
+  desc      = "Link {in_*} -> {out_*}",
+  command   = "g++ {in_*} -o {out_*}",
 )
 
-def c_binary(files_in, files_out, **kwargs):
-  objs = [compile(file, **kwargs) for file in files_in]
-  return link(objs, files_out, **kwargs)
+def c_binary(in_*, out_*, **kwargs):
+  objs = [compile(file, **kwargs) for file in in_*]
+  return link(objs, out_*, **kwargs)
 ```
 
 So overall we have the same rules and commands as before, but now they're split
@@ -514,7 +508,7 @@ Hancho's use of promises as part of its dependency graph means there are a few
 odd things you can do that aren't easily specified in other build systems.
 
 For example, you can call asynchronous functions and pass their return values to
-```files_in```:
+```in_*```:
 
 ```py
 # tutorial/tut4.hancho - Async/await and custom commands
@@ -529,8 +523,8 @@ async def do_slow_thing():
   return ["src/main.cpp"]
 
 echo = Rule(
-  desc = "Consuming a promise as files_in",
-  command = "echo {files_in}",
+  desc = "Consuming a promise as in_*",
+  command = "echo {in_*}",
 )
 echo(do_slow_thing(), [])
 ```
@@ -540,13 +534,13 @@ command line to run arbitrary Python code as part of the build graph:
 
 ```py
 async def custom_command(task):
-  for f in task.files_out:
+  for f in task.out_*:
     print(f"Touching {f}")
     os.system(f"touch {f}")
-  return task.files_out
+  return task.out_*
 
 custom_rule = Rule(
-  desc    = "Custom rule: {files_in} -> {files_out}",
+  desc    = "Custom rule: {in_*} -> {out_*}",
   command = custom_command
 )
 
@@ -579,16 +573,16 @@ expand ""
 expand "src/main.cpp"
 expand "src/util.cpp"
 expand "build/tut0/app"
-expand "{files_in} -> {files_out}"
+expand "{in_*} -> {out_*}"
 expand "src/main.cpp src/util.cpp -> build/tut0/app"
 [1/1] src/main.cpp src/util.cpp -> build/tut0/app
 Reason: Rebuilding ['build/tut0/app'] because some are missing
-expand "g++ {files_in} -o {files_out}"
+expand "g++ {in_*} -o {out_*}"
 expand "g++ src/main.cpp src/util.cpp -o build/tut0/app"
 g++ src/main.cpp src/util.cpp -o build/tut0/app
 {
   "base": {
-    "command": "g++ {files_in} -o {files_out}",
+    "command": "g++ {in_*} -o {out_*}",
     "base": {
       "jobs": 16,
       "verbose": false,
@@ -596,8 +590,8 @@ g++ src/main.cpp src/util.cpp -o build/tut0/app
       "dryrun": false,
       "debug": true,
       "force": false,
-      "desc": "{files_in} -> {files_out}",
-      "files_out": [],
+      "desc": "{in_*} -> {out_*}",
+      "out_*": [],
       "expand": "<function>",
       "join": "<function>",
       "len": "<function>",
@@ -607,11 +601,11 @@ g++ src/main.cpp src/util.cpp -o build/tut0/app
       "base": null
     }
   },
-  "files_in": [
+  "in_*": [
     "src/main.cpp",
     "src/util.cpp"
   ],
-  "files_out": [
+  "out_*": [
     "build/tut0/app"
   ],
   "meta_deps": [
@@ -619,17 +613,17 @@ g++ src/main.cpp src/util.cpp -o build/tut0/app
   ],
   "cwd": "/home/aappleby/hancho/tutorial",
   "deps": [],
-  "abs_files_in": [
+  "abs_in_*": [
     "/home/aappleby/hancho/tutorial/src/main.cpp",
     "/home/aappleby/hancho/tutorial/src/util.cpp"
   ],
-  "abs_files_out": [
+  "abs_out_*": [
     "/home/aappleby/hancho/tutorial/build/tut0/app"
   ],
   "abs_deps": [],
   "reason": "Rebuilding ['build/tut0/app'] because some are missing"
 }
-expand "g++ {files_in} -o {files_out}"
+expand "g++ {in_*} -o {out_*}"
 expand "g++ src/main.cpp src/util.cpp -o build/tut0/app"
 Files ['build/tut0/app'] are up to date
 tasks total:   1

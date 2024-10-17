@@ -4,7 +4,7 @@ compile = hancho.Command(
   desc    = "Compile {rel(in_)}",
   command = "g++ -MMD -c {rel(in_)} -o {rel(out_)}",
   out_    = "{swap_ext(in_, '.o')}",
-  depfile = "{swap_ext(in_, '.d')}",
+  c_deps  = "{swap_ext(in_, '.d')}",
 )
 
 link = hancho.Command(

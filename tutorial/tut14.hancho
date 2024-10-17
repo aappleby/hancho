@@ -4,7 +4,7 @@ cpp_compile = hancho.config(
   desc    = "Compile {rel(in_src)}",
   command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
   out_obj = "build/tut14/{swap_ext(in_src, '.o')}",
-  depfile = "build/tut14/{swap_ext(in_src, '.d')}",
+  c_deps  = "build/tut14/{swap_ext(in_src, '.d')}",
 )
 
 cpp_link = hancho.config(

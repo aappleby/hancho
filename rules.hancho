@@ -19,14 +19,14 @@ if os.name == 'nt':
     command     = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
-    depformat   = "msvc",
+    c_depformat = "msvc",
   )
 elif os.name == 'posix':
   exports.compile_cpp = hancho.Command(
     command     = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
-    depformat   = "gcc",
+    c_depformat = "gcc",
   )
 else:
   assert False
@@ -71,7 +71,7 @@ compile_cpp = hancho.new_command(
 
   in_src  = None,
   out_obj = "{swap_ext(in_src, '.o')}",
-  depfile = "{swap_ext(in_src, '.d')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
 
   toolchain = default_toolchain,
   command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
@@ -211,28 +211,28 @@ exports.check_cpp = base.extend(
   command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {rel(in_src)} && touch {rel(out_ok)}",
   in_src  = [],
   out_ok  = "{in_src}.ok",
-  depfile = "{swap_ext(in_src, '.d')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
 exports.metron = hancho.Config(
   command = "{repo_dir}/symlinks/metron/build/debug/metron/metron/metron -q -v -e -c {in_src} -o {out_sv}",
-  depfile = "{swap_ext(in_src, '.d')}",
   in_src  = [],
   out_sv  = "{swap_ext(in_src, '.sv')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-
 check_cpp = base.command(
-  desc        = "Syntax checking {source_files}",
-  command     = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {source_files} && touch {build_files}",
-  build_files = "{swap_ext(source_files, '.ok')}",
-  build_deps  = "{swap_ext(source_files, '.d')}",
+  desc    = "Syntax checking {source_files}",
+  command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {in_src} && touch {out_ok}",
+  in_src  = None,
+  out_ok  = "{swap_ext(source_files, '.ok')}",
+  c_deps  = "{swap_ext(source_files, '.d')}",
 )
 
 metron = hancho.new_command(
-  command   = "{repo_dir}/symlinks/metron/build/metron/metron -q -v -e -c {source_files} -o {build_files}",
-  depfile   = "{swap_ext(source_files, '.d')}",
-  build_files = "{swap_ext(source_files, '.sv')}",
+  command = "{repo_dir}/symlinks/metron/build/metron/metron -q -v -e -c {in_src} -o {out_sv}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+  out_sv  = "{swap_ext(in_src, '.sv')}",
 )
 
 exports.sv2v = hancho.Config(

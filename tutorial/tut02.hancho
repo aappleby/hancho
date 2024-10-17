@@ -5,7 +5,7 @@ main_o = hancho.new_task(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/main.cpp",
   out_obj = "main.o",
-  depfile = "main.d",
+  c_deps  = "main.d",
 )
 
 util_o = hancho.new_task(
@@ -13,7 +13,7 @@ util_o = hancho.new_task(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/util.cpp",
   out_obj = "util.o",
-  depfile = "util.d",
+  c_deps  = "util.d",
 )
 
 app = hancho.new_task(

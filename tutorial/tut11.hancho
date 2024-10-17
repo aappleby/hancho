@@ -1,8 +1,8 @@
 # tutorial/tut11.hancho
 
 common = hancho.config(
-  source_path   = ".",
-  build_path    = "build/tut11",
+  task_dir  = ".",
+  build_dir = "build/tut11",
 )
 
 compile = hancho.config(
@@ -15,14 +15,14 @@ main_o = hancho.task(
   **compile,
   in_src  = "src/main.cpp",
   out_obj = "src/main.o",
-  depfile = "src/main.d",
+  c_deps  = "src/main.d",
 )
 
 util_o = hancho.task(
   **compile,
   in_src  = "src/util.cpp",
   out_obj = "src/util.o",
-  depfile = "src/util.d",
+  c_deps  = "src/util.d",
 )
 
 link = hancho.config(

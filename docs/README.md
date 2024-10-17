@@ -4,19 +4,20 @@
 # examples/hello_world/build.hancho
 
 compile = hancho.command(
-  command = "g++ -MMD -c {files_in} -o {files_out}",
-  desc = "Compile {files_in} -> {files_out}",
-  files_out = "{swap_ext(files_in, '.o')}",
-  depfile = "{swap_ext(files_out, '.d')}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  desc    = "Compile {in_src} -> {out_obj}",
+  in_src  = None,
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.command(
-  command = "g++ {files_in} -o {files_out}",
-  desc = "Link {files_in} -> {files_out}",
+  command = "g++ {in_objs} -o {out_bin}",
+  desc    = "Link {in_objs} -> {out_bin}",
 )
 
-main_o = compile(files_in = "main.cpp")
-main_app = link(files_in = main_o, files_out = "app")
+main_o   = compile(in_src = "main.cpp")
+main_app = link(in_objs = main_o, out_bin = "app")
 ```
 
 # Directory nomenclature
@@ -59,17 +60,17 @@ main_app = link(files_in = main_o, files_out = "app")
     - A function (sync or async) that returns a list of absolute-path filenames.
 - ```debug``` (Default: ```False```)
     - True if this rule should print debug information when run.
-- ```depfile``` (Default: ```None```)
+- ```c_deps``` (Default: ```None```)
     - Optional: The filename of a [GCC format](http://www.google.com/search?q=gcc+dependency+file+format) dependencies file. Changing a dependency in this file will cause the task to rebuild.
 - ```deps``` (Default: ```None```)
     - A list of files (or file promises) this rule depends on to run that are not input files - use this for configuration files, custom scripts, or anything else that could affect the output of a build aside from the list of input files.
-- ```desc``` (Default: ```"{files_in} -> {files_out}"```)
+- ```desc``` (Default: ```"{_in_files} -> {_out_files}"```)
     - A description of what this rule does that will be printed when run.
 - ```dryrun``` (Default: ```False```)
     - True if this rule should pretend to succeed, but actually do nothing.
-- ```files_in``` (Default: ```[]```)
+- ```in_*``` (Default: ```[]```)
     - The list of files (or file promises) this rule accepts as input.
-- ```files_out``` (Default: ```[]```)
+- ```out_*``` (Default: ```[]```)
     - The list of files this rule generates as output.
 - ```force``` (Default: ```False```)
     - True if this rule should _always_ run.
