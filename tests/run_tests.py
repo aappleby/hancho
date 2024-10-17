@@ -211,8 +211,7 @@ class TestHancho(unittest.TestCase):
   #----------------------------------------
 
   def test_raw_task(self):
-    #ctx = self.create_ctx("--quiet")
-    ctx = self.create_ctx("-d")
+    ctx = self.create_ctx("--quiet")
     task = ctx.Task(
       command   = "touch {rel(out_obj)}",
       in_src    = "src/foo.c",
@@ -220,6 +219,7 @@ class TestHancho(unittest.TestCase):
       task_dir  = os.getcwd(),
       build_dir = "build"
     )
+    print(task)
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(Path("build/foo.o").exists())
 

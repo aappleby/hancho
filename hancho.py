@@ -681,16 +681,16 @@ class Task(Config):
         #self.mod_dir     = None
         #self.log_path    = None
 
-        self.build_dir   = "{root_dir}/{build_name}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
-        self.build_name  = "build"
+        self.build_dir   = "{root_dir}/{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
+        self.build_root  = "build"
         self.build_tag   = ""
         self.task_dir    = "{mod_dir}"
 
         #self.verbose     = False
-        self.debug       = False
+        #self.debug       = False
         #self.force       = False
         #self.trace       = False
-        self.should_fail = False
+        #self.should_fail = False
 
         #self.use_color   = True
 
@@ -773,7 +773,7 @@ class Task(Config):
                 if key != "_promise":
                     self.__dict__[key] = await await_variant(val)
 
-            if self.debug:
+            if self.get('debug', False):
                 log(f"Task {hex(id(self))} start")
 
             # Everything awaited, task_init runs synchronously.
@@ -804,7 +804,7 @@ class Task(Config):
                 app.tasks_running += 1
                 self.print_status()
 
-                if self.get('verbose', False) or self.debug:
+                if self.get('verbose', False) or self.get('debug', False):
                     log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
                 #line_block(app.job_slots)
@@ -815,7 +815,7 @@ class Task(Config):
 
                 try:
                     for command in commands:
-                        if self.get('verbose', False) or self.debug:
+                        if self.get('verbose', False) or self.get('debug', False):
                             log(color(128,128,255), end="")
                             if app.dry_run: log("(DRY RUN) ", end="")
                             log(f"{rel_path(self.task_dir, self.root_dir)}$ ", end="")
@@ -841,7 +841,7 @@ class Task(Config):
 
         finally:
             self._state = TaskState.FINISHED
-            if self.debug:
+            if self.get('debug', False):
                 log(f"Task {hex(id(self))} done")
 
         return self._out_files
@@ -851,7 +851,7 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        if self.debug:
+        if self.get('debug', False):
             log(f"\nTask before expand: {self}")
 
         # Expand the in and out paths first
@@ -897,7 +897,7 @@ class Task(Config):
         self.desc = self.expand(self.desc)
         self.command = self.expand(self.command)
 
-        if self.debug:
+        if self.get('debug', False):
             log(f"\nTask after expand: {self}")
 
         # Check for missing input files/paths
@@ -969,7 +969,7 @@ class Task(Config):
         c_depformat = self.get("c_depformat", "gcc")
 
         if c_deps is not None and path.exists(c_deps):
-            if self.debug:
+            if self.get('debug', False):
                 log(f"Found C dependencies file {c_deps}")
             with open(c_deps, encoding="utf-8") as c_deps:
                 deplines = None
@@ -1014,7 +1014,7 @@ class Task(Config):
 
         # Create the subprocess via asyncio and then await the result.
         try:
-            if self.debug:
+            if self.get('debug', False):
                 log(f"Task {hex(id(self))} subprocess start '{command}'")
 
             proc = await asyncio.create_subprocess_shell(
@@ -1025,7 +1025,7 @@ class Task(Config):
             )
 
             (stdout_data, stderr_data) = await proc.communicate()
-            if self.debug:
+            if self.get('debug', False):
                 log(f"Task {hex(id(self))} subprocess done '{command}'")
         except RuntimeError:
             sys.exit(-1)
@@ -1034,7 +1034,7 @@ class Task(Config):
         self.stderr = stderr_data.decode()
         self.returncode = proc.returncode
 
-        command_pass = (self.returncode == 0) != self.should_fail
+        command_pass = (self.returncode == 0) != self.get('should_fail', False)
 
         if log_path := self.get('log_path', None) is not None:
             print(self)
