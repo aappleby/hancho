@@ -212,6 +212,7 @@ class TestHancho(unittest.TestCase):
 
   def test_raw_task(self):
     ctx = self.create_ctx("--quiet")
+    #ctx = self.create_ctx("-d")
     task = ctx.Task(
       command   = "touch {rel(out_obj)}",
       in_src    = "src/foo.c",
@@ -219,7 +220,7 @@ class TestHancho(unittest.TestCase):
       task_dir  = os.getcwd(),
       build_dir = "build"
     )
-    print(task)
+    #print(task)
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(Path("build/foo.o").exists())
 
@@ -461,13 +462,13 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(path.exists("build/flarp.txt"))
 
-  def test_what_is_in_a_task(self):
-    task = hancho.Task(
-      command = "",
-      task_dir = "",
-      build_dir = ""
-    )
-    print(task)
+  #def test_what_is_in_a_task(self):
+  #  task = hancho.Task(
+  #    command = "",
+  #    task_dir = "",
+  #    build_dir = ""
+  #  )
+  #  print(task)
 
   def test_sync_command(self):
     """The 'command' field of rules should be OK handling a sync function"""
