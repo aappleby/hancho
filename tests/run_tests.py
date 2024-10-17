@@ -464,6 +464,8 @@ class TestHancho(unittest.TestCase):
   def test_what_is_in_a_task(self):
     task = hancho.Task(
       command = "",
+      task_dir = "",
+      build_dir = ""
     )
     print(task)
 

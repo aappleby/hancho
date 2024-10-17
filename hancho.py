@@ -653,7 +653,7 @@ class Task(Config):
     desc        = "{rel(_in_files)} -> {rel(_out_files)}"
 
     def __init__(self, *args, **kwargs):
-        super().__init__()
+        super().__init__(args, kwargs)
 
         #root_dir = "/home/aappleby/repos/hancho",
         #root_path = "/home/aappleby/repos/hancho/build.hancho",
@@ -681,10 +681,10 @@ class Task(Config):
         #self.mod_dir     = None
         #self.log_path    = None
 
-        self.build_dir   = "{root_dir}/{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
-        self.build_root  = "build"
-        self.build_tag   = ""
-        self.task_dir    = "{mod_dir}"
+        #self.build_dir   = "{root_dir}/{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
+        #self.build_root  = "build"
+        #self.build_tag   = ""
+        #self.task_dir    = "{mod_dir}"
 
         #self.verbose     = False
         #self.debug       = False
@@ -693,9 +693,6 @@ class Task(Config):
         #self.should_fail = False
 
         #self.use_color   = True
-
-        self.merge(args)
-        self.merge(kwargs)
 
         #assert path.isdir(self.root_dir)
         #assert path.isdir(self.repo_dir)
@@ -796,7 +793,7 @@ class Task(Config):
                 # Wait for enough jobs to free up to run this task.
                 job_count = self.get("job_count", 1)
                 self._state = TaskState.AWAITING_JOBS
-                await app.acquire_jobs(job_count, self.desc)
+                await app.acquire_jobs(job_count, self)
 
                 self._state = TaskState.RUNNING_COMMANDS
                 # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
@@ -824,7 +821,7 @@ class Task(Config):
                         if not app.dry_run:
                             await self.run_command(command)
                 finally:
-                    await app.release_jobs(job_count, self.desc)
+                    await app.release_jobs(job_count, self)
                 app.tasks_pass += 1
 
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -1275,9 +1272,15 @@ class App:
             repo_dir    = root_dir,
             repo_name   = "",
 
-            hancho_path = root_path,
+            build_dir   = "{root_dir}/{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}",
+            build_root  = "build",
+            build_tag   = "",
+
             mod_dir     = root_dir,
             mod_name    = path.splitext(path.basename(root_path))[0],
+
+            hancho_path = root_path,
+            task_dir    = "{mod_dir}",
 
             verbose     = flags['verbose'],
             debug       = flags['debug'],
@@ -1428,7 +1431,7 @@ class App:
         # Run all tasks in the queue until we run out.
 
         self.jobs_available = app.jobs
-        self.job_slots = ["[----]"] * self.jobs_available
+        self.job_slots = [None] * self.jobs_available
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
@@ -1471,7 +1474,7 @@ class App:
 
     ########################################
 
-    async def acquire_jobs(self, count, desc):
+    async def acquire_jobs(self, count, token):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
         if count > app.jobs:
@@ -1482,8 +1485,8 @@ class App:
 
         slots_remaining = count
         for i, val in enumerate(self.job_slots):
-            if val == "[----]" and slots_remaining:
-                self.job_slots[i] = desc
+            if val == None and slots_remaining:
+                self.job_slots[i] = token
                 slots_remaining -= 1
 
         self.jobs_available -= count
@@ -1496,7 +1499,7 @@ class App:
     # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
     # rest will go back to sleep again, this will repeat for every call to release_jobs().
 
-    async def release_jobs(self, count, desc):
+    async def release_jobs(self, count, token):
         """Returns 'count' jobs back to the job pool."""
 
         await self.jobs_lock.acquire()
@@ -1504,8 +1507,8 @@ class App:
 
         slots_remaining = count
         for i, val in enumerate(self.job_slots):
-            if val == desc:
-                self.job_slots[i] = "[----]"
+            if val == token:
+                self.job_slots[i] = None
                 slots_remaining -= 1
 
         self.jobs_lock.notify_all()
