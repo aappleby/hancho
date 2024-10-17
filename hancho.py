@@ -670,25 +670,25 @@ class Task(Config):
         #self.tags        = []
         #self.command     = None
         #self.jobs        = None
-        self.c_deps      = None
+        #self.c_deps      = None
 
-        self.root_dir    = None
-        self.root_path   = None
-        self.repo_dir    = None
-        self.repo_name   = None
-        self.hancho_path = None
-        self.mod_name    = None
-        self.mod_dir     = None
-        self.log_path    = None
+        #self.root_dir    = None
+        #self.root_path   = None
+        #self.repo_dir    = None
+        #self.repo_name   = None
+        #self.hancho_path = None
+        #self.mod_name    = None
+        #self.mod_dir     = None
+        #self.log_path    = None
 
         self.build_dir   = "{root_dir}/{build_name}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
         self.build_name  = "build"
         self.build_tag   = ""
         self.task_dir    = "{mod_dir}"
 
-        self.verbose     = False
+        #self.verbose     = False
         self.debug       = False
-        self.force       = False
+        #self.force       = False
         self.trace       = False
         self.should_fail = False
 
@@ -749,7 +749,7 @@ class Task(Config):
             #f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
             #{self._task_index}/
             f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {self.desc}",
-            sameline=not self.verbose,
+            sameline=not self.get('verbose', False),
         )
 
     #-----------------------------------------------------------------------------------------------
@@ -787,7 +787,7 @@ class Task(Config):
                 return
 
             # Check if we need a rebuild
-            self._reason = self.needs_rerun(self.force)
+            self._reason = self.needs_rerun(self.get('force', False))
 
             # Run the commands if we need to.
             if not self._reason:
@@ -804,7 +804,7 @@ class Task(Config):
                 app.tasks_running += 1
                 self.print_status()
 
-                if self.verbose or self.debug:
+                if self.get('verbose', False) or self.debug:
                     log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
                 #line_block(app.job_slots)
@@ -815,7 +815,7 @@ class Task(Config):
 
                 try:
                     for command in commands:
-                        if self.verbose or self.debug:
+                        if self.get('verbose', False) or self.debug:
                             log(color(128,128,255), end="")
                             if app.dry_run: log("(DRY RUN) ", end="")
                             log(f"{rel_path(self.task_dir, self.root_dir)}$ ", end="")
@@ -1046,7 +1046,7 @@ class Task(Config):
             result.close()
 
         #if self.verbose or not command_pass or self.stderr:
-        if self.verbose or not command_pass:
+        if self.get('verbose', False) or not command_pass:
             self.print_status()
             if self.stdout:
                 log("-----stdout-----")
@@ -1124,7 +1124,7 @@ class Hancho(Config):
         return new_hancho._load_module()
 
     def _load_module(self):
-        #if config.debug or config.verbose:
+        #if config.debug or config.get('verbose', False):
         log(("┃ " * (len(app.modstack))), end="")
         log(color(128,255,128) + f"Loading {self.hancho_path}" + color())
 
@@ -1187,7 +1187,7 @@ class App:
     def __init__(self):
         self.verbose   = False
         self.debug     = False
-        self.force     = False
+        #self.force     = False
         self.trace     = False
         self.shuffle   = False
         self.use_color = True
@@ -1446,7 +1446,7 @@ class App:
 
         time_b = time.perf_counter()
 
-        #if Config.debug or Config.verbose:
+        #if app.debug or app.verbose:
         log("")
         log(f"Running {len(app.all_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
