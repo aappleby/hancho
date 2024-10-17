@@ -38,6 +38,8 @@ import hancho
 #    min_delta = delta
 #  old_mtime = new_mtime
 
+####################################################################################################
+
 def mtime_ns(filename):
   return os.stat(filename).st_mtime_ns
 
@@ -61,7 +63,7 @@ def run_hancho(name):
     capture_output=True,
   )
 
-################################################################################
+####################################################################################################
 
 class TestConfig(unittest.TestCase):
   """Test cases for weird things our Config objects can do"""
@@ -74,7 +76,7 @@ class TestConfig(unittest.TestCase):
   def test_nothing(self):
     pass
 
-################################################################################
+####################################################################################################
 
 def color(red=None, green=None, blue=None):
   """Converts RGB color to ANSI format string."""
@@ -85,7 +87,7 @@ def color(red=None, green=None, blue=None):
     return "\x1B[0m"
   return f"\x1B[38;2;{red};{green};{blue}m"
 
-################################################################################
+####################################################################################################
 
 # pylint: disable=too-many-public-methods
 class TestHancho(unittest.TestCase):
@@ -100,17 +102,25 @@ class TestHancho(unittest.TestCase):
     hancho.app.reset()
     hancho.app.quiet = True
 
-  def create_ctx(self, commandline):
-    argv = commandline.split()
-    ctx = hancho.app.create_root_hancho(argv)
-    return ctx
+  ########################################
 
   def tearDown(self):
     """And wipe the build dir after a test too."""
     shutil.rmtree("build", ignore_errors=True)
 
+  ########################################
+
+  def create_ctx(self, commandline):
+    argv = commandline.split()
+    ctx = hancho.app.create_root_hancho(argv)
+    return ctx
+
+  ########################################
+
   def test_dummy(self):
     self.assertEqual(0, 0)
+
+  ########################################
 
   def test_should_pass(self):
     """Sanity check"""
@@ -118,12 +128,15 @@ class TestHancho(unittest.TestCase):
     ctx.new_task(command = "(exit 0)")
     self.assertEqual(0, hancho.app.build_all())
 
+  ########################################
+
   def test_should_fail(self):
     """Sanity check"""
     ctx = self.create_ctx("--quiet")
     ctx.new_task(command = "echo skldjlksdlfj && (exit 255)")
     self.assertNotEqual(0, hancho.app.build_all())
 
+  ########################################
 
 #  def test_subrepos1(self):
 #      """Outputs from a subrepo should go in build/repo_name/..."""
@@ -137,6 +150,7 @@ class TestHancho(unittest.TestCase):
 #      self.assertEqual(0, hancho.app.build_all())
 #      self.assertTrue(Path("build/subrepo/repo.txt").exists())
 
+  ########################################
 
 #    def test_subrepos1(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
@@ -151,6 +165,8 @@ class TestHancho(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
 
+  ########################################
+
 #    def test_subrepos2(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
 #        result = subprocess.run(
@@ -163,7 +179,9 @@ class TestHancho(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
-#
+
+  ########################################
+
 #    def test_subrepos3(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
 #        result = subprocess.run(
@@ -177,13 +195,7 @@ class TestHancho(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
 
-
-
-
-
-
-
-  #----------------------------------------
+  ########################################
 
   def test_good_build_path(self):
     ctx = self.create_ctx("--quiet")
@@ -195,7 +207,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(Path("build/narp/foo.o").exists())
 
-  #----------------------------------------
+  ########################################
 
   def test_bad_build_path(self):
     ctx = self.create_ctx("--quiet")
@@ -208,7 +220,7 @@ class TestHancho(unittest.TestCase):
     self.assertFalse(Path("build/foo.o").exists())
     self.assertTrue("Path error" in hancho.app.log)
 
-  #----------------------------------------
+  ########################################
 
   def test_raw_task(self):
     ctx = self.create_ctx("--quiet")
@@ -224,7 +236,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(Path("build/foo.o").exists())
 
-  #----------------------------------------
+  ########################################
 
   def test_missing_input(self):
     """We should fail if an input is missing"""
@@ -238,7 +250,7 @@ class TestHancho(unittest.TestCase):
     self.assertTrue("FileNotFoundError" in hancho.app.log)
     self.assertTrue("does_not_exist.txt" in hancho.app.log)
 
-  #----------------------------------------
+  ########################################
 
   def test_missing_dep(self):
     """Missing dep should fail"""
@@ -253,7 +265,7 @@ class TestHancho(unittest.TestCase):
     self.assertTrue("FileNotFoundError" in hancho.app.log)
     self.assertTrue("missing_dep.txt" in hancho.app.log)
 
-  #----------------------------------------
+  ########################################
 
   def test_expand_failed_to_terminate(self):
     """A recursive text template should cause an 'expand failed to terminate' error."""
@@ -269,7 +281,7 @@ class TestHancho(unittest.TestCase):
     #print(hancho.app.log)
     self.assertTrue("Text expansion failed to terminate" in hancho.app.log)
 
-  #----------------------------------------
+  ########################################
 
   def test_garbage_command(self):
     """Non-existent command line commands should cause Hancho to fail the build."""
@@ -282,7 +294,7 @@ class TestHancho(unittest.TestCase):
     self.assertNotEqual(0, hancho.app.build_all())
     self.assertTrue("ValueError: 127" in hancho.app.log)
 
-  #----------------------------------------
+  ########################################
 
   def test_rule_collision(self):
     """If multiple rules generate the same output file, that's an error."""
@@ -300,7 +312,7 @@ class TestHancho(unittest.TestCase):
     self.assertNotEqual(0, hancho.app.build_all())
     self.assertTrue("Multiple rules build" in hancho.app.log)
 
-  #----------------------------------------
+  ########################################
 
   def test_always_rebuild_if_no_inputs(self):
     """A rule with no inputs should always rebuild"""
@@ -322,7 +334,7 @@ class TestHancho(unittest.TestCase):
     self.assertLess(mtime1, mtime2)
     self.assertLess(mtime2, mtime3)
 
-  #----------------------------------------
+  ########################################
 
   def test_dep_changed(self):
     """Changing a file in deps[] should trigger a rebuild"""
@@ -349,7 +361,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(mtime1, mtime2)
     self.assertLess(mtime2, mtime3)
 
-  #----------------------------------------
+  ########################################
 
   def test_does_create_output(self):
     """Output files should appear in build/ by default"""
@@ -362,7 +374,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(path.exists("build/result.txt"))
 
-  #----------------------------------------
+  ########################################
 
   def test_doesnt_create_output(self):
     """Having a file mentioned in out_obj should not magically create it"""
@@ -375,7 +387,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertFalse(path.exists("build/result.txt"))
 
-  #----------------------------------------
+  ########################################
 
   def test_header_changed(self):
     """Changing a header file tracked in the GCC dependencies file should trigger a rebuild"""
@@ -401,7 +413,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(mtime1, mtime2)
     self.assertLess(mtime2, mtime3)
 
-  #----------------------------------------
+  ########################################
 
   def test_input_changed(self):
     """Changing a source file should trigger a rebuild"""
@@ -427,7 +439,7 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(mtime1, mtime2)
     self.assertLess(mtime2, mtime3)
 
-  #----------------------------------------
+  ########################################
 
   def test_multiple_commands(self):
     """Rules with arrays of commands should run all of them"""
@@ -449,18 +461,22 @@ class TestHancho(unittest.TestCase):
     self.assertTrue(path.exists("build/bar.txt"))
     self.assertTrue(path.exists("build/baz.txt"))
 
+  ########################################
+
   def test_arbitrary_flags(self):
     """Passing arbitrary flags to Hancho should work"""
     ctx = self.create_ctx("--quiet --flarpy=flarp.txt")
-    self.assertEqual("flarp.txt", ctx.flarpy)
+    self.assertEqual("flarp.txt", ctx['flarpy'])
 
     ctx.new_task(
       command = "touch {out_file}",
       source_files = [],
-      out_file = ctx.flarpy,
+      out_file = ctx['flarpy'],
     )
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(path.exists("build/flarp.txt"))
+
+  ########################################
 
   #def test_what_is_in_a_task(self):
   #  task = hancho.Task(
@@ -469,6 +485,8 @@ class TestHancho(unittest.TestCase):
   #    build_dir = ""
   #  )
   #  print(task)
+
+  ########################################
 
   def test_sync_command(self):
     """The 'command' field of rules should be OK handling a sync function"""
@@ -484,6 +502,8 @@ class TestHancho(unittest.TestCase):
     )
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(path.exists("build/result.txt"))
+
+  ########################################
 
   def test_cancellation(self):
     """A task that receives a cancellation exception should not run."""
@@ -508,6 +528,8 @@ class TestHancho(unittest.TestCase):
     self.assertFalse(Path("build/fail_result.txt").exists())
     self.assertFalse(Path("build/should_not_be_created.txt").exists())
 
+  ########################################
+
   def test_task_creates_task(self):
     """Tasks using callbacks can create new tasks when they run."""
     ctx = self.create_ctx("--quiet")
@@ -530,6 +552,8 @@ class TestHancho(unittest.TestCase):
     self.assertEqual(0, hancho.app.build_all())
     self.assertTrue(Path("build/dummy.txt").exists())
 
+  ########################################
+
   def test_tons_of_tasks(self):
     """We should be able to queue up 1000+ tasks at once."""
     ctx = self.create_ctx("--quiet")
@@ -543,6 +567,8 @@ class TestHancho(unittest.TestCase):
       )
     self.assertEqual(0, hancho.app.build_all())
     self.assertEqual(1000, len(glob.glob("build/*")))
+
+  ########################################
 
   def test_job_count(self):
     """We should be able to dispatch tasks that require various numbers of jobs/cores."""
