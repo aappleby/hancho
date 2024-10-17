@@ -260,7 +260,7 @@ class Config:
 
     def clone(self):
         return type(self)(self)
-    
+
     #----------------------------------------
 
     def items(self):
@@ -1088,7 +1088,7 @@ class Context(Config):
             # FIXME need to explicitly define the globals - should be self + some explicit list of staticmethods, etc
             exec(
                 file.read(),
-                new_module.__dict__, 
+                new_module.__dict__,
                 new_module.__dict__
             ) # pylint: disable=exec-used
 
@@ -1184,7 +1184,7 @@ class App:
 
     ########################################
 
-    def create_root_hancho(self, argv):
+    def create_root_context(self, argv):
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
@@ -1219,9 +1219,9 @@ class App:
         setattr(app, 'force',   flags['force'])
         setattr(app, 'trace',   flags['trace'])
 
+        root_file = flags['root_file']
         root_dir  = path.abspath(flags['root_dir']) # Root path must be absolute.
-
-        root_path = path.join(root_dir, flags['root_file'])
+        root_path = path.join(root_dir, root_file)
 
         root_context = Context(
             name        = self.default_name,
@@ -1230,17 +1230,17 @@ class App:
             root_dir    = root_dir,
             root_path   = root_path,
 
-            repo_dir    = root_dir,
             repo_name   = "",
+            repo_dir    = root_dir,
 
-            build_dir   = self.default_build_dir,
             build_root  = self.default_build_root,
+            build_dir   = self.default_build_dir,
             build_tag   = "",
 
+            mod_name    = path.splitext(root_file)[0],
             mod_dir     = root_dir,
-            mod_name    = path.splitext(path.basename(root_path))[0],
+            mod_path    = root_path,
 
-            mod_path = root_path,
             task_dir    = "{mod_dir}",
 
             verbose     = flags['verbose'],
@@ -1265,23 +1265,23 @@ class App:
         #========================================
 
         if root_context.debug:
-            log(f"root_hancho = {Dumper().dump(root_context)}")
+            log(f"root_context = {Dumper().dump(root_context)}")
         return root_context
 
     ########################################
 
     def main(self):
         time_a = time.perf_counter()
-        
-        root_hancho = self.create_root_hancho(sys.argv[1:])
 
-        assert path.isabs(root_hancho.root_dir)
-        assert path.isdir(root_hancho.root_dir)
-        assert path.isabs(root_hancho.root_path)
-        assert path.isfile(root_hancho.root_path)
-        os.chdir(root_hancho.root_dir)
+        root_context = self.create_root_context(sys.argv[1:])
 
-        root_module = root_hancho._load_module()
+        assert path.isabs(root_context.root_dir)
+        assert path.isdir(root_context.root_dir)
+        assert path.isabs(root_context.root_path)
+        assert path.isfile(root_context.root_path)
+        os.chdir(root_context.root_dir)
+
+        root_module = root_context._load_module()
 
         time_b = time.perf_counter()
 

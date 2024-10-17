@@ -50,18 +50,16 @@ def force_touch(filename):
   while old_mtime == mtime_ns(filename):
     os.utime(filename, None)
 
-def run(cmd):
-  """Runs a command line and returns its stdout with whitespace stripped"""
-  return subprocess.check_output(cmd, shell=True, text=True).strip()
+####################################################################################################
 
-def run_hancho(name):
-  """Runs a Hancho build script and returns a subprocess.CompletedProcess."""
-  return subprocess.run(
-    f"python3 ../hancho.py -v -d {name}.hancho",
-    shell=True,
-    text=True,
-    capture_output=True,
-  )
+def color(red=None, green=None, blue=None):
+  """Converts RGB color to ANSI format string."""
+  # Color strings don't work in Windows console, so don't emit them.
+  if os.name == "nt":
+    return ""
+  if red is None:
+    return "\x1B[0m"
+  return f"\x1B[38;2;{red};{green};{blue}m"
 
 ####################################################################################################
 
@@ -75,17 +73,6 @@ class TestConfig(unittest.TestCase):
 
   def test_nothing(self):
     pass
-
-####################################################################################################
-
-def color(red=None, green=None, blue=None):
-  """Converts RGB color to ANSI format string."""
-  # Color strings don't work in Windows console, so don't emit them.
-  if os.name == "nt":
-    return ""
-  if red is None:
-    return "\x1B[0m"
-  return f"\x1B[38;2;{red};{green};{blue}m"
 
 ####################################################################################################
 
@@ -112,7 +99,7 @@ class TestHancho(unittest.TestCase):
 
   def create_ctx(self, commandline):
     argv = commandline.split()
-    ctx = hancho.app.create_root_hancho(argv)
+    ctx = hancho.app.create_root_context(argv)
     return ctx
 
   ########################################
