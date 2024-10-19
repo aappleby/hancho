@@ -649,6 +649,10 @@ class Task(Config):
     def __init__(self, *args, **kwargs):
         super().__init__(args, kwargs)
 
+        assert 'command' in self
+        assert 'task_dir' in self
+        assert 'build_dir' in self
+
         self.desc      = self.get('desc', app.default_desc)
         self.command   = self.command
         self.task_dir  = self.task_dir
@@ -1011,6 +1015,10 @@ class Task(Config):
 ####################################################################################################
 
 class Context(Config):
+
+    def __call__(self, *args, **kwargs):
+        return Task(self, *args, **kwargs)
+
     def new_config(self, *args, **kwargs):
         return Config(self, *args, **kwargs)
 
