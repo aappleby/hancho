@@ -1,7 +1,5 @@
 # tutorial/tut00.hancho
 
-#print(hancho)
-
 hancho(
   desc    = "Compile {in_src} -> {out_bin}",
   command = "g++ {in_src} -o {out_bin}",
