@@ -1017,16 +1017,11 @@ class Task(Config):
 class Context(Config):
 
     def __call__(self, *args, **kwargs):
-        return Task(self, *args, **kwargs)
-
-    def new_config(self, *args, **kwargs):
-        return Config(self, *args, **kwargs)
-
-    def new_command(self, *args, **kwargs):
-        return Command(self, *args, **kwargs)
-
-    def new_task(self, *args, **kwargs):
-        return Task(self, *args, **kwargs)
+        merged = Config(self, args, kwargs)
+        if custom_call := merged.get("call", None):
+            merged.pop("call")
+            return custom_call(**merged)
+        return Task(merged)
 
     def normalize_path(self, file_path):
         file_path = self.expand(file_path)

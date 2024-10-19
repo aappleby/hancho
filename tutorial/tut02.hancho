@@ -1,6 +1,6 @@
 # tutorial/tut02.hancho
 
-main_o = hancho.new_task(
+main_o = hancho(
   desc    = "Compile {in_src} -> {out_obj}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/main.cpp",
@@ -8,7 +8,7 @@ main_o = hancho.new_task(
   c_deps  = "main.d",
 )
 
-util_o = hancho.new_task(
+util_o = hancho(
   desc    = "Compile {in_src} -> {out_obj}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/util.cpp",
@@ -16,7 +16,7 @@ util_o = hancho.new_task(
   c_deps  = "util.d",
 )
 
-app = hancho.new_task(
+app = hancho(
   desc    = "Link {in_objs} -> {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
   in_objs = [main_o, util_o],

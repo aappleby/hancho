@@ -2,13 +2,13 @@
 
 myrepo = hancho.repo("myrepo/build.hancho")
 
-main_o = hancho.new_task(
+main_o = hancho(
   command = "g++ -c {in_src} -o {out_obj}",
   in_src = "main.cpp",
   out_obj = "{swap_ext(in_src, '.o')}"
 )
 
-main = hancho.new_task(
+main = hancho(
   command = "g++ {in_obj} -o {out_bin}",
   in_obj = [main_o, myrepo.util_o],
   out_bin = "main"

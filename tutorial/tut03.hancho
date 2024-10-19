@@ -3,7 +3,7 @@
 def compile_cpp(source):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')
-  return hancho.new_task(
+  return hancho(
     desc    = "Compile {in_src}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = source,
@@ -12,7 +12,7 @@ def compile_cpp(source):
   )
 
 def link_cpp(tasks, binary):
-  return hancho.new_task(
+  return hancho(
     desc    = "Link {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = tasks,

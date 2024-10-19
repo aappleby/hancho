@@ -3,7 +3,7 @@ import os
 ####################################################################################################
 # Utils
 
-touch_outputs = hancho.new_command(
+touch_outputs = hancho.Command(
   command = "touch {in_files}",
   in_files = None,
 )
@@ -15,7 +15,7 @@ touch_outputs = hancho.new_command(
 
 """
 if os.name == 'nt':
-  exports.compile_cpp = hancho.new_command(
+  exports.compile_cpp = hancho.Command(
     command     = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}",
     build_files = "{swap_ext(source_files, '.o')}",
     build_deps  = "{swap_ext(source_files, '.d')}",
@@ -34,13 +34,13 @@ else:
 
 #-------------------------------------------------------------------------------
 
-default_toolchain = hancho.new_config(
+default_toolchain = hancho.Config(
   arch     = "x86-64",
   compiler = "x86_64-linux-gnu-g++",
   linker   = "x86_64-linux-gnu-g++",
 )
 
-riscv64_toolchain = hancho.new_config(
+riscv64_toolchain = hancho.Config(
   arch     = "riscv64",
   compiler = "riscv64-unknown-elf-g++",
   linker   = "riscv64-unknown-elf-g++",
@@ -65,7 +65,7 @@ riscv64_toolchain = hancho.new_config(
 
 #----------------------------------------
 
-compile_cpp = hancho.new_command(
+compile_cpp = hancho.Command(
   name    = None,
   desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
 
@@ -95,7 +95,7 @@ compile_cpp = hancho.new_command(
 
 #----------------------------------------
 
-link_cpp_lib = hancho.new_command(
+link_cpp_lib = hancho.Command(
   name    = None,
   desc    = "Bundling C++ lib {rel(out_lib)}",
 
@@ -107,7 +107,7 @@ link_cpp_lib = hancho.new_command(
 
 #----------------------------------------
 
-link_cpp_bin = hancho.new_command(
+link_cpp_bin = hancho.Command(
   name    = None,
   desc    = "Linking C++ bin {rel(out_bin)}",
 
@@ -155,14 +155,14 @@ def _cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = Non
     in_objs = [objs, in_objs, in_libs],
   )
 
-cpp_lib = hancho.new_command(call = _cpp_lib)
-cpp_bin = hancho.new_command(call = _cpp_bin)
+cpp_lib = hancho.Command(call = _cpp_lib)
+cpp_bin = hancho.Command(call = _cpp_bin)
 
 ####################################################################################################
 # Makefiles
 
 def _make(*, make_config = None, in_makefile):
-  command = hancho.new_command(
+  command = hancho.Command(
     command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
     make_path   = "{path.dirname(in_makefile)}",
     make_file   = "{path.basename(in_makefile)}",
@@ -170,12 +170,12 @@ def _make(*, make_config = None, in_makefile):
   )
   command(make_config, in_makefile = in_makefile)
 
-make = hancho.new_command(call = _make)
+make = hancho.Command(call = _make)
 
 ####################################################################################################
 # Tests
 
-run_test = hancho.new_command(
+run_test = hancho.Command(
   desc     = "Running test {rel(in_test)}",
   command  = "{in_test} {args} && touch {out_pass}",
   in_test  = None,
@@ -193,7 +193,7 @@ def _cpp_test(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = No
   )
   return run_test(test_config, in_test = bin)
 
-cpp_test = hancho.new_command(call = _cpp_test)
+cpp_test = hancho.Command(call = _cpp_test)
 
 
 """
@@ -221,7 +221,7 @@ exports.metron = hancho.Config(
   c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-check_cpp = base.command(
+check_cpp = base.Command(
   desc    = "Syntax checking {source_files}",
   command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {in_src} && touch {out_ok}",
   in_src  = None,
@@ -229,7 +229,7 @@ check_cpp = base.command(
   c_deps  = "{swap_ext(source_files, '.d')}",
 )
 
-metron = hancho.new_command(
+metron = hancho.Command(
   command = "{repo_dir}/symlinks/metron/build/metron/metron -q -v -e -c {in_src} -o {out_sv}",
   c_deps  = "{swap_ext(in_src, '.d')}",
   out_sv  = "{swap_ext(in_src, '.sv')}",

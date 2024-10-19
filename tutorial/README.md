@@ -50,7 +50,7 @@ Here's how we run the same command in Hancho:
 ```py
 # tutorial/tut00.hancho
 
-hancho.new_task(
+hancho(
   desc    = "Compile {in_src} -> {out_bin}",
   command = "g++ {in_src} -o {out_bin}",
   in_src  = ["src/main.cpp", "src/util.cpp"],

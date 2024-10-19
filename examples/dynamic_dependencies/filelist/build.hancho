@@ -7,7 +7,7 @@ from glob import glob
 
 src_files = glob("src/*")
 
-random_touch = hancho.new_task(
+random_touch = hancho(
   desc = "Touch 3 random files in src/ - {rel(in_src)}",
   command = [
     "touch {in_src[0]}",
@@ -24,7 +24,7 @@ def generate_filelist(task):
       file.write(str(f) + "\n")
   return task.out_list
 
-filelist_txt = hancho.new_task(
+filelist_txt = hancho(
   desc     = "Write the names of 3 random files in src/ to {out_list}",
   command  = generate_filelist,
   out_list = "filelist.txt",
@@ -35,7 +35,7 @@ def generate_result(task):
   """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
   file = open(task.in_filelist[0], "r", encoding="utf-8")
   from_filelist = [f.strip() for f in file.readlines()]
-  return hancho.new_task(
+  return hancho(
     desc      = "Concatenate {in_files} into {out_files}",
     command   = "cat {in_files} > {out_files}",
     in_files  = from_filelist,
@@ -43,13 +43,13 @@ def generate_result(task):
     other_files = [random_touch, filelist_txt],
   )
 
-result_txt = hancho.new_task(
+result_txt = hancho(
   desc = "Read {in_filelist} and use its contents to generate another task",
   command = generate_result,
   in_filelist = filelist_txt,
 )
 
-print_task = hancho.new_task(
+print_task = hancho(
   desc = "Print the contents of {in_text}",
   command = "cat {in_text}",
   in_text = result_txt,

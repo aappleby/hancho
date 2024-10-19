@@ -1,6 +1,6 @@
 # examples/subrepos/myrepo/build.hancho
 
-util_o = hancho.new_task(
+util_o = hancho(
   command = "g++ -c {in_src} -o {out_obj}",
   in_src = "util.cpp",
   out_obj = "{swap_ext(in_src, '.o')}"

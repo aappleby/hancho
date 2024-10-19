@@ -1,6 +1,7 @@
-rules = hancho.include("{repo_dir}/rules.hancho")
+rules = hancho.load("{repo_dir}/rules.hancho")
 
-main_o = rules.compile_cpp(
+main_o = hancho(
+  rules.compile_cpp,
   in_src = "main.c",
   flags = rules.compile_cpp.flags + [
     "{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}",
@@ -8,7 +9,8 @@ main_o = rules.compile_cpp(
   ],
 )
 
-main = rules.link_cpp_bin(
+main = hancho(
+  rules.link_cpp_bin,
   name = "hello_gtk",
   in_objs = main_o,
   flags = rules.link_cpp_bin.flags + [
