@@ -1,4 +1,4 @@
 # repo2_test3.hancho
 
-rules = hancho.include("{repo_dir}/rules/repo2_test3_rules.hancho")
+rules = hancho.load("{repo_dir}/rules/repo2_test3_rules.hancho")
 repo2_txt = rules.rule([], "repo2.txt")

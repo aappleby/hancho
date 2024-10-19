@@ -327,25 +327,9 @@ class Config:
     # fmt: on
 
 ####################################################################################################
-# A Command is a 'callable' config. It can wrap a function, or can contain a command string.
 
 class Command(Config):
-
-    def __init__(self, *args, **kwargs):
-        callbacks = [arg for arg in args if callable(arg)]
-        configs   = [arg for arg in args if not callable(arg)]
-        if len(callbacks):
-            if len(callbacks) > 1:
-                raise ValueError("Multiple callbacks passed to Command()")
-            kwargs["call"] = callbacks[0]
-        super().__init__(*configs, **kwargs)
-
-    def __call__(self, *args, **kwargs):
-        merged = Config(self, args, kwargs)
-        if custom_call := merged.get("call", None):
-            merged.pop("call")
-            return custom_call(**merged)
-        return Task(merged)
+    pass
 
 ####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
@@ -1016,8 +1000,11 @@ class Task(Config):
 
 class Context(Config):
 
-    def __call__(self, *args, **kwargs):
-        merged = Config(self, args, kwargs)
+    def __call__(self, arg1 = None, *args, **kwargs):
+        if callable(arg1):
+            return arg1(self, *args, **kwargs)
+
+        merged = Config(self, arg1, args, kwargs)
         if custom_call := merged.get("call", None):
             merged.pop("call")
             return custom_call(**merged)
@@ -1033,17 +1020,6 @@ class Context(Config):
         assert path.isfile(file_path)
 
         return file_path
-
-    def include(self, mod_path, *args, **kwargs):
-        mod_path = self.normalize_path(mod_path)
-        new_context = Context(
-            self,
-            mod_path = mod_path,
-        )
-        new_context.merge(args)
-        new_context.merge(kwargs)
-
-        return new_context._load_module()
 
     def load(self, mod_path, *args, **kwargs):
         mod_path = self.normalize_path(mod_path)

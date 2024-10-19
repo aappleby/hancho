@@ -1,7 +1,19 @@
 # tutorial/tut04.hancho
 
-tut04_rules = hancho.include("tut04_rules.hancho")
+tut04_rules = hancho.load("tut04_rules.hancho")
 
-main_o = tut04_rules.compile_cpp("src/main.cpp")
-util_o = tut04_rules.compile_cpp("src/util.cpp")
-app    = tut04_rules.link_cpp([main_o, util_o], "app")
+main_o = hancho(
+  tut04_rules.compile_cpp,
+  in_src = "src/main.cpp",
+)
+
+util_o = hancho(
+  tut04_rules.compile_cpp,
+  in_src = "src/util.cpp"
+)
+
+app = hancho(
+  tut04_rules.link_cpp,
+  in_objs = [main_o, util_o],
+  out_bin = "app"
+)

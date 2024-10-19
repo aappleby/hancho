@@ -1,2 +1,2 @@
-rules = hancho.include("{root_dir}/rules/rules.hancho")
+rules = hancho.load("{root_dir}/rules/rules.hancho")
 stuff_o = rules.compile("src/stuff.cpp")
