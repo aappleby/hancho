@@ -10,7 +10,7 @@ def sync_callback(task):
     with open(abs_file, 'w', encoding="utf-8") as file:
       file.write("hello world")
   #print("Sync callback end")
-  return task._out_files
+  return task.get_outputs()
 
 fast_task = hancho.Task(
   command   = sync_callback,
@@ -29,7 +29,7 @@ async def async_callback(task):
       file.write("hello world")
     await asyncio.sleep(0.1)
   #print("Async callback end")
-  return task._out_files
+  return task.get_outputs()
 
 slow_task = hancho.Task(
   command   = async_callback,

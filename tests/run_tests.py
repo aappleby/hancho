@@ -97,9 +97,30 @@ class TestHancho(unittest.TestCase):
 
   ########################################
 
-  def create_ctx(self, commandline):
-    argv = commandline.split()
-    ctx = hancho.app.create_root_context(argv)
+  def create_ctx(self, flags, extra_flags):
+    #argv = commandline.split()
+
+    default_flags = hancho.Config(
+      shuffle   = False,
+      use_color = True,
+      quiet     = False,
+      dry_run   = False,
+      jobs      = os.cpu_count(),
+      target    = None,
+      verbose   = False,
+      debug     = False,
+      force     = False,
+      trace     = False,
+      root_file = 'build.hancho',
+      root_dir  = os.getcwd(),
+    )
+
+    default_extra_flags = hancho.Config()
+
+    default_flags.merge(flags)
+    default_extra_flags.merge(extra_flags)
+
+    ctx = hancho.app.create_root_context(default_flags.__dict__, default_extra_flags.__dict__)
     return ctx
 
   ########################################
@@ -111,7 +132,7 @@ class TestHancho(unittest.TestCase):
 
   def test_should_pass(self):
     """Sanity check"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(command = "(exit 0)")
     self.assertEqual(0, hancho.app.build_all())
 
@@ -119,7 +140,7 @@ class TestHancho(unittest.TestCase):
 
   def test_should_fail(self):
     """Sanity check"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(command = "echo skldjlksdlfj && (exit 255)")
     self.assertNotEqual(0, hancho.app.build_all())
 
@@ -185,7 +206,7 @@ class TestHancho(unittest.TestCase):
   ########################################
 
   def test_good_build_path(self):
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command  = "touch {rel(out_obj)}",
       in_src   = "src/foo.c",
@@ -197,7 +218,7 @@ class TestHancho(unittest.TestCase):
   ########################################
 
   def test_bad_build_path(self):
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command  = "touch {rel(out_obj)}",
       in_src   = "src/foo.c",
@@ -210,7 +231,7 @@ class TestHancho(unittest.TestCase):
   ########################################
 
   def test_raw_task(self):
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     #ctx = self.create_ctx("-d")
     task = ctx.Task(
       command   = "touch {rel(out_obj)}",
@@ -227,7 +248,7 @@ class TestHancho(unittest.TestCase):
 
   def test_missing_input(self):
     """We should fail if an input is missing"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "touch {rel(out_obj)}",
       in_src  = "src/does_not_exist.txt",
@@ -241,7 +262,7 @@ class TestHancho(unittest.TestCase):
 
   def test_missing_dep(self):
     """Missing dep should fail"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "touch {rel(out_obj)}",
       in_src  = "src/test.cpp",
@@ -256,7 +277,7 @@ class TestHancho(unittest.TestCase):
 
   def test_expand_failed_to_terminate(self):
     """A recursive text template should cause an 'expand failed to terminate' error."""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "{flarp}",
       in_src  = [],
@@ -272,7 +293,7 @@ class TestHancho(unittest.TestCase):
 
   def test_garbage_command(self):
     """Non-existent command line commands should cause Hancho to fail the build."""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "aklsjdflksjdlfkjldfk",
       in_src  = __file__,
@@ -285,7 +306,7 @@ class TestHancho(unittest.TestCase):
 
   def test_rule_collision(self):
     """If multiple rules generate the same output file, that's an error."""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "sleep 0.1 && touch {rel(out_obj)}",
       in_src  = __file__,
@@ -303,7 +324,7 @@ class TestHancho(unittest.TestCase):
 
   def test_always_rebuild_if_no_inputs(self):
     """A rule with no inputs should always rebuild"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     def run():
       hancho.app.reset()
       hancho.app.quiet = True
@@ -325,7 +346,7 @@ class TestHancho(unittest.TestCase):
 
   def test_dep_changed(self):
     """Changing a file in deps[] should trigger a rebuild"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
     def run():
       hancho.app.reset()
@@ -352,7 +373,7 @@ class TestHancho(unittest.TestCase):
 
   def test_does_create_output(self):
     """Output files should appear in build/ by default"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "touch {rel(out_obj)}",
       in_src  = [],
@@ -365,7 +386,7 @@ class TestHancho(unittest.TestCase):
 
   def test_doesnt_create_output(self):
     """Having a file mentioned in out_obj should not magically create it"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = "echo",
       in_src  = [],
@@ -378,7 +399,7 @@ class TestHancho(unittest.TestCase):
 
   def test_header_changed(self):
     """Changing a header file tracked in the GCC dependencies file should trigger a rebuild"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     def run():
       hancho.app.reset()
       hancho.app.quiet = True
@@ -404,7 +425,7 @@ class TestHancho(unittest.TestCase):
 
   def test_input_changed(self):
     """Changing a source file should trigger a rebuild"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     def run():
       hancho.app.reset()
       hancho.app.quiet = True
@@ -430,7 +451,7 @@ class TestHancho(unittest.TestCase):
 
   def test_multiple_commands(self):
     """Rules with arrays of commands should run all of them"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     ctx.new_task(
       command = [
         "echo foo > {rel(out_foo)}",
@@ -452,7 +473,7 @@ class TestHancho(unittest.TestCase):
 
   def test_arbitrary_flags(self):
     """Passing arbitrary flags to Hancho should work"""
-    ctx = self.create_ctx("--quiet --flarpy=flarp.txt")
+    ctx = self.create_ctx({'quiet':True}, {'flarpy':'flarp.txt'})
     self.assertEqual("flarp.txt", ctx['flarpy'])
 
     ctx.new_task(
@@ -477,7 +498,7 @@ class TestHancho(unittest.TestCase):
 
   def test_sync_command(self):
     """The 'command' field of rules should be OK handling a sync function"""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
 
     def sync_command(task):
       force_touch(task.out_obj)
@@ -494,7 +515,7 @@ class TestHancho(unittest.TestCase):
 
   def test_cancellation(self):
     """A task that receives a cancellation exception should not run."""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     task_that_fails = ctx.new_task(
       command = "(exit 255)",
       in_src  = [],
@@ -519,7 +540,7 @@ class TestHancho(unittest.TestCase):
 
   def test_task_creates_task(self):
     """Tasks using callbacks can create new tasks when they run."""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     def callback(task):
       new_task = ctx.new_task(
         command = "touch {rel(out_obj)}",
@@ -543,7 +564,7 @@ class TestHancho(unittest.TestCase):
 
   def test_tons_of_tasks(self):
     """We should be able to queue up 1000+ tasks at once."""
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
     for i in range(1000):
       ctx.new_task(
         desc    = "I am task {index}",
@@ -561,7 +582,7 @@ class TestHancho(unittest.TestCase):
     """We should be able to dispatch tasks that require various numbers of jobs/cores."""
     # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
     # another batch of 100 tasks that use random numbers of cores.
-    ctx = self.create_ctx("--quiet")
+    ctx = self.create_ctx({'quiet':True}, {})
 
     for i in range(100):
       ctx.new_task(

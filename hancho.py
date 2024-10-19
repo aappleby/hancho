@@ -1,12 +1,10 @@
 #!/usr/bin/python3
 
-"""Hancho v0.1.0 @ 2024-03-25 - A simple, pleasant build system."""
+"""Hancho v0.3.0 @ 2024-10-16 - A simple, pleasant build system."""
 
 from os import path
-from types import MappingProxyType
 import argparse
 import asyncio
-import builtins
 import glob
 import inspect
 import io
@@ -18,7 +16,6 @@ import subprocess
 import sys
 import time
 import traceback
-import types
 from enum import IntEnum
 
 # If we were launched directly, a reference to this module is already in sys.modules[__name__].
@@ -83,12 +80,12 @@ def line_block(lines):
 #---------------------------------------------------------------------------------------------------
 # Path manipulation
 
-def unwrap_path(variant):
+def unwrap_path(variant) -> str | list[str]:
     if isinstance(variant, (Task, Expander)):
-        variant = variant._out_files
+        variant = variant.get_outputs()
     return variant
 
-def abs_path(raw_path, strict=False):
+def abs_path(raw_path, strict=False) -> str | list[str]:
     raw_path = unwrap_path(raw_path)
 
     if isinstance(raw_path, list):
@@ -121,7 +118,7 @@ def join_path2(path1, path2, *args):
     path1 = unwrap_path(path1)
     path2 = unwrap_path(path2)
 
-    if len(args):
+    if len(args) > 0:
         return [join_path(path1, p) for p in join_path(path2, *args)]
     if isinstance(path1, list):
         return [join_path(p, path2) for p in flatten(path1)]
@@ -162,7 +159,7 @@ def run_cmd(cmd):
 def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, Task):
-        name = name._out_files
+        name = name.get_outputs()
     if isinstance(name, list):
         return [swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
@@ -215,7 +212,7 @@ class Dumper:
                     result += self.dump(variant.__dict__)
             case list():
                 result = self.dump_list(variant)
-            case dict() | MappingProxyType():
+            case dict():
                 result = self.dump_dict(variant)
             case str():
                 result = '"' + str(variant) + '"'
@@ -416,7 +413,7 @@ def stringify_variant(variant):
         case Expander():
             return stringify_variant(variant.config)
         case Task():
-            return stringify_variant(variant._out_files)
+            return stringify_variant(variant.get_outputs())
         case list():
             variant = [stringify_variant(val) for val in variant]
             return " ".join(variant)
@@ -604,8 +601,8 @@ def visit_variant(key, val, visitor):
         case Exception():
             raise val
         case Task():
-            for key2, val2 in enumerate(val._out_files):
-                val._out_files[key2] = visit_variant(key2, val2, visitor)
+            for key2, val2 in enumerate(val.get_outputs()):
+                val.get_outputs()[key2] = visit_variant(key2, val2, visitor)
         case Config() | dict():
             for key2, val2 in val.items():
                 val[key2] = visit_variant(key2, val2, visitor)
@@ -626,7 +623,7 @@ class Promise:
     async def get(self):
         await self.task.await_done()
         if len(self.args) == 0:
-            return self.task._out_files
+            return self.task.get_outputs()
         elif len(self.args) == 1:
             return self.task[self.args[0]]
         else:
@@ -652,20 +649,34 @@ class Task(Config):
     def __init__(self, *args, **kwargs):
         super().__init__(args, kwargs)
 
-        assert self.command is not None
-        assert self.task_dir is not None
-        assert self.build_dir is not None
+        self.desc      = self.get('desc', app.default_desc)
+        self.command   = self.command
+        self.task_dir  = self.task_dir
+        self.build_dir = self.build_dir
+
+        assert isinstance(self.command, (str, list)) or callable(self.command)
+        assert isinstance(self.task_dir, str)
+        assert isinstance(self.build_dir, str)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
+        self._in_files  = []
+        self._out_files = []
         self._state = TaskState.DECLARED
         self._reason = None
         self._promise = None
         self._loaded_files = [m.hancho.mod_path for m in app.loaded_modules]
+        self._stdout = ""
+        self._stderr = ""
+        self._returncode = -1
 
-        if not self.command is None:
-            app.all_tasks.append(self)
-            self._task_index = len(app.all_tasks)
+        app.all_tasks.append(self)
+
+    def get_inputs(self):
+        return self._in_files
+
+    def get_outputs(self):
+        return self._out_files
 
     def queue(self):
         if self._state is TaskState.DECLARED:
@@ -687,9 +698,6 @@ class Task(Config):
     def promise(self, *args):
         return Promise(self, *args)
 
-    def __repr__(self):
-        return Dumper(1).dump(self)
-
     def rel(self, sub_path):
         return rel_path(sub_path, expand_variant(self, self.task_dir))
 
@@ -699,8 +707,6 @@ class Task(Config):
         # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
         desc = self.get('desc', app.default_desc)
         log(
-            #f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {desc}",
-            #{self._task_index}/
             f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {desc}",
             sameline=not self.get('verbose', False),
         )
@@ -747,7 +753,7 @@ class Task(Config):
                 # Wait for enough jobs to free up to run this task.
                 job_count = self.get("job_count", 1)
                 self._state = TaskState.AWAITING_JOBS
-                await app.acquire_jobs(job_count, self)
+                await app.job_pool.acquire_jobs(job_count, self)
 
                 self._state = TaskState.RUNNING_COMMANDS
 
@@ -762,15 +768,17 @@ class Task(Config):
                 try:
                     for command in commands:
                         if self.get('verbose', False) or self.get('debug', False):
+                            root_dir = self.get("root_dir", "/")
                             log(color(128,128,255), end="")
                             if app.dry_run: log("(DRY RUN) ", end="")
-                            log(f"{rel_path(self.task_dir, self.root_dir)}$ ", end="")
+                            log(f"{rel_path(self.task_dir, root_dir)}$ ", end="")
+                            #log(f"{self.task_dir}$ ", end="")
                             log(color(), end="")
                             log(command)
                         if not app.dry_run:
                             await self.run_command(command)
                 finally:
-                    await app.release_jobs(job_count, self)
+                    await app.job_pool.release_jobs(job_count, self)
                 app.tasks_pass += 1
 
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -780,7 +788,7 @@ class Task(Config):
             return cancel
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
             app.tasks_fail += 1
             return asyncio.CancelledError()
@@ -811,9 +819,6 @@ class Task(Config):
                 self.__dict__[key] = self.expand(val)
 
         # Prepend the in/out path to the filenames
-        self._in_files  = []
-        self._out_files = []
-
         def handle_in_path(key, val):
             if val is None:
                 raise ValueError(f"Key {key} was None")
@@ -836,12 +841,11 @@ class Task(Config):
             if key.startswith("out_"):
                 self[key] = visit_variant(key, val, handle_out_path)
 
-        if self.get("c_deps", None) is not None:
-            self.c_deps = join_path(self.build_dir, self.c_deps)
+        if c_deps := self.get("c_deps", None):
+            self["c_deps"] = join_path(self.build_dir, c_deps)
 
         # And now we can expand the command.
-        self.desc = self.get('desc', app.default_desc)
-        self.desc = self.expand(self.desc)
+        self.desc    = self.expand(self.desc)
         self.command = self.expand(self.command)
 
         if self.get('debug', False):
@@ -861,9 +865,9 @@ class Task(Config):
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
-            if self.get("root_dir", None) is not None:
-                if not file.startswith(self.root_dir):
-                    raise ValueError(f"Path error, output file {file} is not under root_dir {self.root_dir}")
+            if root_dir := self.get("root_dir", None):
+                if not file.startswith(root_dir):
+                    raise ValueError(f"Path error, output file {file} is not under root_dir {root_dir}")
 
         # Check for duplicate task outputs
         if self.command:
@@ -901,7 +905,7 @@ class Task(Config):
         min_out = min(mtime(f) for f in self._out_files)
 
         if mtime(__file__) >= min_out:
-            return f"Rebuilding because hancho.py has changed"
+            return "Rebuilding because hancho.py has changed"
 
         for file in self._in_files:
             if mtime(file) >= min_out:
@@ -913,9 +917,8 @@ class Task(Config):
 
         # Check all dependencies in the C dependencies file, if present.
         c_deps = self.get("c_deps", None)
-        c_depformat = self.get("c_depformat", "gcc")
-
         if c_deps is not None and path.exists(c_deps):
+            c_depformat = self.get("c_depformat", "gcc")
             if self.get('debug', False):
                 log(f"Found C dependencies file {c_deps}")
             with open(c_deps, encoding="utf-8") as c_deps:
@@ -977,40 +980,37 @@ class Task(Config):
         except RuntimeError:
             sys.exit(-1)
 
-        self.stdout = stdout_data.decode()
-        self.stderr = stderr_data.decode()
-        self.returncode = proc.returncode
+        self._stdout = stdout_data.decode()
+        self._stderr = stderr_data.decode()
+        self._returncode = proc.returncode
 
-        command_pass = (self.returncode == 0) != self.get('should_fail', False)
+        command_pass = (self._returncode == 0) != self.get('should_fail', False)
 
         if log_path := self.get('log_path', None) is not None:
             print(self)
-            result = open(log_path, "w")
+            result = open(log_path, "w", encoding="utf-8")
             result.write("-----stderr-----\n")
-            result.write(self.stderr)
+            result.write(self._stderr)
             result.write("-----stdout-----\n")
-            result.write(self.stdout)
+            result.write(self._stdout)
             result.close()
 
         #if self.verbose or not command_pass or self.stderr:
         if self.get('verbose', False) or not command_pass:
             self.print_status()
-            if self.stdout:
+            if self._stdout:
                 log("-----stdout-----")
-                log(self.stdout, end="")
-            if self.stderr:
+                log(self._stdout, end="")
+            if self._stderr:
                 log("-----stderr-----")
-                log(self.stderr, end="")
+                log(self._stderr, end="")
 
         if not command_pass:
-            raise ValueError(self.returncode)
+            raise ValueError(self._returncode)
 
 ####################################################################################################
 
 class Context(Config):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def new_config(self, *args, **kwargs):
         return Config(self, *args, **kwargs)
 
@@ -1085,12 +1085,8 @@ class Context(Config):
         app.pushdir(path.dirname(self.mod_path))
 
         with open(self.mod_path, encoding="utf-8") as file:
-            # FIXME need to explicitly define the globals - should be self + some explicit list of staticmethods, etc
-            exec(
-                file.read(),
-                new_module.__dict__,
-                new_module.__dict__
-            ) # pylint: disable=exec-used
+            # pylint: disable=exec-used
+            exec(file.read(), new_module.__dict__, new_module.__dict__)
 
         # The exec() function adds __builtins__, remove it now that we're done exec'ing.
         del new_module.__builtins__
@@ -1106,18 +1102,6 @@ class Context(Config):
     Command = Command
     Task = Task
 
-    #def get_log(self):
-    #    return app.log
-
-    #def reset(self):
-    #    return app.reset()
-
-    #def build(self):
-    #    return app.build()
-
-    #def build_all(self):
-    #    return app.build_all()
-
 ####################################################################################################
 
 class Module(Config):
@@ -1125,17 +1109,68 @@ class Module(Config):
 
 ####################################################################################################
 
-class App:
-    """The application state. Mostly here so that the linter will stop complaining about my use of
-    global variables. :D"""
+class JobPool:
+    def __init__(self):
+        self.jobs_available = os.cpu_count()
+        self.jobs_lock = asyncio.Condition()
+        self.job_slots = [None] * self.jobs_available
+
+    def reset(self, job_count):
+        self.jobs_available = job_count
+        self.job_slots = [None] * self.jobs_available
+        pass
 
     ########################################
+
+    async def acquire_jobs(self, count, token):
+        """Waits until 'count' jobs are available and then removes them from the job pool."""
+
+        if count > app.jobs:
+            raise ValueError(f"Nedd {count} jobs, but pool is {app.jobs}.")
+
+        await self.jobs_lock.acquire()
+        await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
+
+        slots_remaining = count
+        for i, val in enumerate(self.job_slots):
+            if val == None and slots_remaining:
+                self.job_slots[i] = token
+                slots_remaining -= 1
+
+        self.jobs_available -= count
+        self.jobs_lock.release()
+
+    ########################################
+    # NOTE: The notify_all here is required because we don't know in advance which tasks will
+    # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
+    # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
+    # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
+    # rest will go back to sleep again, this will repeat for every call to release_jobs().
+
+    async def release_jobs(self, count, token):
+        """Returns 'count' jobs back to the job pool."""
+
+        await self.jobs_lock.acquire()
+        self.jobs_available += count
+
+        slots_remaining = count
+        for i, val in enumerate(self.job_slots):
+            if val == token:
+                self.job_slots[i] = None
+                slots_remaining -= 1
+
+        self.jobs_lock.notify_all()
+        self.jobs_lock.release()
+
+####################################################################################################
+
+class App:
 
     def __init__(self):
         self.verbose   = False
         self.debug     = False
-        #self.force     = False
-        #self.trace     = False
+        self.force     = False
+        self.trace     = False
         self.shuffle   = False
         self.use_color = True
         self.quiet     = False
@@ -1165,18 +1200,16 @@ class App:
         self.queued_tasks = []
         self.started_tasks = []
         self.finished_tasks = []
-
-        self.jobs_available = os.cpu_count()
-        self.jobs_lock = asyncio.Condition()
-        self.job_slots = [None] * self.jobs_available
         self.log = ""
 
         self.default_name        = None
-        self.default_desc        = "{rel(_in_files)} -> {rel(_out_files)}"
+        self.default_desc        = "{rel(get_inputs())} -> {rel(get_outputs())}"
         self.default_command     = ""
         self.default_task_dir    = "."
         self.default_build_dir   = "{root_dir}/{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
         self.default_build_root  = "build"
+
+        self.job_pool = JobPool()
 
 
     def reset(self):
@@ -1184,29 +1217,7 @@ class App:
 
     ########################################
 
-    def create_root_context(self, argv):
-        # pylint: disable=line-too-long
-        # fmt: off
-        parser = argparse.ArgumentParser()
-        parser.add_argument("target",            default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
-
-        parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
-        parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
-
-        parser.add_argument("-v", "--verbose",   default=False, action="store_true",  help="Print verbose build info")
-        parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
-        parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
-        parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
-
-        parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
-        parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
-        parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
-        parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
-        parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
-        # fmt: on
-
-        (flags, unrecognized) = parser.parse_known_args(argv)
-        flags = flags.__dict__
+    def create_root_context(self, flags, extra_flags):
 
         # These flags are app-wide and not context-wide.
         app_flags = ['shuffle', 'use_color', 'quiet', 'dry_run', 'jobs', 'target']
@@ -1249,40 +1260,28 @@ class App:
             trace       = flags['trace'],
         )
 
-        # Unrecognized command line parameters also become global config fields if they are
-        # flag-like
-        unrecognized_flags = {}
-        for span in unrecognized:
-            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-                key = match.group(1)
-                val = match.group(2)
-                val = maybe_as_number(val) if val is not None else True
-                unrecognized_flags[key] = val
-
-        for key, val in unrecognized_flags.items():
+        # All the unrecognized flags get stuck on the root context.
+        for key, val in extra_flags.items():
             setattr(root_context, key, val)
 
-        #========================================
-
-        if root_context.debug:
+        if root_context.get("debug", None):
             log(f"root_context = {Dumper().dump(root_context)}")
         return root_context
 
     ########################################
 
-    def main(self):
-        time_a = time.perf_counter()
+    def main(self, flags, extra_flags):
 
-        root_context = self.create_root_context(sys.argv[1:])
+        root_context = self.create_root_context(flags, extra_flags)
 
         assert path.isabs(root_context.root_dir)
         assert path.isdir(root_context.root_dir)
         assert path.isabs(root_context.root_path)
         assert path.isfile(root_context.root_path)
+
         os.chdir(root_context.root_dir)
-
-        root_module = root_context._load_module()
-
+        time_a = time.perf_counter()
+        root_context._load_module()
         time_b = time.perf_counter()
 
         #if root_config.debug or root_config.verbose:
@@ -1291,19 +1290,23 @@ class App:
 
         #========================================
 
+        print(app.target)
+
         if app.target:
             target_regex = re.compile(app.target)
             for task in self.all_tasks:
                 queue_task = False
-                for name in flatten(task.name):
-                    if target_regex.search(name):
-                        queue_task = True
+                if task.get('name', None):
+                    for name in flatten(task.name):
+                        if target_regex.search(name):
+                            queue_task = True
                 #for desc in flatten(task.desc):
                 #    if target_regex.search(desc):
                 #        queue_task = True
-                for tag in flatten(task.tags):
-                    if target_regex.search(tag):
-                        queue_task = True
+                if task.get('tags', None):
+                    for tag in flatten(task.tags):
+                        if target_regex.search(tag):
+                            queue_task = True
                 if queue_task:
                     log(f"Queueing task '{task.name}'")
                     task.queue()
@@ -1321,7 +1324,7 @@ class App:
 
     ########################################
 
-    def pushdir(self, new_dir):
+    def pushdir(self, new_dir : str):
         new_dir = abs_path(new_dir, strict=True)
         self.dirstack.append(new_dir)
         os.chdir(new_dir)
@@ -1329,22 +1332,6 @@ class App:
     def popdir(self):
         self.dirstack.pop()
         os.chdir(self.dirstack[-1])
-
-    ########################################
-
-    def get_repo_dir(self):
-        if not len(self.modstack):
-            return None
-        result = self.modstack[-1].imports.repo_dir
-        assert path.isdir(result)
-        return result
-
-    def get_repo_name(self):
-        if not len(self.modstack):
-            return None
-        result = self.modstack[-1].imports.repo_name
-        assert isinstance(result, str) or result is None
-        return result
 
     ########################################
 
@@ -1391,8 +1378,7 @@ class App:
     async def async_run_tasks(self):
         # Run all tasks in the queue until we run out.
 
-        self.jobs_available = app.jobs
-        self.job_slots = [None] * self.jobs_available
+        self.job_pool.reset(self.jobs)
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
@@ -1433,61 +1419,46 @@ class App:
 
         return -1 if self.tasks_fail else 0
 
-    ########################################
-
-    async def acquire_jobs(self, count, token):
-        """Waits until 'count' jobs are available and then removes them from the job pool."""
-
-        if count > app.jobs:
-            raise ValueError(f"Nedd {count} jobs, but pool is {app.jobs}.")
-
-        await self.jobs_lock.acquire()
-        await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
-
-        slots_remaining = count
-        for i, val in enumerate(self.job_slots):
-            if val == None and slots_remaining:
-                self.job_slots[i] = token
-                slots_remaining -= 1
-
-        self.jobs_available -= count
-        self.jobs_lock.release()
-
-    ########################################
-    # NOTE: The notify_all here is required because we don't know in advance which tasks will
-    # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
-    # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
-    # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
-    # rest will go back to sleep again, this will repeat for every call to release_jobs().
-
-    async def release_jobs(self, count, token):
-        """Returns 'count' jobs back to the job pool."""
-
-        await self.jobs_lock.acquire()
-        self.jobs_available += count
-
-        slots_remaining = count
-        for i, val in enumerate(self.job_slots):
-            if val == token:
-                self.job_slots[i] = None
-                slots_remaining -= 1
-
-        self.jobs_lock.notify_all()
-        self.jobs_lock.release()
-
-####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
 app = App()
 
+####################################################################################################
+
 if __name__ == "__main__":
 
-    #context = Config(_locals = 2)
-    #print(context)
-    #source = """import os\nasdf = 100\nprint(_locals)"""
-    #exec(source, None, context)
-    #print(context)
+    # pylint: disable=line-too-long
+    # fmt: off
+    parser = argparse.ArgumentParser()
+    parser.add_argument("target",            default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
 
-    sys.exit(app.main())
-    pass
+    parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
+    parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
+
+    parser.add_argument("-v", "--verbose",   default=False, action="store_true",  help="Print verbose build info")
+    parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
+    parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
+    parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
+
+    parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
+    parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
+    parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
+    parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
+    parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
+    # fmt: on
+
+    (flags, unrecognized) = parser.parse_known_args(sys.argv[1:])
+    flags = flags.__dict__
+
+    # Unrecognized command line parameters also become global config fields if they are
+    # flag-like
+    extra_flags = {}
+    for span in unrecognized:
+        if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+            key = match.group(1)
+            val = match.group(2)
+            val = maybe_as_number(val) if val is not None else True
+            extra_flags[key] = val
+
+    sys.exit(app.main(flags, extra_flags))
