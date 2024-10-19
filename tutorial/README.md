@@ -282,7 +282,7 @@ Fields that are used globally in multiple rules can be set on
 'Hancho'
 ```
 
-Rules can also 'inherit' fields from other rules via ```rule.extend()```, which
+Rules can also 'inherit' fields from other rules via ```rule.fork()```, which
 is a better option for common fields that shouldn't be globally visible:
 
 ```py

@@ -118,7 +118,7 @@ Different ways to merge Configs together:
 #   compile = Config(config), compile.update(...)
 #   other = Config(...), compile = Config(config, other)
 #   compile = Config(config), compile |= Config(...)
-#   compile = config.extend(...)
+#   compile = config.fork(...)
 
 w# main_o = (config | compile)(...)
 ```

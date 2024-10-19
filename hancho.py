@@ -300,7 +300,7 @@ class Config:
     def expand(self, variant):
         return expand_variant(Expander(self), variant)
 
-    def extend(self, *args, **kwargs):
+    def fork(self, *args, **kwargs):
         result = type(self)(self)
         result.merge(args, kwargs)
         return result

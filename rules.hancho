@@ -48,7 +48,7 @@ riscv64_toolchain = hancho.Config(
 
 # ----------------------------------------
 
-# rv_config = cpp_config.extend(
+# rv_config = cpp_config.fork(
 #  toolchain = "riscv64-unknown-elf",
 #  arch       = "-march=rv32i -mabi=ilp32 -mstrict-align",
 #  cpp_std    = "-std=gnu++2a",
@@ -126,7 +126,8 @@ link_cpp_bin = hancho.Command(
 # ----------------------------------------
 
 
-def cpp_lib(hancho, *, name, in_srcs=[], in_objs=[], in_libs=[]):
+def cpp_lib(hancho, *args, name, in_srcs=[], in_objs=[], in_libs=[], **kwargs):
+    hancho = hancho.fork(args, kwargs)
     objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
     return hancho(
         link_cpp_lib,
@@ -135,7 +136,8 @@ def cpp_lib(hancho, *, name, in_srcs=[], in_objs=[], in_libs=[]):
     )
 
 
-def cpp_bin(hancho, *, name, in_srcs=[], in_objs=[], in_libs=[]):
+def cpp_bin(hancho, *args, name, in_srcs=[], in_objs=[], in_libs=[], **kwargs):
+    hancho = hancho.fork(args, kwargs)
     objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
     return hancho(
         link_cpp_bin,
@@ -202,7 +204,7 @@ base = hancho.Config(
   includes   = "-I. -I{repo_dir} -I{repo_dir}/symlinks -I{repo_dir}/symlinks/metrolib -I{repo_dir}/symlinks/metron ",
 )
 
-exports.check_cpp = base.extend(
+exports.check_cpp = base.fork(
   desc    = "Syntax checking {rel(in_src)}",
   command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {rel(in_src)} && touch {rel(out_ok)}",
   in_src  = [],
