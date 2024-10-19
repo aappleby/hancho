@@ -1290,8 +1290,6 @@ class App:
 
         #========================================
 
-        print(app.target)
-
         if app.target:
             target_regex = re.compile(app.target)
             for task in self.all_tasks:
