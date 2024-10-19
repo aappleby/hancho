@@ -4,8 +4,8 @@ import os
 # Utils
 
 touch_outputs = hancho.Command(
-  command = "touch {in_files}",
-  in_files = None,
+    command="touch {in_files}",
+    in_files=None,
 )
 
 ####################################################################################################
@@ -32,23 +32,23 @@ else:
   assert False
 """
 
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 
 default_toolchain = hancho.Config(
-  arch     = "x86-64",
-  compiler = "x86_64-linux-gnu-g++",
-  linker   = "x86_64-linux-gnu-g++",
+    arch="x86-64",
+    compiler="x86_64-linux-gnu-g++",
+    linker="x86_64-linux-gnu-g++",
 )
 
 riscv64_toolchain = hancho.Config(
-  arch     = "riscv64",
-  compiler = "riscv64-unknown-elf-g++",
-  linker   = "riscv64-unknown-elf-g++",
+    arch="riscv64",
+    compiler="riscv64-unknown-elf-g++",
+    linker="riscv64-unknown-elf-g++",
 )
 
-#----------------------------------------
+# ----------------------------------------
 
-#rv_config = cpp_config.extend(
+# rv_config = cpp_config.extend(
 #  toolchain = "riscv64-unknown-elf",
 #  arch       = "-march=rv32i -mabi=ilp32 -mstrict-align",
 #  cpp_std    = "-std=gnu++2a",
@@ -61,139 +61,135 @@ riscv64_toolchain = hancho.Config(
 #  #in_ld = "link.ld",
 #  #sys_libs = ["gcc"],
 #  #linkerscript = "{root_dir}/pinwheel/tools/pinwheel.ld",
-#)
+# )
 
-#----------------------------------------
+# ----------------------------------------
 
 compile_cpp = hancho.Command(
-  name    = None,
-  desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
-
-  in_src  = None,
-  out_obj = "{swap_ext(in_src, '.o')}",
-  c_deps  = "{swap_ext(in_src, '.d')}",
-
-  toolchain = default_toolchain,
-  command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
-  cpp_std = "gnu++2a",
-  flags = [
-    "-g",
-    "-O0",
-    "-MMD",
-    "-march={toolchain.arch}",
-    "-std={cpp_std}",
-    "-fdiagnostics-color=always"
-  ],
-  warnings = [],
-  defines  = [],
-  includes = ["."],
-
-  joined_warnings  = "{join_prefix('-W', warnings)}",
-  joined_defines   = "{join_prefix('-D', defines)}",
-  joined_includes  = "{join_prefix('-I', includes)}",
+    name=None,
+    desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+    in_src=None,
+    out_obj="{swap_ext(in_src, '.o')}",
+    c_deps="{swap_ext(in_src, '.d')}",
+    toolchain=default_toolchain,
+    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
+    cpp_std="gnu++2a",
+    flags=[
+        "-g",
+        "-O0",
+        "-MMD",
+        "-march={toolchain.arch}",
+        "-std={cpp_std}",
+        "-fdiagnostics-color=always",
+    ],
+    warnings=[],
+    defines=[],
+    includes=["."],
+    joined_warnings="{join_prefix('-W', warnings)}",
+    joined_defines="{join_prefix('-D', defines)}",
+    joined_includes="{join_prefix('-I', includes)}",
 )
 
-#----------------------------------------
+# ----------------------------------------
 
 link_cpp_lib = hancho.Command(
-  name    = None,
-  desc    = "Bundling C++ lib {rel(out_lib)}",
-
-  in_objs = None,
-  out_lib = "{name}",
-
-  command = "ar rcs {rel(out_lib)} {rel(in_objs)}",
+    name=None,
+    desc="Bundling C++ lib {rel(out_lib)}",
+    in_objs=None,
+    out_lib="{name}",
+    command="ar rcs {rel(out_lib)} {rel(in_objs)}",
 )
 
-#----------------------------------------
+# ----------------------------------------
 
 link_cpp_bin = hancho.Command(
-  name    = None,
-  desc    = "Linking C++ bin {rel(out_bin)}",
-
-  in_objs = None,
-  in_libs = [],
-  out_bin = "{name}",
-
-  toolchain = default_toolchain,
-  command = "{toolchain.linker} {linker_group} {flags} {joined_sys_libs} -o {rel(out_bin)}",
-  flags = [],
-  linker_group = [
-    "-Wl,--as-needed",
-    "-Wl,--no-undefined",
-    "-Wl,--start-group",
-    "{rel(in_objs)}",
-    "{rel(in_libs)}",
-    "-Wl,--end-group",
-  ],
-  sys_libs = [],
-
-  joined_sys_libs  = "{join_prefix('-l', sys_libs)}",
+    name=None,
+    desc="Linking C++ bin {rel(out_bin)}",
+    in_objs=None,
+    in_libs=[],
+    out_bin="{name}",
+    toolchain=default_toolchain,
+    command="{toolchain.linker} {linker_group} {flags} {joined_sys_libs} -o {rel(out_bin)}",
+    flags=[],
+    linker_group=[
+        "-Wl,--as-needed",
+        "-Wl,--no-undefined",
+        "-Wl,--start-group",
+        "{rel(in_objs)}",
+        "{rel(in_libs)}",
+        "-Wl,--end-group",
+    ],
+    sys_libs=[],
+    joined_sys_libs="{join_prefix('-l', sys_libs)}",
 )
 
-#----------------------------------------
+# ----------------------------------------
 
-def _cpp_lib(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, lib_config = None):
-  objs = [
-    compile_cpp(cpp_config, in_src = file)
-    for file in flatten(in_srcs)
-  ]
-  return link_cpp_lib(
-    lib_config,
-    name = name,
-    in_objs = [objs, in_objs, in_libs],
-  )
 
-def _cpp_bin(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, bin_config = None):
-  objs = [
-    compile_cpp(cpp_config, in_src = file)
-    for file in flatten(in_srcs)
-  ]
-  return link_cpp_bin(
-    bin_config,
-    name = name,
-    in_objs = [objs, in_objs, in_libs],
-  )
+def cpp_lib(hancho, *, name, in_srcs=[], in_objs=[], in_libs=[]):
+    objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
+    return hancho(
+        link_cpp_lib,
+        name=name,
+        in_objs=[objs, in_objs, in_libs],
+    )
 
-cpp_lib = hancho.Command(call = _cpp_lib)
-cpp_bin = hancho.Command(call = _cpp_bin)
+
+def cpp_bin(hancho, *, name, in_srcs=[], in_objs=[], in_libs=[]):
+    objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
+    return hancho(
+        link_cpp_bin,
+        name=name,
+        in_objs=[objs, in_objs, in_libs],
+    )
+
 
 ####################################################################################################
 # Makefiles
 
-def _make(*, make_config = None, in_makefile):
-  command = hancho.Command(
-    command     = "make -C {make_path} -f {make_file} {flags} > /dev/null",
-    make_path   = "{path.dirname(in_makefile)}",
-    make_file   = "{path.basename(in_makefile)}",
-    flags       = "--quiet",
-  )
-  command(make_config, in_makefile = in_makefile)
 
-make = hancho.Command(call = _make)
+def make(hancho, *, in_makefile):
+    return hancho(
+        command="make -C {make_path} -f {make_file} {flags} > /dev/null",
+        make_path="{path.dirname(in_makefile)}",
+        make_file="{path.basename(in_makefile)}",
+        flags="--quiet",
+        in_makefile=in_makefile,
+    )
+
 
 ####################################################################################################
 # Tests
 
 run_test = hancho.Command(
-  desc     = "Running test {rel(in_test)}",
-  command  = "{in_test} {args} && touch {out_pass}",
-  in_test  = None,
-  args     = "",
-  out_pass = "{in_test}.pass",
-  log_path = "{in_test}.log",
+    desc="Running test {rel(in_test)}",
+    command="{in_test} {args} && touch {out_pass}",
+    in_test=None,
+    args="",
+    out_pass="{in_test}.pass",
+    log_path="{in_test}.log",
 )
 
-def _cpp_test(*, name, in_srcs = [], in_objs = [], in_libs = [], cpp_config = None, bin_config = None, test_config = None):
-  objs = [compile_cpp(cpp_config, in_src = src) for src in flatten(in_srcs)]
-  bin = link_cpp_bin(
-    bin_config,
-    name = name,
-    in_objs = [objs, in_objs, in_libs],
-  )
-  return run_test(test_config, in_test = bin)
 
-cpp_test = hancho.Command(call = _cpp_test)
+def cpp_test(
+    hancho,
+    *,
+    name,
+    in_srcs=[],
+    in_objs=[],
+    in_libs=[],
+    cpp_config=None,
+    bin_config=None,
+    test_config=None,
+):
+    objs = [hancho(compile_cpp, cpp_config, in_src=src) for src in flatten(in_srcs)]
+    bin = hancho(
+        link_cpp_bin,
+        bin_config,
+        name=name,
+        in_objs=[objs, in_objs, in_libs],
+    )
+    return run_test(test_config, in_test=bin)
 
 
 """

@@ -1000,15 +1000,10 @@ class Task(Config):
 
 class Context(Config):
 
-    def __call__(self, arg1 = None, *args, **kwargs):
+    def __call__(self, arg1 = None, /, *args, **kwargs):
         if callable(arg1):
             return arg1(self, *args, **kwargs)
-
-        merged = Config(self, arg1, args, kwargs)
-        if custom_call := merged.get("call", None):
-            merged.pop("call")
-            return custom_call(**merged)
-        return Task(merged)
+        return Task(arg1, self, args, kwargs)
 
     def normalize_path(self, file_path):
         file_path = self.expand(file_path)

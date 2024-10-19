@@ -12,8 +12,6 @@ link = hancho.Command(
   command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
 
-def c_binary(*, in_srcs, out_bin, **kwargs):
-    objs = [compile(in_src = file, **kwargs) for file in in_srcs]
-    return link(in_objs = objs, out_bin = out_bin, **kwargs)
-
-exports.c_binary = hancho.Command(call = c_binary)
+def c_binary(hancho, *, in_srcs, out_bin, **kwargs):
+    objs = [hancho(compile, in_src = file, **kwargs) for file in in_srcs]
+    return hancho(link, in_objs = objs, out_bin = out_bin, **kwargs)
