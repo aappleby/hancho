@@ -197,7 +197,8 @@ class Dumper:
             case Task():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
-                    result += f"{{name = '{variant.name}', ...}}"
+                    result += "{...}"
+                    #result += f"{{name = '{variant.name}', ...}}"
                 else:
                     result += self.dump(variant.__dict__)
             case Config():
@@ -325,6 +326,9 @@ class Config:
     join_prefix = staticmethod(join_prefix)
     join_suffix = staticmethod(join_suffix)
     # fmt: on
+
+    def stem(self, filename):
+        return path.splitext(filename)[0]
 
 ####################################################################################################
 
@@ -641,6 +645,7 @@ class Task(Config):
         self.command   = self.command
         self.task_dir  = self.task_dir
         self.build_dir = self.build_dir
+        self.log_path  = self.get('log_path', None)
 
         assert isinstance(self.command, (str, list)) or callable(self.command)
         assert isinstance(self.task_dir, str)
@@ -833,8 +838,9 @@ class Task(Config):
             self["c_deps"] = join_path(self.build_dir, c_deps)
 
         # And now we can expand the command.
-        self.desc    = self.expand(self.desc)
-        self.command = self.expand(self.command)
+        self.desc     = self.expand(self.desc)
+        self.command  = self.expand(self.command)
+        self.log_path = self.expand(self.log_path)
 
         if self.get('debug', False):
             log(f"\nTask after expand: {self}")
@@ -904,8 +910,8 @@ class Task(Config):
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        c_deps = self.get("c_deps", None)
-        if c_deps is not None and path.exists(c_deps):
+        
+        if (c_deps := self.get("c_deps", None)) and path.exists(c_deps):
             c_depformat = self.get("c_depformat", "gcc")
             if self.get('debug', False):
                 log(f"Found C dependencies file {c_deps}")
@@ -974,13 +980,10 @@ class Task(Config):
 
         command_pass = (self._returncode == 0) != self.get('should_fail', False)
 
-        if log_path := self.get('log_path', None) is not None:
-            print(self)
+        if (log_path := self.get('log_path', None)) is not None:
             result = open(log_path, "w", encoding="utf-8")
-            result.write("-----stderr-----\n")
-            result.write(self._stderr)
-            result.write("-----stdout-----\n")
-            result.write(self._stdout)
+            result.write(str(self))
+            result.write("\n")
             result.close()
 
         #if self.verbose or not command_pass or self.stderr:
@@ -1176,7 +1179,6 @@ class App:
         self.finished_tasks = []
         self.log = ""
 
-        self.default_name        = None
         self.default_desc        = "{rel(get_inputs())} -> {rel(get_outputs())}"
         self.default_command     = ""
         self.default_task_dir    = "."
@@ -1209,7 +1211,6 @@ class App:
         root_path = path.join(root_dir, root_file)
 
         root_context = Context(
-            name        = self.default_name,
             desc        = self.default_desc,
 
             root_dir    = root_dir,
@@ -1268,19 +1269,25 @@ class App:
             target_regex = re.compile(app.target)
             for task in self.all_tasks:
                 queue_task = False
-                if task.get('name', None):
-                    for name in flatten(task.name):
-                        if target_regex.search(name):
-                            queue_task = True
+                task_name = None
+                for out_file in flatten(task._out_files):
+                    if target_regex.search(out_file):
+                        queue_task = True
+                        task_name = out_file
+                        break
+                #if task.get('name', None):
+                #    for name in flatten(task.name):
+                #        if target_regex.search(name):
+                #            queue_task = True
                 #for desc in flatten(task.desc):
                 #    if target_regex.search(desc):
                 #        queue_task = True
-                if task.get('tags', None):
-                    for tag in flatten(task.tags):
-                        if target_regex.search(tag):
-                            queue_task = True
+                #if task.get('tags', None):
+                #    for tag in flatten(task.tags):
+                #        if target_regex.search(tag):
+                #            queue_task = True
                 if queue_task:
-                    log(f"Queueing task '{task.name}'")
+                    log(f"Queueing task for '{task_name}'")
                     task.queue()
         else:
             for task in self.all_tasks:

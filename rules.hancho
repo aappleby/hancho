@@ -66,7 +66,6 @@ riscv64_toolchain = hancho.Config(
 # ----------------------------------------
 
 compile_cpp = hancho.Command(
-    name=None,
     desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
     in_src=None,
     out_obj="{swap_ext(in_src, '.o')}",
@@ -93,21 +92,19 @@ compile_cpp = hancho.Command(
 # ----------------------------------------
 
 link_cpp_lib = hancho.Command(
-    name=None,
     desc="Bundling C++ lib {rel(out_lib)}",
     in_objs=None,
-    out_lib="{name}",
+    out_lib=None,
     command="ar rcs {rel(out_lib)} {rel(in_objs)}",
 )
 
 # ----------------------------------------
 
 link_cpp_bin = hancho.Command(
-    name=None,
     desc="Linking C++ bin {rel(out_bin)}",
     in_objs=None,
     in_libs=[],
-    out_bin="{name}",
+    out_bin=None,
     toolchain=default_toolchain,
     command="{toolchain.linker} {linker_group} {flags} {joined_sys_libs} -o {rel(out_bin)}",
     flags=[],
@@ -126,23 +123,26 @@ link_cpp_bin = hancho.Command(
 # ----------------------------------------
 
 
-def cpp_lib(hancho, *args, name, in_srcs=[], in_objs=[], in_libs=[], **kwargs):
+def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **kwargs):
     hancho = hancho.fork(args, kwargs)
-    objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
+    for file in hancho.flatten(in_srcs):
+        obj = hancho(compile_cpp, in_src=file)
+        in_objs.append(obj)
+        
     return hancho(
         link_cpp_lib,
-        name=name,
-        in_objs=[objs, in_objs, in_libs],
+        in_objs=[in_objs, in_libs],
+        out_lib=out_lib
     )
 
 
-def cpp_bin(hancho, *args, name, in_srcs=[], in_objs=[], in_libs=[], **kwargs):
+def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **kwargs):
     hancho = hancho.fork(args, kwargs)
     objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
     return hancho(
         link_cpp_bin,
-        name=name,
         in_objs=[objs, in_objs, in_libs],
+        out_bin = out_bin,
     )
 
 
@@ -150,13 +150,18 @@ def cpp_bin(hancho, *args, name, in_srcs=[], in_objs=[], in_libs=[], **kwargs):
 # Makefiles
 
 
-def make(hancho, *, in_makefile):
+def make(hancho, /, *args, in_makefile, **kwargs):
+    c = hancho.Command(
+        command     = "make -C {make_dir} -f {in_makefile} {flags}", #  > /dev/null
+        make_dir    = "{path.dirname(in_makefile)}",
+        make_file   = "{path.basename(in_makefile)}",
+        flags       = "--quiet",        
+    )
     return hancho(
-        command="make -C {make_path} -f {make_file} {flags} > /dev/null",
-        make_path="{path.dirname(in_makefile)}",
-        make_file="{path.basename(in_makefile)}",
-        flags="--quiet",
-        in_makefile=in_makefile,
+        c,
+        *args,
+        in_makefile = in_makefile,
+        **kwargs
     )
 
 
@@ -176,7 +181,6 @@ run_test = hancho.Command(
 def cpp_test(
     hancho,
     *,
-    name,
     in_srcs=[],
     in_objs=[],
     in_libs=[],
@@ -184,14 +188,14 @@ def cpp_test(
     bin_config=None,
     test_config=None,
 ):
-    objs = [hancho(compile_cpp, cpp_config, in_src=src) for src in flatten(in_srcs)]
+    objs = [hancho(compile_cpp, cpp_config, in_src=src) for src in hancho.flatten(in_srcs)]
     bin = hancho(
         link_cpp_bin,
         bin_config,
-        name=name,
         in_objs=[objs, in_objs, in_libs],
     )
-    return run_test(test_config, in_test=bin)
+    #return bin
+    return hancho(run_test, test_config, in_test=bin)
 
 
 """

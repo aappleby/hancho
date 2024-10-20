@@ -11,8 +11,8 @@ main_o = hancho(
 
 main = hancho(
   rules.link_cpp_bin,
-  name = "hello_gtk",
   in_objs = main_o,
+  out_bin = "hello_gtk",
   flags = rules.link_cpp_bin.flags + [
     "{run_cmd('pkg-config gtk+-3.0 --libs')}"
   ],
