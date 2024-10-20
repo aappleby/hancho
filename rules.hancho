@@ -180,21 +180,24 @@ run_test = hancho.Command(
 
 def cpp_test(
     hancho,
-    *,
+    *args,
     in_srcs=[],
     in_objs=[],
     in_libs=[],
+    out_bin=[],
     cpp_config=None,
     bin_config=None,
     test_config=None,
+    **kwargs
 ):
+    hancho = hancho.fork(*args, **kwargs)
     objs = [hancho(compile_cpp, cpp_config, in_src=src) for src in hancho.flatten(in_srcs)]
     bin = hancho(
         link_cpp_bin,
         bin_config,
         in_objs=[objs, in_objs, in_libs],
+        out_bin=out_bin,
     )
-    #return bin
     return hancho(run_test, test_config, in_test=bin)
 
 
