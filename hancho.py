@@ -647,12 +647,13 @@ class Task(Config):
         self.build_dir = self.build_dir
         self.log_path  = self.get('log_path', None)
 
-        assert isinstance(self.command, (str, list)) or callable(self.command)
+        assert isinstance(self.command, (str, list)) or callable(self.command) or self.command is None
         assert isinstance(self.task_dir, str)
         assert isinstance(self.build_dir, str)
 
         # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
         # in an event loop yet
+        self._task_index = 0
         self._in_files  = []
         self._out_files = []
         self._state = TaskState.DECLARED
@@ -700,7 +701,7 @@ class Task(Config):
         # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
         desc = self.get('desc', app.default_desc)
         log(
-            f"{color(128,255,196)}[{app.tasks_running}/{app.tasks_started}]{color()} {desc}",
+            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {desc}",
             sameline=not self.get('verbose', False),
         )
 
@@ -733,6 +734,7 @@ class Task(Config):
 
             # Early-out if this is a no-op task
             if self.command is None:
+                app.task_skipped += 1
                 self._state = TaskState.FINISHED
                 return
 
@@ -751,6 +753,7 @@ class Task(Config):
                 self._state = TaskState.RUNNING_COMMANDS
 
                 app.tasks_running += 1
+                self._task_index = app.tasks_running
                 self.print_status()
 
                 if self.get('verbose', False) or self.get('debug', False):
@@ -815,17 +818,17 @@ class Task(Config):
         def handle_in_path(key, val):
             if val is None:
                 raise ValueError(f"Key {key} was None")
-            if isinstance(val, str):
-                val = abs_path(join_path(self.task_dir, val))
-                self._in_files.append(val)
+            assert isinstance(val, str)
+            val = abs_path(join_path(self.task_dir, val))
+            self._in_files.append(val)
             return val
 
         def handle_out_path(key, val):
             if val is None:
                 raise ValueError(f"Key {key} was None")
-            if isinstance(val, str):
-                val = abs_path(join_path(self.build_dir, val))
-                self._out_files.append(val)
+            assert isinstance(val, str)
+            val = abs_path(join_path(self.build_dir, val))
+            self._out_files.append(val)
             return val
 
         for key, val in self.items():
@@ -988,13 +991,14 @@ class Task(Config):
 
         #if self.verbose or not command_pass or self.stderr:
         if self.get('verbose', False) or not command_pass:
-            self.print_status()
-            if self._stdout:
-                log("-----stdout-----")
-                log(self._stdout, end="")
-            if self._stderr:
-                log("-----stderr-----")
-                log(self._stderr, end="")
+            if self._stdout or self._stderr:
+                self.print_status()
+                if self._stdout:
+                    log("-----stdout-----")
+                    log(self._stdout, end="")
+                if self._stderr:
+                    log("-----stderr-----")
+                    log(self._stderr, end="")
 
         if not command_pass:
             raise ValueError(self._returncode)
@@ -1211,8 +1215,6 @@ class App:
         root_path = path.join(root_dir, root_file)
 
         root_context = Context(
-            desc        = self.default_desc,
-
             root_dir    = root_dir,
             root_path   = root_path,
 

@@ -125,6 +125,8 @@ link_cpp_bin = hancho.Command(
 
 def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **kwargs):
     hancho = hancho.fork(args, kwargs)
+
+    in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
         obj = hancho(compile_cpp, in_src=file)
         in_objs.append(obj)
@@ -138,10 +140,15 @@ def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **k
 
 def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **kwargs):
     hancho = hancho.fork(args, kwargs)
-    objs = [hancho(compile_cpp, in_src=file) for file in hancho.flatten(in_srcs)]
+
+    in_objs = hancho.flatten(in_objs)
+    for file in hancho.flatten(in_srcs):
+        obj = hancho(compile_cpp, in_src=file)
+        in_objs.append(obj)
+
     return hancho(
         link_cpp_bin,
-        in_objs=[objs, in_objs, in_libs],
+        in_objs=[in_objs, in_libs],
         out_bin = out_bin,
     )
 
@@ -152,6 +159,7 @@ def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **k
 
 def make(hancho, /, *args, in_makefile, **kwargs):
     cmd = hancho.Command(
+        desc        = "Run makefile {rel(in_makefile)}",
         command     = "make -C {make_dir} -f {make_file} {flags}", #  > /dev/null
         make_dir    = "{path.dirname(in_makefile)}",
         make_file   = "{path.basename(in_makefile)}",
