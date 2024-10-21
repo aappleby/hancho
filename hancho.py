@@ -91,7 +91,7 @@ def abs_path(raw_path, strict=False) -> str | list[str]:
     if isinstance(raw_path, list):
         return [abs_path(p, strict) for p in raw_path]
 
-    result = path.abspath(raw_path)
+    result = path.realpath(raw_path)
     if strict and not path.exists(result):
         raise FileNotFoundError(raw_path)
     return result
@@ -992,12 +992,14 @@ class Task(Config):
         #if self.verbose or not command_pass or self.stderr:
         if self.get('verbose', False) or not command_pass:
             if self._stdout or self._stderr:
-                self.print_status()
+                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task failed - '{self.desc}'")
+                log(f"Task dir: {self.task_dir}")
+                log(f"Command : {self.command}")
                 if self._stdout:
-                    log("-----stdout-----")
+                    log("Stdout:")
                     log(self._stdout, end="")
                 if self._stderr:
-                    log("-----stderr-----")
+                    log("Stderr:")
                     log(self._stderr, end="")
 
         if not command_pass:
@@ -1010,14 +1012,14 @@ class Context(Config):
     def __call__(self, arg1 = None, /, *args, **kwargs):
         if callable(arg1):
             return arg1(self, *args, **kwargs)
-        return Task(arg1, self, args, kwargs)
+        return Task(self, arg1, args, kwargs)
 
     def normalize_path(self, file_path):
         file_path = self.expand(file_path)
         assert isinstance(file_path, str)
         assert not macro_regex.search(file_path)
 
-        file_path = path.join(os.getcwd(), file_path)
+        file_path = path.realpath(path.join(os.getcwd(), file_path))
         assert path.isabs(file_path)
         assert path.isfile(file_path)
 
@@ -1211,7 +1213,7 @@ class App:
         setattr(app, 'trace',   flags['trace'])
 
         root_file = flags['root_file']
-        root_dir  = path.abspath(flags['root_dir']) # Root path must be absolute.
+        root_dir  = path.realpath(flags['root_dir']) # Root path must be absolute.
         root_path = path.join(root_dir, root_file)
 
         root_context = Context(
@@ -1221,6 +1223,7 @@ class App:
             repo_name   = "",
             repo_dir    = root_dir,
 
+            # FIXME these should probably not be here either...
             build_root  = self.default_build_root,
             build_dir   = self.default_build_dir,
             build_tag   = "",
@@ -1229,8 +1232,8 @@ class App:
             mod_dir     = root_dir,
             mod_path    = root_path,
 
+            # FIXME these should not be here...
             task_dir    = "{mod_dir}",
-
             verbose     = flags['verbose'],
             debug       = flags['debug'],
             force       = flags['force'],
