@@ -151,19 +151,13 @@ def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **k
 
 
 def make(hancho, /, *args, in_makefile, **kwargs):
-    c = hancho.Command(
-        command     = "make -C {make_dir} -f {in_makefile} {flags}", #  > /dev/null
+    cmd = hancho.Command(
+        command     = "make -C {make_dir} -f {make_file} {flags}", #  > /dev/null
         make_dir    = "{path.dirname(in_makefile)}",
         make_file   = "{path.basename(in_makefile)}",
-        flags       = "--quiet",        
+        flags       = "--quiet",                
     )
-    return hancho(
-        c,
-        *args,
-        in_makefile = in_makefile,
-        **kwargs
-    )
-
+    return hancho(cmd, *args, in_makefile = in_makefile, **kwargs)
 
 ####################################################################################################
 # Tests
