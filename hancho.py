@@ -329,6 +329,7 @@ class Config:
 
     def stem(self, filename):
         filename = flatten(filename)[0]
+        filename = path.basename(filename)
         return path.splitext(filename)[0]
 
 ####################################################################################################
@@ -680,8 +681,7 @@ class Task(Config):
         if self._state is TaskState.QUEUED or self._state is TaskState.DECLARED:
             self._promise = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
-            if not self.command is None:
-                app.tasks_started += 1
+            app.tasks_started += 1
 
     async def await_done(self):
         self.start()
@@ -737,7 +737,7 @@ class Task(Config):
 
             # Early-out if this is a no-op task
             if self.command is None:
-                app.task_skipped += 1
+                app.tasks_passed += 1
                 self._state = TaskState.FINISHED
                 return
 
@@ -746,7 +746,7 @@ class Task(Config):
 
             # Run the commands if we need to.
             if not self._reason:
-                app.task_skipped += 1
+                app.tasks_skipped += 1
             else:
                 # Wait for enough jobs to free up to run this task.
                 job_count = self.get("job_count", 1)
@@ -776,20 +776,22 @@ class Task(Config):
                             log(command)
                         if not app.dry_run:
                             await self.run_command(command)
+                        if self._returncode != 0:
+                            break
                 finally:
                     await app.job_pool.release_jobs(job_count, self)
-                app.tasks_pass += 1
+                app.tasks_passed += 1
 
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
         # downstream tasks.
         except asyncio.CancelledError as cancel:
-            app.tasks_cancel += 1
+            app.tasks_cancelled += 1
             return cancel
 
         # If this task failed, we print the error and propagate a cancellation to downstream tasks.
         except Exception: # pylint: disable=broad-exception-caught
             log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
-            app.tasks_fail += 1
+            app.tasks_failed += 1
             return asyncio.CancelledError()
 
         finally:
@@ -989,6 +991,8 @@ class Task(Config):
         self._stderr = stderr_data.decode()
         self._returncode = proc.returncode
 
+        # FIXME we need a better way to handle "should fail" so we don't constantly keep rerunning
+        # intentionally-failing tests every build
         command_pass = (self._returncode == 0) != self.get('should_fail', False)
 
         if (log_path := self.get('log_path', app.default_log_path)) is not None:
@@ -1172,11 +1176,6 @@ class App:
 
         self.all_out_files = set()
 
-        self.tasks_pass = 0
-        self.tasks_fail = 0
-        self.task_skipped = 0
-        self.tasks_cancel = 0
-
         self.mtime_calls = 0
         self.line_dirty = False
         self.expand_depth = 0
@@ -1184,6 +1183,11 @@ class App:
 
         self.tasks_started = 0
         self.tasks_running = 0
+        self.tasks_passed = 0
+        self.tasks_failed = 0
+        self.tasks_skipped = 0
+        self.tasks_cancelled = 0
+
         self.all_tasks = []
         self.queued_tasks = []
         self.started_tasks = []
@@ -1277,15 +1281,16 @@ class App:
             for task in self.all_tasks:
                 queue_task = False
                 task_name = None
-                for out_file in flatten(task._out_files):
-                    if target_regex.search(out_file):
-                        queue_task = True
-                        task_name = out_file
-                        break
-                #if task.get('name', None):
-                #    for name in flatten(task.name):
-                #        if target_regex.search(name):
-                #            queue_task = True
+                # FIXME this doesn't work because we haven't expanded output filenames yet
+                #for out_file in flatten(task._out_files):
+                #    if target_regex.search(out_file):
+                #        queue_task = True
+                #        task_name = out_file
+                #        break
+                if task.get('name', None):
+                    for name in flatten(task.name):
+                        if target_regex.search(name):
+                            queue_task = True
                 #for desc in flatten(task.desc):
                 #    if target_regex.search(desc):
                 #        queue_task = True
@@ -1384,26 +1389,26 @@ class App:
 
         #if app.debug or app.verbose:
         log("")
-        log(f"Running {len(app.all_tasks)} tasks took {time_b-time_a:.3f} seconds")
+        log(f"Running {app.tasks_started} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
         #if Config.debug:
         if app.default_verbose:
-            log(f"tasks total:     {len(self.all_tasks)}")
-            log(f"tasks passed:    {self.tasks_pass}")
-            log(f"tasks failed:    {self.tasks_fail}")
-            log(f"tasks skipped:   {self.task_skipped}")
-            log(f"tasks cancelled: {self.tasks_cancel}")
-            log(f"mtime calls:     {self.mtime_calls}")
+            log(f"tasks started:   {app.tasks_started}")
+            log(f"tasks passed:    {app.tasks_passed}")
+            log(f"tasks failed:    {app.tasks_failed}")
+            log(f"tasks skipped:   {app.tasks_skipped}")
+            log(f"tasks cancelled: {app.tasks_cancelled}")
+            log(f"mtime calls:     {app.mtime_calls}")
 
-        if self.tasks_fail:
+        if self.tasks_failed:
             log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
-        elif self.tasks_pass:
+        elif self.tasks_passed:
             log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
         else:
             log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
 
-        return -1 if self.tasks_fail else 0
+        return -1 if self.tasks_failed else 0
 
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
