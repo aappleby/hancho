@@ -328,6 +328,7 @@ class Config:
     # fmt: on
 
     def stem(self, filename):
+        filename = flatten(filename)[0]
         return path.splitext(filename)[0]
 
 ####################################################################################################
@@ -416,7 +417,7 @@ class Expander:
     def __init__(self, config):
         self.config = config
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self.trace = config.get('trace', False)
+        self.trace = config.get('trace', app.default_trace)
 
     def __getitem__(self, key):
         return self.get(key)
@@ -638,14 +639,12 @@ class Task(Config):
         super().__init__(args, kwargs)
 
         assert 'command' in self
-        assert 'task_dir' in self
-        assert 'build_dir' in self
 
-        self.desc      = self.get('desc', app.default_desc)
-        self.command   = self.command
-        self.task_dir  = self.task_dir
-        self.build_dir = self.build_dir
-        self.log_path  = self.get('log_path', None)
+        self.desc      = self.get('desc',      app.default_desc)
+        self.command   = self.get('command',   app.default_command)
+        self.task_dir  = self.get('task_dir',  app.default_task_dir)
+        self.build_dir = self.get('build_dir', app.default_build_dir)
+        self.log_path  = self.get('log_path',  app.default_log_path)
 
         assert isinstance(self.command, (str, list)) or callable(self.command) or self.command is None
         assert isinstance(self.task_dir, str)
@@ -698,17 +697,21 @@ class Task(Config):
     #-----------------------------------------------------------------------------------------------
 
     def print_status(self):
-        # Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information
-        desc = self.get('desc', app.default_desc)
+        """ Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information """
+        verbose = self.get('verbose', app.default_verbose)
         log(
-            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {desc}",
-            sameline=not self.get('verbose', False),
+            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.desc}",
+            sameline=not verbose,
         )
 
     #-----------------------------------------------------------------------------------------------
 
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
+
+        verbose = self.get('verbose', app.default_verbose)
+        debug   = self.get('debug',   app.default_debug)
+        force   = self.get('force',   app.default_force)
 
         try:
             # Await everything awaitable in this task except the task's own promise.
@@ -726,7 +729,7 @@ class Task(Config):
                 if key != "_promise":
                     self.__dict__[key] = await await_variant(val)
 
-            if self.get('debug', False):
+            if debug:
                 log(f"Task {hex(id(self))} start")
 
             # Everything awaited, task_init runs synchronously.
@@ -739,7 +742,7 @@ class Task(Config):
                 return
 
             # Check if we need a rebuild
-            self._reason = self.needs_rerun(self.get('force', False))
+            self._reason = self.needs_rerun(force)
 
             # Run the commands if we need to.
             if not self._reason:
@@ -756,14 +759,14 @@ class Task(Config):
                 self._task_index = app.tasks_running
                 self.print_status()
 
-                if self.get('verbose', False) or self.get('debug', False):
+                if verbose or debug:
                     log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
                 commands = flatten(self.command)
 
                 try:
                     for command in commands:
-                        if self.get('verbose', False) or self.get('debug', False):
+                        if verbose or debug:
                             root_dir = self.get("root_dir", "/")
                             log(color(128,128,255), end="")
                             if app.dry_run: log("(DRY RUN) ", end="")
@@ -791,7 +794,7 @@ class Task(Config):
 
         finally:
             self._state = TaskState.FINISHED
-            if self.get('debug', False):
+            if debug:
                 log(f"Task {hex(id(self))} done")
 
         return self._out_files
@@ -801,7 +804,9 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        if self.get('debug', False):
+        debug   = self.get('debug',   app.default_debug)
+
+        if debug:
             log(f"\nTask before expand: {self}")
 
         # Expand the in and out paths first
@@ -845,7 +850,7 @@ class Task(Config):
         self.command  = self.expand(self.command)
         self.log_path = self.expand(self.log_path)
 
-        if self.get('debug', False):
+        if debug:
             log(f"\nTask after expand: {self}")
 
         # Check for missing input files/paths
@@ -862,6 +867,7 @@ class Task(Config):
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
+            # Raw tasks may not have a root_dir
             if root_dir := self.get("root_dir", None):
                 if not file.startswith(root_dir):
                     raise ValueError(f"Path error, output file {file} is not under root_dir {root_dir}")
@@ -882,9 +888,8 @@ class Task(Config):
 
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
-        # Pylint really doesn't like this function, lol.
-        # pylint: disable=too-many-return-statements
-        # pylint: disable=too-many-branches
+
+        debug = self.get('debug',   app.default_debug)
 
         if force:
             return f"Files {self._out_files} forced to rebuild"
@@ -916,7 +921,7 @@ class Task(Config):
         
         if (c_deps := self.get("c_deps", None)) and path.exists(c_deps):
             c_depformat = self.get("c_depformat", "gcc")
-            if self.get('debug', False):
+            if debug:
                 log(f"Found C dependencies file {c_deps}")
             with open(c_deps, encoding="utf-8") as c_deps:
                 deplines = None
@@ -945,6 +950,9 @@ class Task(Config):
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
+        verbose = self.get('verbose', app.default_verbose)
+        debug   = self.get('debug',   app.default_debug)
+
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             app.pushdir(self.task_dir)
@@ -961,7 +969,7 @@ class Task(Config):
 
         # Create the subprocess via asyncio and then await the result.
         try:
-            if self.get('debug', False):
+            if debug:
                 log(f"Task {hex(id(self))} subprocess start '{command}'")
 
             proc = await asyncio.create_subprocess_shell(
@@ -972,7 +980,7 @@ class Task(Config):
             )
 
             (stdout_data, stderr_data) = await proc.communicate()
-            if self.get('debug', False):
+            if debug:
                 log(f"Task {hex(id(self))} subprocess done '{command}'")
         except RuntimeError:
             sys.exit(-1)
@@ -983,24 +991,26 @@ class Task(Config):
 
         command_pass = (self._returncode == 0) != self.get('should_fail', False)
 
-        if (log_path := self.get('log_path', None)) is not None:
+        if (log_path := self.get('log_path', app.default_log_path)) is not None:
             result = open(log_path, "w", encoding="utf-8")
             result.write(str(self))
             result.write("\n")
             result.close()
 
-        #if self.verbose or not command_pass or self.stderr:
-        if self.get('verbose', False) or not command_pass:
-            if self._stdout or self._stderr:
-                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task failed - '{self.desc}'")
+        if verbose or not command_pass:
+            if not command_pass:
+                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color(255,128,128)} Task failed {color()}- '{self.desc}'")
                 log(f"Task dir: {self.task_dir}")
                 log(f"Command : {self.command}")
-                if self._stdout:
-                    log("Stdout:")
-                    log(self._stdout, end="")
-                if self._stderr:
-                    log("Stderr:")
-                    log(self._stderr, end="")
+                log(f"Return  : {self._returncode}")
+            else:
+                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.desc}'")
+            if self._stdout:
+                log("Stdout:")
+                log(self._stdout, end="")
+            if self._stderr:
+                log("Stderr:")
+                log(self._stderr, end="")
 
         if not command_pass:
             raise ValueError(self._returncode)
@@ -1054,8 +1064,7 @@ class Context(Config):
         return new_context._load_module()
 
     def _load_module(self):
-        #if config.debug or config.get('verbose', False):
-        log(("┃ " * (len(app.modstack))), end="")
+        log(("┃ " * (len(app.dirstack) - 1)), end="")
         log(color(128,255,128) + f"Loading {self.mod_path}" + color())
 
         new_module = Module(hancho = self)
@@ -1150,10 +1159,6 @@ class JobPool:
 class App:
 
     def __init__(self):
-        self.verbose   = False
-        self.debug     = False
-        self.force     = False
-        self.trace     = False
         self.shuffle   = False
         self.use_color = True
         self.quiet     = False
@@ -1185,13 +1190,20 @@ class App:
         self.finished_tasks = []
         self.log = ""
 
-        self.default_desc        = "{rel(get_inputs())} -> {rel(get_outputs())}"
-        self.default_command     = ""
-        self.default_task_dir    = "."
-        self.default_build_dir   = "{root_dir}/{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
-        self.default_build_root  = "build"
-
         self.job_pool = JobPool()
+
+        self.default_desc       = "{rel(get_inputs())} -> {rel(get_outputs())}"
+        self.default_command    = None
+        self.default_task_dir   = "{mod_dir}"
+        self.default_build_dir  = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
+        self.default_build_root = "{root_dir}/build"
+        self.default_build_tag  = ""
+        self.default_log_path   = None
+
+        self.default_verbose = False
+        self.default_debug   = False
+        self.default_force   = False
+        self.default_trace   = False
 
 
     def reset(self):
@@ -1207,10 +1219,10 @@ class App:
             setattr(app, flag, flags[flag])
             del flags[flag]
 
-        setattr(app, 'verbose', flags['verbose'])
-        setattr(app, 'debug',   flags['debug'])
-        setattr(app, 'force',   flags['force'])
-        setattr(app, 'trace',   flags['trace'])
+        app.default_verbose = flags['verbose']
+        app.default_debug =   flags['debug']
+        app.default_force =   flags['force']
+        app.default_trace =   flags['trace']
 
         root_file = flags['root_file']
         root_dir  = path.realpath(flags['root_dir']) # Root path must be absolute.
@@ -1223,21 +1235,12 @@ class App:
             repo_name   = "",
             repo_dir    = root_dir,
 
-            # FIXME these should probably not be here either...
-            build_root  = self.default_build_root,
-            build_dir   = self.default_build_dir,
-            build_tag   = "",
+            build_root  = app.default_build_root,
+            build_tag   = app.default_build_tag,
 
             mod_name    = path.splitext(root_file)[0],
             mod_dir     = root_dir,
             mod_path    = root_path,
-
-            # FIXME these should not be here...
-            task_dir    = "{mod_dir}",
-            verbose     = flags['verbose'],
-            debug       = flags['debug'],
-            force       = flags['force'],
-            trace       = flags['trace'],
         )
 
         # All the unrecognized flags get stuck on the root context.
@@ -1264,8 +1267,7 @@ class App:
         root_context._load_module()
         time_b = time.perf_counter()
 
-        #if root_config.debug or root_config.verbose:
-        #    log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+        #if app.default_debug or app.default_verbose:
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         #========================================
@@ -1386,7 +1388,7 @@ class App:
 
         # Done, print status info if needed
         #if Config.debug:
-        if app.verbose:
+        if app.default_verbose:
             log(f"tasks total:     {len(self.all_tasks)}")
             log(f"tasks passed:    {self.tasks_pass}")
             log(f"tasks failed:    {self.tasks_fail}")
