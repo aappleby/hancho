@@ -1,19 +1,16 @@
-rules = hancho.load("{repo_dir}/rules.hancho")
+gtk_flags = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+gtk_incs  = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+gtk_libs  = hancho.run_cmd('pkg-config gtk+-3.0 --libs')
 
 main_o = hancho(
-  rules.compile_cpp,
+  hancho.base_rules.compile_cpp,
   in_src = "main.c",
-  flags = rules.compile_cpp.flags + [
-    "{run_cmd('pkg-config gtk+-3.0 --cflags-only-other')}",
-    "{run_cmd('pkg-config gtk+-3.0 --cflags-only-I')}",
-  ],
+  flags = hancho.base_rules.compile_cpp.flags + [gtk_flags] + [gtk_incs],
 )
 
 main = hancho(
-  rules.link_cpp_bin,
+  hancho.base_rules.link_cpp_bin,
   in_objs = main_o,
   out_bin = "hello_gtk",
-  flags = rules.link_cpp_bin.flags + [
-    "{run_cmd('pkg-config gtk+-3.0 --libs')}"
-  ],
+  flags = hancho.base_rules.link_cpp_bin.flags + [gtk_libs],
 )

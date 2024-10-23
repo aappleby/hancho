@@ -550,6 +550,8 @@ def get_awaitables(variant, result):
         return
 
     match variant:
+        case Module():
+            pass
         case Promise():
             get_awaitables(variant.task, result)
         case Task():
@@ -568,6 +570,8 @@ async def await_variant(variant):
         variant = await variant
 
     match variant:
+        case Module():
+            pass
         case Exception() | asyncio.CancelledError():
             raise variant
         case Promise():
@@ -602,6 +606,17 @@ def visit_variant(key, val, visitor):
         case _:
             val = visitor(key, val)
     return val
+
+def simple_visit_variant(key, val, visitor):
+    val = visitor(key, val)
+    if isinstance(val, Module):
+        pass
+    elif isinstance(val, (Config, dict)):
+        for key2, val2 in val.items():
+            simple_visit_variant(key2, val2, visitor)
+    elif isinstance(val, list):
+        for key2, val2 in enumerate(val):
+            simple_visit_variant(key2, val2, visitor)
 
 ####################################################################################################
 
@@ -672,18 +687,29 @@ class Task(Config):
     def get_outputs(self):
         return self._out_files
 
+    # FIXME recurse through all fields and queue requirements
     def queue(self):
-        if self._state is TaskState.DECLARED:
-            app.queued_tasks.append(self)
-            self._state = TaskState.QUEUED
+        def visit(key, val):
+            if isinstance(val, Task) and val._state is TaskState.DECLARED:
+                app.queued_tasks.append(val)
+                val._state = TaskState.QUEUED
+        simple_visit_variant(None, self, visit)
 
     def start(self):
-        if self._state is TaskState.QUEUED or self._state is TaskState.DECLARED:
+        if self._state is TaskState.DECLARED:
+            self._promise = asyncio.create_task(self.task_main())
+            self._state = TaskState.STARTED
+            app.tasks_started += 1
+        if self._state is TaskState.QUEUED:
             self._promise = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
             app.tasks_started += 1
 
     async def await_done(self):
+        if self._state is TaskState.DECLARED:
+            pass
+        if self._state is TaskState.QUEUED:
+            pass
         self.start()
         assert self._promise is not None
         return await self._promise
@@ -923,7 +949,7 @@ class Task(Config):
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        
+
         if (c_deps := self.get("c_deps", None)) and path.exists(c_deps):
             c_depformat = self.get("c_depformat", "gcc")
             if debug:
@@ -1038,7 +1064,9 @@ class Context(Config):
 
         file_path = path.realpath(path.join(os.getcwd(), file_path))
         assert path.isabs(file_path)
-        assert path.isfile(file_path)
+        if not path.isfile(file_path):
+            print(f"Could not find file {file_path}")
+            assert path.isfile(file_path)
 
         return file_path
 
@@ -1049,6 +1077,8 @@ class Context(Config):
             mod_name = path.splitext(path.basename(mod_path))[0],
             mod_dir  = path.dirname(mod_path),
             mod_path = mod_path,
+            task_dir = path.dirname(mod_path),
+            build_dir = app.default_build_dir,
         )
         new_context.merge(args)
         new_context.merge(kwargs)
@@ -1059,11 +1089,46 @@ class Context(Config):
         mod_path = self.normalize_path(mod_path)
         new_context = Context(
             self,
-            repo_name   = path.basename(path.dirname(mod_path)),
-            repo_dir    = path.dirname(mod_path),
-            mod_name    = path.splitext(path.basename(mod_path))[0],
-            mod_dir     = path.dirname(mod_path),
-            mod_path = mod_path,
+            repo_name = path.basename(path.dirname(mod_path)),
+            repo_dir  = path.dirname(mod_path),
+            mod_name  = path.splitext(path.basename(mod_path))[0],
+            mod_dir   = path.dirname(mod_path),
+            mod_path  = mod_path,
+            task_dir  = path.dirname(mod_path),
+            build_dir = app.default_build_dir,
+        )
+        new_context.merge(args)
+        new_context.merge(kwargs)
+
+        return new_context._load_module()
+
+    def root(self, mod_path, *args, **kwargs):
+        mod_path = self.normalize_path(mod_path)
+
+#            root_dir    = root_dir,
+#            root_path   = root_path,
+#
+#            repo_name   = "",
+#            repo_dir    = root_dir,
+#
+#            build_root  = app.default_build_root,
+#            build_tag   = app.default_build_tag,
+#
+#            mod_name    = path.splitext(root_file)[0],
+#            mod_dir     = root_dir,
+#            mod_path    = root_path,
+
+        new_context = Context(
+            #self,
+            root_dir  = path.dirname(mod_path),
+            root_path = mod_path,
+            repo_name = path.basename(path.dirname(mod_path)),
+            repo_dir  = path.dirname(mod_path),
+            build_root  = app.default_build_root,
+            build_tag   = app.default_build_tag,
+            mod_name  = path.splitext(path.basename(mod_path))[0],
+            mod_dir   = path.dirname(mod_path),
+            mod_path  = mod_path,
         )
         new_context.merge(args)
         new_context.merge(kwargs)
@@ -1184,6 +1249,8 @@ class App:
         self.expand_depth = 0
         self.shuffle = False
 
+        self.root_context = None
+
         self.tasks_started = 0
         self.tasks_running = 0
         self.tasks_passed = 0
@@ -1220,17 +1287,6 @@ class App:
 
     def create_root_context(self, flags, extra_flags):
 
-        # These flags are app-wide and not context-wide.
-        app_flags = ['shuffle', 'use_color', 'quiet', 'dry_run', 'jobs', 'target']
-        for flag in app_flags:
-            setattr(app, flag, flags[flag])
-            del flags[flag]
-
-        app.default_verbose = flags['verbose']
-        app.default_debug =   flags['debug']
-        app.default_force =   flags['force']
-        app.default_trace =   flags['trace']
-
         root_file = flags['root_file']
         root_dir  = path.realpath(flags['root_dir']) # Root path must be absolute.
         root_path = path.join(root_dir, root_file)
@@ -1254,24 +1310,36 @@ class App:
         for key, val in extra_flags.items():
             setattr(root_context, key, val)
 
-        if root_context.get("debug", None):
-            log(f"root_context = {Dumper().dump(root_context)}")
         return root_context
 
     ########################################
 
     def main(self, flags, extra_flags):
 
-        root_context = self.create_root_context(flags, extra_flags)
+        # These flags are app-wide and not context-wide.
+        app_flags = ['shuffle', 'use_color', 'quiet', 'dry_run', 'jobs', 'target']
+        for flag in app_flags:
+            setattr(app, flag, flags[flag])
+            del flags[flag]
 
-        assert path.isabs(root_context.root_dir)
-        assert path.isdir(root_context.root_dir)
-        assert path.isabs(root_context.root_path)
-        assert path.isfile(root_context.root_path)
+        app.default_verbose = flags['verbose']
+        app.default_debug =   flags['debug']
+        app.default_force =   flags['force']
+        app.default_trace =   flags['trace']
 
-        os.chdir(root_context.root_dir)
+        app.root_context = self.create_root_context(flags, extra_flags)
+
+        if app.root_context.get("debug", None):
+            log(f"root_context = {Dumper().dump(app.root_context)}")
+
+        assert path.isabs(app.root_context.root_dir)
+        assert path.isdir(app.root_context.root_dir)
+        assert path.isabs(app.root_context.root_path)
+        assert path.isfile(app.root_context.root_path)
+
+        os.chdir(app.root_context.root_dir)
         time_a = time.perf_counter()
-        root_context._load_module()
+        app.root_context._load_module()
         time_b = time.perf_counter()
 
         #if app.default_debug or app.default_verbose:
@@ -1306,7 +1374,10 @@ class App:
                     task.queue()
         else:
             for task in self.all_tasks:
-                task.queue()
+                #if task.mod_path == task.root_path:
+                if task.root_dir == task.repo_dir:
+                    task.queue()
+                #task.queue()
 
         result = self.build()
 

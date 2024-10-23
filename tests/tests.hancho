@@ -1,7 +1,7 @@
 # tests/tests.hancho
 
-hancho(hancho.rules.check_cpp, in_src = "src/main.cpp")
-hancho(hancho.rules.check_cpp, in_src = "src/test.cpp")
+hancho(hancho.base_rules.check_cpp, in_src = "src/main.cpp")
+hancho(hancho.base_rules.check_cpp, in_src = "src/test.cpp")
 
 hancho(
   desc = "Run all tests",

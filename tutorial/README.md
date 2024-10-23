@@ -431,11 +431,9 @@ You'll notice that tut3.hancho is mostly empty now:
 
 ```py
 # tutorial/tut3.hancho
-from hancho import *
+hancho.build_dir = "build/tut3"
 
-config.build_dir = "build/tut3"
-
-load("src/src.hancho")
+hancho.load("src/src.hancho")
 ```
 
 That's because the actual build has moved to ```src/src.hancho``` so it can live alongside its source code.
@@ -443,12 +441,11 @@ That's because the actual build has moved to ```src/src.hancho``` so it can live
 
 ```py
 # tutorial/src/src.hancho
-from hancho import *
 import glob
 
-rules = load("rules.hancho")
+rules = hancho.load("base_rules.hancho")
 
-rules.c_binary(glob.glob("*.cpp"), "app")
+hancho(rules.c_binary, in_srcs = glob.glob("*.cpp"), out_bin = "app")
 ```
 
 Some things to note here -
