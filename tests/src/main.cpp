@@ -2,6 +2,6 @@
 #include "main.hpp"
 
 int main(int argc, char** argv) {
-  printf(message());
+  printf("%s", message());
   return 0;
 }

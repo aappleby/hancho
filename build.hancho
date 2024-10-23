@@ -1,5 +1,7 @@
 #hancho.force = True
 
+hancho.rules = hancho.load("rules.hancho")
+
 hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")
 hancho.load("tests/tests.hancho")

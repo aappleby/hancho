@@ -11,83 +11,76 @@ touch_outputs = hancho.Command(
 ####################################################################################################
 # C++
 
-# ld_opt   = "{'-O3' if build_tag == 'release' else '-g -O0'}",
-
-"""
-if os.name == 'nt':
-  exports.compile_cpp = hancho.Command(
-    command     = "cl.exe /c {rel_source_files} /sourceDependencies {rel_build_deps} /Fo:{rel_build_files}",
-    build_files = "{swap_ext(source_files, '.o')}",
-    build_deps  = "{swap_ext(source_files, '.d')}",
-    c_depformat = "msvc",
-  )
-elif os.name == 'posix':
-  exports.compile_cpp = hancho.Command(
-    command     = "gcc -MMD -c {rel_source_files} -o {rel_build_files}",
-    build_files = "{swap_ext(source_files, '.o')}",
-    build_deps  = "{swap_ext(source_files, '.d')}",
-    c_depformat = "gcc",
-  )
-else:
-  assert False
-"""
+default_warnings = ["unused-variable", "error"]
+default_cpp_std  = "gnu++2a"
+default_ld_opt   = "{'-O3' if build_tag == 'release' else '-g -O0'}"
 
 # -------------------------------------------------------------------------------
 
 default_toolchain = hancho.Config(
-    arch="x86-64",
-    compiler="x86_64-linux-gnu-g++",
-    linker="x86_64-linux-gnu-g++",
+    arch     = "x86-64",
+    compiler = "x86_64-linux-gnu-g++",
+    linker   = "x86_64-linux-gnu-g++",
 )
 
 riscv64_toolchain = hancho.Config(
-    arch="riscv64",
-    compiler="riscv64-unknown-elf-g++",
-    linker="riscv64-unknown-elf-g++",
+    arch     = "riscv64",
+    compiler = "riscv64-unknown-elf-g++",
+    linker   = "riscv64-unknown-elf-g++",
 )
 
 # ----------------------------------------
 
-# rv_config = cpp_config.fork(
-#  toolchain = "riscv64-unknown-elf",
-#  arch       = "-march=rv32i -mabi=ilp32 -mstrict-align",
-#  cpp_std    = "-std=gnu++2a",
-#  build_type = "-g -Os",
-#  flags = [
-#    "-nostdlib",
-#    "-nostartfiles",
-#    "-Wl,-T {linkerscript}",
-#  ],
-#  #in_ld = "link.ld",
-#  #sys_libs = ["gcc"],
-#  #linkerscript = "{root_dir}/pinwheel/tools/pinwheel.ld",
-# )
+check_cpp = hancho.Command(
+  desc    = "Checking C++ syntax of {rel(in_src)}",
+  command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} && touch {rel(out_ok)}",
+  in_src  = None,
+  out_ok  = "{in_src}.ok",
+
+  toolchain = default_toolchain,
+  flags    = ["-fsyntax-only", "-std={cpp_std}"],
+  cpp_std  = "gnu++2a",
+  warnings = [],
+  defines  = [],
+  includes = [],
+  joined_warnings = "{join_prefix('-W', warnings)}",
+  joined_defines  = "{join_prefix('-D', defines)}",
+  joined_includes = "{join_prefix('-I', includes)}",
+)
 
 # ----------------------------------------
 
 compile_cpp = hancho.Command(
-    desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
-    in_src=None,
-    out_obj="{swap_ext(in_src, '.o')}",
-    c_deps ="{swap_ext(in_src, '.d')}",
-    toolchain=default_toolchain,
-    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
-    cpp_std="gnu++2a",
-    flags=[
-        "-g",
-        "-O0",
-        "-MMD",
-        "-march={toolchain.arch}",
-        "-std={cpp_std}",
-        "-fdiagnostics-color=always",
-    ],
-    warnings=[],
-    defines=[],
-    includes=[],
-    joined_warnings="{join_prefix('-W', warnings)}",
-    joined_defines="{join_prefix('-D', defines)}",
-    joined_includes="{join_prefix('-I', includes)}",
+  desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+  command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
+
+  in_src  = None,
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+
+  toolchain=default_toolchain,
+  cpp_std="gnu++2a",
+  flags=[
+    "-g",
+    "-O0",
+    "-MMD",
+    "-march={toolchain.arch}",
+    "-std={cpp_std}",
+    "-fdiagnostics-color=always",
+  ],
+  warnings=[],
+  defines=[],
+  includes=[],
+  joined_warnings="{join_prefix('-W', warnings)}",
+  joined_defines="{join_prefix('-D', defines)}",
+  joined_includes="{join_prefix('-I', includes)}",
 )
+
+"""
+if os.name == 'nt':
+  compile_cpp.command     = "cl.exe /c {rel(in_src)} /sourceDependencies {rel(c_deps)} /Fo:{rel(out_obj)}",
+  compile_cpp.c_depformat = "msvc",
+"""
 
 # ----------------------------------------
 
@@ -122,7 +115,6 @@ link_cpp_bin = hancho.Command(
 
 # ----------------------------------------
 
-
 def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **kwargs):
     config = hancho.Config(*args, **kwargs)
     in_objs = hancho.flatten(in_objs)
@@ -136,7 +128,6 @@ def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **k
         in_objs=[in_objs, in_libs],
         out_lib=out_lib
     )
-
 
 def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **kwargs):
     config = hancho.Config(args, kwargs)
@@ -153,10 +144,8 @@ def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **k
         out_bin = out_bin,
     )
 
-
 ####################################################################################################
 # Makefiles
-
 
 def make(hancho, /, *args, in_makefile, **kwargs):
     cmd = hancho.Command(
@@ -182,7 +171,6 @@ run_test = hancho.Command(
     log_path = "{in_test}.log",
 )
 
-
 def cpp_test(
     hancho,
     *args,
@@ -201,51 +189,3 @@ def cpp_test(
         out_bin=out_bin,
     )
     return hancho(run_test, config, in_test=bin)
-
-
-"""
-base = hancho.Config(
-  toolchain  = "x86_64-linux-gnu",
-  build_type = "-g -O0",
-  warnings   = "-Wunused-variable -Werror",
-  defines    = "-DCONFIG_DEBUG",
-  cpp_std    = "-std=gnu++2a",
-  includes   = "-I. -I{repo_dir} -I{repo_dir}/symlinks -I{repo_dir}/symlinks/metrolib -I{repo_dir}/symlinks/metron ",
-)
-
-exports.check_cpp = base.fork(
-  desc    = "Syntax checking {rel(in_src)}",
-  command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {rel(in_src)} && touch {rel(out_ok)}",
-  in_src  = [],
-  out_ok  = "{in_src}.ok",
-  c_deps  = "{swap_ext(in_src, '.d')}",
-)
-
-exports.metron = hancho.Config(
-  command = "{repo_dir}/symlinks/metron/build/debug/metron/metron/metron -q -v -e -c {in_src} -o {out_sv}",
-  in_src  = [],
-  out_sv  = "{swap_ext(in_src, '.sv')}",
-  c_deps  = "{swap_ext(in_src, '.d')}",
-)
-
-check_cpp = base.Command(
-  desc    = "Syntax checking {source_files}",
-  command = "{toolchain}-g++ -fsyntax-only -MMD {cpp_std} {warnings} {build_type} {includes} {defines} -c {in_src} && touch {out_ok}",
-  in_src  = None,
-  out_ok  = "{swap_ext(source_files, '.ok')}",
-  c_deps  = "{swap_ext(source_files, '.d')}",
-)
-
-metron = hancho.Command(
-  command = "{repo_dir}/symlinks/metron/build/metron/metron -q -v -e -c {in_src} -o {out_sv}",
-  c_deps  = "{swap_ext(in_src, '.d')}",
-  out_sv  = "{swap_ext(in_src, '.sv')}",
-)
-
-exports.sv2v = hancho.Config(
-  command = "symlinks/sv2v/bin/sv2v {includes} {in_src} -w {out_v}",
-  in_src  = None,
-  out_v   = "{in_src}.2.v",
-)
-
-"""
