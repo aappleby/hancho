@@ -845,7 +845,10 @@ class Task(Config):
                 self[key] = visit_variant(key, val, handle_out_path)
 
         if c_deps := self.get("c_deps", None):
-            self["c_deps"] = join_path(self.build_dir, c_deps)
+            c_deps = join_path(self.build_dir, c_deps)
+            self["c_deps"] = c_deps
+            if path.isfile(c_deps):
+                self._in_files.append(c_deps)
 
         # And now we can expand the command.
         self.desc     = self.expand(self.desc)
@@ -1287,10 +1290,10 @@ class App:
                 #        queue_task = True
                 #        task_name = out_file
                 #        break
-                if task.get('name', None):
-                    for name in flatten(task.name):
-                        if target_regex.search(name):
-                            queue_task = True
+                if name := task.get('name', None):
+                    if target_regex.search(task.get('name', None)):
+                        queue_task = True
+                        task_name = name
                 #for desc in flatten(task.desc):
                 #    if target_regex.search(desc):
                 #        queue_task = True
