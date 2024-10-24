@@ -1,0 +1,32 @@
+rv_config = hancho.Config(
+    rv_toolchain = "riscv64-unknown-elf",
+    rv_flags_c = [
+        "{rv_opt_mode}",
+        "-std=gnu++2a",
+        "-mabi=ilp32",
+        "-march=rv32i_zicsr", # _zicsr needed with newer GCC?
+        "-mstrict-align",
+        "-g",
+        "-MMD"
+    ],
+    rv_opt_mode = "-O0",
+)
+
+rv_compile = hancho.Command(
+    rv_config,
+    command = "{rv_toolchain}-g++ {rv_flags_c} -c {in_src} -o {out_obj}",
+    out_obj = "{swap_ext(in_src, '.o')}",
+    c_deps  = "{swap_ext(in_src, '.d')}",
+)
+
+rv_link = hancho.Command(
+    rv_config,
+    command = "{rv_toolchain}-gcc {rv_flags_c} {in_objs} -o {out_bin} -lgcc",
+    rv_flags_c = [
+        rv_config.rv_flags_c,
+        "-nostdlib",
+        "-nostartfiles",
+        "-Wl,-T {linkerscript}",
+    ],
+    linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
+)

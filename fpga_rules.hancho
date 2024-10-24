@@ -1,0 +1,62 @@
+def chparams(c):
+    result = []
+    for key, val in c.items():
+        if isinstance(val, str):
+            val = f"\"{val}\""
+        result.append(f"chparam -set {key} {val} {{top}};")
+    return result
+
+yosys = hancho.Command(
+    desc = "Run yosys on {rel(in_sv)}",
+    command = "yosys -q -p 'read_verilog -defer {join_prefix('-I', includes)} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",
+    in_sv = None,
+    out_json = "{swap_ext(in_sv, '.json')}",
+    params = {},
+    chparams = chparams,
+    includes = [],
+)
+
+nextpnr = hancho.Command(
+    desc    = "Run nextpnr-ice40 on {rel(in_json)}",
+    command = "nextpnr-ice40 {flags} -q --json {rel(in_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
+    in_json = None,
+    out_asc = "{swap_ext(in_json, '.asc')}",
+    flags   = "",
+    pcf     = None,
+    chip    = None,
+    package = None,
+)
+
+icepack = hancho.Command(
+    desc = "Run icepack on {rel(in_asc)}",
+    command = "icepack {rel(in_asc)} {rel(out_bin)}",
+    in_asc = None,
+    out_bin = "{swap_ext(in_asc, '.bin')}",
+)
+
+iceprog = hancho.Command(
+    desc = "Run iceprog on {rel(in_bin)}",
+    command = "iceprog -S {rel(in_bin)}",
+)
+
+synth = hancho.Command(
+    desc = "Synth {rel(in_sv)}",
+    command = [
+        "yosys -p 'read_verilog -defer {join_prefix('-I', includes)} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",
+        #"yosys -q -p 'read_verilog -defer {join_prefix('-I', includes)} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",
+        "nextpnr-ice40 {flags} -q --json {rel(out_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
+        "icepack {rel(out_asc)} {rel(out_bin)}",
+    ],
+    in_sv    = None,
+    out_json = "{swap_ext(in_sv, '.json')}",
+    out_asc  = "{swap_ext(in_sv, '.asc')}",
+    out_bin  = "{swap_ext(in_sv, '.bin')}",
+    params   = {},
+    chparams = chparams,
+    includes = [],
+    flags    = "",
+    pcf      = None,
+    chip     = None,
+    package  = None,
+)
+
