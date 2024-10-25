@@ -1074,7 +1074,7 @@ class Context(Config):
 
         return file_path
 
-    def load(self, mod_path, *args, **kwargs):
+    def load(self, mod_path):
         mod_path = self.normalize_path(mod_path)
 
         new_config = Config(
@@ -1085,13 +1085,11 @@ class Context(Config):
             task_dir = path.dirname(mod_path),
             build_dir = app.default_build_dir,
         )
-        new_config.merge(args)
-        new_config.merge(kwargs)
 
         new_context = Context(self, config = new_config)
         return new_context._load_module()
 
-    def repo(self, mod_path, *args, **kwargs):
+    def repo(self, mod_path):
         mod_path = self.normalize_path(mod_path)
         new_config = Config(
             self.config,
@@ -1103,13 +1101,11 @@ class Context(Config):
             task_dir  = path.dirname(mod_path),
             build_dir = app.default_build_dir,
         )
-        new_config.merge(args)
-        new_config.merge(kwargs)
 
         new_context = Context(self, config = new_config)
         return new_context._load_module()
 
-    def root(self, mod_path, *args, **kwargs):
+    def root(self, mod_path):
         mod_path = self.normalize_path(mod_path)
 
         new_config = Config(
@@ -1123,8 +1119,6 @@ class Context(Config):
             mod_dir   = path.dirname(mod_path),
             mod_path  = mod_path,
         )
-        new_config.merge(args)
-        new_config.merge(kwargs)
 
         new_context = Context(self, config = new_config)
         return new_context._load_module()
