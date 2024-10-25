@@ -1,4 +1,4 @@
-hancho.task(
+hancho.Task(
   command = "touch {rel_build_files}",
   source_files = [],
   build_files = "repo1.txt",

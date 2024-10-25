@@ -1,5 +1,7 @@
 # tutorial/tut01.hancho
 
+hancho.config.repo_name = "tut01"
+
 main_o = hancho(
   desc    = "Compile {in_src} -> {out_obj}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",

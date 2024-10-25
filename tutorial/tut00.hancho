@@ -1,5 +1,7 @@
 # tutorial/tut00.hancho
 
+hancho.config.repo_name = "tut00"
+
 hancho(
   desc    = "Compile {in_src} -> {out_bin}",
   command = "g++ {in_src} -o {out_bin}",

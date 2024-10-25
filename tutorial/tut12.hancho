@@ -1,17 +1,17 @@
 # tutorial/tut12.hancho
 
-cpp_compile = hancho.config(
+cpp_compile = hancho.Config(
   desc    = "Compile {in_src}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   out_obj = "build/tut12/{swap_ext(in_src, '.o')}",
   c_deps  = "build/tut12/{swap_ext(in_src, '.d')}",
 )
 
-cpp_link = hancho.config(
+cpp_link = hancho.Config(
   desc    = "Link {in_objs} into {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
 )
 
-main_o = hancho.task(cpp_compile, in_src = "src/main.cpp")
-util_o = hancho.task(cpp_compile, in_src = "src/util.cpp")
-app    = hancho.task(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut12/app")
+main_o = hancho.Task(cpp_compile, in_src = "src/main.cpp")
+util_o = hancho.Task(cpp_compile, in_src = "src/util.cpp")
+app    = hancho.Task(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut12/app")

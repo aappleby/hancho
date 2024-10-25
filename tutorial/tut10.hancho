@@ -1,6 +1,6 @@
 # tutorial/tut10.hancho - branches off from tut02.hancho
 
-main_o = hancho.task(
+main_o = hancho.Task(
   desc    = "Compile {in_src}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/main.cpp",
@@ -8,7 +8,7 @@ main_o = hancho.task(
   c_deps  = "build/tut10/src/main.d",
 )
 
-util_o = hancho.task(
+util_o = hancho.Task(
   desc    = "Compile {in_src}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/util.cpp",
@@ -16,7 +16,7 @@ util_o = hancho.task(
   c_deps  = "build/tut10/src/util.d",
 )
 
-app = hancho.task(
+app = hancho.Task(
   desc    = "Link {in_objs} into {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
   in_objs = [main_o, util_o],

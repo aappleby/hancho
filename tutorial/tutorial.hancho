@@ -3,11 +3,11 @@
 import shutil
 shutil.rmtree("build", ignore_errors=True)
 
-hancho.load("tut00.hancho", repo_name = "tut00")
-hancho.load("tut01.hancho", repo_name = "tut01")
-hancho.load("tut02.hancho", repo_name = "tut02")
-hancho.load("tut03.hancho", repo_name = "tut03")
-hancho.load("tut04.hancho", repo_name = "tut04")
+hancho.load("tut00.hancho")
+hancho.load("tut01.hancho")
+hancho.load("tut02.hancho")
+hancho.load("tut03.hancho")
+hancho.load("tut04.hancho")
 
 #hancho.load("tut11.hancho")
 #hancho.load("tut12.hancho")

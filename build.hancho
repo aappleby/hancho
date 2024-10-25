@@ -3,10 +3,6 @@
 if 'base_rules' not in hancho:
   hancho.base_rules = hancho.load("base_rules.hancho")
 
-#print(hancho)
-#print(hancho.config)
-#print(hancho.base_rules)
-
 hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")
 hancho.load("tests/tests.hancho")

@@ -674,7 +674,7 @@ class Task(Config):
         self._state = TaskState.DECLARED
         self._reason = None
         self._promise = None
-        self._loaded_files = [m.hancho.config.mod_path for m in app.loaded_modules]
+        self._loaded_files = list(app.loaded_files)
         self._stdout = ""
         self._stderr = ""
         self._returncode = -1
@@ -1128,7 +1128,7 @@ class Context(Config):
         log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
 
         temp_module = Module(hancho = self)
-        app.loaded_modules.append(temp_module)
+        app.loaded_files.append(self.config.mod_path)
         app.modstack.append(temp_module)
 
         # We must chdir()s into the .hancho file directory before running it so that
@@ -1231,7 +1231,7 @@ class App:
         self.jobs      = os.cpu_count()
         self.target    = None
 
-        self.loaded_modules = []
+        self.loaded_files = []
         self.dirstack = [os.getcwd()]
         self.modstack = []
 

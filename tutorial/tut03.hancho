@@ -1,5 +1,7 @@
 # tutorial/tut03.hancho
 
+hancho.config.repo_name = "tut03"
+
 def compile_cpp(source):
   obj = source.replace('.cpp', '.o')
   dep = source.replace('.cpp', '.d')

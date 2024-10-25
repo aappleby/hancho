@@ -84,7 +84,7 @@ main_app = link(in_objs = main_o, out_bin = "app")
 - ```jobs``` (Default: ```os.cpu_count()```)
     - The number of console commands Hancho will run in parallel.
 
-# Helper methods defined in hancho.config:
+# Helper methods defined in hancho.Config:
 
  - ```len([list])```
     - Same as Python's ```len()```

@@ -1,38 +1,38 @@
 # tutorial/tut11.hancho
 
-common = hancho.config(
+common = hancho.Config(
   task_dir  = ".",
   build_dir = "build/tut11",
 )
 
-compile = hancho.config(
+compile_cpp = hancho.Config(
+  common,
   desc    = "Compile {in_src}",
   command = "g++ -MMD -c {in_src} -o {out_obj}",
-  **common,
 )
 
-main_o = hancho.task(
-  **compile,
+main_o = hancho.Task(
+  compile_cpp,
   in_src  = "src/main.cpp",
   out_obj = "src/main.o",
   c_deps  = "src/main.d",
 )
 
-util_o = hancho.task(
-  **compile,
+util_o = hancho.Task(
+  compile_cpp,
   in_src  = "src/util.cpp",
   out_obj = "src/util.o",
   c_deps  = "src/util.d",
 )
 
-link = hancho.config(
-  **common,
+link_cpp = hancho.Config(
+  common,
   desc    = "Link {in_objs} into {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
 )
 
-app = hancho.task(
-  **link,
+app = hancho.Task(
+  link_cpp,
   in_objs = [main_o, util_o],
   out_bin = "app",
 )
