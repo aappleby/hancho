@@ -674,7 +674,7 @@ class Task(Config):
         self._state = TaskState.DECLARED
         self._reason = None
         self._promise = None
-        self._loaded_files = [m.hancho.mod_path for m in app.loaded_modules]
+        self._loaded_files = [m.hancho.config.mod_path for m in app.loaded_modules]
         self._stdout = ""
         self._stderr = ""
         self._returncode = -1
@@ -1052,10 +1052,14 @@ class Task(Config):
 
 class Context(Config):
 
+    def __init__(self, *args, **kwargs):
+        self.config = None
+        super().__init__(*args, **kwargs)
+
     def __call__(self, arg1 = None, /, *args, **kwargs):
         if callable(arg1):
             return arg1(self, *args, **kwargs)
-        return Task(self, arg1, args, kwargs)
+        return Task(self.config, arg1, args, kwargs)
 
     def normalize_path(self, file_path):
         file_path = self.expand(file_path)
@@ -1072,23 +1076,25 @@ class Context(Config):
 
     def load(self, mod_path, *args, **kwargs):
         mod_path = self.normalize_path(mod_path)
-        new_context = Context(
-            self,
+
+        new_config = Config(
+            self.config,
             mod_name = path.splitext(path.basename(mod_path))[0],
             mod_dir  = path.dirname(mod_path),
             mod_path = mod_path,
             task_dir = path.dirname(mod_path),
             build_dir = app.default_build_dir,
         )
-        new_context.merge(args)
-        new_context.merge(kwargs)
+        new_config.merge(args)
+        new_config.merge(kwargs)
 
+        new_context = Context(self, config = new_config)
         return new_context._load_module()
 
     def repo(self, mod_path, *args, **kwargs):
         mod_path = self.normalize_path(mod_path)
-        new_context = Context(
-            self,
+        new_config = Config(
+            self.config,
             repo_name = path.basename(path.dirname(mod_path)),
             repo_dir  = path.dirname(mod_path),
             mod_name  = path.splitext(path.basename(mod_path))[0],
@@ -1097,29 +1103,16 @@ class Context(Config):
             task_dir  = path.dirname(mod_path),
             build_dir = app.default_build_dir,
         )
-        new_context.merge(args)
-        new_context.merge(kwargs)
+        new_config.merge(args)
+        new_config.merge(kwargs)
 
+        new_context = Context(self, config = new_config)
         return new_context._load_module()
 
     def root(self, mod_path, *args, **kwargs):
         mod_path = self.normalize_path(mod_path)
 
-#            root_dir    = root_dir,
-#            root_path   = root_path,
-#
-#            repo_name   = "",
-#            repo_dir    = root_dir,
-#
-#            build_root  = app.default_build_root,
-#            build_tag   = app.default_build_tag,
-#
-#            mod_name    = path.splitext(root_file)[0],
-#            mod_dir     = root_dir,
-#            mod_path    = root_path,
-
-        new_context = Context(
-            #self,
+        new_config = Config(
             root_dir  = path.dirname(mod_path),
             root_path = mod_path,
             repo_name = path.basename(path.dirname(mod_path)),
@@ -1130,30 +1123,36 @@ class Context(Config):
             mod_dir   = path.dirname(mod_path),
             mod_path  = mod_path,
         )
-        new_context.merge(args)
-        new_context.merge(kwargs)
+        new_config.merge(args)
+        new_config.merge(kwargs)
 
+        new_context = Context(self, config = new_config)
         return new_context._load_module()
 
     def _load_module(self):
         log(("┃ " * (len(app.dirstack) - 1)), end="")
-        log(color(128,255,128) + f"Loading {self.mod_path}" + color())
+        log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
 
-        new_module = Module(hancho = self)
-        app.loaded_modules.append(new_module)
-        app.modstack.append(new_module)
+        temp_module = Module(hancho = self)
+        app.loaded_modules.append(temp_module)
+        app.modstack.append(temp_module)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        app.pushdir(path.dirname(self.mod_path))
+        app.pushdir(path.dirname(self.config.mod_path))
 
-        with open(self.mod_path, encoding="utf-8") as file:
+        with open(self.config.mod_path, encoding="utf-8") as file:
             # pylint: disable=exec-used
-            exec(file.read(), new_module.__dict__, new_module.__dict__)
+            exec(file.read(), temp_module.__dict__, temp_module.__dict__)
 
-        # The exec() function adds __builtins__, remove it now that we're done exec'ing.
-        del new_module.__builtins__
+        # Module loaded, make a copy that doesn't include __builtins__ and hancho so we don't have
+        # modules that end up transitively containing the universe
+        new_module = Module()
+        for key, val in temp_module.items():
+            if key == '__builtins__': continue
+            if key == 'hancho': continue
+            new_module[key] = val
 
         # And now we chdir back out.
         app.popdir()
@@ -1291,7 +1290,7 @@ class App:
         root_dir  = path.realpath(flags['root_dir']) # Root path must be absolute.
         root_path = path.join(root_dir, root_file)
 
-        root_context = Context(
+        root_config = Config(
             root_dir    = root_dir,
             root_path   = root_path,
 
@@ -1308,8 +1307,9 @@ class App:
 
         # All the unrecognized flags get stuck on the root context.
         for key, val in extra_flags.items():
-            setattr(root_context, key, val)
+            setattr(root_config, key, val)
 
+        root_context = Context(config = root_config)
         return root_context
 
     ########################################
@@ -1332,12 +1332,12 @@ class App:
         if app.root_context.get("debug", None):
             log(f"root_context = {Dumper().dump(app.root_context)}")
 
-        assert path.isabs(app.root_context.root_dir)
-        assert path.isdir(app.root_context.root_dir)
-        assert path.isabs(app.root_context.root_path)
-        assert path.isfile(app.root_context.root_path)
+        assert path.isabs(app.root_context.config.root_dir)
+        assert path.isdir(app.root_context.config.root_dir)
+        assert path.isabs(app.root_context.config.root_path)
+        assert path.isfile(app.root_context.config.root_path)
 
-        os.chdir(app.root_context.root_dir)
+        os.chdir(app.root_context.config.root_dir)
         time_a = time.perf_counter()
         app.root_context._load_module()
         time_b = time.perf_counter()
