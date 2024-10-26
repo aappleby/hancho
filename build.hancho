@@ -1,4 +1,4 @@
-#hancho.force = True
+#hancho.config.force = True
 
 if 'base_rules' not in hancho:
   hancho.base_rules = hancho.load("base_rules.hancho")

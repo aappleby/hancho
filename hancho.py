@@ -1144,8 +1144,7 @@ class Context(Config):
         # modules that end up transitively containing the universe
         new_module = Module()
         for key, val in temp_module.items():
-            if key == '__builtins__': continue
-            if key == 'hancho': continue
+            if key.startswith('_') or key == 'hancho': continue
             new_module[key] = val
 
         # And now we chdir back out.

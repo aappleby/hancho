@@ -34,16 +34,12 @@ check_cpp = hancho.Command(
     command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} && touch {rel(out_ok)}",
     in_src  = None,
     out_ok  = "{in_src}.ok",
-
     toolchain = default_toolchain,
     flags    = ["-fsyntax-only", "-std={cpp_std}"],
     cpp_std  = "gnu++2a",
-    warnings = [],
-    defines  = [],
-    includes = [],
-    joined_warnings = "{join_prefix('-W', warnings)}",
-    joined_defines  = "{join_prefix('-D', defines)}",
-    joined_includes = "{join_prefix('-I', includes)}",
+    joined_warnings = "{join_prefix('-W', get('warnings', []))}",
+    joined_defines  = "{join_prefix('-D', get('defines', []))}",
+    joined_includes = "{join_prefix('-I', get('includes', []))}",
 )
 
 # ----------------------------------------
@@ -66,12 +62,9 @@ compile_cpp = hancho.Command(
         "-std={cpp_std}",
         "-fdiagnostics-color=always",
     ],
-    warnings=[],
-    defines=[],
-    includes=[],
-    joined_warnings="{join_prefix('-W', warnings)}",
-    joined_defines="{join_prefix('-D', defines)}",
-    joined_includes="{join_prefix('-I', includes)}",
+    joined_warnings = "{join_prefix('-W', get('warnings', []))}",
+    joined_defines  = "{join_prefix('-D', get('defines', []))}",
+    joined_includes = "{join_prefix('-I', get('includes', []))}",
 )
 
 """
@@ -94,22 +87,19 @@ link_cpp_lib = hancho.Command(
 
 link_cpp_bin = hancho.Command(
     desc="Linking C++ bin {rel(out_bin)}",
-    in_objs=None,
-    in_libs=[],
     out_bin=None,
     toolchain=default_toolchain,
-    command="{toolchain.linker} {linker_group} {flags} {joined_sys_libs} -o {rel(out_bin)}",
+    command="{toolchain.linker} {linker_group} {get('flags', [])} {joined_sys_libs} -o {rel(out_bin)}",
     flags=[],
     linker_group=[
         "-Wl,--as-needed",
         "-Wl,--no-undefined",
         "-Wl,--start-group",
-        "{rel(in_objs)}",
-        "{rel(in_libs)}",
+        "{rel(get('in_objs', []))}",
+        "{rel(get('in_libs', []))}",
         "-Wl,--end-group",
     ],
-    sys_libs=[],
-    joined_sys_libs="{join_prefix('-l', sys_libs)}",
+    joined_sys_libs="{join_prefix('-l', get('sys_libs', []))}",
 )
 
 # ----------------------------------------
