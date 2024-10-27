@@ -1,8 +1,0 @@
-# tutorial/tut41_src.hancho
-
-import glob
-
-config = imports.config
-rules  = imports.rules
-
-rules.c_binary(in_srcs = glob.glob("*.cpp"), out_bin = "app", **config)
