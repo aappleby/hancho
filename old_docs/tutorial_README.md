@@ -1,103 +1,3 @@
-### Tutorial 0: Running Hancho
----
-
-To start the tutorial, clone the Hancho repo and cd into hancho/tutorial:
-
-```shell
-user@host:~$ git clone https://github.com/aappleby/hancho
-Cloning into 'hancho'...
-<snip>
-
-user@host:~$ cd hancho/tutorial
-user@host:~/hancho/tutorial$
-```
-
-Inside the tutorial folder there's a ```src``` folder with a trivial "Hello
-World" application consisting of two files, ```main.cpp``` and ```util.cpp```:
-
-``` cpp
-// src/main.cpp
-#include "main.hpp"
-#include "util.hpp"
-#include <stdio.h>
-
-int main(int argc, char** argv) {
-  printf("Hello World %d\n", get_value());
-  return 0;
-}
-```
-```cpp
-// src/util.cpp
-#include <stdint.h>
-
-int32_t get_value() {
-  return 42;
-}
-```
-
-Assuming we have GCC installed, compiling it from the command line is
-straightforward:
-
-```shell
-user@host:~/hancho/tutorial$ mkdir -p build
-user@host:~/hancho/tutorial$ g++ src/main.cpp src/util.cpp -o build/app
-user@host:~/hancho/tutorial$ build/app
-Hello World 42
-```
-
-Here's how we run the same command in Hancho:
-
-```py
-# tutorial/tut00.hancho
-
-hancho(
-  desc    = "Compile {in_src} -> {out_bin}",
-  command = "g++ {in_src} -o {out_bin}",
-  in_src  = ["src/main.cpp", "src/util.cpp"],
-  out_bin = "app",
-)
-```
-
-Hancho build files are just Python modules ending in .hancho, with minor
-modifications. In this build file we define a ```Rule``` that contains a
-```command``` with two template variables ```in_*``` and ```out_*```,
-and then we call the rule and give it our source files and our output filename.
-
-Hancho then does the fill-in-the-blanks for us and runs the command, which we
-can see with the ```--verbose``` flag:
-
-```shell
-user@host:~/hancho/tutorial$ rm -rf build
-user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
-[1/1] src/main.cpp src/util.cpp -> build/tut0/app
-Reason: Rebuilding ['build/tut0/app'] because some are missing
-g++ src/main.cpp src/util.cpp -o build/tut0/app
-
-user@host:~/hancho/tutorial$ build/tut0/app
-Hello World 42
-```
-
-If we run Hancho a second time, nothing will happen because nothing in
-```in_*``` has changed.
-
-```shell
-user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
-hancho: no work to do.
-```
-
-If we change a source file and run Hancho again, it will do a rebuild.
-
-```shell
-user@host:~/hancho/tutorial$ touch src/main.cpp
-
-user@host:~/hancho/tutorial$ ../hancho.py tut0.hancho --verbose
-[1/1] src/main.cpp src/util.cpp -> build/tut0/app
-Reason: Rebuilding ['build/tut0/app'] because an input has changed
-g++ src/main.cpp src/util.cpp -o build/tut0/app
-```
-
-The above example is not a particularly useful way to use Hancho, but it should
-check that your installation is working.
 
 
 
@@ -117,22 +17,30 @@ We'll also add a description to each rule so we get a bit nicer feedback when
 running a build.
 
 ``` py
-# tutorial/tut1.hancho
-from hancho import *
+# tutorial/tut01.hancho
 
-compile = Rule(
-  desc = "Compile {in_src} -> {out_obj}",
-  command = "g++ -c {in_src} -o {out_obj}",
+main_o = hancho(
+  desc    = "Compile {in_src} -> {out_obj}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  in_src  = "src/main.cpp",
+  out_obj = "main.o",
+  c_deps  = "main.d",
 )
 
-link = Rule(
-  desc = "Link {in_objs} -> {out_bin}",
+util_o = hancho(
+  desc    = "Compile {in_src} -> {out_obj}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  in_src  = "src/util.cpp",
+  out_obj = "util.o",
+  c_deps  = "util.d",
+)
+
+app = hancho(
+  desc    = "Link {in_objs} -> {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
+  in_objs = [main_o, util_o],
+  out_bin = "app",
 )
-
-main_o = compile("src/main.cpp", "tut1/src/main.o")
-util_o = compile("src/util.cpp", "tut1/src/util.o")
-link([main_o, util_o], "tut1/app")
 ```
 
 If we run that, we'll see three commands instead of just one:
@@ -177,13 +85,12 @@ user@host:~/hancho/tutorial$ ../hancho.py tut1.hancho --verbose
 hancho: no work to do.
 ```
 
-So what exactly are ```main_o``` and ```util_o```? They are ***promises***
-(well, technically they are ```asyncio.Task```s) that resolve to either a list
-of filenames that the rule generated, or None if the rule failed for some
+So what exactly are ```main_o``` and ```util_o```? They are ```hancho.Task``` objects that contains ***promises***
+(well, technically they are ```asyncio.Task```s) which will resolve to either a list of filenames that the rule generated, or None if the rule failed for some
 reason.
 
-Hancho will ```await``` all promises that are passed to ```in_*``` before
-running the rule.
+Before Hancho starts a task, it will ```await``` all promises in the task before
+expanding all the  ```{template_strings}``` and then starting an ```asyncio.Task```.
 
 Hancho will also skip running a rule if everything in the rule's ```out_*```
 is newer than the rule's ```in_*```.
@@ -191,7 +98,7 @@ is newer than the rule's ```in_*```.
 You might have noticed that we seem to be inconsistent about whether
 ```in_*``` and ```out_*``` are single strings, arrays of strings,
 nested arrays of promises, or whatnot. Hancho doesn't actually care - it will
-```await``` anything that needs awaiting and will flatten out nested lists or
+```await``` anything that needs awaiting and will ```flatten()``` nested lists or
 wrap single strings in ```[]```s as needed. By the time the rule runs,
 everything will be a flat array of strings. Using that array in a
 ```{template}``` will do the equivalent of ```' '.join(array)```.

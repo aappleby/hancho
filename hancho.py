@@ -198,17 +198,12 @@ class Dumper:
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
                     result += "{...}"
-                    #result += f"{{name = '{variant.name}', ...}}"
                 else:
                     result += self.dump(variant.__dict__)
             case Config():
                 result = f"{type(variant).__name__} @ {hex(id(variant))} "
                 if self.depth >= self.max_depth:
                     result += "{...}"
-                    #if "name" in variant:
-                    #    result += f"{{name = '{variant.name}', ...}}"
-                    #else:
-                    #    result += "{...}"
                 else:
                     result += self.dump(variant.__dict__)
             case list():
@@ -254,7 +249,7 @@ class Config:
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
-        self.merge(args, kwargs)
+        self.merge(*args, **kwargs)
 
     def clone(self):
         return type(self)(self)
@@ -285,13 +280,17 @@ class Config:
 
     def merge(self, *args, **kwargs):
         for arg in args:
-            if isinstance(arg, (tuple, list)):
-                for item in arg:
-                    self.merge(item)
-            elif arg is not None:
-                self.__dict__.update(arg)
-        self.__dict__.update(kwargs)
-        return self
+            self.merge2(arg)
+        self.merge2(kwargs)
+
+    def merge2(self, other):
+        for key, rval in other.items():
+            if key in self:
+                lval = self[key]
+                if isinstance(lval, Config) and isinstance(rval, Config):
+                    lval.merge2(rval)
+                    continue
+            self[key] = rval
 
     #----------------------------------------
 
@@ -1258,7 +1257,7 @@ class App:
 
         self.job_pool = JobPool()
 
-        self.default_desc       = "{rel(get_inputs())} -> {rel(get_outputs())}"
+        self.default_desc       = "{command}"
         self.default_command    = None
         self.default_task_dir   = "{mod_dir}"
         self.default_build_dir  = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
@@ -1324,6 +1323,10 @@ class App:
 
         if app.root_context.get("debug", None):
             log(f"root_context = {Dumper().dump(app.root_context)}")
+
+        if not path.isfile(app.root_context.config.root_path):
+            print(f"Could not find root Hancho file {app.root_context.config.root_path}!")
+            sys.exit(-1)
 
         assert path.isabs(app.root_context.config.root_dir)
         assert path.isdir(app.root_context.config.root_dir)
@@ -1484,8 +1487,7 @@ app = App()
 
 ####################################################################################################
 
-if __name__ == "__main__":
-
+def main():
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -1520,3 +1522,7 @@ if __name__ == "__main__":
             extra_flags[key] = val
 
     sys.exit(app.main(flags, extra_flags))
+
+if __name__ == "__main__":
+    main()
+

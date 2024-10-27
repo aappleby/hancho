@@ -1,7 +1,0 @@
-# tutorial/tut30.hancho
-
-config = hancho.Config(repo_name = "tut30")
-
-rules = hancho.load("tut30_rules.hancho")
-
-app = rules.c_binary(config, ["src/main.cpp", "src/util.cpp"], "app")

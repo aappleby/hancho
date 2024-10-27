@@ -1,6 +1,0 @@
-# tutorial/tut40.hancho
-
-config = hancho.Config(repo_name = "tut40")
-rules  = hancho.load("tut40_rules.hancho")
-
-hancho.load("src/tut40_src.hancho", config = config, rules = rules)

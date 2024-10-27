@@ -1,10 +1,332 @@
-# tutorial/tut00.hancho
 
-hancho.config.repo_name = "tut00"
+####################################################################################################
 
 hancho(
-  desc    = "Compile {in_src} -> {out_bin}",
+  command = "g++ src/main.cpp src/util.cpp -o build/app",
+)
+
+####################################################################################################
+
+hancho(
   command = "g++ {in_src} -o {out_bin}",
   in_src  = ["src/main.cpp", "src/util.cpp"],
   out_bin = "app",
+)
+
+# tutorial/tut11.hancho
+
+common = hancho.Config(
+  task_dir  = ".",
+  build_dir = "build/tut11",
+)
+
+compile_cpp = hancho.Config(
+  common,
+  desc    = "Compile {in_src}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+)
+
+main_o = hancho.Task(
+  compile_cpp,
+  in_src  = "src/main.cpp",
+  out_obj = "src/main.o",
+  c_deps  = "src/main.d",
+)
+
+util_o = hancho.Task(
+  compile_cpp,
+  in_src  = "src/util.cpp",
+  out_obj = "src/util.o",
+  c_deps  = "src/util.d",
+)
+
+link_cpp = hancho.Config(
+  common,
+  desc    = "Link {in_objs} into {out_bin}",
+  command = "g++ {in_objs} -o {out_bin}",
+)
+
+app = hancho.Task(
+  link_cpp,
+  in_objs = [main_o, util_o],
+  out_bin = "app",
+)
+
+# tutorial/tut12.hancho
+
+cpp_compile = hancho.Config(
+  desc    = "Compile {in_src}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  out_obj = "build/tut12/{swap_ext(in_src, '.o')}",
+  c_deps  = "build/tut12/{swap_ext(in_src, '.d')}",
+)
+
+cpp_link = hancho.Config(
+  desc    = "Link {in_objs} into {out_bin}",
+  command = "g++ {in_objs} -o {out_bin}",
+)
+
+main_o = hancho.Task(cpp_compile, in_src = "src/main.cpp")
+util_o = hancho.Task(cpp_compile, in_src = "src/util.cpp")
+app    = hancho.Task(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut12/app")
+
+
+# tutorial/tut13.hancho
+
+cpp_compile = hancho.Config(
+  desc    = "Compile {in_src}",
+  command = "g++ -MMD -c {in_src} -o {out_obj}",
+  out_obj = "build/tut13/{swap_ext(in_src, '.o')}",
+  c_deps  = "build/tut13/{swap_ext(in_src, '.d')}",
+)
+
+cpp_link = hancho.Config(
+  desc    = "Link {in_objs} into {out_bin}",
+  command = "g++ {in_objs} -o {out_bin}",
+)
+
+main_o = hancho.Task(cpp_compile, in_src = "src/main.cpp")
+util_o = hancho.Task(cpp_compile, in_src = "src/util.cpp")
+app    = hancho.Task(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut13/app")
+
+# tutorial/tut14.hancho
+
+cpp_compile = hancho.Command(
+  desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+)
+
+cpp_link = hancho.Command(
+  desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+)
+
+main_o = hancho(cpp_compile, in_src = "src/main.cpp")
+util_o = hancho(cpp_compile, in_src = "src/util.cpp")
+app    = hancho(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut14/app")
+
+# tutorial/tut15.hancho
+
+cpp_compile = hancho.Command(
+  desc    = "Compile {rel(in_src)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "build/tut15/{swap_ext(in_src, '.o')}",
+  c_deps  = "build/tut15/{swap_ext(in_src, '.d')}",
+)
+
+cpp_link = hancho.Command(
+  desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+)
+
+main_o = cpp_compile(in_src = "src/main.cpp")
+util_o = cpp_compile(in_src = "src/util.cpp")
+app    = cpp_link(in_objs = [main_o, util_o], out_bin = "build/tut15/app")
+
+
+# tutorial/tut16.hancho
+
+compile = hancho.Command(
+  desc    = "Compile {rel(in_src)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+)
+
+link = hancho.Command(
+  desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+)
+
+config = hancho.Config(repo_name = "tut16")
+main_o = compile(**config, in_src = "src/main.cpp")
+util_o = compile(**config, in_src = "src/util.cpp")
+app    = link(**config, in_objs = [main_o, util_o], out_bin = "app")
+
+
+# tutorial/tut20.hancho
+
+compile = hancho.Command(
+  desc    = "Compile {rel(in_)}",
+  command = "g++ -MMD -c {rel(in_)} -o {rel(out_)}",
+  out_    = "{swap_ext(in_, '.o')}",
+  c_deps  = "{swap_ext(in_, '.d')}",
+)
+
+link = hancho.Command(
+  desc    = "Link {rel(in_)} into {rel(out_)}",
+  command = "g++ {rel(in_)} -o {rel(out_)}",
+)
+
+config = hancho.Config(repo_name = "tut20")
+main_o = compile(**config, in_ = "src/main.cpp")
+util_o = compile(**config, in_ = "src/util.cpp")
+app    = link(**config, in_ = [main_o, util_o], out_ = "app")
+
+
+
+# tutorial/tut40.hancho
+
+config = hancho.Config(repo_name = "tut40")
+rules  = hancho.load("tut40_rules.hancho")
+
+hancho.load("src/tut40_src.hancho", config = config, rules = rules)
+
+# tutorial/tut40_rules.hancho
+
+compile = hancho.Command(
+  desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+)
+
+link = hancho.Command(
+  desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+)
+
+def c_binary(hancho, *, in_srcs, out_bin, **kwargs):
+  objs = [hancho(compile, in_src = file, **kwargs) for file in in_srcs]
+  return hancho(link, in_objs = objs, out_bin = out_bin, **kwargs)
+
+
+
+
+
+# tutorial/tut21.hancho
+
+config = hancho.Config(repo_name = "tut21")
+
+compile = hancho.Config(
+  command     = "g++ -MMD -c {rel_source_files} -o {rel_build_files}",
+  desc        = "Compile {rel_source_files}",
+  build_files = "{swap_ext(source_files, '.o')}",
+  build_deps  = "{swap_ext(source_files, '.d')}",
+)
+
+link = hancho.Config(
+  command   = "g++ {rel_source_files} -o {rel_build_files}",
+  desc      = "Link {rel_source_files} into {rel_build_files}",
+)
+
+main_o = compile(config, "src/main.cpp")
+util_o = compile(config, "src/util.cpp")
+app = link(config, [main_o, util_o], "app")
+
+
+
+# tutorial/tut30.hancho
+
+config = hancho.Config(repo_name = "tut30")
+
+rules = hancho.load("tut30_rules.hancho")
+
+app = rules.c_binary(config, ["src/main.cpp", "src/util.cpp"], "app")
+
+
+# tutorial/tut30_rules.hancho
+
+compile = hancho.Command(
+  desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+)
+
+link = hancho.Command(
+  desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+)
+
+def c_binary(config, source_files, build_files):
+  objs = [compile(**config, in_src = file) for file in source_files]
+  return link(**config, in_objs = objs, out_bin = build_files)
+
+exports.c_binary = c_binary
+
+
+
+
+
+# tutorial/tut41.hancho
+
+config = hancho.Config(repo_name = "tut41")
+rules  = hancho.load("tut41_rules.hancho")
+
+hancho.load("src/tut41_src.hancho", config = config, rules = rules)
+
+# tutorial/tut41_rules.hancho
+
+compile = hancho.Command(
+  desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
+  command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+  out_obj = "{swap_ext(in_src, '.o')}",
+  c_deps  = "{swap_ext(in_src, '.d')}",
+)
+
+link = hancho.Command(
+  desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
+  command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+)
+
+def c_binary(hancho, *, in_srcs, out_bin, **kwargs):
+    objs = [hancho(compile, in_src = file, **kwargs) for file in in_srcs]
+    return hancho(link, in_objs = objs, out_bin = out_bin, **kwargs)
+
+
+
+
+
+
+
+
+
+# tutorial/tut50.hancho - Async/await and custom commands
+import asyncio
+
+# Synchronous functions can be used in place of command strings.
+
+def sync_callback(task):
+  for abs_file in task.out_txts:
+    with open(abs_file, 'w', encoding="utf-8") as file:
+      file.write("hello world")
+  return task.get_outputs()
+
+fast_task = hancho.Task(
+  command   = sync_callback,
+  in_src    = ["src/main.cpp"],
+  out_txts  = ["fast1.txt", "fast2.txt", "fast3.txt"],
+  repo_name = "tut50",
+)
+
+# Asynchronous functions can also be used in place of command strings.
+
+async def async_callback(task):
+  for abs_file in task.out_txts:
+    with open(abs_file, 'w', encoding="utf-8") as file:
+      file.write("hello world")
+    await asyncio.sleep(0.1)
+  return task.get_outputs()
+
+slow_task = hancho.Task(
+  command   = async_callback,
+  in_src    = ["src/main.cpp"],
+  out_txts  = ["slow1.txt", "slow2.txt", "slow3.txt"],
+  repo_name = "tut50",
+)
+
+# Promises that resolve to filenames can be used in place of actual filenames in rules.
+
+async def slow_filename_promise():
+  await asyncio.sleep(0.1)
+  return ["src/main.cpp"]
+
+echo_task = hancho.Task(
+  command = "echo {rel(in_src)} > {rel(out_txt)}",
+  in_src  = [slow_filename_promise()],
+  out_txt = ["promise1.txt"],
+  repo_name = "tut50",
 )
