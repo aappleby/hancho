@@ -119,7 +119,7 @@ def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **k
     )
 
 def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **kwargs):
-    config = hancho.Config(args, kwargs)
+    config = hancho.Config(*args, **kwargs)
 
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):

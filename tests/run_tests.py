@@ -620,5 +620,14 @@ class TestHancho(unittest.TestCase):
 
 ####################################################################################################
 
+import cProfile
+import pstats
+
 if __name__ == "__main__":
-    unittest.main(verbosity=0)
+    with cProfile.Profile() as pr:
+        print("derp")
+        unittest.main(verbosity=0,exit=False)
+        print("done")
+        pr.print_stats(sort=pstats.SortKey.TIME)
+
+    #unittest.main(verbosity=0)

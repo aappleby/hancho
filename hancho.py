@@ -5,6 +5,9 @@
 from os import path
 import argparse
 import asyncio
+import builtins
+import collections
+import copy
 import glob
 import inspect
 import io
@@ -16,6 +19,7 @@ import subprocess
 import sys
 import time
 import traceback
+import types
 from enum import IntEnum
 
 # If we were launched directly, a reference to this module is already in sys.modules[__name__].
@@ -133,7 +137,7 @@ def join_path2(path1, path2, *args):
 # Helper methods
 
 def flatten(variant):
-    if isinstance(variant, list):
+    if isinstance(variant, (list, tuple)):
         return [x for element in variant for x in flatten(element)]
     return [variant]
 
@@ -245,67 +249,79 @@ class Dumper:
 
 ####################################################################################################
 
-class Config:
+def merge_variant(lhs, rhs):
+    if isinstance(lhs, Config) and isinstance(rhs, (Config, dict)):
+        for key, rval in rhs.items():
+            lhs[key] = merge_variant(lhs.get(key, None), rval)
+        return lhs
+
+    return copy.deepcopy(rhs)
+
+####################################################################################################
+
+class Config(collections.abc.MutableMapping):
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
         self.merge(*args, **kwargs)
 
-    def clone(self):
-        return type(self)(self)
+    def fork(self, *args, **kwargs):
+        return type(self)(self, *args, **kwargs)
+
+    def merge(self, *args, **kwargs):
+        for arg in flatten(args):
+            if arg is not None:
+                assert isinstance(arg, (Config, dict))
+                merge_variant(self, arg)
+        merge_variant(self, kwargs)
+        return self
 
     #----------------------------------------
-
-    def items(self):
-        return self.__dict__.items()
 
     def __contains__(self, key):
         return key in self.__dict__
 
-    def __getitem__(self, key):
-        return self.__dict__[key]
+    def __iter__(self):
+        return self.__dict__.__iter__()
+
+    def __len__(self):
+        return len(self.__dict__.keys())
 
     def __setitem__(self, key, val):
         self.__dict__[key] = val
 
-    # required to use Config as a mapping
-    def keys(self):
-        return self.__dict__.keys()
+    def __delitem__(self, key):
+        del self.__dict__[key]
 
-    def pop(self, field):
-        return self.__dict__.pop(field)
-
-    def get(self, field, default):
-        return self.__dict__.get(field, default)
-
-    def merge(self, *args, **kwargs):
-        for arg in args:
-            self.merge2(arg)
-        self.merge2(kwargs)
-
-    def merge2(self, other):
-        for key, rval in other.items():
-            if key in self:
-                lval = self[key]
-                if isinstance(lval, Config) and isinstance(rval, Config):
-                    lval.merge2(rval)
-                    continue
-            self[key] = rval
+    def __getitem__(self, key):
+        return self.__dict__[key]
 
     #----------------------------------------
 
     def __repr__(self):
         return Dumper(1).dump(self)
 
+    #----------------------------------------
+
+    #def items(self):
+    #    return self.__dict__.items()
+
+    #def keys(self):
+    #    return self.__dict__.keys()
+
+    #def values(self):
+    #    return self.__dict__.values()
+
+    #def pop(self, field):
+    #    return self.__dict__.pop(field)
+
+    #def get(self, field, default):
+    #    return self.__dict__.get(field, default)
+
     def expand(self, variant):
         return expand_variant(Expander(self), variant)
 
-    def fork(self, *args, **kwargs):
-        result = type(self)(self)
-        result.merge(args, kwargs)
-        return result
-
-    ####################################################################################################
+    #----------------------------------------
     # All static methods and fields are available to use in any macro.
 
     # fmt: off
@@ -335,6 +351,15 @@ class Config:
 
 class Command(Config):
     pass
+
+####################################################################################################
+
+class Module(Config):
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
 
 ####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
@@ -409,8 +434,6 @@ def stringify_variant(variant):
         case _:
             return str(variant)
 
-#----------------------------------------
-
 class Expander:
     """ Wraps a Config object and expands all fields read from it. """
 
@@ -439,8 +462,6 @@ class Expander:
             log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
         val = expand_variant(self, val)
         return val
-
-#----------------------------------------
 
 def expand_text(expander, text):
     """ Replaces all macros in 'text' with their expanded, stringified values. """
@@ -476,8 +497,6 @@ def expand_text(expander, text):
 
     return result
 
-#----------------------------------------
-
 def expand_macro(expander, macro):
     """ Evaluates the contents of a "{macro}" string. If eval throws an exception, the macro is
     returned unchanged. """
@@ -507,8 +526,6 @@ def expand_macro(expander, macro):
         else:
             log(trace_prefix(expander) + f"┗ expand_macro '{macro}' = {result}")
     return result
-
-#----------------------------------------
 
 def expand_variant(expander, variant):
     """ Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
@@ -552,14 +569,14 @@ def get_awaitables(variant, result):
         case Module():
             pass
         case Promise():
-            get_awaitables(variant.task, result)
+            result.append(variant.task._promise)
         case Task():
-            result.append(variant.await_done())
+            result.append(variant._promise)
         case Config() | dict():
-            for key, val in variant.items():
+            for val in variant.values():
                 get_awaitables(val, result)
-        case list():
-            for key, val in enumerate(variant):
+        case list() | tuple() | set():
+            for val in variant:
                 get_awaitables(val, result)
 
 async def await_variant(variant):
@@ -606,16 +623,16 @@ def visit_variant(key, val, visitor):
             val = visitor(key, val)
     return val
 
-def simple_visit_variant(key, val, visitor):
-    val = visitor(key, val)
-    if isinstance(val, Module):
-        pass
-    elif isinstance(val, (Config, dict)):
-        for key2, val2 in val.items():
-            simple_visit_variant(key2, val2, visitor)
-    elif isinstance(val, list):
-        for key2, val2 in enumerate(val):
-            simple_visit_variant(key2, val2, visitor)
+def simple_visit_variant(val, visitor):
+    visitor(val)
+
+    if isinstance(val, (Config, dict)):
+        for val2 in val.values():
+            simple_visit_variant(val2, visitor)
+
+    if isinstance(val, (list, tuple, set)):
+        for val2 in val:
+            simple_visit_variant(val2, visitor)
 
 ####################################################################################################
 
@@ -646,14 +663,11 @@ class TaskState(IntEnum):
 
 ####################################################################################################
 
-
 class Task(Config):
     """Calling a Command creates a Task."""
 
     def __init__(self, *args, **kwargs):
-        super().__init__(args, kwargs)
-
-        assert 'command' in self
+        super().__init__(*args, **kwargs)
 
         self.desc      = self.get('desc',      app.default_desc)
         self.command   = self.get('command',   app.default_command)
@@ -665,8 +679,6 @@ class Task(Config):
         assert isinstance(self.task_dir, str)
         assert isinstance(self.build_dir, str)
 
-        # Note - We can't set _promise = asyncio.create_task() here, as we're not guaranteed to be
-        # in an event loop yet
         self._task_index = 0
         self._in_files  = []
         self._out_files = []
@@ -680,35 +692,58 @@ class Task(Config):
 
         app.all_tasks.append(self)
 
+    #----------------------------------------
+
+    def fork(self, *args, **kwargs):
+        raise TypeError("Tasks may not be forked!")
+
+    # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
+    def __copy__(self):
+        return self
+
+    def __deepcopy__(self, memo):
+        return self
+
     def get_inputs(self):
         return self._in_files
 
     def get_outputs(self):
         return self._out_files
 
-    # FIXME recurse through all fields and queue requirements
+    #----------------------------------------
+
     def queue(self):
-        def visit(key, val):
-            if isinstance(val, Task) and val._state is TaskState.DECLARED:
-                app.queued_tasks.append(val)
-                val._state = TaskState.QUEUED
-        simple_visit_variant(None, self, visit)
+        # FIXME We have to queue all our dependencies, but this may not be the right way to do it.
+        #def visit(key, val):
+        #    if isinstance(val, Task) and val._state is TaskState.DECLARED:
+        #        app.queued_tasks.append(val)
+        #        val._state = TaskState.QUEUED
+        #simple_visit_variant(None, self, visit)
+
+        #app.queued_tasks.append(self)
+        #self._state = TaskState.QUEUED
+        #return
+
+        work = [self]
+        while len(work):
+            item = work[0]
+            work = work[1:]
+            if isinstance(item, Task) and item._state is TaskState.DECLARED:
+                app.queued_tasks.append(item)
+                item._state = TaskState.QUEUED
+
+            if isinstance(item, (Config, dict)):
+                work.extend(item.values())
+            elif isinstance(item, (list, tuple, set)):
+                work.extend(item)
 
     def start(self):
-        if self._state is TaskState.DECLARED:
-            self._promise = asyncio.create_task(self.task_main())
-            self._state = TaskState.STARTED
-            app.tasks_started += 1
-        if self._state is TaskState.QUEUED:
+        if self._state is TaskState.DECLARED or self._state is TaskState.QUEUED:
             self._promise = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
             app.tasks_started += 1
 
     async def await_done(self):
-        if self._state is TaskState.DECLARED:
-            pass
-        if self._state is TaskState.QUEUED:
-            pass
         self.start()
         assert self._promise is not None
         return await self._promise
@@ -831,7 +866,7 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        debug   = self.get('debug',   app.default_debug)
+        debug = self.get('debug', app.default_debug)
 
         if debug:
             log(f"\nTask before expand: {self}")
@@ -919,7 +954,7 @@ class Task(Config):
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug = self.get('debug',   app.default_debug)
+        debug = self.get('debug', app.default_debug)
 
         if force:
             return f"Files {self._out_files} forced to rebuild"
@@ -1052,13 +1087,13 @@ class Task(Config):
 class Context(Config):
 
     def __init__(self, *args, **kwargs):
-        self.config = None
+        self.config = Config()
         super().__init__(*args, **kwargs)
 
     def __call__(self, arg1 = None, /, *args, **kwargs):
         if callable(arg1):
             return arg1(self, *args, **kwargs)
-        return Task(self.config, arg1, args, kwargs)
+        return Task(self.config, arg1, *args, **kwargs)
 
     def normalize_path(self, file_path):
         file_path = self.expand(file_path)
@@ -1136,8 +1171,24 @@ class Context(Config):
         app.pushdir(path.dirname(self.config.mod_path))
 
         with open(self.config.mod_path, encoding="utf-8") as file:
+            source = file.read()
+
+            code = compile(source, self.config.mod_path, "exec", dont_inherit=True)
+            temp_module.__builtins__ = builtins
+            types.FunctionType(code, temp_module.__dict__)()
+
             # pylint: disable=exec-used
-            exec(file.read(), temp_module.__dict__, temp_module.__dict__)
+            #exec(source, temp_module.__dict__, temp_module.__dict__)
+
+        #with open(mod_path, encoding="utf-8") as file:
+        #    source = file.read()
+        #    code = compile(source, mod_path, "exec", dont_inherit=True)
+        #module = type(sys)(mod_name)
+        #module.__file__ = mod_path
+        #module.__builtins__ = builtins
+        #module.hancho = Context(imports, exports = exports)
+        #app.pushdir(path.dirname(mod_path))
+        #types.FunctionType(code, module.__dict__)()
 
         # Module loaded, make a copy that doesn't include __builtins__ and hancho so we don't have
         # modules that end up transitively containing the universe
@@ -1156,11 +1207,6 @@ class Context(Config):
     Config = Config
     Command = Command
     Task = Task
-
-####################################################################################################
-
-class Module(Config):
-    pass
 
 ####################################################################################################
 
@@ -1488,6 +1534,26 @@ app = App()
 ####################################################################################################
 
 def main():
+
+    """
+    stuff = [1, 2, 3]
+
+    a = Config(foo = 1, bar = stuff, flarp = 666)
+    b = Config(foo = 2, bar = stuff, narp = 777)
+    c = a.fork(b)
+
+    stuff.append(4)
+
+    d = Dumper(100)
+    print(d.dump(a))
+    print()
+    print(d.dump(b))
+    print()
+    print(d.dump(c))
+
+    sys.exit(0)
+    """
+
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -1521,8 +1587,8 @@ def main():
             val = maybe_as_number(val) if val is not None else True
             extra_flags[key] = val
 
-    sys.exit(app.main(flags, extra_flags))
+    return app.main(flags, extra_flags)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
 

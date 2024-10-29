@@ -8,15 +8,15 @@ compile_cpp = hancho.Command(
   c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
+main_o = hancho(compile_cpp, in_src = "main.cpp")
+util_o = hancho(compile_cpp, in_src = "util.cpp")
+
 link_cpp_bin = hancho.Command(
   desc    = "Linking C++ bin {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
   in_objs = None,
   out_bin = None,
 )
-
-main_o = hancho(compile_cpp, in_src = "main.cpp")
-util_o = hancho(compile_cpp, in_src = "util.cpp")
 
 main_app = hancho(
   link_cpp_bin,
