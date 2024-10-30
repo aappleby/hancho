@@ -8,51 +8,51 @@ from glob import glob
 src_files = glob("src/*")
 
 random_touch = hancho(
-  desc = "Touch 3 random files in src/ - {rel(in_src)}",
-  command = [
-    "touch {in_src[0]}",
-    "touch {in_src[1]}",
-    "touch {in_src[2]}",
-  ],
-  in_src = random.sample(src_files, 3),
+    desc = "Touch 3 random files in src/ - {rel(in_src)}",
+    command = [
+        "touch {in_src[0]}",
+        "touch {in_src[1]}",
+        "touch {in_src[2]}",
+    ],
+    in_src = random.sample(src_files, 3),
 )
 
 def generate_filelist(task):
-  with open(task.out_list, "w", encoding="utf-8") as file:
-    for f in random.sample(task.src_files, 3):
-      #hancho.log(f"Writing {f} to {task.out_list}")
-      file.write(str(f) + "\n")
-  return task.out_list
+    with open(task.config.out_list, "w", encoding="utf-8") as file:
+        for f in random.sample(task.config.src_files, 3):
+            #hancho.log(f"Writing {f} to {task.config.out_list}")
+            file.write(str(f) + "\n")
+    return task.config.out_list
 
 filelist_txt = hancho(
-  desc     = "Write the names of 3 random files in src/ to {out_list}",
-  command  = generate_filelist,
-  out_list = "filelist.txt",
-  src_files = src_files
+    desc     = "Write the names of 3 random files in src/ to {out_list}",
+    command  = generate_filelist,
+    out_list = "filelist.txt",
+    src_files = src_files
 )
 
 def generate_result(task):
-  """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
-  file = open(task.in_filelist[0], "r", encoding="utf-8")
-  from_filelist = [f.strip() for f in file.readlines()]
-  return hancho(
-    desc      = "Concatenate {in_files} into {out_files}",
-    command   = "cat {in_files} > {out_files}",
-    in_files  = from_filelist,
-    out_files = "result.txt",
-    other_files = [random_touch, filelist_txt],
-  )
+    """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
+    file = open(task.config.in_filelist[0], "r", encoding="utf-8")
+    from_filelist = [f.strip() for f in file.readlines()]
+    return hancho(
+        desc      = "Concatenate {in_files} into {out_files}",
+        command   = "cat {in_files} > {out_files}",
+        in_files  = from_filelist,
+        out_files = "result.txt",
+        other_files = [random_touch, filelist_txt],
+    )
 
 result_txt = hancho(
-  desc = "Read {in_filelist} and use its contents to generate another task",
-  command = generate_result,
-  in_filelist = filelist_txt,
+    desc = "Read {in_filelist} and use its contents to generate another task",
+    command = generate_result,
+    in_filelist = filelist_txt,
 )
 
 print_task = hancho(
-  desc = "Print the contents of {in_text}",
-  command = "cat {in_text}",
-  in_text = result_txt,
+    desc = "Print the contents of {in_text}",
+    command = "cat {in_text}",
+    in_text = result_txt,
 )
 
 

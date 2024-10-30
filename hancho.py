@@ -188,28 +188,17 @@ def maybe_as_number(text):
 
 class Dumper:
     def __init__(self, max_depth = 2):
-        self.tabs = 0
         self.depth = 0
         self.max_depth = max_depth
 
     def indent(self):
-        return "  " * self.tabs
+        return "  " * self.depth
 
     def dump(self, variant):
-        result = ""
+        result = f"{type(variant).__name__} @ {hex(id(variant))} "
         match variant:
-            case Task():
-                result = f"{type(variant).__name__} @ {hex(id(variant))} "
-                if self.depth >= self.max_depth:
-                    result += "{...}"
-                else:
-                    result += self.dump(variant.__dict__)
-            case Config():
-                result = f"{type(variant).__name__} @ {hex(id(variant))} "
-                if self.depth >= self.max_depth:
-                    result += "{...}"
-                else:
-                    result += self.dump(variant.__dict__)
+            case Config() | Task() | HanchoAPI():
+                result += self.dump_dict(variant.__dict__)
             case list():
                 result = self.dump_list(variant)
             case dict():
@@ -221,28 +210,31 @@ class Dumper:
         return result
 
     def dump_list(self, l):
-        result = "["
-        #self.depth += 1
-        self.tabs += 1
+        if len(l) == 0:
+            return "[]"
+
+        if len(l) == 1:
+            return f"[{self.dump(l[0])}]"
+
+        if self.depth >= self.max_depth:
+            return "[...]"
+
+        result = "[\n"
+        self.depth += 1
         for val in l:
-            if len(l) > 0:
-                result += "\n" + self.indent()
-            result += self.dump(val)
-            result += ", "
-        #self.depth -= 1
-        self.tabs -= 1
-        if len(l) > 0:
-            result += "\n" + self.indent()
-        result += "]"
+            result += self.indent() + self.dump(val) + ",\n"
+        self.depth -= 1
+        result += self.indent() + "]"
         return result
 
     def dump_dict(self, d):
+        if self.depth >= self.max_depth:
+            return "{...}"
+
         result = "{\n"
         self.depth += 1
-        self.tabs += 1
         for key, val in d.items():
-            result += self.indent() + f"{key} = {self.dump(val)},\n"
-        self.tabs -= 1
+            result += self.indent() + f"{key} = " + self.dump(val) + ",\n"
         self.depth -= 1
         result += self.indent() + "}"
         return result
@@ -259,7 +251,29 @@ def merge_variant(lhs, rhs):
 
 ####################################################################################################
 
-class Config(collections.abc.MutableMapping):
+class Utils:
+    # fmt: off
+    abs_path    = staticmethod(abs_path)
+    rel_path    = staticmethod(rel_path)
+    join_path   = staticmethod(join_path)
+    color       = staticmethod(color)
+    glob        = staticmethod(glob.glob)
+    len         = staticmethod(len)
+    run_cmd     = staticmethod(run_cmd)
+    swap_ext    = staticmethod(swap_ext)
+    flatten     = staticmethod(flatten)
+    print       = staticmethod(print)
+    log         = staticmethod(log)
+    path        = path
+    re          = re
+    join_prefix = staticmethod(join_prefix)
+    join_suffix = staticmethod(join_suffix)
+    # fmt: on
+
+####################################################################################################
+# FIXME this should probably just inherit from dict...
+
+class Config(collections.abc.MutableMapping, Utils):
     """A Config object is just a 'bag of fields'."""
 
     def __init__(self, *args, **kwargs):
@@ -275,6 +289,12 @@ class Config(collections.abc.MutableMapping):
                 merge_variant(self, arg)
         merge_variant(self, kwargs)
         return self
+
+    def __repr__(self):
+        return Dumper(1).dump(self)
+
+    def expand(self, variant):
+        return expand_variant(Expander(self), variant)
 
     #----------------------------------------
 
@@ -296,51 +316,8 @@ class Config(collections.abc.MutableMapping):
     def __getitem__(self, key):
         return self.__dict__[key]
 
-    #----------------------------------------
-
-    def __repr__(self):
-        return Dumper(1).dump(self)
-
-    #----------------------------------------
-
-    #def items(self):
-    #    return self.__dict__.items()
-
-    #def keys(self):
-    #    return self.__dict__.keys()
-
-    #def values(self):
-    #    return self.__dict__.values()
-
-    #def pop(self, field):
-    #    return self.__dict__.pop(field)
-
-    #def get(self, field, default):
-    #    return self.__dict__.get(field, default)
-
-    def expand(self, variant):
-        return expand_variant(Expander(self), variant)
-
-    #----------------------------------------
-    # All static methods and fields are available to use in any macro.
-
-    # fmt: off
-    abs_path    = staticmethod(abs_path)
-    rel_path    = staticmethod(rel_path)
-    join_path   = staticmethod(join_path)
-    color       = staticmethod(color)
-    glob        = staticmethod(glob.glob)
-    len         = staticmethod(len)
-    run_cmd     = staticmethod(run_cmd)
-    swap_ext    = staticmethod(swap_ext)
-    flatten     = staticmethod(flatten)
-    print       = staticmethod(print)
-    log         = staticmethod(log)
-    path        = path
-    re          = re
-    join_prefix = staticmethod(join_prefix)
-    join_suffix = staticmethod(join_suffix)
-    # fmt: on
+    def rel(self, sub_path):
+        return rel_path(sub_path, expand_variant(self, self.task_dir))
 
     def stem(self, filename):
         filename = flatten(filename)[0]
@@ -351,15 +328,6 @@ class Config(collections.abc.MutableMapping):
 
 class Command(Config):
     pass
-
-####################################################################################################
-
-class Module(Config):
-    def __copy__(self):
-        return self
-
-    def __deepcopy__(self, memo):
-        return self
 
 ####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
@@ -566,8 +534,6 @@ def get_awaitables(variant, result):
         return
 
     match variant:
-        case Module():
-            pass
         case Promise():
             result.append(variant.task._promise)
         case Task():
@@ -586,8 +552,6 @@ async def await_variant(variant):
         variant = await variant
 
     match variant:
-        case Module():
-            pass
         case Exception() | asyncio.CancelledError():
             raise variant
         case Promise():
@@ -642,13 +606,16 @@ class Promise:
         self.args = args
 
     async def get(self):
-        await self.task.await_done()
-        if len(self.args) == 0:
-            return self.task.get_outputs()
-        elif len(self.args) == 1:
-            return self.task[self.args[0]]
+        task = self.task
+        args = self.args
+        config = task.config
+        await task.await_done()
+        if len(args) == 0:
+            return task.get_outputs()
+        elif len(args) == 1:
+            return config[args[0]]
         else:
-            return [self.task[field] for field in args]
+            return [config[field] for field in args]
 
 ####################################################################################################
 
@@ -663,21 +630,29 @@ class TaskState(IntEnum):
 
 ####################################################################################################
 
-class Task(Config):
+class Task:
     """Calling a Command creates a Task."""
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        #super().__init__(*args, **kwargs)
 
-        self.desc      = self.get('desc',      app.default_desc)
-        self.command   = self.get('command',   app.default_command)
-        self.task_dir  = self.get('task_dir',  app.default_task_dir)
-        self.build_dir = self.get('build_dir', app.default_build_dir)
-        self.log_path  = self.get('log_path',  app.default_log_path)
+        default_config = Config(
+            desc      = app.default_desc,
+            command   = app.default_command,
+            task_dir  = app.default_task_dir,
+            build_dir = app.default_build_dir,
+            log_path  = app.default_log_path,
+        )
 
-        assert isinstance(self.command, (str, list)) or callable(self.command) or self.command is None
-        assert isinstance(self.task_dir, str)
-        assert isinstance(self.build_dir, str)
+        self.config = Config(
+            default_config,
+            *args,
+            **kwargs
+        )
+
+        assert isinstance(self.config.command, (str, list)) or callable(self.config.command) or self.config.command is None
+        assert isinstance(self.config.task_dir, str)
+        assert isinstance(self.config.build_dir, str)
 
         self._task_index = 0
         self._in_files  = []
@@ -694,9 +669,6 @@ class Task(Config):
 
     #----------------------------------------
 
-    def fork(self, *args, **kwargs):
-        raise TypeError("Tasks may not be forked!")
-
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
     def __copy__(self):
         return self
@@ -711,31 +683,25 @@ class Task(Config):
         return self._out_files
 
     #----------------------------------------
+    # FIXME We have to queue all our dependencies, but this may not be the right way to do it.
+
+    @staticmethod
+    def queue_variant(variant):
+        match variant:
+            case Task():
+                if variant._state is TaskState.DECLARED:
+                    app.queued_tasks.append(variant)
+                    variant._state = TaskState.QUEUED
+                    Task.queue_variant(variant.config)
+            case Config() | dict():
+                for val in variant.values():
+                    Task.queue_variant(val)
+            case list() | tuple() | set():
+                for val in variant:
+                    Task.queue_variant(val)
 
     def queue(self):
-        # FIXME We have to queue all our dependencies, but this may not be the right way to do it.
-        #def visit(key, val):
-        #    if isinstance(val, Task) and val._state is TaskState.DECLARED:
-        #        app.queued_tasks.append(val)
-        #        val._state = TaskState.QUEUED
-        #simple_visit_variant(None, self, visit)
-
-        #app.queued_tasks.append(self)
-        #self._state = TaskState.QUEUED
-        #return
-
-        work = [self]
-        while len(work):
-            item = work[0]
-            work = work[1:]
-            if isinstance(item, Task) and item._state is TaskState.DECLARED:
-                app.queued_tasks.append(item)
-                item._state = TaskState.QUEUED
-
-            if isinstance(item, (Config, dict)):
-                work.extend(item.values())
-            elif isinstance(item, (list, tuple, set)):
-                work.extend(item)
+        Task.queue_variant(self)
 
     def start(self):
         if self._state is TaskState.DECLARED or self._state is TaskState.QUEUED:
@@ -751,16 +717,13 @@ class Task(Config):
     def promise(self, *args):
         return Promise(self, *args)
 
-    def rel(self, sub_path):
-        return rel_path(sub_path, expand_variant(self, self.task_dir))
-
     #-----------------------------------------------------------------------------------------------
 
     def print_status(self):
         """ Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information """
-        verbose = self.get('verbose', app.default_verbose)
+        verbose = self.config.get('verbose', app.default_verbose)
         log(
-            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.desc}",
+            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config.desc}",
             sameline=not verbose,
         )
 
@@ -769,25 +732,24 @@ class Task(Config):
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbose = self.get('verbose', app.default_verbose)
-        debug   = self.get('debug',   app.default_debug)
-        force   = self.get('force',   app.default_force)
+        verbose = self.config.get('verbose', app.default_verbose)
+        debug   = self.config.get('debug',   app.default_debug)
+        force   = self.config.get('force',   app.default_force)
 
         try:
             # Await everything awaitable in this task except the task's own promise.
 
             assert self._state is TaskState.STARTED
             awaitables = []
-            for key, val in self.items():
+            for key, val in self.config.items():
                 if key != "_promise":
                     get_awaitables(val, awaitables)
 
             self._state = TaskState.AWAITING_INPUTS
             await asyncio.gather(*awaitables)
 
-            for key, val in self.items():
-                if key != "_promise":
-                    self.__dict__[key] = await await_variant(val)
+            for key, val in self.config.items():
+                self.config.__dict__[key] = await await_variant(val)
 
             if debug:
                 log(f"Task {hex(id(self))} start")
@@ -796,7 +758,7 @@ class Task(Config):
             self.task_init()
 
             # Early-out if this is a no-op task
-            if self.command is None:
+            if self.config.command is None:
                 app.tasks_passed += 1
                 self._state = TaskState.FINISHED
                 return
@@ -809,7 +771,7 @@ class Task(Config):
                 app.tasks_skipped += 1
             else:
                 # Wait for enough jobs to free up to run this task.
-                job_count = self.get("job_count", 1)
+                job_count = self.config.get("job_count", 1)
                 self._state = TaskState.AWAITING_JOBS
                 await app.job_pool.acquire_jobs(job_count, self)
 
@@ -822,16 +784,16 @@ class Task(Config):
                 if verbose or debug:
                     log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
-                commands = flatten(self.command)
+                commands = flatten(self.config.command)
 
                 try:
                     for command in commands:
                         if verbose or debug:
-                            root_dir = self.get("root_dir", "/")
+                            root_dir = self.config.get("root_dir", "/")
                             log(color(128,128,255), end="")
                             if app.dry_run: log("(DRY RUN) ", end="")
-                            log(f"{rel_path(self.task_dir, root_dir)}$ ", end="")
-                            #log(f"{self.task_dir}$ ", end="")
+                            log(f"{rel_path(self.config.task_dir, root_dir)}$ ", end="")
+                            #log(f"{self.config.task_dir}$ ", end="")
                             log(color(), end="")
                             log(command)
                         if not app.dry_run:
@@ -866,27 +828,27 @@ class Task(Config):
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        debug = self.get('debug', app.default_debug)
+        debug = self.config.get('debug', app.default_debug)
 
         if debug:
             log(f"\nTask before expand: {self}")
 
         # Expand the in and out paths first
-        self.task_dir  = abs_path(self.expand(self.task_dir))
-        self.build_dir = abs_path(self.expand(self.build_dir))
+        self.config.task_dir  = abs_path(self.config.expand(self.config.task_dir))
+        self.config.build_dir = abs_path(self.config.expand(self.config.build_dir))
 
         # We _must_ expand first before prepending directories or paths will break
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-        for key, val in self.items():
+        for key, val in self.config.items():
             if key.startswith("in_") or key.startswith("out_") or key == "c_deps":
-                self.__dict__[key] = self.expand(val)
+                self.config.__dict__[key] = self.config.expand(val)
 
         # Prepend the in/out path to the filenames
         def handle_in_path(key, val):
             if val is None:
                 raise ValueError(f"Key {key} was None")
             assert isinstance(val, str)
-            val = abs_path(join_path(self.task_dir, val))
+            val = abs_path(join_path(self.config.task_dir, val))
             self._in_files.append(val)
             return val
 
@@ -894,33 +856,33 @@ class Task(Config):
             if val is None:
                 raise ValueError(f"Key {key} was None")
             assert isinstance(val, str)
-            val = abs_path(join_path(self.build_dir, val))
+            val = abs_path(join_path(self.config.build_dir, val))
             self._out_files.append(val)
             return val
 
-        for key, val in self.items():
+        for key, val in self.config.items():
             if key.startswith("in_"):
-                self[key] = visit_variant(key, val, handle_in_path)
+                self.config[key] = visit_variant(key, val, handle_in_path)
             if key.startswith("out_"):
-                self[key] = visit_variant(key, val, handle_out_path)
+                self.config[key] = visit_variant(key, val, handle_out_path)
 
-        if c_deps := self.get("c_deps", None):
-            c_deps = join_path(self.build_dir, c_deps)
-            self["c_deps"] = c_deps
+        if c_deps := self.config.get("c_deps", None):
+            c_deps = join_path(self.config.build_dir, c_deps)
+            self.config.c_deps = c_deps
             if path.isfile(c_deps):
                 self._in_files.append(c_deps)
 
         # And now we can expand the command.
-        self.desc     = self.expand(self.desc)
-        self.command  = self.expand(self.command)
-        self.log_path = self.expand(self.log_path)
+        self.config.desc     = self.config.expand(self.config.desc)
+        self.config.command  = self.config.expand(self.config.command)
+        self.config.log_path = self.config.expand(self.config.log_path)
 
         if debug:
             log(f"\nTask after expand: {self}")
 
         # Check for missing input files/paths
-        if not path.exists(self.task_dir):
-            raise FileNotFoundError(self.task_dir)
+        if not path.exists(self.config.task_dir):
+            raise FileNotFoundError(self.config.task_dir)
 
         for file in self._in_files:
             if file is None:
@@ -933,12 +895,12 @@ class Task(Config):
             if file is None:
                 raise ValueError("_out_files contained a None")
             # Raw tasks may not have a root_dir
-            if root_dir := self.get("root_dir", None):
+            if root_dir := self.config.get("root_dir", None):
                 if not file.startswith(root_dir):
                     raise ValueError(f"Path error, output file {file} is not under root_dir {root_dir}")
 
         # Check for duplicate task outputs
-        if self.command:
+        if self.config.command:
             for file in self._out_files:
                 if file in app.all_out_files:
                     raise NameError(f"Multiple rules build {file}!")
@@ -954,7 +916,7 @@ class Task(Config):
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug = self.get('debug', app.default_debug)
+        debug = self.config.get('debug', app.default_debug)
 
         if force:
             return f"Files {self._out_files} forced to rebuild"
@@ -984,8 +946,8 @@ class Task(Config):
 
         # Check all dependencies in the C dependencies file, if present.
 
-        if (c_deps := self.get("c_deps", None)) and path.exists(c_deps):
-            c_depformat = self.get("c_depformat", "gcc")
+        if (c_deps := self.config.get("c_deps", None)) and path.exists(c_deps):
+            c_depformat = self.config.get("c_depformat", "gcc")
             if debug:
                 log(f"Found C dependencies file {c_deps}")
             with open(c_deps, encoding="utf-8") as c_deps:
@@ -1001,7 +963,7 @@ class Task(Config):
                     raise ValueError(f"Invalid dependency file format {c_depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [path.join(self.task_dir, d) for d in deplines]
+                deplines = [path.join(self.config.task_dir, d) for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -1015,12 +977,12 @@ class Task(Config):
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbose = self.get('verbose', app.default_verbose)
-        debug   = self.get('debug',   app.default_debug)
+        verbose = self.config.get('verbose', app.default_verbose)
+        debug   = self.config.get('debug',   app.default_debug)
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            app.pushdir(self.task_dir)
+            app.pushdir(self.config.task_dir)
             result = command(self)
             app.popdir()
             while inspect.isawaitable(result):
@@ -1039,7 +1001,7 @@ class Task(Config):
 
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd=self.task_dir,
+                cwd=self.config.task_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1056,9 +1018,9 @@ class Task(Config):
 
         # FIXME we need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
-        command_pass = (self._returncode == 0) != self.get('should_fail', False)
+        command_pass = (self._returncode == 0) != self.config.get('should_fail', False)
 
-        if (log_path := self.get('log_path', app.default_log_path)) is not None:
+        if (log_path := self.config.get('log_path', app.default_log_path)) is not None:
             result = open(log_path, "w", encoding="utf-8")
             result.write(str(self))
             result.write("\n")
@@ -1066,12 +1028,12 @@ class Task(Config):
 
         if verbose or not command_pass:
             if not command_pass:
-                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color(255,128,128)} Task failed {color()}- '{self.desc}'")
-                log(f"Task dir: {self.task_dir}")
-                log(f"Command : {self.command}")
+                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color(255,128,128)} Task failed {color()}- '{self.config.desc}'")
+                log(f"Task dir: {self.config.task_dir}")
+                log(f"Command : {self.config.command}")
                 log(f"Return  : {self._returncode}")
             else:
-                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.desc}'")
+                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config.desc}'")
             if self._stdout:
                 log("Stdout:")
                 log(self._stdout, end="")
@@ -1084,11 +1046,19 @@ class Task(Config):
 
 ####################################################################################################
 
-class Context(Config):
+class HanchoAPI(Utils):
 
-    def __init__(self, *args, **kwargs):
-        self.config = Config()
-        super().__init__(*args, **kwargs)
+    def __init__(self):
+        self.config  = Config()
+        self.Config  = Config
+        self.Command = Command
+        self.Task    = Task
+
+    def __repr__(self):
+        return Dumper(2).dump(self)
+
+    def __contains__(self, key):
+        return key in self.__dict__
 
     def __call__(self, arg1 = None, /, *args, **kwargs):
         if callable(arg1):
@@ -1096,7 +1066,7 @@ class Context(Config):
         return Task(self.config, arg1, *args, **kwargs)
 
     def normalize_path(self, file_path):
-        file_path = self.expand(file_path)
+        file_path = self.config.expand(file_path)
         assert isinstance(file_path, str)
         assert not macro_regex.search(file_path)
 
@@ -1110,7 +1080,6 @@ class Context(Config):
 
     def load(self, mod_path):
         mod_path = self.normalize_path(mod_path)
-
         new_config = Config(
             self.config,
             mod_name = path.splitext(path.basename(mod_path))[0],
@@ -1120,7 +1089,8 @@ class Context(Config):
             build_dir = app.default_build_dir,
         )
 
-        new_context = Context(self, config = new_config)
+        new_context = copy.copy(self)
+        new_context.config = new_config
         return new_context._load_module()
 
     def repo(self, mod_path):
@@ -1136,13 +1106,14 @@ class Context(Config):
             build_dir = app.default_build_dir,
         )
 
-        new_context = Context(self, config = new_config)
+        new_context = copy.copy(self)
+        new_context.config = new_config
         return new_context._load_module()
 
     def root(self, mod_path):
         mod_path = self.normalize_path(mod_path)
-
         new_config = Config(
+            self.config,
             root_dir  = path.dirname(mod_path),
             root_path = mod_path,
             repo_name = path.basename(path.dirname(mod_path)),
@@ -1154,59 +1125,66 @@ class Context(Config):
             mod_path  = mod_path,
         )
 
-        new_context = Context(self, config = new_config)
+        new_context = copy.copy(self)
+        new_context.config = new_config
         return new_context._load_module()
 
     def _load_module(self):
-        log(("┃ " * (len(app.dirstack) - 1)), end="")
-        log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
+        config = self.config
 
-        temp_module = Module(hancho = self)
-        app.loaded_files.append(self.config.mod_path)
-        app.modstack.append(temp_module)
+        log(("┃ " * (len(app.dirstack) - 1)), end="")
+        log(color(128,255,128) + f"Loading {config.mod_path}" + color())
+
+        app.loaded_files.append(config.mod_path)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        app.pushdir(path.dirname(self.config.mod_path))
+        app.pushdir(path.dirname(config.mod_path))
 
-        with open(self.config.mod_path, encoding="utf-8") as file:
+        temp_globals = {
+            "hancho" : self,
+            "__builtins__": builtins
+        }
+
+        with open(config.mod_path, encoding="utf-8") as file:
+            # We're using compile() and FunctionType()() here beause exec() doesn't preserve source
+            # code for debugging.
             source = file.read()
+            code = compile(source, config.mod_path, "exec", dont_inherit=True)
+            types.FunctionType(code, temp_globals)()
 
-            code = compile(source, self.config.mod_path, "exec", dont_inherit=True)
-            temp_module.__builtins__ = builtins
-            types.FunctionType(code, temp_module.__dict__)()
-
-            # pylint: disable=exec-used
-            #exec(source, temp_module.__dict__, temp_module.__dict__)
-
-        #with open(mod_path, encoding="utf-8") as file:
-        #    source = file.read()
-        #    code = compile(source, mod_path, "exec", dont_inherit=True)
-        #module = type(sys)(mod_name)
-        #module.__file__ = mod_path
-        #module.__builtins__ = builtins
-        #module.hancho = Context(imports, exports = exports)
-        #app.pushdir(path.dirname(mod_path))
-        #types.FunctionType(code, module.__dict__)()
-
-        # Module loaded, make a copy that doesn't include __builtins__ and hancho so we don't have
-        # modules that end up transitively containing the universe
-        new_module = Module()
-        for key, val in temp_module.items():
+        # Module loaded, turn the module's globals into a Config that doesn't include __builtins__
+        # and hancho so we don't have modules that end up transitively containing the universe
+        new_module = Config()
+        for key, val in temp_globals.items():
             if key.startswith('_') or key == 'hancho': continue
+            # Don't copy imports from temp_globals either
+            if isinstance(val, type(sys)): continue
             new_module[key] = val
 
         # And now we chdir back out.
         app.popdir()
-        app.modstack.pop()
 
         return new_module
 
-
-    Config = Config
-    Command = Command
-    Task = Task
+    # fmt: off
+    abs_path    = staticmethod(abs_path)
+    rel_path    = staticmethod(rel_path)
+    join_path   = staticmethod(join_path)
+    color       = staticmethod(color)
+    glob        = staticmethod(glob.glob)
+    len         = staticmethod(len)
+    run_cmd     = staticmethod(run_cmd)
+    swap_ext    = staticmethod(swap_ext)
+    flatten     = staticmethod(flatten)
+    print       = staticmethod(print)
+    log         = staticmethod(log)
+    path        = path
+    re          = re
+    join_prefix = staticmethod(join_prefix)
+    join_suffix = staticmethod(join_suffix)
+    # fmt: on
 
 ####################################################################################################
 
@@ -1219,7 +1197,6 @@ class JobPool:
     def reset(self, job_count):
         self.jobs_available = job_count
         self.job_slots = [None] * self.jobs_available
-        pass
 
     ########################################
 
@@ -1277,7 +1254,6 @@ class App:
 
         self.loaded_files = []
         self.dirstack = [os.getcwd()]
-        self.modstack = []
 
         self.all_out_files = set()
 
@@ -1347,7 +1323,8 @@ class App:
         for key, val in extra_flags.items():
             setattr(root_config, key, val)
 
-        root_context = Context(config = root_config)
+        root_context = HanchoAPI()
+        root_context.config = root_config
         return root_context
 
     ########################################
@@ -1367,7 +1344,7 @@ class App:
 
         app.root_context = self.create_root_context(flags, extra_flags)
 
-        if app.root_context.get("debug", None):
+        if app.root_context.config.get("debug", None):
             log(f"root_context = {Dumper().dump(app.root_context)}")
 
         if not path.isfile(app.root_context.config.root_path):
@@ -1389,6 +1366,7 @@ class App:
 
         #========================================
 
+        time_a = time.perf_counter()
         if app.target:
             target_regex = re.compile(app.target)
             for task in self.all_tasks:
@@ -1416,10 +1394,14 @@ class App:
                     task.queue()
         else:
             for task in self.all_tasks:
-                #if task.mod_path == task.root_path:
-                if task.root_dir == task.repo_dir:
+                # If no target was specified, we queue up all tasks from the root repo.
+                root_dir = task.config.get("root_dir", None)
+                repo_dir = task.config.get("repo_dir", None)
+                if root_dir == repo_dir:
                     task.queue()
-                #task.queue()
+        time_b = time.perf_counter()
+        #if app.default_debug or app.default_verbose:
+        log(f"Queueing {len(app.queued_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
         result = self.build()
 

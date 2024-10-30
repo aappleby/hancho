@@ -1,25 +1,25 @@
 # examples/hello_world/build.hancho
 
 compile_cpp = hancho.Command(
-  desc    = "Compiling C++ {in_src} -> {out_obj}",
-  command = "g++ -c {in_src} -o {out_obj}",
-  in_src  = None,
-  out_obj = "{swap_ext(in_src, '.o')}",
-  c_deps  = "{swap_ext(in_src, '.d')}",
+    desc    = "Compiling C++ {in_src} -> {out_obj}",
+    command = "g++ -c {in_src} -o {out_obj}",
+    in_src  = None,
+    out_obj = "{swap_ext(in_src, '.o')}",
+    c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
 main_o = hancho(compile_cpp, in_src = "main.cpp")
 util_o = hancho(compile_cpp, in_src = "util.cpp")
 
 link_cpp_bin = hancho.Command(
-  desc    = "Linking C++ bin {out_bin}",
-  command = "g++ {in_objs} -o {out_bin}",
-  in_objs = None,
-  out_bin = None,
+    desc    = "Linking C++ bin {out_bin}",
+    command = "g++ {in_objs} -o {out_bin}",
+    in_objs = None,
+    out_bin = None,
 )
 
 main_app = hancho(
-  link_cpp_bin,
-  in_objs = [main_o, util_o],
-  out_bin = "hello_world",
+    link_cpp_bin,
+    in_objs = [main_o, util_o],
+    out_bin = "hello_world",
 )
