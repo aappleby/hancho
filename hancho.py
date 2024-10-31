@@ -88,13 +88,7 @@ def log_exception():
 #---------------------------------------------------------------------------------------------------
 # Path manipulation
 
-def unwrap_path(variant) -> str | list[str]:
-    if isinstance(variant, (Task, Expander)):
-        variant = variant._out_files
-    return variant
-
 def abs_path(raw_path, strict=False) -> str | list[str]:
-    raw_path = unwrap_path(raw_path)
 
     if isinstance(raw_path, list):
         return [abs_path(p, strict) for p in raw_path]
@@ -105,8 +99,6 @@ def abs_path(raw_path, strict=False) -> str | list[str]:
     return result
 
 def rel_path(path1, path2):
-    path1 = unwrap_path(path1)
-    path2 = unwrap_path(path2)
 
     if isinstance(path1, list):
         return [rel_path(p, path2) for p in path1]
@@ -123,8 +115,6 @@ def join_path(path1, path2, *args):
     return flatten(result) if isinstance(result, list) else result
 
 def join_path2(path1, path2, *args):
-    path1 = unwrap_path(path1)
-    path2 = unwrap_path(path2)
 
     if len(args) > 0:
         return [join_path(path1, p) for p in join_path(path2, *args)]
@@ -955,11 +945,9 @@ class Task:
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             app.pushdir(self.config.task_dir)
-            result = command(self)
+            command(self)
             app.popdir()
             self._returncode = 0
-            if result is not None:
-                self._out_files.append(result)
             return
 
         # Non-string non-callable commands are not valid
@@ -995,7 +983,7 @@ class Task:
             result.write("\n")
             result.close()
 
-        if verbose or not command_pass:
+        if debug or verbose or not command_pass:
             if not command_pass:
                 log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color(255,128,128)} Task failed {color()}- '{self.config.desc}'")
                 log(f"Task dir: {self.config.task_dir}")

@@ -34,14 +34,14 @@ def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
     file = open(task.config.in_filelist[0], "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
-    task = hancho(
+    new_task = hancho(
         desc      = "Concatenate {in_files} into {out_files}",
         command   = "cat {in_files} > {out_files}",
         in_files  = from_filelist,
         out_files = "result.txt",
         other_files = [random_touch, filelist_txt],
     )
-    return task
+    task._out_files.append(new_task)
 
 result_txt = hancho(
     desc = "Read {in_filelist} and use its contents to generate another task",
