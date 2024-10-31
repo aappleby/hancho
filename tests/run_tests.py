@@ -255,6 +255,7 @@ class TestHancho(unittest.TestCase):
             out_obj = "missing_src.txt"
         )
         self.assertNotEqual(0, hancho.app.build_all())
+        print(hancho.app.log)
         self.assertTrue("FileNotFoundError" in hancho.app.log)
         self.assertTrue("does_not_exist.txt" in hancho.app.log)
 
@@ -501,9 +502,9 @@ class TestHancho(unittest.TestCase):
         ctx = self.create_ctx({'quiet':True}, {})
 
         def sync_command(task):
-            force_touch(task.out_obj)
+            force_touch(task.config.out_obj)
 
-        ctx(
+        task = ctx(
             command = sync_command,
             in_src  = [],
             out_obj = "result.txt",
@@ -624,10 +625,10 @@ import cProfile
 import pstats
 
 if __name__ == "__main__":
-    with cProfile.Profile() as pr:
-        print("derp")
-        unittest.main(verbosity=0,exit=False)
-        print("done")
-        pr.print_stats(sort=pstats.SortKey.TIME)
-
+    #with cProfile.Profile() as pr:
+    #    print("derp")
+    #    unittest.main(verbosity=0,exit=False)
+    #    print("done")
+    #    pr.print_stats(sort=pstats.SortKey.TIME)
     #unittest.main(verbosity=0)
+    unittest.main(verbosity=0)

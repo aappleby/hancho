@@ -22,7 +22,6 @@ def generate_filelist(task):
         for f in random.sample(task.config.src_files, 3):
             #hancho.log(f"Writing {f} to {task.config.out_list}")
             file.write(str(f) + "\n")
-    return task.config.out_list
 
 filelist_txt = hancho(
     desc     = "Write the names of 3 random files in src/ to {out_list}",
@@ -35,13 +34,14 @@ def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
     file = open(task.config.in_filelist[0], "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
-    return hancho(
+    task = hancho(
         desc      = "Concatenate {in_files} into {out_files}",
         command   = "cat {in_files} > {out_files}",
         in_files  = from_filelist,
         out_files = "result.txt",
         other_files = [random_touch, filelist_txt],
     )
+    return task
 
 result_txt = hancho(
     desc = "Read {in_filelist} and use its contents to generate another task",
@@ -54,5 +54,3 @@ print_task = hancho(
     command = "cat {in_text}",
     in_text = result_txt,
 )
-
-

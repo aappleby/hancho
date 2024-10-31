@@ -4,6 +4,6 @@ hancho(hancho.base_rules.check_cpp, in_src = "src/main.cpp")
 hancho(hancho.base_rules.check_cpp, in_src = "src/test.cpp")
 
 hancho(
-  desc = "Run all tests",
-  command = ["./run_tests.py"],
+    desc = "Run all tests",
+    command = ["./run_tests.py"],
 )

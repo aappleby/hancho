@@ -38,7 +38,6 @@ def log_line(message):
         sys.stdout.write(message)
         sys.stdout.flush()
 
-
 def log(message, *, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
     if not sys.stdout.isatty():
@@ -81,12 +80,17 @@ def line_block(lines):
         print("\x1b[K", end="")
         sys.stdout.flush()
 
+def log_exception():
+    log(color(255, 128, 128))
+    log(traceback.format_exc())
+    log(color())
+
 #---------------------------------------------------------------------------------------------------
 # Path manipulation
 
 def unwrap_path(variant) -> str | list[str]:
     if isinstance(variant, (Task, Expander)):
-        variant = variant.get_outputs()
+        variant = variant._out_files
     return variant
 
 def abs_path(raw_path, strict=False) -> str | list[str]:
@@ -133,6 +137,18 @@ def join_path2(path1, path2, *args):
         raise ValueError(f"Cannot join '{path1}' with '{type(path2)}' == '{path2}'")
     return path.join(path1, path2)
 
+def normalize_path(file_path):
+    assert isinstance(file_path, str)
+    assert not macro_regex.search(file_path)
+
+    file_path = path.realpath(path.join(os.getcwd(), file_path))
+    assert path.isabs(file_path)
+    if not path.isfile(file_path):
+        print(f"Could not find file {file_path}")
+        assert path.isfile(file_path)
+
+    return file_path
+
 #---------------------------------------------------------------------------------------------------
 # Helper methods
 
@@ -146,6 +162,11 @@ def join_prefix(prefix, strings):
 
 def join_suffix(strings, suffix):
     return [str(s)+suffix for s in flatten(strings)]
+
+def stem(filename):
+    filename = flatten(filename)[0]
+    filename = path.basename(filename)
+    return path.splitext(filename)[0]
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -163,7 +184,7 @@ def run_cmd(cmd):
 def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, Task):
-        name = name.get_outputs()
+        name = name._out_files
     if isinstance(name, list):
         return [swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
@@ -185,6 +206,50 @@ def maybe_as_number(text):
             return text
 
 ####################################################################################################
+# Variant stuff that I need to clean up
+
+def merge_variant(lhs, rhs):
+    if isinstance(lhs, Config) and isinstance(rhs, (Config, dict)):
+        for key, rval in rhs.items():
+            lhs[key] = merge_variant(lhs.get(key, None), rval)
+        return lhs
+    return copy.deepcopy(rhs)
+
+def map_variant(key, val, apply):
+    val = apply(key, val)
+    if isinstance(val, (Config, dict)):
+        for key2, val2 in val.items():
+            val[key2] = map_variant(key2, val2, apply)
+    elif isinstance(val, (list, tuple, set)):
+        for key2, val2 in enumerate(val):
+            val[key2] = map_variant(key2, val2, apply)
+    return val
+
+async def await_variant(variant):
+    """Recursively replaces every awaitable in the variant with its awaited value."""
+
+    match variant:
+        case Exception() | asyncio.CancelledError():
+            # This has to be here, it's what cancels downstream tasks.
+            raise variant
+        case Promise():
+            variant = await variant.get()
+            variant = await await_variant(variant)
+        case Task():
+            variant = await variant.await_done()
+            variant = await await_variant(variant)
+        case Config() | dict():
+            for key, val in variant.items():
+                variant[key] = await await_variant(val)
+        case list() | tuple() | set():
+            for key, val in enumerate(variant):
+                variant[key] = await await_variant(val)
+        case _:
+            while inspect.isawaitable(variant):
+                variant = await variant
+    return variant
+
+####################################################################################################
 
 class Dumper:
     def __init__(self, max_depth = 2):
@@ -197,8 +262,10 @@ class Dumper:
     def dump(self, variant):
         result = f"{type(variant).__name__} @ {hex(id(variant))} "
         match variant:
-            case Config() | Task() | HanchoAPI():
-                result += self.dump_dict(variant.__dict__)
+            case Task() | HanchoAPI():
+                result += self.dump_dict(variant.config)
+            case Config():
+                result += self.dump_dict(variant)
             case list():
                 result = self.dump_list(variant)
             case dict():
@@ -241,16 +308,6 @@ class Dumper:
 
 ####################################################################################################
 
-def merge_variant(lhs, rhs):
-    if isinstance(lhs, Config) and isinstance(rhs, (Config, dict)):
-        for key, rval in rhs.items():
-            lhs[key] = merge_variant(lhs.get(key, None), rval)
-        return lhs
-
-    return copy.deepcopy(rhs)
-
-####################################################################################################
-
 class Utils:
     # fmt: off
     abs_path    = staticmethod(abs_path)
@@ -268,6 +325,7 @@ class Utils:
     re          = re
     join_prefix = staticmethod(join_prefix)
     join_suffix = staticmethod(join_suffix)
+    stem        = staticmethod(stem)
     # fmt: on
 
 ####################################################################################################
@@ -296,6 +354,9 @@ class Config(collections.abc.MutableMapping, Utils):
     def expand(self, variant):
         return expand_variant(Expander(self), variant)
 
+    def rel(self, sub_path):
+        return rel_path(sub_path, expand_variant(self, self.task_dir))
+
     #----------------------------------------
 
     def __contains__(self, key):
@@ -315,14 +376,6 @@ class Config(collections.abc.MutableMapping, Utils):
 
     def __getitem__(self, key):
         return self.__dict__[key]
-
-    def rel(self, sub_path):
-        return rel_path(sub_path, expand_variant(self, self.task_dir))
-
-    def stem(self, filename):
-        filename = flatten(filename)[0]
-        filename = path.basename(filename)
-        return path.splitext(filename)[0]
 
 ####################################################################################################
 
@@ -395,7 +448,7 @@ def stringify_variant(variant):
         case Expander():
             return stringify_variant(variant.config)
         case Task():
-            return stringify_variant(variant.get_outputs())
+            return stringify_variant(variant._out_files)
         case list():
             variant = [stringify_variant(val) for val in variant]
             return " ".join(variant)
@@ -528,94 +581,20 @@ def expand_variant(expander, variant):
 
 ####################################################################################################
 
-def get_awaitables(variant, result):
-    if inspect.isawaitable(variant):
-        result.append(variant)
-        return
-
-    match variant:
-        case Promise():
-            result.append(variant.task._promise)
-        case Task():
-            result.append(variant._promise)
-        case Config() | dict():
-            for val in variant.values():
-                get_awaitables(val, result)
-        case list() | tuple() | set():
-            for val in variant:
-                get_awaitables(val, result)
-
-async def await_variant(variant):
-    """Recursively replaces every awaitable in the variant with its awaited value."""
-
-    while inspect.isawaitable(variant):
-        variant = await variant
-
-    match variant:
-        case Exception() | asyncio.CancelledError():
-            raise variant
-        case Promise():
-            variant = await variant.get()
-            variant = await await_variant(variant)
-        case Task():
-            variant = await variant.await_done()
-            variant = await await_variant(variant)
-        case Config() | dict():
-            for key, val in variant.items():
-                variant[key] = await await_variant(val)
-        case list():
-            for key, val in enumerate(variant):
-                variant[key] = await await_variant(val)
-    return variant
-
-####################################################################################################
-
-def visit_variant(key, val, visitor):
-    match val:
-        case Exception():
-            raise val
-        case Task():
-            for key2, val2 in enumerate(val.get_outputs()):
-                val.get_outputs()[key2] = visit_variant(key2, val2, visitor)
-        case Config() | dict():
-            for key2, val2 in val.items():
-                val[key2] = visit_variant(key2, val2, visitor)
-        case list():
-            for key2, val2 in enumerate(val):
-                val[key2] = visit_variant(key2, val2, visitor)
-        case _:
-            val = visitor(key, val)
-    return val
-
-def simple_visit_variant(val, visitor):
-    visitor(val)
-
-    if isinstance(val, (Config, dict)):
-        for val2 in val.values():
-            simple_visit_variant(val2, visitor)
-
-    if isinstance(val, (list, tuple, set)):
-        for val2 in val:
-            simple_visit_variant(val2, visitor)
-
-####################################################################################################
-
 class Promise:
     def __init__(self, task, *args):
         self.task = task
         self.args = args
 
     async def get(self):
-        task = self.task
-        args = self.args
-        config = task.config
-        await task.await_done()
-        if len(args) == 0:
-            return task.get_outputs()
-        elif len(args) == 1:
-            return config[args[0]]
-        else:
-            return [config[field] for field in args]
+        await self.task.await_done()
+        match len(self.args):
+            case 0:
+                return self.task._out_files
+            case 1:
+                return self.task.config[self.args[0]]
+            case _:
+                return [self.task.config[field] for field in self.args]
 
 ####################################################################################################
 
@@ -624,9 +603,14 @@ class TaskState(IntEnum):
     QUEUED = 1
     STARTED = 2
     AWAITING_INPUTS = 3
-    AWAITING_JOBS = 4
-    RUNNING_COMMANDS = 5
-    FINISHED = 6
+    TASK_INIT = 4
+    AWAITING_JOBS = 5
+    RUNNING_COMMANDS = 6
+    FINISHED = 7
+    CANCELLED = 8
+    FAILED = 9
+    SKIPPED = 10
+    BROKEN = 11
 
 ####################################################################################################
 
@@ -676,35 +660,21 @@ class Task:
     def __deepcopy__(self, memo):
         return self
 
-    def get_inputs(self):
-        return self._in_files
-
-    def get_outputs(self):
-        return self._out_files
-
     #----------------------------------------
-    # FIXME We have to queue all our dependencies, but this may not be the right way to do it.
-
-    @staticmethod
-    def queue_variant(variant):
-        match variant:
-            case Task():
-                if variant._state is TaskState.DECLARED:
-                    app.queued_tasks.append(variant)
-                    variant._state = TaskState.QUEUED
-                    Task.queue_variant(variant.config)
-            case Config() | dict():
-                for val in variant.values():
-                    Task.queue_variant(val)
-            case list() | tuple() | set():
-                for val in variant:
-                    Task.queue_variant(val)
 
     def queue(self):
-        Task.queue_variant(self)
+        if self._state is TaskState.DECLARED:
+            app.queued_tasks.append(self)
+            self._state = TaskState.QUEUED
+            def apply(key, val):
+                if isinstance(val, Task):
+                    val.queue()
+                return val
+            map_variant(None, self.config, apply)
 
     def start(self):
-        if self._state is TaskState.DECLARED or self._state is TaskState.QUEUED:
+        self.queue()
+        if self._state is TaskState.QUEUED:
             self._promise = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
             app.tasks_started += 1
@@ -736,90 +706,77 @@ class Task:
         debug   = self.config.get('debug',   app.default_debug)
         force   = self.config.get('force',   app.default_force)
 
-        try:
-            # Await everything awaitable in this task except the task's own promise.
 
-            assert self._state is TaskState.STARTED
-            awaitables = []
-            for key, val in self.config.items():
-                if key != "_promise":
-                    get_awaitables(val, awaitables)
-
-            self._state = TaskState.AWAITING_INPUTS
-            await asyncio.gather(*awaitables)
-
-            for key, val in self.config.items():
-                self.config.__dict__[key] = await await_variant(val)
-
-            if debug:
-                log(f"Task {hex(id(self))} start")
-
-            # Everything awaited, task_init runs synchronously.
-            self.task_init()
-
-            # Early-out if this is a no-op task
-            if self.config.command is None:
-                app.tasks_passed += 1
-                self._state = TaskState.FINISHED
-                return
-
-            # Check if we need a rebuild
-            self._reason = self.needs_rerun(force)
-
-            # Run the commands if we need to.
-            if not self._reason:
-                app.tasks_skipped += 1
-            else:
-                # Wait for enough jobs to free up to run this task.
-                job_count = self.config.get("job_count", 1)
-                self._state = TaskState.AWAITING_JOBS
-                await app.job_pool.acquire_jobs(job_count, self)
-
-                self._state = TaskState.RUNNING_COMMANDS
-
-                app.tasks_running += 1
-                self._task_index = app.tasks_running
-                self.print_status()
-
-                if verbose or debug:
-                    log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
-
-                commands = flatten(self.config.command)
-
-                try:
-                    for command in commands:
-                        if verbose or debug:
-                            root_dir = self.config.get("root_dir", "/")
-                            log(color(128,128,255), end="")
-                            if app.dry_run: log("(DRY RUN) ", end="")
-                            log(f"{rel_path(self.config.task_dir, root_dir)}$ ", end="")
-                            #log(f"{self.config.task_dir}$ ", end="")
-                            log(color(), end="")
-                            log(command)
-                        if not app.dry_run:
-                            await self.run_command(command)
-                        if self._returncode != 0:
-                            break
-                finally:
-                    await app.job_pool.release_jobs(job_count, self)
-                app.tasks_passed += 1
-
+        # Await everything awaitable in this task except the task's own promise.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
         # downstream tasks.
-        except asyncio.CancelledError as cancel:
+        try:
+            assert self._state is TaskState.STARTED
+            self._state = TaskState.AWAITING_INPUTS
+            for key, val in self.config.items():
+                if key != "_promise":
+                    self.config[key] = await await_variant(val)
+
+        except Exception as err: # pylint: disable=broad-exception-caught
+            log_exception()
+            self._state = TaskState.CANCELLED
             app.tasks_cancelled += 1
-            return cancel
+            return err
 
-        # If this task failed, we print the error and propagate a cancellation to downstream tasks.
-        except Exception: # pylint: disable=broad-exception-caught
-            log(f"{color(255, 128, 128)}{traceback.format_exc()}{color()}")
-            app.tasks_failed += 1
-            return asyncio.CancelledError()
+        # Everything awaited, task_init runs synchronously.
+        try:
+            self._state = TaskState.TASK_INIT
+            self.task_init()
+        except Exception as err: # pylint: disable=broad-exception-caught
+            log_exception()
+            self._state = TaskState.BROKEN
+            app.tasks_broken += 1
+            return err
 
-        finally:
+        # Early-out if this is a no-op task
+        if self.config.command is None:
+            app.tasks_finished += 1
             self._state = TaskState.FINISHED
-            if debug:
-                log(f"Task {hex(id(self))} done")
+            return self._out_files
+
+        # Check if we need a rebuild
+        self._reason = self.needs_rerun(force)
+        if not self._reason:
+            app.tasks_skipped += 1
+            self._state = TaskState.SKIPPED
+            return self._out_files
+
+        if verbose or debug:
+            log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
+
+        # Wait for enough jobs to free up to run this task.
+        job_count = self.config.get("job_count", 1)
+        self._state = TaskState.AWAITING_JOBS
+        await app.job_pool.acquire_jobs(job_count, self)
+
+        # Run the commands.
+        self._state = TaskState.RUNNING_COMMANDS
+        app.tasks_running += 1
+        self._task_index = app.tasks_running
+        self.print_status()
+
+        try:
+            for command in flatten(self.config.command):
+                await self.run_command(command)
+                if self._returncode != 0:
+                    break
+        except Exception as err: # pylint: disable=broad-exception-caught
+            # If any command failed, we print the error and propagate it to downstream tasks.
+            log_exception()
+            self._state = TaskState.FAILED
+            app.tasks_failed += 1
+            return err
+        finally:
+            await app.job_pool.release_jobs(job_count, self)
+
+        # Task finished successfully
+        self._state = TaskState.FINISHED
+        app.tasks_finished += 1
 
         return self._out_files
 
@@ -831,54 +788,57 @@ class Task:
         debug = self.config.get('debug', app.default_debug)
 
         if debug:
-            log(f"\nTask before expand: {self}")
+            log(f"\nTask before expand: {self.config}")
 
-        # Expand the in and out paths first
+        #----------------------------------------
+        # Expand task_dir and build_dir
+
         self.config.task_dir  = abs_path(self.config.expand(self.config.task_dir))
         self.config.build_dir = abs_path(self.config.expand(self.config.build_dir))
 
-        # We _must_ expand first before prepending directories or paths will break
+        #----------------------------------------
+        # Expand all in_ and out_ filenames.
+        # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
+
         for key, val in self.config.items():
             if key.startswith("in_") or key.startswith("out_") or key == "c_deps":
-                self.config.__dict__[key] = self.config.expand(val)
+                self.config[key] = self.config.expand(val)
 
-        # Prepend the in/out path to the filenames
-        def handle_in_path(key, val):
-            if val is None:
-                raise ValueError(f"Key {key} was None")
-            assert isinstance(val, str)
-            val = abs_path(join_path(self.config.task_dir, val))
-            self._in_files.append(val)
+        #----------------------------------------
+        # Convert all in_, out_, and deps filenames to absolute paths.
+
+        def join_dir(key, val):
+            if isinstance(key, str):
+                if key.startswith("out_"):
+                    val = join_path(self.config.build_dir, val)
+                    val = abs_path(val)
+                    self._out_files.extend(flatten(val))
+                if key.startswith("in_"):
+                    val = join_path(self.config.task_dir, val)
+                    val = abs_path(val)
+                    self._in_files.extend(flatten(val))
+                if key == "c_deps":
+                    val = join_path(self.config.build_dir, val)
+                    val = abs_path(val)
+                    if path.isfile(val):
+                        self._in_files.append(val)
             return val
 
-        def handle_out_path(key, val):
-            if val is None:
-                raise ValueError(f"Key {key} was None")
-            assert isinstance(val, str)
-            val = abs_path(join_path(self.config.build_dir, val))
-            self._out_files.append(val)
-            return val
+        map_variant(None, self.config, join_dir)
 
-        for key, val in self.config.items():
-            if key.startswith("in_"):
-                self.config[key] = visit_variant(key, val, handle_in_path)
-            if key.startswith("out_"):
-                self.config[key] = visit_variant(key, val, handle_out_path)
-
-        if c_deps := self.config.get("c_deps", None):
-            c_deps = join_path(self.config.build_dir, c_deps)
-            self.config.c_deps = c_deps
-            if path.isfile(c_deps):
-                self._in_files.append(c_deps)
-
+        #----------------------------------------
         # And now we can expand the command.
+
         self.config.desc     = self.config.expand(self.config.desc)
         self.config.command  = self.config.expand(self.config.command)
         self.config.log_path = self.config.expand(self.config.log_path)
 
         if debug:
-            log(f"\nTask after expand: {self}")
+            log(f"\nTask after expand: {self.config}")
+
+        #----------------------------------------
+        # Sanity checks
 
         # Check for missing input files/paths
         if not path.exists(self.config.task_dir):
@@ -980,14 +940,26 @@ class Task:
         verbose = self.config.get('verbose', app.default_verbose)
         debug   = self.config.get('debug',   app.default_debug)
 
+        if verbose or debug:
+            root_dir = self.config.get("root_dir", "/")
+            log(color(128,128,255), end="")
+            if app.dry_run: log("(DRY RUN) ", end="")
+            log(f"{rel_path(self.config.task_dir, root_dir)}$ ", end="")
+            log(color(), end="")
+            log(command)
+
+        # Dry runs get early-out'ed before we do anything.
+        if app.dry_run:
+            return
+
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             app.pushdir(self.config.task_dir)
             result = command(self)
             app.popdir()
-            while inspect.isawaitable(result):
-                result = await result
-            self._out_files.append(result)
+            self._returncode = 0
+            if result is not None:
+                self._out_files.append(result)
             return
 
         # Non-string non-callable commands are not valid
@@ -995,22 +967,19 @@ class Task:
             raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
-        try:
-            if debug:
-                log(f"Task {hex(id(self))} subprocess start '{command}'")
+        if debug:
+            log(f"Task {hex(id(self))} subprocess start '{command}'")
 
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd=self.config.task_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=self.config.task_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        (stdout_data, stderr_data) = await proc.communicate()
 
-            (stdout_data, stderr_data) = await proc.communicate()
-            if debug:
-                log(f"Task {hex(id(self))} subprocess done '{command}'")
-        except RuntimeError:
-            sys.exit(-1)
+        if debug:
+            log(f"Task {hex(id(self))} subprocess done '{command}'")
 
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
@@ -1065,21 +1034,9 @@ class HanchoAPI(Utils):
             return arg1(self, *args, **kwargs)
         return Task(self.config, arg1, *args, **kwargs)
 
-    def normalize_path(self, file_path):
-        file_path = self.config.expand(file_path)
-        assert isinstance(file_path, str)
-        assert not macro_regex.search(file_path)
-
-        file_path = path.realpath(path.join(os.getcwd(), file_path))
-        assert path.isabs(file_path)
-        if not path.isfile(file_path):
-            print(f"Could not find file {file_path}")
-            assert path.isfile(file_path)
-
-        return file_path
-
     def load(self, mod_path):
-        mod_path = self.normalize_path(mod_path)
+        mod_path = self.config.expand(mod_path)
+        mod_path = normalize_path(mod_path)
         new_config = Config(
             self.config,
             mod_name = path.splitext(path.basename(mod_path))[0],
@@ -1089,12 +1046,13 @@ class HanchoAPI(Utils):
             build_dir = app.default_build_dir,
         )
 
-        new_context = copy.copy(self)
+        new_context = copy.deepcopy(self)
         new_context.config = new_config
         return new_context._load_module()
 
     def repo(self, mod_path):
-        mod_path = self.normalize_path(mod_path)
+        mod_path = self.config.expand(mod_path)
+        mod_path = normalize_path(mod_path)
         new_config = Config(
             self.config,
             repo_name = path.basename(path.dirname(mod_path)),
@@ -1106,12 +1064,13 @@ class HanchoAPI(Utils):
             build_dir = app.default_build_dir,
         )
 
-        new_context = copy.copy(self)
+        new_context = copy.deepcopy(self)
         new_context.config = new_config
         return new_context._load_module()
 
     def root(self, mod_path):
-        mod_path = self.normalize_path(mod_path)
+        mod_path = self.config.expand(mod_path)
+        mod_path = normalize_path(mod_path)
         new_config = Config(
             self.config,
             root_dir  = path.dirname(mod_path),
@@ -1125,7 +1084,7 @@ class HanchoAPI(Utils):
             mod_path  = mod_path,
         )
 
-        new_context = copy.copy(self)
+        new_context = copy.deepcopy(self)
         new_context.config = new_config
         return new_context._load_module()
 
@@ -1154,37 +1113,19 @@ class HanchoAPI(Utils):
             code = compile(source, config.mod_path, "exec", dont_inherit=True)
             types.FunctionType(code, temp_globals)()
 
-        # Module loaded, turn the module's globals into a Config that doesn't include __builtins__
-        # and hancho so we don't have modules that end up transitively containing the universe
+        # Module loaded, turn the module's globals into a Config that doesn't include __builtins__,
+        # hancho, and imports so we don't have files that end up transitively containing the
+        # universe
         new_module = Config()
         for key, val in temp_globals.items():
-            if key.startswith('_') or key == 'hancho': continue
-            # Don't copy imports from temp_globals either
-            if isinstance(val, type(sys)): continue
+            if key.startswith('_') or key == 'hancho' or isinstance(val, type(sys)):
+                continue
             new_module[key] = val
 
         # And now we chdir back out.
         app.popdir()
 
         return new_module
-
-    # fmt: off
-    abs_path    = staticmethod(abs_path)
-    rel_path    = staticmethod(rel_path)
-    join_path   = staticmethod(join_path)
-    color       = staticmethod(color)
-    glob        = staticmethod(glob.glob)
-    len         = staticmethod(len)
-    run_cmd     = staticmethod(run_cmd)
-    swap_ext    = staticmethod(swap_ext)
-    flatten     = staticmethod(flatten)
-    print       = staticmethod(print)
-    log         = staticmethod(log)
-    path        = path
-    re          = re
-    join_prefix = staticmethod(join_prefix)
-    join_suffix = staticmethod(join_suffix)
-    # fmt: on
 
 ####################################################################################################
 
@@ -1262,14 +1203,13 @@ class App:
         self.expand_depth = 0
         self.shuffle = False
 
-        self.root_context = None
-
         self.tasks_started = 0
         self.tasks_running = 0
-        self.tasks_passed = 0
+        self.tasks_finished = 0
         self.tasks_failed = 0
         self.tasks_skipped = 0
         self.tasks_cancelled = 0
+        self.tasks_broken = 0
 
         self.all_tasks = []
         self.queued_tasks = []
@@ -1297,6 +1237,7 @@ class App:
         self.__init__() # pylint: disable=unnecessary-dunder-call
 
     ########################################
+    # Needs to be its own function, used by run_tests.py
 
     def create_root_context(self, flags, extra_flags):
 
@@ -1311,12 +1252,12 @@ class App:
             repo_name   = "",
             repo_dir    = root_dir,
 
-            build_root  = app.default_build_root,
-            build_tag   = app.default_build_tag,
-
             mod_name    = path.splitext(root_file)[0],
             mod_dir     = root_dir,
             mod_path    = root_path,
+
+            build_root  = app.default_build_root,
+            build_tag   = app.default_build_tag,
         )
 
         # All the unrecognized flags get stuck on the root context.
@@ -1369,7 +1310,7 @@ class App:
         time_a = time.perf_counter()
         if app.target:
             target_regex = re.compile(app.target)
-            for task in self.all_tasks:
+            for task in app.all_tasks:
                 queue_task = False
                 task_name = None
                 # FIXME this doesn't work because we haven't expanded output filenames yet
@@ -1382,18 +1323,11 @@ class App:
                     if target_regex.search(task.get('name', None)):
                         queue_task = True
                         task_name = name
-                #for desc in flatten(task.desc):
-                #    if target_regex.search(desc):
-                #        queue_task = True
-                #if task.get('tags', None):
-                #    for tag in flatten(task.tags):
-                #        if target_regex.search(tag):
-                #            queue_task = True
                 if queue_task:
                     log(f"Queueing task for '{task_name}'")
                     task.queue()
         else:
-            for task in self.all_tasks:
+            for task in app.all_tasks:
                 # If no target was specified, we queue up all tasks from the root repo.
                 root_dir = task.config.get("root_dir", None)
                 repo_dir = task.config.get("repo_dir", None)
@@ -1404,12 +1338,7 @@ class App:
         log(f"Queueing {len(app.queued_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
         result = self.build()
-
-        #========================================
-
-        print()
         return result
-
 
     ########################################
 
@@ -1431,15 +1360,8 @@ class App:
         asyncio.set_event_loop(loop)
         try:
             result = asyncio.run(self.async_run_tasks())
-            # For some reason "result = asyncio.run(self.async_main())" might be breaking actions
-            # in Github, so I'm using get_event_loop().run_until_complete().
-            # Seems to fix the issue.
-            #result = asyncio.get_event_loop().run_until_complete(self.async_run_tasks())
         except Exception:
-            log(color(255, 128, 128), end = "")
-            log("Build failed:")
-            log(traceback.format_exc())
-            log(color(), end="")
+            log_exception()
         loop.close()
         return result
 
@@ -1447,20 +1369,6 @@ class App:
         for task in self.all_tasks:
             task.queue()
         return self.build()
-
-    ########################################
-
-    def start_queued_tasks(self):
-        """Creates an asyncio.Task for each task in the queue and clears the queue."""
-
-        if app.shuffle:
-            log(f"Shufflin' {len(self.queued_tasks)} tasks")
-            random.shuffle(self.queued_tasks)
-
-        while self.queued_tasks:
-            task = self.queued_tasks.pop(0)
-            task.start()
-            self.started_tasks.append(task)
 
     ########################################
 
@@ -1476,66 +1384,51 @@ class App:
 
         time_a = time.perf_counter()
 
-        self.start_queued_tasks()
-        while self.started_tasks:
+        while self.queued_tasks or self.started_tasks:
+            if app.shuffle:
+                log(f"Shufflin' {len(self.queued_tasks)} tasks")
+                random.shuffle(self.queued_tasks)
+
+            while self.queued_tasks:
+                task = self.queued_tasks.pop(0)
+                task.start()
+                self.started_tasks.append(task)
+
             task = self.started_tasks.pop(0)
             await task._promise
             self.finished_tasks.append(task)
-            self.start_queued_tasks()
 
         time_b = time.perf_counter()
 
         #if app.debug or app.verbose:
-        log("")
         log(f"Running {app.tasks_started} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        #if Config.debug:
-        if app.default_verbose:
+        if app.default_debug or app.default_verbose:
             log(f"tasks started:   {app.tasks_started}")
-            log(f"tasks passed:    {app.tasks_passed}")
+            log(f"tasks finished:  {app.tasks_finished}")
             log(f"tasks failed:    {app.tasks_failed}")
             log(f"tasks skipped:   {app.tasks_skipped}")
             log(f"tasks cancelled: {app.tasks_cancelled}")
+            log(f"tasks broken:    {app.tasks_broken}")
             log(f"mtime calls:     {app.mtime_calls}")
 
-        if self.tasks_failed:
+        if self.tasks_failed or self.tasks_broken:
             log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
-        elif self.tasks_passed:
+        elif self.tasks_finished:
             log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
         else:
             log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
 
-        return -1 if self.tasks_failed else 0
+        return -1 if self.tasks_failed or self.tasks_broken else 0
 
+####################################################################################################
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
 app = App()
 
-####################################################################################################
-
 def main():
-
-    """
-    stuff = [1, 2, 3]
-
-    a = Config(foo = 1, bar = stuff, flarp = 666)
-    b = Config(foo = 2, bar = stuff, narp = 777)
-    c = a.fork(b)
-
-    stuff.append(4)
-
-    d = Dumper(100)
-    print(d.dump(a))
-    print()
-    print(d.dump(b))
-    print()
-    print(d.dump(c))
-
-    sys.exit(0)
-    """
-
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -1570,6 +1463,8 @@ def main():
             extra_flags[key] = val
 
     return app.main(flags, extra_flags)
+
+####################################################################################################
 
 if __name__ == "__main__":
     sys.exit(main())
