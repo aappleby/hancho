@@ -120,6 +120,8 @@ class TestHancho(unittest.TestCase):
         default_flags.merge(flags)
         default_extra_flags.merge(extra_flags)
 
+        hancho.app.flags = hancho.Config(verbose = False)
+
         ctx = hancho.app.create_root_context(default_flags.__dict__, default_extra_flags.__dict__)
         return ctx
 

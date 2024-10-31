@@ -226,8 +226,8 @@ async def await_variant(variant):
             variant = await variant.get()
             variant = await await_variant(variant)
         case Task():
-            variant = await variant.await_done()
-            variant = await await_variant(variant)
+            await variant.await_done()
+            variant = await await_variant(variant._out_files)
         case Config() | dict():
             for key, val in variant.items():
                 variant[key] = await await_variant(val)
@@ -671,8 +671,7 @@ class Task:
 
     async def await_done(self):
         self.start()
-        assert self._promise is not None
-        return await self._promise
+        await self._promise
 
     def promise(self, *args):
         return Promise(self, *args)
@@ -767,8 +766,6 @@ class Task:
         # Task finished successfully
         self._state = TaskState.FINISHED
         app.tasks_finished += 1
-
-        return self._out_files
 
     #-----------------------------------------------------------------------------------------------
 
@@ -895,7 +892,6 @@ class Task:
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-
         if (c_deps := self.config.get("c_deps", None)) and path.exists(c_deps):
             c_depformat = self.config.get("c_depformat", "gcc")
             if debug:
@@ -1077,29 +1073,24 @@ class HanchoAPI(Utils):
         return new_context._load_module()
 
     def _load_module(self):
-        config = self.config
-
         log(("┃ " * (len(app.dirstack) - 1)), end="")
-        log(color(128,255,128) + f"Loading {config.mod_path}" + color())
+        log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
 
-        app.loaded_files.append(config.mod_path)
+        app.loaded_files.append(self.config.mod_path)
+
+        # We're using compile() and FunctionType()() here beause exec() doesn't preserve source
+        # code for debugging.
+        file = open(self.config.mod_path, encoding="utf-8")
+        source = file.read()
+        code = compile(source, self.config.mod_path, "exec", dont_inherit=True)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        app.pushdir(path.dirname(config.mod_path))
-
-        temp_globals = {
-            "hancho" : self,
-            "__builtins__": builtins
-        }
-
-        with open(config.mod_path, encoding="utf-8") as file:
-            # We're using compile() and FunctionType()() here beause exec() doesn't preserve source
-            # code for debugging.
-            source = file.read()
-            code = compile(source, config.mod_path, "exec", dont_inherit=True)
-            types.FunctionType(code, temp_globals)()
+        app.pushdir(path.dirname(self.config.mod_path))
+        temp_globals = { "hancho" : self, "__builtins__": builtins }
+        types.FunctionType(code, temp_globals)()
+        app.popdir()
 
         # Module loaded, turn the module's globals into a Config that doesn't include __builtins__,
         # hancho, and imports so we don't have files that end up transitively containing the
@@ -1109,10 +1100,6 @@ class HanchoAPI(Utils):
             if key.startswith('_') or key == 'hancho' or isinstance(val, type(sys)):
                 continue
             new_module[key] = val
-
-        # And now we chdir back out.
-        app.popdir()
-
         return new_module
 
 ####################################################################################################
@@ -1416,7 +1403,7 @@ class App:
 
 app = App()
 
-def main():
+def main(args):
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -1437,7 +1424,7 @@ def main():
     parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
     # fmt: on
 
-    (flags, unrecognized) = parser.parse_known_args(sys.argv[1:])
+    (flags, unrecognized) = parser.parse_known_args(args)
     flags = flags.__dict__
 
     # Unrecognized command line parameters also become global config fields if they are
@@ -1455,5 +1442,6 @@ def main():
 ####################################################################################################
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exitcode = main(sys.argv[1:])
+    sys.exit(exitcode)
 
