@@ -2,7 +2,7 @@
 
 hancho.c_depformat = "msvc"
 
-compile = hancho.Command(
+compile = hancho.Config(
   command = "cl.exe /nologo /c {in_src} /sourceDependencies {c_deps} /Fo:{out_obj} > NUL",
   desc    = "Compile {in_src} -> {out_obj}",
   in_src  = None
@@ -10,7 +10,7 @@ compile = hancho.Command(
   c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Command(
+link = hancho.Config(
   command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin} > NUL",
   desc      = "Link {in_objs} -> {out_bin}",
   in_objs   = None,

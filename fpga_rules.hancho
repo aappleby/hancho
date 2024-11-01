@@ -6,7 +6,7 @@ def chparams(c):
         result.append(f"chparam -set {key} {val} {{top}};")
     return result
 
-yosys = hancho.Command(
+yosys = hancho.Config(
     desc = "Run yosys on {rel(in_sv)}",
     command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",
     in_sv = None,
@@ -16,7 +16,7 @@ yosys = hancho.Command(
     joined_includes = "{join_prefix('-I', get('includes', []))}",
 )
 
-nextpnr = hancho.Command(
+nextpnr = hancho.Config(
     desc    = "Run nextpnr-ice40 on {rel(in_json)}",
     command = "nextpnr-ice40 {flags} -q --json {rel(in_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
     in_json = None,
@@ -27,19 +27,19 @@ nextpnr = hancho.Command(
     package = None,
 )
 
-icepack = hancho.Command(
+icepack = hancho.Config(
     desc = "Run icepack on {rel(in_asc)}",
     command = "icepack {rel(in_asc)} {rel(out_bin)}",
     in_asc = None,
     out_bin = "{swap_ext(in_asc, '.bin')}",
 )
 
-iceprog = hancho.Command(
+iceprog = hancho.Config(
     desc = "Run iceprog on {rel(in_bin)}",
     command = "iceprog -S {rel(in_bin)}",
 )
 
-synth = hancho.Command(
+synth = hancho.Config(
     desc = "Synth {rel(in_sv)}",
     command = [
         "yosys -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",

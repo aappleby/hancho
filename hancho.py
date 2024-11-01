@@ -34,7 +34,7 @@ first_line_block = True
 
 def log_line(message):
     app.log += message
-    if not app.quiet:
+    if not app.flags.quiet:
         sys.stdout.write(message)
         sys.stdout.flush()
 
@@ -81,9 +81,9 @@ def line_block(lines):
         sys.stdout.flush()
 
 def log_exception():
-    log(color(255, 128, 128))
+    log(color(255, 128, 128), end="")
     log(traceback.format_exc())
-    log(color())
+    log(color(), end="")
 
 #---------------------------------------------------------------------------------------------------
 # Path manipulation
@@ -219,9 +219,6 @@ async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
 
     match variant:
-        case Exception() | asyncio.CancelledError():
-            # This has to be here, it's what cancels downstream tasks.
-            raise variant
         case Promise():
             variant = await variant.get()
             variant = await await_variant(variant)
@@ -252,7 +249,9 @@ class Dumper:
     def dump(self, variant):
         result = f"{type(variant).__name__} @ {hex(id(variant))} "
         match variant:
-            case Task() | HanchoAPI():
+            case Task():
+                result += self.dump_dict(variant.__dict__)
+            case HanchoAPI():
                 result += self.dump_dict(variant.config)
             case Config():
                 result += self.dump_dict(variant)
@@ -368,11 +367,6 @@ class Config(collections.abc.MutableMapping, Utils):
         return self.__dict__[key]
 
 ####################################################################################################
-
-class Command(Config):
-    pass
-
-####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
 # power.
 #
@@ -423,7 +417,6 @@ def expand_inc():
     """ Increments the current expansion recursion depth. """
     app.expand_depth += 1
     if app.expand_depth > MAX_EXPAND_DEPTH:
-        log("Text expansion failed to terminate")
         raise RecursionError("Text expansion failed to terminate")
 
 def expand_dec():
@@ -451,7 +444,7 @@ class Expander:
     def __init__(self, config):
         self.config = config
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self.trace = config.get('trace', app.default_trace)
+        self.trace = config.get('trace', app.flags.trace)
 
     def __getitem__(self, key):
         return self.get(key)
@@ -588,25 +581,23 @@ class Promise:
 
 ####################################################################################################
 
-class TaskState(IntEnum):
-    DECLARED = 0
-    QUEUED = 1
-    STARTED = 2
-    AWAITING_INPUTS = 3
-    TASK_INIT = 4
-    AWAITING_JOBS = 5
-    RUNNING_COMMANDS = 6
-    FINISHED = 7
-    CANCELLED = 8
-    FAILED = 9
-    SKIPPED = 10
-    BROKEN = 11
+class TaskState:
+    DECLARED = "DECLARED"
+    QUEUED = "QUEUED"
+    STARTED = "STARTED"
+    AWAITING_INPUTS = "AWAITING_INPUTS"
+    TASK_INIT = "TASK_INIT"
+    AWAITING_JOBS = "AWAITING_JOBS"
+    RUNNING_COMMANDS = "RUNNING_COMMANDS"
+    FINISHED = "FINISHED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    BROKEN = "BROKEN"
 
 ####################################################################################################
 
 class Task:
-    """Calling a Command creates a Task."""
-
     def __init__(self, *args, **kwargs):
         #super().__init__(*args, **kwargs)
 
@@ -633,7 +624,7 @@ class Task:
         self._out_files = []
         self._state = TaskState.DECLARED
         self._reason = None
-        self._promise = None
+        self._asyncio_task = None
         self._loaded_files = list(app.loaded_files)
         self._stdout = ""
         self._stderr = ""
@@ -650,6 +641,9 @@ class Task:
     def __deepcopy__(self, memo):
         return self
 
+    def __repr__(self):
+        return Dumper(2).dump(self)
+
     #----------------------------------------
 
     def queue(self):
@@ -665,13 +659,16 @@ class Task:
     def start(self):
         self.queue()
         if self._state is TaskState.QUEUED:
-            self._promise = asyncio.create_task(self.task_main())
+            self._asyncio_task = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
             app.tasks_started += 1
 
     async def await_done(self):
         self.start()
-        await self._promise
+        try:
+            await self._asyncio_task
+        except:
+            raise asyncio.CancelledError()
 
     def promise(self, *args):
         return Promise(self, *args)
@@ -680,7 +677,7 @@ class Task:
 
     def print_status(self):
         """ Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information """
-        verbose = self.config.get('verbose', app.default_verbose)
+        verbose = self.config.get('verbose', app.flags.verbose)
         log(
             f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config.desc}",
             sameline=not verbose,
@@ -691,10 +688,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbose = self.config.get('verbose', app.default_verbose)
-        debug   = self.config.get('debug',   app.default_debug)
-        force   = self.config.get('force',   app.default_force)
-
+        verbose = self.config.get('verbose', app.flags.verbose)
+        debug   = self.config.get('debug',   app.flags.debug)
+        force   = self.config.get('force',   app.flags.force)
 
         # Await everything awaitable in this task except the task's own promise.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -703,37 +699,40 @@ class Task:
             assert self._state is TaskState.STARTED
             self._state = TaskState.AWAITING_INPUTS
             for key, val in self.config.items():
-                if key != "_promise":
+                if key != "_asyncio_task":
                     self.config[key] = await await_variant(val)
 
-        except Exception as err: # pylint: disable=broad-exception-caught
-            log_exception()
+        except Exception as ex: # pylint: disable=broad-exception-caught
+            self._state = TaskState.BROKEN
+            app.tasks_broken += 1
+            raise ex
+        except asyncio.CancelledError as ex:
             self._state = TaskState.CANCELLED
             app.tasks_cancelled += 1
-            return err
+            raise ex
+
 
         # Everything awaited, task_init runs synchronously.
         try:
             self._state = TaskState.TASK_INIT
             self.task_init()
-        except Exception as err: # pylint: disable=broad-exception-caught
-            log_exception()
+        except Exception as ex: # pylint: disable=broad-exception-caught
             self._state = TaskState.BROKEN
             app.tasks_broken += 1
-            return err
+            raise ex
 
         # Early-out if this is a no-op task
         if self.config.command is None:
             app.tasks_finished += 1
             self._state = TaskState.FINISHED
-            return self._out_files
+            return
 
         # Check if we need a rebuild
         self._reason = self.needs_rerun(force)
         if not self._reason:
             app.tasks_skipped += 1
             self._state = TaskState.SKIPPED
-            return self._out_files
+            return
 
         if verbose or debug:
             log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
@@ -754,12 +753,11 @@ class Task:
                 await self.run_command(command)
                 if self._returncode != 0:
                     break
-        except Exception as err: # pylint: disable=broad-exception-caught
+        except Exception as ex: # pylint: disable=broad-exception-caught
             # If any command failed, we print the error and propagate it to downstream tasks.
-            log_exception()
             self._state = TaskState.FAILED
             app.tasks_failed += 1
-            return err
+            raise ex
         finally:
             await app.job_pool.release_jobs(job_count, self)
 
@@ -772,7 +770,7 @@ class Task:
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        debug = self.config.get('debug', app.default_debug)
+        debug = self.config.get('debug', app.flags.debug)
 
         if debug:
             log(f"\nTask before expand: {self.config}")
@@ -854,7 +852,7 @@ class Task:
                 app.all_out_files.add(file)
 
         # Make sure our output directories exist
-        if not app.dry_run:
+        if not app.flags.dry_run:
             for file in self._out_files:
                 os.makedirs(path.dirname(file), exist_ok=True)
 
@@ -863,7 +861,7 @@ class Task:
     def needs_rerun(self, force=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug = self.config.get('debug', app.default_debug)
+        debug = self.config.get('debug', app.flags.debug)
 
         if force:
             return f"Files {self._out_files} forced to rebuild"
@@ -923,19 +921,19 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbose = self.config.get('verbose', app.default_verbose)
-        debug   = self.config.get('debug',   app.default_debug)
+        verbose = self.config.get('verbose', app.flags.verbose)
+        debug   = self.config.get('debug',   app.flags.debug)
 
         if verbose or debug:
             root_dir = self.config.get("root_dir", "/")
             log(color(128,128,255), end="")
-            if app.dry_run: log("(DRY RUN) ", end="")
+            if app.flags.dry_run: log("(DRY RUN) ", end="")
             log(f"{rel_path(self.config.task_dir, root_dir)}$ ", end="")
             log(color(), end="")
             log(command)
 
         # Dry runs get early-out'ed before we do anything.
-        if app.dry_run:
+        if app.flags.dry_run:
             return
 
         # Custom commands just get called and then early-out'ed.
@@ -979,23 +977,34 @@ class Task:
             result.write("\n")
             result.close()
 
-        if debug or verbose or not command_pass:
-            if not command_pass:
-                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color(255,128,128)} Task failed {color()}- '{self.config.desc}'")
-                log(f"Task dir: {self.config.task_dir}")
-                log(f"Command : {self.config.command}")
-                log(f"Return  : {self._returncode}")
-            else:
-                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config.desc}'")
-            if self._stdout:
-                log("Stdout:")
-                log(self._stdout, end="")
-            if self._stderr:
-                log("Stderr:")
-                log(self._stderr, end="")
-
         if not command_pass:
-            raise ValueError(self._returncode)
+            message = f"Command exited with return code {self._returncode}\n"
+            #message += color(128,255,196)
+            #message += f"[{self._task_index}/{app.tasks_started}]\n"
+            #message += color(255,128,128)
+            #message += f"Task failed - '{self.config.desc}'\n"
+            #message += f"Task dir: {self.config.task_dir}\n"
+            #message += f"Command : {self.config.command}\n"
+            #message += f"Return  : {self._returncode}\n"
+            if self._stdout:
+                message += "Stdout:\n"
+                message += self._stdout
+            if self._stderr:
+                message += "Stderr:\n"
+                message += self._stderr
+            #message += "Task:\n"
+            #message += str(self)
+            raise ValueError(message)
+        else:
+            if debug or verbose:
+                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config.desc}'")
+                if self._stdout:
+                    log("Stdout:")
+                    log(self._stdout, end="")
+                if self._stderr:
+                    log("Stderr:")
+                    log(self._stderr, end="")
+
 
 ####################################################################################################
 
@@ -1004,7 +1013,6 @@ class HanchoAPI(Utils):
     def __init__(self):
         self.config  = Config()
         self.Config  = Config
-        self.Command = Command
         self.Task    = Task
 
     def __repr__(self):
@@ -1073,8 +1081,9 @@ class HanchoAPI(Utils):
         return new_context._load_module()
 
     def _load_module(self):
-        log(("┃ " * (len(app.dirstack) - 1)), end="")
-        log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
+        if len(app.dirstack) == 1 or app.flags.verbose:
+            log(("┃ " * (len(app.dirstack) - 1)), end="")
+            log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
 
         app.loaded_files.append(self.config.mod_path)
 
@@ -1119,8 +1128,8 @@ class JobPool:
     async def acquire_jobs(self, count, token):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > app.jobs:
-            raise ValueError(f"Nedd {count} jobs, but pool is {app.jobs}.")
+        if count > app.flags.jobs:
+            raise ValueError(f"Need {count} jobs, but pool is {app.flags.jobs}.")
 
         await self.jobs_lock.acquire()
         await self.jobs_lock.wait_for(lambda: self.jobs_available >= count)
@@ -1161,12 +1170,9 @@ class JobPool:
 class App:
 
     def __init__(self):
-        self.shuffle   = False
-        self.use_color = True
-        self.quiet     = False
-        self.dry_run   = False
-        self.jobs      = os.cpu_count()
-        self.target    = None
+        self.flags = None
+        self.extra_flags = None
+        self.target_regex = None
 
         self.loaded_files = []
         self.dirstack = [os.getcwd()]
@@ -1202,22 +1208,56 @@ class App:
         self.default_build_tag  = ""
         self.default_log_path   = None
 
-        self.default_verbose = False
-        self.default_debug   = False
-        self.default_force   = False
-        self.default_trace   = False
-
-
     def reset(self):
         self.__init__() # pylint: disable=unnecessary-dunder-call
 
     ########################################
+
+    def parse_flags(self, argv):
+        assert isinstance(argv, list)
+
+        # pylint: disable=line-too-long
+        # fmt: off
+        parser = argparse.ArgumentParser()
+        parser.add_argument("target",            default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
+
+        parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
+        parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
+
+        parser.add_argument("-v", "--verbose",   default=False, action="store_true",  help="Print verbose build info")
+        parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
+        parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
+        parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
+
+        parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
+        parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
+        parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
+        parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
+        # fmt: on
+
+        (flags, unrecognized) = parser.parse_known_args(argv)
+
+        # Unrecognized command line parameters also become global config fields if they are
+        # flag-like
+        extra_flags = {}
+        for span in unrecognized:
+            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+                key = match.group(1)
+                val = match.group(2)
+                val = maybe_as_number(val) if val is not None else True
+                extra_flags[key] = val
+
+        self.flags = flags
+        self.extra_flags = extra_flags
+
+    ########################################
     # Needs to be its own function, used by run_tests.py
 
-    def create_root_context(self, flags, extra_flags):
+    def create_root_context(self):
 
-        root_file = flags['root_file']
-        root_dir  = path.realpath(flags['root_dir']) # Root path must be absolute.
+        root_file = self.flags.root_file
+        root_dir  = path.realpath(self.flags.root_dir) # Root path must be absolute.
         root_path = path.join(root_dir, root_file)
 
         root_config = Config(
@@ -1236,7 +1276,7 @@ class App:
         )
 
         # All the unrecognized flags get stuck on the root context.
-        for key, val in extra_flags.items():
+        for key, val in self.extra_flags.items():
             setattr(root_config, key, val)
 
         root_context = HanchoAPI()
@@ -1245,20 +1285,9 @@ class App:
 
     ########################################
 
-    def main(self, flags, extra_flags):
+    def main(self):
 
-        # These flags are app-wide and not context-wide.
-        app_flags = ['shuffle', 'use_color', 'quiet', 'dry_run', 'jobs', 'target']
-        for flag in app_flags:
-            setattr(app, flag, flags[flag])
-            del flags[flag]
-
-        app.default_verbose = flags['verbose']
-        app.default_debug =   flags['debug']
-        app.default_force =   flags['force']
-        app.default_trace =   flags['trace']
-
-        app.root_context = self.create_root_context(flags, extra_flags)
+        app.root_context = self.create_root_context()
 
         if app.root_context.config.get("debug", None):
             log(f"root_context = {Dumper().dump(app.root_context)}")
@@ -1277,25 +1306,26 @@ class App:
         app.root_context._load_module()
         time_b = time.perf_counter()
 
-        #if app.default_debug or app.default_verbose:
+        #if app.flags.debug or app.flags.verbose:
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         #========================================
 
         time_a = time.perf_counter()
-        if app.target:
-            target_regex = re.compile(app.target)
+
+        if app.flags.target:
+            app.target_regex = re.compile(app.flags.target)
             for task in app.all_tasks:
                 queue_task = False
                 task_name = None
                 # FIXME this doesn't work because we haven't expanded output filenames yet
                 #for out_file in flatten(task._out_files):
-                #    if target_regex.search(out_file):
+                #    if app.target_regex.search(out_file):
                 #        queue_task = True
                 #        task_name = out_file
                 #        break
                 if name := task.get('name', None):
-                    if target_regex.search(task.get('name', None)):
+                    if app.target_regex.search(task.get('name', None)):
                         queue_task = True
                         task_name = name
                 if queue_task:
@@ -1309,7 +1339,7 @@ class App:
                 if root_dir == repo_dir:
                     task.queue()
         time_b = time.perf_counter()
-        #if app.default_debug or app.default_verbose:
+        #if app.flags.debug or app.flags.verbose:
         log(f"Queueing {len(app.queued_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
         result = self.build()
@@ -1333,10 +1363,7 @@ class App:
         result = -1
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        try:
-            result = asyncio.run(self.async_run_tasks())
-        except Exception:
-            log_exception()
+        result = asyncio.run(self.async_run_tasks())
         loop.close()
         return result
 
@@ -1350,7 +1377,7 @@ class App:
     async def async_run_tasks(self):
         # Run all tasks in the queue until we run out.
 
-        self.job_pool.reset(self.jobs)
+        self.job_pool.reset(self.flags.jobs)
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
@@ -1370,7 +1397,14 @@ class App:
                 self.started_tasks.append(task)
 
             task = self.started_tasks.pop(0)
-            await task._promise
+            try:
+                await task._asyncio_task
+            except BaseException as ex:
+                log(color(255,128,0), end="")
+                log(f"Task failed: {task.config.desc}")
+                log(color(), end="")
+                log(str(task.config))
+                log_exception()
             self.finished_tasks.append(task)
 
         time_b = time.perf_counter()
@@ -1379,7 +1413,7 @@ class App:
         log(f"Running {app.tasks_started} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        if app.default_debug or app.default_verbose:
+        if app.flags.debug or app.flags.verbose:
             log(f"tasks started:   {app.tasks_started}")
             log(f"tasks finished:  {app.tasks_finished}")
             log(f"tasks failed:    {app.tasks_failed}")
@@ -1403,45 +1437,9 @@ class App:
 
 app = App()
 
-def main(args):
-    # pylint: disable=line-too-long
-    # fmt: off
-    parser = argparse.ArgumentParser()
-    parser.add_argument("target",            default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
-
-    parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
-    parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
-
-    parser.add_argument("-v", "--verbose",   default=False, action="store_true",  help="Print verbose build info")
-    parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
-    parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
-    parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
-
-    parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
-    parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
-    parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
-    parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
-    parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
-    # fmt: on
-
-    (flags, unrecognized) = parser.parse_known_args(args)
-    flags = flags.__dict__
-
-    # Unrecognized command line parameters also become global config fields if they are
-    # flag-like
-    extra_flags = {}
-    for span in unrecognized:
-        if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-            key = match.group(1)
-            val = match.group(2)
-            val = maybe_as_number(val) if val is not None else True
-            extra_flags[key] = val
-
-    return app.main(flags, extra_flags)
-
 ####################################################################################################
 
 if __name__ == "__main__":
-    exitcode = main(sys.argv[1:])
-    sys.exit(exitcode)
+    app.parse_flags(sys.argv[1:])
+    sys.exit(app.main())
 

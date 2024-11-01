@@ -3,7 +3,7 @@
 ```py
 # examples/hello_world/build.hancho
 
-compile = hancho.command(
+compile = hancho.Config(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   desc    = "Compile {in_src} -> {out_obj}",
   in_src  = None,
@@ -11,7 +11,7 @@ compile = hancho.command(
   c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.command(
+link = hancho.Config(
   command = "g++ {in_objs} -o {out_bin}",
   desc    = "Link {in_objs} -> {out_bin}",
 )
@@ -51,7 +51,7 @@ main_app = link(in_objs = main_o, out_bin = "app")
 - In your top .hancho file, use ```thingy = load(root="my_submodule", file="component/thingy/build.hancho")```
 - Built files will appear in ```build/my_submodule/component/thingy/...```
 
-# Special fields in hancho.Command()
+# Special fields in hancho.Config()
 
 - ```base``` (Default: ```config```)
     - The rule this rule inherits from. Reading missing fields from a ```rule``` will check ```rule.base``` for the field if there is one, otherwise the missing field will read as ```None```.

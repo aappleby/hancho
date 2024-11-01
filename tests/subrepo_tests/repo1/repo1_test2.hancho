@@ -1,4 +1,4 @@
-touch = hancho.command("touch {rel_build_files}")
+touch = hancho.Config("touch {rel_build_files}")
 
 rule([], "repo1.txt")
 

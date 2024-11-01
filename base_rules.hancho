@@ -1,7 +1,7 @@
 ####################################################################################################
 # Utils
 
-touch_outputs = hancho.Command(
+touch_outputs = hancho.Config(
     command="touch {in_files}",
     in_files=None,
 )
@@ -29,7 +29,7 @@ riscv64_toolchain = hancho.Config(
 
 # ----------------------------------------
 
-check_cpp = hancho.Command(
+check_cpp = hancho.Config(
     desc    = "Checking C++ syntax of {rel(in_src)}",
     command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} && touch {rel(out_ok)}",
     in_src  = None,
@@ -44,7 +44,7 @@ check_cpp = hancho.Command(
 
 # ----------------------------------------
 
-compile_cpp = hancho.Command(
+compile_cpp = hancho.Config(
     desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
     command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
 
@@ -76,7 +76,7 @@ if os.name == 'nt':
 
 # ----------------------------------------
 
-link_cpp_lib = hancho.Command(
+link_cpp_lib = hancho.Config(
     desc="Bundling C++ lib {rel(out_lib)}",
     in_objs=None,
     out_lib=None,
@@ -85,7 +85,7 @@ link_cpp_lib = hancho.Command(
 
 # ----------------------------------------
 
-link_cpp_bin = hancho.Command(
+link_cpp_bin = hancho.Config(
     desc="Linking C++ bin {rel(out_bin)}",
     out_bin=None,
     toolchain=default_toolchain,
@@ -137,7 +137,7 @@ def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **k
 # Makefiles
 
 def make(hancho, /, *args, in_makefile, **kwargs):
-    cmd = hancho.Command(
+    cmd = hancho.Config(
         desc        = "Run makefile {rel(in_makefile)}",
         command     = "make -C {make_dir} -f {make_file} {flags}", #  > /dev/null
         make_dir    = "{path.dirname(in_makefile)}",
@@ -149,7 +149,7 @@ def make(hancho, /, *args, in_makefile, **kwargs):
 ####################################################################################################
 # Tests
 
-run_test = hancho.Command(
+run_test = hancho.Config(
     desc     = "Running test {rel(in_test)}",
     command  = "{in_test} {args} && touch {out_pass}",
     task_dir = "{test_dir}",

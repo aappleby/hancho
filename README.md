@@ -56,7 +56,7 @@ options:
 ```python
 # examples/hello_world/build.hancho
 
-compile_cpp = hancho.command(
+compile_cpp = hancho.Config(
   desc    = "Compiling C++ {in_src} -> {out_obj}",
   command = "g++ -c {in_src} -o {out_obj}",
   in_src  = None,
@@ -64,7 +64,7 @@ compile_cpp = hancho.command(
   c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link_cpp_bin = hancho.command(
+link_cpp_bin = hancho.Config(
   desc    = "Linking C++ bin {out_bin}",
   command = "g++ {in_objs} -o {out_bin}",
   in_objs = None,

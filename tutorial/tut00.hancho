@@ -271,14 +271,14 @@ app    = hancho.Task(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut1
 
 # tutorial/tut14.hancho
 
-cpp_compile = hancho.Command(
+cpp_compile = hancho.Config(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{swap_ext(in_src, '.o')}",
     c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-cpp_link = hancho.Command(
+cpp_link = hancho.Config(
     desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
@@ -289,14 +289,14 @@ app    = hancho(cpp_link, in_objs = [main_o, util_o], out_bin = "build/tut14/app
 
 # tutorial/tut15.hancho
 
-cpp_compile = hancho.Command(
+cpp_compile = hancho.Config(
     desc    = "Compile {rel(in_src)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "build/tut15/{swap_ext(in_src, '.o')}",
     c_deps  = "build/tut15/{swap_ext(in_src, '.d')}",
 )
 
-cpp_link = hancho.Command(
+cpp_link = hancho.Config(
     desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
@@ -308,14 +308,14 @@ app    = cpp_link(in_objs = [main_o, util_o], out_bin = "build/tut15/app")
 
 # tutorial/tut16.hancho
 
-compile = hancho.Command(
+compile = hancho.Config(
     desc    = "Compile {rel(in_src)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{swap_ext(in_src, '.o')}",
     c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Command(
+link = hancho.Config(
     desc    = "Link {rel(in_objs)} into {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
@@ -328,14 +328,14 @@ app    = link(**config, in_objs = [main_o, util_o], out_bin = "app")
 
 # tutorial/tut20.hancho
 
-compile = hancho.Command(
+compile = hancho.Config(
     desc    = "Compile {rel(in_)}",
     command = "g++ -MMD -c {rel(in_)} -o {rel(out_)}",
     out_    = "{swap_ext(in_, '.o')}",
     c_deps  = "{swap_ext(in_, '.d')}",
 )
 
-link = hancho.Command(
+link = hancho.Config(
     desc    = "Link {rel(in_)} into {rel(out_)}",
     command = "g++ {rel(in_)} -o {rel(out_)}",
 )
@@ -385,14 +385,14 @@ app = rules.c_binary(config, ["src/main.cpp", "src/util.cpp"], "app")
 
 # tutorial/tut30_rules.hancho
 
-compile = hancho.Command(
+compile = hancho.Config(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{swap_ext(in_src, '.o')}",
     c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Command(
+link = hancho.Config(
     desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
@@ -436,14 +436,14 @@ exports.bin = bin
 
 # tutorial/tut40_rules.hancho
 
-compile = hancho.Command(
+compile = hancho.Config(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{swap_ext(in_src, '.o')}",
     c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Command(
+link = hancho.Config(
     desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )
@@ -478,14 +478,14 @@ rules.c_binary(in_srcs = glob.glob("*.cpp"), out_bin = "app", **config)
 
 # tutorial/tut41_rules.hancho
 
-compile = hancho.Command(
+compile = hancho.Config(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{swap_ext(in_src, '.o')}",
     c_deps  = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Command(
+link = hancho.Config(
     desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )

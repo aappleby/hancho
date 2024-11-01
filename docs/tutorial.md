@@ -128,7 +128,7 @@ Task @ 0x727f0371d6a0 {
   _out_files = [],
   _state = 0,
   _reason = None,
-  _promise = None,
+  _asyncio_task = None,
   _loaded_files = [
     "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
   ],
