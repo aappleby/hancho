@@ -19,11 +19,14 @@ import sys
 import time
 import traceback
 import types
+import collections.abc as abc
 
 # If we were launched directly, a reference to this module is already in sys.modules[__name__].
 # Stash another reference in sys.modules["hancho"] so that build.hancho and descendants don't try
 # to load a second copy of Hancho.
 sys.modules["hancho"] = sys.modules[__name__]
+
+# FIXME c_deps -> in_depfile
 
 #---------------------------------------------------------------------------------------------------
 # Logging stuff
@@ -88,7 +91,7 @@ def log_exception():
 
 def abs_path(raw_path, strict=False) -> str | list[str]:
 
-    if isinstance(raw_path, list):
+    if listlike(raw_path):
         return [abs_path(p, strict) for p in raw_path]
 
     result = path.realpath(raw_path)
@@ -98,7 +101,7 @@ def abs_path(raw_path, strict=False) -> str | list[str]:
 
 def rel_path(path1, path2):
 
-    if isinstance(path1, list):
+    if listlike(path1):
         return [rel_path(p, path2) for p in path1]
 
     # Generating relative paths in the presence of symlinks doesn't work with either
@@ -110,15 +113,15 @@ def rel_path(path1, path2):
 
 def join_path(path1, path2, *args):
     result = join_path2(path1, path2, *args)
-    return flatten(result) if isinstance(result, list) else result
+    return flatten(result) if listlike(result) else result
 
 def join_path2(path1, path2, *args):
 
     if len(args) > 0:
         return [join_path(path1, p) for p in join_path(path2, *args)]
-    if isinstance(path1, list):
+    if listlike(path1):
         return [join_path(p, path2) for p in flatten(path1)]
-    if isinstance(path2, list):
+    if listlike(path2):
         return [join_path(path1, p) for p in flatten(path2)]
 
     if not path2:
@@ -140,8 +143,14 @@ def normalize_path(file_path):
 #---------------------------------------------------------------------------------------------------
 # Helper methods
 
+def listlike(variant):
+    return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes, bytearray))
+
+def dictlike(variant):
+    return isinstance(variant, abc.Mapping)
+
 def flatten(variant):
-    if isinstance(variant, (list, tuple)):
+    if listlike(variant):
         return [x for element in variant for x in flatten(element)]
     return [variant]
 
@@ -173,7 +182,7 @@ def swap_ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, Task):
         name = name._out_files
-    if isinstance(name, list):
+    if listlike(name):
         return [swap_ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
 
@@ -197,7 +206,7 @@ def maybe_as_number(text):
 # Heplers for managing variants (could be Config, list, dict, etc.)
 
 def merge_variant(lhs, rhs):
-    if isinstance(lhs, Config) and isinstance(rhs, (Config, dict)):
+    if isinstance(lhs, Config) and dictlike(rhs):
         for key, rval in rhs.items():
             lhs[key] = merge_variant(lhs.get(key, None), rval)
         return lhs
@@ -205,10 +214,10 @@ def merge_variant(lhs, rhs):
 
 def map_variant(key, val, apply):
     val = apply(key, val)
-    if isinstance(val, (Config, dict)):
+    if dictlike(val):
         for key2, val2 in val.items():
             val[key2] = map_variant(key2, val2, apply)
-    elif isinstance(val, (list, tuple, set)):
+    elif listlike(val):
         for key2, val2 in enumerate(val):
             val[key2] = map_variant(key2, val2, apply)
     return val
@@ -216,22 +225,22 @@ def map_variant(key, val, apply):
 async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
 
-    match variant:
-        case Promise():
-            variant = await variant.get()
-            variant = await await_variant(variant)
-        case Task():
-            await variant.await_done()
-            variant = await await_variant(variant._out_files)
-        case Config() | dict():
-            for key, val in variant.items():
-                variant[key] = await await_variant(val)
-        case list() | tuple() | set():
-            for key, val in enumerate(variant):
-                variant[key] = await await_variant(val)
-        case _:
-            while inspect.isawaitable(variant):
-                variant = await variant
+    if isinstance(variant, Promise):
+        variant = await variant.get()
+        variant = await await_variant(variant)
+    elif isinstance(variant, Task):
+        await variant.await_done()
+        variant = await await_variant(variant._out_files)
+    elif dictlike(variant):
+        for key, val in variant.items():
+            variant[key] = await await_variant(val)
+    elif listlike(variant):
+        for key, val in enumerate(variant):
+            variant[key] = await await_variant(val)
+    else:
+        while inspect.isawaitable(variant):
+            variant = await variant
+
     return variant
 
 ####################################################################################################
@@ -246,24 +255,23 @@ class Dumper:
 
     def dump(self, variant):
         result = f"{type(variant).__name__} @ {hex(id(variant))} "
-        match variant:
-            case Task():
-                result += self.dump_dict(variant.__dict__)
-            case HanchoAPI():
-                result += self.dump_dict(variant.__dict__)
-            case Config():
-                result += self.dump_dict(variant)
-            case list():
-                result += self.dump_list(variant)
-            case dict():
-                result = ""
-                result += self.dump_dict(variant)
-            case str():
-                result = ""
-                result += '"' + str(variant) + '"'
-            case _:
-                result = ""
-                result += str(variant)
+        if isinstance(variant, Task):
+            result += self.dump_dict(variant.__dict__)
+        elif isinstance(variant, HanchoAPI):
+            result += self.dump_dict(variant.__dict__)
+        elif isinstance(variant, Config):
+            result += self.dump_dict(variant)
+        elif listlike(variant):
+            result += self.dump_list(variant)
+        elif dictlike(variant):
+            result = ""
+            result += self.dump_dict(variant)
+        elif isinstance(variant, str):
+            result = ""
+            result += '"' + str(variant) + '"'
+        else:
+            result = ""
+            result += str(variant)
         return result
 
     def dump_list(self, l):
@@ -355,7 +363,7 @@ class Config(dict, Utils):
     def merge(self, *args, **kwargs):
         for arg in flatten(args):
             if arg is not None:
-                assert isinstance(arg, (Config, dict))
+                assert dictlike(arg)
                 merge_variant(self, arg)
         merge_variant(self, kwargs)
         return self
@@ -427,16 +435,15 @@ def expand_dec():
 
 def stringify_variant(variant):
     """ Converts any type into an expansion-compatible string. """
-    match variant:
-        case Expander():
-            return stringify_variant(variant.config)
-        case Task():
-            return stringify_variant(variant._out_files)
-        case list():
-            variant = [stringify_variant(val) for val in variant]
-            return " ".join(variant)
-        case _:
-            return str(variant)
+    if isinstance(variant, Expander):
+        return stringify_variant(variant.config)
+    elif isinstance(variant, Task):
+        return stringify_variant(variant._out_files)
+    elif listlike(variant):
+        variant = [stringify_variant(val) for val in variant]
+        return " ".join(variant)
+    else:
+        return str(variant)
 
 class Expander:
     """ Wraps a Config object and expands all fields read from it. """
@@ -540,21 +547,16 @@ def expand_variant(expander, variant):
     #   log(trace_config(expander) + f"┏ expand_variant {trace_variant(variant)}")
     #expand_inc()
 
-    #==========
-
-    match variant:
-        case Config():
-            result = Expander(variant)
-        case str():
-            result = expand_text(expander, variant)
-        case list():
-            result = [expand_variant(expander, val) for val in variant]
-        case dict():
-            result = {expand_variant(expander, key): expand_variant(expander, val) for key, val in variant.items()}
-        case _:
-            result = variant
-
-    #==========
+    if isinstance(variant, Config):
+        result = Expander(variant)
+    elif listlike(variant):
+        result = [expand_variant(expander, val) for val in variant]
+    elif dictlike(variant):
+        result = {expand_variant(expander, key): expand_variant(expander, val) for key, val in variant.items()}
+    elif isinstance(variant, str):
+        result = expand_text(expander, variant)
+    else:
+        result = variant
 
     #expand_dec()
     #if expander.trace:
@@ -571,13 +573,12 @@ class Promise:
 
     async def get(self):
         await self.task.await_done()
-        match len(self.args):
-            case 0:
-                return self.task._out_files
-            case 1:
-                return self.task.config[self.args[0]]
-            case _:
-                return [self.task.config[field] for field in self.args]
+        if len(self.args) == 0:
+            return self.task._out_files
+        elif len(self.args) == 1:
+            return self.task.config[self.args[0]]
+        else:
+            return [self.task.config[field] for field in self.args]
 
 ####################################################################################################
 
@@ -617,10 +618,6 @@ class Task:
         )
 
         self.config.merge(*args, **kwargs)
-
-        assert isinstance(self.config.command, (str, list)) or callable(self.config.command) or self.config.command is None
-        assert isinstance(self.config.task_dir, str)
-        assert isinstance(self.config.build_dir, str)
 
         self._task_index = 0
         self._in_files  = []
@@ -1192,7 +1189,7 @@ class App:
     ########################################
 
     def parse_flags(self, argv):
-        assert isinstance(argv, list)
+        assert listlike(argv)
 
         # pylint: disable=line-too-long
         # fmt: off
