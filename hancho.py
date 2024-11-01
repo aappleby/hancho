@@ -1,12 +1,11 @@
 #!/usr/bin/python3
 
-"""Hancho v0.3.0 @ 2024-10-16 - A simple, pleasant build system."""
+"""Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system."""
 
 from os import path
 import argparse
 import asyncio
 import builtins
-import collections
 import copy
 import glob
 import inspect
@@ -20,7 +19,6 @@ import sys
 import time
 import traceback
 import types
-from enum import IntEnum
 
 # If we were launched directly, a reference to this module is already in sys.modules[__name__].
 # Stash another reference in sys.modules["hancho"] so that build.hancho and descendants don't try
@@ -196,7 +194,7 @@ def maybe_as_number(text):
             return text
 
 ####################################################################################################
-# Variant stuff that I need to clean up
+# Heplers for managing variants (could be Config, list, dict, etc.)
 
 def merge_variant(lhs, rhs):
     if isinstance(lhs, Config) and isinstance(rhs, (Config, dict)):
@@ -256,13 +254,16 @@ class Dumper:
             case Config():
                 result += self.dump_dict(variant)
             case list():
-                result = self.dump_list(variant)
+                result += self.dump_list(variant)
             case dict():
-                result = self.dump_dict(variant)
+                result = ""
+                result += self.dump_dict(variant)
             case str():
-                result = '"' + str(variant) + '"'
+                result = ""
+                result += '"' + str(variant) + '"'
             case _:
-                result = str(variant)
+                result = ""
+                result += str(variant)
         return result
 
     def dump_list(self, l):
@@ -318,13 +319,35 @@ class Utils:
     # fmt: on
 
 ####################################################################################################
-# FIXME this should probably just inherit from dict...
 
-class Config(collections.abc.MutableMapping, Utils):
-    """A Config object is just a 'bag of fields'."""
+class Config(dict, Utils):
+    """
+    A Config object is a specialized dict that also supports 'config.attribute' syntax as well as
+    arbitrary "merging" of dicts/keys and text template expansion.
+    """
 
     def __init__(self, *args, **kwargs):
-        self.merge(*args, **kwargs)
+        self.merge(*args)
+        self.merge(kwargs)
+
+    def __repr__(self):
+        return Dumper(100).dump(self)
+
+    def __getattr__(self, key):
+        if not dict.__contains__(self, key):
+            raise AttributeError(name = key, obj = self)
+        result = dict.__getitem__(self, key)
+        return result
+
+    def __setattr__(self, key, val):
+        return dict.__setitem__(self, key, val)
+
+    def __delattr__(self, key):
+        if not dict.__contains__(self, key):
+            raise AttributeError(name = key, obj = self)
+        return dict.__delitem__(self, key)
+
+    #----------------------------------------
 
     def fork(self, *args, **kwargs):
         return type(self)(self, *args, **kwargs)
@@ -337,34 +360,11 @@ class Config(collections.abc.MutableMapping, Utils):
         merge_variant(self, kwargs)
         return self
 
-    def __repr__(self):
-        return Dumper(1).dump(self)
-
     def expand(self, variant):
         return expand_variant(Expander(self), variant)
 
     def rel(self, sub_path):
         return rel_path(sub_path, expand_variant(self, self.task_dir))
-
-    #----------------------------------------
-
-    def __contains__(self, key):
-        return key in self.__dict__
-
-    def __iter__(self):
-        return self.__dict__.__iter__()
-
-    def __len__(self):
-        return len(self.__dict__.keys())
-
-    def __setitem__(self, key, val):
-        self.__dict__[key] = val
-
-    def __delitem__(self, key):
-        del self.__dict__[key]
-
-    def __getitem__(self, key):
-        return self.__dict__[key]
 
 ####################################################################################################
 # Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
@@ -453,9 +453,8 @@ class Expander:
         return self.get(key)
 
     def get(self, key):
-        # FIXME - I don't remember why this has to be getattr(), but if I change it it stops
-        # working.
         try:
+            # This has to be getattr() so that we also check other Config base classes like Utils.
             val = getattr(self.config, key)
         except KeyError:
             if self.trace:
@@ -463,7 +462,8 @@ class Expander:
             raise
 
         if self.trace:
-            log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
+            if key != "__iter__":
+                log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
         val = expand_variant(self, val)
         return val
 
@@ -543,14 +543,14 @@ def expand_variant(expander, variant):
     #==========
 
     match variant:
+        case Config():
+            result = Expander(variant)
         case str():
             result = expand_text(expander, variant)
         case list():
             result = [expand_variant(expander, val) for val in variant]
         case dict():
             result = {expand_variant(expander, key): expand_variant(expander, val) for key, val in variant.items()}
-        case Config():
-            result = Expander(variant)
         case _:
             result = variant
 
@@ -645,7 +645,7 @@ class Task:
         return self
 
     def __repr__(self):
-        return Dumper(2).dump(self)
+        return Dumper(100).dump(self)
 
     #----------------------------------------
 
@@ -1001,7 +1001,7 @@ class HanchoAPI(Utils):
         self.Task    = Task
 
     def __repr__(self):
-        return Dumper(2).dump(self)
+        return Dumper(100).dump(self)
 
     def __contains__(self, key):
         return key in self.__dict__
@@ -1184,6 +1184,7 @@ class App:
         self.log = ""
 
         self.job_pool = JobPool()
+        self.parse_flags([])
 
     def reset(self):
         self.__init__() # pylint: disable=unnecessary-dunder-call
