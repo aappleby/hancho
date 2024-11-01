@@ -160,15 +160,7 @@ run_test = hancho.Config(
     log_path = "{in_test}.log",
 )
 
-def cpp_test(
-    hancho,
-    *args,
-    in_srcs=[],
-    in_objs=[],
-    in_libs=[],
-    out_bin=[],
-    **kwargs
-):
+def cpp_test(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin=[], **kwargs):
     config = hancho.Config(*args, **kwargs)
     objs = [hancho(compile_cpp, config, in_src=src) for src in hancho.flatten(in_srcs)]
     test_bin = hancho(

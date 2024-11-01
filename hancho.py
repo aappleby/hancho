@@ -252,7 +252,7 @@ class Dumper:
             case Task():
                 result += self.dump_dict(variant.__dict__)
             case HanchoAPI():
-                result += self.dump_dict(variant.config)
+                result += self.dump_dict(variant.__dict__)
             case Config():
                 result += self.dump_dict(variant)
             case list():
@@ -518,7 +518,7 @@ def expand_macro(expander, macro):
 
     try:
         result = eval(macro[1:-1], {}, expander) # pylint: disable=eval-used
-    except Exception: # pylint: disable=broad-exception-caught
+    except BaseException: # pylint: disable=broad-exception-caught
         failed = True
 
     #==========
@@ -598,22 +598,25 @@ class TaskState:
 ####################################################################################################
 
 class Task:
+
+    default_desc       = "{command}"
+    default_command    = None
+    default_task_dir   = "{mod_dir}"
+    default_build_dir  = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
+    default_build_root = "{root_dir}/build"
+    default_build_tag  = ""
+    default_log_path   = None
+
     def __init__(self, *args, **kwargs):
-        #super().__init__(*args, **kwargs)
-
-        default_config = Config(
-            desc      = app.default_desc,
-            command   = app.default_command,
-            task_dir  = app.default_task_dir,
-            build_dir = app.default_build_dir,
-            log_path  = app.default_log_path,
-        )
-
         self.config = Config(
-            default_config,
-            *args,
-            **kwargs
+            desc      = Task.default_desc,
+            command   = Task.default_command,
+            task_dir  = Task.default_task_dir,
+            build_dir = Task.default_build_dir,
+            log_path  = Task.default_log_path,
         )
+
+        self.config.merge(*args, **kwargs)
 
         assert isinstance(self.config.command, (str, list)) or callable(self.config.command) or self.config.command is None
         assert isinstance(self.config.task_dir, str)
@@ -650,7 +653,7 @@ class Task:
         if self._state is TaskState.DECLARED:
             app.queued_tasks.append(self)
             self._state = TaskState.QUEUED
-            def apply(key, val):
+            def apply(_, val):
                 if isinstance(val, Task):
                     val.queue()
                 return val
@@ -665,10 +668,7 @@ class Task:
 
     async def await_done(self):
         self.start()
-        try:
-            await self._asyncio_task
-        except:
-            raise asyncio.CancelledError()
+        await self._asyncio_task
 
     def promise(self, *args):
         return Promise(self, *args)
@@ -701,22 +701,17 @@ class Task:
             for key, val in self.config.items():
                 if key != "_asyncio_task":
                     self.config[key] = await await_variant(val)
-
-        except Exception as ex: # pylint: disable=broad-exception-caught
-            self._state = TaskState.BROKEN
-            app.tasks_broken += 1
-            raise ex
-        except asyncio.CancelledError as ex:
+        except BaseException as ex: # pylint: disable=broad-exception-caught
+            # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = TaskState.CANCELLED
             app.tasks_cancelled += 1
-            raise ex
-
+            raise asyncio.CancelledError() from ex
 
         # Everything awaited, task_init runs synchronously.
         try:
             self._state = TaskState.TASK_INIT
             self.task_init()
-        except Exception as ex: # pylint: disable=broad-exception-caught
+        except BaseException as ex: # pylint: disable=broad-exception-caught
             self._state = TaskState.BROKEN
             app.tasks_broken += 1
             raise ex
@@ -733,27 +728,27 @@ class Task:
             app.tasks_skipped += 1
             self._state = TaskState.SKIPPED
             return
-
-        if verbose or debug:
+        elif verbose or debug:
             log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
-        # Wait for enough jobs to free up to run this task.
-        job_count = self.config.get("job_count", 1)
-        self._state = TaskState.AWAITING_JOBS
-        await app.job_pool.acquire_jobs(job_count, self)
-
-        # Run the commands.
-        self._state = TaskState.RUNNING_COMMANDS
-        app.tasks_running += 1
-        self._task_index = app.tasks_running
-        self.print_status()
-
         try:
+            # Wait for enough jobs to free up to run this task.
+            job_count = self.config.get("job_count", 1)
+            self._state = TaskState.AWAITING_JOBS
+            await app.job_pool.acquire_jobs(job_count, self)
+
+            # Run the commands.
+            self._state = TaskState.RUNNING_COMMANDS
+            app.tasks_running += 1
+            self._task_index = app.tasks_running
+            self.print_status()
+
             for command in flatten(self.config.command):
                 await self.run_command(command)
                 if self._returncode != 0:
                     break
-        except Exception as ex: # pylint: disable=broad-exception-caught
+
+        except BaseException as ex: # pylint: disable=broad-exception-caught
             # If any command failed, we print the error and propagate it to downstream tasks.
             self._state = TaskState.FAILED
             app.tasks_failed += 1
@@ -971,7 +966,7 @@ class Task:
         # intentionally-failing tests every build
         command_pass = (self._returncode == 0) != self.config.get('should_fail', False)
 
-        if (log_path := self.config.get('log_path', app.default_log_path)) is not None:
+        if (log_path := self.config.get('log_path', Task.default_log_path)) is not None:
             result = open(log_path, "w", encoding="utf-8")
             result.write(str(self))
             result.write("\n")
@@ -979,21 +974,12 @@ class Task:
 
         if not command_pass:
             message = f"Command exited with return code {self._returncode}\n"
-            #message += color(128,255,196)
-            #message += f"[{self._task_index}/{app.tasks_started}]\n"
-            #message += color(255,128,128)
-            #message += f"Task failed - '{self.config.desc}'\n"
-            #message += f"Task dir: {self.config.task_dir}\n"
-            #message += f"Command : {self.config.command}\n"
-            #message += f"Return  : {self._returncode}\n"
             if self._stdout:
                 message += "Stdout:\n"
                 message += self._stdout
             if self._stderr:
                 message += "Stderr:\n"
                 message += self._stderr
-            #message += "Task:\n"
-            #message += str(self)
             raise ValueError(message)
         else:
             if debug or verbose:
@@ -1004,7 +990,6 @@ class Task:
                 if self._stderr:
                     log("Stderr:")
                     log(self._stderr, end="")
-
 
 ####################################################################################################
 
@@ -1035,7 +1020,7 @@ class HanchoAPI(Utils):
             mod_dir  = path.dirname(mod_path),
             mod_path = mod_path,
             task_dir = path.dirname(mod_path),
-            build_dir = app.default_build_dir,
+            build_dir = Task.default_build_dir,
         )
 
         new_context = copy.deepcopy(self)
@@ -1053,7 +1038,7 @@ class HanchoAPI(Utils):
             mod_dir   = path.dirname(mod_path),
             mod_path  = mod_path,
             task_dir  = path.dirname(mod_path),
-            build_dir = app.default_build_dir,
+            build_dir = Task.default_build_dir,
         )
 
         new_context = copy.deepcopy(self)
@@ -1065,15 +1050,15 @@ class HanchoAPI(Utils):
         mod_path = normalize_path(mod_path)
         new_config = Config(
             self.config,
-            root_dir  = path.dirname(mod_path),
-            root_path = mod_path,
-            repo_name = path.basename(path.dirname(mod_path)),
-            repo_dir  = path.dirname(mod_path),
-            build_root  = app.default_build_root,
-            build_tag   = app.default_build_tag,
-            mod_name  = path.splitext(path.basename(mod_path))[0],
-            mod_dir   = path.dirname(mod_path),
-            mod_path  = mod_path,
+            root_dir   = path.dirname(mod_path),
+            root_path  = mod_path,
+            repo_name  = path.basename(path.dirname(mod_path)),
+            repo_dir   = path.dirname(mod_path),
+            build_root = Task.default_build_root,
+            build_tag  = Task.default_build_tag,
+            mod_name   = path.splitext(path.basename(mod_path))[0],
+            mod_dir    = path.dirname(mod_path),
+            mod_path   = mod_path,
         )
 
         new_context = copy.deepcopy(self)
@@ -1081,7 +1066,7 @@ class HanchoAPI(Utils):
         return new_context._load_module()
 
     def _load_module(self):
-        if len(app.dirstack) == 1 or app.flags.verbose:
+        if len(app.dirstack) == 1 or app.flags.verbose or app.flags.debug:
             log(("┃ " * (len(app.dirstack) - 1)), end="")
             log(color(128,255,128) + f"Loading {self.config.mod_path}" + color())
 
@@ -1200,14 +1185,6 @@ class App:
 
         self.job_pool = JobPool()
 
-        self.default_desc       = "{command}"
-        self.default_command    = None
-        self.default_task_dir   = "{mod_dir}"
-        self.default_build_dir  = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
-        self.default_build_root = "{root_dir}/build"
-        self.default_build_tag  = ""
-        self.default_log_path   = None
-
     def reset(self):
         self.__init__() # pylint: disable=unnecessary-dunder-call
 
@@ -1271,8 +1248,8 @@ class App:
             mod_dir     = root_dir,
             mod_path    = root_path,
 
-            build_root  = app.default_build_root,
-            build_tag   = app.default_build_tag,
+            build_root  = Task.default_build_root,
+            build_tag   = Task.default_build_tag,
         )
 
         # All the unrecognized flags get stuck on the root context.
@@ -1286,7 +1263,6 @@ class App:
     ########################################
 
     def main(self):
-
         app.root_context = self.create_root_context()
 
         if app.root_context.config.get("debug", None):
@@ -1308,8 +1284,6 @@ class App:
 
         #if app.flags.debug or app.flags.verbose:
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
-
-        #========================================
 
         time_a = time.perf_counter()
 
@@ -1338,7 +1312,9 @@ class App:
                 repo_dir = task.config.get("repo_dir", None)
                 if root_dir == repo_dir:
                     task.queue()
+
         time_b = time.perf_counter()
+
         #if app.flags.debug or app.flags.verbose:
         log(f"Queueing {len(app.queued_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
@@ -1399,7 +1375,7 @@ class App:
             task = self.started_tasks.pop(0)
             try:
                 await task._asyncio_task
-            except BaseException as ex:
+            except BaseException: # pylint: disable=broad-exception-caught
                 log(color(255,128,0), end="")
                 log(f"Task failed: {task.config.desc}")
                 log(color(), end="")
@@ -1409,7 +1385,7 @@ class App:
 
         time_b = time.perf_counter()
 
-        #if app.debug or app.verbose:
+        #if app.flags.debug or app.flags.verbose:
         log(f"Running {app.tasks_started} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed

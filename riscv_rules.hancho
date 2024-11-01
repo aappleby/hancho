@@ -10,6 +10,7 @@ rv_config = hancho.Config(
         "-MMD"
     ],
     rv_opt_mode = "-O0",
+
     joined_warnings = "{join_prefix('-W', get('warnings', []))}",
     joined_defines  = "{join_prefix('-D', get('defines', []))}",
     joined_includes = "{join_prefix('-I', get('includes', []))}",
