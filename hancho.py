@@ -19,14 +19,12 @@ import sys
 import time
 import traceback
 import types
-import collections.abc as abc
+from collections import abc
 
 # If we were launched directly, a reference to this module is already in sys.modules[__name__].
 # Stash another reference in sys.modules["hancho"] so that build.hancho and descendants don't try
 # to load a second copy of Hancho.
 sys.modules["hancho"] = sys.modules[__name__]
-
-# FIXME c_deps -> in_depfile
 
 #---------------------------------------------------------------------------------------------------
 # Logging stuff
@@ -779,7 +777,7 @@ class Task:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
         for key, val in self.config.items():
-            if key.startswith("in_") or key.startswith("out_") or key == "c_deps":
+            if key.startswith("in_") or key.startswith("out_"):
                 self.config[key] = self.config.expand(val)
 
         #----------------------------------------
@@ -787,19 +785,19 @@ class Task:
 
         def join_dir(key, val):
             if isinstance(key, str):
-                if key.startswith("out_"):
-                    val = join_path(self.config.build_dir, val)
-                    val = abs_path(val)
-                    self._out_files.extend(flatten(val))
-                if key.startswith("in_"):
-                    val = join_path(self.config.task_dir, val)
-                    val = abs_path(val)
-                    self._in_files.extend(flatten(val))
-                if key == "c_deps":
+                if key == "in_depfile":
                     val = join_path(self.config.build_dir, val)
                     val = abs_path(val)
                     if path.isfile(val):
                         self._in_files.append(val)
+                elif key.startswith("out_"):
+                    val = join_path(self.config.build_dir, val)
+                    val = abs_path(val)
+                    self._out_files.extend(flatten(val))
+                elif key.startswith("in_"):
+                    val = join_path(self.config.task_dir, val)
+                    val = abs_path(val)
+                    self._in_files.extend(flatten(val))
             return val
 
         map_variant(None, self.config, join_dir)
@@ -882,21 +880,21 @@ class Task:
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if (c_deps := self.config.get("c_deps", None)) and path.exists(c_deps):
-            c_depformat = self.config.get("c_depformat", "gcc")
+        if (in_depfile := self.config.get("in_depfile", None)) and path.exists(in_depfile):
+            depformat = self.config.get("depformat", "gcc")
             if debug:
-                log(f"Found C dependencies file {c_deps}")
-            with open(c_deps, encoding="utf-8") as c_deps:
+                log(f"Found C dependencies file {in_depfile}")
+            with open(in_depfile, encoding="utf-8") as depfile:
                 deplines = None
-                if c_depformat == "msvc":
-                    # MSVC /sourceDependencies json c_deps
-                    deplines = json.load(c_deps)["Data"]["Includes"]
-                elif c_depformat == "gcc":
-                    # GCC -MMD .d c_deps
-                    deplines = c_deps.read().split()
+                if depformat == "msvc":
+                    # MSVC /sourceDependencies
+                    deplines = json.load(depfile)["Data"]["Includes"]
+                elif depformat == "gcc":
+                    # GCC -MMD
+                    deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise ValueError(f"Invalid dependency file format {c_depformat}")
+                    raise ValueError(f"Invalid dependency file format {depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [path.join(self.config.task_dir, d) for d in deplines]

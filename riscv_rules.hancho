@@ -18,9 +18,9 @@ rv_config = hancho.Config(
 
 rv_compile = hancho.Config(
     rv_config,
-    command = "{rv_toolchain}-g++ {rv_flags_c} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
-    out_obj = "{swap_ext(in_src, '.o')}",
-    c_deps  = "{swap_ext(in_src, '.d')}",
+    command    = "{rv_toolchain}-g++ {rv_flags_c} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
+    out_obj    = "{swap_ext(in_src, '.o')}",
+    in_depfile = "{swap_ext(in_src, '.d')}",
 )
 
 rv_link = hancho.Config(

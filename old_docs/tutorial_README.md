@@ -24,7 +24,7 @@ main_o = hancho(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/main.cpp",
   out_obj = "main.o",
-  c_deps  = "main.d",
+  in_depfile  = "main.d",
 )
 
 util_o = hancho(
@@ -32,7 +32,7 @@ util_o = hancho(
   command = "g++ -MMD -c {in_src} -o {out_obj}",
   in_src  = "src/util.cpp",
   out_obj = "util.o",
-  c_deps  = "util.d",
+  in_depfile  = "util.d",
 )
 
 app = hancho(
@@ -236,13 +236,13 @@ dependency file ```main.d``` alongside the compiled ```main.o``` that contains a
 list of all the header files ```main.cpp``` depends on. We can use this in
 Hancho to ensure that our source files are recompiled whenever a header file
 they depend on changes. Like ```build_dir```, the special rule field
-```c_deps``` accepts the name of the generated dependency file. If the dependency file exists
+```in_depfile``` accepts the name of the generated dependency file. If the dependency file exists
 during the build, Hancho will use its contents when deciding if a rule
 needs to be rebuilt.
 
-It would be nice if we didn't have to specify ```out_*``` and ```c_deps```
+It would be nice if we didn't have to specify ```out_*``` and ```in_depfile```
 every time we call ```compile```. To do that, we can use the ```swap_ext```
-builtin to generically define ```out_*``` and ```c_deps``` in the
+builtin to generically define ```out_*``` and ```in_depfile``` in the
 ```compile``` rule. Then we don't need to specify them at all when calling
 ```compile```.
 
@@ -257,7 +257,7 @@ compile = Rule(
   desc      = "Compile {in_*} -> {out_*}",
   command   = "g++ -MMD -c {in_*} -o {out_*}",
   out_* = "{swap_ext(in_*, '.o')}",
-  c_deps   = "{swap_ext(out_*, '.d')}",
+  in_depfile   = "{swap_ext(out_*, '.d')}",
 )
 
 link = Rule(
@@ -377,7 +377,7 @@ compile = Rule(
   desc      = "Compile {in_*} -> {out_*}",
   command   = "g++ -MMD -c {in_*} -o {out_*}",
   out_* = "{swap_ext(in_*, '.o')}",
-  c_deps = "{swap_ext(out_*, '.d')}",
+  in_depfile = "{swap_ext(out_*, '.d')}",
 )
 
 link = Rule(

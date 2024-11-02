@@ -4,11 +4,11 @@
 # examples/hello_world/build.hancho
 
 compile = hancho.Config(
-  command = "g++ -MMD -c {in_src} -o {out_obj}",
-  desc    = "Compile {in_src} -> {out_obj}",
-  in_src  = None,
-  out_obj = "{swap_ext(in_src, '.o')}",
-  c_deps  = "{swap_ext(in_src, '.d')}",
+  command    = "g++ -MMD -c {in_src} -o {out_obj}",
+  desc       = "Compile {in_src} -> {out_obj}",
+  in_src     = None,
+  out_obj    = "{swap_ext(in_src, '.o')}",
+  in_depfile = "{swap_ext(in_src, '.d')}",
 )
 
 link = hancho.Config(
@@ -60,7 +60,7 @@ main_app = link(in_objs = main_o, out_bin = "app")
     - A function (sync or async) that returns a list of absolute-path filenames.
 - ```debug``` (Default: ```False```)
     - True if this rule should print debug information when run.
-- ```c_deps``` (Default: ```None```)
+- ```in_depfile``` (Default: ```None```)
     - Optional: The filename of a [GCC format](http://www.google.com/search?q=gcc+dependency+file+format) dependencies file. Changing a dependency in this file will cause the task to rebuild.
 - ```deps``` (Default: ```None```)
     - A list of files (or file promises) this rule depends on to run that are not input files - use this for configuration files, custom scripts, or anything else that could affect the output of a build aside from the list of input files.

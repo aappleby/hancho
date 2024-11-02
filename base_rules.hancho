@@ -50,7 +50,7 @@ compile_cpp = hancho.Config(
 
     in_src  = None,
     out_obj = "{swap_ext(in_src, '.o')}",
-    c_deps  = "{swap_ext(in_src, '.d')}",
+    in_depfile = "{swap_ext(in_src, '.d')}",
 
     toolchain=default_toolchain,
     cpp_std="gnu++2a",
@@ -70,8 +70,8 @@ compile_cpp = hancho.Config(
 """
 if os.name == 'nt':
     compile_cpp.command =
-        "cl.exe /c {rel(in_src)} /sourceDependencies {rel(c_deps)} /Fo:{rel(out_obj)}",
-    compile_cpp.c_depformat = "msvc",
+        "cl.exe /c {rel(in_src)} /sourceDependencies {rel(in_depfile)} /Fo:{rel(out_obj)}",
+    compile_cpp.depformat = "msvc",
 """
 
 # ----------------------------------------

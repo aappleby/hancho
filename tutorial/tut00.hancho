@@ -39,14 +39,14 @@ main_o = hancho(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
-    c_deps  = "main.d",
+    in_depfile  = "main.d",
 )
 
 util_o = hancho(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
-    c_deps  = "util.d",
+    in_depfile  = "util.d",
 )
 
 hancho(
@@ -61,7 +61,7 @@ compile_cpp = hancho.Config(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{swap_ext(in_src, '.o')}",
-    c_deps  = "{swap_ext(in_src, '.d')}",
+    in_depfile  = "{swap_ext(in_src, '.d')}",
 )
 
 link_cpp = hancho.Config(
@@ -87,7 +87,7 @@ compile_cpp = hancho.Config(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{swap_ext(in_src, '.o')}",
-    c_deps  = "{swap_ext(in_src, '.d')}",
+    in_depfile  = "{swap_ext(in_src, '.d')}",
 )
 
 link_cpp = hancho.Config(
@@ -109,7 +109,7 @@ compile_cpp = hancho.Config(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{swap_ext(in_src, '.o')}",
-    c_deps  = "{swap_ext(in_src, '.d')}",
+    in_depfile  = "{swap_ext(in_src, '.d')}",
 )
 
 link_cpp = hancho.Config(
