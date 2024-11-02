@@ -1,7 +1,7 @@
 emcc = hancho.Config(
-    desc = "Compile Emscripten'd {in_src}",
-    command = "emcc {flags} {joined_includes} -c {in_src} -o {out_obj}",
-    flags = [
+    desc="Compile Emscripten'd {in_src}",
+    command="emcc {flags} {joined_includes} -c {in_src} -o {out_obj}",
+    flags=[
         "-std=c++20",
         "-O0",
         "-g3",
@@ -10,32 +10,32 @@ emcc = hancho.Config(
         "-sNO_DISABLE_EXCEPTION_CATCHING",
         "-Wno-deprecated-declarations",
     ],
-    includes = [],
-    out_obj = "{swap_ext(in_src, '.o')}",
-    joined_includes = "{join_prefix('-I', get('includes', []))}"
+    includes=[],
+    out_obj="{swap_ext(in_src, '.o')}",
+    joined_includes="{join_prefix('-I', get('includes', []))}",
 )
 
 emld = hancho.Config(
-    desc = "Link Emscripten'd {rel(out_js)}",
-    command = "emcc {flags} {in_objs} -o {out_js}",
-    flags = [
+    desc="Link Emscripten'd {rel(out_js)}",
+    command="emcc {flags} {in_objs} -o {out_js}",
+    flags=[
         "-sEXPORT_ES6",
         "-sEXPORTED_RUNTIME_METHODS=['FS','callMain']",
         "-sNO_DISABLE_EXCEPTION_CATCHING",
         "-sTOTAL_STACK=32MB",
         "-sINITIAL_MEMORY=256MB",
         "-sALLOW_MEMORY_GROWTH",
-        "-sFORCE_FILESYSTEM"
+        "-sFORCE_FILESYSTEM",
     ],
 )
 
 ems_package = hancho.Config(
-    desc     = "Package {rel(out_data)}",
-    command  = [
+    desc="Package {rel(out_data)}",
+    command=[
         "rm -f {out_data}",
         "rm -f {out_js}",
         "python3 $EMSDK/upstream/emscripten/tools/file_packager.py {out_data} {flags} --js-output={out_js} --preload {preloads} --exclude {excludes} 2> /dev/null",
     ],
-    flags    = "--no-node",
-    excludes = "*.cpp *.sv *.MD *.hex *.pcf *.v *.txt *.hancho",
+    flags="--no-node",
+    excludes="*.cpp *.sv *.MD *.hex *.pcf *.v *.txt *.hancho",
 )

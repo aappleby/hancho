@@ -64,7 +64,7 @@ main_app = link(in_objs = main_o, out_bin = "app")
     - Optional: The filename of a [GCC format](http://www.google.com/search?q=gcc+dependency+file+format) dependencies file. Changing a dependency in this file will cause the task to rebuild.
 - ```deps``` (Default: ```None```)
     - A list of files (or file promises) this rule depends on to run that are not input files - use this for configuration files, custom scripts, or anything else that could affect the output of a build aside from the list of input files.
-- ```desc``` (Default: ```"{_in_files} -> {_out_files}"```)
+- ```desc``` (Default: ```{command}```)
     - A description of what this rule does that will be printed when run.
 - ```dryrun``` (Default: ```False```)
     - True if this rule should pretend to succeed, but actually do nothing.
