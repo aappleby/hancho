@@ -1,57 +1,41 @@
 ####################################################################################################
-# Utils
-
-touch_outputs = hancho.Config(
-    command="touch {in_files}",
-    in_files=None,
-)
-
-####################################################################################################
 # C++
 
-default_warnings = ["unused-variable", "error"]
-default_cpp_std  = "gnu++2a"
-default_ld_opt   = "{'-O3' if build_tag == 'release' else '-g -O0'}"
-
-# -------------------------------------------------------------------------------
-
 default_toolchain = hancho.Config(
-    arch     = "x86-64",
-    compiler = "x86_64-linux-gnu-g++",
-    linker   = "x86_64-linux-gnu-g++",
+    arch="x86-64",
+    compiler="x86_64-linux-gnu-g++",
+    linker="x86_64-linux-gnu-g++",
 )
 
 riscv64_toolchain = hancho.Config(
-    arch     = "riscv64",
-    compiler = "riscv64-unknown-elf-g++",
-    linker   = "riscv64-unknown-elf-g++",
+    arch="riscv64",
+    compiler="riscv64-unknown-elf-g++",
+    linker="riscv64-unknown-elf-g++",
 )
 
 # ----------------------------------------
 
 check_cpp = hancho.Config(
-    desc    = "Checking C++ syntax of {rel(in_src)}",
-    command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} && touch {rel(out_ok)}",
-    in_src  = None,
-    out_ok  = "{in_src}.ok",
-    toolchain = default_toolchain,
-    flags    = ["-fsyntax-only", "-std={cpp_std}"],
-    cpp_std  = "gnu++2a",
-    joined_warnings = "{join_prefix('-W', get('warnings', []))}",
-    joined_defines  = "{join_prefix('-D', get('defines', []))}",
-    joined_includes = "{join_prefix('-I', get('includes', []))}",
+    desc="Checking C++ syntax of {rel(in_src)}",
+    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} && touch {rel(out_ok)}",
+    in_src=None,
+    out_ok="{in_src}.ok",
+    toolchain=default_toolchain,
+    flags=["-fsyntax-only", "-std={cpp_std}"],
+    cpp_std="gnu++2a",
+    joined_warnings="{join_prefix('-W', get('warnings', []))}",
+    joined_defines="{join_prefix('-D', get('defines', []))}",
+    joined_includes="{join_prefix('-I', get('includes', []))}",
 )
 
 # ----------------------------------------
 
 compile_cpp = hancho.Config(
-    desc    = "Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
-    command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
-
-    in_src  = None,
-    out_obj = "{swap_ext(in_src, '.o')}",
-    in_depfile = "{swap_ext(in_src, '.d')}",
-
+    desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
+    in_src=None,
+    out_obj="{swap_ext(in_src, '.o')}",
+    in_depfile="{swap_ext(in_src, '.d')}",
     toolchain=default_toolchain,
     cpp_std="gnu++2a",
     flags=[
@@ -62,9 +46,9 @@ compile_cpp = hancho.Config(
         "-std={cpp_std}",
         "-fdiagnostics-color=always",
     ],
-    joined_warnings = "{join_prefix('-W', get('warnings', []))}",
-    joined_defines  = "{join_prefix('-D', get('defines', []))}",
-    joined_includes = "{join_prefix('-I', get('includes', []))}",
+    joined_warnings="{join_prefix('-W', get('warnings', []))}",
+    joined_defines="{join_prefix('-D', get('defines', []))}",
+    joined_includes="{join_prefix('-I', get('includes', []))}",
 )
 
 """
@@ -74,7 +58,6 @@ if os.name == 'nt':
     compile_cpp.depformat = "msvc",
 """
 
-# ----------------------------------------
 
 link_cpp_lib = hancho.Config(
     desc="Bundling C++ lib {rel(out_lib)}",
@@ -83,7 +66,6 @@ link_cpp_lib = hancho.Config(
     command="ar rcs {rel(out_lib)} {rel(in_objs)}",
 )
 
-# ----------------------------------------
 
 link_cpp_bin = hancho.Config(
     desc="Linking C++ bin {rel(out_bin)}",
@@ -102,23 +84,18 @@ link_cpp_bin = hancho.Config(
     joined_sys_libs="{join_prefix('-l', get('sys_libs', []))}",
 )
 
-# ----------------------------------------
 
-def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib = [], **kwargs):
+def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib=[], **kwargs):
     config = hancho.Config(*args, **kwargs)
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
         obj = hancho(compile_cpp, config, in_src=file)
         in_objs.append(obj)
 
-    return hancho(
-        link_cpp_lib,
-        config,
-        in_objs=[in_objs, in_libs],
-        out_lib=out_lib
-    )
+    return hancho(link_cpp_lib, config, in_objs=[in_objs, in_libs], out_lib=out_lib)
 
-def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **kwargs):
+
+def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin=[], **kwargs):
     config = hancho.Config(*args, **kwargs)
 
     in_objs = hancho.flatten(in_objs)
@@ -130,35 +107,38 @@ def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin = [], **k
         link_cpp_bin,
         config,
         in_objs=[in_objs, in_libs],
-        out_bin = out_bin,
+        out_bin=out_bin,
     )
+
 
 ####################################################################################################
 # Makefiles
 
+
 def make(hancho, /, *args, in_makefile, **kwargs):
     cmd = hancho.Config(
-        desc        = "Run makefile {rel(in_makefile)}",
-        command     = "make -C {make_dir} -f {make_file} {flags}", #  > /dev/null
-        make_dir    = "{path.dirname(in_makefile)}",
-        make_file   = "{path.basename(in_makefile)}",
-        flags       = "--quiet",
+        desc="Run makefile {rel(in_makefile)}",
+        command="make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
+        make_dir="{path.dirname(in_makefile)}",
+        make_file="{path.basename(in_makefile)}",
+        flags="--quiet",
     )
-    return hancho(cmd, *args, in_makefile = in_makefile, **kwargs)
+    return hancho(cmd, *args, in_makefile=in_makefile, **kwargs)
+
 
 ####################################################################################################
 # Tests
 
 run_test = hancho.Config(
-    desc     = "Running test {rel(in_test)}",
-    command  = "{in_test} {args} && touch {out_pass}",
-    task_dir = "{test_dir}",
-    test_dir = "{mod_dir}",
-    args     = "",
-    in_test  = None,
-    out_pass = "{in_test}.pass",
-    log_path = "{in_test}.log",
+    desc="Running test {rel(in_test)}",
+    command="{in_test} {args} && touch {out_pass}",
+    task_dir="{test_dir}",
+    test_dir="{mod_dir}",
+    args="",
+    in_test=None,
+    out_pass="{in_test}.pass",
 )
+
 
 def cpp_test(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin=[], **kwargs):
     config = hancho.Config(*args, **kwargs)

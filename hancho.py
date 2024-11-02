@@ -604,7 +604,6 @@ class Task:
     default_build_dir  = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
     default_build_root = "{root_dir}/build"
     default_build_tag  = ""
-    default_log_path   = None
 
     def __init__(self, *args, **kwargs):
         self.config = Config(
@@ -612,7 +611,6 @@ class Task:
             command   = Task.default_command,
             task_dir  = Task.default_task_dir,
             build_dir = Task.default_build_dir,
-            log_path  = Task.default_log_path,
         )
 
         self.config.merge(*args, **kwargs)
@@ -807,7 +805,6 @@ class Task:
 
         self.config.desc     = self.config.expand(self.config.desc)
         self.config.command  = self.config.expand(self.config.command)
-        self.config.log_path = self.config.expand(self.config.log_path)
 
         if debug:
             log(f"\nTask after expand: {self.config}")
@@ -960,12 +957,6 @@ class Task:
         # FIXME we need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
         command_pass = (self._returncode == 0) != self.config.get('should_fail', False)
-
-        if (log_path := self.config.get('log_path', Task.default_log_path)) is not None:
-            result = open(log_path, "w", encoding="utf-8")
-            result.write(str(self))
-            result.write("\n")
-            result.close()
 
         if not command_pass:
             message = f"Command exited with return code {self._returncode}\n"

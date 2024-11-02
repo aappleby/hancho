@@ -122,7 +122,6 @@ Task @ 0x727f0371d6a0 {
   out_bin = "app",
   task_dir = "{mod_dir}",
   build_dir = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}",
-  log_path = None,
   _task_index = 0,
   _in_files = [],
   _out_files = [],
