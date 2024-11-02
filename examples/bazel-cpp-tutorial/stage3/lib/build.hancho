@@ -1,7 +1,5 @@
-hancho(
-    hancho.rules.cpp_
-    name = "hello-time",
-    srcs = ["hello-time.cc"],
-    hdrs = ["hello-time.h"],
-    visibility = ["//main:__pkg__"],
+hello_time = hancho(
+    hancho.rules.cc_library,
+    in_srcs = ["hello-time.cc"],
+    out_lib = "hello_time.a"
 )

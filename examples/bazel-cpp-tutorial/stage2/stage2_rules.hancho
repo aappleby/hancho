@@ -1,0 +1,65 @@
+# Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
+# This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
+
+_gcc_flags = [
+    "-U_FORTIFY_SOURCE",
+    "-fstack-protector",
+    "-Wall",
+    "-Wunused-but-set-parameter",
+    "-Wno-free-nonheap-object",
+    "-fno-omit-frame-pointer",
+    "-std=c++14",
+    "-MD -MF {in_depfile}",
+    "-frandom-seed={out_obj}",
+    "-fPIC",
+    "-iquote .",
+    "-fno-canonical-system-headers",
+    "-Wno-builtin-macro-redefined",
+    "-D__DATE__=\"redacted\"",
+    "-D__TIMESTAMP__=\"redacted\"",
+    "-D__TIME__=\"redacted\"",
+]
+
+_ld_flags = [
+    "-Wl,-S",
+    "-Wl,-no-as-needed",
+    "-Wl,-z,relro,-z,now",
+    "-fuse-ld=gold",
+    "-B/usr/bin",
+    "-pass-exit-codes",
+]
+
+_ld_libs = [
+    "-Wl,--push-state,-as-needed -lstdc++ -Wl,--pop-state",
+    "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
+]
+
+_compile_cpp = hancho.Config(
+    desc       = "Compiling C++ {in_src} -> {out_obj}",
+    command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
+    out_obj    = "{swap_ext(in_src, '.o')}",
+    in_depfile = "{swap_ext(in_src, '.d')}",
+    gcc_flags  = _gcc_flags,
+)
+
+_link_cpp_bin = hancho.Config(
+    desc     = "Linking {out_bin}",
+    command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_libs} {ld_libs}",
+    ld_flags = _ld_flags,
+    ld_libs  = _ld_libs,
+)
+
+_link_cpp_lib = hancho.Config(
+    desc     = "Bundling C++ library {out_lib}",
+    command  = "ar rcs {out_lib} {in_objs}",
+)
+
+def cc_library(hancho, * in_srcs, out_lib):
+    objs = [hancho(_compile_cpp, in_src=src) for src in hancho.flatten(in_srcs)]
+    bin  = hancho(_link_cpp_lib, in_objs=objs, out_lib=out_lib)
+    return bin
+
+def cc_binary(hancho, *, in_srcs=[], in_objs=[], in_libs=[], out_bin):
+    objs = [hancho(_compile_cpp, in_src=src) for src in hancho.flatten(in_srcs)]
+    bin  = hancho(_link_cpp_bin, in_objs=objs + in_objs, in_libs=in_libs, out_bin=out_bin)
+    return bin

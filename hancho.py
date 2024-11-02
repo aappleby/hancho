@@ -234,7 +234,9 @@ def maybe_as_number(text):
 def merge_variant(lhs, rhs):
     if isinstance(lhs, Config) and dictlike(rhs):
         for key, rval in rhs.items():
-            lhs[key] = merge_variant(lhs.get(key, None), rval)
+            lval = lhs.get(key, None)
+            if lval is None or rval is not None:
+                lhs[key] = merge_variant(lval, rval)
         return lhs
     return copy.deepcopy(rhs)
 
@@ -476,7 +478,9 @@ def expand_dec():
 
 def stringify_variant(variant):
     """Converts any type into an expansion-compatible string."""
-    if isinstance(variant, Expander):
+    if variant is None:
+        return ""
+    elif isinstance(variant, Expander):
         return stringify_variant(variant.config)
     elif isinstance(variant, Task):
         return stringify_variant(variant.out_files)
@@ -846,6 +850,8 @@ class Task:
                 if key == "in_depfile":
                     val = join_path(self.config.build_dir, val)
                     val = abs_path(val)
+                    # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will
+                    # fail a check that all our inputs are present.
                     if path.isfile(val):
                         self.in_files.append(val)
                 elif key.startswith("out_"):

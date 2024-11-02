@@ -1,0 +1,5 @@
+# This just builds all three stages of the Bazel tutorial
+
+hancho.repo("stage1/build.hancho")
+hancho.repo("stage2/build.hancho")
+hancho.repo("stage3/build.hancho")

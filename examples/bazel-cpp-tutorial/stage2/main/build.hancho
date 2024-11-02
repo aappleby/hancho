@@ -1,0 +1,11 @@
+hello_greet = hancho(
+    hancho.rules.cc_library,
+    in_srcs = ["hello-greet.cc"],
+    in_hdrs = ["hello-greet.h"],
+)
+
+hancho(
+    hancho.rules.cc_binary,
+    in_srcs = ["hello-world.cc"],
+    in_libs = hello_greet,
+)
