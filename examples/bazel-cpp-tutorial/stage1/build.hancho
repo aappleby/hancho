@@ -1,0 +1,20 @@
+# ----------------------------------------
+
+compile_cpp = hancho.Config(
+    desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+    command="g++ -c {in_src} -o {out_obj}",
+    out_obj="{swap_ext(in_src, '.o')}",
+    in_depfile="{swap_ext(in_src, '.d')}",
+)
+
+link_cpp_lib = hancho.Config(
+    desc="Bundling C++ lib {rel(out_lib)}",
+    in_objs=None,
+    out_lib=None,
+    command="ar rcs {rel(out_lib)} {rel(in_objs)}",
+)
+
+cc_binary = hancho.Config(
+    desc="Linking C++ bin {rel(out_bin)}",
+    command="g++ {in_srcs} {in_objs} {in_libs} -o {out_bin}",
+)
