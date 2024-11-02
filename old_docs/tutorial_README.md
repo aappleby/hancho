@@ -350,7 +350,7 @@ That's because the actual build has moved to ```src/src.hancho``` so it can live
 # tutorial/src/src.hancho
 import glob
 
-rules = hancho.load("base_rules.hancho")
+rules = hancho.load("{hancho_dir}/base_rules.hancho")
 
 hancho(rules.c_binary, in_srcs = glob.glob("*.cpp"), out_bin = "app")
 ```

@@ -1,3 +1,5 @@
+import os
+
 ####################################################################################################
 # C++
 
@@ -5,12 +7,6 @@ default_toolchain = hancho.Config(
     arch="x86-64",
     compiler="x86_64-linux-gnu-g++",
     linker="x86_64-linux-gnu-g++",
-)
-
-riscv64_toolchain = hancho.Config(
-    arch="riscv64",
-    compiler="riscv64-unknown-elf-g++",
-    linker="riscv64-unknown-elf-g++",
 )
 
 # ----------------------------------------
@@ -51,12 +47,9 @@ compile_cpp = hancho.Config(
     joined_includes="{join_prefix('-I', get('includes', []))}",
 )
 
-"""
-if os.name == 'nt':
-    compile_cpp.command =
-        "cl.exe /c {rel(in_src)} /sourceDependencies {rel(in_depfile)} /Fo:{rel(out_obj)}",
-    compile_cpp.depformat = "msvc",
-"""
+if os.name == "nt":
+    compile_cpp.command = "cl.exe /c {rel(in_src)} /sourceDependencies {rel(in_depfile)} /Fo:{rel(out_obj)}"
+    compile_cpp.depformat = "msvc"
 
 
 link_cpp_lib = hancho.Config(

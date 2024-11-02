@@ -322,6 +322,7 @@ class Utils:
     join_prefix = staticmethod(join_prefix)
     join_suffix = staticmethod(join_suffix)
     stem        = staticmethod(stem)
+    hancho_dir  = abs_path(path.dirname(path.realpath(__file__)))
     # fmt: on
 
 ####################################################################################################
@@ -967,15 +968,15 @@ class Task:
                 message += "Stderr:\n"
                 message += self._stderr
             raise ValueError(message)
-        else:
-            if debug or verbose:
-                log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config.desc}'")
-                if self._stdout:
-                    log("Stdout:")
-                    log(self._stdout, end="")
-                if self._stderr:
-                    log("Stderr:")
-                    log(self._stderr, end="")
+
+        if debug or verbose:
+            log(f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config.desc}'")
+            if self._stdout:
+                log("Stdout:")
+                log(self._stdout, end="")
+            if self._stderr:
+                log("Stderr:")
+                log(self._stderr, end="")
 
 ####################################################################################################
 

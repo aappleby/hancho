@@ -1,3 +1,11 @@
+# FIXME could merge these with base_rules.hancho
+
+riscv64_toolchain = hancho.Config(
+    arch="riscv64",
+    compiler="riscv64-unknown-elf-g++",
+    linker="riscv64-unknown-elf-g++",
+)
+
 rv_config = hancho.Config(
     rv_toolchain = "riscv64-unknown-elf",
     rv_flags_c = [

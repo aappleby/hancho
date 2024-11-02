@@ -1,7 +1,7 @@
 hancho.config.force = True
 
 if 'base_rules' not in hancho:
-    hancho.base_rules = hancho.load("base_rules.hancho")
+    hancho.base_rules = hancho.load("{hancho_dir}/base_rules.hancho")
 
 hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")
