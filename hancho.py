@@ -168,6 +168,8 @@ def dictlike(variant):
 def flatten(variant):
     if listlike(variant):
         return [x for element in variant for x in flatten(element)]
+    elif variant is None:
+        return []
     return [variant]
 
 

@@ -37,18 +37,18 @@ _ld_libs = [
 compile_cpp = hancho.Config(
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
-    out_obj    = "{swap_ext(in_src, '.o')}",
-    in_depfile = "{swap_ext(in_src, '.d')}",
     gcc_flags  = _gcc_flags,
     includes   = None,
+    out_obj    = "{swap_ext(in_src, '.o')}",
+    in_depfile = "{swap_ext(in_src, '.d')}",
 )
 
 link_cpp_bin = hancho.Config(
     desc     = "Linking {out_bin}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_libs} {ld_libs}",
+    ld_flags = _ld_flags,
     in_objs  = None,
     in_libs  = None,
-    ld_flags = _ld_flags,
     ld_libs  = _ld_libs,
 )
 
@@ -62,7 +62,7 @@ def cc_library(hancho, *args, in_srcs, out_lib, **kwargs):
     bin  = hancho(link_cpp_lib, *args, in_objs=objs, out_lib=out_lib, **kwargs)
     return bin
 
-def cc_binary(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin, **kwargs):
+def cc_binary(hancho, *args, in_srcs=[], in_objs=None, in_libs=None, out_bin, **kwargs):
     objs = [hancho(compile_cpp, *args, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
-    bin  = hancho(link_cpp_bin, *args, in_objs=objs + in_objs, in_libs=in_libs, out_bin=out_bin, **kwargs)
+    bin  = hancho(link_cpp_bin, *args, in_objs=[objs, in_objs], in_libs=in_libs, out_bin=out_bin, **kwargs)
     return bin
