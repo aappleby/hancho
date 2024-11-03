@@ -169,3 +169,14 @@ echo_stuff = hancho.Config(
 )
 hancho(echo_stuff, in_file = "foo.txt")
 ```
+## Tasks can be used as inputs to other tasks anywhere you'd use a filename.
+```py
+foo_txt = hancho(
+    command = "echo I like turtles > {out_file}",
+    out_file = "foo.txt"
+)
+hancho(
+    command = "cat {in_file}",
+    in_file = foo_txt
+)
+```
