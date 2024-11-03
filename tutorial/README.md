@@ -17,18 +17,9 @@ Config @ 0x788c818610e0 {
 }
 ```
 
-To clone a Config and optionally change its fields, use ```config.fork()```:
-```py
->>> foo = hancho.Config(a = 1)
->>> bar = foo.fork(b = 2)
->>> bar
-Config @ 0x788c814aaee0 {
-  a = 1,
-  b = 2,
-}
-```
+Configs can be merged together by wrapping them in another Config: ```merged = hancho.Config(A, B)```.
 
-Configs can be merged together by wrapping them in another Config. The rule for merging two configs A and B via ```hancho.Config(A, B)``` is: ***If a field in B is not None, it overrides the corresponding field in A***.
+The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
 
 ```py
 >>> hancho.Config(hancho.Config(a = 1), hancho.Config(a = 2))
@@ -56,20 +47,42 @@ Config @ 0x746cb87f3f70 {
 }
 ```
 
-## Text {templates}
+## Text Templating
 
 Hancho's text templates work a bit like Python's F-strings and a bit like its ```str.format()``` method:
 
-Like Python's F-strings, Hancho's templates can contain ```{arbitrary_expressions}```, but the expressions are _not_ immediately evaluated. Instead, we call ```config.expand(template)``` and the values in ```config``` are used to fill in the blanks in ```template```.
+Like Python's F-strings, Hancho's templates can contain ```{arbi + trary * express - ions}```, but the expressions are _not_ immediately evaluated.
+
+Instead, we call ```config.expand(template)``` and the values in ```config``` are used to fill in the blanks in ```template```.
 
 
 ```py
 >>> foo = hancho.Config(a = 1, b = 2)
 >>> foo.expand("The sum of a and b is {a+b}.")
 'The sum of a and b is 3.'
+
+A template that evaluates to an array will have each element stringified and then joined with spaces
+```py
+>>> foo = hancho.Config(a = [1, 2, 3])
+>>> foo.expand("These are numbers - {a}")
+'These are numbers - 1 2 3'
 ```
 
-If the result contains more templates, Hancho will keep expanding until the string stops changing.
+Nested arrays get flattened before joining
+```py
+>>> foo = hancho.Config(a = [[1, [2]], [[3]]])
+>>> foo.expand("These are numbers - {a}")
+'These are numbers - 1 2 3'
+```
+
+And a ```None``` will turn into an empty string.
+```py
+>>> foo = hancho.Config(a = None, b = None, c = None)
+>>> foo.expand("a=({a}), b=({b}), c=({c})")
+'a=(), b=(), c=()'
+```
+
+If the result of a template expansion contains more templates, Hancho will keep expanding until the string stops changing.
 
 ```py
 >>> foo = hancho.Config(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
@@ -77,13 +90,14 @@ If the result contains more templates, Hancho will keep expanding until the stri
 'abcd1000'
 ```
 
+
 ## Configs can contain functions, templates can call functions.
 
 Any function attached to a ```Config``` can be used in a template. By default it contains all the methods from ```dict``` plus a set of built-in utility methods.
 
 ```py
 >>> dir(foo)
-[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten', 'fork',
+[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten',
 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join_path', 'join_prefix',
 'join_suffix', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',
 'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'swap_ext',

@@ -1,7 +1,0 @@
-# repo1_test3.hancho
-
-rules = hancho.load("{repo_dir}/rules/repo1_test3_rules.hancho")
-repo1_txt = rules.rule([], "repo1.txt")
-
-repo2 = hancho.subrepo("repo2")
-repo2.load("repo2_test3.hancho")

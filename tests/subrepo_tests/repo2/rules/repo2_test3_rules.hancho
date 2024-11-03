@@ -1,5 +1,0 @@
-# repo2_test3_rules.hancho
-
-exports.rule = hancho.Config(
-    command = "touch {rel_build_files}",
-)

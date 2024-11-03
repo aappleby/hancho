@@ -1,2 +1,0 @@
-touch = hancho.Config("touch {rel_build_files}")
-touch([], "repo2.txt")

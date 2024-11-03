@@ -396,9 +396,6 @@ class Config(dict, Utils):
 
     # ----------------------------------------
 
-    def fork(self, *args, **kwargs):
-        return type(self)(self, *args, **kwargs)
-
     def merge(self, *args, **kwargs):
         for arg in flatten(args):
             if arg is not None:

@@ -1,6 +1,0 @@
-touch = hancho.Config("touch {rel_build_files}")
-
-rule([], "repo1.txt")
-
-repo2 = hancho.subrepo("repo2")
-repo2.load("repo2_test2.hancho")

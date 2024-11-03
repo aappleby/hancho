@@ -1,3 +1,0 @@
-# top_test3_rules.hancho
-
-exports.touch = hancho.rule("touch {rel_build_files}")
