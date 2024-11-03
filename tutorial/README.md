@@ -1,4 +1,6 @@
-Hancho is built out of a few simple pieces - Configs, text templates, and Tasks.
+# Hancho quick reference
+
+Hancho is built out of a few simple pieces - Configs, Templates, and Tasks.
 
 ## The hancho.Config class is a dict, basically.
 
@@ -17,16 +19,19 @@ Config @ 0x788c818610e0 {
 }
 ```
 
-Configs can be merged together by wrapping them in another Config: ```merged = hancho.Config(A, B)```.
+## Merging Configs together combines their fields. 
 
 The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
 
 ```py
->>> hancho.Config(hancho.Config(a = 1), hancho.Config(a = 2))
+>>> foo = hancho.Config(a = 1)
+>>> bar = hancho.Config(a = 2)
+>>> hancho.Config(foo, bar)
 Config @ 0x746cb87f3ed0 {
   a = 2,
 }
->>> hancho.Config(hancho.Config(a = 1), hancho.Config(a = None))
+>>> bar = hancho.Config(a = None)
+>>> hancho.Config(foo, bar)
 Config @ 0x746cb87f3f20 {
   a = 1,
 }
@@ -35,11 +40,11 @@ Config @ 0x746cb87f3f20 {
 This works for nested Configs as well:
 
 ```py
->>> a = hancho.Config(foo = hancho.Config(bar = 1, baz = 2))
->>> b = hancho.Config(foo = hancho.Config(baz = 3, cow = 4))
->>> hancho.Config(a, b)
+>>> foo = hancho.Config(child = hancho.Config(bar = 1, baz = 2))
+>>> bar = hancho.Config(child = hancho.Config(baz = 3, cow = 4))
+>>> hancho.Config(foo, bar)
 Config @ 0x746cb87f3f70 {
-  foo = Config @ 0x746cb8610640 {
+  child = Config @ 0x746cb8610640 {
     bar = 1,
     baz = 3,
     cow = 4,
@@ -47,9 +52,7 @@ Config @ 0x746cb87f3f70 {
 }
 ```
 
-## Text Templating
-
-Hancho's text templates work a bit like Python's F-strings and a bit like its ```str.format()``` method:
+## Templates work like a mix of F-strings and ```str.format()```
 
 Like Python's F-strings, Hancho's templates can contain ```{arbi + trary * express - ions}```, but the expressions are _not_ immediately evaluated.
 
@@ -90,7 +93,15 @@ If the result of a template expansion contains more templates, Hancho will keep 
 >>> foo.expand("{a}")
 'abcd1000'
 ```
+Expanding templates based on configs inside configs also works:
 
+```py
+>>> foo = hancho.Config(a = 1, b = 2)
+>>> bar = hancho.Config(c = foo)
+>>> baz = hancho.Config(d = bar)
+>>> baz.expand("d.c.a = {d.c.a}, d.c.a = {d.c.b}")
+'d.c.a = 1, d.c.a = 2'
+```
 
 ## Configs can contain functions, templates can call functions.
 
@@ -125,17 +136,7 @@ You can also attach your own functions to a config:
 'Calling get_number equals 7'
 ```
 
-## Nested configs and "fallthrough"
-
-Expanding templates based on configs inside configs also works:
-
-```py
->>> foo = hancho.Config(a = 1, b = 2)
->>> bar = hancho.Config(c = foo)
->>> baz = hancho.Config(d = bar)
->>> baz.expand("d.c.a = {d.c.a}, d.c.a = {d.c.b}")
-'d.c.a = 1, d.c.a = 2'
-```
+## Configs can contain templates they can't expand.
 
 Failure to expand a template is _not an error_, it just passes the unexpanded template through.
 
@@ -145,7 +146,7 @@ Failure to expand a template is _not an error_, it just passes the unexpanded te
 'A equals 1, B equals {b}'
 ```
 
-While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand which will be used later by a parent or grandparent config.
+While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand until they're needed later by a parent or grandparent config.
 
 ```py
 >>> foo = hancho.Config(msg = "What's a {bar.thing}?")
@@ -154,4 +155,17 @@ While this might seem like a bad idea, it allows for Configs to hold templates t
 >>> baz.expand("{foo.msg}")
 "What's a bear?"
 ```
+## Tasks are nodes in Hancho's build graph.
 
+Tasks take a Config that completely defines the input files, output files, and directories needed to run a command and adds it to Hancho's build graph.
+
+Tasks are lazily executed - only tasks that are needed to build the selected outputs are executed. By default, all Tasks that originate from the repo we started the build in will be queued up for execution.
+
+## Calling ```hancho(...)``` merges ```hancho.config``` with all the parameters passed to ```hancho()``` and creates a task from it.
+
+```py
+echo_stuff = hancho.Config(
+    command = "echo {in_file}",
+)
+hancho(echo_stuff, in_file = "foo.txt")
+```
