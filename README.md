@@ -25,19 +25,22 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 ## Example usage
 
 ```py
-# Hancho is a Python-native build system that lets you write build scripts using regular Python
-# code. Build scripts use a global 'hancho' object to create build configurations and start build
-# tasks.
+# Hancho is a Python-native build system that lets you write build scripts
+# using regular Python code. Build scripts use a global 'hancho' object to
+# create build configurations and start build tasks.
 
-# In this example, the 'compile_cpp' object below tells Hancho how to compile C++ source code.
+# In this example, the 'compile_cpp' object below tells Hancho how to compile
+# C++ source code.
 
-# Hancho text templates use {brackets} like Python f-strings with a few differences:
+# Hancho templates use {brackets} like Python f-strings with a few differences:
 #   - Templates are lazily-evaluated
 #   - Templates can only reference fields in a Config object
-#   - Templates can use built-in functions like swap_ext() for common filename operations
+#   - Templates can use built-in functions like swap_ext() for common filename
+#     operations
 
-# Config fields named 'in_*' and 'out_*' are special - they define the input and output filenames
-# for a task. Hancho uses these fields to track dependencies between tasks.
+# Config fields named 'in_*' and 'out_*' are special - they define the input
+# and output filenames for a task. Hancho uses these fields to track
+# dependencies between tasks.
 
 compile_cpp = hancho.Config(
     desc = "Compiling C++ {in_src} -> {out_obj}",
@@ -45,27 +48,28 @@ compile_cpp = hancho.Config(
     out_obj = "{swap_ext(in_src, '.o')}",
 )
 
-# To make Hancho do some work, we pass configs and key-value pairs to hancho(). It merges configs,
-# expands templates, and queues an asynchronous task to run the command.
+# To make Hancho do some work, we pass configs and key-value pairs to hancho().
+# It merges configs, expands templates, and queues an asynchronous task to run
+# the command.
 
-# The hancho() function returns a Task object, which is like a promise that resolves to the list
-# of output files when the task is complete.
+# The hancho() function returns a Task object, which is like a promise that
+# resolves to a list of output files when the task is complete.
 
 main_o = hancho(compile_cpp, in_src = "main.cpp")
 util_o = hancho(compile_cpp, in_src = "util.cpp")
 
-# This config object defines how to link objects into a binary file. Instead of passing filenames
-# to 'in_objs', we can pass the task objects created above instead. Using a task object in place of
-# a filename creates a dependency. Hancho uses these dependencies to build a task graph and
-# schedule parallel task execution.
+# This config object defines how to link objects into a binary file. Instead of
+# passing filenames to 'in_objs', we can provide the task objects created above.
+# Using a task object in place of a filename creates a dependency. Hancho uses
+# these dependencies to build a task graph and schedule parallel task execution.
 
 link_cpp_bin = hancho.Config(
     desc = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
-# Hancho will automatically parallelize independent tasks. Here, main.cpp and util.cpp will be
-# compiled in parallel before the link task starts.
+# Hancho will automatically parallelize independent tasks. Here, main.cpp and
+# util.cpp will be compiled in parallel before the link task starts.
 
 main_app = hancho(
     link_cpp_bin,
@@ -73,7 +77,8 @@ main_app = hancho(
     out_bin = "hello_world",
 )
 
-# To run a build script, save it as 'build.hancho' and run './hancho.py' in the same directory.
+# To run a build script, save it as 'build.hancho' and run 'hancho.py' in the
+# same directory.
 ```
 
 ## Updates
