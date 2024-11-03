@@ -81,6 +81,8 @@ main_app = hancho(
 # same directory.
 ```
 
+More documentation (still a work in progress) can be found at [docs/README.md](docs/README.md). The currently-broken step-by-step tutorial is in [tutorial](tutorial). Working examples are in [examples](examples). There are also sample build rules for [C++](base_rules.hancho), [WASM](wasm_rules.hancho), and [FPGA synthesis](fpga_rules.hancho).
+
 ## Updates
  - 2024-11-03 - I'm stripping out obsolete documentation and trimming the tutorials down to the essentials.
  - 2024-11-02 - We're now on version v040 and the API has (hopefully) stabilized. Working on docs and tutorials now.

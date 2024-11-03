@@ -1,6 +1,30 @@
-# Hancho quick reference
+# Hancho Quick Reference
 
-Hancho is built out of a few simple pieces - Configs, Templates, and Tasks.
+Hancho is built out of a few simple pieces - the ```hancho``` object, Configs, Templates, and Tasks. This document is a quick overview of each of those pieces, along with a few examples of more complex usage.
+
+For more detailed and up-to-date information, check out the examples folder and the '*_rules.hancho' files in the root directory of this repo.
+
+## The global 'hancho' object you use when writing a script has some other stuff in it.
+
+In particular, there's a hancho.Config object named 'hancho.config' (note the lowercase) that gets merged into all tasks when you call ```hancho()```. This config object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.config - they will then be visible to all tasks in your build script.
+
+```py
+HanchoAPI @ 0x7cb6c8d0b110 {
+  config = Config @ 0x7cb6c8b223f0 {
+    root_dir = "/home/user/temp",
+    root_path = "/home/user/temp/build.hancho",
+    repo_name = "",
+    repo_dir = "/home/user/temp",
+    mod_name = "build",
+    mod_dir = "/home/user/temp",
+    mod_path = "/home/user/temp/build.hancho",
+    build_root = "{root_dir}/build",
+    build_tag = "",
+  },
+  Config = <class '__main__.Config'>,
+  Task = <class '__main__.Task'>,
+}
+```
 
 ## The hancho.Config class is a dict, basically.
 
@@ -19,7 +43,7 @@ Config @ 0x788c818610e0 {
 }
 ```
 
-## Merging Configs together combines their fields. 
+## Merging Configs together combines their fields.
 
 The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
 
