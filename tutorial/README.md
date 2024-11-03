@@ -60,6 +60,7 @@ Instead, we call ```config.expand(template)``` and the values in ```config``` ar
 >>> foo = hancho.Config(a = 1, b = 2)
 >>> foo.expand("The sum of a and b is {a+b}.")
 'The sum of a and b is 3.'
+```
 
 A template that evaluates to an array will have each element stringified and then joined with spaces
 ```py
