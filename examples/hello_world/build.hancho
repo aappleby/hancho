@@ -3,7 +3,6 @@
 compile_cpp = hancho.Config(
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ -c {in_src} -o {out_obj}",
-    in_src     = None,
     out_obj    = "{swap_ext(in_src, '.o')}",
     in_depfile = "{swap_ext(in_src, '.d')}",
 )
@@ -14,8 +13,6 @@ util_o = hancho(compile_cpp, in_src = "util.cpp")
 link_cpp_bin = hancho.Config(
     desc    = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
-    in_objs = None,
-    out_bin = None,
 )
 
 main_app = hancho(

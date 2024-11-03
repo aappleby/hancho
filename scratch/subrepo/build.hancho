@@ -1,2 +1,0 @@
-rules = hancho.load("{root_dir}/rules/rules.hancho")
-util_o = rules.compile("src/util.cpp")

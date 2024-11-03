@@ -1,22 +1,19 @@
 # hancho/examples/windows/build.hancho - Builds a trivial Win32 app.
 
-hancho.depformat = "msvc"
+hancho.config.depformat = "msvc"
 
-compile = hancho.Config(
-    command    = "cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj} > NUL",
+compile_cpp = hancho.Config(
     desc       = "Compile {in_src} -> {out_obj}",
-    in_src     = None,
+    command    = "cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
     out_obj    = "{swap_ext(in_src, '.o')}",
     in_depfile = "{swap_ext(in_src, '.d')}",
 )
 
-link = hancho.Config(
-    command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin} > NUL",
+link_cpp = hancho.Config(
     desc      = "Link {in_objs} -> {out_bin}",
-    in_objs   = None,
-    out_bin   = None,
+    command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin} > NUL",
     libs      = "user32.lib"
 )
 
-main_o = hancho(compile, "src/main.cpp")
-hancho(link, main_o, "app.exe")
+main_o = hancho(compile_cpp, in_src = "src/main.cpp")
+hancho(link_cpp, in_objs = main_o, out_bin = "app.exe")

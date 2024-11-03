@@ -1,9 +1,0 @@
-
-rules = hancho.load("{root_dir}/rules/rules.hancho")
-
-main_o = hancho(rules.compile, in_src="src/main.cpp")
-test_o = hancho(rules.compile, in_src="src/test.cpp")
-
-submod = hancho.module("submod/build.hancho")
-
-subrepo = hancho.repo("subrepo")

@@ -1,4 +1,4 @@
-# ![Logo](https://github.com/aappleby/hancho/blob/main/docs/hancho_small.png?raw=true) Hancho
+# ![Logo](assets/hancho_small.png) Hancho
 
 "班長, hanchō - "Squad leader”, from 19th c. Mandarin 班長 (bānzhǎng, “team leader”)"
 
@@ -10,19 +10,16 @@ Hancho is inspired by Ninja (for speed and simplicity) and Bazel (for syntax and
 
 Like Ninja, it knows nothing about your build tools and is only trying to assemble and run commands as fast as possible.
 
-Unlike Ninja, you can use glob("*.cpp") and such to make things far less verbose.
+Unlike Ninja, Hancho's build scripts are vastly less verbose.
 
-Like Bazel, you invoke build rules by calling them as if they were functions with keyword arguments.
+Like Bazel, the build synax is simple and Pythonesque.
 
-Unlike Bazel, you can create build rules that call arbitary Python code (for better or worse).
+Unlike Bazel, your build can call arbitrary Python code (for better or worse).
 
 Hancho should suffice for small to medium sized projects.
 
-[Tutorial Here](tutorial)
-
-[Some Additional Documentation Here](docs)
-
 ## Updates
+ - 2024-11-02 - We're now on version v040 and the API has (hopefully) stabilized. Working on docs and tutorials now.
  - 2024-10-06 - The main branch has been updated to v020, which is what I've been using for personal projects all year. It changes a _lot_ of stuff compared to v010 and previous, and the documentation and tutorials are currently outdated.
 
 ## Installation
@@ -31,24 +28,28 @@ Hancho should suffice for small to medium sized projects.
 user@host:~$ wget https://raw.githubusercontent.com/aappleby/hancho/main/hancho.py
 user@host:~$ chmod +x hancho.py
 user@host:~$ ./hancho.py --help
-usage: hancho.py [-h] [-f ROOT_NAME] [-C ROOT_PATH] [-j JOBS] [-v] [-q] [-n] [-d] [--force] [-s] [-t] [target]
+usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace] [-j JOBS] [-q] [-n] [-s]
+                 [--use_color]
+                 [target]
 
 positional arguments:
   target                A regex that selects the targets to build. Defaults to all targets.
 
 options:
   -h, --help            show this help message and exit
-  -f FILE, --file FILE  The name of the .hancho file(s) to build
-  -C ROOT_PATH, --chdir ROOT_PATH
+  -f ROOT_FILE, --root_file ROOT_FILE
+                        The name of the .hancho file(s) to build
+  -C ROOT_DIR, --root_dir ROOT_DIR
                         Change directory before starting the build
-  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count)
   -v, --verbose         Print verbose build info
-  -q, --quiet           Mute all output
-  -n, --dry_run         Do not run commands
   -d, --debug           Print debugging information
   --force               Force rebuild of everything
+  --trace               Trace all text expansion
+  -j JOBS, --jobs JOBS  Run N jobs in parallel (default = cpu_count)
+  -q, --quiet           Mute all output
+  -n, --dry_run         Do not run commands
   -s, --shuffle         Shuffle task order to shake out dependency issues
-  -t, --trace           Trace all text expansion
+  --use_color           Use color in the console output
 ```
 
 ## Simple Example
@@ -57,62 +58,51 @@ options:
 # examples/hello_world/build.hancho
 
 compile_cpp = hancho.Config(
-  desc    = "Compiling C++ {in_src} -> {out_obj}",
-  command = "g++ -c {in_src} -o {out_obj}",
-  in_src  = None,
-  out_obj = "{swap_ext(in_src, '.o')}",
-  in_depfile  = "{swap_ext(in_src, '.d')}",
+    desc       = "Compiling C++ {in_src} -> {out_obj}",
+    command    = "g++ -c {in_src} -o {out_obj}",
+    out_obj    = "{swap_ext(in_src, '.o')}",
+    in_depfile = "{swap_ext(in_src, '.d')}",
 )
+
+main_o = hancho(compile_cpp, in_src = "main.cpp")
+util_o = hancho(compile_cpp, in_src = "util.cpp")
 
 link_cpp_bin = hancho.Config(
-  desc    = "Linking C++ bin {out_bin}",
-  command = "g++ {in_objs} -o {out_bin}",
-  in_objs = None,
-  out_bin = None,
+    desc    = "Linking C++ bin {out_bin}",
+    command = "g++ {in_objs} -o {out_bin}",
 )
 
-main_o = compile_cpp(in_src = "main.cpp")
-util_o = compile_cpp(in_src = "util.cpp")
-
-main_app = link_cpp_bin(
-  in_objs = [main_o, util_o],
-  out_bin = "hello_world",
+main_app = hancho(
+    link_cpp_bin,
+    in_objs = [main_o, util_o],
+    out_bin = "hello_world",
 )
-```
-
-```cpp
-// examples/hello_world/main.cpp
-
-#include <stdio.h>
-
-int blah();
-
-int main(int argc, char** argv) {
-  printf("Hello World %d\n", blah());
-  return 0;
-}
 ```
 
 ```sh
 user@host:~/hancho/examples/hello_world$ ../../hancho.py --verbose
-Loading module /home/user/hancho/examples/hello_world/build.hancho
+Loading /home/user/hancho/examples/hello_world/build.hancho
 Loading .hancho files took 0.000 seconds
-[1/3] Compiling C++ /home/user/hancho/examples/hello_world/main.cpp -> /home/user/hancho/examples/hello_world/build/hello_world/main.o
-Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/main.o is missing
-.$ g++ -c /home/user/hancho/examples/hello_world/main.cpp -o /home/user/hancho/examples/hello_world/build/hello_world/main.o
-[2/3] Compiling C++ /home/user/hancho/examples/hello_world/util.cpp -> /home/user/hancho/examples/hello_world/build/hello_world/util.o
-Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/util.o is missing
-.$ g++ -c /home/user/hancho/examples/hello_world/util.cpp -o /home/user/hancho/examples/hello_world/build/hello_world/util.o
-[3/3] Linking C++ bin /home/user/hancho/examples/hello_world/build/hello_world/hello_world
-Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world/hello_world is missing
-.$ g++ /home/user/hancho/examples/hello_world/build/hello_world/main.o /home/user/hancho/examples/hello_world/build/hello_world/util.o -o /home/user/hancho/examples/hello_world/build/hello_world/hello_world
-
-Running 3 tasks took 0.042 seconds
-tasks total:     3
-tasks passed:    3
+Queueing 3 tasks took 0.000 seconds
+Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/main.o is missing
+[1/3] Compiling C++ /home/user/hancho/examples/hello_world/main.cpp -> /home/user/hancho/examples/hello_world/build/main.o
+.$ g++ -c /home/user/hancho/examples/hello_world/main.cpp -o /home/user/hancho/examples/hello_world/build/main.o
+Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/util.o is missing
+[2/3] Compiling C++ /home/user/hancho/examples/hello_world/util.cpp -> /home/user/hancho/examples/hello_world/build/util.o
+.$ g++ -c /home/user/hancho/examples/hello_world/util.cpp -o /home/user/hancho/examples/hello_world/build/util.o
+[2/3] Task passed - 'Compiling C++ /home/user/hancho/examples/hello_world/util.cpp -> /home/user/hancho/examples/hello_world/build/util.o'
+[1/3] Task passed - 'Compiling C++ /home/user/hancho/examples/hello_world/main.cpp -> /home/user/hancho/examples/hello_world/build/main.o'
+Reason: Rebuilding because /home/user/hancho/examples/hello_world/build/hello_world is missing
+[3/3] Linking C++ bin /home/user/hancho/examples/hello_world/build/hello_world
+.$ g++ /home/user/hancho/examples/hello_world/build/main.o /home/user/hancho/examples/hello_world/build/util.o -o /home/user/hancho/examples/hello_world/build/hello_world
+[3/3] Task passed - 'Linking C++ bin /home/user/hancho/examples/hello_world/build/hello_world'
+Running 3 tasks took 0.043 seconds
+tasks started:   3
+tasks finished:  3
 tasks failed:    0
 tasks skipped:   0
 tasks cancelled: 0
+tasks broken:    0
 mtime calls:     0
 hancho: BUILD PASSED
 ```
