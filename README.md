@@ -61,7 +61,6 @@ compile_cpp = hancho.Config(
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ -c {in_src} -o {out_obj}",
     out_obj    = "{swap_ext(in_src, '.o')}",
-    in_depfile = "{swap_ext(in_src, '.d')}",
 )
 
 main_o = hancho(compile_cpp, in_src = "main.cpp")
