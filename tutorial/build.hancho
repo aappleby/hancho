@@ -1,0 +1,6 @@
+hancho(
+    command = [
+        "mkdir -p build",
+        "g++ src/main.cpp src/util.cpp -o build/app"
+    ]
+)

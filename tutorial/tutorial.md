@@ -45,42 +45,42 @@ user@host:~/hancho/tutorial$ build/app
 Hello World 42
 ```
 
-Here's how we run the same command in Hancho:
+Here's how we run the same command using Hancho. First, we create ```build.hancho``` in the tutorial directory:
 
 ```py
-# tutorial/tut00.hancho
-
 hancho(
-  command = "g++ src/main.cpp src/util.cpp -o build/app",
+  command = [
+    "mkdir -p build",
+    "g++ src/main.cpp src/util.cpp -o build/app"
+  ]
 )
 ```
 
+Hancho build files are just Python code in a file ending in .hancho, with a few minor differences. Hancho build files always have access to a global ```hancho``` object, which we can also call as if it's a function to tell Hancho to do some work. The absolute minimum we can pass to ```hancho()``` is just the command to run.
+
+
 ```shell
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho --verbose
-Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
+user@host:~/hancho/tutorial$ ../hancho.py
+Loading /home/aappleby/repos/hancho/tutorial/build.hancho
 Loading .hancho files took 0.000 seconds
-[1/1]  ->
-Reason: Always rebuild a target with no inputs
-.$ g++ src/main.cpp src/util.cpp -o build/app
-[1/1] Task passed - ' -> '
+Queueing 1 tasks took 0.000 seconds
+[1/1] mkdir -p build g++ src/main.cpp src/util.cpp -o build/app
+Running 1 tasks took 0.054 seconds
+hancho: BUILD PASSED
 ```
 
-The slightly odd ```' -> '``` is because Hancho tried to print ```<inputs> -> <outputs>```, but we didn't tell it what the inputs and outputs are. Let's fix that:
+Of course we don't actually want to hardcode the file names into the command, so let's use Hancho's text templates to fix that. Templates in Hancho work almost identically to Python F-strings, except that they're lazily-evaluated and can only read variables from the ```hancho()``` invocation they're in.
 
+In addition, parameters named ```in_*``` or ```out_*``` are special - strings inside them are assumed to be filenames, and Hancho will check for changes to any ```in_``` file before deciding to re-run the command.
 
 ```py
-# tutorial/tut00.hancho
-
 hancho(
-  desc    = "Compile {in_src} -> {out_bin}",
   command = "g++ {in_src} -o {out_bin}",
   in_src  = ["src/main.cpp", "src/util.cpp"],
   out_bin = "app",
 )
 ```
 
-Hancho build files are just Python modules ending in .hancho, with minor
-modifications. One modification is that there's always a global ```hancho``` object, which we can call as if it's a function to tell Hancho to start up an asynchronous task that will do some work.
 
 Strings in Hancho tasks use Python-style f-string syntax, minus the 'f' prefix. The ```{}``` blocks can contain arbitrary Python expressions, with the limitation that the expressions can only refer to other fields inside the task or to Hancho's built-in functions (see documentation at ***FIXME***).
 
