@@ -13,27 +13,27 @@ default_toolchain = hancho.Config(
 
 check_cpp = hancho.Config(
     desc="Checking C++ syntax of {rel(in_src)}",
-    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} && touch {rel(out_ok)}",
-    in_src=None,
-    out_ok="{in_src}.ok",
+    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} && touch {out_ok}",
+
     toolchain=default_toolchain,
     flags=["-fsyntax-only", "-std={cpp_std}"],
+    warnings = None,
+    defines = None,
+    includes = None,
+    out_ok="{in_src}.ok",
+
     cpp_std="gnu++2a",
-    joined_warnings="{join_prefix('-W', get('warnings', []))}",
-    joined_defines="{join_prefix('-D', get('defines', []))}",
-    joined_includes="{join_prefix('-I', get('includes', []))}",
+    joined_warnings="{join_prefix('-W', warnings)}",
+    joined_defines="{join_prefix('-D', defines)}",
+    joined_includes="{join_prefix('-I', includes)}",
 )
 
 # ----------------------------------------
 
 compile_cpp = hancho.Config(
     desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
-    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src)} -o {rel(out_obj)}",
-    in_src=None,
-    out_obj="{swap_ext(in_src, '.o')}",
-    in_depfile="{swap_ext(in_src, '.d')}",
+    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
     toolchain=default_toolchain,
-    cpp_std="gnu++2a",
     flags=[
         "-g",
         "-O0",
@@ -42,53 +42,50 @@ compile_cpp = hancho.Config(
         "-std={cpp_std}",
         "-fdiagnostics-color=always",
     ],
-    joined_warnings="{join_prefix('-W', get('warnings', []))}",
-    joined_defines="{join_prefix('-D', get('defines', []))}",
-    joined_includes="{join_prefix('-I', get('includes', []))}",
+    cpp_std="gnu++2a",
+    warnings = None,
+    defines = None,
+    includes = None,
+    in_depfile="{swap_ext(in_src, '.d')}",
+    out_obj="{swap_ext(in_src, '.o')}",
+
+    joined_warnings="{join_prefix('-W', warnings)}",
+    joined_defines="{join_prefix('-D', defines)}",
+    joined_includes="{join_prefix('-I', includes)}",
 )
 
 if os.name == "nt":
-    compile_cpp.command = "cl.exe /c {rel(in_src)} /sourceDependencies {rel(in_depfile)} /Fo:{rel(out_obj)}"
+    compile_cpp.command = "cl.exe /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}"
     compile_cpp.depformat = "msvc"
 
 
 link_cpp_lib = hancho.Config(
-    desc="Bundling C++ lib {rel(out_lib)}",
-    in_objs=None,
-    out_lib=None,
-    command="ar rcs {rel(out_lib)} {rel(in_objs)}",
+    desc="Bundling C++ lib {out_lib}",
+    command="ar rcs {out_lib} {in_objs}",
 )
 
 
 link_cpp_bin = hancho.Config(
-    desc="Linking C++ bin {rel(out_bin)}",
-    out_bin=None,
-    toolchain=default_toolchain,
-    command="{toolchain.linker} {linker_group} {get('flags', [])} {joined_sys_libs} -o {rel(out_bin)}",
-    flags=[],
-    linker_group=[
-        "-Wl,--as-needed",
-        "-Wl,--no-undefined",
-        "-Wl,--start-group",
-        "{rel(get('in_objs', []))}",
-        "{rel(get('in_libs', []))}",
-        "-Wl,--end-group",
-    ],
-    joined_sys_libs="{join_prefix('-l', get('sys_libs', []))}",
+    desc      = "Linking C++ bin {rel(out_bin)}",
+    toolchain = default_toolchain,
+    command   = "{toolchain.linker} {flags} {in_objs} -o {out_bin} {in_libs} {sys_libs}",
+    in_objs   = None,
+    in_libs   = None,
+    flags     = None,
+    sys_libs  = None,
 )
 
 
-def cpp_lib(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_lib=[], **kwargs):
-    config = hancho.Config(*args, **kwargs)
+def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
-        obj = hancho(compile_cpp, config, in_src=file)
+        obj = hancho(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
 
-    return hancho(link_cpp_lib, config, in_objs=[in_objs, in_libs], out_lib=out_lib)
+    return hancho(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 
 
-def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin=[], **kwargs):
+def cpp_bin(hancho, *args, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
     config = hancho.Config(*args, **kwargs)
 
     in_objs = hancho.flatten(in_objs)
@@ -108,7 +105,7 @@ def cpp_bin(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin=[], **kwa
 # Makefiles
 
 
-def make(hancho, /, *args, in_makefile, **kwargs):
+def make(hancho, *, in_makefile, **kwargs):
     cmd = hancho.Config(
         desc="Run makefile {rel(in_makefile)}",
         command="make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
@@ -116,7 +113,7 @@ def make(hancho, /, *args, in_makefile, **kwargs):
         make_file="{path.basename(in_makefile)}",
         flags="--quiet",
     )
-    return hancho(cmd, *args, in_makefile=in_makefile, **kwargs)
+    return hancho(cmd, in_makefile=in_makefile, **kwargs)
 
 
 ####################################################################################################
@@ -128,18 +125,16 @@ run_test = hancho.Config(
     task_dir="{test_dir}",
     test_dir="{mod_dir}",
     args="",
-    in_test=None,
     out_pass="{in_test}.pass",
 )
 
 
-def cpp_test(hancho, *args, in_srcs=[], in_objs=[], in_libs=[], out_bin=[], **kwargs):
-    config = hancho.Config(*args, **kwargs)
-    objs = [hancho(compile_cpp, config, in_src=src) for src in hancho.flatten(in_srcs)]
+def cpp_test(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
+    objs = [hancho(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
     test_bin = hancho(
         link_cpp_bin,
-        config,
         in_objs=[objs, in_objs, in_libs],
         out_bin=out_bin,
+        **kwargs
     )
-    return hancho(run_test, config, in_test=test_bin)
+    return hancho(run_test, in_test=test_bin, **kwargs)

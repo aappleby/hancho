@@ -6,15 +6,15 @@ import random
 all_deps  = [f"src/text{d}.txt" for d in range(0, 9)]
 
 hancho.Task(
-  command = "touch {build_files}",
-  source_files = [],
-  build_files = random.sample(all_deps, 3),
-  build_path = hancho.source_path,
+    command = "touch {build_files}",
+    source_files = [],
+    build_files = random.sample(all_deps, 3),
+    build_path = hancho.source_path,
 )
 
 hancho.Task(
-  command = "cat {rel_source_files} > {rel_build_files}",
-  source_files = random.sample(all_deps, 3),
-  build_files = "result.txt",
+    command = "cat {rel_source_files} > {rel_build_files}",
+    source_files = random.sample(all_deps, 3),
+    build_files = "result.txt",
 )
 """

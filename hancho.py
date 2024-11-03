@@ -848,7 +848,7 @@ class Task:
         # Convert all in_, out_, and deps filenames to absolute paths.
 
         def join_dir(key, val):
-            if isinstance(key, str):
+            if isinstance(key, str) and val is not None:
                 if key == "in_depfile":
                     val = join_path(self.config.build_dir, val)
                     val = abs_path(val)
@@ -1071,7 +1071,8 @@ class HanchoAPI(Utils):
 
     def __call__(self, arg1=None, /, *args, **kwargs):
         if callable(arg1):
-            return arg1(self, *args, **kwargs)
+            temp_config = Config(*args, **kwargs)
+            return arg1(self, **temp_config)
         return Task(self.config, arg1, *args, **kwargs)
 
     def load(self, mod_path):

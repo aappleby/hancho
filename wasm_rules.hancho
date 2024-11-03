@@ -10,9 +10,9 @@ emcc = hancho.Config(
         "-sNO_DISABLE_EXCEPTION_CATCHING",
         "-Wno-deprecated-declarations",
     ],
-    includes=[],
+    includes=None,
     out_obj="{swap_ext(in_src, '.o')}",
-    joined_includes="{join_prefix('-I', get('includes', []))}",
+    joined_includes="{join_prefix('-I', includes)}",
 )
 
 emld = hancho.Config(

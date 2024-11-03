@@ -16,20 +16,20 @@ iverilog = hancho.Config(
     desc = "Run iverilog on {rel(in_sv)}",
     command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {joined_includes} {rel(in_sv)} -o {rel(out_iv)}",
     gen_ivparams = gen_ivparams,
-    joined_includes = "{join_prefix('-I', get('includes', []))}"
+    joined_includes = "{join_prefix('-I', includes)}"
 )
 
 verilated_o = hancho(
     hancho.base_rules.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated.cpp",
-    out_obj = "verilator/verilated.o",
+    out_obj = "verilated.o",
     build_dir = "{build_root}/verilator",
 )
 
 verilated_threads_o = hancho(
     hancho.base_rules.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
-    out_obj = "verilator/verilated_threads.o",
+    out_obj = "verilated_threads.o",
     build_dir = "{build_root}/verilator",
 )
 
@@ -46,12 +46,12 @@ verilator_cmd = hancho.Config(
     command = "verilator -Wno-width --public {gen_vlparams(params)} {joined_includes} --cc {rel(in_top)} -Mdir {path.dirname(rel(out_makefile))}",
     out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
     out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_top)}",
-    joined_includes = "{join_prefix('-I', get('includes', []))}",
+    joined_includes = "{join_prefix('-I', includes)}",
     gen_vlparams = gen_vlparams,
     params = {},
 )
 
-def verilator(hancho, /, in_top, **kwargs):
+def verilator(hancho, *, in_top, **kwargs):
     verilated = hancho(
         verilator_cmd,
         kwargs,
@@ -95,37 +95,31 @@ def gen_chparams(c):
 yosys = hancho.Config(
     desc = "Run yosys on {rel(in_sv)}",
     command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {rel(out_json)};'",
-    in_sv    = None,
     out_json = "{swap_ext(in_sv, '.json')}",
     params = {},
     gen_chparams = gen_chparams,
     top = "{stem(in_sv)}",
-    joined_includes = "{join_prefix('-I', get('includes', []))}",
+    joined_includes = "{join_prefix('-I', includes)}",
 )
 
 
 sv2v = hancho.Config(
     desc = "Run sv2v on {rel(in_sv)}",
     command = "sv2v {joined_includes} {rel(in_sv)} -w {rel(out_v)}",
-    joined_includes = "{join_prefix('-I', get('includes', []))}",
+    joined_includes = "{join_prefix('-I', includes)}",
     out_v = "{swap_ext(in_sv, '.v')}",
 )
 
 nextpnr = hancho.Config(
     desc    = "Run nextpnr-ice40 on {rel(in_json)}",
     command = "nextpnr-ice40 {flags} -q --json {rel(in_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
-    in_json = None,
     out_asc = "{swap_ext(in_json, '.asc')}",
-    flags   = "",
-    pcf     = None,
-    chip    = None,
-    package = None,
+    flags   = None,
 )
 
 icepack = hancho.Config(
     desc    = "Run icepack on {rel(in_asc)}",
     command = "icepack {rel(in_asc)} {rel(out_bin)}",
-    in_asc  = None,
     out_bin = "{swap_ext(in_asc, '.bin')}",
 )
 
@@ -133,6 +127,8 @@ iceprog = hancho.Config(
     desc    = "Run iceprog on {rel(in_bin)}",
     command = "iceprog -S {rel(in_bin)}",
 )
+
+# FIXME Remove this and replace with "def synth(hancho, *, ...):"
 
 synth = hancho.Config(
     desc    = "Synth {rel(in_sv)}",
@@ -142,16 +138,13 @@ synth = hancho.Config(
         "nextpnr-ice40 {flags} -q --json {rel(out_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
         "icepack {rel(out_asc)} {rel(out_bin)}",
     ],
-    in_sv    = None,
     out_json = "{swap_ext(in_sv, '.json')}",
     out_asc  = "{swap_ext(in_sv, '.asc')}",
     out_bin  = "{swap_ext(in_sv, '.bin')}",
     params   = {},
     chparams = gen_chparams,
-    joined_includes = "{join_prefix('-I', get('includes', []))}",
-    flags    = "",
-    pcf      = None,
-    chip     = None,
-    package  = None,
+    includes = None,
+    joined_includes = "{join_prefix('-I', includes)}",
+    flags    = None,
 )
 
