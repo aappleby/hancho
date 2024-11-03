@@ -1,5 +1,5 @@
 hello_time = hancho(
     hancho.rules.cc_library,
     in_srcs = ["hello-time.cc"],
-    out_lib = "hello_time.a"
+    out_lib = "hello-time.a"
 )

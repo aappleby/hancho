@@ -1116,7 +1116,11 @@ class HanchoAPI(Utils):
             self.config,
             root_dir=path.dirname(mod_path),
             root_path=mod_path,
-            repo_name=path.basename(path.dirname(mod_path)),
+
+            # Do we want new roots to use build/repo_name/...? Seems like no.
+            #repo_name=path.basename(path.dirname(mod_path)),
+            repo_name="",
+
             repo_dir=path.dirname(mod_path),
             build_root=Task.default_build_root,
             build_tag=Task.default_build_tag,
