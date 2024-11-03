@@ -345,22 +345,22 @@ class Dumper:
 class Utils:
     # fmt: off
     abs_path    = staticmethod(abs_path)
-    rel_path    = staticmethod(rel_path)
-    join_path   = staticmethod(join_path)
     color       = staticmethod(color)
-    glob        = staticmethod(glob.glob)
-    len         = staticmethod(len)
-    run_cmd     = staticmethod(run_cmd)
-    swap_ext    = staticmethod(swap_ext)
     flatten     = staticmethod(flatten)
-    print       = staticmethod(print)
-    log         = staticmethod(log)
-    path        = path
-    re          = re
+    glob        = staticmethod(glob.glob)
+    hancho_dir  = abs_path(path.dirname(path.realpath(__file__)))
+    join_path   = staticmethod(join_path)
     join_prefix = staticmethod(join_prefix)
     join_suffix = staticmethod(join_suffix)
+    len         = staticmethod(len)
+    log         = staticmethod(log)
+    path        = path
+    print       = staticmethod(print)
+    re          = re
+    rel_path    = staticmethod(rel_path)
+    run_cmd     = staticmethod(run_cmd)
     stem        = staticmethod(stem)
-    hancho_dir  = abs_path(path.dirname(path.realpath(__file__)))
+    swap_ext    = staticmethod(swap_ext)
     # fmt: on
 
 
