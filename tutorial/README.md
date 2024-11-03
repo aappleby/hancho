@@ -4,7 +4,7 @@ Hancho is built out of a few simple pieces - Configs, text templates, and Tasks.
 
 The ```hancho.Config``` class is just a fancy ```dict``` with a few additional methods. For example, it comes with a pretty-printer:
 
-```
+```py
 >>> foo = hancho.Config(a = 1, b = "two", c = ['th','ree'])
 >>> foo
 Config @ 0x788c818610e0 {
@@ -18,7 +18,7 @@ Config @ 0x788c818610e0 {
 ```
 
 To clone a Config and optionally change its fields, use ```config.fork()```:
-```
+```py
 >>> foo = hancho.Config(a = 1)
 >>> bar = foo.fork(b = 2)
 >>> bar
@@ -43,7 +43,7 @@ Config @ 0x746cb87f3f20 {
 
 This works for nested Configs as well:
 
-```
+```py
 >>> a = hancho.Config(foo = hancho.Config(bar = 1, baz = 2))
 >>> b = hancho.Config(foo = hancho.Config(baz = 3, cow = 4))
 >>> hancho.Config(a, b)
