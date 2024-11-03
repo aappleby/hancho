@@ -83,7 +83,11 @@ Any function attached to a ```Config``` can be used in a template. By default it
 
 ```py
 >>> dir(foo)
-[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten', 'fork', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join_path', 'join_prefix', 'join_suffix', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem', 'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'swap_ext', 'update', 'values']
+[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten', 'fork',
+'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join_path', 'join_prefix',
+'join_suffix', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',
+'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'swap_ext',
+'update', 'values']
 ```
 
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:
