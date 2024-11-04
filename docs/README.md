@@ -4,6 +4,33 @@ Hancho is built out of a few simple pieces - the ```hancho``` object, Configs, T
 
 For more detailed and up-to-date information, check out the examples folder and the '*_rules.hancho' files in the root directory of this repo.
 
+## All built-ins:
+
+Both ```hancho.Config``` and ```hancho.HanchoAPI``` (the class of the global ```hancho``` object) derive from ```hancho.Utils``` to pick up various built-in functions that you may want to use in your scripts or templates. Most functions can accept either single values or arrays of values as their params and will generally do the right thing.
+
+| Built-in       | Description |
+| --------       | ----------- |
+|```log```        | Logs messages to the console and to Hancho's internal log. Also plays nicer with console output from parallel tasks than ```print()```|
+|```print```      | Python's built-in ```print()```.|
+|```len```        | Python's built-in ```len()```|
+|```abs_path```   | Converts a relative path to an absolute, physical path.|
+|```rel_path```   | Removes a common prefix from an absolute path to make a relative path. ```rel_path('/foo/bar/baz', '/foo')``` -> ```'bar/baz'```
+|```join_path```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
+|```join_prefix```| Attaches a prefix to a string or an array of strings.|
+|```join_suffix```| Attaches a suffix to a string or an array of strings.|
+|```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
+|```swap_ext```   | Replaces a filename's extension.|
+|```color```      | Returns escape codes that change the terminal's text color. Used for color-coding Hancho output.|
+|```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
+|```hancho_dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho_dir}/base_rules.hancho")```|
+|```glob```       | Python's ```glob.glob```|
+|```re```         | Python's ```re``` regular expression module|
+|```path```       | Python's ```os.path``` module|
+|```run_cmd```    | Runs a CLI command and returns the command's ```stdout```.|
+|```rel```        | Only usable by ```Config```s. Removes ```task_dir``` from a file path if present. Makes descriptions and commands a bit more readable.|
+|```merge```      | Only usable by ```Config```s. Merges additional ```Config```s or key-value pairs into this one.|
+|```expand```     | Only usable by ```Config```s. Expands a text template.|
+
 ## The global 'hancho' object you use when writing a script has some other stuff in it.
 
 In particular, there's a hancho.Config object named 'hancho.config' (note the lowercase) that gets merged into all tasks when you call ```hancho()```. This config object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.config - they will then be visible to all tasks in your build script.
@@ -25,6 +52,32 @@ HanchoAPI @ 0x7cb6c8d0b110 {
   Task = <class '__main__.Task'>,
 }
 ```
+
+Special fields and methods in ```hancho```
+'Config',
+'Task',
+'__call__',
+'config',
+'hancho_dir',
+'load',
+'load_module',
+'repo',
+'root'
+
+Fields automatically added to ```hancho.config```:
+|Field name | Description |
+| -----    | ----- |
+|root_dir  | The directory Hancho was started in.|
+|root_path | The build script Hancho read first|
+|repo_name | The name of the repo or subrepo we're currently in. Empty string for the root repo, directory name for subrepos. Used to keep repos from colliding in ```build```|
+|repo_dir  | The directory of the repo we're currently in.|
+|mod_name  | The name of the Hancho script currently being processed |
+|mod_dir   | The directory of the Hancho script currently being processed |
+|mod_path  | The absolute path of the Hancho script currently being processed|
+|build_root| The place where all ```out_*``` files should go. Defaults to ```{root_dir}/build```|
+|build_tag | A descriptive tag such as ```debug```, ```release```, etcetera that can be used to divide your ```build``` directory up into ```build/debug```. Defaults to empty string.|
+
+
 
 ## The hancho.Config class is a dict, basically.
 
@@ -204,3 +257,4 @@ hancho(
     in_file = foo_txt
 )
 ```
+
