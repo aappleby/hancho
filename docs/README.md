@@ -4,7 +4,24 @@ Hancho is built out of a few simple pieces - the ```hancho``` object, Configs, T
 
 For more detailed and up-to-date information, check out the examples folder and the '*_rules.hancho' files in the root directory of this repo.
 
-## All built-ins:
+## The hancho.Config class is a dict, basically
+
+The ```hancho.Config``` class is just a fancy ```dict``` with a few additional methods. For example, it comes with a pretty-printer:
+
+```py
+>>> foo = hancho.Config(a = 1, b = "two", c = ['th','ree'])
+>>> foo
+Config @ 0x788c818610e0 {
+  a = 1,
+  b = "two",
+  c = list @ 0x788c8147db40 [
+    "th",
+    "ree",
+  ],
+}
+```
+
+## Hancho comes with some built-in functions
 
 Both ```hancho.Config``` and ```hancho.HanchoAPI``` (the class of the global ```hancho``` object) derive from ```hancho.Utils``` to pick up various built-in functions that you may want to use in your scripts or templates. Most functions can accept either single values or arrays of values as their params and will generally do the right thing.
 
@@ -30,6 +47,78 @@ Both ```hancho.Config``` and ```hancho.HanchoAPI``` (the class of the global ```
 |```rel```        | Only usable by ```Config```s. Removes ```task_dir``` from a file path if present. Makes descriptions and commands a bit more readable.|
 |```merge```      | Only usable by ```Config```s. Merges additional ```Config```s or key-value pairs into this one.|
 |```expand```     | Only usable by ```Config```s. Expands a text template.|
+
+## Splitting your build into multiple ```.hancho``` files
+
+Hancho is explicitly designed to allow for build scripts that span multiple files, multiple directories, and multiple repos.
+
+To load the contents of another ```.hancho``` file into the current one, use ```hancho.load(filename)```. The return value from ```load()``` will be a Config containing all the global variables defined in the file, minus imported modules and 'private' variables prefixed with an underscore.
+
+```py
+# stuff.hancho
+_private_constant = 42
+
+def helper_function():
+    return _private_constant
+```
+
+```py
+# build.hancho
+stuff = hancho.load("stuff.hancho")
+print(stuff)
+```
+
+```sh
+user@host:~/temp$ hancho
+Loading /home/user/temp/build.hancho
+Config @ 0x7cda59023480 {
+  helper_function = <function helper_function at 0x7cda5902f100>,
+}
+hancho: BUILD CLEAN
+```
+
+Build scripts loaded this way get a _deep copy_ of the loader's ```hancho``` object, which can be used to pass arbitrary data into another build script.
+
+```py
+# stuff.hancho
+print(f"hancho.options = {hancho.options}")
+print(f"hancho.config.thing = {hancho.config.thing}")
+```
+
+```py
+# build.hancho
+hancho.options = 42
+hancho.config.thing = "cat"
+stuff = hancho.load("stuff.hancho")
+```
+
+```sh
+aappleby@Neurotron:~/temp$ hancho
+Loading /home/aappleby/temp/build.hancho
+hancho.options = 42
+hancho.config.thing = cat
+hancho: BUILD CLEAN
+```
+
+If your project uses Git subrepos and your subrepo also builds with Hancho, you can load the subrepo's build script via ```hancho.repo()``` - this will ensure that all of its build targets go in ```{build_root}/{build_tag}/subrepo/path-relative-to-subrepo``` instead of getting mixed in with the rest of your build files.
+
+```py
+base_rules = hancho.load("{hancho_path}/base_rules.hancho")
+awesomelib = hancho.repo("subrepos/awesomelib/build.hancho")
+
+hancho(
+  base_rules.cpp_binary,
+  in_srcs = "main.cpp",
+  in_libs = awesomelib.lib,
+  out_bin = "main"
+)
+```
+
+If you need a subrepo to place its build files entirely within its own subfolder (as if you'd run ```hancho``` from that folder), you can load it via ```hancho.root()```.
+
+```py
+isolated_submodule = hancho.root("subrepos/standalone_thing/build.hancho")
+```
 
 ## The global 'hancho' object you use when writing a script has some other stuff in it.
 
@@ -78,24 +167,6 @@ Fields automatically added to ```hancho.config```:
 |build_tag | A descriptive tag such as ```debug```, ```release```, etcetera that can be used to divide your ```build``` directory up into ```build/debug```. Defaults to empty string.|
 
 
-
-## The hancho.Config class is a dict, basically.
-
-The ```hancho.Config``` class is just a fancy ```dict``` with a few additional methods. For example, it comes with a pretty-printer:
-
-```py
->>> foo = hancho.Config(a = 1, b = "two", c = ['th','ree'])
->>> foo
-Config @ 0x788c818610e0 {
-  a = 1,
-  b = "two",
-  c = list @ 0x788c8147db40 [
-    "th",
-    "ree",
-  ],
-}
-```
-
 ## Merging Configs together combines their fields.
 
 The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
@@ -134,8 +205,6 @@ Config @ 0x746cb87f3f70 {
 Like Python's F-strings, Hancho's templates can contain ```{arbi + trary * express - ions}```, but the expressions are _not_ immediately evaluated.
 
 Instead, we call ```config.expand(template)``` and the values in ```config``` are used to fill in the blanks in ```template```.
-
-
 ```py
 >>> foo = hancho.Config(a = 1, b = 2)
 >>> foo.expand("The sum of a and b is {a+b}.")
@@ -164,14 +233,13 @@ And a ```None``` will turn into an empty string.
 ```
 
 If the result of a template expansion contains more templates, Hancho will keep expanding until the string stops changing.
-
 ```py
 >>> foo = hancho.Config(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
 >>> foo.expand("{a}")
 'abcd1000'
 ```
-Expanding templates based on configs inside configs also works:
 
+Expanding templates based on configs inside configs also works:
 ```py
 >>> foo = hancho.Config(a = 1, b = 2)
 >>> bar = hancho.Config(c = foo)
@@ -224,7 +292,6 @@ Failure to expand a template is _not an error_, it just passes the unexpanded te
 ```
 
 While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand until they're needed later by a parent or grandparent config.
-
 ```py
 >>> foo = hancho.Config(msg = "What's a {bar.thing}?")
 >>> bar = hancho.Config(thing = "bear")
@@ -232,6 +299,36 @@ While this might seem like a bad idea, it allows for Configs to hold templates t
 >>> baz.expand("{foo.msg}")
 "What's a bear?"
 ```
+
+Hancho comes with a simple text-expansion tracing tool for debugging your build scripts. It can be enabled by setting ```trace=True``` on a Config, or via ```--trace``` on the command line.
+
+Here's what the tracer generates for the above example:
+
+```py
+Python 3.12.3 (main, Sep 11 2024, 14:17:37) [GCC 13.2.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import hancho
+>>> foo = hancho.Config(msg = "What's a {bar.thing}?")
+>>> bar = hancho.Config(thing = "bear")
+>>> baz = hancho.Config(foo = foo, bar = bar, trace=True)
+>>> baz.expand("{foo.msg}")
+0x76beaa7eebc0: ┏ expand_text '{foo.msg}'
+0x76beaa7eebc0: ┃ ┏ expand_macro '{foo.msg}'
+0x76beaa7eebc0: ┃ ┃ Read 'foo' = Config @ 0x76beaa7eec60'
+0x76beaa7eebc0: ┃ ┗ expand_macro '{foo.msg}' = What's a {bar.thing}?
+0x76beaa7eebc0: ┗ expand_text '{foo.msg}' = 'What's a {bar.thing}?'
+0x76beaa7eebc0: ┏ expand_text 'What's a {bar.thing}?'
+0x76beaa7eebc0: ┃ ┏ expand_macro '{bar.thing}'
+0x76beaa7eebc0: ┃ ┃ Read 'bar' = Config @ 0x76beaa7eecb0'
+0x76beaa7eebc0: ┃ ┗ expand_macro '{bar.thing}' = bear
+0x76beaa7eebc0: ┗ expand_text 'What's a {bar.thing}?' = 'What's a bear?'
+"What's a bear?"
+```
+
+FIXME - there should be a ```Read 'msg'``` line and a ```Read 'thing'``` line in that trace - where did they go?
+
+
+
 ## Tasks are nodes in Hancho's build graph.
 
 Tasks take a Config that completely defines the input files, output files, and directories needed to run a command and adds it to Hancho's build graph.
@@ -258,3 +355,74 @@ hancho(
 )
 ```
 
+## Raw tasks for corner cases
+
+Normally Hancho will inject ```hancho.config``` into your Tasks to provide the path information
+needed for the build.
+
+If you'd rather control all the paths yourself, you can create a Task directly. You'll need to
+supply ```task_dir``` and ```build_dir``` so that Hancho knows where to look for input and output
+files.
+
+```py
+hancho.Task(
+  command = "echo hello world",
+  task_dir = ".",
+  build_dir = "."
+)
+```
+
+## Using task-generating functions to simplify your build
+
+Sometimes you may need to create multiple small tasks to accomplish a larger task. For example,
+this function from ```base_rules.hancho``` compiles a list of source files and then links them
+along with other object files or libraries into a larger C++ library.
+
+```py
+def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
+    in_objs = hancho.flatten(in_objs)
+    for file in hancho.flatten(in_srcs):
+        obj = hancho(compile_cpp, in_src=file, **kwargs)
+        in_objs.append(obj)
+    return hancho(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
+```
+
+You can of course call this function directly, but for easier integration with larger build scripts
+you can also pass ```cpp_lib``` as the first argument to ```hancho()```:
+
+```
+hancho(
+  cpp_lib,
+  in_srcs = glob.glob("src/*.cpp")
+  out_lib = "foo.a"
+)
+```
+
+Doing this is is exactly equivalent to the following:
+
+```py
+temp_config = hancho.Config(
+  hancho.config,
+  in_srcs = glob.glob("src/*.cpp"),
+  out_lib = "foo.a"
+)
+cpp_lib(hancho, **temp_config)
+```
+
+## Using callbacks as Hancho commands
+
+If you pass a function as the ```command``` field for a task, Hancho will call it with the task as
+an argument. The callbacks can be synchronous or asynchronous - both work fine. If you need to do
+some custom Python stuff during a build, this is the easiest way to do it.
+
+```py
+import asyncio
+
+async def my_callback(task):
+  await asyncio.sleep(0.1)
+  print(f"Hello from an asynchronous callback, my task is {task}")
+
+hancho(
+  command = my_callback,
+)
+```

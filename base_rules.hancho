@@ -81,29 +81,24 @@ def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwar
     for file in hancho.flatten(in_srcs):
         obj = hancho(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-
     return hancho(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 
 
-def cpp_bin(hancho, *args, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    config = hancho.Config(*args, **kwargs)
-
+def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
-        obj = hancho(compile_cpp, config, in_src=file)
+        obj = hancho(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-
     return hancho(
         link_cpp_bin,
-        config,
         in_objs=[in_objs, in_libs],
         out_bin=out_bin,
+        **kwargs
     )
 
 
 ####################################################################################################
 # Makefiles
-
 
 def make(hancho, *, in_makefile, **kwargs):
     cmd = hancho.Config(
@@ -127,7 +122,6 @@ run_test = hancho.Config(
     args="",
     out_pass="{in_test}.pass",
 )
-
 
 def cpp_test(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
     objs = [hancho(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]

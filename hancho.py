@@ -996,7 +996,9 @@ class Task:
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             app.pushdir(self.config.task_dir)
-            command(self)
+            result = command(self)
+            while inspect.isawaitable(result):
+                result = await result
             app.popdir()
             self._returncode = 0
             return
