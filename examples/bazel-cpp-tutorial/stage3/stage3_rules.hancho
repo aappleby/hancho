@@ -40,7 +40,7 @@ compile_cpp = hancho.Config(
     gcc_flags  = _gcc_flags,
     includes   = None,
     out_obj    = "{swap_ext(in_src, '.o')}",
-    in_depfile = "{swap_ext(in_src, '.d')}",
+    in_depfile = "{swap_ext(out_obj, '.d')}",
 )
 
 link_cpp_bin = hancho.Config(

@@ -46,8 +46,10 @@ compile_cpp = hancho.Config(
     warnings = None,
     defines = None,
     includes = None,
-    in_depfile="{swap_ext(in_src, '.d')}",
     out_obj="{swap_ext(in_src, '.o')}",
+
+    # Note - this swaps out_obj and not in_src in case the user redirects out_obj
+    in_depfile="{swap_ext(out_obj, '.d')}",
 
     joined_warnings="{join_prefix('-W', warnings)}",
     joined_defines="{join_prefix('-D', defines)}",

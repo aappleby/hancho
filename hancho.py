@@ -100,7 +100,7 @@ def abs_path(raw_path, strict=False) -> str | list[str]:
     if listlike(raw_path):
         return [abs_path(p, strict) for p in raw_path]
 
-    result = path.realpath(raw_path)
+    result = path.abspath(raw_path)
     if strict and not path.exists(result):
         raise FileNotFoundError(raw_path)
     return result
@@ -142,7 +142,7 @@ def normalize_path(file_path):
     assert isinstance(file_path, str)
     assert not macro_regex.search(file_path)
 
-    file_path = path.realpath(path.join(os.getcwd(), file_path))
+    file_path = path.abspath(path.join(os.getcwd(), file_path))
     assert path.isabs(file_path)
     if not path.isfile(file_path):
         print(f"Could not find file {file_path}")
@@ -242,6 +242,16 @@ def merge_variant(lhs, rhs):
         return lhs
     return copy.deepcopy(rhs)
 
+
+def apply_variant(key, val, apply):
+    apply(key, val)
+    if dictlike(val):
+        for key2, val2 in val.items():
+            apply_variant(key2, val2, apply)
+    elif listlike(val):
+        for key2, val2 in enumerate(val):
+            apply_variant(key2, val2, apply)
+    return val
 
 def map_variant(key, val, apply):
     val = apply(key, val)
@@ -348,7 +358,7 @@ class Utils:
     color       = staticmethod(color)
     flatten     = staticmethod(flatten)
     glob        = staticmethod(glob.glob)
-    hancho_dir  = abs_path(path.dirname(path.realpath(__file__)))
+    hancho_dir  = path.dirname(path.realpath(__file__))
     join_path   = staticmethod(join_path)
     join_prefix = staticmethod(join_prefix)
     join_suffix = staticmethod(join_suffix)
@@ -823,47 +833,83 @@ class Task:
         debug = self.config.get("debug", app.flags.debug)
 
         if debug:
-            log(f"\nTask before expand: {self.config}")
+            log(f"\nTask before expand: {self}")
 
         # ----------------------------------------
         # Expand task_dir and build_dir
 
         # pylint: disable=attribute-defined-outside-init
-        self.config.task_dir = abs_path(self.config.expand(self.config.task_dir))
-        self.config.build_dir = abs_path(self.config.expand(self.config.build_dir))
+
+        self.config.task_dir   = abs_path(self.config.expand(self.config.task_dir))
+        self.config.build_dir  = abs_path(self.config.expand(self.config.build_dir))
+
+        if root_dir := self.config.get("root_dir", None):
+            if not self.config.build_dir.startswith(root_dir):
+                raise ValueError(
+                    f"Path error, build_dir {self.config.build_dir} is not under root_dir {root_dir}"
+                )
 
         # ----------------------------------------
-        # Expand all in_ and out_ filenames.
+        # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
         for key, val in self.config.items():
             if key.startswith("in_") or key.startswith("out_"):
-                self.config[key] = self.config.expand(val)
+                def expand_path(_, val):
+                    if not isinstance(val, str):
+                        return val
+                    val = self.config.expand(val)
+                    val = path.normpath(val)
+                    return val
+                self.config[key] = map_variant(key, val, expand_path)
 
-        # ----------------------------------------
-        # Convert all in_, out_, and deps filenames to absolute paths.
+        # Make all in_ and out_ file paths absolute
 
-        def join_dir(key, val):
-            if isinstance(key, str) and val is not None:
-                if key == "in_depfile":
-                    val = join_path(self.config.build_dir, val)
-                    val = abs_path(val)
-                    # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will
-                    # fail a check that all our inputs are present.
-                    if path.isfile(val):
-                        self.in_files.append(val)
-                elif key.startswith("out_"):
-                    val = join_path(self.config.build_dir, val)
-                    val = abs_path(val)
-                    self.out_files.extend(flatten(val))
-                elif key.startswith("in_"):
-                    val = join_path(self.config.task_dir, val)
-                    val = abs_path(val)
-                    self.in_files.extend(flatten(val))
-            return val
+        # FIXME feeling like in_depfile should really be io_depfile...
 
-        map_variant(None, self.config, join_dir)
+        for key, val in self.config.items():
+            if key.startswith("out_") or key == "in_depfile":
+                def move_to_builddir(_, val):
+                    if not isinstance(val, str):
+                        return val
+                    # Note this conditional needs to be first, as build_dir can itself be under
+                    # task_dir
+                    if val.startswith(self.config.build_dir):
+                        # Absolute path under build_dir, do nothing.
+                        pass
+                    elif val.startswith(self.config.task_dir):
+                        # Absolute path under task_dir, move to build_dir
+                        val = rel_path(val, self.config.task_dir)
+                        val = join_path(self.config.build_dir, val)
+                    elif val.startswith("/"):
+                        raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
+                    else:
+                        # Relative path, add build_dir
+                        val = join_path(self.config.build_dir, val)
+                    return val
+                self.config[key] = map_variant(key, val, move_to_builddir)
+            elif key.startswith("in_"):
+                def move_to_taskdir(key, val):
+                    if not isinstance(val, str):
+                        return val
+                    if not val.startswith("/"):
+                        val = join_path(self.config.task_dir, val)
+                    return val
+                self.config[key] = map_variant(key, val, move_to_taskdir)
+
+        # Gather all inputs to task.in_files and outputs to task.out_files
+
+        for key, val in self.config.items():
+            # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will fail a check
+            # that all our inputs are present.
+            if key == "in_depfile":
+                if path.isfile(val):
+                    self.in_files.append(val)
+            elif key.startswith("out_"):
+                self.out_files.extend(flatten(val))
+            elif key.startswith("in_"):
+                self.in_files.extend(flatten(val))
 
         # ----------------------------------------
         # And now we can expand the command.
@@ -872,7 +918,7 @@ class Task:
         self.config.command = self.config.expand(self.config.command)
 
         if debug:
-            log(f"\nTask after expand: {self.config}")
+            log(f"\nTask after expand: {self}")
 
         # ----------------------------------------
         # Sanity checks
@@ -891,12 +937,10 @@ class Task:
         for file in self.out_files:
             if file is None:
                 raise ValueError("out_files contained a None")
-            # Raw tasks may not have a root_dir
-            if root_dir := self.config.get("root_dir", None):
-                if not file.startswith(root_dir):
-                    raise ValueError(
-                        f"Path error, output file {file} is not under root_dir {root_dir}"
-                    )
+            if not file.startswith(self.config.build_dir):
+                raise ValueError(
+                    f"Path error, output file {file} is not under build_dir {self.config.build_dir}"
+                )
 
         # Check for duplicate task outputs
         if self.config.command:
@@ -1310,7 +1354,7 @@ class App:
     def create_root_context(self):
 
         root_file = self.flags.root_file
-        root_dir = path.realpath(self.flags.root_dir)  # Root path must be absolute.
+        root_dir = path.abspath(self.flags.root_dir)  # Root path must be absolute.
         root_path = path.join(root_dir, root_file)
 
         root_config = Config(

@@ -6,7 +6,7 @@ compile_cpp = hancho.Config(
     desc       = "Compile {in_src} -> {out_obj}",
     command    = "cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
     out_obj    = "{swap_ext(in_src, '.o')}",
-    in_depfile = "{swap_ext(in_src, '.d')}",
+    in_depfile = "{swap_ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Config(

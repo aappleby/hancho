@@ -38,7 +38,7 @@ _compile_cpp = hancho.Config(
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
     out_obj    = "{swap_ext(in_src, '.o')}",
-    in_depfile = "{swap_ext(in_src, '.d')}",
+    in_depfile = "{swap_ext(out_obj, '.d')}",
     gcc_flags  = _gcc_flags,
 )
 

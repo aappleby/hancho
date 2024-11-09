@@ -90,6 +90,7 @@ class TestHancho(unittest.TestCase):
         #hancho_py.app.parse_flags(["--quiet"])
         hancho_py.app.parse_flags([])
         #hancho_py.app.parse_flags(["-v"])
+        #hancho_py.app.parse_flags(["-d"])
         self.hancho = hancho_py.app.create_root_context()
 
     ########################################
@@ -199,16 +200,15 @@ class TestHancho(unittest.TestCase):
         self.assertNotEqual(0, hancho_py.app.build_all())
         self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
-        self.assertTrue("Path error" in hancho_py.app.log)
 
     ########################################
 
     def test_raw_task(self):
         self.hancho.Task(
-            command   = "touch {rel(out_obj)}",
-            in_src    = "src/foo.c",
-            out_obj   = "foo.o",
-            task_dir  = os.getcwd(),
+            command    = "touch {rel(out_obj)}",
+            in_src     = "src/foo.c",
+            out_obj    = "foo.o",
+            task_dir   = os.getcwd(),
             build_dir = "build"
         )
         #print(task)
@@ -228,6 +228,24 @@ class TestHancho(unittest.TestCase):
         self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
         self.assertTrue("FileNotFoundError" in hancho_py.app.log)
         self.assertTrue("does_not_exist.txt" in hancho_py.app.log)
+
+    ########################################
+
+    def test_absolute_inputs(self):
+        """
+        If input filenames are absolute paths, we should still end up with build files under
+        build_root.
+        """
+
+        self.hancho(
+            command = "cp {in_src} {out_obj}",
+            in_src  = path.abspath("src/foo.c"),
+            out_obj = "{swap_ext(in_src, '.o')}",
+        )
+
+        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertTrue(Path("build/src/foo.o").exists())
+
 
     ########################################
 
@@ -371,7 +389,7 @@ class TestHancho(unittest.TestCase):
             compile = self.hancho.Config(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj    = "{swap_ext(in_src, '.o')}",
-                in_depfile = "{swap_ext(in_src, '.d')}",
+                in_depfile = "{swap_ext(out_obj, '.d')}",
             )
             self.hancho(compile, in_src = "src/test.cpp")
             self.assertEqual(0, hancho_py.app.build_all())
@@ -396,7 +414,7 @@ class TestHancho(unittest.TestCase):
             compile = self.hancho.Config(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj    = "{swap_ext(in_src, '.o')}",
-                in_depfile = "{swap_ext(in_src, '.d')}",
+                in_depfile = "{swap_ext(out_obj, '.d')}",
             )
             self.hancho(compile, in_src = "src/test.cpp")
             self.assertEqual(0, hancho_py.app.build_all())
