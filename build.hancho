@@ -1,10 +1,17 @@
 hancho.config.force = True
 
 # Check that all our rule files load
-hancho.base_rules  = hancho.load("{hancho_dir}/base_rules.hancho")
-hancho.fpga_rules  = hancho.load("{hancho_dir}/fpga_rules.hancho")
-hancho.riscv_rules = hancho.load("{hancho_dir}/riscv_rules.hancho")
-hancho.wasm_rules  = hancho.load("{hancho_dir}/wasm_rules.hancho")
+if "base_rules" not in hancho:
+    hancho.base_rules  = hancho.load("{hancho_dir}/base_rules.hancho")
+
+if "fpga_rules" not in hancho:
+    hancho.fpga_rules  = hancho.load("{hancho_dir}/fpga_rules.hancho")
+
+if "riscv_rules" not in hancho:
+    hancho.riscv_rules = hancho.load("{hancho_dir}/riscv_rules.hancho")
+
+if "wasm_rules" not in hancho:
+    hancho.wasm_rules  = hancho.load("{hancho_dir}/wasm_rules.hancho")
 
 #hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")

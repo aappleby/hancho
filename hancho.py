@@ -671,7 +671,7 @@ class Task:
     default_command = None
     default_task_dir = "{mod_dir}"
     default_build_dir = (
-        "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}"
+        "{build_root}/{repo_name}/{build_tag}/{rel_path(task_dir, repo_dir)}"
     )
     default_build_root = "{root_dir}/build"
     default_build_tag = ""
@@ -1417,8 +1417,8 @@ class App:
                 #        queue_task = True
                 #        task_name = out_file
                 #        break
-                if name := task.get("name", None):
-                    if app.target_regex.search(task.get("name", None)):
+                if name := task.config.get("name", None):
+                    if app.target_regex.search(name):
                         queue_task = True
                         task_name = name
                 if queue_task:
