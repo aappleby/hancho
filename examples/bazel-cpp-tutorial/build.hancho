@@ -1,5 +1,5 @@
 # This just builds all three stages of the Bazel tutorial
 
-hancho.root("stage1/build.hancho")
-hancho.root("stage2/build.hancho")
-hancho.root("stage3/build.hancho")
+hancho.repo("stage1/build.hancho")
+hancho.repo("stage2/build.hancho")
+hancho.repo("stage3/build.hancho")

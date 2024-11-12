@@ -5,6 +5,17 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Scratch",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd": "${workspaceFolder}/scratch",
+      //"args": ["--force", "-j1"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Wipe build",
+    },
+    {
       "name": "Debug Hancho",
       "type": "debugpy",
       "request": "launch",
@@ -21,7 +32,7 @@
       "request": "launch",
       "program": "run_tests.py",
       "cwd": "${workspaceFolder}/tests",
-      //"args": ["TestHancho.test_header_changed"],
+      "args": ["TestHancho.test_always_rebuild_if_no_inputs"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },

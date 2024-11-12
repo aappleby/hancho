@@ -1,7 +1,6 @@
 # FIXME these could stand to be cleaned up a bit.
 
-if not "base_rules" in hancho:
-    hancho.base_rules = hancho.load("{hancho_dir}/base_rules.hancho")
+hancho.base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
 
 def gen_ivparams(params):
     result = []

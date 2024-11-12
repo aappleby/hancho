@@ -114,12 +114,6 @@ hancho(
 )
 ```
 
-If you need a subrepo to place its build files entirely within its own subfolder (as if you'd run ```hancho``` from that folder), you can load it via ```hancho.root()```.
-
-```py
-isolated_submodule = hancho.root("subrepos/standalone_thing/build.hancho")
-```
-
 ## The global 'hancho' object you use when writing a script has some other stuff in it.
 
 In particular, there's a hancho.Config object named 'hancho.config' (note the lowercase) that gets merged into all tasks when you call ```hancho()```. This config object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.config - they will then be visible to all tasks in your build script.

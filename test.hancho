@@ -1,0 +1,16 @@
+hancho.config.force = True
+
+hancho.base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
+
+#hancho.load("tutorial/tutorial.hancho")
+hancho.load("examples/examples.hancho")
+hancho.load("tests/tests.hancho")
+
+hancho(hancho.base_rules.check_cpp, in_src = "tests/src/main.cpp")
+hancho(hancho.base_rules.check_cpp, in_src = "tests/src/test.cpp")
+
+hancho(
+    desc = "Run all tests",
+    command  = ["{repo_dir}/tests/run_tests.py"],
+    task_dir = "{repo_dir}/tests",
+)

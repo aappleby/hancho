@@ -87,8 +87,8 @@ class TestHancho(unittest.TestCase):
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
         hancho_py.app.reset()
-        #hancho_py.app.parse_flags(["--quiet"])
-        hancho_py.app.parse_flags([])
+        hancho_py.app.parse_flags(["--quiet"])
+        #hancho_py.app.parse_flags([])
         #hancho_py.app.parse_flags(["-v"])
         #hancho_py.app.parse_flags(["-d"])
         self.hancho = hancho_py.app.create_root_context()
@@ -275,7 +275,7 @@ class TestHancho(unittest.TestCase):
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
         self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("Text expansion failed to terminate" in hancho_py.app.log)
+        self.assertTrue("TemplateRecursion" in hancho_py.app.log)
 
     ########################################
 
@@ -288,12 +288,12 @@ class TestHancho(unittest.TestCase):
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
         self.assertEqual(garbage_task._state, hancho_py.TaskState.FAILED)
-        self.assertTrue("ValueError: Command exited with return code 127" in hancho_py.app.log)
+        self.assertTrue("CommandFailure" in hancho_py.app.log)
 
     ########################################
 
-    def test_rule_collision(self):
-        """If multiple rules generate the same output file, that's an error."""
+    def test_task_collision(self):
+        """If multiple distinct commands generate the same output file, that's an error."""
         self.hancho(
             command = "sleep 0.1 && touch {rel(out_obj)}",
             in_src  = __file__,
@@ -305,7 +305,22 @@ class TestHancho(unittest.TestCase):
             out_obj = "colliding_output.txt",
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertTrue("Multiple rules build" in hancho_py.app.log)
+        self.assertTrue("TaskCollision" in hancho_py.app.log)
+
+    def test_redundant_tasks(self):
+        """If multiple distinct commands generate the same output file, that's an error."""
+        self.hancho(
+            command = "touch {rel(out_obj)}",
+            in_src  = __file__,
+            out_obj = "colliding_output.txt",
+        )
+        self.hancho(
+            command = "touch {rel(out_obj)}",
+            in_src  = __file__,
+            out_obj = "colliding_output.txt",
+        )
+        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(1, hancho_py.app.tasks_redundant)
 
     ########################################
 

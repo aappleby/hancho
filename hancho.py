@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 # pylint: disable=too-many-lines
+# pylint: disable=protected-access
+# pylint: disable=unused-argument
 
 """Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system."""
 
@@ -143,10 +145,12 @@ def normalize_path(file_path):
     assert not macro_regex.search(file_path)
 
     file_path = path.abspath(path.join(os.getcwd(), file_path))
+    file_path = path.normpath(file_path)
+
     assert path.isabs(file_path)
-    if not path.isfile(file_path):
-        print(f"Could not find file {file_path}")
-        assert path.isfile(file_path)
+#    if not path.isfile(file_path):
+#        print(f"Could not find file {file_path}")
+#        assert path.isfile(file_path)
 
     return file_path
 
@@ -475,7 +479,7 @@ def expand_inc():
     """Increments the current expansion recursion depth."""
     app.expand_depth += 1
     if app.expand_depth > MAX_EXPAND_DEPTH:
-        raise RecursionError("Text expansion failed to terminate")
+        raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
 
 
 def expand_dec():
@@ -660,6 +664,7 @@ class TaskState:
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     BROKEN = "BROKEN"
+    REDUNDANT = "REDUNDANT"
 
 
 ####################################################################################################
@@ -670,18 +675,14 @@ class Task:
     default_desc = "{command}"
     default_command = None
     default_task_dir = "{mod_dir}"
-    default_build_dir = (
-        "{build_root}/{repo_name}/{build_tag}/{rel_path(task_dir, repo_dir)}"
-    )
-    default_build_root = "{root_dir}/build"
+    default_build_dir = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}"
+    default_build_root = "{repo_dir}/build"
     default_build_tag = ""
 
     def __init__(self, *args, **kwargs):
         self.config = Config(
             desc=Task.default_desc,
             command=Task.default_command,
-            task_dir=Task.default_task_dir,
-            build_dir=Task.default_build_dir,
         )
 
         self.config.merge(*args, **kwargs)
@@ -698,6 +699,9 @@ class Task:
         self._returncode = -1
 
         app.all_tasks.append(self)
+
+        #if self.config.get("queue", False):
+        #    self.queue()
 
     # ----------------------------------------
 
@@ -776,10 +780,20 @@ class Task:
         try:
             self._state = TaskState.TASK_INIT
             self.task_init()
+        except asyncio.CancelledError as ex:
+            # We discovered during init that we don't need to run this task.
+            self._state = TaskState.CANCELLED
+            app.tasks_cancelled += 1
+            raise asyncio.CancelledError() from ex
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             self._state = TaskState.BROKEN
             app.tasks_broken += 1
             raise ex
+
+        # Early-out if the task is redundant
+        if self._state == TaskState.REDUNDANT:
+            app.tasks_redundant += 1
+            return
 
         # Early-out if this is a no-op task
         if self.config.command is None:
@@ -843,10 +857,12 @@ class Task:
         self.config.task_dir   = abs_path(self.config.expand(self.config.task_dir))
         self.config.build_dir  = abs_path(self.config.expand(self.config.build_dir))
 
-        if root_dir := self.config.get("root_dir", None):
-            if not self.config.build_dir.startswith(root_dir):
+        # Raw tasks may not have a repo_dir.
+        repo_dir = self.config.get("repo_dir", None)
+        if repo_dir is not None:
+            if not self.config.build_dir.startswith(repo_dir):
                 raise ValueError(
-                    f"Path error, build_dir {self.config.build_dir} is not under root_dir {root_dir}"
+                    f"Path error, build_dir {self.config.build_dir} is not under repo dir {repo_dir}"
                 )
 
         # ----------------------------------------
@@ -882,7 +898,7 @@ class Task:
                         # Absolute path under task_dir, move to build_dir
                         val = rel_path(val, self.config.task_dir)
                         val = join_path(self.config.build_dir, val)
-                    elif val.startswith("/"):
+                    elif path.isabs(val):
                         raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
                     else:
                         # Relative path, add build_dir
@@ -893,7 +909,7 @@ class Task:
                 def move_to_taskdir(key, val):
                     if not isinstance(val, str):
                         return val
-                    if not val.startswith("/"):
+                    if not path.isabs(val):
                         val = join_path(self.config.task_dir, val)
                     return val
                 self.config[key] = map_variant(key, val, move_to_taskdir)
@@ -921,6 +937,29 @@ class Task:
             log(f"\nTask after expand: {self}")
 
         # ----------------------------------------
+        # Check for redundant tasks
+
+        if self.out_files and self.config.command is not None:
+            redundant = 0
+
+            for file in self.out_files:
+                old_fingerprint = app.filename_to_fingerprint.get(file, None)
+                new_fingerprint = self.config.command
+
+                if old_fingerprint is None:
+                    app.filename_to_fingerprint[file] = new_fingerprint
+                elif old_fingerprint != new_fingerprint:
+                    raise ValueError(f"TaskCollision: File {file} was built via '{old_fingerprint}', but now we are trying to build it via '{new_fingerprint}'")
+                else:
+                    redundant = redundant + 1
+
+            if redundant == len(self.out_files):
+                self._state = TaskState.REDUNDANT
+                return
+            elif redundant > 0:
+                raise ValueError("Inconsistent redundancy check, something broken")
+
+        # ----------------------------------------
         # Sanity checks
 
         # Check for missing input files/paths
@@ -933,7 +972,7 @@ class Task:
             if not path.exists(file):
                 raise FileNotFoundError(file)
 
-        # Check that all build files would end up under root_dir
+        # Check that all build files would end up under build_dir
         for file in self.out_files:
             if file is None:
                 raise ValueError("out_files contained a None")
@@ -945,8 +984,8 @@ class Task:
         # Check for duplicate task outputs
         if self.config.command:
             for file in self.out_files:
-                if file in app.all_out_files:
-                    raise NameError(f"Multiple rules build {file}!")
+                #if file in app.all_out_files:
+                #    raise NameError(f"Multiple rules build {file}!")
                 app.all_out_files.add(file)
 
         # Make sure our output directories exist
@@ -1025,11 +1064,10 @@ class Task:
         debug = self.config.get("debug", app.flags.debug)
 
         if verbose or debug:
-            root_dir = self.config.get("root_dir", "/")
             log(color(128, 128, 255), end="")
             if app.flags.dry_run:
                 log("(DRY RUN) ", end="")
-            log(f"{rel_path(self.config.task_dir, root_dir)}$ ", end="")
+            log(f"{rel_path(self.config.task_dir, self.config.repo_dir)}$ ", end="")
             log(color(), end="")
             log(command)
 
@@ -1075,7 +1113,7 @@ class Task:
         command_pass = (self._returncode == 0) != self.config.get("should_fail", False)
 
         if not command_pass:
-            message = f"Command exited with return code {self._returncode}\n"
+            message = f"CommandFailure: Command exited with return code {self._returncode}\n"
             if self._stdout:
                 message += "Stdout:\n"
                 message += self._stdout
@@ -1098,6 +1136,62 @@ class Task:
 
 ####################################################################################################
 
+def create_repo(mod_path):
+    assert path.isabs(mod_path)
+    assert mod_path == normalize_path(mod_path)
+    assert mod_path == path.realpath(mod_path)
+    assert mod_path not in app.realpath_to_repo
+
+    mod_dir  = path.split(mod_path)[0]
+    mod_file = path.split(mod_path)[1]
+    mod_name = path.splitext(mod_file)[0]
+
+    new_config = Config(
+        repo_name  = path.split(mod_dir)[1],
+        repo_dir   = mod_dir,
+        repo_path  = mod_path,
+
+        mod_name   = mod_name,
+        mod_dir    = mod_dir,
+        mod_path   = mod_path,
+
+        # These have to be here so that hancho.config.expand("{build_dir}") works.
+        build_root = Task.default_build_root,
+        build_tag  = Task.default_build_tag,
+        build_dir  = Task.default_build_dir,
+
+        task_dir   = Task.default_task_dir,
+    )
+
+    new_context = HanchoAPI()
+    new_context.is_repo = True
+    new_context.config = new_config
+    return new_context
+
+####################################################################################################
+
+def create_mod(parent, mod_path):
+    assert isinstance(parent, HanchoAPI)
+
+    mod_path = normalize_path(parent.config.expand(mod_path))
+    mod_dir  = path.split(mod_path)[0]
+    mod_file = path.split(mod_path)[1]
+    mod_name = path.splitext(mod_file)[0]
+
+    new_config = Config(
+        parent.config,
+        mod_name = mod_name,
+        mod_dir  = mod_dir,
+        mod_path = mod_path,
+    )
+
+    new_context = copy.deepcopy(parent)
+    new_context.is_repo = False
+
+    new_context.config = new_config
+    return new_context
+
+####################################################################################################
 
 class HanchoAPI(Utils):
 
@@ -1105,6 +1199,7 @@ class HanchoAPI(Utils):
         self.config = Config()
         self.Config = Config
         self.Task = Task
+        self.is_repo = False
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -1118,68 +1213,44 @@ class HanchoAPI(Utils):
             return arg1(self, **temp_config)
         return Task(self.config, arg1, *args, **kwargs)
 
+
+
+    def repo(self, mod_path):
+
+        mod_path = self.config.expand(mod_path)
+        mod_path = normalize_path(mod_path)
+        mod_path = path.realpath(mod_path)
+        #real_path = path.realpath(mod_path)
+
+        dedupe = app.realpath_to_repo.get(mod_path, None)
+        if dedupe is not None:
+            return dedupe
+
+        new_context = create_repo(mod_path)
+        new_context.is_repo = True
+
+        result = new_context._load()
+        app.realpath_to_repo[mod_path] = result
+        return result
+
+
+
     def load(self, mod_path):
         mod_path = self.config.expand(mod_path)
         mod_path = normalize_path(mod_path)
-        new_config = Config(
-            self.config,
-            mod_name=path.splitext(path.basename(mod_path))[0],
-            mod_dir=path.dirname(mod_path),
-            mod_path=mod_path,
-            task_dir=path.dirname(mod_path),
-            build_dir=Task.default_build_dir,
-        )
+        new_context = create_mod(self, mod_path)
+        return new_context._load()
 
-        new_context = copy.deepcopy(self)
-        new_context.config = new_config
-        return new_context.load_module()
 
-    def repo(self, mod_path):
-        mod_path = self.config.expand(mod_path)
-        mod_path = normalize_path(mod_path)
-        new_config = Config(
-            self.config,
-            repo_name=path.basename(path.dirname(mod_path)),
-            repo_dir=path.dirname(mod_path),
-            mod_name=path.splitext(path.basename(mod_path))[0],
-            mod_dir=path.dirname(mod_path),
-            mod_path=mod_path,
-            task_dir=path.dirname(mod_path),
-            build_dir=Task.default_build_dir,
-        )
 
-        new_context = copy.deepcopy(self)
-        new_context.config = new_config
-        return new_context.load_module()
-
-    def root(self, mod_path):
-        mod_path = self.config.expand(mod_path)
-        mod_path = normalize_path(mod_path)
-        new_config = Config(
-            self.config,
-            root_dir=path.dirname(mod_path),
-            root_path=mod_path,
-
-            # Do we want new roots to use build/repo_name/...? Seems like no.
-            #repo_name=path.basename(path.dirname(mod_path)),
-            repo_name="",
-
-            repo_dir=path.dirname(mod_path),
-            build_root=Task.default_build_root,
-            build_tag=Task.default_build_tag,
-            mod_name=path.splitext(path.basename(mod_path))[0],
-            mod_dir=path.dirname(mod_path),
-            mod_path=mod_path,
-        )
-
-        new_context = copy.deepcopy(self)
-        new_context.config = new_config
-        return new_context.load_module()
-
-    def load_module(self):
-        if len(app.dirstack) == 1 or app.flags.verbose or app.flags.debug:
+    def _load(self):
+        #if len(app.dirstack) == 1 or app.flags.verbose or app.flags.debug:
+        if True:
             log(("┃ " * (len(app.dirstack) - 1)), end="")
-            log(color(128, 255, 128) + f"Loading {self.config.mod_path}" + color())
+            if self.is_repo:
+                log(color(128, 128, 255) + f"Loading repo {self.config.mod_path}" + color())
+            else:
+                log(color(128, 255, 128) + f"Loading file {self.config.mod_path}" + color())
 
         app.loaded_files.append(self.config.mod_path)
 
@@ -1208,6 +1279,7 @@ class HanchoAPI(Utils):
             if key.startswith("_") or key == "hancho" or isinstance(val, type(sys)):
                 continue
             new_module[key] = val
+
         return new_module
 
 
@@ -1282,6 +1354,9 @@ class App:
         self.dirstack = [os.getcwd()]
 
         self.all_out_files = set()
+        self.filename_to_fingerprint = {}
+
+        self.realpath_to_repo = {}
 
         self.mtime_calls = 0
         self.line_dirty = False
@@ -1295,6 +1370,7 @@ class App:
         self.tasks_skipped = 0
         self.tasks_cancelled = 0
         self.tasks_broken = 0
+        self.tasks_redundant = 0
 
         self.all_tasks = []
         self.queued_tasks = []
@@ -1331,6 +1407,7 @@ class App:
         parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
         parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
+        parser.add_argument("-t", "--tool",      default=None, type=str,   help="Run a subtool.")
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args(argv)
@@ -1349,32 +1426,22 @@ class App:
         self.extra_flags = extra_flags
 
     ########################################
-    # Needs to be its own function, used by run_tests.py
 
     def create_root_context(self):
+        """ Needs to be its own function, used by run_tests.py """
 
         root_file = self.flags.root_file
-        root_dir = path.abspath(self.flags.root_dir)  # Root path must be absolute.
-        root_path = path.join(root_dir, root_file)
+        root_dir  = path.abspath(self.flags.root_dir)  # Root path must be absolute.
+        root_path = path.normpath(path.join(root_dir, root_file))
+        root_path = path.realpath(root_path)
 
-        root_config = Config(
-            root_dir=root_dir,
-            root_path=root_path,
-            repo_name="",
-            repo_dir=root_dir,
-            mod_name=path.splitext(root_file)[0],
-            mod_dir=root_dir,
-            mod_path=root_path,
-            build_root=Task.default_build_root,
-            build_tag=Task.default_build_tag,
-        )
+        root_context = create_repo(root_path)
+        #root_context._load()
 
         # All the unrecognized flags get stuck on the root context.
         for key, val in self.extra_flags.items():
-            setattr(root_config, key, val)
+            setattr(root_context.config, key, val)
 
-        root_context = HanchoAPI()
-        root_context.config = root_config
         return root_context
 
     ########################################
@@ -1385,24 +1452,39 @@ class App:
         if app.root_context.config.get("debug", None):
             log(f"root_context = {Dumper(2).dump(app.root_context)}")
 
-        if not path.isfile(app.root_context.config.root_path):
+        if not path.isfile(app.root_context.config.repo_path):
             print(
-                f"Could not find root Hancho file {app.root_context.config.root_path}!"
+                f"Could not find Hancho file {app.root_context.config.repo_path}!"
             )
             sys.exit(-1)
 
-        assert path.isabs(app.root_context.config.root_dir)
-        assert path.isdir(app.root_context.config.root_dir)
-        assert path.isabs(app.root_context.config.root_path)
-        assert path.isfile(app.root_context.config.root_path)
+        assert path.isabs(app.root_context.config.repo_path)
+        assert path.isfile(app.root_context.config.repo_path)
+        assert path.isabs(app.root_context.config.repo_dir)
+        assert path.isdir(app.root_context.config.repo_dir)
 
-        os.chdir(app.root_context.config.root_dir)
+        os.chdir(app.root_context.config.repo_dir)
         time_a = time.perf_counter()
-        app.root_context.load_module()
+        app.root_context._load()
         time_b = time.perf_counter()
 
         # if app.flags.debug or app.flags.verbose:
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+
+        if app.flags.tool:
+            print(f"Running tool {app.flags.tool}")
+            if app.flags.tool == "clean":
+                print(f"Cleaning build directores")
+                build_dirs = []
+                for task in app.all_tasks:
+                    build_dir = task.config.expand("{build_dir}")
+                    build_dir = normalize_path(build_dir)
+                    build_dir = path.realpath(build_dir)
+                    build_dirs.append(build_dir)
+                build_dirs = set(build_dirs)
+                import pprint
+                pprint.pprint(build_dirs)
+            return 0
 
         time_a = time.perf_counter()
 
@@ -1426,11 +1508,18 @@ class App:
                     task.queue()
         else:
             for task in app.all_tasks:
-                # If no target was specified, we queue up all tasks from the root repo.
-                root_dir = task.config.get("root_dir", None)
-                repo_dir = task.config.get("repo_dir", None)
-                if root_dir == repo_dir:
-                    task.queue()
+                # If no target was specified, we queue up all tasks that build stuff in the root
+                # repo
+                #build_dir = task.config.expand(task.config.build_dir)
+                #build_dir = normalize_path(build_dir)
+                #repo_dir = app.root_context.config.expand("{build_dir}")
+                #repo_dir = normalize_path(repo_dir)
+                #print(build_dir)
+                #print(repo_dir)
+                #if build_dir.startswith(repo_dir):
+                #    task.queue()
+                task.queue()
+                pass
 
         time_b = time.perf_counter()
 
@@ -1498,7 +1587,7 @@ class App:
                 log(color(255, 128, 0), end="")
                 log(f"Task failed: {task.config.desc}")
                 log(color(), end="")
-                log(str(task.config))
+                log(str(task))
                 log_exception()
             self.finished_tasks.append(task)
 
@@ -1515,6 +1604,7 @@ class App:
             log(f"tasks skipped:   {app.tasks_skipped}")
             log(f"tasks cancelled: {app.tasks_cancelled}")
             log(f"tasks broken:    {app.tasks_broken}")
+            log(f"tasks redundant: {app.tasks_redundant}")
             log(f"mtime calls:     {app.mtime_calls}")
 
         if self.tasks_failed or self.tasks_broken:
