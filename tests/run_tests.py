@@ -271,7 +271,6 @@ class TestHancho(unittest.TestCase):
             in_src  = [],
             out_obj = [],
             flarp   = "asdf {flarp}",
-            #verbose = True
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
         self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
@@ -295,7 +294,7 @@ class TestHancho(unittest.TestCase):
     def test_task_collision(self):
         """If multiple distinct commands generate the same output file, that's an error."""
         self.hancho(
-            command = "sleep 0.1 && touch {rel(out_obj)}",
+            command = "touch {rel(out_obj)}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
@@ -306,21 +305,6 @@ class TestHancho(unittest.TestCase):
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
         self.assertTrue("TaskCollision" in hancho_py.app.log)
-
-    def test_redundant_tasks(self):
-        """If multiple distinct commands generate the same output file, that's an error."""
-        self.hancho(
-            command = "touch {rel(out_obj)}",
-            in_src  = __file__,
-            out_obj = "colliding_output.txt",
-        )
-        self.hancho(
-            command = "touch {rel(out_obj)}",
-            in_src  = __file__,
-            out_obj = "colliding_output.txt",
-        )
-        self.assertEqual(0, hancho_py.app.build_all())
-        self.assertEqual(1, hancho_py.app.tasks_redundant)
 
     ########################################
 
@@ -500,6 +484,11 @@ class TestHancho(unittest.TestCase):
 
     def test_cancellation(self):
         """A task that receives a cancellation exception should not run."""
+
+        # Note: not using -k0 will break the cancellation test
+        hancho_py.app.reset()
+        hancho_py.app.parse_flags(["--quiet", "-k0"])
+
         task_that_fails = self.hancho(
             command = "(exit 255)",
             in_src  = [],

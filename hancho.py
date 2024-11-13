@@ -17,6 +17,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -664,7 +665,6 @@ class TaskState:
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     BROKEN = "BROKEN"
-    REDUNDANT = "REDUNDANT"
 
 
 ####################################################################################################
@@ -747,10 +747,10 @@ class Task:
 
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
-        verbose = self.config.get("verbose", app.flags.verbose)
+        verbosity = self.config.get("verbosity", app.flags.verbosity)
         log(
             f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config.desc}",
-            sameline=not verbose,
+            sameline=verbosity == 0,
         )
 
     # -----------------------------------------------------------------------------------------------
@@ -758,7 +758,7 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbose = self.config.get("verbose", app.flags.verbose)
+        verbosity = self.config.get("verbosity", app.flags.verbosity)
         debug = self.config.get("debug", app.flags.debug)
         force = self.config.get("force", app.flags.force)
 
@@ -790,11 +790,6 @@ class Task:
             app.tasks_broken += 1
             raise ex
 
-        # Early-out if the task is redundant
-        if self._state == TaskState.REDUNDANT:
-            app.tasks_redundant += 1
-            return
-
         # Early-out if this is a no-op task
         if self.config.command is None:
             app.tasks_finished += 1
@@ -807,7 +802,7 @@ class Task:
             app.tasks_skipped += 1
             self._state = TaskState.SKIPPED
             return
-        elif verbose or debug:
+        elif verbosity or debug:
             log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
         try:
@@ -937,27 +932,16 @@ class Task:
             log(f"\nTask after expand: {self}")
 
         # ----------------------------------------
-        # Check for redundant tasks
+        # Check for task collisions
+
+        # FIXME need a test for this that uses symlinks
 
         if self.out_files and self.config.command is not None:
-            redundant = 0
-
             for file in self.out_files:
-                old_fingerprint = app.filename_to_fingerprint.get(file, None)
-                new_fingerprint = self.config.command
-
-                if old_fingerprint is None:
-                    app.filename_to_fingerprint[file] = new_fingerprint
-                elif old_fingerprint != new_fingerprint:
-                    raise ValueError(f"TaskCollision: File {file} was built via '{old_fingerprint}', but now we are trying to build it via '{new_fingerprint}'")
-                else:
-                    redundant = redundant + 1
-
-            if redundant == len(self.out_files):
-                self._state = TaskState.REDUNDANT
-                return
-            elif redundant > 0:
-                raise ValueError("Inconsistent redundancy check, something broken")
+                file = path.realpath(file)
+                if file in app.filename_to_fingerprint:
+                    raise ValueError(f"TaskCollision: Multiple tasks build {file}")
+                app.filename_to_fingerprint[file] = self.config.command
 
         # ----------------------------------------
         # Sanity checks
@@ -1060,10 +1044,10 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbose = self.config.get("verbose", app.flags.verbose)
+        verbosity = self.config.get("verbosity", app.flags.verbosity)
         debug = self.config.get("debug", app.flags.debug)
 
-        if verbose or debug:
+        if verbosity or debug:
             log(color(128, 128, 255), end="")
             if app.flags.dry_run:
                 log("(DRY RUN) ", end="")
@@ -1122,7 +1106,7 @@ class Task:
                 message += self._stderr
             raise ValueError(message)
 
-        if debug or verbose:
+        if debug or verbosity:
             log(
                 f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config.desc}'"
             )
@@ -1244,7 +1228,7 @@ class HanchoAPI(Utils):
 
 
     def _load(self):
-        #if len(app.dirstack) == 1 or app.flags.verbose or app.flags.debug:
+        #if len(app.dirstack) == 1 or app.flags.verbosity or app.flags.debug:
         if True:
             log(("┃ " * (len(app.dirstack) - 1)), end="")
             if self.is_repo:
@@ -1370,7 +1354,6 @@ class App:
         self.tasks_skipped = 0
         self.tasks_cancelled = 0
         self.tasks_broken = 0
-        self.tasks_redundant = 0
 
         self.all_tasks = []
         self.queued_tasks = []
@@ -1396,18 +1379,18 @@ class App:
 
         parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
         parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
-
-        parser.add_argument("-v", "--verbose",   default=False, action="store_true",  help="Print verbose build info")
+        parser.add_argument("-v",                default=0,     action="count",  dest = "verbosity", help="Increase verbosity (-v, -vv, -vvv)")
         parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
         parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
         parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
-
         parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
         parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
         parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
         parser.add_argument("-t", "--tool",      default=None, type=str,   help="Run a subtool.")
+        parser.add_argument("-k", "--keep_going", default=1,  type=int,   help="Keep going until N jobs fail (0 means infinity)")
+
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args(argv)
@@ -1468,22 +1451,23 @@ class App:
         app.root_context._load()
         time_b = time.perf_counter()
 
-        # if app.flags.debug or app.flags.verbose:
+        # if app.flags.debug or app.flags.verbosity:
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         if app.flags.tool:
             print(f"Running tool {app.flags.tool}")
             if app.flags.tool == "clean":
                 print(f"Cleaning build directores")
-                build_dirs = []
+                build_dirs = set()
                 for task in app.all_tasks:
-                    build_dir = task.config.expand("{build_dir}")
+                    build_dir = task.config.expand("{build_root}")
                     build_dir = normalize_path(build_dir)
                     build_dir = path.realpath(build_dir)
-                    build_dirs.append(build_dir)
-                build_dirs = set(build_dirs)
-                import pprint
-                pprint.pprint(build_dirs)
+                    if path.isdir(build_dir):
+                        build_dirs.add(build_dir)
+                for build_dir in build_dirs:
+                    print(f"Deleting build root {build_dir}")
+                    shutil.rmtree(build_dir, ignore_errors=True)
             return 0
 
         time_a = time.perf_counter()
@@ -1523,7 +1507,7 @@ class App:
 
         time_b = time.perf_counter()
 
-        # if app.flags.debug or app.flags.verbose:
+        # if app.flags.debug or app.flags.verbosity:
         log(f"Queueing {len(app.queued_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
         result = self.build()
@@ -1589,22 +1573,28 @@ class App:
                 log(color(), end="")
                 log(str(task))
                 log_exception()
+                fail_count = app.tasks_failed + app.tasks_cancelled + app.tasks_broken
+                if app.flags.keep_going and fail_count >= app.flags.keep_going:
+                    log("Too many failures, cancelling tasks and stopping build")
+                    for task in self.started_tasks:
+                        task.asyncio_task.cancel()
+                        app.tasks_cancelled += 1
+                    break
             self.finished_tasks.append(task)
 
         time_b = time.perf_counter()
 
-        # if app.flags.debug or app.flags.verbose:
+        # if app.flags.debug or app.flags.verbosity:
         log(f"Running {app.tasks_started} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
-        if app.flags.debug or app.flags.verbose:
+        if app.flags.debug or app.flags.verbosity:
             log(f"tasks started:   {app.tasks_started}")
             log(f"tasks finished:  {app.tasks_finished}")
             log(f"tasks failed:    {app.tasks_failed}")
             log(f"tasks skipped:   {app.tasks_skipped}")
             log(f"tasks cancelled: {app.tasks_cancelled}")
             log(f"tasks broken:    {app.tasks_broken}")
-            log(f"tasks redundant: {app.tasks_redundant}")
             log(f"mtime calls:     {app.mtime_calls}")
 
         if self.tasks_failed or self.tasks_broken:

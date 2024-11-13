@@ -36,5 +36,17 @@
       "console": "integratedTerminal",
       "justMyCode": false,
     },
+    {
+      "name": "Debug Megabuild",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd": "${workspaceFolder}/..",
+      //"args": ["--force", "-j1"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Wipe build",
+    },
+
   ]
 }

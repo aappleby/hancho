@@ -101,7 +101,7 @@ print(task)
 
 There's quite a lot of stuff in there:
 ```shell
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho --verbose
+aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
 Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
 Task @ 0x727f0371d6a0 {
   root_dir = "/home/aappleby/repos/hancho/tutorial",
@@ -144,11 +144,11 @@ In this build file we define a ```Rule``` that contains a
 and then we call the rule and give it our source files and our output filename.
 
 Hancho then does the fill-in-the-blanks for us and runs the command, which we
-can see with the ```--verbose``` flag:
+can see with the ```-v``` (verbosity) flag:
 
 ```shell
 user@host:~/hancho/tutorial$ rm -rf build
-user@host:~/hancho/tutorial$ ../hancho.py -f tut00.hancho --verbose
+user@host:~/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
 Loading /home/user/hancho/tutorial/tut00.hancho
 Loading .hancho files took 0.000 seconds
 [1/1] Compile /home/user/hancho/tutorial/src/main.cpp /home/user/hancho/tutorial/src/util.cpp -> /home/user/hancho/tutorial/build/app
@@ -164,7 +164,7 @@ If we run Hancho a second time, nothing will happen because nothing in
 ```in_*``` has changed.
 
 ```shell
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho --verbose
+aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
 Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
 Loading .hancho files took 0.000 seconds
 ```
@@ -173,7 +173,7 @@ If we change a source file and run Hancho again, it will do a rebuild.
 
 ```shell
 aappleby@Neurotron:~/repos/hancho/tutorial$ touch src/main.cpp
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho --verbose
+aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
 Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
 Loading .hancho files took 0.000 seconds
 [1/1] Compile /home/aappleby/repos/hancho/tutorial/src/main.cpp /home/aappleby/repos/hancho/tutorial/src/util.cpp -> /home/aappleby/repos/hancho/tutorial/build/app

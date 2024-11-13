@@ -3,7 +3,7 @@
 import random
 from glob import glob
 
-#hancho.verbose = True
+#hancho.verbosity = 1
 
 src_files = glob("src/*")
 
