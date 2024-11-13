@@ -802,8 +802,6 @@ class Task:
             app.tasks_skipped += 1
             self._state = TaskState.SKIPPED
             return
-        elif verbosity or debug:
-            log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
         try:
             # Wait for enough jobs to free up to run this task.
@@ -815,7 +813,10 @@ class Task:
             self._state = TaskState.RUNNING_COMMANDS
             app.tasks_running += 1
             self._task_index = app.tasks_running
+
             self.print_status()
+            if verbosity or debug:
+                log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
             for command in flatten(self.config.command):
                 await self.run_command(command)
