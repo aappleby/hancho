@@ -23,9 +23,9 @@ check_cpp = hancho.Config(
     out_ok="{in_src}.ok",
 
     cpp_std="gnu++2a",
-    joined_warnings="{join_prefix('-W', warnings)}",
-    joined_defines="{join_prefix('-D', defines)}",
-    joined_includes="{join_prefix('-I', includes)}",
+    joined_warnings="{join('-W', warnings)}",
+    joined_defines ="{join('-D', defines)}",
+    joined_includes="{join('-I', includes)}",
 )
 
 # ----------------------------------------
@@ -47,13 +47,14 @@ compile_cpp = hancho.Config(
     defines = None,
     includes = None,
     out_obj="{swap_ext(in_src, '.o')}",
+    #out_obj = "{swap(swap(in_src, '.cpp', '.o'), '.c', '.o')}",
 
     # Note - this swaps out_obj and not in_src in case the user redirects out_obj
     in_depfile="{swap_ext(out_obj, '.d')}",
 
-    joined_warnings="{join_prefix('-W', warnings)}",
-    joined_defines="{join_prefix('-D', defines)}",
-    joined_includes="{join_prefix('-I', includes)}",
+    joined_warnings="{join('-W', warnings)}",
+    joined_defines ="{join('-D', defines)}",
+    joined_includes="{join('-I', includes)}",
 )
 
 if os.name == "nt":

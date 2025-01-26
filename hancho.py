@@ -121,24 +121,11 @@ def rel_path(path1, path2):
     # path, which we can do with simple string manipulation.
     return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
-
-def join_path(path1, path2, *args):
-    result = join_path2(path1, path2, *args)
-    return flatten(result) if listlike(result) else result
-
-
-def join_path2(path1, path2, *args):
-
+def join_path(lhs, rhs, *args):
     if len(args) > 0:
-        return [join_path(path1, p) for p in join_path(path2, *args)] # pylint: disable=E1120
-    if listlike(path1):
-        return [join_path(p, path2) for p in flatten(path1)]
-    if listlike(path2):
-        return [join_path(path1, p) for p in flatten(path2)]
-
-    if not path2:
-        raise ValueError(f"Cannot join '{path1}' with '{type(path2)}' == '{path2}'")
-    return path.join(path1, path2)
+        rhs = join_path(rhs, *args)
+    result = [path.join(lhs, rhs) for l in flatten(lhs) for r in flatten(rhs)]
+    return result[0] if len(result) == 1 else result
 
 
 def normalize_path(file_path):
@@ -165,26 +152,28 @@ def listlike(variant):
         variant, (str, bytes, bytearray)
     )
 
-
 def dictlike(variant):
     return isinstance(variant, abc.Mapping)
 
-
 def flatten(variant):
+    if isinstance(variant, Task):
+        return flatten(variant.out_files)
     if listlike(variant):
         return [x for element in variant for x in flatten(element)]
-    elif variant is None:
+    if variant is None:
         return []
     return [variant]
 
 
-def join_prefix(prefix, strings):
-    return [prefix + str(s) for s in flatten(strings)]
+def join(lhs, rhs, *args):
+    if len(args) > 0:
+        rhs = join(rhs, *args)
+    return [l + r for l in flatten(lhs) for r in flatten(rhs)]
 
 
-def join_suffix(strings, suffix):
-    return [str(s) + suffix for s in flatten(strings)]
-
+def swap(variant, old, new):
+    return map_variant(None, variant,
+        lambda key, val: val.replace(old, new) if isinstance(val, str) else val)
 
 def stem(filename):
     filename = flatten(filename)[0]
@@ -364,9 +353,9 @@ class Utils:
     flatten     = staticmethod(flatten)
     glob        = staticmethod(glob.glob)
     hancho_dir  = path.dirname(path.realpath(__file__))
-    join_path   = staticmethod(join_path)
-    join_prefix = staticmethod(join_prefix)
-    join_suffix = staticmethod(join_suffix)
+    join        = staticmethod(join)
+    swap        = staticmethod(swap)
+    ext         = staticmethod(swap_ext)
     len         = staticmethod(len)
     log         = staticmethod(log)
     path        = path

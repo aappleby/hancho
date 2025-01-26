@@ -32,9 +32,8 @@ Both ```hancho.Config``` and ```hancho.HanchoAPI``` (the class of the global ```
 |```len```        | Python's built-in ```len()```|
 |```abs_path```   | Converts a relative path to an absolute, physical path.|
 |```rel_path```   | Removes a common prefix from an absolute path to make a relative path. ```rel_path('/foo/bar/baz', '/foo')``` -> ```'bar/baz'```
+|```join```       | Joins arbitrary arrays of strings together, combinatorially. ```join(['a','b'],['c','d'])``` -> ```['ac', 'ad', 'bc', 'bd']```|
 |```join_path```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
-|```join_prefix```| Attaches a prefix to a string or an array of strings.|
-|```join_suffix```| Attaches a suffix to a string or an array of strings.|
 |```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
 |```swap_ext```   | Replaces a filename's extension.|
 |```color```      | Returns escape codes that change the terminal's text color. Used for color-coding Hancho output.|
@@ -248,11 +247,7 @@ Any function attached to a ```Config``` can be used in a template. By default it
 
 ```py
 >>> dir(foo)
-[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten',
-'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join_path', 'join_prefix',
-'join_suffix', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',
-'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'swap_ext',
-'update', 'values']
+[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'swap_ext', 'update', 'values']
 ```
 
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:

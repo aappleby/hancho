@@ -22,9 +22,9 @@ rv_config = hancho.Config(
     defines = None,
     includes = None,
 
-    joined_warnings = "{join_prefix('-W', warnings)}",
-    joined_defines  = "{join_prefix('-D', defines)}",
-    joined_includes = "{join_prefix('-I', includes)}",
+    joined_warnings = "{join('-W', warnings)}",
+    joined_defines  = "{join('-D', defines)}",
+    joined_includes = "{join('-I', includes)}",
 )
 
 rv_compile = hancho.Config(
