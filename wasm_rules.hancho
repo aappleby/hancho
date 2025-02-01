@@ -11,7 +11,7 @@ emcc = hancho.Config(
         "-Wno-deprecated-declarations",
     ],
     includes=None,
-    out_obj="{swap_ext(in_src, '.o')}",
+    out_obj="{ext(in_src, '.o')}",
     joined_includes="{join('-I', includes)}",
 )
 

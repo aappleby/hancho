@@ -61,7 +61,7 @@ def verilator(hancho, *, in_top, **kwargs):
         hancho.base_rules.make,
         kwargs,
         in_makefile = verilated.promise("out_makefile"),
-        out_obj = "{swap_ext(in_makefile, '__ALL.o')}",
+        out_obj = "{ext(in_makefile, '__ALL.o')}",
         flags = [
             "-B",
         ],
@@ -72,7 +72,7 @@ def verilator(hancho, *, in_top, **kwargs):
         kwargs,
         in_top  = in_top,
         in_objs = [verilated_threads_o, verilated_o, compiled],
-        out_lib = "{swap_ext(in_top, '.a')}",
+        out_lib = "{ext(in_top, '.a')}",
     )
 
     return hancho(
@@ -94,10 +94,10 @@ def gen_chparams(c):
 yosys = hancho.Config(
     desc = "Run yosys on {rel(in_sv)}",
     command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {rel(out_json)};'",
-    out_json = "{swap_ext(in_sv, '.json')}",
+    out_json = "{ext(in_sv, '.json')}",
     params = {},
     gen_chparams = gen_chparams,
-    top = "{stem(in_sv)}",
+    top = "{path.splitext(in_sv)[0]}",
     joined_includes = "{join('-I', includes)}",
 )
 
@@ -106,20 +106,20 @@ sv2v = hancho.Config(
     desc = "Run sv2v on {rel(in_sv)}",
     command = "sv2v {joined_includes} {rel(in_sv)} -w {rel(out_v)}",
     joined_includes = "{join('-I', includes)}",
-    out_v = "{swap_ext(in_sv, '.v')}",
+    out_v = "{ext(in_sv, '.v')}",
 )
 
 nextpnr = hancho.Config(
     desc    = "Run nextpnr-ice40 on {rel(in_json)}",
     command = "nextpnr-ice40 {flags} -q --json {rel(in_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
-    out_asc = "{swap_ext(in_json, '.asc')}",
+    out_asc = "{ext(in_json, '.asc')}",
     flags   = None,
 )
 
 icepack = hancho.Config(
     desc    = "Run icepack on {rel(in_asc)}",
     command = "icepack {rel(in_asc)} {rel(out_bin)}",
-    out_bin = "{swap_ext(in_asc, '.bin')}",
+    out_bin = "{ext(in_asc, '.bin')}",
 )
 
 iceprog = hancho.Config(
@@ -137,9 +137,9 @@ synth = hancho.Config(
         "nextpnr-ice40 {flags} -q --json {rel(out_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
         "icepack {rel(out_asc)} {rel(out_bin)}",
     ],
-    out_json = "{swap_ext(in_sv, '.json')}",
-    out_asc  = "{swap_ext(in_sv, '.asc')}",
-    out_bin  = "{swap_ext(in_sv, '.bin')}",
+    out_json = "{ext(in_sv, '.json')}",
+    out_asc  = "{ext(in_sv, '.asc')}",
+    out_bin  = "{ext(in_sv, '.bin')}",
     params   = {},
     chparams = gen_chparams,
     includes = None,

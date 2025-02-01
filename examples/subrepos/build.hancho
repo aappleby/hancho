@@ -5,7 +5,7 @@ myrepo = hancho.repo("myrepo/build.hancho")
 main_o = hancho(
     command = "g++ -c {in_src} -o {out_obj}",
     in_src = "main.cpp",
-    out_obj = "{swap_ext(in_src, '.o')}"
+    out_obj = "{ext(in_src, '.o')}"
 )
 
 main = hancho(

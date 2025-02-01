@@ -60,8 +60,8 @@ hancho(
 compile_cpp = hancho.Config(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
-    out_obj = "{swap_ext(in_src, '.o')}",
-    in_depfile  = "{swap_ext(out_obj, '.d')}",
+    out_obj = "{ext(in_src, '.o')}",
+    in_depfile  = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Config(
@@ -86,8 +86,8 @@ app    = hancho(rules.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 compile_cpp = hancho.Config(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
-    out_obj = "{swap_ext(in_src, '.o')}",
-    in_depfile  = "{swap_ext(out_obj, '.d')}",
+    out_obj = "{ext(in_src, '.o')}",
+    in_depfile  = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Config(
@@ -97,19 +97,17 @@ link_cpp = hancho.Config(
 
 ####################################################################################################
 
-import glob
-
 rules = hancho.load("rules.hancho")
 
-app = hancho(rules.c_binary, glob.glob("src/*.cpp"), "app")
+app = hancho(rules.c_binary, hancho.glob("src/*.cpp"), "app")
 
 #----------------------------------------
 
 compile_cpp = hancho.Config(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-    out_obj = "{swap_ext(in_src, '.o')}",
-    in_depfile  = "{swap_ext(out_obj, '.d')}",
+    out_obj = "{ext(in_src, '.o')}",
+    in_depfile  = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Config(

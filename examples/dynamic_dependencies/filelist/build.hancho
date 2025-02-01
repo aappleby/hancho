@@ -1,11 +1,10 @@
 # examples/dynamic_dependencies/filelist/build.hancho
 
 import random
-from glob import glob
 
 #hancho.verbosity = 1
 
-src_files = glob("src/*")
+src_files = hancho.glob("src/*")
 
 random_touch = hancho(
     desc = "Touch 3 random files in src/ - {rel(in_src)}",

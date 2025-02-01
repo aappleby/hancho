@@ -35,7 +35,7 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 # Hancho templates use {brackets} like Python f-strings with a few differences:
 #   - Templates are lazily-evaluated
 #   - Templates can only reference fields in a Config object
-#   - Templates can use built-in functions like swap_ext() for common filename
+#   - Templates can use built-in functions like ext() for common filename
 #     operations
 
 # Config fields named 'in_*' and 'out_*' are special - they define the input
@@ -45,7 +45,7 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 compile_cpp = hancho.Config(
     desc = "Compiling C++ {in_src} -> {out_obj}",
     command = "g++ -c {in_src} -o {out_obj}",
-    out_obj = "{swap_ext(in_src, '.o')}",
+    out_obj = "{ext(in_src, '.o')}",
 )
 
 # To make Hancho do some work, we pass configs and key-value pairs to hancho().

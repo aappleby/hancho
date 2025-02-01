@@ -171,9 +171,13 @@ def join(lhs, rhs, *args):
     return [l + r for l in flatten(lhs) for r in flatten(rhs)]
 
 
-def swap(variant, old, new):
+#def swap(variant, old, new):
+#    return map_variant(None, variant,
+#        lambda key, val: val.replace(old, new) if isinstance(val, str) else val)
+
+def sub(variant, old, new):
     return map_variant(None, variant,
-        lambda key, val: val.replace(old, new) if isinstance(val, str) else val)
+        lambda key, val: re.sub(old, new, val) if isinstance(val, str) else val)
 
 def stem(filename):
     filename = flatten(filename)[0]
@@ -196,12 +200,12 @@ def run_cmd(cmd):
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
-def swap_ext(name, new_ext):
+def ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if isinstance(name, Task):
         name = name.out_files
     if listlike(name):
-        return [swap_ext(n, new_ext) for n in name]
+        return [ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
 
 
@@ -348,23 +352,26 @@ class Dumper:
 
 class Utils:
     # fmt: off
-    abs_path    = staticmethod(abs_path)
+    path        = path # path.dirname and path.basename used by makefile-related rules
+    re          = re # why is sub() not working?
+
+    #abs_path    = staticmethod(abs_path)
     color       = staticmethod(color)
     flatten     = staticmethod(flatten)
     glob        = staticmethod(glob.glob)
-    hancho_dir  = path.dirname(path.realpath(__file__))
     join        = staticmethod(join)
-    swap        = staticmethod(swap)
-    ext         = staticmethod(swap_ext)
-    len         = staticmethod(len)
+    sub         = staticmethod(sub)
+    ext         = staticmethod(ext)
+    #len         = staticmethod(len)
     log         = staticmethod(log)
-    path        = path
-    print       = staticmethod(print)
-    re          = re
-    rel_path    = staticmethod(rel_path)
-    run_cmd     = staticmethod(run_cmd)
-    stem        = staticmethod(stem)
-    swap_ext    = staticmethod(swap_ext)
+    #print       = staticmethod(print)
+
+    #rel() is defined in Config, always relative to task_dir
+    rel_path     = staticmethod(rel_path) # used by build_path etc
+    run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
+    stem        = staticmethod(stem)      # FIXME used by metron/tests?
+
+    hancho_dir  = path.dirname(path.realpath(__file__))
     # fmt: on
 
 
@@ -576,7 +583,10 @@ def expand_macro(expander, macro):
 
     try:
         result = eval(macro[1:-1], {}, expander)  # pylint: disable=eval-used
-    except BaseException:  # pylint: disable=broad-exception-caught
+    except BaseException as e:  # pylint: disable=broad-exception-caught
+        print("!?!?!")
+        print(e)
+        print("!?!?!")
         failed = True
 
     # ==========

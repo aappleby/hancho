@@ -21,7 +21,7 @@
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}",
-      //"args": ["--force", "-j1"],
+      "args": ["-f", "examples/gb_spu/gb_spu.hancho"],
       "console": "integratedTerminal",
       "justMyCode": false,
       "preLaunchTask": "Wipe build",

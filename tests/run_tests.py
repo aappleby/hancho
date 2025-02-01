@@ -240,7 +240,7 @@ class TestHancho(unittest.TestCase):
         self.hancho(
             command = "cp {in_src} {out_obj}",
             in_src  = path.abspath("src/foo.c"),
-            out_obj = "{swap_ext(in_src, '.o')}",
+            out_obj = "{ext(in_src, '.o')}",
         )
 
         self.assertEqual(0, hancho_py.app.build_all())
@@ -387,8 +387,8 @@ class TestHancho(unittest.TestCase):
             time.sleep(0.01)
             compile = self.hancho.Config(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-                out_obj    = "{swap_ext(in_src, '.o')}",
-                in_depfile = "{swap_ext(out_obj, '.d')}",
+                out_obj    = "{ext(in_src, '.o')}",
+                in_depfile = "{ext(out_obj, '.d')}",
             )
             self.hancho(compile, in_src = "src/test.cpp")
             self.assertEqual(0, hancho_py.app.build_all())
@@ -412,8 +412,8 @@ class TestHancho(unittest.TestCase):
             time.sleep(0.01)
             compile = self.hancho.Config(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-                out_obj    = "{swap_ext(in_src, '.o')}",
-                in_depfile = "{swap_ext(out_obj, '.d')}",
+                out_obj    = "{ext(in_src, '.o')}",
+                in_depfile = "{ext(out_obj, '.d')}",
             )
             self.hancho(compile, in_src = "src/test.cpp")
             self.assertEqual(0, hancho_py.app.build_all())

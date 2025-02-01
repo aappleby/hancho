@@ -35,7 +35,7 @@ Both ```hancho.Config``` and ```hancho.HanchoAPI``` (the class of the global ```
 |```join```       | Joins arbitrary arrays of strings together, combinatorially. ```join(['a','b'],['c','d'])``` -> ```['ac', 'ad', 'bc', 'bd']```|
 |```join_path```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
 |```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
-|```swap_ext```   | Replaces a filename's extension.|
+|```ext```        | Replaces a filename's extension.|
 |```color```      | Returns escape codes that change the terminal's text color. Used for color-coding Hancho output.|
 |```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
 |```hancho_dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho_dir}/base_rules.hancho")```|
@@ -247,7 +247,7 @@ Any function attached to a ```Config``` can be used in a template. By default it
 
 ```py
 >>> dir(foo)
-[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'swap_ext', 'update', 'values']
+[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'ext', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'update', 'values']
 ```
 
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:
