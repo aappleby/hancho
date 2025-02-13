@@ -1,4 +1,4 @@
-hancho.config.force = True
+hancho.Context.force = True
 
 hancho.base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
 

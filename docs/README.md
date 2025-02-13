@@ -4,12 +4,12 @@ Hancho is built out of a few simple pieces - the ```hancho``` object, Configs, T
 
 For more detailed and up-to-date information, check out the examples folder and the '*_rules.hancho' files in the root directory of this repo.
 
-## The hancho.Config class is a dict, basically
+## The hancho.Context class is a dict, basically
 
-The ```hancho.Config``` class is just a fancy ```dict``` with a few additional methods. For example, it comes with a pretty-printer:
+The ```hancho.Context``` class is just a fancy ```dict``` with a few additional methods. For example, it comes with a pretty-printer:
 
 ```py
->>> foo = hancho.Config(a = 1, b = "two", c = ['th','ree'])
+>>> foo = hancho.Context(a = 1, b = "two", c = ['th','ree'])
 >>> foo
 Config @ 0x788c818610e0 {
   a = 1,
@@ -23,7 +23,7 @@ Config @ 0x788c818610e0 {
 
 ## Hancho comes with some built-in functions
 
-Both ```hancho.Config``` and ```hancho.HanchoAPI``` (the class of the global ```hancho``` object) derive from ```hancho.Utils``` to pick up various built-in functions that you may want to use in your scripts or templates. Most functions can accept either single values or arrays of values as their params and will generally do the right thing.
+Both ```hancho.Context``` and ```hancho.HanchoAPI``` (the class of the global ```hancho``` object) derive from ```hancho.Utils``` to pick up various built-in functions that you may want to use in your scripts or templates. Most functions can accept either single values or arrays of values as their params and will generally do the right thing.
 
 | Built-in       | Description |
 | --------       | ----------- |
@@ -81,13 +81,13 @@ Build scripts loaded this way get a _deep copy_ of the loader's ```hancho``` obj
 ```py
 # stuff.hancho
 print(f"hancho.options = {hancho.options}")
-print(f"hancho.config.thing = {hancho.config.thing}")
+print(f"hancho.Context.thing = {hancho.Context.thing}")
 ```
 
 ```py
 # build.hancho
 hancho.options = 42
-hancho.config.thing = "cat"
+hancho.Context.thing = "cat"
 stuff = hancho.load("stuff.hancho")
 ```
 
@@ -95,7 +95,7 @@ stuff = hancho.load("stuff.hancho")
 aappleby@Neurotron:~/temp$ hancho
 Loading /home/aappleby/temp/build.hancho
 hancho.options = 42
-hancho.config.thing = cat
+hancho.Context.thing = cat
 hancho: BUILD CLEAN
 ```
 
@@ -115,11 +115,11 @@ hancho(
 
 ## The global 'hancho' object you use when writing a script has some other stuff in it.
 
-In particular, there's a hancho.Config object named 'hancho.config' (note the lowercase) that gets merged into all tasks when you call ```hancho()```. This config object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.config - they will then be visible to all tasks in your build script.
+In particular, there's a hancho.Context object named 'hancho.Context' (note the lowercase) that gets merged into all tasks when you call ```hancho()```. This context object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.Context - they will then be visible to all tasks in your build script.
 
 ```py
 HanchoAPI @ 0x7cb6c8d0b110 {
-  config = Config @ 0x7cb6c8b223f0 {
+  context = Context @ 0x7cb6c8b223f0 {
     root_dir = "/home/user/temp",
     root_path = "/home/user/temp/build.hancho",
     repo_name = "",
@@ -130,7 +130,7 @@ HanchoAPI @ 0x7cb6c8d0b110 {
     build_root = "{root_dir}/build",
     build_tag = "",
   },
-  Config = <class '__main__.Config'>,
+  Context = <class '__main__.Context'>,
   Task = <class '__main__.Task'>,
 }
 ```
@@ -139,14 +139,14 @@ Special fields and methods in ```hancho```
 'Config',
 'Task',
 '__call__',
-'config',
+'context',
 'hancho_dir',
 'load',
 'load_module',
 'repo',
 'root'
 
-Fields automatically added to ```hancho.config```:
+Fields automatically added to ```hancho.Context```:
 |Field name | Description |
 | -----    | ----- |
 |root_dir  | The directory Hancho was started in.|
@@ -165,14 +165,14 @@ Fields automatically added to ```hancho.config```:
 The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
 
 ```py
->>> foo = hancho.Config(a = 1)
->>> bar = hancho.Config(a = 2)
->>> hancho.Config(foo, bar)
+>>> foo = hancho.Context(a = 1)
+>>> bar = hancho.Context(a = 2)
+>>> hancho.Context(foo, bar)
 Config @ 0x746cb87f3ed0 {
   a = 2,
 }
->>> bar = hancho.Config(a = None)
->>> hancho.Config(foo, bar)
+>>> bar = hancho.Context(a = None)
+>>> hancho.Context(foo, bar)
 Config @ 0x746cb87f3f20 {
   a = 1,
 }
@@ -181,9 +181,9 @@ Config @ 0x746cb87f3f20 {
 This works for nested Configs as well:
 
 ```py
->>> foo = hancho.Config(child = hancho.Config(bar = 1, baz = 2))
->>> bar = hancho.Config(child = hancho.Config(baz = 3, cow = 4))
->>> hancho.Config(foo, bar)
+>>> foo = hancho.Context(child = hancho.Context(bar = 1, baz = 2))
+>>> bar = hancho.Context(child = hancho.Context(baz = 3, cow = 4))
+>>> hancho.Context(foo, bar)
 Config @ 0x746cb87f3f70 {
   child = Config @ 0x746cb8610640 {
     bar = 1,
@@ -197,46 +197,46 @@ Config @ 0x746cb87f3f70 {
 
 Like Python's F-strings, Hancho's templates can contain ```{arbi + trary * express - ions}```, but the expressions are _not_ immediately evaluated.
 
-Instead, we call ```config.expand(template)``` and the values in ```config``` are used to fill in the blanks in ```template```.
+Instead, we call ```context.expand(template)``` and the values in ```context``` are used to fill in the blanks in ```template```.
 ```py
->>> foo = hancho.Config(a = 1, b = 2)
+>>> foo = hancho.Context(a = 1, b = 2)
 >>> foo.expand("The sum of a and b is {a+b}.")
 'The sum of a and b is 3.'
 ```
 
 A template that evaluates to an array will have each element stringified and then joined with spaces
 ```py
->>> foo = hancho.Config(a = [1, 2, 3])
+>>> foo = hancho.Context(a = [1, 2, 3])
 >>> foo.expand("These are numbers - {a}")
 'These are numbers - 1 2 3'
 ```
 
 Nested arrays get flattened before joining
 ```py
->>> foo = hancho.Config(a = [[1, [2]], [[3]]])
+>>> foo = hancho.Context(a = [[1, [2]], [[3]]])
 >>> foo.expand("These are numbers - {a}")
 'These are numbers - 1 2 3'
 ```
 
 And a ```None``` will turn into an empty string.
 ```py
->>> foo = hancho.Config(a = None, b = None, c = None)
+>>> foo = hancho.Context(a = None, b = None, c = None)
 >>> foo.expand("a=({a}), b=({b}), c=({c})")
 'a=(), b=(), c=()'
 ```
 
 If the result of a template expansion contains more templates, Hancho will keep expanding until the string stops changing.
 ```py
->>> foo = hancho.Config(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
+>>> foo = hancho.Context(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
 >>> foo.expand("{a}")
 'abcd1000'
 ```
 
 Expanding templates based on configs inside configs also works:
 ```py
->>> foo = hancho.Config(a = 1, b = 2)
->>> bar = hancho.Config(c = foo)
->>> baz = hancho.Config(d = bar)
+>>> foo = hancho.Context(a = 1, b = 2)
+>>> bar = hancho.Context(c = foo)
+>>> baz = hancho.Context(d = bar)
 >>> baz.expand("d.c.a = {d.c.a}, d.c.a = {d.c.b}")
 'd.c.a = 1, d.c.a = 2'
 ```
@@ -253,7 +253,7 @@ Any function attached to a ```Config``` can be used in a template. By default it
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:
 
 ```py
->>> foo = hancho.Config()
+>>> foo = hancho.Context()
 >>> foo.expand("{color(255,0,0)}")
 '\x1b[38;2;255;0;0m'
 >>> print(foo.expand("The color is now {color(255,0,0)}RED"))
@@ -261,11 +261,11 @@ The color is now RED
 >>> (or it would be if this wasn't a Markdown file)
 ```
 
-You can also attach your own functions to a config:
+You can also attach your own functions to a context:
 
 ```py
 >>> def get_number(): return 7
->>> a = hancho.Config(get_number = get_number)
+>>> a = hancho.Context(get_number = get_number)
 >>> a.expand("Calling get_number equals {get_number()}")
 'Calling get_number equals 7'
 ```
@@ -275,16 +275,16 @@ You can also attach your own functions to a config:
 Failure to expand a template is _not an error_, it just passes the unexpanded template through.
 
 ```py
->>> foo = hancho.Config(a = 1)
+>>> foo = hancho.Context(a = 1)
 >>> foo.expand("A equals {a}, B equals {b}")
 'A equals 1, B equals {b}'
 ```
 
-While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand until they're needed later by a parent or grandparent config.
+While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand until they're needed later by a parent or grandparent context.
 ```py
->>> foo = hancho.Config(msg = "What's a {bar.thing}?")
->>> bar = hancho.Config(thing = "bear")
->>> baz = hancho.Config(foo = foo, bar = bar)
+>>> foo = hancho.Context(msg = "What's a {bar.thing}?")
+>>> bar = hancho.Context(thing = "bear")
+>>> baz = hancho.Context(foo = foo, bar = bar)
 >>> baz.expand("{foo.msg}")
 "What's a bear?"
 ```
@@ -297,9 +297,9 @@ Here's what the tracer generates for the above example:
 Python 3.12.3 (main, Sep 11 2024, 14:17:37) [GCC 13.2.0] on linux
 Type "help", "copyright", "credits" or "license" for more information.
 >>> import hancho
->>> foo = hancho.Config(msg = "What's a {bar.thing}?")
->>> bar = hancho.Config(thing = "bear")
->>> baz = hancho.Config(foo = foo, bar = bar, trace=True)
+>>> foo = hancho.Context(msg = "What's a {bar.thing}?")
+>>> bar = hancho.Context(thing = "bear")
+>>> baz = hancho.Context(foo = foo, bar = bar, trace=True)
 >>> baz.expand("{foo.msg}")
 0x76beaa7eebc0: ┏ expand_text '{foo.msg}'
 0x76beaa7eebc0: ┃ ┏ expand_macro '{foo.msg}'
@@ -324,10 +324,10 @@ Tasks take a Config that completely defines the input files, output files, and d
 
 Tasks are lazily executed - only tasks that are needed to build the selected outputs are executed. By default, all Tasks that originate from the repo we started the build in will be queued up for execution.
 
-## Calling ```hancho(...)``` merges ```hancho.config``` with all the parameters passed to ```hancho()``` and creates a task from it.
+## Calling ```hancho(...)``` merges ```hancho.Context``` with all the parameters passed to ```hancho()``` and creates a task from it.
 
 ```py
-echo_stuff = hancho.Config(
+echo_stuff = hancho.Context(
     command = "echo {in_file}",
 )
 hancho(echo_stuff, in_file = "foo.txt")
@@ -346,7 +346,7 @@ hancho(
 
 ## Raw tasks for corner cases
 
-Normally Hancho will inject ```hancho.config``` into your Tasks to provide the path information
+Normally Hancho will inject ```hancho.Context``` into your Tasks to provide the path information
 needed for the build.
 
 If you'd rather control all the paths yourself, you can create a Task directly. You'll need to
@@ -390,8 +390,8 @@ hancho(
 Doing this is is exactly equivalent to the following:
 
 ```py
-temp_config = hancho.Config(
-  hancho.config,
+temp_config = hancho.Context(
+  hancho.Context,
   in_srcs = glob.glob("src/*.cpp"),
   out_lib = "foo.a"
 )

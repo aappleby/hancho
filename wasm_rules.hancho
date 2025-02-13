@@ -1,4 +1,4 @@
-emcc = hancho.Config(
+emcc = hancho.Context(
     desc="Compile Emscripten'd {in_src}",
     command="emcc {flags} {joined_includes} -c {in_src} -o {out_obj}",
     flags=[
@@ -15,7 +15,7 @@ emcc = hancho.Config(
     joined_includes="{join('-I', includes)}",
 )
 
-emld = hancho.Config(
+emld = hancho.Context(
     desc="Link Emscripten'd {rel(out_js)}",
     command="emcc {flags} {in_objs} -o {out_js}",
     flags=[
@@ -29,7 +29,7 @@ emld = hancho.Config(
     ],
 )
 
-ems_package = hancho.Config(
+ems_package = hancho.Context(
     desc="Package {rel(out_data)}",
     command=[
         "rm -f {out_data}",

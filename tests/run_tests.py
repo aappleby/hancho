@@ -63,8 +63,8 @@ def color(red=None, green=None, blue=None):
 
 ####################################################################################################
 
-class TestConfig(unittest.TestCase):
-    """Test cases for weird things our Config objects can do"""
+class TestContext(unittest.TestCase):
+    """Test cases for weird things our Context objects can do"""
 
     def setUp(self):
         #print(f"Running {type(self).__name__}::{self._testMethodName}")
@@ -385,7 +385,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = self.hancho.Config(
+            compile = self.hancho.Context(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj    = "{ext(in_src, '.o')}",
                 in_depfile = "{ext(out_obj, '.d')}",
@@ -410,7 +410,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = self.hancho.Config(
+            compile = self.hancho.Context(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj    = "{ext(in_src, '.o')}",
                 in_depfile = "{ext(out_obj, '.d')}",
@@ -455,7 +455,7 @@ class TestHancho(unittest.TestCase):
         hancho_py.app.reset()
         hancho_py.app.parse_flags(["--quiet", "--flarpy=flarp.txt"])
         self.hancho = hancho_py.app.create_root_context()
-        self.assertEqual("flarp.txt", self.hancho.config.flarpy)
+        self.assertEqual("flarp.txt", self.hancho.context.flarpy)
 
         self.hancho(
             command = "touch {out_file}",
@@ -470,7 +470,7 @@ class TestHancho(unittest.TestCase):
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
         def sync_command(task):
-            force_touch(task.config.out_obj)
+            force_touch(task.context.out_obj)
 
         self.hancho(
             command = sync_command,

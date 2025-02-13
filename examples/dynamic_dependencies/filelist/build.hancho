@@ -17,9 +17,9 @@ random_touch = hancho(
 )
 
 def generate_filelist(task):
-    with open(task.config.out_list, "w", encoding="utf-8") as file:
-        for f in random.sample(task.config.src_files, 3):
-            #hancho.log(f"Writing {f} to {task.config.out_list}")
+    with open(task.context.out_list, "w", encoding="utf-8") as file:
+        for f in random.sample(task.context.src_files, 3):
+            #hancho.log(f"Writing {f} to {task.context.out_list}")
             file.write(str(f) + "\n")
 
 filelist_txt = hancho(
@@ -31,7 +31,7 @@ filelist_txt = hancho(
 
 def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
-    file = open(task.config.in_filelist[0], "r", encoding="utf-8")
+    file = open(task.context.in_filelist[0], "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
     new_task = hancho(
         desc      = "Concatenate {in_files} into {out_files}",

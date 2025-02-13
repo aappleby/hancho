@@ -34,7 +34,7 @@ _ld_libs = [
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
-_compile_cpp = hancho.Config(
+_compile_cpp = hancho.Context(
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
     out_obj    = "{ext(in_src, '.o')}",
@@ -42,7 +42,7 @@ _compile_cpp = hancho.Config(
     gcc_flags  = _gcc_flags,
 )
 
-_link_cpp_bin = hancho.Config(
+_link_cpp_bin = hancho.Context(
     desc     = "Linking {out_bin}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {ld_libs}",
     ld_flags = _ld_flags,

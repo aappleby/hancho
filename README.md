@@ -34,22 +34,22 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 
 # Hancho templates use {brackets} like Python f-strings with a few differences:
 #   - Templates are lazily-evaluated
-#   - Templates can only reference fields in a Config object
+#   - Templates can only reference fields in a Context object
 #   - Templates can use built-in functions like ext() for common filename
 #     operations
 
-# Config fields named 'in_*' and 'out_*' are special - they define the input
+# Context fields named 'in_*' and 'out_*' are special - they define the input
 # and output filenames for a task. Hancho uses these fields to track
 # dependencies between tasks.
 
-compile_cpp = hancho.Config(
+compile_cpp = hancho.Context(
     desc = "Compiling C++ {in_src} -> {out_obj}",
     command = "g++ -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
 )
 
-# To make Hancho do some work, we pass configs and key-value pairs to hancho().
-# It merges configs, expands templates, and queues an asynchronous task to run
+# To make Hancho do some work, we pass contexts and key-value pairs to hancho().
+# It merges contexts, expands templates, and queues an asynchronous task to run
 # the command.
 
 # The hancho() function returns a Task object, which is like a promise that
@@ -58,12 +58,12 @@ compile_cpp = hancho.Config(
 main_o = hancho(compile_cpp, in_src = "main.cpp")
 util_o = hancho(compile_cpp, in_src = "util.cpp")
 
-# This config object defines how to link objects into a binary file. Instead of
+# This context object defines how to link objects into a binary file. Instead of
 # passing filenames to 'in_objs', we can provide the task objects created above.
 # Using a task object in place of a filename creates a dependency. Hancho uses
 # these dependencies to build a task graph and schedule parallel task execution.
 
-link_cpp_bin = hancho.Config(
+link_cpp_bin = hancho.Context(
     desc = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
