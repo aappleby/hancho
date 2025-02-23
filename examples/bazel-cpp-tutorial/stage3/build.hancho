@@ -1,5 +1,4 @@
-hancho.Context.includes = "-I{repo_dir}"
-#hancho.Context.includes = "-I" + hancho.Context.mod_dir
+hancho.context.includes = "-I{repo_dir}"
 
 hancho.rules = hancho.load("stage3_rules.hancho")
 hancho.lib   = hancho.load("lib/build.hancho")

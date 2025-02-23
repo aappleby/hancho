@@ -5,6 +5,7 @@
 
 """Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system."""
 
+#region imports
 from os import path
 import argparse
 import asyncio
@@ -24,17 +25,9 @@ import time
 import traceback
 import types
 from collections import abc
+#endregion
 
-# If we were launched directly, a reference to this module is already in sys.modules[__name__].
-# Stash another reference in sys.modules["hancho"] so that build.hancho and descendants don't try
-# to load a second copy of Hancho.
-sys.modules["hancho"] = sys.modules[__name__]
-
-# ---------------------------------------------------------------------------------------------------
-# Logging stuff
-
-first_line_block = True
-
+#region Logging
 
 def log_line(message):
     app.log += message
@@ -70,44 +63,19 @@ def log(message, *, sameline=False, **kwargs):
     app.line_dirty = sameline
 
 
-def line_block(lines):
-    count = len(lines)
-    global first_line_block # pylint: disable=global-statement
-    if not first_line_block:
-        print(f"\x1b[{count}A")
-    else:
-        first_line_block = False
-    for y in range(count):
-        if y > 0:
-            print()
-        line = lines[y]
-        if line is not None:
-            line = line[: os.get_terminal_size().columns - 20]
-        print(line, end="")
-        print("\x1b[K", end="")
-        sys.stdout.flush()
-
-
 def log_exception():
     log(color(255, 128, 128), end="")
     log(traceback.format_exc())
     log(color(), end="")
 
+#endregion ---------------------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------------------------------
-# Path manipulation
+#region Path manipulation
 
-
-def abs_path(raw_path, strict=False) -> str | list[str]:
-
+def abs_path(raw_path) -> str | list[str]:
     if listlike(raw_path):
-        return [abs_path(p, strict) for p in raw_path]
-
-    result = path.abspath(raw_path)
-    if strict and not path.exists(result):
-        raise FileNotFoundError(raw_path)
-    return result
-
+        return [abs_path(p) for p in raw_path]
+    return path.abspath(raw_path)
 
 def rel_path(path1, path2):
 
@@ -130,34 +98,36 @@ def join_path(lhs, rhs, *args):
 
 def normalize_path(file_path):
     assert isinstance(file_path, str)
-    assert not macro_regex.search(file_path)
+    assert not istemplate(file_path)
 
     file_path = path.abspath(path.join(os.getcwd(), file_path))
     file_path = path.normpath(file_path)
 
     assert path.isabs(file_path)
-#    if not path.isfile(file_path):
-#        print(f"Could not find file {file_path}")
-#        assert path.isfile(file_path)
-
     return file_path
 
+def ext(name, new_ext):
+    """Replaces file extensions on either a single filename or a list of filenames."""
+    if isinstance(name, Task):
+        name = name.out_files
+    if listlike(name):
+        return [ext(n, new_ext) for n in name]
+    return path.splitext(name)[0] + new_ext
 
-# ---------------------------------------------------------------------------------------------------
-# Helper methods
+#endregion ---------------------------------------------------------------------------------------
 
+#region Helper Methods
+
+def istemplate(variant):
+    return isinstance(variant, str) and macro_regex.search(variant)
 
 def listlike(variant):
-    return isinstance(variant, abc.Sequence) and not isinstance(
-        variant, (str, bytes, bytearray)
-    )
+    return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
 
 def dictlike(variant):
     return isinstance(variant, abc.Mapping)
 
 def flatten(variant):
-    if isinstance(variant, Task):
-        return flatten(variant.out_files)
     if listlike(variant):
         return [x for element in variant for x in flatten(element)]
     if variant is None:
@@ -169,11 +139,6 @@ def join(lhs, rhs, *args):
     if len(args) > 0:
         rhs = join(rhs, *args)
     return [l + r for l in flatten(lhs) for r in flatten(rhs)]
-
-
-#def swap(variant, old, new):
-#    return map_variant(None, variant,
-#        lambda key, val: val.replace(old, new) if isinstance(val, str) else val)
 
 def sub(variant, old, new):
     return map_variant(None, variant,
@@ -226,10 +191,9 @@ def maybe_as_number(text):
         except ValueError:
             return text
 
+#endregion ---------------------------------------------------------------------------------------
 
-####################################################################################################
-# Heplers for managing variants (could be Context, list, dict, etc.)
-
+#region Helpers for managing variants (could be Context, list, dict, etc.)
 
 def merge_variant(lhs, rhs):
     if isinstance(lhs, Context) and dictlike(rhs):
@@ -239,17 +203,6 @@ def merge_variant(lhs, rhs):
                 lhs[key] = merge_variant(lval, rval)
         return lhs
     return copy.deepcopy(rhs)
-
-
-def apply_variant(key, val, apply):
-    apply(key, val)
-    if dictlike(val):
-        for key2, val2 in val.items():
-            apply_variant(key2, val2, apply)
-    elif listlike(val):
-        for key2, val2 in enumerate(val):
-            apply_variant(key2, val2, apply)
-    return val
 
 def map_variant(key, val, apply):
     val = apply(key, val)
@@ -283,9 +236,7 @@ async def await_variant(variant):
 
     return variant
 
-
-####################################################################################################
-
+#endregion ---------------------------------------------------------------------------------------
 
 class Dumper:
     def __init__(self, max_depth=2):
@@ -360,7 +311,7 @@ class Utils:
     flatten     = staticmethod(flatten)
     glob        = staticmethod(glob.glob)
     join        = staticmethod(join)
-    sub         = staticmethod(sub)
+    #sub         = staticmethod(sub)
     ext         = staticmethod(ext)
     #len         = staticmethod(len)
     log         = staticmethod(log)
@@ -415,16 +366,12 @@ class Context(dict, Utils):
         merge_variant(self, kwargs)
         return self
 
-    def expand(self, variant):
-        return expand_variant(Expander(self), variant)
-
     def rel(self, sub_path):
         return rel_path(sub_path, expand_variant(self, self.task_dir))
 
+# region Hancho's text expansion system. ------------------------------------------------------------
 
-####################################################################################################
-# Hancho's text expansion system. Works similarly to Python's F-strings, but with quite a bit more
-# power.
+# Works similarly to Python's F-strings, but with quite a bit more power.
 #
 # The code here requires some explanation.
 #
@@ -450,14 +397,9 @@ MAX_EXPAND_DEPTH = 20
 # Matches macros inside a string.
 macro_regex = re.compile("{[^{}]*}")
 
-# ----------------------------------------
-# Helper methods
-
-
-def trace_prefix(expander):
+def trace_prefix(context):
     """Prints the left-side trellis of the expansion traces."""
-    assert isinstance(expander, Expander)
-    return hex(id(expander.context)) + ": " + ("┃ " * app.expand_depth)
+    return hex(id(context)) + ": " + ("┃ " * app.expand_depth)
 
 
 def trace_variant(variant):
@@ -471,35 +413,17 @@ def trace_variant(variant):
     else:
         return f"'{variant}'"
 
-
-def expand_inc():
-    """Increments the current expansion recursion depth."""
-    app.expand_depth += 1
-    if app.expand_depth > MAX_EXPAND_DEPTH:
-        raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
-
-
-def expand_dec():
-    """Decrements the current expansion recursion depth."""
-    app.expand_depth -= 1
-    if app.expand_depth < 0:
-        raise RecursionError("Text expand_inc/dec unbalanced")
-
-
 def stringify_variant(variant):
     """Converts any type into an expansion-compatible string."""
     if variant is None:
         return ""
-    elif isinstance(variant, Expander):
-        return stringify_variant(variant.context)
-    elif isinstance(variant, Task):
-        return stringify_variant(variant.out_files)
     elif listlike(variant):
         variant = [stringify_variant(val) for val in variant]
         return " ".join(variant)
     else:
         return str(variant)
 
+# ----------------------------------------
 
 class Expander:
     """Wraps a Context object and expands all fields read from it."""
@@ -520,116 +444,100 @@ class Expander:
             # This has to be getattr() so that we also check other Context base classes like Utils.
             val = getattr(self.context, key)
         except KeyError:
-            if self.trace:
+            if self.context.get("trace", app.flags.trace):
                 log(trace_prefix(self) + f"Read '{key}' failed")
             raise
 
-        if self.trace:
+        if self.context.get("trace", app.flags.trace):
             if key != "__iter__":
                 log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
-        val = expand_variant(self, val)
+        val = expand_variant(self.context, val)
         return val
 
+# ----------------------------------------
 
 def expand_text(expander, text):
     """Replaces all macros in 'text' with their expanded, stringified values."""
 
-    if not macro_regex.search(text):
+    if not istemplate(text):
         return text
 
-    if expander.trace:
+    if expander.get("trace", app.flags.trace):
         log(trace_prefix(expander) + f"┏ expand_text '{text}'")
-    expand_inc()
+
+    app.expand_depth += 1
+    if app.expand_depth > MAX_EXPAND_DEPTH:
+        raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
 
     # ==========
 
-    temp = text
+    old_text = text
+    temp = old_text
     result = ""
     while span := macro_regex.search(temp):
         result += temp[0 : span.start()]
         macro = temp[span.start() : span.end()]
-        variant = expand_macro(expander, macro)
+
+        if expander.get("trace", app.flags.trace):
+            log(trace_prefix(expander) + f"┏ expand_macro '{macro}'")
+
+        # ==========
+
+        result2 = macro
+        failed = False
+
+        try:
+            result2 = eval(macro[1:-1], {}, Expander(expander))  # pylint: disable=eval-used
+        except RecursionError:
+            raise
+        except BaseException:  # pylint: disable=broad-exception-caught
+            failed = True
+
+        # ==========
+
+        if expander.get("trace", app.flags.trace):
+            if failed:
+                log(trace_prefix(expander) + f"┗ expand_macro '{macro}' failed")
+            else:
+                log(trace_prefix(expander) + f"┗ expand_macro '{macro}' = {result2}")
+
+        variant = result2
+
         result += stringify_variant(variant)
         temp = temp[span.end() :]
     result += temp
 
     # ==========
 
-    expand_dec()
-    if expander.trace:
-        log(trace_prefix(expander) + f"┗ expand_text '{text}' = '{result}'")
-
     # If expansion changed the text, try to expand it again.
-    if result != text:
+    if result != old_text:
         result = expand_text(expander, result)
 
+    app.expand_depth -= 1
+    if app.expand_depth < 0:
+        raise RecursionError("Text expand_inc/dec unbalanced")
+
+    if expander.get("trace", app.flags.trace):
+        log(trace_prefix(expander) + f"┗ expand_text '{old_text}' = '{result}'")
+
     return result
 
-
-def expand_macro(expander, macro):
-    """Evaluates the contents of a "{macro}" string. If eval throws an exception, the macro is
-    returned unchanged."""
-
-    assert isinstance(expander, Expander)
-
-    if expander.trace:
-        log(trace_prefix(expander) + f"┏ expand_macro '{macro}'")
-    expand_inc()
-
-    # ==========
-
-    result = macro
-    failed = False
-
-    try:
-        result = eval(macro[1:-1], {}, expander)  # pylint: disable=eval-used
-    except BaseException as e:  # pylint: disable=broad-exception-caught
-        print(e)
-        failed = True
-
-    # ==========
-
-    expand_dec()
-    if expander.trace:
-        if failed:
-            log(trace_prefix(expander) + f"┗ expand_macro '{macro}' failed")
-        else:
-            log(trace_prefix(expander) + f"┗ expand_macro '{macro}' = {result}")
-    return result
-
+# ----------------------------------------
 
 def expand_variant(expander, variant):
     """Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
     expand someone else's data."""
 
-    # This level of tracing is too spammy to be useful.
-    # if expander.trace:
-    #   log(trace_context(expander) + f"┏ expand_variant {trace_variant(variant)}")
-    # expand_inc()
-
-    if isinstance(variant, Context):
-        result = Expander(variant)
-    elif listlike(variant):
+    if listlike(variant):
         result = [expand_variant(expander, val) for val in variant]
-    elif dictlike(variant):
-        result = {
-            expand_variant(expander, key): expand_variant(expander, val)
-            for key, val in variant.items()
-        }
     elif isinstance(variant, str):
         result = expand_text(expander, variant)
     else:
         result = variant
 
-    # expand_dec()
-    # if expander.trace:
-    #    log(trace_context(expander) + f"┗ expand_variant {trace_variant(variant)} = {trace_variant(result)}")
-
     return result
 
-
-####################################################################################################
-
+#endregion -----------------------------------------------------------------------------------------
 
 class Promise:
     def __init__(self, task, *args):
@@ -645,9 +553,7 @@ class Promise:
         else:
             return [self.task.context[field] for field in self.args]
 
-
 ####################################################################################################
-
 
 class TaskState:
     DECLARED = "DECLARED"
@@ -662,10 +568,6 @@ class TaskState:
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     BROKEN = "BROKEN"
-
-
-####################################################################################################
-
 
 class Task:
 
@@ -757,7 +659,12 @@ class Task:
 
         verbosity = self.context.get("verbosity", app.flags.verbosity)
         debug = self.context.get("debug", app.flags.debug)
-        force = self.context.get("force", app.flags.force)
+        rebuild = self.context.get("rebuild", app.flags.rebuild)
+
+#        print(self.context.desc)
+#        print(f"rebuild = {rebuild}")
+#        if not rebuild:
+#            print(self.context)
 
         # Await everything awaitable in this task's context.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -794,8 +701,11 @@ class Task:
             return
 
         # Check if we need a rebuild
-        self._reason = self.needs_rerun(force)
+        self._reason = self.needs_rerun(rebuild)
         if not self._reason:
+            print()
+            print(f"Skipping {self.context.desc}")
+            print()
             app.tasks_skipped += 1
             self._state = TaskState.SKIPPED
             return
@@ -847,8 +757,8 @@ class Task:
 
         # pylint: disable=attribute-defined-outside-init
 
-        self.context.task_dir   = abs_path(self.context.expand(self.context.task_dir))
-        self.context.build_dir  = abs_path(self.context.expand(self.context.build_dir))
+        self.context.task_dir   = abs_path(expand_variant(self.context, self.context.task_dir))
+        self.context.build_dir  = abs_path(expand_variant(self.context, self.context.build_dir))
 
         # Raw tasks may not have a repo_dir.
         repo_dir = self.context.get("repo_dir", None)
@@ -868,7 +778,7 @@ class Task:
                 def expand_path(_, val):
                     if not isinstance(val, str):
                         return val
-                    val = self.context.expand(val)
+                    val = expand_variant(self.context, val)
                     val = path.normpath(val)
                     return val
                 self.context[key] = map_variant(key, val, expand_path)
@@ -923,8 +833,8 @@ class Task:
         # ----------------------------------------
         # And now we can expand the command.
 
-        self.context.desc = self.context.expand(self.context.desc)
-        self.context.command = self.context.expand(self.context.command)
+        self.context.desc    = expand_variant(self.context, self.context.desc)
+        self.context.command = expand_variant(self.context, self.context.command)
 
         if debug:
             log(f"\nTask after expand: {self}")
@@ -977,12 +887,12 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    def needs_rerun(self, force=False):
+    def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
         debug = self.context.get("debug", app.flags.debug)
 
-        if force:
+        if rebuild:
             return f"Files {self.out_files} forced to rebuild"
         if not self.in_files:
             return "Always rebuild a target with no inputs"
@@ -1115,72 +1025,16 @@ class Task:
                 log("Stderr:")
                 log(self._stderr, end="")
 
-
-####################################################################################################
-
-def create_repo(mod_path):
-    assert path.isabs(mod_path)
-    assert mod_path == normalize_path(mod_path)
-    assert mod_path == path.realpath(mod_path)
-    assert mod_path not in app.realpath_to_repo
-
-    mod_dir  = path.split(mod_path)[0]
-    mod_file = path.split(mod_path)[1]
-    mod_name = path.splitext(mod_file)[0]
-
-    new_context = Context(
-        repo_name  = path.split(mod_dir)[1],
-        repo_dir   = mod_dir,
-        repo_path  = mod_path,
-
-        mod_name   = mod_name,
-        mod_dir    = mod_dir,
-        mod_path   = mod_path,
-
-        # These have to be here so that hancho.context.expand("{build_dir}") works.
-        build_root = Task.default_build_root,
-        build_tag  = Task.default_build_tag,
-        build_dir  = Task.default_build_dir,
-
-        task_dir   = Task.default_task_dir,
-    )
-
-    new_api = HanchoAPI()
-    new_api.is_repo = True
-    new_api.context = new_context
-    return new_api
-
-####################################################################################################
-
-def create_mod(parent, mod_path):
-    assert isinstance(parent, HanchoAPI)
-
-    mod_path = normalize_path(parent.context.expand(mod_path))
-    mod_dir  = path.split(mod_path)[0]
-    mod_file = path.split(mod_path)[1]
-    mod_name = path.splitext(mod_file)[0]
-
-    new_context = Context(
-        parent.context,
-        mod_name = mod_name,
-        mod_dir  = mod_dir,
-        mod_path = mod_path,
-    )
-
-    mod_context = copy.deepcopy(parent)
-    mod_context.is_repo = False
-    mod_context.context = new_context
-    return mod_context
-
 ####################################################################################################
 
 class HanchoAPI(Utils):
 
-    def __init__(self):
-        self.context = Context()
+    def __init__(self, context, is_repo):
+        self.app = app
+        self.context = context
+        self.is_repo = is_repo
         self.Context = Context
-        self.Task = Task
-        self.is_repo = False
+        self.Task    = Task
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -1196,9 +1050,9 @@ class HanchoAPI(Utils):
 
 
 
-    def repo(self, mod_path):
+    def repo(self, mod_path, *args, **kwargs):
 
-        mod_path = self.context.expand(mod_path)
+        mod_path = expand_variant(self.context, mod_path)
         mod_path = normalize_path(mod_path)
         mod_path = path.realpath(mod_path)
         #real_path = path.realpath(mod_path)
@@ -1207,17 +1061,16 @@ class HanchoAPI(Utils):
         if dedupe is not None:
             return dedupe
 
-        new_context = create_repo(mod_path)
-        new_context.is_repo = True
+        new_api = create_repo(mod_path, *args, **kwargs)
 
-        result = new_context._load()
+        result = new_api._load()
         app.realpath_to_repo[mod_path] = result
         return result
 
 
 
     def load(self, mod_path):
-        mod_path = self.context.expand(mod_path)
+        mod_path = expand_variant(self.context, mod_path)
         mod_path = normalize_path(mod_path)
         new_context = create_mod(self, mod_path)
         return new_context._load()
@@ -1263,9 +1116,59 @@ class HanchoAPI(Utils):
 
         return new_module
 
+####################################################################################################
+
+def create_repo(mod_path, *args, **kwargs):
+    assert path.isabs(mod_path)
+    assert mod_path == normalize_path(mod_path)
+    assert mod_path == path.realpath(mod_path)
+    assert mod_path not in app.realpath_to_repo
+
+    mod_dir  = path.split(mod_path)[0]
+    mod_file = path.split(mod_path)[1]
+    mod_name = path.splitext(mod_file)[0]
+
+    mod_context = Context(
+        repo_name  = path.split(mod_dir)[1],
+        repo_dir   = mod_dir,
+        repo_path  = mod_path,
+
+        mod_name   = mod_name,
+        mod_dir    = mod_dir,
+        mod_path   = mod_path,
+
+        # These have to be here so that expand_variant(hancho.context, "{build_dir}") works.
+        build_root = Task.default_build_root,
+        build_tag  = Task.default_build_tag,
+        build_dir  = Task.default_build_dir,
+
+        task_dir   = Task.default_task_dir,
+    )
+    mod_context.merge(*args, **kwargs)
+
+    mod_api = HanchoAPI(mod_context, True)
+    return mod_api
 
 ####################################################################################################
 
+def create_mod(parent_api, mod_path, *args, **kwargs):
+    assert isinstance(parent_api, HanchoAPI)
+
+    mod_path = normalize_path(expand_variant(parent_api.context, mod_path))
+    mod_dir  = path.split(mod_path)[0]
+    mod_file = path.split(mod_path)[1]
+    mod_name = path.splitext(mod_file)[0]
+
+    mod_api = copy.deepcopy(parent_api)
+    mod_api.is_repo = False
+
+    mod_api.context.mod_name = mod_name
+    mod_api.context.mod_dir  = mod_dir
+    mod_api.context.mod_path = mod_path
+    mod_api.context.merge(*args, **kwargs)
+    return mod_api
+
+####################################################################################################
 
 class JobPool:
     def __init__(self):
@@ -1372,22 +1275,22 @@ class App:
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
-        parser.add_argument("target",            default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
+        parser.add_argument("target",             default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
+        parser.add_argument("-C", "--root_dir",   default=os.getcwd(),     type=str,   help="Change directory before starting the build")
+        parser.add_argument("-f", "--root_file",  default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
+        parser.add_argument("-j", "--jobs",       default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
 
-        parser.add_argument("-f", "--root_file", default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
-        parser.add_argument("-C", "--root_dir",  default=os.getcwd(),     type=str,   help="Change directory before starting the build")
-        parser.add_argument("-v",                default=0,     action="count",  dest = "verbosity", help="Increase verbosity (-v, -vv, -vvv)")
-        parser.add_argument("-d", "--debug",     default=False, action="store_true",  help="Print debugging information")
-        parser.add_argument("--force",           default=False, action="store_true",  help="Force rebuild of everything")
-        parser.add_argument("--trace",           default=False, action="store_true",  help="Trace all text expansion")
-        parser.add_argument("-j", "--jobs",      default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
-        parser.add_argument("-q", "--quiet",     default=False, action="store_true",  help="Mute all output")
-        parser.add_argument("-n", "--dry_run",   default=False, action="store_true",  help="Do not run commands")
-        parser.add_argument("-s", "--shuffle",   default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
-        parser.add_argument("--use_color",       default=False, action="store_true",  help="Use color in the console output")
-        parser.add_argument("-t", "--tool",      default=None, type=str,   help="Run a subtool.")
-        parser.add_argument("-k", "--keep_going", default=1,  type=int,   help="Keep going until N jobs fail (0 means infinity)")
+        parser.add_argument("-k", "--keep_going", default=1,     type=int,                                        help="Keep going until N jobs fail (0 means infinity)")
+        parser.add_argument("-t", "--tool",       default=None,  type=str,                                        help="Run a subtool.")
+        parser.add_argument("-v",                 default=0,     action="count",  dest = "verbosity", help="Increase verbosity (-v, -vv, -vvv)")
 
+        parser.add_argument("-d", "--debug",      default=False, action="store_true",  help="Print debugging information")
+        parser.add_argument("-n", "--dry_run",    default=False, action="store_true",  help="Do not run commands")
+        parser.add_argument("-q", "--quiet",      default=False, action="store_true",  help="Mute all output")
+        parser.add_argument("-r", "--rebuild",    default=False, action="store_true",  help="Rebuild everything")
+        parser.add_argument("-s", "--shuffle",    default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
+        parser.add_argument("--trace",            default=False, action="store_true",  help="Trace all text expansion")
+        parser.add_argument("--use_color",        default=False, action="store_true",  help="Use color in the console output")
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args(argv)
@@ -1416,7 +1319,7 @@ class App:
         root_path = path.realpath(root_path)
 
         root_context = create_repo(root_path)
-        #root_context._load()
+        # root_context._load()
 
         # All the unrecognized flags get stuck on the root context.
         for key, val in self.extra_flags.items():
@@ -1457,7 +1360,7 @@ class App:
                 print(f"Cleaning build directores")
                 build_dirs = set()
                 for task in app.all_tasks:
-                    build_dir = task.context.expand("{build_root}")
+                    build_dir = expand_variant(task.context, "{build_root}")
                     build_dir = normalize_path(build_dir)
                     build_dir = path.realpath(build_dir)
                     if path.isdir(build_dir):
@@ -1491,16 +1394,15 @@ class App:
             for task in app.all_tasks:
                 # If no target was specified, we queue up all tasks that build stuff in the root
                 # repo
-                #build_dir = task.context.expand(task.context.build_dir)
-                #build_dir = normalize_path(build_dir)
-                #repo_dir = app.root_context.context.expand("{build_dir}")
-                #repo_dir = normalize_path(repo_dir)
-                #print(build_dir)
-                #print(repo_dir)
-                #if build_dir.startswith(repo_dir):
+                # build_dir = expand_variant(task.context, task.context.build_dir)
+                # build_dir = normalize_path(build_dir)
+                # repo_dir = expand_variant(app.root_context.context, "{build_dir}")
+                # repo_dir = normalize_path(repo_dir)
+                # print(build_dir)
+                # print(repo_dir)
+                # if build_dir.startswith(repo_dir):
                 #    task.queue()
                 task.queue()
-                pass
 
         time_b = time.perf_counter()
 
@@ -1513,7 +1415,9 @@ class App:
     ########################################
 
     def pushdir(self, new_dir: str):
-        new_dir = abs_path(new_dir, strict=True)
+        new_dir = abs_path(new_dir)
+        if not path.exists(new_dir):
+            raise FileNotFoundError(new_dir)
         self.dirstack.append(new_dir)
         os.chdir(new_dir)
 
@@ -1582,7 +1486,7 @@ class App:
         time_b = time.perf_counter()
 
         # if app.flags.debug or app.flags.verbosity:
-        log(f"Running {app.tasks_started} tasks took {time_b-time_a:.3f} seconds")
+        log(f"Running {app.tasks_finished} tasks took {time_b-time_a:.3f} seconds")
 
         # Done, print status info if needed
         if app.flags.debug or app.flags.verbosity:
@@ -1603,15 +1507,14 @@ class App:
 
         return -1 if self.tasks_failed or self.tasks_broken else 0
 
-
-####################################################################################################
+# region Main
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
 app = App()
 
-####################################################################################################
-
 if __name__ == "__main__":
     app.parse_flags(sys.argv[1:])
     sys.exit(app.main())
+
+# endregion ---------------------------------------------------------------------------------------

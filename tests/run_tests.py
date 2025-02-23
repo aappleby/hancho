@@ -263,14 +263,41 @@ class TestHancho(unittest.TestCase):
         self.assertTrue("missing_dep.txt" in hancho_py.app.log)
 
     ########################################
+    # A recursive text template should cause an 'expand failed to terminate' error.
 
     def test_expand_failed_to_terminate(self):
-        """A recursive text template should cause an 'expand failed to terminate' error."""
+        # Single recursion
         bad_task = self.hancho(
             command = "{flarp}",
             in_src  = [],
             out_obj = [],
             flarp   = "asdf {flarp}",
+        )
+        self.assertNotEqual(0, hancho_py.app.build_all())
+        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
+        self.assertTrue("TemplateRecursion" in hancho_py.app.log)
+
+    def test_expand_failed_to_terminate2(self):
+        # Mutual recursion
+        bad_task = self.hancho(
+            command = "{flarp}",
+            in_src  = [],
+            out_obj = [],
+            flarp   = "{command}",
+        )
+        self.assertNotEqual(0, hancho_py.app.build_all())
+        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
+        self.assertTrue("TemplateRecursion" in hancho_py.app.log)
+
+    def test_expand_failed_to_terminate3(self):
+        # Recursion via TXINAE
+        #hancho_py.app.reset()
+        bad_task = self.hancho(
+            command = "{subthing.foo}",
+            in_src  = [],
+            out_obj = [],
+            subthing = self.hancho.Context(foo = "{subthing.foo} x"),
+            #trace = True
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
         self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
