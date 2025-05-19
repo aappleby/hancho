@@ -106,6 +106,20 @@ class TestHancho(unittest.TestCase):
 
     ########################################
 
+    def test_log(self):
+        hancho_py.app.reset()
+        hancho_py.log("")
+
+    ########################################
+
+    def test_run_cmd(self):
+        #hancho_py.app.reset()
+        #self.hancho = hancho_py.app.create_root_context()
+        task = self.hancho(command = "echo \'{run_cmd('ls')}\'")
+        self.assertEqual(0, self.hancho.app.build_all())
+
+    ########################################
+
     def test_should_pass(self):
         """Sanity check"""
         self.hancho(command = "(exit 0)")

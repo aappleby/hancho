@@ -1,5 +1,4 @@
 // src/main.cpp
-#include "main.hpp"
 #include "util.hpp"
 #include <stdio.h>
 

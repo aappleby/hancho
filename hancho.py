@@ -1,9 +1,18 @@
 #!/usr/bin/python3
+
+"""
+Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system.
+
+Hancho is a single-file build system that's designed to be dropped into your project folder - there
+is no 'install' step.
+
+Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo.
+"""
+
 # pylint: disable=too-many-lines
 # pylint: disable=protected-access
 # pylint: disable=unused-argument
-
-"""Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system."""
+# pylint: disable=bad-indentation
 
 #region imports
 from os import path
@@ -29,13 +38,6 @@ from collections import abc
 
 #region Logging
 
-def log_line(message):
-    app.log += message
-    if not app.flags.quiet:
-        sys.stdout.write(message)
-        sys.stdout.flush()
-
-
 def log(message, *, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
     if not sys.stdout.isatty():
@@ -51,6 +53,12 @@ def log(message, *, sameline=False, **kwargs):
     if not output:
         return
 
+    def log_line(message):
+        app.log += message
+        if not app.flags.quiet:
+            sys.stdout.write(message)
+            sys.stdout.flush()
+
     if sameline:
         output = output[: os.get_terminal_size().columns - 1]
         output = "\r" + output + "\x1B[K"
@@ -62,11 +70,6 @@ def log(message, *, sameline=False, **kwargs):
 
     app.line_dirty = sameline
 
-
-def log_exception():
-    log(color(255, 128, 128), end="")
-    log(traceback.format_exc())
-    log(color(), end="")
 
 #endregion ---------------------------------------------------------------------------------------
 
@@ -106,14 +109,6 @@ def normalize_path(file_path):
     assert path.isabs(file_path)
     return file_path
 
-def ext(name, new_ext):
-    """Replaces file extensions on either a single filename or a list of filenames."""
-    if isinstance(name, Task):
-        name = name.out_files
-    if listlike(name):
-        return [ext(n, new_ext) for n in name]
-    return path.splitext(name)[0] + new_ext
-
 #endregion ---------------------------------------------------------------------------------------
 
 #region Helper Methods
@@ -134,21 +129,15 @@ def flatten(variant):
         return []
     return [variant]
 
-
 def join(lhs, rhs, *args):
     if len(args) > 0:
         rhs = join(rhs, *args)
     return [l + r for l in flatten(lhs) for r in flatten(rhs)]
 
-def sub(variant, old, new):
-    return map_variant(None, variant,
-        lambda key, val: re.sub(old, new, val) if isinstance(val, str) else val)
-
 def stem(filename):
     filename = flatten(filename)[0]
     filename = path.basename(filename)
     return path.splitext(filename)[0]
-
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -159,37 +148,20 @@ def color(red=None, green=None, blue=None):
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
 
-
 def run_cmd(cmd):
     """Runs a console command synchronously and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
-
 def ext(name, new_ext):
     """Replaces file extensions on either a single filename or a list of filenames."""
-    if isinstance(name, Task):
-        name = name.out_files
     if listlike(name):
         return [ext(n, new_ext) for n in name]
     return path.splitext(name)[0] + new_ext
-
 
 def mtime(filename):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     app.mtime_calls += 1
     return os.stat(filename).st_mtime_ns
-
-
-def maybe_as_number(text):
-    """Tries to convert a string to an int, then a float, then gives up. Used for ingesting
-    unrecognized flag values."""
-    try:
-        return int(text)
-    except ValueError:
-        try:
-            return float(text)
-        except ValueError:
-            return text
 
 #endregion ---------------------------------------------------------------------------------------
 
@@ -218,21 +190,20 @@ def map_variant(key, val, apply):
 async def await_variant(variant):
     """Recursively replaces every awaitable in the variant with its awaited value."""
 
-    if isinstance(variant, Promise):
-        variant = await variant.get()
-        variant = await await_variant(variant)
-    elif isinstance(variant, Task):
-        await variant.await_done()
-        variant = await await_variant(variant.out_files)
-    elif dictlike(variant):
-        for key, val in variant.items():
-            variant[key] = await await_variant(val)
-    elif listlike(variant):
+    if listlike(variant):
         for key, val in enumerate(variant):
             variant[key] = await await_variant(val)
-    else:
-        while inspect.isawaitable(variant):
-            variant = await variant
+        return variant
+
+    if isinstance(variant, Promise):
+        return await await_variant(await variant.get())
+
+    if isinstance(variant, Task):
+        await variant.await_done()
+        return await await_variant(variant.out_files)
+
+    if inspect.isawaitable(variant):
+        return await await_variant(await variant)
 
     return variant
 
@@ -445,12 +416,12 @@ class Expander:
             val = getattr(self.context, key)
         except KeyError:
             if self.context.get("trace", app.flags.trace):
-                log(trace_prefix(self) + f"Read '{key}' failed")
+                log(trace_prefix(self) + f"┃ Read '{key}' failed")
             raise
 
         if self.context.get("trace", app.flags.trace):
             if key != "__iter__":
-                log(trace_prefix(self) + f"Read '{key}' = {trace_variant(val)}")
+                log(trace_prefix(self) + f"┃ Read '{key}' = {trace_variant(val)}")
         val = expand_variant(self.context, val)
         return val
 
@@ -524,14 +495,16 @@ def expand_text(expander, text):
 
 # ----------------------------------------
 
-def expand_variant(expander, variant):
+def expand_variant(context, variant):
     """Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
     expand someone else's data."""
 
     if listlike(variant):
-        result = [expand_variant(expander, val) for val in variant]
+        result = [expand_variant(context, val) for val in variant]
     elif isinstance(variant, str):
-        result = expand_text(expander, variant)
+        app.expand_depth += 1
+        result = expand_text(context, variant)
+        app.expand_depth -= 1
     else:
         result = variant
 
@@ -703,9 +676,6 @@ class Task:
         # Check if we need a rebuild
         self._reason = self.needs_rerun(rebuild)
         if not self._reason:
-            print()
-            print(f"Skipping {self.context.desc}")
-            print()
             app.tasks_skipped += 1
             self._state = TaskState.SKIPPED
             return
@@ -970,9 +940,7 @@ class Task:
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             app.pushdir(self.context.task_dir)
-            result = command(self)
-            while inspect.isawaitable(result):
-                result = await result
+            result = await await_variant(command(self))
             app.popdir()
             self._returncode = 0
             return
@@ -1302,7 +1270,19 @@ class App:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
-                val = maybe_as_number(val) if val is not None else True
+
+                if val is None:
+                    val = True
+                else:
+                    try:
+                        val = int(val)
+                    except ValueError:
+                        try:
+                            val = float(val)
+                        except ValueError:
+                            pass
+
+                #val = maybe_as_number(val) if val is not None else True
                 extra_flags[key] = val
 
         self.flags = flags
@@ -1473,7 +1453,9 @@ class App:
                 log(f"Task failed: {task.context.desc}")
                 log(color(), end="")
                 log(str(task))
-                log_exception()
+                log(color(255, 128, 128), end="")
+                log(traceback.format_exc())
+                log(color(), end="")
                 fail_count = app.tasks_failed + app.tasks_cancelled + app.tasks_broken
                 if app.flags.keep_going and fail_count >= app.flags.keep_going:
                     log("Too many failures, cancelling tasks and stopping build")
