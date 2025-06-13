@@ -1,6 +1,6 @@
 # examples/hello_world/build.hancho
 
-compile_cpp = hancho.Context(
+compile_cpp = dict(
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj    = "{ext(in_src, '.o')}",
@@ -10,7 +10,7 @@ compile_cpp = hancho.Context(
 main_o = hancho(compile_cpp, in_src = "main.cpp")
 util_o = hancho(compile_cpp, in_src = "util.cpp")
 
-link_cpp_bin = hancho.Context(
+link_cpp_bin = dict(
     desc    = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )

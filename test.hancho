@@ -1,13 +1,13 @@
 # Don't do this, if we load this in any other build it makes _everything_ rebuild...
 # hancho.app.flags.rebuild = True
 
-hancho.base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
+base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
+
+hancho(base_rules.check_cpp, in_src = "tests/src/main.cpp")
+hancho(base_rules.check_cpp, in_src = "tests/src/test.cpp")
 
 hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")
-
-hancho(hancho.base_rules.check_cpp, in_src = "tests/src/main.cpp")
-hancho(hancho.base_rules.check_cpp, in_src = "tests/src/test.cpp")
 
 hancho(
     desc = "Run all tests",

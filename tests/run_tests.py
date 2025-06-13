@@ -5,7 +5,7 @@ import sys
 import os
 from os import path
 import random
-import subprocess
+#import subprocess
 import unittest
 import shutil
 import glob
@@ -310,7 +310,7 @@ class TestHancho(unittest.TestCase):
             command = "{subthing.foo}",
             in_src  = [],
             out_obj = [],
-            subthing = self.hancho.Context(foo = "{subthing.foo} x"),
+            subthing = dict(foo = "{subthing.foo} x"),
             #trace = True
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
@@ -426,7 +426,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = self.hancho.Context(
+            compile = dict(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj    = "{ext(in_src, '.o')}",
                 in_depfile = "{ext(out_obj, '.d')}",
@@ -451,7 +451,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = self.hancho.Context(
+            compile = dict(
                 command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj    = "{ext(in_src, '.o')}",
                 in_depfile = "{ext(out_obj, '.d')}",
@@ -637,8 +637,8 @@ class TestHancho(unittest.TestCase):
 
 ####################################################################################################
 
-import cProfile
-import pstats
+#import cProfile
+#import pstats
 
 if __name__ == "__main__":
     #with cProfile.Profile() as pr:

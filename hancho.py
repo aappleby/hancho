@@ -36,6 +36,30 @@ import types
 from collections import abc
 #endregion
 
+#region Subclass of dict that allows attribute access
+
+class DotDict(dict):
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+
+    def __setattr__(self, name, value):
+        if hasattr(type(self), name):
+            raise AttributeError(f"Cannot set attribute '{name}' on dict")
+        self[name] = value
+
+    def __delattr__(self, name):
+            if hasattr(type(self), name):
+                raise AttributeError(f"Cannot delete attribute '{name}' on dict")
+            try:
+                del self[name]
+            except KeyError as e:
+                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+
+#endregion
+
 #region Logging
 
 def log(message, *, sameline=False, **kwargs):
@@ -142,7 +166,7 @@ def stem(filename):
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
     # Color strings don't work in Windows console, so don't emit them.
-    # if not Context.use_color or os.name == "nt":
+    # if not app.flags.use_color or os.name == "nt":
     #    return ""
     if red is None:
         return "\x1B[0m"
@@ -165,16 +189,42 @@ def mtime(filename):
 
 #endregion ---------------------------------------------------------------------------------------
 
-#region Helpers for managing variants (could be Context, list, dict, etc.)
+#region Helpers for managing variants
 
-def merge_variant(lhs, rhs):
-    if isinstance(lhs, Context) and dictlike(rhs):
-        for key, rval in rhs.items():
-            lval = lhs.get(key, None)
+def merge_dicts(*args, **kwargs):
+    """
+    >>> merge_dicts(dict(),           dict())
+    {}
+    >>> merge_dicts(dict(),           dict(bar = None))
+    {'bar': None}
+    >>> merge_dicts(dict(),           dict(bar = 3))
+    {'bar': 3}
+    >>> merge_dicts(dict(bar = None), dict())
+    {'bar': None}
+    >>> merge_dicts(dict(bar = None), dict(bar = None))
+    {'bar': None}
+    >>> merge_dicts(dict(bar = None), dict(bar = 3))
+    {'bar': 3}
+    >>> merge_dicts(dict(bar = 2),    dict())
+    {'bar': 2}
+    >>> merge_dicts(dict(bar = 2),    dict(bar = None))
+    {'bar': 2}
+    >>> merge_dicts(dict(bar = 2),    dict(bar = 3))
+    {'bar': 3}
+    """
+
+    result = DotDict()
+    args = list(args) + [kwargs]
+    for arg in args:
+        if arg is None:
+            continue
+        assert dictlike(arg)
+        for key, rval in arg.items():
+            lval = result.get(key, None)
             if lval is None or rval is not None:
-                lhs[key] = merge_variant(lval, rval)
-        return lhs
-    return copy.deepcopy(rhs)
+                result[key] = rval
+    return result
+
 
 def map_variant(key, val, apply):
     val = apply(key, val)
@@ -223,7 +273,7 @@ class Dumper:
             result += self.dump_dict(variant.__dict__)
         elif isinstance(variant, HanchoAPI):
             result += self.dump_dict(variant.__dict__)
-        elif isinstance(variant, Context):
+        elif isinstance(variant, DotDict):
             result += self.dump_dict(variant)
         elif listlike(variant):
             result += self.dump_list(variant)
@@ -277,19 +327,13 @@ class Utils:
     path        = path # path.dirname and path.basename used by makefile-related rules
     re          = re # why is sub() not working?
 
-    #abs_path    = staticmethod(abs_path)
     color       = staticmethod(color)
     flatten     = staticmethod(flatten)
     glob        = staticmethod(glob.glob)
     join        = staticmethod(join)
-    #sub         = staticmethod(sub)
     ext         = staticmethod(ext)
-    #len         = staticmethod(len)
     log         = staticmethod(log)
-    #print       = staticmethod(print)
-
-    #rel() is defined in Context, always relative to task_dir
-    rel_path     = staticmethod(rel_path) # used by build_path etc
+    rel_path    = staticmethod(rel_path)  # used by build_path etc
     run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
     stem        = staticmethod(stem)      # FIXME used by metron/tests?
 
@@ -298,47 +342,6 @@ class Utils:
 
 
 ####################################################################################################
-
-
-class Context(dict, Utils):
-    """
-    A Context object is a specialized dict that also supports 'context.attribute' syntax as well as
-    arbitrary "merging" of dicts/keys and text template expansion.
-    """
-
-    def __init__(self, *args, **kwargs):
-        self.merge(*args)
-        self.merge(kwargs)
-
-    def __repr__(self):
-        return Dumper(2).dump(self)
-
-    def __getattr__(self, key):
-        if not dict.__contains__(self, key):
-            raise AttributeError(name=key, obj=self)
-        result = dict.__getitem__(self, key)
-        return result
-
-    def __setattr__(self, key, val):
-        return dict.__setitem__(self, key, val)
-
-    def __delattr__(self, key):
-        if not dict.__contains__(self, key):
-            raise AttributeError(name=key, obj=self)
-        return dict.__delitem__(self, key)
-
-    # ----------------------------------------
-
-    def merge(self, *args, **kwargs):
-        for arg in flatten(args):
-            if arg is not None:
-                assert dictlike(arg)
-                merge_variant(self, arg)
-        merge_variant(self, kwargs)
-        return self
-
-    def rel(self, sub_path):
-        return rel_path(sub_path, expand_variant(self, self.task_dir))
 
 # region Hancho's text expansion system. ------------------------------------------------------------
 
@@ -356,10 +359,9 @@ class Context(dict, Utils):
 # The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
 #
-# Also - TEFINAE - Text Expansion Failure Is Not An Error. Context objects can contain macros that
-# are not expandable inside the context. This allows context objects nested inside other contexts to
-# contain templates that can only be expanded in the context of the outer context, and things will
-# still Just Work.
+# Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
+# expandable by that dict. This allows nested dicts to contain templates that can only be expanded
+# an outer dict, and things will still Just Work.
 
 # The maximum number of recursion levels we will do to expand a macro.
 # Tests currently require MAX_EXPAND_DEPTH >= 6
@@ -377,8 +379,8 @@ def trace_variant(variant):
     """Prints the right-side values of the expansion traces."""
     if callable(variant):
         return f"Callable @ {hex(id(variant))}"
-    elif isinstance(variant, Context):
-        return f"Context @ {hex(id(variant))}'"
+    elif isinstance(variant, dict):
+        return f"dict @ {hex(id(variant))}'"
     elif isinstance(variant, Expander):
         return f"Expander @ {hex(id(variant.context))}'"
     else:
@@ -397,12 +399,21 @@ def stringify_variant(variant):
 # ----------------------------------------
 
 class Expander:
-    """Wraps a Context object and expands all fields read from it."""
+    """
+    This class is used to fetch and expand text templates from a dict during text expansion, and
+    also to provide utility methods like 'rel' that return relative paths from the task directory.
+    It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
+    (using `expander.key`), making it versatile for accessing template variables and methods.
+    """
 
     def __init__(self, context):
+        assert isinstance(context, dict)
         self.context = context
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         self.trace = context.get("trace", app.flags.trace)
+
+    def __contains__(self, key):
+        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context
 
     def __getitem__(self, key):
         return self.get(key)
@@ -411,30 +422,48 @@ class Expander:
         return self.get(key)
 
     def get(self, key):
-        try:
-            # This has to be getattr() so that we also check other Context base classes like Utils.
-            val = getattr(self.context, key)
-        except KeyError:
-            if self.context.get("trace", app.flags.trace):
+        # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
+        # method is called on the Expander instance, not the class.
+        if hasattr(Expander, key):
+            val = getattr(self, key)
+        # Check to see if we're fetching a special method from the Utils class.
+        elif hasattr(Utils, key):
+            val = getattr(Utils, key)
+        # Neither of those special cases apply, so we fetch the key from the context and expand it
+        # immediately.
+        elif key in self.context:
+            val = expand_variant(self.context, self.context[key])
+        # If the key is not found, raise an AttributeError.
+        else:
+            if self.trace:
                 log(trace_prefix(self) + f"┃ Read '{key}' failed")
-            raise
+            raise AttributeError(key)
 
-        if self.context.get("trace", app.flags.trace):
-            if key != "__iter__":
-                log(trace_prefix(self) + f"┃ Read '{key}' = {trace_variant(val)}")
-        val = expand_variant(self.context, val)
+        if self.trace:
+            log(trace_prefix(self) + f"┃ Read '{key}' = {trace_variant(val)}")
+
+        # If we fetched a dict, wrap it in an Expander so we expand its sub-fields.
+        if isinstance(val, dict):
+            val = Expander(val)
         return val
+
+    # Returns a relative path from the task directory to the sub_path.
+    def rel(self, sub_path):
+        result = rel_path(sub_path, expand_variant(self.context, self.context.task_dir))
+        return result
 
 # ----------------------------------------
 
-def expand_text(expander, text):
+def expand_text(context, text):
     """Replaces all macros in 'text' with their expanded, stringified values."""
 
     if not istemplate(text):
         return text
 
-    if expander.get("trace", app.flags.trace):
-        log(trace_prefix(expander) + f"┏ expand_text '{text}'")
+    trace = context.get("trace", app.flags.trace)
+
+    if trace:
+        log(trace_prefix(context) + f"┏ expand_text '{text}'")
 
     app.expand_depth += 1
     if app.expand_depth > MAX_EXPAND_DEPTH:
@@ -449,8 +478,8 @@ def expand_text(expander, text):
         result += temp[0 : span.start()]
         macro = temp[span.start() : span.end()]
 
-        if expander.get("trace", app.flags.trace):
-            log(trace_prefix(expander) + f"┏ expand_macro '{macro}'")
+        if trace:
+            log(trace_prefix(context) + f"┏ expand_macro '{macro}'")
 
         # ==========
 
@@ -458,7 +487,7 @@ def expand_text(expander, text):
         failed = False
 
         try:
-            result2 = eval(macro[1:-1], {}, Expander(expander))  # pylint: disable=eval-used
+            result2 = eval(macro[1:-1], {}, Expander(context))  # pylint: disable=eval-used
         except RecursionError:
             raise
         except BaseException:  # pylint: disable=broad-exception-caught
@@ -466,11 +495,11 @@ def expand_text(expander, text):
 
         # ==========
 
-        if expander.get("trace", app.flags.trace):
+        if trace:
             if failed:
-                log(trace_prefix(expander) + f"┗ expand_macro '{macro}' failed")
+                log(trace_prefix(context) + f"┗ expand_macro '{macro}' failed")
             else:
-                log(trace_prefix(expander) + f"┗ expand_macro '{macro}' = {result2}")
+                log(trace_prefix(context) + f"┗ expand_macro '{macro}' = {result2}")
 
         variant = result2
 
@@ -482,14 +511,14 @@ def expand_text(expander, text):
 
     # If expansion changed the text, try to expand it again.
     if result != old_text:
-        result = expand_text(expander, result)
+        result = expand_text(context, result)
 
     app.expand_depth -= 1
     if app.expand_depth < 0:
         raise RecursionError("Text expand_inc/dec unbalanced")
 
-    if expander.get("trace", app.flags.trace):
-        log(trace_prefix(expander) + f"┗ expand_text '{old_text}' = '{result}'")
+    if trace:
+        log(trace_prefix(context) + f"┗ expand_text '{old_text}' = '{result}'")
 
     return result
 
@@ -552,12 +581,13 @@ class Task:
     default_build_tag = ""
 
     def __init__(self, *args, **kwargs):
-        self.context = Context(
-            desc=Task.default_desc,
-            command=Task.default_command,
+
+        default_context = dict(
+            desc = Task.default_desc,
+            command = Task.default_command,
         )
 
-        self.context.merge(*args, **kwargs)
+        self.context = merge_dicts(default_context, *args, **kwargs)
 
         self._task_index = 0
         self.in_files = []
@@ -571,9 +601,6 @@ class Task:
         self._returncode = -1
 
         app.all_tasks.append(self)
-
-        #if self.context.get("queue", False):
-        #    self.queue()
 
     # ----------------------------------------
 
@@ -633,11 +660,6 @@ class Task:
         verbosity = self.context.get("verbosity", app.flags.verbosity)
         debug = self.context.get("debug", app.flags.debug)
         rebuild = self.context.get("rebuild", app.flags.rebuild)
-
-#        print(self.context.desc)
-#        print(f"rebuild = {rebuild}")
-#        if not rebuild:
-#            print(self.context)
 
         # Await everything awaitable in this task's context.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -940,7 +962,7 @@ class Task:
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             app.pushdir(self.context.task_dir)
-            result = await await_variant(command(self))
+            await await_variant(command(self))
             app.popdir()
             self._returncode = 0
             return
@@ -1001,7 +1023,6 @@ class HanchoAPI(Utils):
         self.app = app
         self.context = context
         self.is_repo = is_repo
-        self.Context = Context
         self.Task    = Task
 
     def __repr__(self):
@@ -1012,7 +1033,9 @@ class HanchoAPI(Utils):
 
     def __call__(self, arg1=None, /, *args, **kwargs):
         if callable(arg1):
-            temp_context = Context(*args, **kwargs)
+            temp_context = merge_dicts(*args, **kwargs)
+            # Note that we spread temp_context so that we can take advantage of parameter list
+            # checking when we call the callback.
             return arg1(self, **temp_context)
         return Task(self.context, arg1, *args, **kwargs)
 
@@ -1066,17 +1089,22 @@ class HanchoAPI(Utils):
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
         app.pushdir(path.dirname(self.context.mod_path))
-        temp_globals = {"hancho": self, "__builtins__": builtins}
+
+        # Monkeypatch builtins to replace dict with DotDict to enable dot notation
+        new_builtins = types.ModuleType(builtins.__name__)
+        new_builtins.__dict__.update(builtins.__dict__)
+        new_builtins.__dict__['dict'] = DotDict
+        temp_globals = {"hancho": self, "__builtins__": new_builtins}
 
         # Pylint is just wrong here
         # pylint: disable=not-callable
         types.FunctionType(code, temp_globals)()
         app.popdir()
 
-        # Module loaded, turn the module's globals into a Context that doesn't include __builtins__,
-        # hancho, and imports so we don't have files that end up transitively containing the
-        # universe
-        new_module = Context()
+        # Module loaded, turn the module's globals into a dict that doesn't include __builtins__,
+        # hancho, imports, and private fields so we don't have files that end up transitively
+        # containing the universe
+        new_module = DotDict()
         for key, val in temp_globals.items():
             if key.startswith("_") or key == "hancho" or isinstance(val, type(sys)):
                 continue
@@ -1096,7 +1124,7 @@ def create_repo(mod_path, *args, **kwargs):
     mod_file = path.split(mod_path)[1]
     mod_name = path.splitext(mod_file)[0]
 
-    mod_context = Context(
+    mod_context = DotDict(
         repo_name  = path.split(mod_dir)[1],
         repo_dir   = mod_dir,
         repo_path  = mod_path,
@@ -1112,7 +1140,8 @@ def create_repo(mod_path, *args, **kwargs):
 
         task_dir   = Task.default_task_dir,
     )
-    mod_context.merge(*args, **kwargs)
+
+    mod_context = merge_dicts(mod_context, *args, **kwargs)
 
     mod_api = HanchoAPI(mod_context, True)
     return mod_api
@@ -1133,7 +1162,9 @@ def create_mod(parent_api, mod_path, *args, **kwargs):
     mod_api.context.mod_name = mod_name
     mod_api.context.mod_dir  = mod_dir
     mod_api.context.mod_path = mod_path
-    mod_api.context.merge(*args, **kwargs)
+
+    mod_api.context = merge_dicts(mod_api.context, *args, kwargs)
+
     return mod_api
 
 ####################################################################################################
@@ -1265,7 +1296,7 @@ class App:
 
         # Unrecognized command line parameters also become global context fields if they are
         # flag-like
-        extra_flags = {}
+        extra_flags = DotDict()
         for span in unrecognized:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
@@ -1297,9 +1328,7 @@ class App:
         root_dir  = path.abspath(self.flags.root_dir)  # Root path must be absolute.
         root_path = path.normpath(path.join(root_dir, root_file))
         root_path = path.realpath(root_path)
-
         root_context = create_repo(root_path)
-        # root_context._load()
 
         # All the unrecognized flags get stuck on the root context.
         for key, val in self.extra_flags.items():
@@ -1331,13 +1360,13 @@ class App:
         app.root_context._load()
         time_b = time.perf_counter()
 
-        # if app.flags.debug or app.flags.verbosity:
-        log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
+        if app.flags.debug or app.flags.verbosity:
+            log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
         if app.flags.tool:
             print(f"Running tool {app.flags.tool}")
             if app.flags.tool == "clean":
-                print(f"Cleaning build directores")
+                print("Cleaning build directories")
                 build_dirs = set()
                 for task in app.all_tasks:
                     build_dir = expand_variant(task.context, "{build_root}")
@@ -1352,6 +1381,7 @@ class App:
 
         time_a = time.perf_counter()
 
+        # FIXME selecting targets by regex needs revisiting
         if app.flags.target:
             app.target_regex = re.compile(app.flags.target)
             for task in app.all_tasks:
@@ -1374,6 +1404,9 @@ class App:
             for task in app.all_tasks:
                 # If no target was specified, we queue up all tasks that build stuff in the root
                 # repo
+
+                # FIXME we are not currently doing that....
+
                 # build_dir = expand_variant(task.context, task.context.build_dir)
                 # build_dir = normalize_path(build_dir)
                 # repo_dir = expand_variant(app.root_context.context, "{build_dir}")
@@ -1500,3 +1533,7 @@ if __name__ == "__main__":
     sys.exit(app.main())
 
 # endregion ---------------------------------------------------------------------------------------
+
+import doctest
+doctest.testmod(verbose=True)
+doctest.testmod()
