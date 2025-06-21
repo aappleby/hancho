@@ -27,7 +27,7 @@
       "preLaunchTask": "Wipe build",
     },
     {
-      "name": "Debug Hancho Test Suite",
+      "name": "Debug test.hancho",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
@@ -38,12 +38,12 @@
       "preLaunchTask": "Wipe build",
     },
     {
-      "name": "Run Hancho Test Suite",
+      "name": "Debug run_tests.py",
       "type": "debugpy",
       "request": "launch",
       "program": "run_tests.py",
       "cwd": "${workspaceFolder}/tests",
-      //"args": ["TestHancho.test_always_rebuild_if_no_inputs"],
+      //"args": ["TestHancho.test_expand_failed_to_terminate3"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },
@@ -57,6 +57,16 @@
       "console": "integratedTerminal",
       "justMyCode": false,
       "preLaunchTask": "Wipe build",
+    },
+
+    {
+      "name": "Debug Scratch",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scratch.py",
+      "cwd": "${workspaceFolder}/..",
+      "console": "integratedTerminal",
+      "justMyCode": false,
     },
 
   ]

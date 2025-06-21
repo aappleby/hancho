@@ -4,12 +4,14 @@ Hancho is built out of a few simple pieces - the ```hancho``` object, Configs, T
 
 For more detailed and up-to-date information, check out the examples folder and the '*_rules.hancho' files in the root directory of this repo.
 
-## The hancho.Context class is a dict, basically
+## Dicts in Hancho have a few special properties
 
-The ```hancho.Context``` class is just a fancy ```dict``` with a few additional methods. For example, it comes with a pretty-printer:
+Inside a ```.hancho``` file, ```dict```s have a few useful additions
+
+For example, it comes with a pretty-printer:
 
 ```py
->>> foo = hancho.Context(a = 1, b = "two", c = ['th','ree'])
+>>> foo = dict(a = 1, b = "two", c = ['th','ree'])
 >>> foo
 Config @ 0x788c818610e0 {
   a = 1,
@@ -165,14 +167,14 @@ Fields automatically added to ```hancho.Context```:
 The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
 
 ```py
->>> foo = hancho.Context(a = 1)
->>> bar = hancho.Context(a = 2)
->>> hancho.Context(foo, bar)
+>>> foo = dict(a = 1)
+>>> bar = dict(a = 2)
+>>> dict(foo, bar)
 Config @ 0x746cb87f3ed0 {
   a = 2,
 }
->>> bar = hancho.Context(a = None)
->>> hancho.Context(foo, bar)
+>>> bar = dict(a = None)
+>>> dict(foo, bar)
 Config @ 0x746cb87f3f20 {
   a = 1,
 }
@@ -181,9 +183,9 @@ Config @ 0x746cb87f3f20 {
 This works for nested Configs as well:
 
 ```py
->>> foo = hancho.Context(child = hancho.Context(bar = 1, baz = 2))
->>> bar = hancho.Context(child = hancho.Context(baz = 3, cow = 4))
->>> hancho.Context(foo, bar)
+>>> foo = dict(child = dict(bar = 1, baz = 2))
+>>> bar = dict(child = dict(baz = 3, cow = 4))
+>>> dict(foo, bar)
 Config @ 0x746cb87f3f70 {
   child = Config @ 0x746cb8610640 {
     bar = 1,
@@ -199,44 +201,44 @@ Like Python's F-strings, Hancho's templates can contain ```{arbi + trary * expre
 
 Instead, we call ```context.expand(template)``` and the values in ```context``` are used to fill in the blanks in ```template```.
 ```py
->>> foo = hancho.Context(a = 1, b = 2)
+>>> foo = dict(a = 1, b = 2)
 >>> foo.expand("The sum of a and b is {a+b}.")
 'The sum of a and b is 3.'
 ```
 
 A template that evaluates to an array will have each element stringified and then joined with spaces
 ```py
->>> foo = hancho.Context(a = [1, 2, 3])
+>>> foo = dict(a = [1, 2, 3])
 >>> foo.expand("These are numbers - {a}")
 'These are numbers - 1 2 3'
 ```
 
 Nested arrays get flattened before joining
 ```py
->>> foo = hancho.Context(a = [[1, [2]], [[3]]])
+>>> foo = dict(a = [[1, [2]], [[3]]])
 >>> foo.expand("These are numbers - {a}")
 'These are numbers - 1 2 3'
 ```
 
 And a ```None``` will turn into an empty string.
 ```py
->>> foo = hancho.Context(a = None, b = None, c = None)
+>>> foo = dict(a = None, b = None, c = None)
 >>> foo.expand("a=({a}), b=({b}), c=({c})")
 'a=(), b=(), c=()'
 ```
 
 If the result of a template expansion contains more templates, Hancho will keep expanding until the string stops changing.
 ```py
->>> foo = hancho.Context(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
+>>> foo = dict(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
 >>> foo.expand("{a}")
 'abcd1000'
 ```
 
 Expanding templates based on configs inside configs also works:
 ```py
->>> foo = hancho.Context(a = 1, b = 2)
->>> bar = hancho.Context(c = foo)
->>> baz = hancho.Context(d = bar)
+>>> foo = dict(a = 1, b = 2)
+>>> bar = dict(c = foo)
+>>> baz = dict(d = bar)
 >>> baz.expand("d.c.a = {d.c.a}, d.c.a = {d.c.b}")
 'd.c.a = 1, d.c.a = 2'
 ```
@@ -253,7 +255,7 @@ Any function attached to a ```Config``` can be used in a template. By default it
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:
 
 ```py
->>> foo = hancho.Context()
+>>> foo = dict()
 >>> foo.expand("{color(255,0,0)}")
 '\x1b[38;2;255;0;0m'
 >>> print(foo.expand("The color is now {color(255,0,0)}RED"))
@@ -265,7 +267,7 @@ You can also attach your own functions to a context:
 
 ```py
 >>> def get_number(): return 7
->>> a = hancho.Context(get_number = get_number)
+>>> a = dict(get_number = get_number)
 >>> a.expand("Calling get_number equals {get_number()}")
 'Calling get_number equals 7'
 ```
@@ -275,16 +277,16 @@ You can also attach your own functions to a context:
 Failure to expand a template is _not an error_, it just passes the unexpanded template through.
 
 ```py
->>> foo = hancho.Context(a = 1)
+>>> foo = dict(a = 1)
 >>> foo.expand("A equals {a}, B equals {b}")
 'A equals 1, B equals {b}'
 ```
 
 While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand until they're needed later by a parent or grandparent context.
 ```py
->>> foo = hancho.Context(msg = "What's a {bar.thing}?")
->>> bar = hancho.Context(thing = "bear")
->>> baz = hancho.Context(foo = foo, bar = bar)
+>>> foo = dict(msg = "What's a {bar.thing}?")
+>>> bar = dict(thing = "bear")
+>>> baz = dict(foo = foo, bar = bar)
 >>> baz.expand("{foo.msg}")
 "What's a bear?"
 ```
@@ -297,9 +299,9 @@ Here's what the tracer generates for the above example:
 Python 3.12.3 (main, Sep 11 2024, 14:17:37) [GCC 13.2.0] on linux
 Type "help", "copyright", "credits" or "license" for more information.
 >>> import hancho
->>> foo = hancho.Context(msg = "What's a {bar.thing}?")
->>> bar = hancho.Context(thing = "bear")
->>> baz = hancho.Context(foo = foo, bar = bar, trace=True)
+>>> foo = dict(msg = "What's a {bar.thing}?")
+>>> bar = dict(thing = "bear")
+>>> baz = dict(foo = foo, bar = bar, trace=True)
 >>> baz.expand("{foo.msg}")
 0x76beaa7eebc0: ┏ expand_text '{foo.msg}'
 0x76beaa7eebc0: ┃ ┏ expand_macro '{foo.msg}'
@@ -327,7 +329,7 @@ Tasks are lazily executed - only tasks that are needed to build the selected out
 ## Calling ```hancho(...)``` merges ```hancho.Context``` with all the parameters passed to ```hancho()``` and creates a task from it.
 
 ```py
-echo_stuff = hancho.Context(
+echo_stuff = dict(
     command = "echo {in_file}",
 )
 hancho(echo_stuff, in_file = "foo.txt")
@@ -390,7 +392,7 @@ hancho(
 Doing this is is exactly equivalent to the following:
 
 ```py
-temp_config = hancho.Context(
+temp_config = dict(
   hancho.Context,
   in_srcs = glob.glob("src/*.cpp"),
   out_lib = "foo.a"

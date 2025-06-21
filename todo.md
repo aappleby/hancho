@@ -1,3 +1,10 @@
+00 - How to download and run Hancho, Trivial .hancho example
+01 - Example with {in_src} and {out_obj}
+02 - Example with separate tasks for compile and link
+03 - compile_cpp and link_cpp commands
+04 - rules.hancho
+05 - 
+
 need test case for:
   task.promise
   command is None

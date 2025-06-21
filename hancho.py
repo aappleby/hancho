@@ -58,6 +58,12 @@ class DotDict(dict):
             except KeyError as e:
                 raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
 
+    def __repr__(self):
+        return Dumper(2).dump(self)
+
+    def expand(self, text):
+        return expand_variant(self, text)
+
 #endregion
 
 #region Logging
@@ -125,7 +131,6 @@ def join_path(lhs, rhs, *args):
 
 def normalize_path(file_path):
     assert isinstance(file_path, str)
-    assert not istemplate(file_path)
 
     file_path = path.abspath(path.join(os.getcwd(), file_path))
     file_path = path.normpath(file_path)
@@ -136,9 +141,6 @@ def normalize_path(file_path):
 #endregion ---------------------------------------------------------------------------------------
 
 #region Helper Methods
-
-def istemplate(variant):
-    return isinstance(variant, str) and macro_regex.search(variant)
 
 def listlike(variant):
     return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
@@ -321,28 +323,6 @@ class Dumper:
 
 ####################################################################################################
 
-
-class Utils:
-    # fmt: off
-    path        = path # path.dirname and path.basename used by makefile-related rules
-    re          = re # why is sub() not working?
-
-    color       = staticmethod(color)
-    flatten     = staticmethod(flatten)
-    glob        = staticmethod(glob.glob)
-    join        = staticmethod(join)
-    ext         = staticmethod(ext)
-    log         = staticmethod(log)
-    rel_path    = staticmethod(rel_path)  # used by build_path etc
-    run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
-    stem        = staticmethod(stem)      # FIXME used by metron/tests?
-
-    hancho_dir  = path.dirname(path.realpath(__file__))
-    # fmt: on
-
-
-####################################################################################################
-
 # region Hancho's text expansion system. ------------------------------------------------------------
 
 # Works similarly to Python's F-strings, but with quite a bit more power.
@@ -367,13 +347,10 @@ class Utils:
 # Tests currently require MAX_EXPAND_DEPTH >= 6
 MAX_EXPAND_DEPTH = 20
 
-# Matches macros inside a string.
-macro_regex = re.compile("{[^{}]*}")
-
-def trace_prefix(context):
-    """Prints the left-side trellis of the expansion traces."""
-    return hex(id(context)) + ": " + ("┃ " * app.expand_depth)
-
+def log_trace(context, text):
+    """Prints a trace message to the log."""
+    prefix = hex(id(context)) + ": " + ("┃ " * app.expand_depth)
+    log(prefix + text)
 
 def trace_variant(variant):
     """Prints the right-side values of the expansion traces."""
@@ -387,7 +364,7 @@ def trace_variant(variant):
         return f"'{variant}'"
 
 def stringify_variant(variant):
-    """Converts any type into an expansion-compatible string."""
+    """Converts any type into an template-compatible string."""
     if variant is None:
         return ""
     elif listlike(variant):
@@ -421,7 +398,7 @@ class Expander:
     def __getattr__(self, key):
         return self.get(key)
 
-    def get(self, key):
+    def get(self, key, default = None):
         # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
         # method is called on the Expander instance, not the class.
         if hasattr(Expander, key):
@@ -431,16 +408,20 @@ class Expander:
             val = getattr(Utils, key)
         # Neither of those special cases apply, so we fetch the key from the context and expand it
         # immediately.
+        elif hasattr(self.context, key):
+            val = expand_variant(self.context, getattr(self.context, key))
         elif key in self.context:
             val = expand_variant(self.context, self.context[key])
+        elif default is not None:
+            val = default
         # If the key is not found, raise an AttributeError.
         else:
             if self.trace:
-                log(trace_prefix(self) + f"┃ Read '{key}' failed")
+                log_trace(self, f"┃ Read '{key}' failed")
             raise AttributeError(key)
 
         if self.trace:
-            log(trace_prefix(self) + f"┃ Read '{key}' = {trace_variant(val)}")
+            log_trace(self, f"┃ Read '{key}' = {trace_variant(val)}")
 
         # If we fetched a dict, wrap it in an Expander so we expand its sub-fields.
         if isinstance(val, dict):
@@ -454,92 +435,162 @@ class Expander:
 
 # ----------------------------------------
 
-def expand_text(context, text):
-    """Replaces all macros in 'text' with their expanded, stringified values."""
+def eval_macro(context, macro):
+    trace = context.get("trace", app.flags.trace)
+    if trace:
+        log_trace(context, f"┏ eval_macro {macro}")
 
-    if not istemplate(text):
-        return text
+    #----------
+
+    try:
+        result = eval(macro[1:-1], {}, Expander(context))  # pylint: disable=eval-used
+        if trace:
+            log_trace(context, f"┗ eval_macro {macro} = {result}")
+    except BaseException:  # pylint: disable=broad-exception-caught
+        # TEFINAE - Text Expansion Failure Is Not An Error, we return the original macro.
+        result = macro
+        if trace:
+            log_trace(context, f"┗ eval_macro {macro} failed")
+
+    return result
+
+# ----------------------------------------
+
+def split_template(text):
+    """
+    Extract all innermost single-brace-delimited spans from a block of text and produce a list of
+    non-delimited and delimited blocks. Escaped braces don't count as delimiters.
+    """
+    result = []
+    cursor = 0
+    lbrace = -1
+    rbrace = -1
+    escaped = False
+
+    for i, c in enumerate(text):
+        if escaped:
+            escaped = False
+        elif c == '\\':
+            escaped = True
+        elif c == '{':
+            lbrace = i
+        elif c == '}' and lbrace >= 0:
+            rbrace = i
+            if cursor < lbrace:
+                result.append((False, text[cursor:lbrace]))
+            result.append((True, text[lbrace:rbrace + 1]))
+            cursor = rbrace + 1
+            lbrace = -1
+            rbrace = -1
+
+    if cursor < len(text):
+        result.append((False, text[cursor:]))
+
+    return result
+
+# ----------------------------------------
+
+def eval_template(context, template):
+    """Replaces all macros in 'template' with their stringified values."""
 
     trace = context.get("trace", app.flags.trace)
-
     if trace:
-        log(trace_prefix(context) + f"┏ expand_text '{text}'")
+        log_trace(context, f"┏ expand_text '{template}'")
 
-    app.expand_depth += 1
-    if app.expand_depth > MAX_EXPAND_DEPTH:
-        raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
+    #----------
 
-    # ==========
-
-    old_text = text
-    temp = old_text
+    blocks = split_template(template)
     result = ""
-    while span := macro_regex.search(temp):
-        result += temp[0 : span.start()]
-        macro = temp[span.start() : span.end()]
+    for block in blocks:
+        if block[0] is True:
+            value = eval_macro(context, block[1])
+            result += stringify_variant(value)
+        else:
+            result += block[1]
 
-        if trace:
-            log(trace_prefix(context) + f"┏ expand_macro '{macro}'")
-
-        # ==========
-
-        result2 = macro
-        failed = False
-
-        try:
-            result2 = eval(macro[1:-1], {}, Expander(context))  # pylint: disable=eval-used
-        except RecursionError:
-            raise
-        except BaseException:  # pylint: disable=broad-exception-caught
-            failed = True
-
-        # ==========
-
-        if trace:
-            if failed:
-                log(trace_prefix(context) + f"┗ expand_macro '{macro}' failed")
-            else:
-                log(trace_prefix(context) + f"┗ expand_macro '{macro}' = {result2}")
-
-        variant = result2
-
-        result += stringify_variant(variant)
-        temp = temp[span.end() :]
-    result += temp
-
-    # ==========
-
-    # If expansion changed the text, try to expand it again.
-    if result != old_text:
-        result = expand_text(context, result)
-
-    app.expand_depth -= 1
-    if app.expand_depth < 0:
-        raise RecursionError("Text expand_inc/dec unbalanced")
+    #----------
 
     if trace:
-        log(trace_prefix(context) + f"┗ expand_text '{old_text}' = '{result}'")
+        log_trace(context, f"┗ eval_template '{template}' = '{result}'")
+
+    #print(app.expand_depth)
 
     return result
 
 # ----------------------------------------
 
 def expand_variant(context, variant):
-    """Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
-    expand someone else's data."""
+    """Expands single templates and nested lists of templates."""
 
-    if listlike(variant):
+    recurse = False
+
+    if isinstance(variant, str):
+        blocks = split_template(variant)
+
+        if len(blocks) == 0:
+            result = variant
+        elif len(blocks) > 1:
+            template = variant
+            result = eval_template(context, template)
+            if result != template:
+                recurse = True
+        elif blocks[0][0] is True:
+            macro = blocks[0][1]
+            result = eval_macro(context, macro)
+            if result != macro:
+                recurse = True
+        else:
+            result = variant
+    elif listlike(variant):
         result = [expand_variant(context, val) for val in variant]
-    elif isinstance(variant, str):
-        app.expand_depth += 1
-        result = expand_text(context, variant)
-        app.expand_depth -= 1
     else:
         result = variant
 
+    if recurse:
+        app.expand_depth += 1
+        if app.expand_depth > MAX_EXPAND_DEPTH:
+            raise RecursionError(f"TemplateRecursion: Text expansion of {variant} failed to terminate")
+
+        # If we are recursing, we need to ensure that we expand the result again, in case it
+        # contains any macros or templates that need to be expanded.
+        result = expand_variant(context, result)
+        app.expand_depth -= 1
+
+
     return result
 
+# ----------------------------------------
+
+def expand_everything(context, variant):
+    pass
+
 #endregion -----------------------------------------------------------------------------------------
+
+####################################################################################################
+
+
+class Utils:
+    # fmt: off
+    path        = path # path.dirname and path.basename used by makefile-related rules
+    re          = re # why is sub() not working?
+
+    color       = staticmethod(color)
+    flatten     = staticmethod(flatten)
+    glob        = staticmethod(glob.glob)
+    join        = staticmethod(join)
+    ext         = staticmethod(ext)
+    log         = staticmethod(log)
+    rel_path    = staticmethod(rel_path)  # used by build_path etc
+    run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
+    stem        = staticmethod(stem)      # FIXME used by metron/tests?
+
+    #expand      = staticmethod(expand_variant)
+
+    hancho_dir  = path.dirname(path.realpath(__file__))
+    # fmt: on
+
+####################################################################################################
+
 
 class Promise:
     def __init__(self, task, *args):
@@ -588,6 +639,13 @@ class Task:
         )
 
         self.context = merge_dicts(default_context, *args, **kwargs)
+
+        self.config = DotDict(
+            _desc = None,
+            _command = None,
+            _in_files = [],
+            _out_files = [],
+        )
 
         self._task_index = 0
         self.in_files = []
@@ -646,9 +704,13 @@ class Task:
 
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
+
+        # FIXME what if things like 'verbosity' could also be templates?
+        # hancho(verbosity = "{True if blah else False}")
+
         verbosity = self.context.get("verbosity", app.flags.verbosity)
         log(
-            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.context.desc}",
+            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config._desc}",
             sameline=verbosity == 0,
         )
 
@@ -744,13 +806,20 @@ class Task:
         if debug:
             log(f"\nTask before expand: {self}")
 
+        expander = Expander(self.context)
+
         # ----------------------------------------
         # Expand task_dir and build_dir
 
         # pylint: disable=attribute-defined-outside-init
 
-        self.context.task_dir   = abs_path(expand_variant(self.context, self.context.task_dir))
-        self.context.build_dir  = abs_path(expand_variant(self.context, self.context.build_dir))
+        # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
+
+        self.config.task_dir   = abs_path(expander.task_dir)
+        self.config.build_dir  = abs_path(expander.build_dir)
+
+        self.context.task_dir   = abs_path(expander.task_dir)
+        self.context.build_dir  = abs_path(expander.build_dir)
 
         # Raw tasks may not have a repo_dir.
         repo_dir = self.context.get("repo_dir", None)
@@ -765,6 +834,9 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
+        #for key in expander.keys():
+        #    print(f"key {key}")
+
         for key, val in self.context.items():
             if key.startswith("in_") or key.startswith("out_"):
                 def expand_path(_, val):
@@ -773,11 +845,15 @@ class Task:
                     val = expand_variant(self.context, val)
                     val = path.normpath(val)
                     return val
-                self.context[key] = map_variant(key, val, expand_path)
+                #val = self.context[key]
+                expanded = map_variant(key, val, expand_path)
+                self.config[key] = expanded
+                self.context[key] = expanded
 
         # Make all in_ and out_ file paths absolute
 
         # FIXME feeling like in_depfile should really be io_depfile...
+        # FIXME I dislike all this "move_to" stuff
 
         for key, val in self.context.items():
             if key.startswith("out_") or key == "in_depfile":
@@ -799,7 +875,9 @@ class Task:
                         # Relative path, add build_dir
                         val = join_path(self.context.build_dir, val)
                     return val
-                self.context[key] = map_variant(key, val, move_to_builddir)
+                moved = map_variant(key, val, move_to_builddir)
+                self.config[key] = moved
+                self.context[key] = moved
             elif key.startswith("in_"):
                 def move_to_taskdir(key, val):
                     if not isinstance(val, str):
@@ -807,7 +885,9 @@ class Task:
                     if not path.isabs(val):
                         val = join_path(self.context.task_dir, val)
                     return val
-                self.context[key] = map_variant(key, val, move_to_taskdir)
+                moved = map_variant(key, val, move_to_taskdir)
+                self.config[key] = moved
+                self.context[key] = moved
 
         # Gather all inputs to task.in_files and outputs to task.out_files
 
@@ -817,16 +897,25 @@ class Task:
             if key == "in_depfile":
                 if path.isfile(val):
                     self.in_files.append(val)
+                    self.config._in_files.append(val)
             elif key.startswith("out_"):
                 self.out_files.extend(flatten(val))
+                self.config._out_files.extend(flatten(val))
             elif key.startswith("in_"):
                 self.in_files.extend(flatten(val))
+                self.config._in_files.extend(flatten(val))
 
         # ----------------------------------------
         # And now we can expand the command.
 
-        self.context.desc    = expand_variant(self.context, self.context.desc)
-        self.context.command = expand_variant(self.context, self.context.command)
+        expanded_desc    = expander.desc
+        expanded_command = expander.command
+
+        self.context.desc    = expanded_desc
+        self.context.command = expanded_command
+
+        self.config._desc    = expanded_desc
+        self.config._command = expanded_command
 
         if debug:
             log(f"\nTask after expand: {self}")
@@ -1006,7 +1095,7 @@ class Task:
 
         if debug or verbosity:
             log(
-                f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.context.desc}'"
+                f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config._desc}'"
             )
             if self._stdout:
                 log("Stdout:")
@@ -1110,7 +1199,13 @@ class HanchoAPI(Utils):
                 continue
             new_module[key] = val
 
+        # Tack the context onto the module so people who load it can see the paths it was built with, etc.
+        new_module['context'] = temp_globals['hancho'].context
+
         return new_module
+
+    def expand(self, text):
+        return expand_variant(self.context, text)
 
 ####################################################################################################
 
@@ -1483,7 +1578,7 @@ class App:
                 await task.asyncio_task
             except BaseException:  # pylint: disable=broad-exception-caught
                 log(color(255, 128, 0), end="")
-                log(f"Task failed: {task.context.desc}")
+                log(f"Task failed: {task.config._desc}")
                 log(color(), end="")
                 log(str(task))
                 log(color(255, 128, 128), end="")
@@ -1534,6 +1629,7 @@ if __name__ == "__main__":
 
 # endregion ---------------------------------------------------------------------------------------
 
-import doctest
-doctest.testmod(verbose=True)
-doctest.testmod()
+#import doctest
+#doctest.testmod(verbose=True)
+#doctest.testmod()
+
