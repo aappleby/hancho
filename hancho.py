@@ -108,6 +108,8 @@ def log(message, *, sameline=False, **kwargs):
 #region Path manipulation
 
 def abs_path(raw_path) -> str | list[str]:
+    if raw_path is None:
+        return None
     if listlike(raw_path):
         return [abs_path(p) for p in raw_path]
     return path.abspath(raw_path)
@@ -825,6 +827,39 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
+    def move_to_builddir(self, _, val):
+        if not isinstance(val, str):
+            return val
+        # Note this conditional needs to be first, as build_dir can itself be under
+        # task_dir
+        if val.startswith(self.config.build_dir):
+            # Absolute path under build_dir, do nothing.
+            pass
+        elif val.startswith(self.config.task_dir):
+            # Absolute path under task_dir, move to build_dir
+            val = rel_path(val, self.config.task_dir)
+            val = join_path(self.config.build_dir, val)
+        elif path.isabs(val):
+            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
+        else:
+            # Relative path, add build_dir
+            val = join_path(self.config.build_dir, val)
+        return val
+
+    def move_to_taskdir(self, key, val):
+        if not isinstance(val, str):
+            return val
+        if not path.isabs(val):
+            val = join_path(self.config.task_dir, val)
+        return val
+
+    def expand_path(self, _, val):
+        if not isinstance(val, str):
+            return val
+        val = expand_variant(self.context, val)
+        val = path.normpath(val)
+        return val
+
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
@@ -840,14 +875,17 @@ class Task:
 
         # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
 
-        self.config.task_dir   = abs_path(self.expanded_context.task_dir)
-        self.config.build_dir  = abs_path(self.expanded_context.build_dir)
+        repo_dir   = abs_path(self.expanded_context.get("repo_dir", None))
+        task_dir   = abs_path(self.expanded_context.task_dir)
+        build_dir  = abs_path(self.expanded_context.build_dir)
 
-        self.context.task_dir   = abs_path(self.expanded_context.task_dir)
-        self.context.build_dir  = abs_path(self.expanded_context.build_dir)
+        self.config.task_dir   = task_dir
+        self.config.build_dir  = build_dir
+
+        self.context.task_dir   = task_dir
+        self.context.build_dir  = build_dir
 
         # Raw tasks may not have a repo_dir.
-        repo_dir = self.expanded_context.get("repo_dir", None)
         if repo_dir is not None:
             if not self.context.build_dir.startswith(repo_dir):
                 raise ValueError(
@@ -859,72 +897,61 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        #for key in expander.keys():
-        #    print(f"key {key}")
-
-        for key, val in self.context.items():
-            if key.startswith("in_") or key.startswith("out_"):
-                def expand_path(_, val):
-                    if not isinstance(val, str):
-                        return val
-                    val = expand_variant(self.context, val)
-                    val = path.normpath(val)
-                    return val
-                #val = self.context[key]
-                expanded = map_variant(key, val, expand_path)
-                self.config[key] = expanded
-                self.context[key] = expanded
-
         # Make all in_ and out_ file paths absolute
 
         # FIXME feeling like in_depfile should really be io_depfile...
         # FIXME I dislike all this "move_to" stuff
 
-        for key, val in self.context.items():
-            if key.startswith("out_") or key == "in_depfile":
-                def move_to_builddir(_, val):
-                    if not isinstance(val, str):
-                        return val
-                    # Note this conditional needs to be first, as build_dir can itself be under
-                    # task_dir
-                    if val.startswith(self.context.build_dir):
-                        # Absolute path under build_dir, do nothing.
-                        pass
-                    elif val.startswith(self.context.task_dir):
-                        # Absolute path under task_dir, move to build_dir
-                        val = rel_path(val, self.context.task_dir)
-                        val = join_path(self.context.build_dir, val)
-                    elif path.isabs(val):
-                        raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
-                    else:
-                        # Relative path, add build_dir
-                        val = join_path(self.context.build_dir, val)
-                    return val
-                moved = map_variant(key, val, move_to_builddir)
+        # Gather all inputs to task.config._in_files and outputs to task.config._out_files
+
+        # pylint: disable=consider-using-dict-items
+        for key in self.expanded_context.keys():
+            if key == "in_depfile":
+                val = self.expanded_context[key]
+                expanded = map_variant(key, val, self.expand_path)
+                self.config[key] = expanded
+                self.context[key] = expanded
+            elif key.startswith("in_"):
+                val = self.expanded_context[key]
+                expanded = map_variant(key, val, self.expand_path)
+                self.config[key] = expanded
+                self.context[key] = expanded
+            elif key.startswith("out_"):
+                val = self.expanded_context[key]
+                expanded = map_variant(key, val, self.expand_path)
+                self.config[key] = expanded
+                self.context[key] = expanded
+
+        # pylint: disable=consider-using-dict-items
+        for key in self.context.keys():
+            if key == "in_depfile":
+                val = self.expanded_context[key]
+                moved = map_variant(key, val, self.move_to_builddir)
                 self.config[key] = moved
                 self.context[key] = moved
             elif key.startswith("in_"):
-                def move_to_taskdir(key, val):
-                    if not isinstance(val, str):
-                        return val
-                    if not path.isabs(val):
-                        val = join_path(self.context.task_dir, val)
-                    return val
-                moved = map_variant(key, val, move_to_taskdir)
+                val = self.expanded_context[key]
+                moved = map_variant(key, val, self.move_to_taskdir)
+                self.config[key] = moved
+                self.context[key] = moved
+            elif key.startswith("out_"):
+                val = self.expanded_context[key]
+                moved = map_variant(key, val, self.move_to_builddir)
                 self.config[key] = moved
                 self.context[key] = moved
 
-        # Gather all inputs to task.config._in_files and outputs to task.config._out_files
-
-        for key, val in self.context.items():
+        for key in self.context.keys():
             # Note - we only add the depfile to _in_files _if_it_exists_, otherwise we will fail a check
             # that all our inputs are present.
             if key == "in_depfile":
+                val = self.context[key]
                 if path.isfile(val):
                     self.config._in_files.append(val)
             elif key.startswith("out_"):
+                val = self.context[key]
                 self.config._out_files.extend(flatten(val))
             elif key.startswith("in_"):
+                val = self.context[key]
                 self.config._in_files.extend(flatten(val))
 
         # ----------------------------------------
