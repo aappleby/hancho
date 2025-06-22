@@ -420,6 +420,8 @@ class Expander:
         assert False
 
     def get(self, key, default = None):
+        val = default
+
         # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
         # method is called on the Expander instance, not the class.
         if hasattr(Expander, key):
@@ -433,13 +435,6 @@ class Expander:
             val = expand_variant(self.context3, getattr(self.context3, key))
         elif key in self.context3:
             val = expand_variant(self.context3, self.context3[key])
-        elif default is not None:
-            val = default
-        # If the key is not found, raise an AttributeError.
-        else:
-            if self.trace:
-                log_trace(self, f"┃ Read '{key}' failed")
-            raise AttributeError(key)
 
         if self.trace:
             log_trace(self, f"┃ Read '{key}' = {trace_variant(val)}")
@@ -738,7 +733,7 @@ class Task:
         # FIXME what if things like 'verbosity' could also be templates?
         # hancho(verbosity = "{True if blah else False}")
 
-        verbosity = self.context.get("verbosity", app.flags.verbosity)
+        verbosity = self.expanded_context.get("verbosity", app.flags.verbosity)
         log(
             f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config._desc}",
             sameline=verbosity == 0,
@@ -749,9 +744,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self.context.get("verbosity", app.flags.verbosity)
-        debug = self.context.get("debug", app.flags.debug)
-        rebuild = self.context.get("rebuild", app.flags.rebuild)
+        verbosity = self.expanded_context.get("verbosity", app.flags.verbosity)
+        debug = self.expanded_context.get("debug", app.flags.debug)
+        rebuild = self.expanded_context.get("rebuild", app.flags.rebuild)
 
         # Await everything awaitable in this task's context.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -761,6 +756,8 @@ class Task:
             self._state = TaskState.AWAITING_INPUTS
             for key, val in self.context.items():
                 self.context[key] = await await_variant(val)
+            for key, val in self.config.items():
+                self.config[key] = await await_variant(val)
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = TaskState.CANCELLED
@@ -850,7 +847,7 @@ class Task:
         self.context.build_dir  = abs_path(self.expanded_context.build_dir)
 
         # Raw tasks may not have a repo_dir.
-        repo_dir = self.context.get("repo_dir", None)
+        repo_dir = self.expanded_context.get("repo_dir", None)
         if repo_dir is not None:
             if not self.context.build_dir.startswith(repo_dir):
                 raise ValueError(
