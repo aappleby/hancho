@@ -366,7 +366,7 @@ def trace_variant(variant):
     elif isinstance(variant, dict):
         return f"dict @ {hex(id(variant))}'"
     elif isinstance(variant, Expander):
-        return f"Expander @ {hex(id(variant.context))}'"
+        return f"Expander @ {hex(id(variant.context3))}'"
     else:
         return f"'{variant}'"
 
@@ -668,7 +668,7 @@ class Task:
         )
 
         self.context = merge_dicts(default_context, *args, **kwargs)
-        self.context2 = Expander(self.context)
+        self.expanded_context = Expander(self.context)
 
         self.config = DotDict(
             _desc = None,
@@ -782,7 +782,7 @@ class Task:
             raise ex
 
         # Early-out if this is a no-op task
-        if self.context.command is None:
+        if self.config._command is None:
             app.tasks_finished += 1
             self._state = TaskState.FINISHED
             return
@@ -809,7 +809,7 @@ class Task:
             if verbosity or debug:
                 log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
-            for command in flatten(self.context.command):
+            for command in flatten(self.config._command):
                 await self.run_command(command)
                 if self._returncode != 0:
                     break
@@ -836,9 +836,6 @@ class Task:
         if debug:
             log(f"\nTask before expand: {self}")
 
-        #expander = Expander(self.context)
-        expander = self.context2
-
         # ----------------------------------------
         # Expand task_dir and build_dir
 
@@ -846,11 +843,11 @@ class Task:
 
         # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
 
-        self.config.task_dir   = abs_path(self.context2.task_dir)
-        self.config.build_dir  = abs_path(self.context2.build_dir)
+        self.config.task_dir   = abs_path(self.expanded_context.task_dir)
+        self.config.build_dir  = abs_path(self.expanded_context.build_dir)
 
-        self.context.task_dir   = abs_path(self.context2.task_dir)
-        self.context.build_dir  = abs_path(self.context2.build_dir)
+        self.context.task_dir   = abs_path(self.expanded_context.task_dir)
+        self.context.build_dir  = abs_path(self.expanded_context.build_dir)
 
         # Raw tasks may not have a repo_dir.
         repo_dir = self.context.get("repo_dir", None)
@@ -936,14 +933,8 @@ class Task:
         # ----------------------------------------
         # And now we can expand the command.
 
-        expanded_desc    = self.context2.desc
-        expanded_command = self.context2.command
-
-        self.context.desc    = expanded_desc
-        self.context.command = expanded_command
-
-        self.config._desc    = expanded_desc
-        self.config._command = expanded_command
+        self.config._desc    = self.expanded_context.desc
+        self.config._command = self.expanded_context.command
 
         if debug:
             log(f"\nTask after expand: {self}")
@@ -953,12 +944,12 @@ class Task:
 
         # FIXME need a test for this that uses symlinks
 
-        if self.config._out_files and self.context.command is not None:
+        if self.config._out_files and self.config._command is not None:
             for file in self.config._out_files:
                 file = path.realpath(file)
                 if file in app.filename_to_fingerprint:
                     raise ValueError(f"TaskCollision: Multiple tasks build {file}")
-                app.filename_to_fingerprint[file] = self.context.command
+                app.filename_to_fingerprint[file] = self.config._command
 
         # ----------------------------------------
         # Sanity checks
@@ -983,7 +974,7 @@ class Task:
                 )
 
         # Check for duplicate task outputs
-        if self.context.command:
+        if self.config._command:
             for file in self.config._out_files:
                 #if file in app.all_out_files:
                 #    raise NameError(f"Multiple rules build {file}!")
