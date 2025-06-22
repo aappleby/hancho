@@ -40,7 +40,8 @@ def generate_result(task):
         out_files = "result.txt",
         other_files = [random_touch, filelist_txt],
     )
-    task.out_files.append(new_task)
+    # FIXME should we be doing this some other way?
+    task.config._out_files.append(new_task)
 
 result_txt = hancho(
     desc = "Read {in_filelist} and use its contents to generate another task",

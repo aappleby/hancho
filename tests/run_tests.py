@@ -653,6 +653,76 @@ class TestHancho(unittest.TestCase):
 
 ####################################################################################################
 
+class TestSplitTemplate(unittest.TestCase):
+    def test_basic(self):
+        def split_template(text):
+            blocks = hancho_py.split_template(text)
+            return [block[1] for block in blocks]
+
+        # Sanity check - Single braces should produce a block
+        self.assertEqual(split_template("a {b} c"), ['a ', '{b}', ' c'])
+
+        # Degenerate cases should produce single blocks
+        self.assertEqual(split_template(""),  []   )
+        self.assertEqual(split_template("{"), ['{'])
+        self.assertEqual(split_template("}"), ['}'])
+        self.assertEqual(split_template("a"), ['a'])
+
+        # Multiple single-braced blocks should not produce empty text between them if they touch
+        self.assertEqual(split_template("{a}{b}{c}"), ['{a}', '{b}', '{c}']  )
+
+        # But if there's whitespace between them, it should be preserved
+        self.assertEqual(split_template(" {a} {b} {c} "), [' ', '{a}', ' ', '{b}', ' ', '{c}', ' '])
+
+        # Whitespace inside a block should not split the block
+        self.assertEqual(split_template("{ a }{ b }{ c }"), ['{ a }', '{ b }', '{ c }'])
+
+        # Unmatched braces
+        self.assertEqual(split_template("{"),   ['{'])
+        self.assertEqual(split_template("}"),   ['}'])
+
+        self.assertEqual(split_template("{}"),  ['{}'])
+        self.assertEqual(split_template("}{"),  ['}{'])
+        self.assertEqual(split_template("{a"),  ['{a'])
+        self.assertEqual(split_template("a}"),  ['a}'])
+
+        self.assertEqual(split_template("a{b"), ['a{b'])
+        self.assertEqual(split_template("a}b"), ['a}b'])
+        self.assertEqual(split_template("}}{"), ['}}{'])
+        self.assertEqual(split_template("}{{"), ['}{{'])
+        self.assertEqual(split_template("{{}"), ['{', '{}'])
+        self.assertEqual(split_template("{{}"), ['{', '{}'])
+        self.assertEqual(split_template("{}}"), ['{}', '}'])
+
+        # Nesting
+        self.assertEqual(split_template("a{{b}}c"),      ['a{', '{b}', '}c'])
+        self.assertEqual(split_template("{a{b}c}"),      ['{a', '{b}', 'c}'])
+        self.assertEqual(split_template("x{a{b}{c}d}y"), ['x{a', '{b}', '{c}', 'd}y'])
+        self.assertEqual(split_template("{{{{a}}}}"),    ['{{{', '{a}', '}}}'])
+
+        # Adjacent blocks with different brace counts
+        self.assertEqual(split_template("{a}{{b}}{c}"),   ['{a}', '{', '{b}', '}', '{c}'])
+        self.assertEqual(split_template("{{a}}{b}{{c}}"), ['{', '{a}', '}', '{b}', '{', '{c}', '}'])
+        self.assertEqual(split_template("{{a}}"),         ['{', '{a}', '}']       )
+        self.assertEqual(split_template("{{a}{b}}"),      ['{', '{a}', '{b}', '}'])
+        self.assertEqual(split_template("{{{a}}}"),       ['{{', '{a}', '}}']     )
+
+        # Escaped braces should be ignored.
+        self.assertEqual(split_template("a\\{b\\}c"),  ['a\\{b\\}c']      )
+        self.assertEqual(split_template("a{\\}}b"),    ['a', '{\\}}', 'b'])
+        self.assertEqual(split_template("a{\\{}b"),    ['a', '{\\{}', 'b'])
+
+        self.assertEqual(split_template("\\"),            ['\\'])
+        self.assertEqual(split_template("{\\n}"),         ['{\\n}'])
+        self.assertEqual(split_template("a\\{b}"),        ['a\\{b}'])
+        self.assertEqual(split_template("a{b\\}"),        ['a{b\\}'])
+
+        # Escaped backslashes should _not_ cause a following brace to be ignored.
+        self.assertEqual(split_template("a\\\\{b}"),      ['a\\\\', '{b}'])
+        self.assertEqual(split_template("a{b\\\\}"),      ['a', '{b\\\\}'])
+
+####################################################################################################
+
 #import cProfile
 #import pstats
 

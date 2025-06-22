@@ -36,6 +36,7 @@ import types
 from collections import abc
 #endregion
 
+####################################################################################################
 #region Subclass of dict that allows attribute access
 
 class DotDict(dict):
@@ -66,6 +67,7 @@ class DotDict(dict):
 
 #endregion
 
+####################################################################################################
 #region Logging
 
 def log(message, *, sameline=False, **kwargs):
@@ -100,9 +102,9 @@ def log(message, *, sameline=False, **kwargs):
 
     app.line_dirty = sameline
 
+#endregion
 
-#endregion ---------------------------------------------------------------------------------------
-
+####################################################################################################
 #region Path manipulation
 
 def abs_path(raw_path) -> str | list[str]:
@@ -138,8 +140,9 @@ def normalize_path(file_path):
     assert path.isabs(file_path)
     return file_path
 
-#endregion ---------------------------------------------------------------------------------------
+#endregion
 
+####################################################################################################
 #region Helper Methods
 
 def listlike(variant):
@@ -189,8 +192,9 @@ def mtime(filename):
     app.mtime_calls += 1
     return os.stat(filename).st_mtime_ns
 
-#endregion ---------------------------------------------------------------------------------------
+#endregion
 
+####################################################################################################
 #region Helpers for managing variants
 
 def merge_dicts(*args, **kwargs):
@@ -252,14 +256,17 @@ async def await_variant(variant):
 
     if isinstance(variant, Task):
         await variant.await_done()
-        return await await_variant(variant.out_files)
+        return await await_variant(variant.config._out_files)
 
     if inspect.isawaitable(variant):
         return await await_variant(await variant)
 
     return variant
 
-#endregion ---------------------------------------------------------------------------------------
+#endregion
+
+####################################################################################################
+# region Pretty-printer for various types
 
 class Dumper:
     def __init__(self, max_depth=2):
@@ -320,10 +327,10 @@ class Dumper:
         result += self.indent() + "}"
         return result
 
+# endregion
 
 ####################################################################################################
-
-# region Hancho's text expansion system. ------------------------------------------------------------
+# region Hancho's text expansion system.
 
 # Works similarly to Python's F-strings, but with quite a bit more power.
 #
@@ -383,20 +390,34 @@ class Expander:
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    def __init__(self, context):
-        assert isinstance(context, dict)
-        self.context = context
+#    def __new__(cls, data):
+#        if isinstance(data, cls):
+#            print("S?SD??SS?FSJK?DFKL?DFJ?SLDKJF")
+#            return data
+#        return super().__new__(cls)
+
+    def __init__(self, context3):
+        assert isinstance(context3, DotDict)
+        object.__setattr__(self, "context3", context3)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self.trace = context.get("trace", app.flags.trace)
+        object.__setattr__(self, "trace", context3.get("trace", app.flags.trace))
 
     def __contains__(self, key):
-        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context
+        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context3
 
     def __getitem__(self, key):
         return self.get(key)
 
     def __getattr__(self, key):
         return self.get(key)
+
+    def __setitem__(self, name, value):
+        print("should not be setting things on an expander")
+        assert False
+
+    def __setattr__(self, name, value):
+        print("should not be setting things on an expander")
+        assert False
 
     def get(self, key, default = None):
         # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
@@ -406,12 +427,12 @@ class Expander:
         # Check to see if we're fetching a special method from the Utils class.
         elif hasattr(Utils, key):
             val = getattr(Utils, key)
-        # Neither of those special cases apply, so we fetch the key from the context and expand it
+        # Neither of those special cases apply, so we fetch the key from the context3 and expand it
         # immediately.
-        elif hasattr(self.context, key):
-            val = expand_variant(self.context, getattr(self.context, key))
-        elif key in self.context:
-            val = expand_variant(self.context, self.context[key])
+        elif hasattr(self.context3, key):
+            val = expand_variant(self.context3, getattr(self.context3, key))
+        elif key in self.context3:
+            val = expand_variant(self.context3, self.context3[key])
         elif default is not None:
             val = default
         # If the key is not found, raise an AttributeError.
@@ -430,7 +451,12 @@ class Expander:
 
     # Returns a relative path from the task directory to the sub_path.
     def rel(self, sub_path):
-        result = rel_path(sub_path, expand_variant(self.context, self.context.task_dir))
+        result = rel_path(sub_path, expand_variant(self.context3, self.context3.task_dir))
+        return result
+
+    def __repr__(self):
+        result = f"{type(self).__name__} @ {hex(id(self))} wraps "
+        result += Dumper(2).dump(self.context3)
         return result
 
 # ----------------------------------------
@@ -495,18 +521,23 @@ def eval_template(context, template):
 
     trace = context.get("trace", app.flags.trace)
     if trace:
-        log_trace(context, f"┏ expand_text '{template}'")
+        log_trace(context, f"┏ eval_template '{template}'")
 
     #----------
 
-    blocks = split_template(template)
-    result = ""
-    for block in blocks:
-        if block[0] is True:
-            value = eval_macro(context, block[1])
-            result += stringify_variant(value)
-        else:
-            result += block[1]
+    try:
+        app.expand_depth += 1
+        blocks = split_template(template)
+        result = ""
+        for block in blocks:
+            if block[0] is True:
+                value = eval_macro(context, block[1])
+                result += stringify_variant(value)
+            else:
+                result += block[1]
+    finally:
+        app.expand_depth -= 1
+
 
     #----------
 
@@ -564,10 +595,9 @@ def expand_variant(context, variant):
 def expand_everything(context, variant):
     pass
 
-#endregion -----------------------------------------------------------------------------------------
+#endregion
 
 ####################################################################################################
-
 
 class Utils:
     # fmt: off
@@ -591,7 +621,6 @@ class Utils:
 
 ####################################################################################################
 
-
 class Promise:
     def __init__(self, task, *args):
         self.task = task
@@ -600,7 +629,7 @@ class Promise:
     async def get(self):
         await self.task.await_done()
         if len(self.args) == 0:
-            return self.task.out_files
+            return self.task.config._out_files
         elif len(self.args) == 1:
             return self.task.context[self.args[0]]
         else:
@@ -639,6 +668,7 @@ class Task:
         )
 
         self.context = merge_dicts(default_context, *args, **kwargs)
+        self.context2 = Expander(self.context)
 
         self.config = DotDict(
             _desc = None,
@@ -648,8 +678,6 @@ class Task:
         )
 
         self._task_index = 0
-        self.in_files = []
-        self.out_files = []
         self._state = TaskState.DECLARED
         self._reason = None
         self.asyncio_task = None
@@ -676,15 +704,17 @@ class Task:
 
     def queue(self):
         if self._state is TaskState.DECLARED:
-            app.queued_tasks.append(self)
-            self._state = TaskState.QUEUED
 
+            # Queue all tasks referenced by this task's context.
             def apply(_, val):
                 if isinstance(val, Task):
                     val.queue()
                 return val
-
             map_variant(None, self.context, apply)
+
+            # And now queue this task.
+            app.queued_tasks.append(self)
+            self._state = TaskState.QUEUED
 
     def start(self):
         self.queue()
@@ -806,7 +836,8 @@ class Task:
         if debug:
             log(f"\nTask before expand: {self}")
 
-        expander = Expander(self.context)
+        #expander = Expander(self.context)
+        expander = self.context2
 
         # ----------------------------------------
         # Expand task_dir and build_dir
@@ -815,11 +846,11 @@ class Task:
 
         # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
 
-        self.config.task_dir   = abs_path(expander.task_dir)
-        self.config.build_dir  = abs_path(expander.build_dir)
+        self.config.task_dir   = abs_path(self.context2.task_dir)
+        self.config.build_dir  = abs_path(self.context2.build_dir)
 
-        self.context.task_dir   = abs_path(expander.task_dir)
-        self.context.build_dir  = abs_path(expander.build_dir)
+        self.context.task_dir   = abs_path(self.context2.task_dir)
+        self.context.build_dir  = abs_path(self.context2.build_dir)
 
         # Raw tasks may not have a repo_dir.
         repo_dir = self.context.get("repo_dir", None)
@@ -889,27 +920,24 @@ class Task:
                 self.config[key] = moved
                 self.context[key] = moved
 
-        # Gather all inputs to task.in_files and outputs to task.out_files
+        # Gather all inputs to task.config._in_files and outputs to task.config._out_files
 
         for key, val in self.context.items():
-            # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will fail a check
+            # Note - we only add the depfile to _in_files _if_it_exists_, otherwise we will fail a check
             # that all our inputs are present.
             if key == "in_depfile":
                 if path.isfile(val):
-                    self.in_files.append(val)
                     self.config._in_files.append(val)
             elif key.startswith("out_"):
-                self.out_files.extend(flatten(val))
                 self.config._out_files.extend(flatten(val))
             elif key.startswith("in_"):
-                self.in_files.extend(flatten(val))
                 self.config._in_files.extend(flatten(val))
 
         # ----------------------------------------
         # And now we can expand the command.
 
-        expanded_desc    = expander.desc
-        expanded_command = expander.command
+        expanded_desc    = self.context2.desc
+        expanded_command = self.context2.command
 
         self.context.desc    = expanded_desc
         self.context.command = expanded_command
@@ -925,8 +953,8 @@ class Task:
 
         # FIXME need a test for this that uses symlinks
 
-        if self.out_files and self.context.command is not None:
-            for file in self.out_files:
+        if self.config._out_files and self.context.command is not None:
+            for file in self.config._out_files:
                 file = path.realpath(file)
                 if file in app.filename_to_fingerprint:
                     raise ValueError(f"TaskCollision: Multiple tasks build {file}")
@@ -939,16 +967,16 @@ class Task:
         if not path.exists(self.context.task_dir):
             raise FileNotFoundError(self.context.task_dir)
 
-        for file in self.in_files:
+        for file in self.config._in_files:
             if file is None:
-                raise ValueError("in_files contained a None")
+                raise ValueError("config._in_files contained a None")
             if not path.exists(file):
                 raise FileNotFoundError(file)
 
         # Check that all build files would end up under build_dir
-        for file in self.out_files:
+        for file in self.config._out_files:
             if file is None:
-                raise ValueError("out_files contained a None")
+                raise ValueError("config._out_files contained a None")
             if not file.startswith(self.context.build_dir):
                 raise ValueError(
                     f"Path error, output file {file} is not under build_dir {self.context.build_dir}"
@@ -956,14 +984,14 @@ class Task:
 
         # Check for duplicate task outputs
         if self.context.command:
-            for file in self.out_files:
+            for file in self.config._out_files:
                 #if file in app.all_out_files:
                 #    raise NameError(f"Multiple rules build {file}!")
                 app.all_out_files.add(file)
 
         # Make sure our output directories exist
         if not app.flags.dry_run:
-            for file in self.out_files:
+            for file in self.config._out_files:
                 os.makedirs(path.dirname(file), exist_ok=True)
 
     # -----------------------------------------------------------------------------------------------
@@ -974,24 +1002,24 @@ class Task:
         debug = self.context.get("debug", app.flags.debug)
 
         if rebuild:
-            return f"Files {self.out_files} forced to rebuild"
-        if not self.in_files:
+            return f"Files {self.config._out_files} forced to rebuild"
+        if not self.config._in_files:
             return "Always rebuild a target with no inputs"
-        if not self.out_files:
+        if not self.config._out_files:
             return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
-        for file in self.out_files:
+        for file in self.config._out_files:
             if not path.exists(file):
                 return f"Rebuilding because {file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(mtime(f) for f in self.out_files)
+        min_out = min(mtime(f) for f in self.config._out_files)
 
         if mtime(__file__) >= min_out:
             return "Rebuilding because hancho.py has changed"
 
-        for file in self.in_files:
+        for file in self.config._in_files:
             if mtime(file) >= min_out:
                 return f"Rebuilding because {file} has changed"
 
@@ -1319,7 +1347,6 @@ class JobPool:
 
 ####################################################################################################
 
-
 class App:
 
     def __init__(self):
@@ -1483,7 +1510,7 @@ class App:
                 queue_task = False
                 task_name = None
                 # This doesn't work because we haven't expanded output filenames yet
-                # for out_file in flatten(task.out_files):
+                # for out_file in flatten(task.config._out_files):
                 #    if app.target_regex.search(out_file):
                 #        queue_task = True
                 #        task_name = out_file
@@ -1617,17 +1644,35 @@ class App:
 
         return -1 if self.tasks_failed or self.tasks_broken else 0
 
+####################################################################################################
 # region Main
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a
 # module instead of running it directly.
 
 app = App()
 
+#def test_main():
+#    app.flags.trace = True
+#
+#    foo = DotDict(
+#        a = "bee",
+#        b = "boo",
+#        beeboo = "1234 {foobar}",
+#        foobar = "1234 {barbaz}",
+#        barbaz = 1234,
+#    )
+#
+#    result = foo.expand("blarp {{a}{b}}")
+#    print(result)
+#    print(type(result))
+#main()
+
 if __name__ == "__main__":
     app.parse_flags(sys.argv[1:])
     sys.exit(app.main())
 
-# endregion ---------------------------------------------------------------------------------------
+# endregion
+####################################################################################################
 
 #import doctest
 #doctest.testmod(verbose=True)
