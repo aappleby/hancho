@@ -142,8 +142,19 @@ def normalize_path(file_path):
     assert path.isabs(file_path)
     return file_path
 
-#endregion
+def normpath(val):
+    if isinstance(val, list):
+        result = [normpath(v) for v in val]
+    elif val is None:
+        result = None
+    elif isinstance(val, str):
+        result = path.normpath(val)
+    else:
+        assert False
+    return result
 
+
+#endregion
 ####################################################################################################
 #region Helper Methods
 
@@ -266,7 +277,6 @@ async def await_variant(variant):
     return variant
 
 #endregion
-
 ####################################################################################################
 # region Pretty-printer for various types
 
@@ -330,7 +340,6 @@ class Dumper:
         return result
 
 # endregion
-
 ####################################################################################################
 # region Hancho's text expansion system.
 
@@ -593,8 +602,8 @@ def expand_everything(context, variant):
     pass
 
 #endregion
-
 ####################################################################################################
+#region Utils
 
 class Utils:
     # fmt: off
@@ -616,7 +625,9 @@ class Utils:
     hancho_dir  = path.dirname(path.realpath(__file__))
     # fmt: on
 
+#endregion
 ####################################################################################################
+#region Promise
 
 class Promise:
     def __init__(self, task, *args):
@@ -632,6 +643,7 @@ class Promise:
         else:
             return [self.task.context[field] for field in self.args]
 
+#endregion
 ####################################################################################################
 
 class TaskState:
@@ -846,19 +858,41 @@ class Task:
             val = join_path(self.config.build_dir, val)
         return val
 
-    def move_to_taskdir(self, key, val):
-        if not isinstance(val, str):
-            return val
-        if not path.isabs(val):
-            val = join_path(self.config.task_dir, val)
-        return val
+#    def move_to_builddir2(self, build_dir, val):
+#        if isinstance(val, list):
+#            return [self.move_to_builddir2(build_dir, v) for v in val]
+#        if val is None:
+#            return None
+#        assert isinstance(val, str)
+#
+#        # Note this conditional needs to be first, as build_dir can itself be under
+#        # task_dir
+#        if val.startswith(build_dir):
+#            # Absolute path under build_dir, do nothing.
+#            pass
+#        elif val.startswith(task_dir):
+#            # Absolute path under task_dir, move to build_dir
+#            val = rel_path(val, task_dir)
+#            val = join_path(build_dir, val)
+#        elif path.isabs(val):
+#            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
+#        else:
+#            # Relative path, add build_dir
+#            val = join_path(build_dir, val)
+#        return val
 
-    def expand_path(self, _, val):
-        if not isinstance(val, str):
-            return val
-        val = expand_variant(self.context, val)
-        val = path.normpath(val)
-        return val
+    def prepend_dir(self, task_dir, val):
+        if isinstance(val, list):
+            result = [self.prepend_dir(task_dir, v) for v in val]
+        elif val is None:
+            result = None
+        elif isinstance(val, str):
+            result = join_path(task_dir, val)
+        else:
+            assert False
+        return result
+
+    # -----------------------------------------------------------------------------------------------
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
@@ -879,6 +913,10 @@ class Task:
         task_dir   = abs_path(self.expanded_context.task_dir)
         build_dir  = abs_path(self.expanded_context.build_dir)
 
+        # Check for missing input files/paths
+        if not path.exists(task_dir):
+            raise FileNotFoundError(task_dir)
+
         self.config.task_dir   = task_dir
         self.config.build_dir  = build_dir
 
@@ -887,9 +925,9 @@ class Task:
 
         # Raw tasks may not have a repo_dir.
         if repo_dir is not None:
-            if not self.context.build_dir.startswith(repo_dir):
+            if not build_dir.startswith(repo_dir):
                 raise ValueError(
-                    f"Path error, build_dir {self.context.build_dir} is not under repo dir {repo_dir}"
+                    f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
                 )
 
         # ----------------------------------------
@@ -904,83 +942,60 @@ class Task:
 
         # Gather all inputs to task.config._in_files and outputs to task.config._out_files
 
+        def handle_depfile(file):
+            if file is None:
+                return None
+            if isinstance(file, list):
+                return [handle_depfile(f) for f in file]
+            file = normpath(file)
+            file = rel_path(file, task_dir)
+            file = join_path(build_dir, file)
+            return file
+
         # pylint: disable=consider-using-dict-items
         for key in self.expanded_context.keys():
             if key == "in_depfile":
-                val = self.expanded_context[key]
-                expanded = map_variant(key, val, self.expand_path)
-                self.config[key] = expanded
-                self.context[key] = expanded
-            elif key.startswith("in_"):
-                val = self.expanded_context[key]
-                expanded = map_variant(key, val, self.expand_path)
-                self.config[key] = expanded
-                self.context[key] = expanded
-            elif key.startswith("out_"):
-                val = self.expanded_context[key]
-                expanded = map_variant(key, val, self.expand_path)
-                self.config[key] = expanded
-                self.context[key] = expanded
+                # Note - we only add the depfile to _in_files _if_it_exists_, otherwise we will
+                # fail a check that all our inputs are present.
 
-        # pylint: disable=consider-using-dict-items
-        for key in self.context.keys():
-            if key == "in_depfile":
-                val = self.expanded_context[key]
-                moved = map_variant(key, val, self.move_to_builddir)
-                self.config[key] = moved
-                self.context[key] = moved
-            elif key.startswith("in_"):
-                val = self.expanded_context[key]
-                moved = map_variant(key, val, self.move_to_taskdir)
-                self.config[key] = moved
-                self.context[key] = moved
-            elif key.startswith("out_"):
-                val = self.expanded_context[key]
-                moved = map_variant(key, val, self.move_to_builddir)
-                self.config[key] = moved
-                self.context[key] = moved
 
-        for key in self.context.keys():
-            # Note - we only add the depfile to _in_files _if_it_exists_, otherwise we will fail a check
-            # that all our inputs are present.
-            if key == "in_depfile":
-                val = self.context[key]
+
+                val = self.expanded_context[key]
+                val = normpath(val)
+                val = map_variant(key, val, self.move_to_builddir)
                 if path.isfile(val):
                     self.config._in_files.append(val)
-            elif key.startswith("out_"):
-                val = self.context[key]
-                self.config._out_files.extend(flatten(val))
+                self.config[key] = val
+                self.context[key] = val
             elif key.startswith("in_"):
-                val = self.context[key]
+                val = self.expanded_context[key]
+                val = normpath(val)
+                val = self.prepend_dir(task_dir, val)
                 self.config._in_files.extend(flatten(val))
-
-        # ----------------------------------------
-        # And now we can expand the command.
-
-        self.config._desc    = self.expanded_context.desc
-        self.config._command = self.expanded_context.command
-
-        if debug:
-            log(f"\nTask after expand: {self}")
+                self.config[key] = val
+                self.context[key] = val
+            elif key.startswith("out_"):
+                val = self.expanded_context[key]
+                val = normpath(val)
+                val = map_variant(key, val, self.move_to_builddir)
+                self.config._out_files.extend(flatten(val))
+                self.config[key] = val
+                self.context[key] = val
 
         # ----------------------------------------
         # Check for task collisions
 
         # FIXME need a test for this that uses symlinks
 
-        if self.config._out_files and self.config._command is not None:
+        if self.config._out_files:
             for file in self.config._out_files:
-                file = path.realpath(file)
-                if file in app.filename_to_fingerprint:
-                    raise ValueError(f"TaskCollision: Multiple tasks build {file}")
-                app.filename_to_fingerprint[file] = self.config._command
+                real_file = path.realpath(file)
+                if real_file in app.filename_to_fingerprint:
+                    raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+                app.filename_to_fingerprint[real_file] = real_file
 
         # ----------------------------------------
         # Sanity checks
-
-        # Check for missing input files/paths
-        if not path.exists(self.context.task_dir):
-            raise FileNotFoundError(self.context.task_dir)
 
         for file in self.config._in_files:
             if file is None:
@@ -996,18 +1011,22 @@ class Task:
                 raise ValueError(
                     f"Path error, output file {file} is not under build_dir {self.context.build_dir}"
                 )
-
-        # Check for duplicate task outputs
-        if self.config._command:
-            for file in self.config._out_files:
-                #if file in app.all_out_files:
-                #    raise NameError(f"Multiple rules build {file}!")
-                app.all_out_files.add(file)
-
-        # Make sure our output directories exist
-        if not app.flags.dry_run:
-            for file in self.config._out_files:
+            # Make sure our output directories exist
+            if not app.flags.dry_run:
                 os.makedirs(path.dirname(file), exist_ok=True)
+
+        # ----------------------------------------
+        # And now we can expand the command.
+
+        desc = self.expanded_context.desc
+        command = self.expanded_context.command
+
+        self.config._desc    = desc
+        self.config._command = command
+
+        if debug:
+            log(f"\nTask after expand: {self}")
+
 
     # -----------------------------------------------------------------------------------------------
 
@@ -1373,7 +1392,6 @@ class App:
         self.loaded_files = []
         self.dirstack = [os.getcwd()]
 
-        self.all_out_files = set()
         self.filename_to_fingerprint = {}
 
         self.realpath_to_repo = {}
