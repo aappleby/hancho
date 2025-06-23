@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import builtins
 import copy
+#import functools
 import glob
 import inspect
 import io
@@ -66,7 +67,6 @@ class DotDict(dict):
         return expand_variant(self, text)
 
 #endregion
-
 ####################################################################################################
 #region Logging
 
@@ -103,7 +103,6 @@ def log(message, *, sameline=False, **kwargs):
     app.line_dirty = sameline
 
 #endregion
-
 ####################################################################################################
 #region Path manipulation
 
@@ -115,6 +114,8 @@ def abs_path(raw_path) -> str | list[str]:
     return path.abspath(raw_path)
 
 def rel_path(path1, path2):
+    if path2 is None:
+        return path1
 
     if listlike(path1):
         return [rel_path(p, path2) for p in path1]
@@ -133,15 +134,6 @@ def join_path(lhs, rhs, *args):
     return result[0] if len(result) == 1 else result
 
 
-def normalize_path(file_path):
-    assert isinstance(file_path, str)
-
-    file_path = path.abspath(path.join(os.getcwd(), file_path))
-    file_path = path.normpath(file_path)
-
-    assert path.isabs(file_path)
-    return file_path
-
 def normpath(val):
     if isinstance(val, list):
         result = [normpath(v) for v in val]
@@ -149,6 +141,17 @@ def normpath(val):
         result = None
     elif isinstance(val, str):
         result = path.normpath(val)
+    else:
+        assert False
+    return result
+
+def prepend_dir(task_dir, val):
+    if isinstance(val, list):
+        result = [prepend_dir(task_dir, v) for v in val]
+    elif val is None:
+        result = None
+    elif isinstance(val, str):
+        result = join_path(task_dir, val)
     else:
         assert False
     return result
@@ -206,7 +209,6 @@ def mtime(filename):
     return os.stat(filename).st_mtime_ns
 
 #endregion
-
 ####################################################################################################
 #region Helpers for managing variants
 
@@ -839,61 +841,6 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    def move_to_builddir(self, _, val):
-        if not isinstance(val, str):
-            return val
-        # Note this conditional needs to be first, as build_dir can itself be under
-        # task_dir
-        if val.startswith(self.config.build_dir):
-            # Absolute path under build_dir, do nothing.
-            pass
-        elif val.startswith(self.config.task_dir):
-            # Absolute path under task_dir, move to build_dir
-            val = rel_path(val, self.config.task_dir)
-            val = join_path(self.config.build_dir, val)
-        elif path.isabs(val):
-            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
-        else:
-            # Relative path, add build_dir
-            val = join_path(self.config.build_dir, val)
-        return val
-
-#    def move_to_builddir2(self, build_dir, val):
-#        if isinstance(val, list):
-#            return [self.move_to_builddir2(build_dir, v) for v in val]
-#        if val is None:
-#            return None
-#        assert isinstance(val, str)
-#
-#        # Note this conditional needs to be first, as build_dir can itself be under
-#        # task_dir
-#        if val.startswith(build_dir):
-#            # Absolute path under build_dir, do nothing.
-#            pass
-#        elif val.startswith(task_dir):
-#            # Absolute path under task_dir, move to build_dir
-#            val = rel_path(val, task_dir)
-#            val = join_path(build_dir, val)
-#        elif path.isabs(val):
-#            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
-#        else:
-#            # Relative path, add build_dir
-#            val = join_path(build_dir, val)
-#        return val
-
-    def prepend_dir(self, task_dir, val):
-        if isinstance(val, list):
-            result = [self.prepend_dir(task_dir, v) for v in val]
-        elif val is None:
-            result = None
-        elif isinstance(val, str):
-            result = join_path(task_dir, val)
-        else:
-            assert False
-        return result
-
-    # -----------------------------------------------------------------------------------------------
-
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
@@ -942,57 +889,71 @@ class Task:
 
         # Gather all inputs to task.config._in_files and outputs to task.config._out_files
 
-        def handle_depfile(file):
+        def move_to_builddir2(file):
+            if isinstance(file, list):
+                return [move_to_builddir2(f) for f in file]
             if file is None:
                 return None
-            if isinstance(file, list):
-                return [handle_depfile(f) for f in file]
             file = normpath(file)
-            file = rel_path(file, task_dir)
-            file = join_path(build_dir, file)
+
+            # Note this conditional needs to be first, as build_dir can itself be under
+            # task_dir
+            if file.startswith(build_dir):
+                # Absolute path under build_dir, do nothing.
+                pass
+            elif file.startswith(task_dir):
+                # Absolute path under task_dir, move to build_dir
+                file = rel_path(file, task_dir)
+                file = join_path(build_dir, file)
+            elif path.isabs(file):
+                raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
+            else:
+                # Relative path, add build_dir
+                file = join_path(build_dir, file)
             return file
 
         # pylint: disable=consider-using-dict-items
         for key in self.expanded_context.keys():
+            file = self.expanded_context[key]
+
             if key == "in_depfile":
                 # Note - we only add the depfile to _in_files _if_it_exists_, otherwise we will
                 # fail a check that all our inputs are present.
 
+                file = path.normpath(file)
 
+                if not file.startswith(build_dir):
+                    file = rel_path(file, repo_dir)
+                    file = join_path(build_dir, file)
 
-                val = self.expanded_context[key]
-                val = normpath(val)
-                val = map_variant(key, val, self.move_to_builddir)
-                if path.isfile(val):
-                    self.config._in_files.append(val)
-                self.config[key] = val
-                self.context[key] = val
+                if path.isfile(file):
+                    self.config._in_files.append(file)
+                self.config[key] = file
+                self.context[key] = file
+
             elif key.startswith("in_"):
-                val = self.expanded_context[key]
-                val = normpath(val)
-                val = self.prepend_dir(task_dir, val)
-                self.config._in_files.extend(flatten(val))
-                self.config[key] = val
-                self.context[key] = val
+                file = normpath(file)
+                file = prepend_dir(task_dir, file)
+                self.config._in_files.extend(flatten(file))
+                self.config[key] = file
+                self.context[key] = file
+
             elif key.startswith("out_"):
-                val = self.expanded_context[key]
-                val = normpath(val)
-                val = map_variant(key, val, self.move_to_builddir)
-                self.config._out_files.extend(flatten(val))
-                self.config[key] = val
-                self.context[key] = val
+                file = move_to_builddir2(file)
+                self.config._out_files.extend(flatten(file))
+                self.config[key] = file
+                self.context[key] = file
 
         # ----------------------------------------
         # Check for task collisions
 
         # FIXME need a test for this that uses symlinks
 
-        if self.config._out_files:
-            for file in self.config._out_files:
-                real_file = path.realpath(file)
-                if real_file in app.filename_to_fingerprint:
-                    raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-                app.filename_to_fingerprint[real_file] = real_file
+        for file in self.config._out_files:
+            real_file = path.realpath(file)
+            if real_file in app.filename_to_fingerprint:
+                raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+            app.filename_to_fingerprint[real_file] = real_file
 
         # ----------------------------------------
         # Sanity checks
@@ -1195,7 +1156,7 @@ class HanchoAPI(Utils):
     def repo(self, mod_path, *args, **kwargs):
 
         mod_path = expand_variant(self.context, mod_path)
-        mod_path = normalize_path(mod_path)
+        mod_path = path.abspath(mod_path)
         mod_path = path.realpath(mod_path)
         #real_path = path.realpath(mod_path)
 
@@ -1213,7 +1174,7 @@ class HanchoAPI(Utils):
 
     def load(self, mod_path):
         mod_path = expand_variant(self.context, mod_path)
-        mod_path = normalize_path(mod_path)
+        mod_path = path.abspath(mod_path)
         new_context = create_mod(self, mod_path)
         return new_context._load()
 
@@ -1273,7 +1234,7 @@ class HanchoAPI(Utils):
 
 def create_repo(mod_path, *args, **kwargs):
     assert path.isabs(mod_path)
-    assert mod_path == normalize_path(mod_path)
+    assert mod_path == path.abspath(mod_path)
     assert mod_path == path.realpath(mod_path)
     assert mod_path not in app.realpath_to_repo
 
@@ -1308,7 +1269,7 @@ def create_repo(mod_path, *args, **kwargs):
 def create_mod(parent_api, mod_path, *args, **kwargs):
     assert isinstance(parent_api, HanchoAPI)
 
-    mod_path = normalize_path(expand_variant(parent_api.context, mod_path))
+    mod_path = path.abspath(expand_variant(parent_api.context, mod_path))
     mod_dir  = path.split(mod_path)[0]
     mod_file = path.split(mod_path)[1]
     mod_name = path.splitext(mod_file)[0]
@@ -1525,7 +1486,7 @@ class App:
                 build_dirs = set()
                 for task in app.all_tasks:
                     build_dir = expand_variant(task.context, "{build_root}")
-                    build_dir = normalize_path(build_dir)
+                    build_dir = path.abspath(build_dir)
                     build_dir = path.realpath(build_dir)
                     if path.isdir(build_dir):
                         build_dirs.add(build_dir)
@@ -1563,9 +1524,9 @@ class App:
                 # FIXME we are not currently doing that....
 
                 # build_dir = expand_variant(task.context, task.context.build_dir)
-                # build_dir = normalize_path(build_dir)
+                # build_dir = path.abspath(build_dir)
                 # repo_dir = expand_variant(app.root_context.context, "{build_dir}")
-                # repo_dir = normalize_path(repo_dir)
+                # repo_dir = path.abspath(repo_dir)
                 # print(build_dir)
                 # print(repo_dir)
                 # if build_dir.startswith(repo_dir):
