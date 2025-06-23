@@ -387,7 +387,7 @@ class TestHancho(unittest.TestCase):
     ########################################
 
     def test_dep_changed(self):
-        """Changing a file in deps[] should trigger a rebuild"""
+        """Changing a file in in_files[] should trigger a rebuild"""
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
         def run():
             hancho_py.app.reset()
@@ -443,9 +443,9 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
             compile = dict(
-                command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-                out_obj    = "{ext(in_src, '.o')}",
-                in_depfile = "{ext(out_obj, '.d')}",
+                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                out_obj = "{ext(in_src, '.o')}",
+                depfile = "{ext(out_obj, '.d')}",
             )
             self.hancho(compile, in_src = "src/test.cpp")
             self.assertEqual(0, hancho_py.app.build_all())
@@ -468,9 +468,9 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
             compile = dict(
-                command    = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
-                out_obj    = "{ext(in_src, '.o')}",
-                in_depfile = "{ext(out_obj, '.d')}",
+                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                out_obj = "{ext(in_src, '.o')}",
+                depfile = "{ext(out_obj, '.d')}",
             )
             self.hancho(compile, in_src = "src/test.cpp")
             self.assertEqual(0, hancho_py.app.build_all())

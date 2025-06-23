@@ -3,10 +3,10 @@
 hancho.context.depformat = "msvc"
 
 compile_cpp = dict(
-    desc       = "Compile {in_src} -> {out_obj}",
-    command    = "cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
-    out_obj    = "{ext(in_src, '.o')}",
-    in_depfile = "{ext(out_obj, '.d')}",
+    desc    = "Compile {in_src} -> {out_obj}",
+    command = "cl.exe /nologo /c {in_src} /sourceDependencies {depfile} /Fo:{out_obj}",
+    out_obj = "{ext(in_src, '.o')}",
+    depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = dict(

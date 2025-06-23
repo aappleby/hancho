@@ -9,7 +9,7 @@ _gcc_flags = [
     "-Wno-free-nonheap-object",
     "-fno-omit-frame-pointer",
     "-std=c++14",
-    "-MD -MF {in_depfile}",
+    "-MD -MF {depfile}",
     "-frandom-seed={out_obj}",
     "-fPIC",
     "-iquote .",
@@ -35,12 +35,12 @@ _ld_libs = [
 ]
 
 compile_cpp = dict(
-    desc       = "Compiling C++ {in_src} -> {out_obj}",
-    command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
-    gcc_flags  = _gcc_flags,
-    includes   = None,
-    out_obj    = "{ext(in_src, '.o')}",
-    in_depfile = "{ext(out_obj, '.d')}",
+    desc      = "Compiling C++ {in_src} -> {out_obj}",
+    command   = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
+    gcc_flags = _gcc_flags,
+    includes  = None,
+    out_obj   = "{ext(in_src, '.o')}",
+    depfile   = "{ext(out_obj, '.d')}",
 )
 
 link_cpp_bin = dict(

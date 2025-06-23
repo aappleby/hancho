@@ -46,10 +46,10 @@ compile_cpp = dict(
     warnings = None,
     defines = None,
     includes = None,
-    out_obj="{ext(in_src, '.o')}",
+    out_obj = "{ext(in_src, '.o')}",
 
     # Note - this swaps out_obj and not in_src in case the user redirects out_obj
-    in_depfile="{ext(out_obj, '.d')}",
+    depfile = "{ext(out_obj, '.d')}",
 
     joined_warnings="{join('-W', warnings)}",
     joined_defines ="{join('-D', defines)}",
@@ -57,7 +57,7 @@ compile_cpp = dict(
 )
 
 if os.name == "nt":
-    compile_cpp.command = "cl.exe /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}"
+    compile_cpp.command = "cl.exe /c {in_src} /sourceDependencies {depfile} /Fo:{out_obj}"
     compile_cpp.depformat = "msvc"
 
 

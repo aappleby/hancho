@@ -864,18 +864,18 @@ class Task:
         if not path.exists(task_dir):
             raise FileNotFoundError(task_dir)
 
-        self.config.task_dir   = task_dir
-        self.config.build_dir  = build_dir
-
-        self.context.task_dir   = task_dir
-        self.context.build_dir  = build_dir
-
         # Raw tasks may not have a repo_dir.
         if repo_dir is not None:
             if not build_dir.startswith(repo_dir):
                 raise ValueError(
                     f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
                 )
+
+        self.config.task_dir   = task_dir
+        self.config.build_dir  = build_dir
+
+        self.context.task_dir   = task_dir
+        self.context.build_dir  = build_dir
 
         # ----------------------------------------
         # Expand all in_ and out_ filenames
@@ -884,7 +884,6 @@ class Task:
 
         # Make all in_ and out_ file paths absolute
 
-        # FIXME feeling like in_depfile should really be io_depfile...
         # FIXME I dislike all this "move_to" stuff
 
         # Gather all inputs to task.config._in_files and outputs to task.config._out_files
@@ -894,53 +893,51 @@ class Task:
                 return [move_to_builddir2(f) for f in file]
             if file is None:
                 return None
-            file = normpath(file)
+
+            #print()
+            #print(f"@@@ {file} @@@")
+
+            # needed for test_bad_build_path
+            file = path.normpath(file)
 
             # Note this conditional needs to be first, as build_dir can itself be under
             # task_dir
             if file.startswith(build_dir):
-                # Absolute path under build_dir, do nothing.
+                # Absolute path under build_dir.
+                #print(f"@@@ {file} @@@")
                 pass
             elif file.startswith(task_dir):
                 # Absolute path under task_dir, move to build_dir
                 file = rel_path(file, task_dir)
-                file = join_path(build_dir, file)
+                #print(f"@@@ {file} @@@")
             elif path.isabs(file):
-                raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
+                raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {file}")
             else:
-                # Relative path, add build_dir
-                file = join_path(build_dir, file)
+                #print(f"@@@ {file} @@@")
+                pass
+
+            file = join_path(build_dir, file)
             return file
 
         # pylint: disable=consider-using-dict-items
         for key in self.expanded_context.keys():
             file = self.expanded_context[key]
 
-            if key == "in_depfile":
-                # Note - we only add the depfile to _in_files _if_it_exists_, otherwise we will
-                # fail a check that all our inputs are present.
-
-                file = path.normpath(file)
-
-                if not file.startswith(build_dir):
-                    file = rel_path(file, repo_dir)
-                    file = join_path(build_dir, file)
-
-                if path.isfile(file):
-                    self.config._in_files.append(file)
-                self.config[key] = file
-                self.context[key] = file
-
-            elif key.startswith("in_"):
+            if key.startswith("in_"):
                 file = normpath(file)
                 file = prepend_dir(task_dir, file)
                 self.config._in_files.extend(flatten(file))
                 self.config[key] = file
                 self.context[key] = file
 
-            elif key.startswith("out_"):
+            if key.startswith("out_"):
                 file = move_to_builddir2(file)
                 self.config._out_files.extend(flatten(file))
+                self.config[key] = file
+                self.context[key] = file
+
+            if key == "depfile":
+                file = move_to_builddir2(file)
                 self.config[key] = file
                 self.context[key] = file
 
@@ -1023,20 +1020,18 @@ class Task:
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if (in_depfile := self.context.get("in_depfile", None)) and path.exists(
-            in_depfile
-        ):
+        if (depfile := self.context.get("depfile", None)) and path.exists(depfile):
             depformat = self.context.get("depformat", "gcc")
             if debug:
-                log(f"Found C dependencies file {in_depfile}")
-            with open(in_depfile, encoding="utf-8") as depfile:
+                log(f"Found C dependencies file {depfile}")
+            with open(depfile, encoding="utf-8") as depfile2:
                 deplines = None
                 if depformat == "msvc":
                     # MSVC /sourceDependencies
-                    deplines = json.load(depfile)["Data"]["Includes"]
+                    deplines = json.load(depfile2)["Data"]["Includes"]
                 elif depformat == "gcc":
                     # GCC -MMD
-                    deplines = depfile.read().split()
+                    deplines = depfile2.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
                     raise ValueError(f"Invalid dependency file format {depformat}")

@@ -39,14 +39,14 @@ main_o = hancho(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
-    in_depfile  = "main.d",
+    depfile = "main.d",
 )
 
 util_o = hancho(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
-    in_depfile  = "util.d",
+    depfile = "util.d",
 )
 
 hancho(
@@ -61,7 +61,7 @@ compile_cpp = dict(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
-    in_depfile  = "{ext(out_obj, '.d')}",
+    depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = dict(
@@ -87,7 +87,7 @@ compile_cpp = dict(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
-    in_depfile  = "{ext(out_obj, '.d')}",
+    depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = dict(
@@ -107,7 +107,7 @@ compile_cpp = dict(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{ext(in_src, '.o')}",
-    in_depfile  = "{ext(out_obj, '.d')}",
+    depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = dict(
