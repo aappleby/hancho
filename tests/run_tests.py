@@ -222,7 +222,8 @@ class TestHancho(unittest.TestCase):
             command    = "touch {rel(out_obj)}",
             in_src     = "src/foo.c",
             out_obj    = "foo.o",
-            task_dir   = os.getcwd(),
+            repo_dir   = os.getcwd(),
+            task_dir   = ".",
             build_dir = "build"
         )
         #print(task)

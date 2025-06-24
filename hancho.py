@@ -130,7 +130,7 @@ def rel_path(path1, path2):
 def join_path(lhs, rhs, *args):
     if len(args) > 0:
         rhs = join_path(rhs, *args)
-    result = [path.join(lhs, rhs) for l in flatten(lhs) for r in flatten(rhs)]
+    result = [path.join(l, r) for l in flatten(lhs) for r in flatten(rhs)]
     return result[0] if len(result) == 1 else result
 
 
@@ -169,7 +169,7 @@ def dictlike(variant):
 
 def flatten(variant):
     if listlike(variant):
-        return [x for element in variant for x in flatten(element)]
+        return [x for element in variant for x in flatten(element) if x is not None]
     if variant is None:
         return []
     return [variant]
@@ -598,11 +598,6 @@ def expand_variant(context, variant):
 
     return result
 
-# ----------------------------------------
-
-def expand_everything(context, variant):
-    pass
-
 #endregion
 ####################################################################################################
 #region Utils
@@ -783,7 +778,13 @@ class Task:
         # Everything awaited, task_init runs synchronously.
         try:
             self._state = TaskState.TASK_INIT
+
+            # FIXME feels like init should run with os.getcwd() == task_dir, but we have to expand
+            # directories first...
+            #app.pushdir(self.context.task_dir)
             self.task_init()
+            #app.popdir()
+
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
             self._state = TaskState.CANCELLED
@@ -856,20 +857,21 @@ class Task:
 
         # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
 
+        context    = self.context
         repo_dir   = abs_path(self.expanded_context.get("repo_dir", None))
-        task_dir   = abs_path(self.expanded_context.task_dir)
-        build_dir  = abs_path(self.expanded_context.build_dir)
+        task_dir   = abs_path(join_path(repo_dir, self.expanded_context.task_dir))
+        build_dir  = abs_path(join_path(repo_dir, self.expanded_context.build_dir))
 
         # Check for missing input files/paths
         if not path.exists(task_dir):
             raise FileNotFoundError(task_dir)
 
         # Raw tasks may not have a repo_dir.
-        if repo_dir is not None:
-            if not build_dir.startswith(repo_dir):
-                raise ValueError(
-                    f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
-                )
+        #if repo_dir is not None:
+        if not build_dir.startswith(repo_dir):
+            raise ValueError(
+                f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
+            )
 
         self.config.task_dir   = task_dir
         self.config.build_dir  = build_dir
@@ -891,11 +893,6 @@ class Task:
         def move_to_builddir2(file):
             if isinstance(file, list):
                 return [move_to_builddir2(f) for f in file]
-            if file is None:
-                return None
-
-            #print()
-            #print(f"@@@ {file} @@@")
 
             # needed for test_bad_build_path
             file = path.normpath(file)
@@ -904,39 +901,38 @@ class Task:
             # task_dir
             if file.startswith(build_dir):
                 # Absolute path under build_dir.
-                #print(f"@@@ {file} @@@")
                 pass
             elif file.startswith(task_dir):
                 # Absolute path under task_dir, move to build_dir
                 file = rel_path(file, task_dir)
-                #print(f"@@@ {file} @@@")
             elif path.isabs(file):
                 raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {file}")
-            else:
-                #print(f"@@@ {file} @@@")
-                pass
 
             file = join_path(build_dir, file)
             return file
 
         # pylint: disable=consider-using-dict-items
-        for key in self.expanded_context.keys():
-            file = self.expanded_context[key]
+        for key in self.context.keys():
 
             if key.startswith("in_"):
-                file = normpath(file)
-                file = prepend_dir(task_dir, file)
+                file = self.context[key]
+                file = self.context.expand(file)
+                file = join_path(task_dir, normpath(file))
                 self.config._in_files.extend(flatten(file))
                 self.config[key] = file
                 self.context[key] = file
 
             if key.startswith("out_"):
+                file = self.context[key]
+                file = self.context.expand(file)
                 file = move_to_builddir2(file)
                 self.config._out_files.extend(flatten(file))
                 self.config[key] = file
                 self.context[key] = file
 
             if key == "depfile":
+                file = self.context[key]
+                file = self.context.expand(file)
                 file = move_to_builddir2(file)
                 self.config[key] = file
                 self.context[key] = file
