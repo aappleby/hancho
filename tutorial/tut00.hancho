@@ -57,14 +57,14 @@ hancho(
 
 ####################################################################################################
 
-compile_cpp = dict(
+compile_cpp = task(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = dict(
+link_cpp = task(
     desc    = "Link {in_objs} into {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
@@ -83,14 +83,14 @@ app    = hancho(rules.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 
 #----------------------------------------
 
-compile_cpp = dict(
+compile_cpp = task(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = dict(
+link_cpp = task(
     desc    = "Link {in_objs} into {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
@@ -103,14 +103,14 @@ app = hancho(rules.c_binary, hancho.glob("src/*.cpp"), "app")
 
 #----------------------------------------
 
-compile_cpp = dict(
+compile_cpp = task(
     desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
     command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = dict(
+link_cpp = task(
     desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
     command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
 )

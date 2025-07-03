@@ -403,12 +403,6 @@ class Expander:
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-#    def __new__(cls, data):
-#        if isinstance(data, cls):
-#            print("S?SD??SS?FSJK?DFKL?DFJ?SLDKJF")
-#            return data
-#        return super().__new__(cls)
-
     def __init__(self, context3):
         assert isinstance(context3, DotDict)
         object.__setattr__(self, "context3", context3)
@@ -858,7 +852,7 @@ class Task:
         # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
 
         context    = self.context
-        repo_dir   = abs_path(self.expanded_context.get("repo_dir", None))
+        repo_dir   = abs_path(self.expanded_context.repo_dir)
         task_dir   = abs_path(join_path(repo_dir, self.expanded_context.task_dir))
         build_dir  = abs_path(join_path(repo_dir, self.expanded_context.build_dir))
 
@@ -1123,10 +1117,8 @@ class Task:
 class HanchoAPI(Utils):
 
     def __init__(self, context, is_repo):
-        self.app = app
         self.context = context
         self.is_repo = is_repo
-        self.Task    = Task
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -1193,28 +1185,43 @@ class HanchoAPI(Utils):
         # context here so there should be no other threads trying to change cwd.
         app.pushdir(path.dirname(self.context.mod_path))
 
-        # Monkeypatch builtins to replace dict with DotDict to enable dot notation
-        new_builtins = types.ModuleType(builtins.__name__)
-        new_builtins.__dict__.update(builtins.__dict__)
-        new_builtins.__dict__['dict'] = DotDict
-        temp_globals = {"hancho": self, "__builtins__": new_builtins}
+        #{
+        #  '__annotations__': {},
+        #  '__builtins__': <module 'builtins' (built-in)>,
+        #  '__cached__': None,
+        #  '__doc__': None,
+        #  '__file__': '/home/aappleby/bin/hancho',
+        #  '__loader__': <_frozen_importlib_external.SourceFileLoader object at 0x7ebe818004a0>,
+        #  '__name__': '__main__',
+        #  '__package__': None,
+        #  '__spec__': None,
+        #}
+
+        temp_globals = {
+            "hancho": self,
+            "config": DotDict,
+            "task"  : DotDict,
+        }
+
+        module_globals = dict(temp_globals)
 
         # Pylint is just wrong here
         # pylint: disable=not-callable
-        types.FunctionType(code, temp_globals)()
+        types.FunctionType(code, module_globals)()
         app.popdir()
 
         # Module loaded, turn the module's globals into a dict that doesn't include __builtins__,
         # hancho, imports, and private fields so we don't have files that end up transitively
         # containing the universe
         new_module = DotDict()
-        for key, val in temp_globals.items():
-            if key.startswith("_") or key == "hancho" or isinstance(val, type(sys)):
+        for key, val in module_globals.items():
+            #if key.startswith("_") or key == "hancho" or key == "config" or key == "task" or isinstance(val, type(sys)):
+            if key.startswith("_") or key in temp_globals or isinstance(val, type(sys)):
                 continue
             new_module[key] = val
 
         # Tack the context onto the module so people who load it can see the paths it was built with, etc.
-        new_module['context'] = temp_globals['hancho'].context
+        new_module['context'] = module_globals['hancho'].context
 
         return new_module
 
@@ -1223,7 +1230,7 @@ class HanchoAPI(Utils):
 
 ####################################################################################################
 
-def create_repo(mod_path, *args, **kwargs):
+def create_repo(mod_path : str, *args, **kwargs):
     assert path.isabs(mod_path)
     assert mod_path == path.abspath(mod_path)
     assert mod_path == path.realpath(mod_path)
@@ -1257,10 +1264,10 @@ def create_repo(mod_path, *args, **kwargs):
 
 ####################################################################################################
 
-def create_mod(parent_api, mod_path, *args, **kwargs):
-    assert isinstance(parent_api, HanchoAPI)
-
-    mod_path = path.abspath(expand_variant(parent_api.context, mod_path))
+def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
+    mod_path = parent_api.context.expand(mod_path)
+    assert isinstance(mod_path, str)
+    mod_path = path.abspath(mod_path)
     mod_dir  = path.split(mod_path)[0]
     mod_file = path.split(mod_path)[1]
     mod_name = path.splitext(mod_file)[0]
@@ -1280,7 +1287,7 @@ def create_mod(parent_api, mod_path, *args, **kwargs):
 
 class JobPool:
     def __init__(self):
-        self.jobs_available = os.cpu_count()
+        self.jobs_available = os.cpu_count() or 1
         self.jobs_lock = asyncio.Condition()
         self.job_slots = [None] * self.jobs_available
 
@@ -1336,8 +1343,8 @@ class JobPool:
 class App:
 
     def __init__(self):
-        self.flags = None
-        self.extra_flags = None
+        self.flags = argparse.Namespace()
+        self.extra_flags = DotDict()
         self.target_regex = None
 
         self.root_context = None
@@ -1376,8 +1383,6 @@ class App:
     ########################################
 
     def parse_flags(self, argv):
-        assert listlike(argv)
-
         # pylint: disable=line-too-long
         # fmt: off
         parser = argparse.ArgumentParser()
@@ -1399,32 +1404,24 @@ class App:
         parser.add_argument("--use_color",        default=False, action="store_true",  help="Use color in the console output")
         # fmt: on
 
-        (flags, unrecognized) = parser.parse_known_args(argv)
+        (self.flags, unrecognized) = parser.parse_known_args(argv)
 
         # Unrecognized command line parameters also become global context fields if they are
         # flag-like
-        extra_flags = DotDict()
         for span in unrecognized:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
-
                 if val is None:
                     val = True
                 else:
-                    try:
-                        val = int(val)
-                    except ValueError:
+                    for converter in (int, float):
                         try:
-                            val = float(val)
+                            val = converter(val)
+                            break
                         except ValueError:
                             pass
-
-                #val = maybe_as_number(val) if val is not None else True
-                extra_flags[key] = val
-
-        self.flags = flags
-        self.extra_flags = extra_flags
+                self.extra_flags[key] = val
 
     ########################################
 
@@ -1477,6 +1474,7 @@ class App:
                 build_dirs = set()
                 for task in app.all_tasks:
                     build_dir = expand_variant(task.context, "{build_root}")
+                    assert isinstance(build_dir, str)
                     build_dir = path.abspath(build_dir)
                     build_dir = path.realpath(build_dir)
                     if path.isdir(build_dir):
@@ -1535,7 +1533,7 @@ class App:
     ########################################
 
     def pushdir(self, new_dir: str):
-        new_dir = abs_path(new_dir)
+        new_dir = path.abspath(new_dir)
         if not path.exists(new_dir):
             raise FileNotFoundError(new_dir)
         self.dirstack.append(new_dir)
@@ -1635,22 +1633,6 @@ class App:
 # module instead of running it directly.
 
 app = App()
-
-#def test_main():
-#    app.flags.trace = True
-#
-#    foo = DotDict(
-#        a = "bee",
-#        b = "boo",
-#        beeboo = "1234 {foobar}",
-#        foobar = "1234 {barbaz}",
-#        barbaz = 1234,
-#    )
-#
-#    result = foo.expand("blarp {{a}{b}}")
-#    print(result)
-#    print(type(result))
-#main()
 
 if __name__ == "__main__":
     app.parse_flags(sys.argv[1:])

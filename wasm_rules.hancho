@@ -1,4 +1,4 @@
-emcc = dict(
+emcc = task(
     desc="Compile Emscripten'd {in_src}",
     command="emcc {flags} {joined_includes} -c {in_src} -o {out_obj}",
     flags=[
@@ -15,7 +15,7 @@ emcc = dict(
     joined_includes="{join('-I', includes)}",
 )
 
-emld = dict(
+emld = task(
     desc="Link Emscripten'd {rel(out_js)}",
     command="emcc {flags} {in_objs} -o {out_js}",
     flags=[
@@ -29,7 +29,7 @@ emld = dict(
     ],
 )
 
-ems_package = dict(
+ems_package = task(
     desc="Package {rel(out_data)}",
     command=[
         "rm -f {out_data}",

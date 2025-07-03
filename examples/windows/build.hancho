@@ -2,14 +2,14 @@
 
 hancho.context.depformat = "msvc"
 
-compile_cpp = dict(
+compile_cpp = task(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "cl.exe /nologo /c {in_src} /sourceDependencies {depfile} /Fo:{out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = dict(
+link_cpp = task(
     desc      = "Link {in_objs} -> {out_bin}",
     command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin} > NUL",
     libs      = "user32.lib"

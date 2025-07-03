@@ -116,7 +116,7 @@ class TestHancho(unittest.TestCase):
         #hancho_py.app.reset()
         #self.hancho = hancho_py.app.create_root_context()
         task = self.hancho(command = "echo \'{run_cmd('ls')}\'")
-        self.assertEqual(0, self.hancho.app.build_all())
+        self.assertEqual(0, hancho_py.app.build_all())
 
     ########################################
 
@@ -216,19 +216,20 @@ class TestHancho(unittest.TestCase):
         self.assertFalse(Path("build/foo.o").exists())
 
     ########################################
+    # FIXME do we really need to support raw tasks?
 
-    def test_raw_task(self):
-        self.hancho.Task(
-            command    = "touch {rel(out_obj)}",
-            in_src     = "src/foo.c",
-            out_obj    = "foo.o",
-            repo_dir   = os.getcwd(),
-            task_dir   = ".",
-            build_dir = "build"
-        )
-        #print(task)
-        self.assertEqual(0, hancho_py.app.build_all())
-        self.assertTrue(Path("build/foo.o").exists())
+    #def test_raw_task(self):
+    #    self.hancho.Task(
+    #        command    = "touch {rel(out_obj)}",
+    #        in_src     = "src/foo.c",
+    #        out_obj    = "foo.o",
+    #        repo_dir   = os.getcwd(),
+    #        task_dir   = ".",
+    #        build_dir = "build"
+    #    )
+    #    #print(task)
+    #    self.assertEqual(0, hancho_py.app.build_all())
+    #    self.assertTrue(Path("build/foo.o").exists())
 
     ########################################
 
@@ -314,7 +315,7 @@ class TestHancho(unittest.TestCase):
             command = "{subthing.foo}",
             in_src  = [],
             out_obj = [],
-            subthing = dict(foo = "{subthing.foo} x"),
+            subthing = hancho_py.DotDict(foo = "{subthing.foo} x"),
             #trace = True
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
@@ -443,7 +444,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = dict(
+            compile = hancho_py.DotDict(
                 command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
@@ -468,7 +469,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = dict(
+            compile = hancho_py.DotDict(
                 command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",

@@ -3,7 +3,7 @@ import os
 ####################################################################################################
 # C++
 
-default_toolchain = dict(
+default_toolchain = config(
     arch = "x86-64",
     compiler = "x86_64-linux-gnu-g++",
     linker = "x86_64-linux-gnu-g++",
@@ -11,7 +11,7 @@ default_toolchain = dict(
 
 # ----------------------------------------
 
-check_cpp = dict(
+check_cpp = task(
     desc="Checking C++ syntax of {rel(in_src)}",
     command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} && touch {out_ok}",
 
@@ -30,7 +30,7 @@ check_cpp = dict(
 
 # ----------------------------------------
 
-compile_cpp = dict(
+compile_cpp = task(
     desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
     command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
     toolchain=default_toolchain,
@@ -61,13 +61,13 @@ if os.name == "nt":
     compile_cpp.depformat = "msvc"
 
 
-link_cpp_lib = dict(
+link_cpp_lib = task(
     desc="Bundling C++ lib {out_lib}",
     command="ar rcs {out_lib} {in_objs}",
 )
 
 
-link_cpp_bin = dict(
+link_cpp_bin = task(
     desc      = "Linking C++ bin {rel(out_bin)}",
     toolchain = default_toolchain,
     command   = "{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}",
@@ -103,7 +103,7 @@ def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwar
 # Makefiles
 
 def make(hancho, *, in_makefile, **kwargs):
-    cmd = dict(
+    cmd = task(
         desc="Run makefile {rel(in_makefile)}",
         command="make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
         make_dir="{path.dirname(in_makefile)}",
@@ -116,7 +116,7 @@ def make(hancho, *, in_makefile, **kwargs):
 ####################################################################################################
 # Tests
 
-run_test = dict(
+run_test = task(
     desc="Running test {rel(in_test)}",
     command="{in_test} {args} && touch {out_pass}",
     task_dir="{test_dir}",
