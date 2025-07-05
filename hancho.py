@@ -18,7 +18,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 from os import path
 import argparse
 import asyncio
-import builtins
+#import builtins
 import copy
 #import functools
 import glob
@@ -35,30 +35,79 @@ import time
 import traceback
 import types
 from collections import abc
+
 #endregion
 
 ####################################################################################################
-#region Subclass of dict that allows attribute access
+#region Config
 
-class DotDict(dict):
+class Config(dict):
+    """
+    This class extends 'dict' in a couple ways -
+    1. Config supports "foo.bar" attribute access in addition to "foo['bar']"
+    2. Config supports "merging" instances by passing them (and any additional key-value pairs)
+       in via the constructor.
+    3. When merging Configs, the rightmost not-None value of an attribute will be kept.
+    4. If two attributes with the same name are both Configs, we will recursively merge them.
+    5. Config behaves like a value type, merging will make copies of all its inputs.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        for arg in (*args, kwargs):
+            if arg is None:
+                continue
+            if not isinstance(arg, abc.Mapping):
+                raise TypeError(f"Argument {arg} is not a mapping")
+            for key, rval in arg.items():
+                lval = self.get(key, None)
+
+                # Recursively merge mapping-type attributes.
+                if isinstance(lval, abc.Mapping) and isinstance(rval, abc.Mapping):
+                    self[key] = Config(lval, rval)
+
+                # Deep copy all other attributes.
+                elif lval is None or rval is not None:
+                    self[key] = rval
+
+    def to_dict(self):
+        return {k: v.to_dict() if isinstance(v, Config) else v for k, v in self.items()}
+
+    def copy(self):
+        return Config(self)
+
+    def __copy__(self):
+        return self.copy()
+
+    def __deepcopy__(self, memo):
+        return Config(copy.deepcopy(dict(self), memo))
+
+    def __setitem__(self, key, value):
+        # Upgrade all mappings to Config, make deep copies of everything else.
+        if isinstance(value, abc.Mapping) and not isinstance(value, Config):
+            value = Config(value)
+        else:
+            value = copy.deepcopy(value)
+        super().__setitem__(key, value)
+
     def __getattr__(self, name):
         try:
             return self[name]
         except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'") from e
 
     def __setattr__(self, name, value):
-        if hasattr(type(self), name):
-            raise AttributeError(f"Cannot set attribute '{name}' on dict")
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(f"Cannot set dunder attribute '{name}' on config")
         self[name] = value
 
     def __delattr__(self, name):
-            if hasattr(type(self), name):
-                raise AttributeError(f"Cannot delete attribute '{name}' on dict")
-            try:
-                del self[name]
-            except KeyError as e:
-                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+        if name.startswith('__') and name.endswith('__'):
+            raise AttributeError(f"Cannot delete dunder attribute '{name}' on config")
+        try:
+            del self[name]
+        except KeyError as e:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'") from e
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -106,7 +155,7 @@ def log(message, *, sameline=False, **kwargs):
 ####################################################################################################
 #region Path manipulation
 
-def abs_path(raw_path) -> str | list[str]:
+def abs_path(raw_path):
     if raw_path is None:
         return None
     if listlike(raw_path):
@@ -164,9 +213,6 @@ def prepend_dir(task_dir, val):
 def listlike(variant):
     return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
 
-def dictlike(variant):
-    return isinstance(variant, abc.Mapping)
-
 def flatten(variant):
     if listlike(variant):
         return [x for element in variant for x in flatten(element) if x is not None]
@@ -212,44 +258,9 @@ def mtime(filename):
 ####################################################################################################
 #region Helpers for managing variants
 
-def merge_dicts(*args, **kwargs):
-    """
-    >>> merge_dicts(dict(),           dict())
-    {}
-    >>> merge_dicts(dict(),           dict(bar = None))
-    {'bar': None}
-    >>> merge_dicts(dict(),           dict(bar = 3))
-    {'bar': 3}
-    >>> merge_dicts(dict(bar = None), dict())
-    {'bar': None}
-    >>> merge_dicts(dict(bar = None), dict(bar = None))
-    {'bar': None}
-    >>> merge_dicts(dict(bar = None), dict(bar = 3))
-    {'bar': 3}
-    >>> merge_dicts(dict(bar = 2),    dict())
-    {'bar': 2}
-    >>> merge_dicts(dict(bar = 2),    dict(bar = None))
-    {'bar': 2}
-    >>> merge_dicts(dict(bar = 2),    dict(bar = 3))
-    {'bar': 3}
-    """
-
-    result = DotDict()
-    args = list(args) + [kwargs]
-    for arg in args:
-        if arg is None:
-            continue
-        assert dictlike(arg)
-        for key, rval in arg.items():
-            lval = result.get(key, None)
-            if lval is None or rval is not None:
-                result[key] = rval
-    return result
-
-
 def map_variant(key, val, apply):
     val = apply(key, val)
-    if dictlike(val):
+    if isinstance(val, abc.Mapping):
         for key2, val2 in val.items():
             val[key2] = map_variant(key2, val2, apply)
     elif listlike(val):
@@ -296,11 +307,11 @@ class Dumper:
             result += self.dump_dict(variant.__dict__)
         elif isinstance(variant, HanchoAPI):
             result += self.dump_dict(variant.__dict__)
-        elif isinstance(variant, DotDict):
+        elif isinstance(variant, Config):
             result += self.dump_dict(variant)
         elif listlike(variant):
             result += self.dump_list(variant)
-        elif dictlike(variant):
+        elif isinstance(variant, abc.Mapping):
             result = ""
             result += self.dump_dict(variant)
         elif isinstance(variant, str):
@@ -359,9 +370,9 @@ class Dumper:
 # The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
 # should suffice.
 #
-# Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
-# expandable by that dict. This allows nested dicts to contain templates that can only be expanded
-# an outer dict, and things will still Just Work.
+# Also - TEFINAE - Text Expansion Failure Is Not An Error. Configs can contain macros that are not
+# expandable by that config. This allows nested configs to contain templates that can only be expanded
+# a parent config, and things will still Just Work.
 
 # The maximum number of recursion levels we will do to expand a macro.
 # Tests currently require MAX_EXPAND_DEPTH >= 6
@@ -376,8 +387,8 @@ def trace_variant(variant):
     """Prints the right-side values of the expansion traces."""
     if callable(variant):
         return f"Callable @ {hex(id(variant))}"
-    elif isinstance(variant, dict):
-        return f"dict @ {hex(id(variant))}'"
+    elif isinstance(variant, Config):
+        return f"Config @ {hex(id(variant))}'"
     elif isinstance(variant, Expander):
         return f"Expander @ {hex(id(variant.context3))}'"
     else:
@@ -397,14 +408,12 @@ def stringify_variant(variant):
 
 class Expander:
     """
-    This class is used to fetch and expand text templates from a dict during text expansion, and
-    also to provide utility methods like 'rel' that return relative paths from the task directory.
-    It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
-    (using `expander.key`), making it versatile for accessing template variables and methods.
+    This class is used to fetch and expand text templates from a config and
+    to provide utility methods like 'rel' to macro expressions.
     """
 
     def __init__(self, context3):
-        assert isinstance(context3, DotDict)
+        assert isinstance(context3, Config)
         object.__setattr__(self, "context3", context3)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         object.__setattr__(self, "trace", context3.get("trace", app.flags.trace))
@@ -436,39 +445,41 @@ class Expander:
         # Check to see if we're fetching a special method from the Utils class.
         elif hasattr(Utils, key):
             val = getattr(Utils, key)
-        # Neither of those special cases apply, so we fetch the key from the context3 and expand it
+        # Neither of those special cases apply, so we fetch the key from the context and expand it
         # immediately.
         elif hasattr(self.context3, key):
-            val = expand_variant(self.context3, getattr(self.context3, key))
+            val = self.context3.expand(getattr(self.context3, key))
         elif key in self.context3:
-            val = expand_variant(self.context3, self.context3[key])
+            val = self.context3.expand(self.context3[key])
 
         if self.trace:
             log_trace(self, f"┃ Read '{key}' = {trace_variant(val)}")
 
-        # If we fetched a dict, wrap it in an Expander so we expand its sub-fields.
-        if isinstance(val, dict):
+        # If we fetched a config, wrap it in an Expander so we expand its sub-fields.
+        if isinstance(val, Config):
             val = Expander(val)
         return val
 
     # Returns a relative path from the task directory to the sub_path.
     def rel(self, sub_path):
-        result = rel_path(sub_path, expand_variant(self.context3, self.context3.task_dir))
+        result = rel_path(sub_path, self.context3.expand(self.context3.task_dir))
         return result
 
     def __repr__(self):
-        result = f"{type(self).__name__} @ {hex(id(self))} wraps "
+        result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
         result += Dumper(2).dump(self.context3)
         return result
 
 # ----------------------------------------
 
 def eval_macro(context, macro):
+    """
+    Evaluates the expression inside a {macro} and returns the result.
+    Returns the full macro (with curly braces) unchanged if evaluation fails.
+    """
     trace = context.get("trace", app.flags.trace)
     if trace:
         log_trace(context, f"┏ eval_macro {macro}")
-
-    #----------
 
     try:
         result = eval(macro[1:-1], {}, Expander(context))  # pylint: disable=eval-used
@@ -486,8 +497,9 @@ def eval_macro(context, macro):
 
 def split_template(text):
     """
-    Extract all innermost single-brace-delimited spans from a block of text and produce a list of
+    Extracts all innermost single-brace-delimited spans from a block of text and produces a list of
     non-delimited and delimited blocks. Escaped braces don't count as delimiters.
+    The result is of the form [(True, "{macro}"), (False, "plain text"), ...]
     """
     result = []
     cursor = 0
@@ -525,8 +537,6 @@ def eval_template(context, template):
     if trace:
         log_trace(context, f"┏ eval_template '{template}'")
 
-    #----------
-
     try:
         app.expand_depth += 1
         blocks = split_template(template)
@@ -540,13 +550,8 @@ def eval_template(context, template):
     finally:
         app.expand_depth -= 1
 
-
-    #----------
-
     if trace:
         log_trace(context, f"┗ eval_template '{template}' = '{result}'")
-
-    #print(app.expand_depth)
 
     return result
 
@@ -555,46 +560,49 @@ def eval_template(context, template):
 def expand_variant(context, variant):
     """Expands single templates and nested lists of templates."""
 
+    if listlike(variant):
+        return [context.expand(val) for val in variant]
+
+    if not isinstance(variant, str):
+        # FIXME are we hitting this? What if we try to expand a whole Config?
+        return variant
+
+    blocks = split_template(variant)
     recurse = False
 
-    if isinstance(variant, str):
-        blocks = split_template(variant)
-
-        if len(blocks) == 0:
-            result = variant
-        elif len(blocks) > 1:
-            template = variant
-            result = eval_template(context, template)
-            if result != template:
-                recurse = True
-        elif blocks[0][0] is True:
-            macro = blocks[0][1]
-            result = eval_macro(context, macro)
-            if result != macro:
-                recurse = True
-        else:
-            result = variant
-    elif listlike(variant):
-        result = [expand_variant(context, val) for val in variant]
+    if len(blocks) == 0:
+        # Empty string
+        result = variant
+    elif len(blocks) > 1:
+        # Template
+        template = variant
+        result = eval_template(context, template)
+        if result != template:
+            recurse = True
+    elif blocks[0][0] is True:
+        # Macro
+        macro = blocks[0][1]
+        result = eval_macro(context, macro)
+        if result != macro:
+            recurse = True
     else:
+        # Plain string
         result = variant
 
     if recurse:
-        app.expand_depth += 1
-        if app.expand_depth > MAX_EXPAND_DEPTH:
+        if app.expand_depth >= MAX_EXPAND_DEPTH:
             raise RecursionError(f"TemplateRecursion: Text expansion of {variant} failed to terminate")
-
-        # If we are recursing, we need to ensure that we expand the result again, in case it
-        # contains any macros or templates that need to be expanded.
-        result = expand_variant(context, result)
-        app.expand_depth -= 1
-
+        try:
+            app.expand_depth += 1
+            result = context.expand(result)
+        finally:
+            app.expand_depth -= 1
 
     return result
 
 #endregion
 ####################################################################################################
-#region Utils
+#region Utils FIXME we should just merge these into the context the moment we wrap it in an Expander or something.
 
 class Utils:
     # fmt: off
@@ -618,7 +626,7 @@ class Utils:
 
 #endregion
 ####################################################################################################
-#region Promise
+#region This small Promise class is used to select a subset of all Task outputs for awaiting.
 
 class Promise:
     def __init__(self, task, *args):
@@ -636,6 +644,7 @@ class Promise:
 
 #endregion
 ####################################################################################################
+# region Task object + bookkeeping FIXME you started to split .context into .context and .config but it got messy and you need to clean it up
 
 class TaskState:
     DECLARED = "DECLARED"
@@ -662,15 +671,15 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        default_context = dict(
+        default_context = Config(
             desc = Task.default_desc,
             command = Task.default_command,
         )
 
-        self.context = merge_dicts(default_context, *args, **kwargs)
+        self.context = Config(default_context, *args, **kwargs)
         self.expanded_context = Expander(self.context)
 
-        self.config = DotDict(
+        self.config = Config(
             _desc = None,
             _command = None,
             _in_files = [],
@@ -835,33 +844,32 @@ class Task:
         app.tasks_finished += 1
 
     # -----------------------------------------------------------------------------------------------
+    # FIXME we need to expand task_dir first, then cd into task_dir, then expand the rest
+    # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
         debug = self.context.get("debug", app.flags.debug)
-
         if debug:
             log(f"\nTask before expand: {self}")
 
         # ----------------------------------------
         # Expand task_dir and build_dir
 
-        # pylint: disable=attribute-defined-outside-init
-
-        # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
-
         context    = self.context
         repo_dir   = abs_path(self.expanded_context.repo_dir)
         task_dir   = abs_path(join_path(repo_dir, self.expanded_context.task_dir))
         build_dir  = abs_path(join_path(repo_dir, self.expanded_context.build_dir))
 
+        assert isinstance(repo_dir, str)
+        assert isinstance(task_dir, str)
+        assert isinstance(build_dir, str)
+
         # Check for missing input files/paths
         if not path.exists(task_dir):
             raise FileNotFoundError(task_dir)
 
-        # Raw tasks may not have a repo_dir.
-        #if repo_dir is not None:
         if not build_dir.startswith(repo_dir):
             raise ValueError(
                 f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
@@ -1112,10 +1120,11 @@ class Task:
                 log("Stderr:")
                 log(self._stderr, end="")
 
+#endregion
 ####################################################################################################
+#region The Hancho API object that gets passed into .hancho files FIXME self.context -> self.config?
 
 class HanchoAPI(Utils):
-
     def __init__(self, context, is_repo):
         self.context = context
         self.is_repo = is_repo
@@ -1128,17 +1137,15 @@ class HanchoAPI(Utils):
 
     def __call__(self, arg1=None, /, *args, **kwargs):
         if callable(arg1):
-            temp_context = merge_dicts(*args, **kwargs)
+            temp_context = Config(*args, **kwargs)
             # Note that we spread temp_context so that we can take advantage of parameter list
             # checking when we call the callback.
             return arg1(self, **temp_context)
         return Task(self.context, arg1, *args, **kwargs)
 
-
-
     def repo(self, mod_path, *args, **kwargs):
-
-        mod_path = expand_variant(self.context, mod_path)
+        mod_path = self.context.expand(mod_path)
+        assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
         mod_path = path.realpath(mod_path)
         #real_path = path.realpath(mod_path)
@@ -1153,15 +1160,12 @@ class HanchoAPI(Utils):
         app.realpath_to_repo[mod_path] = result
         return result
 
-
-
     def load(self, mod_path):
-        mod_path = expand_variant(self.context, mod_path)
+        mod_path = self.context.expand(mod_path)
+        assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
         new_context = create_mod(self, mod_path)
         return new_context._load()
-
-
 
     def _load(self):
         #if len(app.dirstack) == 1 or app.flags.verbosity or app.flags.debug:
@@ -1199,8 +1203,8 @@ class HanchoAPI(Utils):
 
         temp_globals = {
             "hancho": self,
-            "config": DotDict,
-            "task"  : DotDict,
+            "config": Config,
+            "task"  : Config,
         }
 
         module_globals = dict(temp_globals)
@@ -1210,10 +1214,10 @@ class HanchoAPI(Utils):
         types.FunctionType(code, module_globals)()
         app.popdir()
 
-        # Module loaded, turn the module's globals into a dict that doesn't include __builtins__,
+        # Module loaded, turn the module's globals into a config that doesn't include __builtins__,
         # hancho, imports, and private fields so we don't have files that end up transitively
         # containing the universe
-        new_module = DotDict()
+        new_module = Config()
         for key, val in module_globals.items():
             #if key.startswith("_") or key == "hancho" or key == "config" or key == "task" or isinstance(val, type(sys)):
             if key.startswith("_") or key in temp_globals or isinstance(val, type(sys)):
@@ -1225,9 +1229,7 @@ class HanchoAPI(Utils):
 
         return new_module
 
-    def expand(self, text):
-        return expand_variant(self.context, text)
-
+#endregion
 ####################################################################################################
 
 def create_repo(mod_path : str, *args, **kwargs):
@@ -1240,7 +1242,7 @@ def create_repo(mod_path : str, *args, **kwargs):
     mod_file = path.split(mod_path)[1]
     mod_name = path.splitext(mod_file)[0]
 
-    mod_context = DotDict(
+    mod_context = Config(
         repo_name  = path.split(mod_dir)[1],
         repo_dir   = mod_dir,
         repo_path  = mod_path,
@@ -1249,7 +1251,7 @@ def create_repo(mod_path : str, *args, **kwargs):
         mod_dir    = mod_dir,
         mod_path   = mod_path,
 
-        # These have to be here so that expand_variant(hancho.context, "{build_dir}") works.
+        # These have to be here so that context.expand("{build_dir}") works.
         build_root = Task.default_build_root,
         build_tag  = Task.default_build_tag,
         build_dir  = Task.default_build_dir,
@@ -1257,7 +1259,7 @@ def create_repo(mod_path : str, *args, **kwargs):
         task_dir   = Task.default_task_dir,
     )
 
-    mod_context = merge_dicts(mod_context, *args, **kwargs)
+    mod_context = Config(mod_context, *args, **kwargs)
 
     mod_api = HanchoAPI(mod_context, True)
     return mod_api
@@ -1279,11 +1281,12 @@ def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
     mod_api.context.mod_dir  = mod_dir
     mod_api.context.mod_path = mod_path
 
-    mod_api.context = merge_dicts(mod_api.context, *args, kwargs)
+    mod_api.context = Config(mod_api.context, *args, kwargs)
 
     return mod_api
 
 ####################################################################################################
+#region Job pool, keeps track of how many tasks we have running at once.
 
 class JobPool:
     def __init__(self):
@@ -1337,14 +1340,15 @@ class JobPool:
         self.jobs_lock.notify_all()
         self.jobs_lock.release()
 
-
+#endregion
 ####################################################################################################
+#region The global app object. There's probably a better way to handle global state...
 
 class App:
 
     def __init__(self):
         self.flags = argparse.Namespace()
-        self.extra_flags = DotDict()
+        self.extra_flags = Config()
         self.target_regex = None
 
         self.root_context = None
@@ -1470,18 +1474,18 @@ class App:
         if app.flags.tool:
             print(f"Running tool {app.flags.tool}")
             if app.flags.tool == "clean":
-                print("Cleaning build directories")
-                build_dirs = set()
+                print("Deleting build directories")
+                build_roots = set()
                 for task in app.all_tasks:
-                    build_dir = expand_variant(task.context, "{build_root}")
-                    assert isinstance(build_dir, str)
-                    build_dir = path.abspath(build_dir)
-                    build_dir = path.realpath(build_dir)
-                    if path.isdir(build_dir):
-                        build_dirs.add(build_dir)
-                for build_dir in build_dirs:
-                    print(f"Deleting build root {build_dir}")
-                    shutil.rmtree(build_dir, ignore_errors=True)
+                    build_root = task.context.expand(task.context.build_root)
+                    assert isinstance(build_root, str)
+                    build_root = path.abspath(build_root)
+                    build_root = path.realpath(build_root)
+                    if path.isdir(build_root):
+                        build_roots.add(build_root)
+                for root in build_roots:
+                    print(f"Deleting build root {root}")
+                    shutil.rmtree(root, ignore_errors=True)
             return 0
 
         time_a = time.perf_counter()
@@ -1512,9 +1516,9 @@ class App:
 
                 # FIXME we are not currently doing that....
 
-                # build_dir = expand_variant(task.context, task.context.build_dir)
+                # build_dir = task.context.expand(task.context.build_dir)
                 # build_dir = path.abspath(build_dir)
-                # repo_dir = expand_variant(app.root_context.context, "{build_dir}")
+                # repo_dir = app.root_context.context.expand("{repo_dir}")
                 # repo_dir = path.abspath(repo_dir)
                 # print(build_dir)
                 # print(repo_dir)
@@ -1627,6 +1631,7 @@ class App:
 
         return -1 if self.tasks_failed or self.tasks_broken else 0
 
+#endregion
 ####################################################################################################
 # region Main
 # Always create an App() object so we can use it for bookkeeping even if we loaded Hancho as a

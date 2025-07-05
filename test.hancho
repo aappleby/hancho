@@ -1,7 +1,4 @@
-# Don't do this, if we load this in any other build it makes _everything_ rebuild...
-# hancho.app.flags.rebuild = True
-
-base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
+base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
 
 hancho(base_rules.check_cpp, in_src = "tests/src/main.cpp")
 hancho(base_rules.check_cpp, in_src = "tests/src/test.cpp")
@@ -10,7 +7,7 @@ hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")
 
 hancho(
-    desc = "Run all tests",
+    desc     = "Run all tests",
     command  = ["{repo_dir}/tests/run_tests.py"],
     task_dir = "{repo_dir}/tests",
 )

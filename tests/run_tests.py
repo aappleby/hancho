@@ -15,6 +15,8 @@ import time
 sys.path.append("..")
 import hancho as hancho_py
 
+Config = hancho_py.Config
+
 # tests still needed -
 # calling hancho in src dir
 # meta deps changed
@@ -103,12 +105,6 @@ class TestHancho(unittest.TestCase):
 
     def test_dummy(self):
         self.assertEqual(0, 0)
-
-    ########################################
-
-    def test_log(self):
-        hancho_py.app.reset()
-        hancho_py.log("")
 
     ########################################
 
@@ -315,7 +311,7 @@ class TestHancho(unittest.TestCase):
             command = "{subthing.foo}",
             in_src  = [],
             out_obj = [],
-            subthing = hancho_py.DotDict(foo = "{subthing.foo} x"),
+            subthing = hancho_py.Config(foo = "{subthing.foo} x"),
             #trace = True
         )
         self.assertNotEqual(0, hancho_py.app.build_all())
@@ -326,7 +322,7 @@ class TestHancho(unittest.TestCase):
     ########################################
 
     def test_nested_macros(self):
-        c = hancho_py.DotDict(
+        c = hancho_py.Config(
             foo = "piece1",
             bar = "piece2",
             baz = "{ {foo}{bar} }",
@@ -444,7 +440,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = hancho_py.DotDict(
+            compile = hancho_py.Config(
                 command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
@@ -469,7 +465,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = hancho_py.DotDict(
+            compile = hancho_py.Config(
                 command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
@@ -656,6 +652,10 @@ class TestHancho(unittest.TestCase):
 ####################################################################################################
 
 class TestSplitTemplate(unittest.TestCase):
+    def setUp(self):
+        print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
+        sys.stdout.flush()
+
     def test_basic(self):
         def split_template(text):
             blocks = hancho_py.split_template(text)
@@ -722,6 +722,113 @@ class TestSplitTemplate(unittest.TestCase):
         # Escaped backslashes should _not_ cause a following brace to be ignored.
         self.assertEqual(split_template("a\\\\{b}"),      ['a\\\\', '{b}'])
         self.assertEqual(split_template("a{b\\\\}"),      ['a', '{b\\\\}'])
+
+####################################################################################################
+
+class TestConfig(unittest.TestCase):
+    def setUp(self):
+        print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
+        sys.stdout.flush()
+
+    def test_attribute_access(self):
+        d = Config({'a': 1, 'b': 2})
+        self.assertEqual(d.a, 1)
+        self.assertEqual(d['b'], 2)
+        d.c = 3
+        self.assertEqual(d['c'], 3)
+        d['d'] = 4
+        self.assertEqual(d.d, 4)
+        with self.assertRaises(AttributeError):
+            _ = d.not_present
+
+    def test_setattr_upgrades_dict(self):
+        d = Config()
+        d.child = {'x': 1}
+        self.assertIsInstance(d.child, Config)
+        self.assertEqual(d.child.x, 1)
+
+    def test_merge_rightmost_wins(self):
+        d1 = Config({'a': 1, 'b': 2})
+        d2 = Config({'b': 3, 'c': 4})
+        merged = Config(d1, d2)
+        self.assertEqual(merged.a, 1)
+        self.assertEqual(merged.b, 3)
+        self.assertEqual(merged.c, 4)
+
+    def test_recursive_merge(self):
+        d1 = Config({'a': {'x': 1, 'y': 2}})
+        d2 = Config({'a': {'y': 3, 'z': 4}})
+        merged = Config(d1, d2)
+        self.assertIsInstance(merged.a, Config)
+        self.assertEqual(merged.a.x, 1)
+        self.assertEqual(merged.a.y, 3)
+        self.assertEqual(merged.a.z, 4)
+
+    def test_value_semantics(self):
+        d1 = Config({'a': [1, 2]})
+        d2 = Config(d1)
+        d2.a.append(3)
+        self.assertEqual(d1.a, [1, 2])  # d1 should not be affected
+
+    def test_dunder_protection(self):
+        d = Config()
+        with self.assertRaises(AttributeError):
+            d.__foo__ = 123
+        with self.assertRaises(AttributeError):
+            del d.__foo__
+
+    def test_rightmost_none_does_not_override(self):
+        d1 = Config({'a': 1, 'b': 2})
+        d2 = Config({'a': None})
+        merged = Config(d1, d2)
+        self.assertEqual(merged.a, 1)
+        self.assertEqual(merged.b, 2)
+
+    def test_nested_dicts_are_upgraded(self):
+        d = Config({'a': {'b': {'c': 1}}})
+        self.assertIsInstance(d.a, Config)
+        self.assertIsInstance(d.a.b, Config)
+        self.assertEqual(d.a.b.c, 1)
+
+    def test_setitem_upgrades_dict(self):
+        d = Config()
+        d['foo'] = {'bar': 42}
+        self.assertIsInstance(d.foo, Config)
+        self.assertEqual(d.foo.bar, 42)
+
+    def test_delattr_removes_key(self):
+        d = Config({'a': 1, 'b': 2})
+        del d.a
+        self.assertNotIn('a', d)
+        d.c = 3
+        del d.c
+        self.assertNotIn('c', d)
+
+    def test_merge_with_multiple_dicts(self):
+        d1 = Config({'a': 1})
+        d2 = Config({'b': 2})
+        d3 = Config({'c': 3})
+        merged = Config(d1, d2, d3)
+        self.assertEqual(merged.a, 1)
+        self.assertEqual(merged.b, 2)
+        self.assertEqual(merged.c, 3)
+
+    def test_merge_with_kwargs(self):
+        d1 = Config({'a': 1})
+        merged = Config(d1, b=2, c=3)
+        self.assertEqual(merged.a, 1)
+        self.assertEqual(merged.b, 2)
+        self.assertEqual(merged.c, 3)
+
+    def test_attribute_error_on_missing(self):
+        d = Config()
+        with self.assertRaises(AttributeError):
+            _ = d.missing
+
+    def test_no_override_with_none_in_kwargs(self):
+        d1 = Config({'a': 1})
+        merged = Config(d1, a=None)
+        self.assertEqual(merged.a, 1)
 
 ####################################################################################################
 
