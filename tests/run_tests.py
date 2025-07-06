@@ -525,7 +525,7 @@ class TestHancho(unittest.TestCase):
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
         def sync_command(task):
-            force_touch(task.merged_config.out_obj)
+            force_touch(task.config.out_obj)
 
         self.hancho(
             command = sync_command,
