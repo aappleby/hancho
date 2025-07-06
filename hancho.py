@@ -689,11 +689,8 @@ class Task:
 
         self.context = Config(default_context, *args, **kwargs)
 
-        self.config = Config(
-            _desc = None,
-            _command = None,
-        )
-
+        self._desc = None
+        self._command = None
         self._task_index = 0
         self._state = TaskState.DECLARED
         self._reason = None
@@ -756,7 +753,7 @@ class Task:
 
         verbosity = self.context.get_expanded("verbosity", app.flags.verbosity)
         log(
-            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config._desc}",
+            f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self._desc}",
             sameline=verbosity == 0,
         )
 
@@ -777,8 +774,6 @@ class Task:
             self._state = TaskState.AWAITING_INPUTS
             for key, val in self.context.items():
                 self.context[key] = await await_variant(val)
-            for key, val in self.config.items():
-                self.config[key] = await await_variant(val)
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = TaskState.CANCELLED
@@ -806,7 +801,7 @@ class Task:
             raise ex
 
         # Early-out if this is a no-op task
-        if self.config._command is None:
+        if self._command is None:
             app.tasks_finished += 1
             self._state = TaskState.FINISHED
             return
@@ -833,7 +828,7 @@ class Task:
             if verbosity or debug:
                 log(f"{color(128,128,128)}Reason: {self._reason}{color()}")
 
-            for command in flatten(self.config._command):
+            for command in flatten(self._command):
                 await self.run_command(command)
                 if self._returncode != 0:
                     break
@@ -852,7 +847,6 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
     # FIXME we need to expand task_dir first, then cd into task_dir, then expand the rest
-    # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
     # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
     def task_init(self):
@@ -882,9 +876,6 @@ class Task:
             raise ValueError(
                 f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
             )
-
-        self.config.task_dir   = task_dir
-        self.config.build_dir  = build_dir
 
         self.context.task_dir   = task_dir
         self.context.build_dir  = build_dir
@@ -929,7 +920,6 @@ class Task:
                 file = self.context.expand(file)
                 file = join_path(task_dir, normpath(file))
                 self._in_files.extend(flatten(file))
-                self.config[key] = file
                 self.context[key] = file
 
             if key.startswith("out_"):
@@ -937,14 +927,12 @@ class Task:
                 file = self.context.expand(file)
                 file = move_to_builddir2(file)
                 self._out_files.extend(flatten(file))
-                self.config[key] = file
                 self.context[key] = file
 
             if key == "depfile":
                 file = self.context[key]
                 file = self.context.expand(file)
                 file = move_to_builddir2(file)
-                self.config[key] = file
                 self.context[key] = file
 
         # ----------------------------------------
@@ -985,8 +973,8 @@ class Task:
         desc    = self.context.expand("{desc}")
         command = self.context.expand("{command}")
 
-        self.config._desc    = desc
-        self.config._command = command
+        self._desc    = desc
+        self._command = command
 
         if debug:
             log(f"\nTask after expand: {self}")
@@ -1119,7 +1107,7 @@ class Task:
 
         if debug or verbosity:
             log(
-                f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self.config._desc}'"
+                f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} Task passed - '{self._desc}'"
             )
             if self._stdout:
                 log("Stdout:")
@@ -1610,7 +1598,7 @@ class App:
                 await task.asyncio_task
             except BaseException:  # pylint: disable=broad-exception-caught
                 log(color(255, 128, 0), end="")
-                log(f"Task failed: {task.config._desc}")
+                log(f"Task failed: {task._desc}")
                 log(color(), end="")
                 log(str(task))
                 log(color(255, 128, 128), end="")
