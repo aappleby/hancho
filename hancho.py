@@ -319,7 +319,7 @@ class Dumper:
         elif isinstance(variant, Config):
             result += self.dump_dict(variant)
         elif isinstance(variant, Expander):
-            result += self.dump_dict(variant.context3)
+            result += self.dump_dict(variant.config)
         elif listlike(variant):
             result += self.dump_list(variant)
         elif isinstance(variant, abc.Mapping):
@@ -393,9 +393,9 @@ def id_to_color(obj):
     random.seed(id(obj))
     return color(random.randint(64, 255), random.randint(64, 255), random.randint(64, 255))
 
-def log_trace(context, text):
+def log_trace(config, text):
     """Prints a trace message to the log."""
-    prefix = id_to_color(context) + hex(id(context)) + color() + ": " + ("┃ " * app.expand_depth)
+    prefix = id_to_color(config) + hex(id(config)) + color() + ": " + ("┃ " * app.expand_depth)
     log(prefix + text)
 
 def trace_variant(variant):
@@ -405,7 +405,7 @@ def trace_variant(variant):
     elif isinstance(variant, Config):
         return f"Config @ {hex(id(variant))}'"
     elif isinstance(variant, Expander):
-        return f"Expander @ {hex(id(variant.context3))}'"
+        return f"Expander @ {hex(id(variant.config))}'"
     else:
         return f"'{variant}'"
 
@@ -427,20 +427,15 @@ class Expander:
     to provide utility methods like 'rel' to macro expressions.
     """
 
-    def __init__(self, context3):
-        assert isinstance(context3, Config)
-
-        trace = context3.get("trace", app.flags.trace)
-
-        object.__setattr__(self, "context3", context3)
-        # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        object.__setattr__(self, "trace", trace)
-        context3.glob     = glob.glob
-        context3.rel_path = rel_path
-        context3.ext      = ext
+    def __init__(self, config):
+        assert isinstance(config, Config)
+        config.glob     = glob.glob
+        config.rel_path = rel_path
+        config.ext      = ext
+        self.config = config
 
     def __contains__(self, key):
-        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context3
+        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.config
 
     def __getitem__(self, key):
         return self.get(key)
@@ -449,62 +444,72 @@ class Expander:
         return self.get(key)
 
     def get(self, key, default = None):
+        trace = self.config.get("trace", app.flags.trace)
 
-        if self.trace:
-            log_trace(self.context3, f"┏ expander.get('{key}')")
+        if trace:
+            log_trace(self.config, f"┏ expander.get('{key}')")
+        app.expand_depth += 1
 
         val = default
+        failed = False
 
         # Check to see if we're fetching a special method from the Utils class.
         if hasattr(Utils, key):
             val = getattr(Utils, key)
-        # Neither of those special cases apply, so we fetch the key from the context and expand it
+        # Neither of those special cases apply, so we fetch the key from the config and expand it
         # immediately.
-        elif hasattr(self.context3, key):
-            app.expand_depth += 1
-            val = self.context3.expand(getattr(self.context3, key))
-            app.expand_depth -= 1
+        elif hasattr(self.config, key):
+            val = self.config.expand(getattr(self.config, key))
         elif default is not None:
             val = default
         else:
-            if self.trace:
-                log_trace(self.context3, f"┗ expander.get('{key}') failed")
-            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+            failed = True
 
-        if self.trace:
-            log_trace(self.context3, f"┗ expander.get('{key}') = {trace_variant(val)}")
+        app.expand_depth -= 1
+        if trace:
+            if failed:
+                log_trace(self.config, f"┗ expander.get('{key}') failed")
+            else:
+                log_trace(self.config, f"┗ expander.get('{key}') = {trace_variant(val)}")
+
+        if failed:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
         # If we fetched a config, wrap it in an Expander so we expand its sub-fields.
         if isinstance(val, Config):
             val = Expander(val)
+
         return val
 
     def __repr__(self):
         result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
-        result += Dumper(2).dump(self.context3)
+        result += Dumper(2).dump(self.config)
         return result
 
 # ----------------------------------------
 
-def eval_macro(context, macro):
+class Macro(str):
+    pass
+
+def eval_macro(config, macro : Macro):
     """
     Evaluates the expression inside a {macro} and returns the result.
     Returns the full macro (with curly braces) unchanged if evaluation fails.
     """
-    trace = context.get("trace", app.flags.trace)
+    trace = config.get("trace", app.flags.trace)
     if trace:
-        log_trace(context, f"┏ eval_macro {macro}")
+        log_trace(config, f"┏ eval_macro {macro}")
 
     if app.expand_depth >= MAX_EXPAND_DEPTH:
         if trace:
-            log_trace(context, f"┗ eval_macro {macro} failed due to recursion depth")
+            log_trace(config, f"┗ eval_macro {macro} failed due to recursion depth")
         raise RecursionError(f"eval_macro('{macro}') failed to terminate")
 
     failed = False
     app.expand_depth += 1
 
     try:
-        result = eval(macro[1:-1], {}, Expander(context))  # pylint: disable=eval-used
+        result = eval(macro[1:-1], {}, Expander(config))  # pylint: disable=eval-used
     except BaseException:  # pylint: disable=broad-exception-caught
         # TEFINAE - Text Expansion Failure Is Not An Error, we return the original macro.
         failed = True
@@ -513,19 +518,20 @@ def eval_macro(context, macro):
     app.expand_depth -= 1
     if trace:
         if failed:
-            log_trace(context, f"┗ eval_macro {macro} failed")
+            log_trace(config, f"┗ eval_macro {macro} failed")
         else:
-            log_trace(context, f"┗ eval_macro {macro} = {result}")
+            log_trace(config, f"┗ eval_macro {macro} = {result}")
 
     return result
 
 # ----------------------------------------
+# FIXME we need full-loop test cases for escaped {}s. Somewhere in the process we need to unescape
+# them and I'm not sure where it goes.
 
 def split_template(text):
     """
     Extracts all innermost single-brace-delimited spans from a block of text and produces a list of
-    non-delimited and delimited blocks. Escaped braces don't count as delimiters.
-    The result is of the form [(True, "{macro}"), (False, "plain text"), ...]
+    strings and macros. Escaped braces don't count as delimiters.
     """
     result = []
     cursor = 0
@@ -543,110 +549,78 @@ def split_template(text):
         elif c == '}' and lbrace >= 0:
             rbrace = i
             if cursor < lbrace:
-                result.append((False, text[cursor:lbrace]))
-            result.append((True, text[lbrace:rbrace + 1]))
+                result.append(text[cursor:lbrace])
+            result.append(Macro(text[lbrace:rbrace + 1]))
             cursor = rbrace + 1
             lbrace = -1
             rbrace = -1
 
     if cursor < len(text):
-        result.append((False, text[cursor:]))
+        result.append(text[cursor:])
 
     return result
 
 # ----------------------------------------
 
-def expand_blocks(context, blocks):
+def expand_blocks(config, blocks):
+    trace = config.get("trace", app.flags.trace)
+    if trace:
+        log_trace(config, f"┏ expand_blocks {blocks}")
+    app.expand_depth += 1
+
     result = ""
     for block in blocks:
-        if block[0] is True:
-            value = eval_macro(context, block[1])
+        if isinstance(block, Macro):
+            value = eval_macro(config, block)
             result += stringify_variant(value)
         else:
-            result += block[1]
+            result += block
 
+    app.expand_depth -= 1
+    if trace:
+        log_trace(config, f"┗ expand_blocks {blocks} = '{result}'")
     return result
 
 # ----------------------------------------
 
-def expand_template(context, template):
-    """Replaces all macros in 'template' with their stringified values."""
-
-    trace = context.get("trace", app.flags.trace)
-    if trace:
-        log_trace(context, f"┏ expand_template '{template}'")
-
-    try:
-        app.expand_depth += 1
-        blocks = split_template(template)
-        result = expand_blocks(context, blocks)
-        #result = ""
-        #for block in blocks:
-        #    if block[0] is True:
-        #        value = eval_macro(context, block[1])
-        #        result += stringify_variant(value)
-        #    else:
-        #        result += block[1]
-    finally:
-        app.expand_depth -= 1
-
-    if trace:
-        log_trace(context, f"┗ expand_template '{template}' = '{result}'")
-
-    return result
-
-# ----------------------------------------
-
-def expand_variant(context, variant):
+def expand_variant(config, variant):
     """Expands single templates and nested lists of templates. Returns non-templates unchanged."""
 
-    trace = context.get("trace", app.flags.trace)
+    trace = config.get("trace", app.flags.trace)
 
     if listlike(variant):
-        return [context.expand(val) for val in variant]
+        return [config.expand(val) for val in variant]
 
     if not isinstance(variant, str):
         return variant
 
     blocks = split_template(variant)
-    recurse = False
-
-    if trace:
-        log_trace(context, f"┏ expand_variant '{variant}'")
-
-    if len(blocks) == 0 or (len(blocks) == 1 and blocks[0][0] is False):
+    if len(blocks) == 0 or (len(blocks) == 1 and not isinstance(blocks[0], Macro)):
         # Empty string or plain string
         return variant
 
+    if trace:
+        log_trace(config, f"┏ expand_variant '{variant}'")
     app.expand_depth += 1
 
-    if len(blocks) > 1:
-        result = expand_template(context, variant)
-        if result != variant:
-            recurse = True
+    if len(blocks) == 1:
+        result = eval_macro(config, blocks[0])
     else:
-        result = eval_macro(context, blocks[0][1])
-        if result != blocks[0][1]:
-            recurse = True
+        result = expand_blocks(config, blocks)
 
-    if recurse:
-        if trace:
-            app.expand_depth -= 1
-            log_trace(context, "┃ Expansion incomplete, recursing")
-            app.expand_depth += 1
-        result = context.expand(result)
+    if result != variant:
+        result = config.expand(result)
 
     app.expand_depth -= 1
-
     if trace:
-        log_trace(context, f"┗ expand_variant '{variant}' = '{result}'")
+        log_trace(config, f"┗ expand_variant '{variant}' = '{result}'")
 
     return result
 
 #endregion
 ####################################################################################################
 #region Utils
-# FIXME we should just merge these into the context the moment we wrap it in an Expander or something.
+# FIXME we should just merge these into the config the moment we wrap it in an Expander or something.
 
 class Utils:
     # fmt: off
@@ -714,12 +688,12 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        default_context = Config(
+        default_config = Config(
             desc = Task.default_desc,
             command = Task.default_command,
         )
 
-        self.config = Config(default_context, *args, **kwargs)
+        self.config = Config(default_config, *args, **kwargs)
 
         self._desc = None
         self._command = None
@@ -753,7 +727,7 @@ class Task:
     def queue(self):
         if self._state is TaskState.DECLARED:
 
-            # Queue all tasks referenced by this task's context.
+            # Queue all tasks referenced by this task's config.
             def apply(_, val):
                 if isinstance(val, Task):
                     val.queue()
@@ -799,7 +773,7 @@ class Task:
         debug     = self.config.get_expanded("debug",     app.flags.debug)
         rebuild   = self.config.get_expanded("rebuild",   app.flags.rebuild)
 
-        # Await everything awaitable in this task's context.
+        # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
         # downstream tasks.
         try:
@@ -1172,7 +1146,7 @@ class HanchoAPI:
     def __call__(self, arg1=None, /, *args, **kwargs):
         if callable(arg1):
             temp_config = Config(*args, **kwargs)
-            # Note that we spread temp_context so that we can take advantage of parameter list
+            # Note that we spread temp_config so that we can take advantage of parameter list
             # checking when we call the callback.
             return arg1(self, **temp_config)
         return Task(self.config, arg1, *args, **kwargs)
@@ -1198,8 +1172,8 @@ class HanchoAPI:
         mod_path = self.config.expand(mod_path)
         assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
-        new_context = create_mod(self, mod_path)
-        return new_context._load()
+        new_module = create_mod(self, mod_path)
+        return new_module._load()
 
     def _load(self):
         #if len(app.dirstack) == 1 or app.flags.verbosity or app.flags.debug:
@@ -1263,7 +1237,7 @@ class HanchoAPI:
                 continue
             new_module[key] = val
 
-        # Tack the context onto the module so people who load it can see the paths it was built with, etc.
+        # Tack the config onto the module so people who load it can see the paths it was built with, etc.
         new_module['config'] = module_globals['hancho'].config
 
         return new_module
@@ -1281,7 +1255,7 @@ def create_repo(mod_path : str, *args, **kwargs):
     mod_file = path.split(mod_path)[1]
     mod_name = path.splitext(mod_file)[0]
 
-    mod_context = Config(
+    mod_config = Config(
         hancho_dir  = path.dirname(path.realpath(__file__)),
         root_dir    = app.flags.root_dir,
 
@@ -1293,7 +1267,7 @@ def create_repo(mod_path : str, *args, **kwargs):
         mod_dir    = mod_dir,
         mod_path   = mod_path,
 
-        # These have to be here so that context.expand("{build_dir}") works.
+        # These have to be here so that config.expand("{build_dir}") works.
         build_root = Task.default_build_root,
         build_tag  = Task.default_build_tag,
         build_dir  = Task.default_build_dir,
@@ -1303,9 +1277,9 @@ def create_repo(mod_path : str, *args, **kwargs):
         join       = join
     )
 
-    mod_context = Config(mod_context, *args, **kwargs)
+    mod_config = Config(mod_config, *args, **kwargs)
 
-    mod_api = HanchoAPI(mod_context, True)
+    mod_api = HanchoAPI(mod_config, True)
     return mod_api
 
 ####################################################################################################
@@ -1396,7 +1370,7 @@ class App:
         self.extra_flags = Config()
         self.target_regex = None
 
-        self.root_context = None
+        self.root_mod = None
         self.loaded_files = []
         self.dirstack = [os.getcwd()]
 
@@ -1455,7 +1429,7 @@ class App:
 
         (self.flags, unrecognized) = parser.parse_known_args(argv)
 
-        # Unrecognized command line parameters also become global context fields if they are
+        # Unrecognized command line parameters also become module config fields if they are
         # flag-like
         for span in unrecognized:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
@@ -1474,43 +1448,43 @@ class App:
 
     ########################################
 
-    def create_root_context(self):
+    def create_root_mod(self):
         """ Needs to be its own function, used by run_tests.py """
 
         root_file = self.flags.root_file
         root_dir  = path.abspath(self.flags.root_dir)  # Root path must be absolute.
         root_path = path.normpath(path.join(root_dir, root_file))
         root_path = path.realpath(root_path)
-        root_context = create_repo(root_path)
+        root_mod = create_repo(root_path)
 
-        # All the unrecognized flags get stuck on the root context.
+        # All the unrecognized flags get stuck on the root module's config.
         for key, val in self.extra_flags.items():
-            setattr(root_context.config, key, val)
+            setattr(root_mod.config, key, val)
 
-        return root_context
+        return root_mod
 
     ########################################
 
     def main(self):
-        app.root_context = self.create_root_context()
+        app.root_mod = self.create_root_mod()
 
-        if app.root_context.config.get_expanded("debug", None):
-            log(f"root_context = {Dumper(2).dump(app.root_context)}")
+        if app.root_mod.config.get_expanded("debug", None):
+            log(f"root_mod = {Dumper(2).dump(app.root_mod)}")
 
-        if not path.isfile(app.root_context.config.repo_path):
+        if not path.isfile(app.root_mod.config.repo_path):
             print(
-                f"Could not find Hancho file {app.root_context.config.repo_path}!"
+                f"Could not find Hancho file {app.root_mod.config.repo_path}!"
             )
             sys.exit(-1)
 
-        assert path.isabs(app.root_context.config.repo_path)
-        assert path.isfile(app.root_context.config.repo_path)
-        assert path.isabs(app.root_context.config.repo_dir)
-        assert path.isdir(app.root_context.config.repo_dir)
+        assert path.isabs(app.root_mod.config.repo_path)
+        assert path.isfile(app.root_mod.config.repo_path)
+        assert path.isabs(app.root_mod.config.repo_dir)
+        assert path.isdir(app.root_mod.config.repo_dir)
 
-        os.chdir(app.root_context.config.repo_dir)
+        os.chdir(app.root_mod.config.repo_dir)
         time_a = time.perf_counter()
-        app.root_context._load()
+        app.root_mod._load()
         time_b = time.perf_counter()
 
         if app.flags.debug or app.flags.verbosity:
@@ -1563,7 +1537,7 @@ class App:
 
                 # build_dir = task.config.get_expanded("{build_dir}")
                 # build_dir = path.abspath(build_dir)
-                # repo_dir = app.root_context.config.get_expanded("{repo_dir}")
+                # repo_dir = app.root_mod.config.get_expanded("{repo_dir}")
                 # repo_dir = path.abspath(repo_dir)
                 # print(build_dir)
                 # print(repo_dir)
@@ -1690,9 +1664,10 @@ if __name__ == "__main__":
     foo = Config(a = "sdf {b} ssd", b = "222 {c} 222", trace = True)
     bar = Config(foo = foo, c = 2, trace = True)
     try:
-        #print(e.a)
-        #print(e.c)
-        print(bar.expand("asdlkfj {foo.a} sjkdlfjs"))
+        template = "begin {foo.a} end"
+        print(template)
+        result = bar.expand(template)
+        print(result)
     except BaseException as e:
         pass
 

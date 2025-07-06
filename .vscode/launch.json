@@ -43,7 +43,7 @@
       "request": "launch",
       "program": "run_tests.py",
       "cwd": "${workspaceFolder}/tests",
-      "args": ["TestHancho.test_raw_task"],
+      //"args": ["TestHancho.test_raw_task"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },

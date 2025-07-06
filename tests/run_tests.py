@@ -93,7 +93,7 @@ class TestHancho(unittest.TestCase):
         #hancho_py.app.parse_flags([])
         #hancho_py.app.parse_flags(["-v"])
         #hancho_py.app.parse_flags(["-d"])
-        self.hancho = hancho_py.app.create_root_context()
+        self.hancho = hancho_py.app.create_root_mod()
 
     ########################################
 
@@ -110,7 +110,7 @@ class TestHancho(unittest.TestCase):
 
     def test_run_cmd(self):
         #hancho_py.app.reset()
-        #self.hancho = hancho_py.app.create_root_context()
+        #self.hancho = hancho_py.app.create_root_mod()
         task = self.hancho(command = "echo \'{run_cmd('ls')}\'")
         self.assertEqual(0, hancho_py.app.build_all())
 
@@ -509,7 +509,7 @@ class TestHancho(unittest.TestCase):
         """Passing arbitrary flags to Hancho should work"""
         hancho_py.app.reset()
         hancho_py.app.parse_flags(["--quiet", "--flarpy=flarp.txt"])
-        self.hancho = hancho_py.app.create_root_context()
+        self.hancho = hancho_py.app.create_root_mod()
         self.assertEqual("flarp.txt", self.hancho.config.flarpy)
 
         self.hancho(
@@ -658,8 +658,7 @@ class TestSplitTemplate(unittest.TestCase):
 
     def test_basic(self):
         def split_template(text):
-            blocks = hancho_py.split_template(text)
-            return [block[1] for block in blocks]
+            return hancho_py.split_template(text)
 
         # Sanity check - Single braces should produce a block
         self.assertEqual(split_template("a {b} c"), ['a ', '{b}', ' c'])
