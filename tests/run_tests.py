@@ -510,7 +510,7 @@ class TestHancho(unittest.TestCase):
         hancho_py.app.reset()
         hancho_py.app.parse_flags(["--quiet", "--flarpy=flarp.txt"])
         self.hancho = hancho_py.app.create_root_context()
-        self.assertEqual("flarp.txt", self.hancho.context.flarpy)
+        self.assertEqual("flarp.txt", self.hancho.mod_config.flarpy)
 
         self.hancho(
             command = "touch {out_file}",
@@ -525,7 +525,7 @@ class TestHancho(unittest.TestCase):
     def test_sync_command(self):
         """The 'command' field of rules should be OK handling a sync function"""
         def sync_command(task):
-            force_touch(task.context.out_obj)
+            force_touch(task.merged_config.out_obj)
 
         self.hancho(
             command = sync_command,

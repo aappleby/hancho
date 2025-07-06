@@ -649,13 +649,13 @@ class Promise:
         if len(self.args) == 0:
             return self.task._out_files
         elif len(self.args) == 1:
-            return self.task.context[self.args[0]]
+            return self.task.merged_config[self.args[0]]
         else:
-            return [self.task.context[field] for field in self.args]
+            return [self.task.merged_config[field] for field in self.args]
 
 #endregion
 ####################################################################################################
-# region Task object + bookkeeping FIXME you started to split .context into .context and .config but it got messy and you need to clean it up
+# region Task object + bookkeeping
 
 class TaskState:
     DECLARED = "DECLARED"
@@ -687,7 +687,7 @@ class Task:
             command = Task.default_command,
         )
 
-        self.context = Config(default_context, *args, **kwargs)
+        self.merged_config = Config(default_context, *args, **kwargs)
 
         self._desc = None
         self._command = None
@@ -726,7 +726,7 @@ class Task:
                 if isinstance(val, Task):
                     val.queue()
                 return val
-            map_variant(None, self.context, apply)
+            map_variant(None, self.merged_config, apply)
 
             # And now queue this task.
             app.queued_tasks.append(self)
@@ -751,7 +751,7 @@ class Task:
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
 
-        verbosity = self.context.get_expanded("verbosity", app.flags.verbosity)
+        verbosity = self.merged_config.get_expanded("verbosity", app.flags.verbosity)
         log(
             f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self._desc}",
             sameline=verbosity == 0,
@@ -762,9 +762,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self.context.get_expanded("verbosity", app.flags.verbosity)
-        debug     = self.context.get_expanded("debug",     app.flags.debug)
-        rebuild   = self.context.get_expanded("rebuild",   app.flags.rebuild)
+        verbosity = self.merged_config.get_expanded("verbosity", app.flags.verbosity)
+        debug     = self.merged_config.get_expanded("debug",     app.flags.debug)
+        rebuild   = self.merged_config.get_expanded("rebuild",   app.flags.rebuild)
 
         # Await everything awaitable in this task's context.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -772,8 +772,8 @@ class Task:
         try:
             assert self._state is TaskState.STARTED
             self._state = TaskState.AWAITING_INPUTS
-            for key, val in self.context.items():
-                self.context[key] = await await_variant(val)
+            for key, val in self.merged_config.items():
+                self.merged_config[key] = await await_variant(val)
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = TaskState.CANCELLED
@@ -786,7 +786,7 @@ class Task:
 
             # FIXME feels like init should run with os.getcwd() == task_dir, but we have to expand
             # directories first...
-            #app.pushdir(self.context.task_dir)
+            #app.pushdir(self.merged_config.task_dir)
             self.task_init()
             #app.popdir()
 
@@ -815,7 +815,7 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            job_count = self.context.get("job_count", 1)
+            job_count = self.merged_config.get("job_count", 1)
             self._state = TaskState.AWAITING_JOBS
             await app.job_pool.acquire_jobs(job_count, self)
 
@@ -852,17 +852,16 @@ class Task:
     def task_init(self):
         """All the setup steps needed before we run a task."""
 
-        debug = self.context.get("debug", app.flags.debug)
+        debug = self.merged_config.get("debug", app.flags.debug)
         if debug:
             log(f"\nTask before expand: {self}")
 
         # ----------------------------------------
         # Expand task_dir and build_dir
 
-        context    = self.context
-        repo_dir   = abs_path(self.context.expand("{repo_dir}"))
-        task_dir   = abs_path(join_path(repo_dir, self.context.expand("{task_dir}")))
-        build_dir  = abs_path(join_path(repo_dir, self.context.expand("{build_dir}")))
+        repo_dir   = abs_path(self.merged_config.expand("{repo_dir}"))
+        task_dir   = abs_path(join_path(repo_dir, self.merged_config.expand("{task_dir}")))
+        build_dir  = abs_path(join_path(repo_dir, self.merged_config.expand("{build_dir}")))
 
         assert isinstance(repo_dir, str)
         assert isinstance(task_dir, str)
@@ -877,8 +876,8 @@ class Task:
                 f"Path error, build_dir {build_dir} is not under repo dir {repo_dir}"
             )
 
-        self.context.task_dir   = task_dir
-        self.context.build_dir  = build_dir
+        self.merged_config.task_dir   = task_dir
+        self.merged_config.build_dir  = build_dir
 
         # ----------------------------------------
         # Expand all in_ and out_ filenames
@@ -913,27 +912,27 @@ class Task:
             return file
 
         # pylint: disable=consider-using-dict-items
-        for key in self.context.keys():
+        for key in self.merged_config.keys():
 
             if key.startswith("in_"):
-                file = self.context[key]
-                file = self.context.expand(file)
+                file = self.merged_config[key]
+                file = self.merged_config.expand(file)
                 file = join_path(task_dir, normpath(file))
                 self._in_files.extend(flatten(file))
-                self.context[key] = file
+                self.merged_config[key] = file
 
             if key.startswith("out_"):
-                file = self.context[key]
-                file = self.context.expand(file)
+                file = self.merged_config[key]
+                file = self.merged_config.expand(file)
                 file = move_to_builddir2(file)
                 self._out_files.extend(flatten(file))
-                self.context[key] = file
+                self.merged_config[key] = file
 
             if key == "depfile":
-                file = self.context[key]
-                file = self.context.expand(file)
+                file = self.merged_config[key]
+                file = self.merged_config.expand(file)
                 file = move_to_builddir2(file)
-                self.context[key] = file
+                self.merged_config[key] = file
 
         # ----------------------------------------
         # Check for task collisions
@@ -959,9 +958,9 @@ class Task:
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
-            if not file.startswith(self.context.build_dir):
+            if not file.startswith(self.merged_config.build_dir):
                 raise ValueError(
-                    f"Path error, output file {file} is not under build_dir {self.context.build_dir}"
+                    f"Path error, output file {file} is not under build_dir {self.merged_config.build_dir}"
                 )
             # Make sure our output directories exist
             if not app.flags.dry_run:
@@ -970,8 +969,8 @@ class Task:
         # ----------------------------------------
         # And now we can expand the command.
 
-        desc    = self.context.expand("{desc}")
-        command = self.context.expand("{command}")
+        desc    = self.merged_config.expand("{desc}")
+        command = self.merged_config.expand("{command}")
 
         self._desc    = desc
         self._command = command
@@ -985,7 +984,7 @@ class Task:
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug = self.context.get("debug", app.flags.debug)
+        debug = self.merged_config.get("debug", app.flags.debug)
 
         if rebuild:
             return f"Files {self._out_files} forced to rebuild"
@@ -1014,8 +1013,8 @@ class Task:
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if (depfile := self.context.get("depfile", None)) and path.exists(depfile):
-            depformat = self.context.get("depformat", "gcc")
+        if (depfile := self.merged_config.get("depfile", None)) and path.exists(depfile):
+            depformat = self.merged_config.get("depformat", "gcc")
             if debug:
                 log(f"Found C dependencies file {depfile}")
             with open(depfile, encoding="utf-8") as depfile2:
@@ -1031,7 +1030,7 @@ class Task:
                     raise ValueError(f"Invalid dependency file format {depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [path.join(self.context.task_dir, d) for d in deplines]
+                deplines = [path.join(self.merged_config.task_dir, d) for d in deplines]
                 for abs_file in deplines:
                     if mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -1045,14 +1044,14 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbosity = self.context.get("verbosity", app.flags.verbosity)
-        debug = self.context.get("debug", app.flags.debug)
+        verbosity = self.merged_config.get_expanded("verbosity", app.flags.verbosity)
+        debug     = self.merged_config.get_expanded("debug", app.flags.debug)
 
         if verbosity or debug:
             log(color(128, 128, 255), end="")
             if app.flags.dry_run:
                 log("(DRY RUN) ", end="")
-            log(f"{rel_path(self.context.task_dir, self.context.repo_dir)}$ ", end="")
+            log(f"{rel_path(self.merged_config.task_dir, self.merged_config.repo_dir)}$ ", end="")
             log(color(), end="")
             log(command)
 
@@ -1062,7 +1061,7 @@ class Task:
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            app.pushdir(self.context.task_dir)
+            app.pushdir(self.merged_config.task_dir)
             await await_variant(command(self))
             app.popdir()
             self._returncode = 0
@@ -1078,7 +1077,7 @@ class Task:
 
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd=self.context.task_dir,
+            cwd=self.merged_config.task_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -1093,7 +1092,7 @@ class Task:
 
         # We need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
-        command_pass = (self._returncode == 0) != self.context.get("should_fail", False)
+        command_pass = (self._returncode == 0) != self.merged_config.get("should_fail", False)
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
@@ -1118,11 +1117,11 @@ class Task:
 
 #endregion
 ####################################################################################################
-#region The Hancho API object that gets passed into .hancho files FIXME self.context -> self.config?
+#region The Hancho API object that gets passed into .hancho files
 
 class HanchoAPI:
-    def __init__(self, context, is_repo):
-        self.context = context
+    def __init__(self, mod_config, is_repo):
+        self.mod_config = mod_config
         self.is_repo = is_repo
 
     def __repr__(self):
@@ -1133,14 +1132,14 @@ class HanchoAPI:
 
     def __call__(self, arg1=None, /, *args, **kwargs):
         if callable(arg1):
-            temp_context = Config(*args, **kwargs)
+            temp_config = Config(*args, **kwargs)
             # Note that we spread temp_context so that we can take advantage of parameter list
             # checking when we call the callback.
-            return arg1(self, **temp_context)
-        return Task(self.context, arg1, *args, **kwargs)
+            return arg1(self, **temp_config)
+        return Task(self.mod_config, arg1, *args, **kwargs)
 
     def repo(self, mod_path, *args, **kwargs):
-        mod_path = self.context.expand(mod_path)
+        mod_path = self.mod_config.expand(mod_path)
         assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
         mod_path = path.realpath(mod_path)
@@ -1157,7 +1156,7 @@ class HanchoAPI:
         return result
 
     def load(self, mod_path):
-        mod_path = self.context.expand(mod_path)
+        mod_path = self.mod_config.expand(mod_path)
         assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
         new_context = create_mod(self, mod_path)
@@ -1166,26 +1165,26 @@ class HanchoAPI:
     def _load(self):
         #if len(app.dirstack) == 1 or app.flags.verbosity or app.flags.debug:
         if True:
-            #mod_path = rel_path(self.context.mod_path, self.context.repo_dir)
-            mod_path = rel_path(self.context.mod_path, app.flags.root_dir)
+            #mod_path = rel_path(self.mod_config.mod_path, self.mod_config.repo_dir)
+            mod_path = rel_path(self.mod_config.mod_path, app.flags.root_dir)
             log(("┃ " * (len(app.dirstack) - 1)), end="")
             if self.is_repo:
                 log(color(128, 128, 255) + f"Loading repo {mod_path}" + color())
             else:
                 log(color(128, 255, 128) + f"Loading file {mod_path}" + color())
 
-        app.loaded_files.append(self.context.mod_path)
+        app.loaded_files.append(self.mod_config.mod_path)
 
         # We're using compile() and FunctionType()() here beause exec() doesn't preserve source
         # code for debugging.
-        file = open(self.context.mod_path, encoding="utf-8")
+        file = open(self.mod_config.mod_path, encoding="utf-8")
         source = file.read()
-        code = compile(source, self.context.mod_path, "exec", dont_inherit=True)
+        code = compile(source, self.mod_config.mod_path, "exec", dont_inherit=True)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        app.pushdir(path.dirname(self.context.mod_path))
+        app.pushdir(path.dirname(self.mod_config.mod_path))
 
         #{
         #  '__annotations__': {},
@@ -1226,7 +1225,7 @@ class HanchoAPI:
             new_module[key] = val
 
         # Tack the context onto the module so people who load it can see the paths it was built with, etc.
-        new_module['context'] = module_globals['hancho'].context
+        new_module['config'] = module_globals['hancho'].mod_config
 
         return new_module
 
@@ -1273,7 +1272,7 @@ def create_repo(mod_path : str, *args, **kwargs):
 ####################################################################################################
 
 def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
-    mod_path = parent_api.context.expand(mod_path)
+    mod_path = parent_api.mod_config.expand(mod_path)
     assert isinstance(mod_path, str)
     mod_path = path.abspath(mod_path)
     mod_dir  = path.split(mod_path)[0]
@@ -1283,11 +1282,11 @@ def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
     mod_api = copy.deepcopy(parent_api)
     mod_api.is_repo = False
 
-    mod_api.context.mod_name = mod_name
-    mod_api.context.mod_dir  = mod_dir
-    mod_api.context.mod_path = mod_path
+    mod_api.mod_config.mod_name = mod_name
+    mod_api.mod_config.mod_dir  = mod_dir
+    mod_api.mod_config.mod_path = mod_path
 
-    mod_api.context = Config(mod_api.context, *args, kwargs)
+    mod_api.mod_config = Config(mod_api.mod_config, *args, kwargs)
 
     return mod_api
 
@@ -1446,7 +1445,7 @@ class App:
 
         # All the unrecognized flags get stuck on the root context.
         for key, val in self.extra_flags.items():
-            setattr(root_context.context, key, val)
+            setattr(root_context.mod_config, key, val)
 
         return root_context
 
@@ -1455,21 +1454,21 @@ class App:
     def main(self):
         app.root_context = self.create_root_context()
 
-        if app.root_context.context.get("debug", None):
+        if app.root_context.mod_config.get_expanded("debug", None):
             log(f"root_context = {Dumper(2).dump(app.root_context)}")
 
-        if not path.isfile(app.root_context.context.repo_path):
+        if not path.isfile(app.root_context.mod_config.repo_path):
             print(
-                f"Could not find Hancho file {app.root_context.context.repo_path}!"
+                f"Could not find Hancho file {app.root_context.mod_config.repo_path}!"
             )
             sys.exit(-1)
 
-        assert path.isabs(app.root_context.context.repo_path)
-        assert path.isfile(app.root_context.context.repo_path)
-        assert path.isabs(app.root_context.context.repo_dir)
-        assert path.isdir(app.root_context.context.repo_dir)
+        assert path.isabs(app.root_context.mod_config.repo_path)
+        assert path.isfile(app.root_context.mod_config.repo_path)
+        assert path.isabs(app.root_context.mod_config.repo_dir)
+        assert path.isdir(app.root_context.mod_config.repo_dir)
 
-        os.chdir(app.root_context.context.repo_dir)
+        os.chdir(app.root_context.mod_config.repo_dir)
         time_a = time.perf_counter()
         app.root_context._load()
         time_b = time.perf_counter()
@@ -1483,7 +1482,7 @@ class App:
                 print("Deleting build directories")
                 build_roots = set()
                 for task in app.all_tasks:
-                    build_root = task.context.expand(task.context.build_root)
+                    build_root = task.merged_config.get_expanded("{build_root}")
                     assert isinstance(build_root, str)
                     build_root = path.abspath(build_root)
                     build_root = path.realpath(build_root)
@@ -1508,7 +1507,7 @@ class App:
                 #        queue_task = True
                 #        task_name = out_file
                 #        break
-                if name := task.context.get("name", None):
+                if name := task.merged_config.get_expanded("name", None):
                     if app.target_regex.search(name):
                         queue_task = True
                         task_name = name
@@ -1522,9 +1521,9 @@ class App:
 
                 # FIXME we are not currently doing that....
 
-                # build_dir = task.context.expand(task.context.build_dir)
+                # build_dir = task.merged_config.get_expanded("{build_dir}")
                 # build_dir = path.abspath(build_dir)
-                # repo_dir = app.root_context.context.expand("{repo_dir}")
+                # repo_dir = app.root_context.mod_config.get_expanded("{repo_dir}")
                 # repo_dir = path.abspath(repo_dir)
                 # print(build_dir)
                 # print(repo_dir)

@@ -1,6 +1,6 @@
 # hancho/examples/windows/build.hancho - Builds a trivial Win32 app.
 
-hancho.context.depformat = "msvc"
+hancho.mod_config.depformat = "msvc"
 
 compile_cpp = task(
     desc    = "Compile {in_src} -> {out_obj}",
