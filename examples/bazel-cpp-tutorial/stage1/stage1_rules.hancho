@@ -50,6 +50,6 @@ _link_cpp_bin = task(
 )
 
 def cc_binary(hancho, *, in_srcs, out_bin):
-    objs = [hancho(_compile_cpp, in_src=src) for src in hancho.flatten(in_srcs)]
+    objs = [hancho(_compile_cpp, in_src=src) for src in flatten(in_srcs)]
     bin  = hancho(_link_cpp_bin, in_objs=objs, out_bin=out_bin)
     return bin

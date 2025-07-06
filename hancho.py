@@ -309,6 +309,8 @@ class Dumper:
             result += self.dump_dict(variant.__dict__)
         elif isinstance(variant, Config):
             result += self.dump_dict(variant)
+        elif isinstance(variant, Expander):
+            result += self.dump_dict(variant.context3)
         elif listlike(variant):
             result += self.dump_list(variant)
         elif isinstance(variant, abc.Mapping):
@@ -414,9 +416,15 @@ class Expander:
 
     def __init__(self, context3):
         assert isinstance(context3, Config)
+
+        trace = context3.get("trace", app.flags.trace)
+
         object.__setattr__(self, "context3", context3)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        object.__setattr__(self, "trace", context3.get("trace", app.flags.trace))
+        object.__setattr__(self, "trace", trace)
+        context3.glob     = glob.glob
+        context3.rel_path = rel_path
+        context3.ext      = ext
 
     def __contains__(self, key):
         return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context3
@@ -426,14 +434,6 @@ class Expander:
 
     def __getattr__(self, key):
         return self.get(key)
-
-    def __setitem__(self, name, value):
-        print("should not be setting things on an expander")
-        assert False
-
-    def __setattr__(self, name, value):
-        print("should not be setting things on an expander")
-        assert False
 
     def get(self, key, default = None):
         val = default
@@ -449,8 +449,6 @@ class Expander:
         # immediately.
         elif hasattr(self.context3, key):
             val = self.context3.expand(getattr(self.context3, key))
-        elif key in self.context3:
-            val = self.context3.expand(self.context3[key])
 
         if self.trace:
             log_trace(self, f"┃ Read '{key}' = {trace_variant(val)}")
@@ -461,9 +459,9 @@ class Expander:
         return val
 
     # Returns a relative path from the task directory to the sub_path.
-    def rel(self, sub_path):
-        result = rel_path(sub_path, self.context3.expand(self.context3.task_dir))
-        return result
+    #def rel(self, sub_path):
+    #    result = rel_path(sub_path, self.context3.expand(self.context3.task_dir))
+    #    return result
 
     def __repr__(self):
         result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
@@ -558,13 +556,12 @@ def eval_template(context, template):
 # ----------------------------------------
 
 def expand_variant(context, variant):
-    """Expands single templates and nested lists of templates."""
+    """Expands single templates and nested lists of templates. Returns non-templates unchanged."""
 
     if listlike(variant):
         return [context.expand(val) for val in variant]
 
     if not isinstance(variant, str):
-        # FIXME are we hitting this? What if we try to expand a whole Config?
         return variant
 
     blocks = split_template(variant)
@@ -606,22 +603,21 @@ def expand_variant(context, variant):
 
 class Utils:
     # fmt: off
-    path        = path # path.dirname and path.basename used by makefile-related rules
-    re          = re # why is sub() not working?
+    #path        = path # path.dirname and path.basename used by makefile-related rules
+    #re          = re # why is sub() not working?
 
-    color       = staticmethod(color)
-    flatten     = staticmethod(flatten)
-    glob        = staticmethod(glob.glob)
-    join        = staticmethod(join)
-    ext         = staticmethod(ext)
-    log         = staticmethod(log)
+    #color       = staticmethod(color)
+    #flatten     = staticmethod(flatten)
+    #glob        = staticmethod(glob.glob)
+    #join        = staticmethod(join)
+    #ext         = staticmethod(ext)
+    #log         = staticmethod(log)
     rel_path    = staticmethod(rel_path)  # used by build_path etc
-    run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
-    stem        = staticmethod(stem)      # FIXME used by metron/tests?
+    #run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
+    #stem        = staticmethod(stem)      # FIXME used by metron/tests?
 
     #expand      = staticmethod(expand_variant)
 
-    hancho_dir  = path.dirname(path.realpath(__file__))
     # fmt: on
 
 #endregion
@@ -846,6 +842,7 @@ class Task:
     # -----------------------------------------------------------------------------------------------
     # FIXME we need to expand task_dir first, then cd into task_dir, then expand the rest
     # FIXME we should be putting these on self.config.task_dir or something so we don't clobber the original
+    # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
@@ -1124,7 +1121,7 @@ class Task:
 ####################################################################################################
 #region The Hancho API object that gets passed into .hancho files FIXME self.context -> self.config?
 
-class HanchoAPI(Utils):
+class HanchoAPI:
     def __init__(self, context, is_repo):
         self.context = context
         self.is_repo = is_repo
@@ -1170,11 +1167,13 @@ class HanchoAPI(Utils):
     def _load(self):
         #if len(app.dirstack) == 1 or app.flags.verbosity or app.flags.debug:
         if True:
+            #mod_path = rel_path(self.context.mod_path, self.context.repo_dir)
+            mod_path = rel_path(self.context.mod_path, app.flags.root_dir)
             log(("┃ " * (len(app.dirstack) - 1)), end="")
             if self.is_repo:
-                log(color(128, 128, 255) + f"Loading repo {self.context.mod_path}" + color())
+                log(color(128, 128, 255) + f"Loading repo {mod_path}" + color())
             else:
-                log(color(128, 255, 128) + f"Loading file {self.context.mod_path}" + color())
+                log(color(128, 255, 128) + f"Loading file {mod_path}" + color())
 
         app.loaded_files.append(self.context.mod_path)
 
@@ -1202,9 +1201,12 @@ class HanchoAPI(Utils):
         #}
 
         temp_globals = {
-            "hancho": self,
-            "config": Config,
-            "task"  : Config,
+            "hancho"  : self,
+            "config"  : Config,
+            "task"    : Config,
+            "glob"    : glob.glob,
+            "run_cmd" : run_cmd,
+            "flatten" : flatten,
         }
 
         module_globals = dict(temp_globals)
@@ -1243,6 +1245,9 @@ def create_repo(mod_path : str, *args, **kwargs):
     mod_name = path.splitext(mod_file)[0]
 
     mod_context = Config(
+        hancho_dir  = path.dirname(path.realpath(__file__)),
+        root_dir    = app.flags.root_dir,
+
         repo_name  = path.split(mod_dir)[1],
         repo_dir   = mod_dir,
         repo_path  = mod_path,
@@ -1257,6 +1262,8 @@ def create_repo(mod_path : str, *args, **kwargs):
         build_dir  = Task.default_build_dir,
 
         task_dir   = Task.default_task_dir,
+
+        join       = join
     )
 
     mod_context = Config(mod_context, *args, **kwargs)

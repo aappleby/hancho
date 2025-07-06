@@ -16,7 +16,7 @@ emcc = task(
 )
 
 emld = task(
-    desc="Link Emscripten'd {rel(out_js)}",
+    desc="Link Emscripten'd {out_js}",
     command="emcc {flags} {in_objs} -o {out_js}",
     flags=[
         "-sEXPORT_ES6",
@@ -30,7 +30,7 @@ emld = task(
 )
 
 ems_package = task(
-    desc="Package {rel(out_data)}",
+    desc="Package {out_data}",
     command=[
         "rm -f {out_data}",
         "rm -f {out_js}",

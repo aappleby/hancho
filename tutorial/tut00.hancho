@@ -99,20 +99,20 @@ link_cpp = task(
 
 rules = hancho.load("rules.hancho")
 
-app = hancho(rules.c_binary, hancho.glob("src/*.cpp"), "app")
+app = hancho(rules.c_binary, glob("src/*.cpp"), "app")
 
 #----------------------------------------
 
 compile_cpp = task(
-    desc    = "Compile {rel(in_src)} -> {rel(out_obj)}",
-    command = "g++ -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+    desc    = "Compile {in_src} -> {out_obj}",
+    command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = task(
-    desc    = "Link {rel(in_objs)} -> {rel(out_bin)}",
-    command = "g++ {rel(in_objs)} -o {rel(out_bin)}",
+    desc    = "Link {in_objs} -> {out_bin}",
+    command = "g++ {in_objs} -o {out_bin}",
 )
 
 def c_binary(hancho, *, in_srcs, out_bin, **kwargs):
@@ -162,7 +162,7 @@ async def slow_filename_promise():
     return ["src/main.cpp"]
 
 echo_task = hancho.Task(
-    command = "echo {rel(in_src)} > {rel(out_txt)}",
+    command = "echo {in_src} > {out_txt}",
     in_src  = [slow_filename_promise()],
     out_txt = ["promise1.txt"],
     repo_name = "tut50",

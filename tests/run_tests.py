@@ -69,7 +69,7 @@ class TestContext(unittest.TestCase):
     """Test cases for weird things our Context objects can do"""
 
     def setUp(self):
-        #print(f"Running {type(self).__name__}::{self._testMethodName}")
+        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         #sys.stdout.flush()
         pass
 
@@ -83,7 +83,7 @@ class TestHancho(unittest.TestCase):
     """Basic test cases"""
 
     def setUp(self):
-        print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
+        print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         sys.stdout.flush()
 
         # Always wipe the build dir before a test
@@ -192,7 +192,7 @@ class TestHancho(unittest.TestCase):
 
     def test_good_build_path(self):
         self.hancho(
-            command  = "touch {rel(out_obj)}",
+            command  = "touch {out_obj}",
             in_src   = "src/foo.c",
             out_obj  = "{repo_dir}/build/narp/foo.o",
         )
@@ -203,7 +203,7 @@ class TestHancho(unittest.TestCase):
 
     def test_bad_build_path(self):
         bad_task = self.hancho(
-            command  = "touch {rel(out_obj)}",
+            command  = "touch {out_obj}",
             in_src   = "src/foo.c",
             out_obj  = "{repo_dir}/../build/foo.o",
         )
@@ -216,7 +216,7 @@ class TestHancho(unittest.TestCase):
 
     #def test_raw_task(self):
     #    self.hancho.Task(
-    #        command    = "touch {rel(out_obj)}",
+    #        command    = "touch {out_obj}",
     #        in_src     = "src/foo.c",
     #        out_obj    = "foo.o",
     #        repo_dir   = os.getcwd(),
@@ -232,7 +232,7 @@ class TestHancho(unittest.TestCase):
     def test_missing_input(self):
         """We should fail if an input is missing"""
         bad_task = self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = "src/does_not_exist.txt",
             out_obj = "missing_src.txt"
         )
@@ -264,7 +264,7 @@ class TestHancho(unittest.TestCase):
     def test_missing_dep(self):
         """Missing dep should fail"""
         bad_task = self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = "src/test.cpp",
             in_dep  = ["missing_dep.txt"],
             out_obj = "result.txt",
@@ -349,12 +349,12 @@ class TestHancho(unittest.TestCase):
     def test_task_collision(self):
         """If multiple distinct commands generate the same output file, that's an error."""
         self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
         self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
@@ -369,7 +369,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             self.hancho(
-                command = "sleep 0.1 && touch {rel(out_obj)}",
+                command = "sleep 0.1 && touch {out_obj}",
                 in_src  = [],
                 out_obj = "result.txt",
             )
@@ -391,7 +391,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.reset()
             hancho_py.app.parse_flags(["--quiet"])
             self.hancho(
-                command = "sleep 0.1 && touch {rel(out_obj)}",
+                command = "sleep 0.1 && touch {out_obj}",
                 in_temp = ["build/dummy.txt"],
                 in_src  = "src/test.cpp",
                 out_obj = "result.txt",
@@ -413,7 +413,7 @@ class TestHancho(unittest.TestCase):
     def test_does_create_output(self):
         """Output files should appear in build/ by default"""
         self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = [],
             out_obj = "result.txt",
         )
@@ -441,7 +441,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
             compile = hancho_py.Config(
-                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                command = "gcc -MMD -c {in_src} -o {out_obj}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
             )
@@ -466,7 +466,7 @@ class TestHancho(unittest.TestCase):
             hancho_py.app.parse_flags(["--quiet"])
             time.sleep(0.01)
             compile = hancho_py.Config(
-                command = "gcc -MMD -c {rel(in_src)} -o {rel(out_obj)}",
+                command = "gcc -MMD -c {in_src} -o {out_obj}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
             )
@@ -488,9 +488,9 @@ class TestHancho(unittest.TestCase):
         """Rules with arrays of commands should run all of them"""
         self.hancho(
             command = [
-                "echo foo > {rel(out_foo)}",
-                "echo bar > {rel(out_bar)}",
-                "echo baz > {rel(out_baz)}",
+                "echo foo > {out_foo}",
+                "echo bar > {out_bar}",
+                "echo baz > {out_baz}",
             ],
             in_src  = __file__,
             out_foo = "foo.txt",
@@ -550,12 +550,12 @@ class TestHancho(unittest.TestCase):
             out_obj = "fail_result.txt",
         )
         task_that_passes = self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = [],
             out_obj = "pass_result.txt",
         )
         should_be_cancelled = self.hancho(
-            command = "touch {rel(out_obj)}",
+            command = "touch {out_obj}",
             in_src  = [task_that_fails, task_that_passes],
             out_obj = "should_not_be_created.txt",
         )
@@ -576,7 +576,7 @@ class TestHancho(unittest.TestCase):
         """Tasks using callbacks can create new tasks when they run."""
         def callback(task):
             new_task = self.hancho(
-                command = "touch {rel(out_obj)}",
+                command = "touch {out_obj}",
                 in_src  = [],
                 out_obj = "dummy.txt"
             )
@@ -600,7 +600,7 @@ class TestHancho(unittest.TestCase):
         for i in range(1000):
             self.hancho(
                 desc    = "I am task {index}",
-                command = "echo {index} > {rel(out_obj)}",
+                command = "echo {index} > {out_obj}",
                 in_src  = [],
                 out_obj = "dummy{index}.txt",
                 index   = i
@@ -628,7 +628,7 @@ class TestHancho(unittest.TestCase):
         self.hancho(
             desc = "********** I am the slow task, I eat all the cores **********",
             command = [
-                "touch {rel(out_obj)}",
+                "touch {out_obj}",
                 "sleep 0.3",
             ],
             job_count = os.cpu_count(),
@@ -653,7 +653,7 @@ class TestHancho(unittest.TestCase):
 
 class TestSplitTemplate(unittest.TestCase):
     def setUp(self):
-        print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
+        print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         sys.stdout.flush()
 
     def test_basic(self):
@@ -727,7 +727,7 @@ class TestSplitTemplate(unittest.TestCase):
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
-        print(f"{color(255, 255, 0)}Running {type(self).__name__}::{self._testMethodName}{color()}")
+        print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         sys.stdout.flush()
 
     def test_attribute_access(self):

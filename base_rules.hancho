@@ -12,7 +12,7 @@ default_toolchain = config(
 # ----------------------------------------
 
 check_cpp = task(
-    desc="Checking C++ syntax of {rel(in_src)}",
+    desc="Checking C++ syntax of {in_src}",
     command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} && touch {out_ok}",
 
     toolchain=default_toolchain,
@@ -31,7 +31,7 @@ check_cpp = task(
 # ----------------------------------------
 
 compile_cpp = task(
-    desc="Compiling C++ {rel(in_src)} -> {rel(out_obj)} ({build_tag})",
+    desc="Compiling C++ {in_src} -> {out_obj} ({build_tag})",
     command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
     toolchain=default_toolchain,
     flags=[
@@ -68,7 +68,7 @@ link_cpp_lib = task(
 
 
 link_cpp_bin = task(
-    desc      = "Linking C++ bin {rel(out_bin)}",
+    desc      = "Linking C++ bin {out_bin}",
     toolchain = default_toolchain,
     command   = "{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}",
     in_objs   = None,
@@ -79,16 +79,16 @@ link_cpp_bin = task(
 
 
 def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
-    in_objs = hancho.flatten(in_objs)
-    for file in hancho.flatten(in_srcs):
+    in_objs = flatten(in_objs)
+    for file in flatten(in_srcs):
         obj = hancho(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
     return hancho(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 
 
 def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    in_objs = hancho.flatten(in_objs)
-    for file in hancho.flatten(in_srcs):
+    in_objs = flatten(in_objs)
+    for file in flatten(in_srcs):
         obj = hancho(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
     return hancho(
@@ -104,7 +104,7 @@ def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwar
 
 def make(hancho, *, in_makefile, **kwargs):
     cmd = task(
-        desc="Run makefile {rel(in_makefile)}",
+        desc="Run makefile {in_makefile}",
         command="make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
         make_dir="{path.dirname(in_makefile)}",
         make_file="{path.basename(in_makefile)}",
@@ -117,7 +117,7 @@ def make(hancho, *, in_makefile, **kwargs):
 # Tests
 
 run_test = task(
-    desc="Running test {rel(in_test)}",
+    desc="Running test {in_test}",
     command="{in_test} {args} && touch {out_pass}",
     task_dir="{test_dir}",
     test_dir="{mod_dir}",
@@ -126,7 +126,7 @@ run_test = task(
 )
 
 def cpp_test(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    objs = [hancho(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
+    objs = [hancho(compile_cpp, in_src=src, **kwargs) for src in flatten(in_srcs)]
     test_bin = hancho(
         link_cpp_bin,
         in_objs=[objs, in_objs, in_libs],

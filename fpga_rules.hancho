@@ -12,8 +12,8 @@ def gen_ivparams(params):
     return result
 
 iverilog = task(
-    desc = "Run iverilog on {rel(in_sv)}",
-    command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {joined_includes} {rel(in_sv)} -o {rel(out_iv)}",
+    desc = "Run iverilog on {in_sv}",
+    command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {joined_includes} {in_sv} -o {out_iv}",
     gen_ivparams = gen_ivparams,
     joined_includes = "{join('-I', includes)}"
 )
@@ -41,8 +41,8 @@ def gen_vlparams(c):
     return result
 
 verilator_cmd = task(
-    desc = "Run Verilator on {rel(in_top)}",
-    command = "verilator -Wno-width --public {gen_vlparams(params)} {joined_includes} --cc {rel(in_top)} -Mdir {path.dirname(rel(out_makefile))}",
+    desc = "Run Verilator on {in_top}",
+    command = "verilator -Wno-width --public {gen_vlparams(params)} {joined_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
     out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
     out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_top)}",
     joined_includes = "{join('-I', includes)}",
@@ -92,8 +92,8 @@ def gen_chparams(c):
 
 
 yosys = task(
-    desc = "Run yosys on {rel(in_sv)}",
-    command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {rel(out_json)};'",
+    desc = "Run yosys on {in_sv}",
+    command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {out_json};'",
     out_json = "{ext(in_sv, '.json')}",
     params = {},
     gen_chparams = gen_chparams,
@@ -103,39 +103,39 @@ yosys = task(
 
 
 sv2v = task(
-    desc = "Run sv2v on {rel(in_sv)}",
-    command = "sv2v {joined_includes} {rel(in_sv)} -w {rel(out_v)}",
+    desc = "Run sv2v on {in_sv}",
+    command = "sv2v {joined_includes} {in_sv} -w {out_v}",
     joined_includes = "{join('-I', includes)}",
     out_v = "{ext(in_sv, '.v')}",
 )
 
 nextpnr = task(
-    desc    = "Run nextpnr-ice40 on {rel(in_json)}",
-    command = "nextpnr-ice40 {flags} -q --json {rel(in_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
+    desc    = "Run nextpnr-ice40 on {in_json}",
+    command = "nextpnr-ice40 {flags} -q --json {in_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
     out_asc = "{ext(in_json, '.asc')}",
     flags   = None,
 )
 
 icepack = task(
-    desc    = "Run icepack on {rel(in_asc)}",
-    command = "icepack {rel(in_asc)} {rel(out_bin)}",
+    desc    = "Run icepack on {in_asc}",
+    command = "icepack {in_asc} {out_bin}",
     out_bin = "{ext(in_asc, '.bin')}",
 )
 
 iceprog = task(
-    desc    = "Run iceprog on {rel(in_bin)}",
-    command = "iceprog -S {rel(in_bin)}",
+    desc    = "Run iceprog on {in_bin}",
+    command = "iceprog -S {in_bin}",
 )
 
 # FIXME Remove this and replace with "def synth(hancho, *, ...):"
 
 synth = task(
-    desc    = "Synth {rel(in_sv)}",
+    desc    = "Synth {in_sv}",
     command = [
-        "yosys -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",
-        #"yosys -q -p 'read_verilog -defer {joined_includes} -sv {rel(in_sv)}; dump; {chparams(params)} synth_ice40 -json {rel(out_json)};'",
-        "nextpnr-ice40 {flags} -q --json {rel(out_json)} --pcf {pcf} --{chip} --package {package}  --asc {rel(out_asc)}",
-        "icepack {rel(out_asc)} {rel(out_bin)}",
+        "yosys -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
+        #"yosys -q -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
+        "nextpnr-ice40 {flags} -q --json {out_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
+        "icepack {out_asc} {out_bin}",
     ],
     out_json = "{ext(in_sv, '.json')}",
     out_asc  = "{ext(in_sv, '.asc')}",

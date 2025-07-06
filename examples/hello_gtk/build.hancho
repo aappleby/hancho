@@ -1,8 +1,8 @@
 hancho.base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
 
-gtk_flags = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
-gtk_incs  = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
-gtk_libs  = hancho.run_cmd('pkg-config gtk+-3.0 --libs')
+gtk_flags = run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+gtk_incs  = run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+gtk_libs  = run_cmd('pkg-config gtk+-3.0 --libs')
 
 main_o = hancho(
     hancho.base_rules.compile_cpp,

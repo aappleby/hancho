@@ -4,10 +4,10 @@ import random
 
 #hancho.verbosity = 1
 
-src_files = hancho.glob("src/*")
+src_files = glob("src/*")
 
 random_touch = hancho(
-    desc = "Touch 3 random files in src/ - {rel(in_src)}",
+    desc = "Touch 3 random files in src/ - {in_src}",
     command = [
         "touch {in_src[0]}",
         "touch {in_src[1]}",

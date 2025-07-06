@@ -58,11 +58,11 @@ link_cpp_lib = task(
 )
 
 def cc_library(hancho, *args, in_srcs, out_lib, **kwargs):
-    objs = [hancho(compile_cpp, *args, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
+    objs = [hancho(compile_cpp, *args, in_src=src, **kwargs) for src in flatten(in_srcs)]
     bin  = hancho(link_cpp_lib, *args, in_objs=objs, out_lib=out_lib, **kwargs)
     return bin
 
 def cc_binary(hancho, *args, in_srcs=[], in_objs=None, in_libs=None, out_bin, **kwargs):
-    objs = [hancho(compile_cpp, *args, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
+    objs = [hancho(compile_cpp, *args, in_src=src, **kwargs) for src in flatten(in_srcs)]
     bin  = hancho(link_cpp_bin, *args, in_objs=[objs, in_objs], in_libs=in_libs, out_bin=out_bin, **kwargs)
     return bin
