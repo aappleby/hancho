@@ -16,7 +16,7 @@
       "preLaunchTask": "Wipe build",
     },
     {
-      "name": "Debug Hancho",
+      "name": "Debug hancho.py",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",

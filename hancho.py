@@ -115,6 +115,14 @@ class Config(dict):
     def expand(self, text):
         return expand_variant(self, text)
 
+    def get_expanded(self, key, default=None):
+        macro = f"{{{key}}}"
+        expanded = expand_variant(self, macro)
+        if macro == expanded and default is not None:
+            return default
+        else:
+            return expanded
+
 #endregion
 ####################################################################################################
 #region Logging
@@ -282,7 +290,7 @@ async def await_variant(variant):
 
     if isinstance(variant, Task):
         await variant.await_done()
-        return await await_variant(variant.config._out_files)
+        return await await_variant(variant._out_files)
 
     if inspect.isawaitable(variant):
         return await await_variant(await variant)
@@ -449,6 +457,13 @@ class Expander:
         # immediately.
         elif hasattr(self.context3, key):
             val = self.context3.expand(getattr(self.context3, key))
+        elif default is not None:
+            val = default
+        else:
+            if self.trace:
+                log_trace(self, f"┃ Read '{key}' failed")
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
 
         if self.trace:
             log_trace(self, f"┃ Read '{key}' = {trace_variant(val)}")
@@ -632,7 +647,7 @@ class Promise:
     async def get(self):
         await self.task.await_done()
         if len(self.args) == 0:
-            return self.task.config._out_files
+            return self.task._out_files
         elif len(self.args) == 1:
             return self.task.context[self.args[0]]
         else:
@@ -673,13 +688,10 @@ class Task:
         )
 
         self.context = Config(default_context, *args, **kwargs)
-        self.expanded_context = Expander(self.context)
 
         self.config = Config(
             _desc = None,
             _command = None,
-            _in_files = [],
-            _out_files = [],
         )
 
         self._task_index = 0
@@ -690,6 +702,8 @@ class Task:
         self._stdout = ""
         self._stderr = ""
         self._returncode = -1
+        self._in_files  = []
+        self._out_files = []
 
         app.all_tasks.append(self)
 
@@ -740,10 +754,7 @@ class Task:
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
 
-        # FIXME what if things like 'verbosity' could also be templates?
-        # hancho(verbosity = "{True if blah else False}")
-
-        verbosity = self.expanded_context.get("verbosity", app.flags.verbosity)
+        verbosity = self.context.get_expanded("verbosity", app.flags.verbosity)
         log(
             f"{color(128,255,196)}[{self._task_index}/{app.tasks_started}]{color()} {self.config._desc}",
             sameline=verbosity == 0,
@@ -754,9 +765,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self.expanded_context.get("verbosity", app.flags.verbosity)
-        debug = self.expanded_context.get("debug", app.flags.debug)
-        rebuild = self.expanded_context.get("rebuild", app.flags.rebuild)
+        verbosity = self.context.get_expanded("verbosity", app.flags.verbosity)
+        debug     = self.context.get_expanded("debug",     app.flags.debug)
+        rebuild   = self.context.get_expanded("rebuild",   app.flags.rebuild)
 
         # Await everything awaitable in this task's context.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -855,9 +866,9 @@ class Task:
         # Expand task_dir and build_dir
 
         context    = self.context
-        repo_dir   = abs_path(self.expanded_context.repo_dir)
-        task_dir   = abs_path(join_path(repo_dir, self.expanded_context.task_dir))
-        build_dir  = abs_path(join_path(repo_dir, self.expanded_context.build_dir))
+        repo_dir   = abs_path(self.context.expand("{repo_dir}"))
+        task_dir   = abs_path(join_path(repo_dir, self.context.expand("{task_dir}")))
+        build_dir  = abs_path(join_path(repo_dir, self.context.expand("{build_dir}")))
 
         assert isinstance(repo_dir, str)
         assert isinstance(task_dir, str)
@@ -887,7 +898,7 @@ class Task:
 
         # FIXME I dislike all this "move_to" stuff
 
-        # Gather all inputs to task.config._in_files and outputs to task.config._out_files
+        # Gather all inputs to task._in_files and outputs to task._out_files
 
         def move_to_builddir2(file):
             if isinstance(file, list):
@@ -917,7 +928,7 @@ class Task:
                 file = self.context[key]
                 file = self.context.expand(file)
                 file = join_path(task_dir, normpath(file))
-                self.config._in_files.extend(flatten(file))
+                self._in_files.extend(flatten(file))
                 self.config[key] = file
                 self.context[key] = file
 
@@ -925,7 +936,7 @@ class Task:
                 file = self.context[key]
                 file = self.context.expand(file)
                 file = move_to_builddir2(file)
-                self.config._out_files.extend(flatten(file))
+                self._out_files.extend(flatten(file))
                 self.config[key] = file
                 self.context[key] = file
 
@@ -941,7 +952,7 @@ class Task:
 
         # FIXME need a test for this that uses symlinks
 
-        for file in self.config._out_files:
+        for file in self._out_files:
             real_file = path.realpath(file)
             if real_file in app.filename_to_fingerprint:
                 raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
@@ -950,16 +961,16 @@ class Task:
         # ----------------------------------------
         # Sanity checks
 
-        for file in self.config._in_files:
+        for file in self._in_files:
             if file is None:
-                raise ValueError("config._in_files contained a None")
+                raise ValueError("_in_files contained a None")
             if not path.exists(file):
                 raise FileNotFoundError(file)
 
         # Check that all build files would end up under build_dir
-        for file in self.config._out_files:
+        for file in self._out_files:
             if file is None:
-                raise ValueError("config._out_files contained a None")
+                raise ValueError("_out_files contained a None")
             if not file.startswith(self.context.build_dir):
                 raise ValueError(
                     f"Path error, output file {file} is not under build_dir {self.context.build_dir}"
@@ -971,8 +982,8 @@ class Task:
         # ----------------------------------------
         # And now we can expand the command.
 
-        desc = self.expanded_context.desc
-        command = self.expanded_context.command
+        desc    = self.context.expand("{desc}")
+        command = self.context.expand("{command}")
 
         self.config._desc    = desc
         self.config._command = command
@@ -989,24 +1000,24 @@ class Task:
         debug = self.context.get("debug", app.flags.debug)
 
         if rebuild:
-            return f"Files {self.config._out_files} forced to rebuild"
-        if not self.config._in_files:
+            return f"Files {self._out_files} forced to rebuild"
+        if not self._in_files:
             return "Always rebuild a target with no inputs"
-        if not self.config._out_files:
+        if not self._out_files:
             return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
-        for file in self.config._out_files:
+        for file in self._out_files:
             if not path.exists(file):
                 return f"Rebuilding because {file} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(mtime(f) for f in self.config._out_files)
+        min_out = min(mtime(f) for f in self._out_files)
 
         if mtime(__file__) >= min_out:
             return "Rebuilding because hancho.py has changed"
 
-        for file in self.config._in_files:
+        for file in self._in_files:
             if mtime(file) >= min_out:
                 return f"Rebuilding because {file} has changed"
 
@@ -1504,7 +1515,7 @@ class App:
                 queue_task = False
                 task_name = None
                 # This doesn't work because we haven't expanded output filenames yet
-                # for out_file in flatten(task.config._out_files):
+                # for out_file in flatten(task._out_files):
                 #    if app.target_regex.search(out_file):
                 #        queue_task = True
                 #        task_name = out_file
