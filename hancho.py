@@ -389,9 +389,13 @@ class Dumper:
 # Tests currently require MAX_EXPAND_DEPTH >= 6
 MAX_EXPAND_DEPTH = 20
 
+def id_to_color(obj):
+    random.seed(id(obj))
+    return color(random.randint(64, 255), random.randint(64, 255), random.randint(64, 255))
+
 def log_trace(context, text):
     """Prints a trace message to the log."""
-    prefix = hex(id(context)) + ": " + ("┃ " * app.expand_depth)
+    prefix = id_to_color(context) + hex(id(context)) + color() + ": " + ("┃ " * app.expand_depth)
     log(prefix + text)
 
 def trace_variant(variant):
@@ -447,7 +451,7 @@ class Expander:
     def get(self, key, default = None):
 
         if self.trace:
-            log_trace(self, f"┏ Read '{key}'")
+            log_trace(self.context3, f"┏ expander.get('{key}')")
 
         val = default
 
@@ -464,11 +468,11 @@ class Expander:
             val = default
         else:
             if self.trace:
-                log_trace(self, f"┗ Read '{key}' failed")
+                log_trace(self.context3, f"┗ expander.get('{key}') failed")
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
         if self.trace:
-            log_trace(self, f"┗ Read '{key}' = {trace_variant(val)}")
+            log_trace(self.context3, f"┗ expander.get('{key}') = {trace_variant(val)}")
 
         # If we fetched a config, wrap it in an Expander so we expand its sub-fields.
         if isinstance(val, Config):
@@ -552,28 +556,42 @@ def split_template(text):
 
 # ----------------------------------------
 
-def eval_template(context, template):
+def expand_blocks(context, blocks):
+    result = ""
+    for block in blocks:
+        if block[0] is True:
+            value = eval_macro(context, block[1])
+            result += stringify_variant(value)
+        else:
+            result += block[1]
+
+    return result
+
+# ----------------------------------------
+
+def expand_template(context, template):
     """Replaces all macros in 'template' with their stringified values."""
 
     trace = context.get("trace", app.flags.trace)
     if trace:
-        log_trace(context, f"┏ eval_template '{template}'")
+        log_trace(context, f"┏ expand_template '{template}'")
 
     try:
         app.expand_depth += 1
         blocks = split_template(template)
-        result = ""
-        for block in blocks:
-            if block[0] is True:
-                value = eval_macro(context, block[1])
-                result += stringify_variant(value)
-            else:
-                result += block[1]
+        result = expand_blocks(context, blocks)
+        #result = ""
+        #for block in blocks:
+        #    if block[0] is True:
+        #        value = eval_macro(context, block[1])
+        #        result += stringify_variant(value)
+        #    else:
+        #        result += block[1]
     finally:
         app.expand_depth -= 1
 
     if trace:
-        log_trace(context, f"┗ eval_template '{template}' = '{result}'")
+        log_trace(context, f"┗ expand_template '{template}' = '{result}'")
 
     return result
 
@@ -581,6 +599,8 @@ def eval_template(context, template):
 
 def expand_variant(context, variant):
     """Expands single templates and nested lists of templates. Returns non-templates unchanged."""
+
+    trace = context.get("trace", app.flags.trace)
 
     if listlike(variant):
         return [context.expand(val) for val in variant]
@@ -591,27 +611,35 @@ def expand_variant(context, variant):
     blocks = split_template(variant)
     recurse = False
 
-    if len(blocks) == 0:
-        # Empty string
-        result = variant
-    elif len(blocks) > 1:
-        # Template
-        template = variant
-        result = eval_template(context, template)
-        if result != template:
-            recurse = True
-    elif blocks[0][0] is True:
-        # Macro
-        macro = blocks[0][1]
-        result = eval_macro(context, macro)
-        if result != macro:
+    if trace:
+        log_trace(context, f"┏ expand_variant '{variant}'")
+
+    if len(blocks) == 0 or (len(blocks) == 1 and blocks[0][0] is False):
+        # Empty string or plain string
+        return variant
+
+    app.expand_depth += 1
+
+    if len(blocks) > 1:
+        result = expand_template(context, variant)
+        if result != variant:
             recurse = True
     else:
-        # Plain string
-        result = variant
+        result = eval_macro(context, blocks[0][1])
+        if result != blocks[0][1]:
+            recurse = True
 
     if recurse:
+        if trace:
+            app.expand_depth -= 1
+            log_trace(context, "┃ Expansion incomplete, recursing")
+            app.expand_depth += 1
         result = context.expand(result)
+
+    app.expand_depth -= 1
+
+    if trace:
+        log_trace(context, f"┗ expand_variant '{variant}' = '{result}'")
 
     return result
 
@@ -1659,14 +1687,14 @@ app = App()
 if __name__ == "__main__":
     app.parse_flags(sys.argv[1:])
     sys.exit(app.main())
-    #foo = Config(a = "sdf {b} ssd", b = "222 {c} 222", trace = True)
-    #e = Expander(foo)
-    #try:
-    #    #print(e.a)
-    #    #print(e.c)
-    #    print(foo.expand("asdlkfj {a} sjkdlfjs"))
-    #except BaseException as e:
-    #    pass
+    foo = Config(a = "sdf {b} ssd", b = "222 {c} 222", trace = True)
+    bar = Config(foo = foo, c = 2, trace = True)
+    try:
+        #print(e.a)
+        #print(e.c)
+        print(bar.expand("asdlkfj {foo.a} sjkdlfjs"))
+    except BaseException as e:
+        pass
 
 
 # endregion
