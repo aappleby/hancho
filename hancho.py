@@ -694,7 +694,7 @@ class Task:
         self._task_index = 0
         self._state = TaskState.DECLARED
         self._reason = None
-        self.asyncio_task = None
+        self._asyncio_task = None
         self._loaded_files = list(app.loaded_files)
         self._stdout = ""
         self._stderr = ""
@@ -735,13 +735,13 @@ class Task:
     def start(self):
         self.queue()
         if self._state is TaskState.QUEUED:
-            self.asyncio_task = asyncio.create_task(self.task_main())
+            self._asyncio_task = asyncio.create_task(self.task_main())
             self._state = TaskState.STARTED
             app.tasks_started += 1
 
     async def await_done(self):
         self.start()
-        await self.asyncio_task
+        await self._asyncio_task
 
     def promise(self, *args):
         return Promise(self, *args)
@@ -1120,8 +1120,8 @@ class Task:
 #region The Hancho API object that gets passed into .hancho files
 
 class HanchoAPI:
-    def __init__(self, mod_config, is_repo):
-        self.mod_config = mod_config
+    def __init__(self, config, is_repo):
+        self.config = config
         self.is_repo = is_repo
 
     def __repr__(self):
@@ -1136,10 +1136,10 @@ class HanchoAPI:
             # Note that we spread temp_context so that we can take advantage of parameter list
             # checking when we call the callback.
             return arg1(self, **temp_config)
-        return Task(self.mod_config, arg1, *args, **kwargs)
+        return Task(self.config, arg1, *args, **kwargs)
 
     def repo(self, mod_path, *args, **kwargs):
-        mod_path = self.mod_config.expand(mod_path)
+        mod_path = self.config.expand(mod_path)
         assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
         mod_path = path.realpath(mod_path)
@@ -1156,7 +1156,7 @@ class HanchoAPI:
         return result
 
     def load(self, mod_path):
-        mod_path = self.mod_config.expand(mod_path)
+        mod_path = self.config.expand(mod_path)
         assert isinstance(mod_path, str)
         mod_path = path.abspath(mod_path)
         new_context = create_mod(self, mod_path)
@@ -1165,26 +1165,26 @@ class HanchoAPI:
     def _load(self):
         #if len(app.dirstack) == 1 or app.flags.verbosity or app.flags.debug:
         if True:
-            #mod_path = rel_path(self.mod_config.mod_path, self.mod_config.repo_dir)
-            mod_path = rel_path(self.mod_config.mod_path, app.flags.root_dir)
+            #mod_path = rel_path(self.config.mod_path, self.config.repo_dir)
+            mod_path = rel_path(self.config.mod_path, app.flags.root_dir)
             log(("┃ " * (len(app.dirstack) - 1)), end="")
             if self.is_repo:
                 log(color(128, 128, 255) + f"Loading repo {mod_path}" + color())
             else:
                 log(color(128, 255, 128) + f"Loading file {mod_path}" + color())
 
-        app.loaded_files.append(self.mod_config.mod_path)
+        app.loaded_files.append(self.config.mod_path)
 
         # We're using compile() and FunctionType()() here beause exec() doesn't preserve source
         # code for debugging.
-        file = open(self.mod_config.mod_path, encoding="utf-8")
+        file = open(self.config.mod_path, encoding="utf-8")
         source = file.read()
-        code = compile(source, self.mod_config.mod_path, "exec", dont_inherit=True)
+        code = compile(source, self.config.mod_path, "exec", dont_inherit=True)
 
         # We must chdir()s into the .hancho file directory before running it so that
         # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
         # context here so there should be no other threads trying to change cwd.
-        app.pushdir(path.dirname(self.mod_config.mod_path))
+        app.pushdir(path.dirname(self.config.mod_path))
 
         #{
         #  '__annotations__': {},
@@ -1225,7 +1225,7 @@ class HanchoAPI:
             new_module[key] = val
 
         # Tack the context onto the module so people who load it can see the paths it was built with, etc.
-        new_module['config'] = module_globals['hancho'].mod_config
+        new_module['config'] = module_globals['hancho'].config
 
         return new_module
 
@@ -1272,7 +1272,7 @@ def create_repo(mod_path : str, *args, **kwargs):
 ####################################################################################################
 
 def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
-    mod_path = parent_api.mod_config.expand(mod_path)
+    mod_path = parent_api.config.expand(mod_path)
     assert isinstance(mod_path, str)
     mod_path = path.abspath(mod_path)
     mod_dir  = path.split(mod_path)[0]
@@ -1282,11 +1282,11 @@ def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
     mod_api = copy.deepcopy(parent_api)
     mod_api.is_repo = False
 
-    mod_api.mod_config.mod_name = mod_name
-    mod_api.mod_config.mod_dir  = mod_dir
-    mod_api.mod_config.mod_path = mod_path
+    mod_api.config.mod_name = mod_name
+    mod_api.config.mod_dir  = mod_dir
+    mod_api.config.mod_path = mod_path
 
-    mod_api.mod_config = Config(mod_api.mod_config, *args, kwargs)
+    mod_api.config = Config(mod_api.config, *args, kwargs)
 
     return mod_api
 
@@ -1445,7 +1445,7 @@ class App:
 
         # All the unrecognized flags get stuck on the root context.
         for key, val in self.extra_flags.items():
-            setattr(root_context.mod_config, key, val)
+            setattr(root_context.config, key, val)
 
         return root_context
 
@@ -1454,21 +1454,21 @@ class App:
     def main(self):
         app.root_context = self.create_root_context()
 
-        if app.root_context.mod_config.get_expanded("debug", None):
+        if app.root_context.config.get_expanded("debug", None):
             log(f"root_context = {Dumper(2).dump(app.root_context)}")
 
-        if not path.isfile(app.root_context.mod_config.repo_path):
+        if not path.isfile(app.root_context.config.repo_path):
             print(
-                f"Could not find Hancho file {app.root_context.mod_config.repo_path}!"
+                f"Could not find Hancho file {app.root_context.config.repo_path}!"
             )
             sys.exit(-1)
 
-        assert path.isabs(app.root_context.mod_config.repo_path)
-        assert path.isfile(app.root_context.mod_config.repo_path)
-        assert path.isabs(app.root_context.mod_config.repo_dir)
-        assert path.isdir(app.root_context.mod_config.repo_dir)
+        assert path.isabs(app.root_context.config.repo_path)
+        assert path.isfile(app.root_context.config.repo_path)
+        assert path.isabs(app.root_context.config.repo_dir)
+        assert path.isdir(app.root_context.config.repo_dir)
 
-        os.chdir(app.root_context.mod_config.repo_dir)
+        os.chdir(app.root_context.config.repo_dir)
         time_a = time.perf_counter()
         app.root_context._load()
         time_b = time.perf_counter()
@@ -1523,7 +1523,7 @@ class App:
 
                 # build_dir = task.merged_config.get_expanded("{build_dir}")
                 # build_dir = path.abspath(build_dir)
-                # repo_dir = app.root_context.mod_config.get_expanded("{repo_dir}")
+                # repo_dir = app.root_context.config.get_expanded("{repo_dir}")
                 # repo_dir = path.abspath(repo_dir)
                 # print(build_dir)
                 # print(repo_dir)
@@ -1594,7 +1594,7 @@ class App:
 
             task = self.started_tasks.pop(0)
             try:
-                await task.asyncio_task
+                await task._asyncio_task
             except BaseException:  # pylint: disable=broad-exception-caught
                 log(color(255, 128, 0), end="")
                 log(f"Task failed: {task._desc}")
@@ -1607,7 +1607,7 @@ class App:
                 if app.flags.keep_going and fail_count >= app.flags.keep_going:
                     log("Too many failures, cancelling tasks and stopping build")
                     for task in self.started_tasks:
-                        task.asyncio_task.cancel()
+                        task._asyncio_task.cancel()
                         app.tasks_cancelled += 1
                     break
             self.finished_tasks.append(task)

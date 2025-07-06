@@ -510,7 +510,7 @@ class TestHancho(unittest.TestCase):
         hancho_py.app.reset()
         hancho_py.app.parse_flags(["--quiet", "--flarpy=flarp.txt"])
         self.hancho = hancho_py.app.create_root_context()
-        self.assertEqual("flarp.txt", self.hancho.mod_config.flarpy)
+        self.assertEqual("flarp.txt", self.hancho.config.flarpy)
 
         self.hancho(
             command = "touch {out_file}",
