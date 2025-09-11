@@ -1,5 +1,5 @@
-hancho(
-    hancho.rules.cc_binary,
+hancho.task(
+    hancho.tools.cc_binary,
     in_srcs = "hello-world.cc",
     out_bin = "hello-world",
 )

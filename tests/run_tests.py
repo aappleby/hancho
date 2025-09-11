@@ -13,9 +13,9 @@ from pathlib import Path
 import time
 
 sys.path.append("..")
-import hancho as hancho_py
+import hancho
 
-Config = hancho_py.Config
+Config = hancho.Config
 
 # tests still needed -
 # calling hancho in src dir
@@ -88,12 +88,11 @@ class TestHancho(unittest.TestCase):
 
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
-        hancho_py.app.reset()
-        hancho_py.app.parse_flags(["--quiet"])
-        #hancho_py.app.parse_flags([])
-        #hancho_py.app.parse_flags(["-v"])
-        #hancho_py.app.parse_flags(["-d"])
-        self.hancho = hancho_py.app.create_root_mod()
+        hancho.reset()
+        hancho.parse_flags(["--quiet"])
+        #hancho.parse_flags([])
+        #hancho.parse_flags(["-v"])
+        #hancho.parse_flags(["-d"])
 
     ########################################
 
@@ -109,25 +108,25 @@ class TestHancho(unittest.TestCase):
     ########################################
 
     def test_run_cmd(self):
-        #hancho_py.app.reset()
-        #self.hancho = hancho_py.app.create_root_mod()
-        task = self.hancho(command = "echo \'{run_cmd('ls')}\'")
-        self.assertEqual(0, hancho_py.app.build_all())
+        #hancho.reset()
+        #self.hancho = hancho.create_root_mod()
+        task = self.hancho.task(command = "echo \'{run_cmd('ls')}\'")
+        self.assertEqual(0, hancho.build_all())
 
     ########################################
 
     def test_should_pass(self):
         """Sanity check"""
-        self.hancho(command = "(exit 0)")
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.hancho.task(command = "(exit 0)")
+        self.assertEqual(0, hancho.build_all())
 
     ########################################
 
     def test_should_fail(self):
         """Sanity check"""
-        bad_task = self.hancho(command = "echo skldjlksdlfj && (exit 255)")
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.FAILED)
+        bad_task = self.hancho.task(command = "echo skldjlksdlfj && (exit 255)")
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.FAILED)
 
     ########################################
 
@@ -140,7 +139,7 @@ class TestHancho(unittest.TestCase):
 #          build_files = "repo.txt",
 #          b*ase_path = os.path.abspath("subrepo")
 #      )
-#      self.assertEqual(0, hancho.app.build_all())
+#      self.assertEqual(0, hancho.build_all())
 #      self.assertTrue(Path("build/subrepo/repo.txt").exists())
 
     ########################################
@@ -191,55 +190,39 @@ class TestHancho(unittest.TestCase):
     ########################################
 
     def test_good_build_path(self):
-        self.hancho(
+        self.hancho.task(
             command  = "touch {out_obj}",
             in_src   = "src/foo.c",
             out_obj  = "{repo_dir}/build/narp/foo.o",
         )
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(Path("build/narp/foo.o").exists())
 
     ########################################
 
     def test_bad_build_path(self):
-        bad_task = self.hancho(
+        bad_task = self.hancho.task(
             command  = "touch {out_obj}",
             in_src   = "src/foo.c",
             out_obj  = "{repo_dir}/../build/foo.o",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
-
-    ########################################
-    # FIXME do we really need to support raw tasks?
-
-    #def test_raw_task(self):
-    #    self.hancho.Task(
-    #        command    = "touch {out_obj}",
-    #        in_src     = "src/foo.c",
-    #        out_obj    = "foo.o",
-    #        repo_dir   = os.getcwd(),
-    #        task_dir   = ".",
-    #        build_dir = "build"
-    #    )
-    #    #print(task)
-    #    self.assertEqual(0, hancho_py.app.build_all())
-    #    self.assertTrue(Path("build/foo.o").exists())
 
     ########################################
 
     def test_missing_input(self):
         """We should fail if an input is missing"""
-        bad_task = self.hancho(
+        bad_task = self.hancho.task(
             command = "touch {out_obj}",
             in_src  = "src/does_not_exist.txt",
             out_obj = "missing_src.txt"
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("FileNotFoundError" in hancho_py.app.log)
-        self.assertTrue("does_not_exist.txt" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("FileNotFoundError" in hancho.get_log())
+        self.assertTrue("does_not_exist.txt" in hancho.get_log())
 
     ########################################
 
@@ -249,13 +232,13 @@ class TestHancho(unittest.TestCase):
         build_root.
         """
 
-        self.hancho(
+        self.hancho.task(
             command = "cp {in_src} {out_obj}",
             in_src  = path.abspath("src/foo.c"),
             out_obj = "{ext(in_src, '.o')}",
         )
 
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(Path("build/src/foo.o").exists())
 
 
@@ -263,16 +246,16 @@ class TestHancho(unittest.TestCase):
 
     def test_missing_dep(self):
         """Missing dep should fail"""
-        bad_task = self.hancho(
+        bad_task = self.hancho.task(
             command = "touch {out_obj}",
             in_src  = "src/test.cpp",
             in_dep  = ["missing_dep.txt"],
             out_obj = "result.txt",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("FileNotFoundError" in hancho_py.app.log)
-        self.assertTrue("missing_dep.txt" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("FileNotFoundError" in hancho.get_log())
+        self.assertTrue("missing_dep.txt" in hancho.get_log())
 
     ########################################
     # A recursive text template should cause an 'expand failed to terminate' error.
@@ -281,48 +264,48 @@ class TestHancho(unittest.TestCase):
     # FIXME after we're done redoing template expansion
     def test_expand_failed_to_terminate(self):
         # Single recursion
-        bad_task = self.hancho(
+        bad_task = self.hancho.task(
             command = "{flarp}",
             in_src  = [],
             out_obj = [],
             flarp   = "asdf {flarp}",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("TemplateRecursion" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("TemplateRecursion" in hancho.get_log())
 
     def test_expand_failed_to_terminate2(self):
         # Mutual recursion
-        bad_task = self.hancho(
+        bad_task = self.hancho.task(
             command = "{flarp}",
             in_src  = [],
             out_obj = [],
             flarp   = "{command}",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("TemplateRecursion" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("TemplateRecursion" in hancho.get_log())
 
     def test_expand_failed_to_terminate3(self):
         # Recursion via TXINAE
-        #hancho_py.app.reset()
+        #hancho.reset()
         print("lksjflskdflsdjk?")
-        bad_task = self.hancho(
+        bad_task = self.hancho.task(
             command = "{subthing.foo}",
             in_src  = [],
             out_obj = [],
-            subthing = hancho_py.Config(foo = "{subthing.foo} x"),
+            subthing = hancho.Config(foo = "{subthing.foo} x"),
             #trace = True
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("TemplateRecursion" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("TemplateRecursion" in hancho.get_log())
     """
 
     ########################################
 
     def test_nested_macros(self):
-        c = hancho_py.Config(
+        c = hancho.Config(
             foo = "piece1",
             bar = "piece2",
             baz = "{ {foo}{bar} }",
@@ -335,45 +318,45 @@ class TestHancho(unittest.TestCase):
 
     def test_garbage_command(self):
         """Non-existent command line commands should cause Hancho to fail the build."""
-        garbage_task = self.hancho(
+        garbage_task = self.hancho.task(
             command = "aklsjdflksjdlfkjldfk",
             in_src  = __file__,
             out_obj = "result.txt",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(garbage_task._state, hancho_py.TaskState.FAILED)
-        self.assertTrue("CommandFailure" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(garbage_task._state, hancho.TaskState.FAILED)
+        self.assertTrue("CommandFailure" in hancho.get_log())
 
     ########################################
 
     def test_task_collision(self):
         """If multiple distinct commands generate the same output file, that's an error."""
-        self.hancho(
+        self.hancho.task(
             command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
-        self.hancho(
+        self.hancho.task(
             command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertTrue("TaskCollision" in hancho_py.app.log)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertTrue("TaskCollision" in hancho.get_log())
 
     ########################################
 
     def test_always_rebuild_if_no_inputs(self):
         """A rule with no inputs should always rebuild"""
         def run():
-            hancho_py.app.reset()
-            hancho_py.app.parse_flags(["--quiet"])
-            self.hancho(
+            hancho.reset()
+            hancho.parse_flags(["--quiet"])
+            self.hancho.task(
                 command = "sleep 0.1 && touch {out_obj}",
                 in_src  = [],
                 out_obj = "result.txt",
             )
-            self.assertEqual(0, hancho_py.app.build_all())
+            self.assertEqual(0, hancho.build_all())
             return mtime_ns("build/result.txt")
 
         mtime1 = run()
@@ -388,15 +371,15 @@ class TestHancho(unittest.TestCase):
         """Changing a file in in_files[] should trigger a rebuild"""
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
         def run():
-            hancho_py.app.reset()
-            hancho_py.app.parse_flags(["--quiet"])
-            self.hancho(
+            hancho.reset()
+            hancho.parse_flags(["--quiet"])
+            self.hancho.task(
                 command = "sleep 0.1 && touch {out_obj}",
                 in_temp = ["build/dummy.txt"],
                 in_src  = "src/test.cpp",
                 out_obj = "result.txt",
             )
-            self.assertEqual(0, hancho_py.app.build_all())
+            self.assertEqual(0, hancho.build_all())
             return mtime_ns("build/result.txt")
 
         os.makedirs("build", exist_ok=True)
@@ -412,24 +395,24 @@ class TestHancho(unittest.TestCase):
 
     def test_does_create_output(self):
         """Output files should appear in build/ by default"""
-        self.hancho(
+        self.hancho.task(
             command = "touch {out_obj}",
             in_src  = [],
             out_obj = "result.txt",
         )
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(path.exists("build/result.txt"))
 
     ########################################
 
     def test_doesnt_create_output(self):
         """Having a file mentioned in out_obj should not magically create it"""
-        self.hancho(
+        self.hancho.task(
             command = "echo",
             in_src  = [],
             out_obj = "result.txt"
         )
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertFalse(path.exists("build/result.txt"))
 
     ########################################
@@ -437,16 +420,16 @@ class TestHancho(unittest.TestCase):
     def test_header_changed(self):
         """Changing a header file tracked in the GCC dependencies file should trigger a rebuild"""
         def run():
-            hancho_py.app.reset()
-            hancho_py.app.parse_flags(["--quiet"])
+            hancho.reset()
+            hancho.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = hancho_py.Config(
+            compile = hancho.Config(
                 command = "gcc -MMD -c {in_src} -o {out_obj}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
             )
-            self.hancho(compile, in_src = "src/test.cpp")
-            self.assertEqual(0, hancho_py.app.build_all())
+            self.hancho.task(compile, in_src = "src/test.cpp")
+            self.assertEqual(0, hancho.build_all())
             return mtime_ns("build/src/test.o")
 
         mtime1 = run()
@@ -462,16 +445,16 @@ class TestHancho(unittest.TestCase):
     def test_input_changed(self):
         """Changing a source file should trigger a rebuild"""
         def run():
-            hancho_py.app.reset()
-            hancho_py.app.parse_flags(["--quiet"])
+            hancho.reset()
+            hancho.parse_flags(["--quiet"])
             time.sleep(0.01)
-            compile = hancho_py.Config(
+            compile = hancho.Config(
                 command = "gcc -MMD -c {in_src} -o {out_obj}",
                 out_obj = "{ext(in_src, '.o')}",
                 depfile = "{ext(out_obj, '.d')}",
             )
-            self.hancho(compile, in_src = "src/test.cpp")
-            self.assertEqual(0, hancho_py.app.build_all())
+            self.hancho.task(compile, in_src = "src/test.cpp")
+            self.assertEqual(0, hancho.build_all())
             return mtime_ns("build/src/test.o")
 
         mtime1 = run()
@@ -485,8 +468,8 @@ class TestHancho(unittest.TestCase):
     ########################################
 
     def test_multiple_commands(self):
-        """Rules with arrays of commands should run all of them"""
-        self.hancho(
+        """Tools with arrays of commands should run all of them"""
+        self.hancho.task(
             command = [
                 "echo foo > {out_foo}",
                 "echo bar > {out_bar}",
@@ -498,7 +481,7 @@ class TestHancho(unittest.TestCase):
             out_baz = "baz.txt",
         )
 
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(path.exists("build/foo.txt"))
         self.assertTrue(path.exists("build/bar.txt"))
         self.assertTrue(path.exists("build/baz.txt"))
@@ -507,32 +490,32 @@ class TestHancho(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         """Passing arbitrary flags to Hancho should work"""
-        hancho_py.app.reset()
-        hancho_py.app.parse_flags(["--quiet", "--flarpy=flarp.txt"])
-        self.hancho = hancho_py.app.create_root_mod()
+        hancho.reset()
+        hancho.parse_flags(["--quiet", "--flarpy=flarp.txt"])
+        self.hancho = hancho.create_root_mod()
         self.assertEqual("flarp.txt", self.hancho.config.flarpy)
 
-        self.hancho(
+        self.hancho.task(
             command = "touch {out_file}",
             source_files = [],
             out_file = "{flarpy}",
         )
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(path.exists("build/flarp.txt"))
 
     ########################################
 
     def test_sync_command(self):
-        """The 'command' field of rules should be OK handling a sync function"""
+        """The 'command' field of tools should be OK handling a sync function"""
         def sync_command(task):
             force_touch(task.config.out_obj)
 
-        self.hancho(
+        self.hancho.task(
             command = sync_command,
             in_src  = [],
             out_obj = "result.txt",
         )
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(path.exists("build/result.txt"))
 
     ########################################
@@ -541,31 +524,31 @@ class TestHancho(unittest.TestCase):
         """A task that receives a cancellation exception should not run."""
 
         # Note: not using -k0 will break the cancellation test
-        hancho_py.app.reset()
-        hancho_py.app.parse_flags(["--quiet", "-k0"])
+        hancho.reset()
+        hancho.parse_flags(["--quiet", "-k0"])
 
-        task_that_fails = self.hancho(
+        task_that_fails = self.hancho.task(
             command = "(exit 255)",
             in_src  = [],
             out_obj = "fail_result.txt",
         )
-        task_that_passes = self.hancho(
+        task_that_passes = self.hancho.task(
             command = "touch {out_obj}",
             in_src  = [],
             out_obj = "pass_result.txt",
         )
-        should_be_cancelled = self.hancho(
+        should_be_cancelled = self.hancho.task(
             command = "touch {out_obj}",
             in_src  = [task_that_fails, task_that_passes],
             out_obj = "should_not_be_created.txt",
         )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(1, hancho_py.app.tasks_finished)
-        self.assertEqual(1, hancho_py.app.tasks_failed)
-        self.assertEqual(1, hancho_py.app.tasks_cancelled)
-        self.assertEqual(task_that_fails._state, hancho_py.TaskState.FAILED)
-        self.assertEqual(task_that_passes._state, hancho_py.TaskState.FINISHED)
-        self.assertEqual(should_be_cancelled._state, hancho_py.TaskState.CANCELLED)
+        self.assertNotEqual(0, hancho.build_all())
+        self.assertEqual(1, hancho.tasks_finished)
+        self.assertEqual(1, hancho.tasks_failed)
+        self.assertEqual(1, hancho.tasks_cancelled)
+        self.assertEqual(task_that_fails._state, hancho.TaskState.FAILED)
+        self.assertEqual(task_that_passes._state, hancho.TaskState.FINISHED)
+        self.assertEqual(should_be_cancelled._state, hancho.TaskState.CANCELLED)
         self.assertTrue(Path("build/pass_result.txt").exists())
         self.assertFalse(Path("build/fail_result.txt").exists())
         self.assertFalse(Path("build/should_not_be_created.txt").exists())
@@ -575,7 +558,7 @@ class TestHancho(unittest.TestCase):
     def test_task_creates_task(self):
         """Tasks using callbacks can create new tasks when they run."""
         def callback(task):
-            new_task = self.hancho(
+            new_task = self.hancho.task(
                 command = "touch {out_obj}",
                 in_src  = [],
                 out_obj = "dummy.txt"
@@ -584,13 +567,13 @@ class TestHancho(unittest.TestCase):
             new_task.queue()
             return []
 
-        self.hancho(
+        self.hancho.task(
             command = callback,
             in_src  = [],
             out_obj = []
         )
 
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(Path("build/dummy.txt").exists())
 
     ########################################
@@ -598,14 +581,14 @@ class TestHancho(unittest.TestCase):
     def test_tons_of_tasks(self):
         """We should be able to queue up 1000+ tasks at once."""
         for i in range(1000):
-            self.hancho(
+            self.hancho.task(
                 desc    = "I am task {index}",
                 command = "echo {index} > {out_obj}",
                 in_src  = [],
                 out_obj = "dummy{index}.txt",
                 index   = i
             )
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertEqual(1000, len(glob.glob("build/*")))
 
     ########################################
@@ -616,7 +599,7 @@ class TestHancho(unittest.TestCase):
         # another batch of 100 tasks that use random numbers of cores.
 
         for i in range(100):
-            self.hancho(
+            self.hancho.task(
                 desc    = "I am task {index}, I use {job_count} cores",
                 command = "(exit 0)",
                 in_src  = [],
@@ -625,7 +608,7 @@ class TestHancho(unittest.TestCase):
                 index = i
             )
 
-        self.hancho(
+        self.hancho.task(
             desc = "********** I am the slow task, I eat all the cores **********",
             command = [
                 "touch {out_obj}",
@@ -637,7 +620,7 @@ class TestHancho(unittest.TestCase):
         )
 
         for i in range(100):
-            self.hancho(
+            self.hancho.task(
                 desc = "I am task {index}, I use {job_count} cores",
                 command = "(exit 0)",
                 in_src  = [],
@@ -646,7 +629,7 @@ class TestHancho(unittest.TestCase):
                 index = 100 + i
             )
 
-        self.assertEqual(0, hancho_py.app.build_all())
+        self.assertEqual(0, hancho.build_all())
         self.assertTrue(Path("build/slow_result.txt").exists())
 
 ####################################################################################################
@@ -658,7 +641,7 @@ class TestSplitTemplate(unittest.TestCase):
 
     def test_basic(self):
         def split_template(text):
-            return hancho_py.split_template(text)
+            return hancho.split_template(text)
 
         # Sanity check - Single braces should produce a block
         self.assertEqual(split_template("a {b} c"), ['a ', '{b}', ' c'])

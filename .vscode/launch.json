@@ -5,17 +5,6 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Scratch",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/hancho.py",
-      "cwd": "${workspaceFolder}/scratch",
-      //"args": ["--force", "-j1"],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "preLaunchTask": "Wipe build",
-    },
-    {
       "name": "Debug hancho.py",
       "type": "debugpy",
       "request": "launch",
@@ -43,7 +32,7 @@
       "request": "launch",
       "program": "run_tests.py",
       "cwd": "${workspaceFolder}/tests",
-      //"args": ["TestHancho.test_raw_task"],
+      "args": ["TestHancho.test_header_changed"],
       "console": "integratedTerminal",
       "justMyCode": false,
     },
@@ -60,14 +49,25 @@
     },
 
     {
-      "name": "Debug Scratch",
+      "name": "Debug scratch/scratch.py",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/scratch.py",
-      "cwd": "${workspaceFolder}/..",
+      "program": "${workspaceFolder}/scratch/scratch.py",
+      "cwd": "${workspaceFolder}/scratch",
       "console": "integratedTerminal",
       "justMyCode": false,
+      "preLaunchTask": "Wipe build",
     },
-
+    {
+      "name": "Debug hancho.py in scratch/",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd": "${workspaceFolder}/scratch",
+      //"args": ["--force", "-j1"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Wipe build",
+    },
   ]
 }

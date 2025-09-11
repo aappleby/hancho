@@ -1,6 +1,6 @@
 # FIXME these could stand to be cleaned up a bit.
 
-hancho.base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
+hancho.base_tools = hancho.repo("{hancho_dir}/base_tools.hancho")
 
 def gen_ivparams(params):
     result = []
@@ -11,22 +11,22 @@ def gen_ivparams(params):
         result.append(f"-P{{top}}.{key}={val}")
     return result
 
-iverilog = task(
+iverilog = hancho.Tool(
     desc = "Run iverilog on {in_sv}",
     command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {joined_includes} {in_sv} -o {out_iv}",
     gen_ivparams = gen_ivparams,
     joined_includes = "{join('-I', includes)}"
 )
 
-verilated_o = hancho(
-    hancho.base_rules.compile_cpp,
+verilated_o = hancho.task(
+    hancho.base_tools.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated.cpp",
     out_obj = "verilated.o",
     build_dir = "{build_root}/verilator",
 )
 
-verilated_threads_o = hancho(
-    hancho.base_rules.compile_cpp,
+verilated_threads_o = hancho.task(
+    hancho.base_tools.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
     out_obj = "verilated_threads.o",
     build_dir = "{build_root}/verilator",
@@ -40,7 +40,7 @@ def gen_vlparams(c):
         result.append(f"-G{key}={val}")
     return result
 
-verilator_cmd = task(
+verilator_cmd = hancho.Tool(
     desc = "Run Verilator on {in_top}",
     command = "verilator -Wno-width --public {gen_vlparams(params)} {joined_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
     out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
@@ -51,14 +51,14 @@ verilator_cmd = task(
 )
 
 def verilator(hancho, *, in_top, **kwargs):
-    verilated = hancho(
+    verilated = hancho.task(
         verilator_cmd,
         kwargs,
         in_top = in_top,
     )
 
-    compiled = hancho(
-        hancho.base_rules.make,
+    compiled = hancho.task(
+        hancho.base_tools.make,
         kwargs,
         in_makefile = verilated.promise("out_makefile"),
         out_obj = "{ext(in_makefile, '__ALL.o')}",
@@ -67,15 +67,15 @@ def verilator(hancho, *, in_top, **kwargs):
         ],
     )
 
-    lib = hancho(
-        hancho.base_rules.cpp_lib,
+    lib = hancho.task(
+        hancho.base_tools.cpp_lib,
         kwargs,
         in_top  = in_top,
         in_objs = [verilated_threads_o, verilated_o, compiled],
         out_lib = "{ext(in_top, '.a')}",
     )
 
-    return hancho(
+    return hancho.task(
         command    = None,
         out_lib    = lib.promise("out_lib"),
         out_header = verilated.promise("out_header"),
@@ -91,7 +91,7 @@ def gen_chparams(c):
     return result
 
 
-yosys = task(
+yosys = hancho.Tool(
     desc = "Run yosys on {in_sv}",
     command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {out_json};'",
     out_json = "{ext(in_sv, '.json')}",
@@ -102,34 +102,34 @@ yosys = task(
 )
 
 
-sv2v = task(
+sv2v = hancho.Tool(
     desc = "Run sv2v on {in_sv}",
     command = "sv2v {joined_includes} {in_sv} -w {out_v}",
     joined_includes = "{join('-I', includes)}",
     out_v = "{ext(in_sv, '.v')}",
 )
 
-nextpnr = task(
+nextpnr = hancho.Tool(
     desc    = "Run nextpnr-ice40 on {in_json}",
     command = "nextpnr-ice40 {flags} -q --json {in_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
     out_asc = "{ext(in_json, '.asc')}",
     flags   = None,
 )
 
-icepack = task(
+icepack = hancho.Tool(
     desc    = "Run icepack on {in_asc}",
     command = "icepack {in_asc} {out_bin}",
     out_bin = "{ext(in_asc, '.bin')}",
 )
 
-iceprog = task(
+iceprog = hancho.Tool(
     desc    = "Run iceprog on {in_bin}",
     command = "iceprog -S {in_bin}",
 )
 
 # FIXME Remove this and replace with "def synth(hancho, *, ...):"
 
-synth = task(
+synth = hancho.Tool(
     desc    = "Synth {in_sv}",
     command = [
         "yosys -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",

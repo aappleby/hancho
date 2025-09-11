@@ -1,3 +1,3 @@
-hancho.rules = hancho.load("stage1_rules.hancho")
+hancho.tools = hancho.load("stage1_tools.hancho")
 
 hancho.load("main/build.hancho")
