@@ -18,14 +18,14 @@ iverilog = hancho.Tool(
     joined_includes = "{join('-I', includes)}"
 )
 
-verilated_o = hancho.task(
+verilated_o = hancho.Task(
     hancho.base_tools.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated.cpp",
     out_obj = "verilated.o",
     build_dir = "{build_root}/verilator",
 )
 
-verilated_threads_o = hancho.task(
+verilated_threads_o = hancho.Task(
     hancho.base_tools.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
     out_obj = "verilated_threads.o",
@@ -51,13 +51,13 @@ verilator_cmd = hancho.Tool(
 )
 
 def verilator(hancho, *, in_top, **kwargs):
-    verilated = hancho.task(
+    verilated = hancho.Task(
         verilator_cmd,
         kwargs,
         in_top = in_top,
     )
 
-    compiled = hancho.task(
+    compiled = hancho.Task(
         hancho.base_tools.make,
         kwargs,
         in_makefile = verilated.promise("out_makefile"),
@@ -67,7 +67,7 @@ def verilator(hancho, *, in_top, **kwargs):
         ],
     )
 
-    lib = hancho.task(
+    lib = hancho.Task(
         hancho.base_tools.cpp_lib,
         kwargs,
         in_top  = in_top,
@@ -75,7 +75,7 @@ def verilator(hancho, *, in_top, **kwargs):
         out_lib = "{ext(in_top, '.a')}",
     )
 
-    return hancho.task(
+    return hancho.Task(
         command    = None,
         out_lib    = lib.promise("out_lib"),
         out_header = verilated.promise("out_header"),

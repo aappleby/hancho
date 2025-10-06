@@ -1,13 +1,13 @@
 
 ####################################################################################################
 
-hancho.task(
+hancho.Task(
     command = "g++ src/main.cpp src/util.cpp -o build/app",
 )
 
 ####################################################################################################
 
-hancho.task(
+hancho.Task(
     command = "g++ {in_src} -o {out_bin}",
     in_src  = ["src/main.cpp", "src/util.cpp"],
     out_bin = "app",
@@ -15,19 +15,19 @@ hancho.task(
 
 ####################################################################################################
 
-main_o = hancho.task(
+main_o = hancho.Task(
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
 )
 
-util_o = hancho.task(
+util_o = hancho.Task(
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
 )
 
-hancho.task(
+hancho.Task(
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = [main_o, util_o],
     out_bin = "app",
@@ -35,21 +35,21 @@ hancho.task(
 
 ####################################################################################################
 
-main_o = hancho.task(
+main_o = hancho.Task(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
     depfile = "main.d",
 )
 
-util_o = hancho.task(
+util_o = hancho.Task(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
     depfile = "util.d",
 )
 
-hancho.task(
+hancho.Task(
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = [main_o, util_o],
     out_bin = "app",
@@ -69,17 +69,17 @@ link_cpp = hancho.Tool(
     command = "g++ {in_objs} -o {out_bin}",
 )
 
-main_o = hancho.task(compile_cpp, in_src = "src/main.cpp")
-util_o = hancho.task(compile_cpp, in_src = "src/util.cpp")
-app    = hancho.task(link_cpp, in_objs = [main_o, util_o], out_bin = "app")
+main_o = hancho.Task(compile_cpp, in_src = "src/main.cpp")
+util_o = hancho.Task(compile_cpp, in_src = "src/util.cpp")
+app    = hancho.Task(link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 
 ####################################################################################################
 
 tools = hancho.load("tools.hancho")
 
-main_o = hancho.task(tools.compile_cpp, in_src = "src/main.cpp")
-util_o = hancho.task(tools.compile_cpp, in_src = "src/util.cpp")
-app    = hancho.task(tools.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
+main_o = hancho.Task(tools.compile_cpp, in_src = "src/main.cpp")
+util_o = hancho.Task(tools.compile_cpp, in_src = "src/util.cpp")
+app    = hancho.Task(tools.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 
 #----------------------------------------
 
@@ -99,7 +99,7 @@ link_cpp = hancho.Tool(
 
 tools = hancho.load("tools.hancho")
 
-app = hancho.task(tools.c_binary, hancho.glob("src/*.cpp"), "app")
+app = hancho.Task(tools.c_binary, hancho.glob("src/*.cpp"), "app")
 
 #----------------------------------------
 
@@ -116,8 +116,8 @@ link_cpp = hancho.Tool(
 )
 
 def c_binary(hancho, *, in_srcs, out_bin, **kwargs):
-    objs = [hancho.task(compile_cpp, in_src = file, **kwargs) for file in in_srcs]
-    return hancho.task(link_cpp, in_objs = objs, out_bin = out_bin, **kwargs)
+    objs = [hancho.Task(compile_cpp, in_src = file, **kwargs) for file in in_srcs]
+    return hancho.Task(link_cpp, in_objs = objs, out_bin = out_bin, **kwargs)
 
 ####################################################################################################
 # Async/await and custom commands
@@ -132,7 +132,7 @@ def sync_callback(task):
             file.write("hello world")
     return task.out_txts
 
-fast_task = hancho.task(
+fast_task = hancho.Task(
     command   = sync_callback,
     in_src    = ["src/main.cpp"],
     out_txts  = ["fast1.txt", "fast2.txt", "fast3.txt"],
@@ -148,7 +148,7 @@ async def async_callback(task):
         await asyncio.sleep(0.1)
     return task.out_txts
 
-slow_task = hancho.task(
+slow_task = hancho.Task(
     command   = async_callback,
     in_src    = ["src/main.cpp"],
     out_txts  = ["slow1.txt", "slow2.txt", "slow3.txt"],
@@ -161,7 +161,7 @@ async def slow_filename_promise():
     await asyncio.sleep(0.1)
     return ["src/main.cpp"]
 
-echo_task = hancho.task(
+echo_task = hancho.Task(
     command = "echo {in_src} > {out_txt}",
     in_src  = [slow_filename_promise()],
     out_txt = ["promise1.txt"],

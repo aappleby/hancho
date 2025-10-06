@@ -3,7 +3,7 @@ import os
 ####################################################################################################
 # C++
 
-default_toolchain = hancho.config(
+default_toolchain = hancho.Config(
     arch = "x86-64",
     compiler = "x86_64-linux-gnu-g++",
     linker = "x86_64-linux-gnu-g++",
@@ -82,17 +82,17 @@ link_cpp_bin = hancho.Tool(
 def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
-        obj = hancho.task(compile_cpp, in_src=file, **kwargs)
+        obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-    return hancho.task(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
+    return hancho.Task(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 
 
 def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
-        obj = hancho.task(compile_cpp, in_src=file, **kwargs)
+        obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-    return hancho.task(
+    return hancho.Task(
         link_cpp_bin,
         in_objs=[in_objs, in_libs],
         out_bin=out_bin,
@@ -111,7 +111,7 @@ def make(hancho, *, in_makefile, **kwargs):
         make_file="{path.basename(in_makefile)}",
         flags="--quiet",
     )
-    return hancho.task(cmd, in_makefile=in_makefile, **kwargs)
+    return hancho.Task(cmd, in_makefile=in_makefile, **kwargs)
 
 
 ####################################################################################################
@@ -127,11 +127,11 @@ run_test = hancho.Tool(
 )
 
 def cpp_test(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    objs = [hancho.task(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
-    test_bin = hancho.task(
+    objs = [hancho.Task(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
+    test_bin = hancho.Task(
         link_cpp_bin,
         in_objs=[objs, in_objs, in_libs],
         out_bin=out_bin,
         **kwargs
     )
-    return hancho.task(run_test, in_test=test_bin, **kwargs)
+    return hancho.Task(run_test, in_test=test_bin, **kwargs)

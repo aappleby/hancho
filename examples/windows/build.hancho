@@ -1,6 +1,6 @@
 # hancho/examples/windows/build.hancho - Builds a trivial Win32 app.
 
-hancho.config.depformat = "msvc"
+hancho.repo_config.depformat = "msvc"
 
 compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
@@ -15,5 +15,5 @@ link_cpp = hancho.Tool(
     libs      = "user32.lib"
 )
 
-main_o = hancho.task(compile_cpp, in_src = "src/main.cpp")
-hancho.task(link_cpp, in_objs = main_o, out_bin = "app.exe")
+main_o = hancho.Task(compile_cpp, in_src = "src/main.cpp")
+hancho.Task(link_cpp, in_objs = main_o, out_bin = "app.exe")

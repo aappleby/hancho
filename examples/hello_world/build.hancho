@@ -7,15 +7,15 @@ compile_cpp = hancho.Tool(
     depfile = "{ext(out_obj, '.d')}",
 )
 
-main_o = hancho.task(compile_cpp, in_src = "main.cpp")
-util_o = hancho.task(compile_cpp, in_src = "util.cpp")
+main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
+util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 
 link_cpp_bin = hancho.Tool(
     desc    = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
-main_app = hancho.task(
+main_app = hancho.Task(
     link_cpp_bin,
     in_objs = [main_o, util_o],
     out_bin = "hello_world",

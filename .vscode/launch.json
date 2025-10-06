@@ -59,6 +59,16 @@
       "preLaunchTask": "Wipe build",
     },
     {
+      "name": "Debug scratch/build.hancho",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd": "${workspaceFolder}/scratch",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "preLaunchTask": "Wipe build",
+    },
+    {
       "name": "Debug hancho.py in scratch/",
       "type": "debugpy",
       "request": "launch",

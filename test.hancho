@@ -1,12 +1,12 @@
 base_tools = hancho.repo("{hancho_dir}/base_tools.hancho")
 
-hancho.task(base_tools.check_cpp, in_src = "tests/src/main.cpp")
-hancho.task(base_tools.check_cpp, in_src = "tests/src/test.cpp")
+hancho.Task(base_tools.check_cpp, in_src = "tests/src/main.cpp")
+hancho.Task(base_tools.check_cpp, in_src = "tests/src/test.cpp")
 
 hancho.load("tutorial/tutorial.hancho")
 hancho.load("examples/examples.hancho")
 
-hancho.task(
+hancho.Task(
     desc     = "Run all tests",
     command  = ["{repo_dir}/tests/run_tests.py"],
     task_dir = "{repo_dir}/tests",
