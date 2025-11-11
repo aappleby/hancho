@@ -1,4 +1,4 @@
-base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
-fpga_rules  = hancho.repo("{hancho_dir}/fpga_rules.hancho")
-riscv_rules = hancho.repo("{hancho_dir}/riscv_rules.hancho")
-wasm_rules  = hancho.repo("{hancho_dir}/wasm_rules.hancho")
+base_tools  = hancho.repo("{hancho_dir}/base_tools.hancho")
+fpga_tools  = hancho.repo("{hancho_dir}/fpga_tools.hancho")
+riscv_tools = hancho.repo("{hancho_dir}/riscv_tools.hancho")
+wasm_tools  = hancho.repo("{hancho_dir}/wasm_tools.hancho")

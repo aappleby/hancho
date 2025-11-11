@@ -48,15 +48,15 @@ compile_cpp = task(
     out_obj = "{ext(in_src, '.o')}",
 )
 
-# To make Hancho do some work, we pass tasks, configs and key-value pairs to hancho().
+# To make Hancho do some work, we pass tasks, configs and key-value pairs to hancho.Task().
 # It merges tasks and configs, expands templates, and queues an asynchronous task to run
 # the command.
 
-# The hancho() function returns a Task object, which is like a promise that
+# The hancho.Task() function returns a Task object, which is like a promise that
 # resolves to a list of output files when the task is complete.
 
-main_o = hancho(compile_cpp, in_src = "main.cpp")
-util_o = hancho(compile_cpp, in_src = "util.cpp")
+main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
+util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 
 # This task defines how to link objects into a binary file. Instead of passing
 # filenames to 'in_objs', we can provide the task objects created above.
@@ -71,7 +71,7 @@ link_cpp_bin = task(
 # Hancho will automatically parallelize independent tasks. Here, main.cpp and
 # util.cpp will be compiled in parallel before the link task starts.
 
-main_app = hancho(
+main_app = hancho.Task(
     link_cpp_bin,
     in_objs = [main_o, util_o],
     out_bin = "hello_world",
@@ -81,7 +81,7 @@ main_app = hancho(
 # same directory.
 ```
 
-More documentation (still a work in progress) can be found at [docs/README.md](docs/README.md). The currently-broken step-by-step tutorial is in [tutorial](tutorial). Working examples are in [examples](examples). There are also sample build rules for [C++](base_rules.hancho), [WASM](wasm_rules.hancho), and [FPGA synthesis](fpga_rules.hancho).
+More documentation (still a work in progress) can be found at [docs/README.md](docs/README.md). The currently-broken step-by-step tutorial is in [tutorial](tutorial). Working examples are in [examples](examples). There are also sample build tools for [C++](base_tools.hancho), [WASM](wasm_tools.hancho), and [FPGA synthesis](fpga_tools.hancho).
 
 ## Updates
  - 2024-11-03 - I'm stripping out obsolete documentation and trimming the tutorials down to the essentials.

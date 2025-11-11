@@ -1,0 +1,11 @@
+_base_tools  = hancho.repo("base_tools.hancho")
+_fpga_tools  = hancho.repo("fpga_tools.hancho")
+_riscv_tools = hancho.repo("riscv_tools.hancho")
+_wasm_tools  = hancho.repo("wasm_tools.hancho")
+
+tools = hancho.Config(
+    _base_tools,
+    _fpga_tools,
+    _riscv_tools,
+    _wasm_tools
+)

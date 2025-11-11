@@ -1,6 +1,6 @@
 hancho.config.includes = "-I{repo_dir}"
 
-hancho.rules = hancho.load("stage3_rules.hancho")
+hancho.tools = hancho.load("stage3_tools.hancho")
 hancho.lib   = hancho.load("lib/build.hancho")
 
 hancho.load("main/build.hancho")

@@ -1,5 +1,5 @@
-hello_time = hancho(
-    hancho.rules.cc_library,
+hello_time = hancho.Task(
+    hancho.tools.cc_library,
     in_srcs = ["hello-time.cc"],
     out_lib = "hello-time.a"
 )
