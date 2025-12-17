@@ -49,6 +49,8 @@ from collections import abc
 from typing import Callable
 from xmlrpc.client import boolean
 
+from matplotlib.backend_tools import ToolBack
+
 #endregion
 ####################################################################################################
 #region Config
@@ -280,41 +282,6 @@ def mtime(filename):
 
 #endregion
 ####################################################################################################
-#region Helpers for managing variants
-
-def map_variant(key, val, apply):
-    val = apply(key, val)
-    if isinstance(val, abc.MutableMapping):
-        for key2, val2 in val.items():
-            val[key2] = map_variant(key2, val2, apply)
-    elif listlike(val):
-        for key2, val2 in enumerate(val):
-            val[key2] = map_variant(key2, val2, apply)
-    return val
-
-
-async def await_variant(variant):
-    """Recursively replaces every awaitable in the variant with its awaited value."""
-
-    if listlike(variant):
-        for key, val in enumerate(variant):
-            variant[key] = await await_variant(val)
-        return variant
-
-    if isinstance(variant, Promise):
-        return await await_variant(await variant.get())
-
-    if isinstance(variant, Task):
-        await variant.await_done()
-        return await await_variant(variant.out_files)
-
-    if inspect.isawaitable(variant):
-        return await await_variant(await variant)
-
-    return variant
-
-#endregion
-####################################################################################################
 # region Pretty-printer for various types
 
 class Dumper:
@@ -399,6 +366,9 @@ class Dumper:
 # Also - TEFINAE - Text Expansion Failure Is Not An Error. Configs can contain macros that are not
 # expandable by that config. This allows nested configs to contain templates that can only be
 # expanded by a parent config, and things will still Just Work.
+
+# if inspect.isawaitable(variant):
+#   return await await_variant(await variant)
 
 class Expander:
 
@@ -650,24 +620,6 @@ class Utils:
 
 #endregion
 ####################################################################################################
-#region Promise selects subsets of _out_files
-
-class Promise:
-    def __init__(self, task, *args):
-        self.task = task
-        self.args = args
-
-    async def get(self):
-        await self.task.await_done()
-        if len(self.args) == 0:
-            return self.task.out_files
-        elif len(self.args) == 1:
-            return self.task.config[self.args[0]]
-        else:
-            return [self.task.config[field] for field in self.args]
-
-#endregion
-####################################################################################################
 # region Task object + bookkeeping
 
 class TaskState:
@@ -729,50 +681,36 @@ class Task:
 ####################################################################################################
 #region async_task_main
 
-async def async_task_main(top: HanchoTop, task : Task, tasks : Tasks, job_pool : JobPool, log : Logger, dirstack : Dirstack):
+async def async_task_main(top: HanchoTop, task : Task):
     """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-    tasks = top.tasks
-    job_pool = top.job_pool
-
-    ex = Expander(do_trace = task.config.do_trace)
-
+    tasks     = top.tasks
+    job_pool  = top.job_pool
+    do_trace  = task.config.expand("{do_trace}")
     verbosity = task.config.expand("{verbosity}")
     debug     = task.config.expand("{debug}")
     rebuild   = task.config.expand("{rebuild}")
+    task_dir  = task.config.expand("{task_dir}")
 
     assert isinstance(verbosity, bool)
     assert isinstance(debug, bool)
     assert isinstance(rebuild, bool)
+    assert path.isdir(task_dir)
 
-    # Await everything awaitable in this task's config.
-    # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
-    # downstream tasks.
-    try:
-        assert task.state is TaskState.STARTED
-        task.state = TaskState.AWAITING_INPUTS
-        for key, val in task.config.items():
-            task.config[key] = await await_variant(val)
-    except BaseException as ex:  # pylint: disable=broad-exception-caught
-        # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
-        task.state = TaskState.CANCELLED
-        tasks.count_cancelled += 1
-        raise asyncio.CancelledError() from ex
+    ex = Expander(do_trace = do_trace)
 
-    # Everything awaited, init_task runs synchronously.
     try:
         task.state = TaskState.TASK_INIT
 
         # Note that we chdir to task_dir before initializing the task so that any path.abspath
         # or whatever happen from the right place
 
-        task_dir = task.config.expand("{task_dir}")
         assert isinstance(task_dir, str)
         try:
-            dirstack.pushdir(task_dir)
-            init_task(task, log, top.filename_to_fingerprint)
+            top.dirstack.pushdir(task_dir)
+            init_task(task, top.log, top.filename_to_fingerprint)
         finally:
-            dirstack.popdir()
+            top.dirstack.popdir()
 
     except asyncio.CancelledError as ex:
         # We discovered during init that we don't need to run this task.
@@ -791,7 +729,7 @@ async def async_task_main(top: HanchoTop, task : Task, tasks : Tasks, job_pool :
         return
 
     # Check if we need a rebuild
-    task.reason = needs_rerun(task, log)
+    task.reason = needs_rerun(task, top.log)
     if not task.reason:
         tasks.count_skipped += 1
         task.state = TaskState.SKIPPED
@@ -808,13 +746,12 @@ async def async_task_main(top: HanchoTop, task : Task, tasks : Tasks, job_pool :
         tasks.count_started += 1
         task.task_index = tasks.count_started
 
-        task.print_status(tasks, log)
+        task.print_status(tasks, top.log)
         if verbosity or debug:
-            log(f"{color(128,128,128)}Reason: {task.reason}{color()}")
+            top.log(f"{color(128,128,128)}Reason: {task.reason}{color()}")
 
         for command in flatten(task.command):
-            # async def async_run_command(task : Task, command : str | list[str] | Callable, log : Logger, tasks : Tasks, dirstack : Dirstack):
-            await async_run_command(task, command, log, tasks, dirstack)
+            await async_run_command(top, task, command)
             if task.returncode != 0:
                 break
 
@@ -1059,7 +996,7 @@ class Dirstack:
 ####################################################################################################
 #region async_run_command
 
-async def async_run_command(task : Task, command : str | list[str] | Callable, log : Logger, tasks : Tasks, dirstack : Dirstack):
+async def async_run_command(top : HanchoTop, task : Task, command : str | list[str] | Callable):
     """Runs a single command, either by calling it or running it in a subprocess."""
 
     verbosity = task.config.expand("{verbosity}")
@@ -1067,12 +1004,12 @@ async def async_run_command(task : Task, command : str | list[str] | Callable, l
     dry_run   = task.config.expand("{dry_run}")
 
     if verbosity or debug:
-        log(color(128, 128, 255), end="")
+        top.log(color(128, 128, 255), end="")
         if dry_run:
-            log("(DRY RUN) ", end="")
-        log(f"{rel_path(task.config.task_dir, task.config.repo_dir)}$ ", end="")
-        log(color(), end="")
-        log(command)
+            top.log("(DRY RUN) ", end="")
+        top.log(f"{rel_path(task.config.task_dir, task.config.repo_dir)}$ ", end="")
+        top.log(color(), end="")
+        top.log(command)
 
     # Dry runs get early-out'ed before we do anything.
     if dry_run:
@@ -1080,9 +1017,9 @@ async def async_run_command(task : Task, command : str | list[str] | Callable, l
 
     # Custom commands just get called and then early-out'ed.
     if callable(command):
-        dirstack.pushdir(task.config.task_dir)
-        await await_variant(command(task))
-        dirstack.popdir()
+        top.dirstack.pushdir(task.config.task_dir)
+        command(task)
+        top.dirstack.popdir()
         task.returncode = 0
         return
 
@@ -1092,9 +1029,8 @@ async def async_run_command(task : Task, command : str | list[str] | Callable, l
 
     # Create the subprocess via asyncio and then await the result.
     if debug:
-        log(f"Task {hex(id(task))} subprocess start '{command}'")
+        top.log(f"Task {hex(id(task))} subprocess start '{command}'")
 
-    #proc : asyncio.subprocess.Process = await asyncio.create_subprocess_shell(
     proc = await asyncio.create_subprocess_shell(
         command,
         cwd=task.config.task_dir,
@@ -1104,7 +1040,7 @@ async def async_run_command(task : Task, command : str | list[str] | Callable, l
     (stdout_data, stderr_data) = await proc.communicate()
 
     if debug:
-        log(f"Task {hex(id(task))} subprocess done '{command}'")
+        top.log(f"Task {hex(id(task))} subprocess done '{command}'")
 
     task.stdout = stdout_data.decode()
     task.stderr = stderr_data.decode()
@@ -1125,15 +1061,15 @@ async def async_run_command(task : Task, command : str | list[str] | Callable, l
         raise ValueError(message)
 
     if debug or verbosity:
-        log(
-            f"{color(128,255,196)}[{task.task_index}/{tasks.count_started}]{color()} Task passed - '{task.desc}'"
+        top.log(
+            f"{color(128,255,196)}[{task.task_index}/{top.tasks.count_started}]{color()} Task passed - '{task.desc}'"
         )
         if task.stdout:
-            log("Stdout:")
-            log(task.stdout, end="")
+            top.log("Stdout:")
+            top.log(task.stdout, end="")
         if task.stderr:
-            log("Stderr:")
-            log(task.stderr, end="")
+            top.log("Stderr:")
+            top.log(task.stderr, end="")
 
 #endregion
 ####################################################################################################
@@ -1142,13 +1078,12 @@ async def async_run_command(task : Task, command : str | list[str] | Callable, l
 class HanchoAPI:
     """This is what gets passed into .hancho files."""
 
-    def __init__(self, config : Config, log : Logger, dirstack : Dirstack, is_repo : boolean):
+    def __init__(self, top: HanchoTop, config : Config):
+        self.top = top
         self.config = config
-        self.log = log
-        self.dirstack = dirstack
-        self.is_repo = is_repo
-        # FIXME where is Config/Tool/Task/etc?
-        # FIXME log/dirstack/is_repo don't need to be here, the client doesn't use them
+        self.Config = Config
+        self.Tool = Config
+        self.Task = Task
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -1156,15 +1091,22 @@ class HanchoAPI:
     def __contains__(self, key : str):
         return key in self.__dict__
 
-    def __call__(self, arg1=None, /, *args, **kwargs):
-        if callable(arg1):
-            temp_config = Config(*args, **kwargs)
-            # Note that we spread temp_config so that we can take advantage of parameter list
-            # checking when we call the callback.
-            return arg1(self, **temp_config)
-        else:
-            temp_config = Config(arg1, *args, **kwargs)
-            return Task(temp_config)
+    def repo(self, script_path, *args, **kwargs):
+        return load_script(self.top, self, script_path, True, *args, **kwargs)
+
+    def load(self, script_path, *args, **kwargs):
+        return load_script(self.top, self, script_path, False, *args, **kwargs)
+        pass
+
+    #def __call__(self, arg1=None, /, *args, **kwargs):
+    #    if callable(arg1):
+    #        temp_config = Config(*args, **kwargs)
+    #        # Note that we spread temp_config so that we can take advantage of parameter list
+    #        # checking when we call the callback.
+    #        return arg1(self, **temp_config)
+    #    else:
+    #        temp_config = Config(arg1, *args, **kwargs)
+    #        return Task(temp_config)
 
 #endregion
 ####################################################################################################
@@ -1228,10 +1170,7 @@ class JobPool:
 #region Tasks
 
 class Tasks:
-    def __init__(self, log : Logger, job_pool : JobPool, flags : Config):
-        self.log = log
-        self.job_pool = job_pool
-        self.flags = flags
+    def __init__(self):
         self.all = []
         self.queued = []
         self.started = []
@@ -1248,91 +1187,89 @@ class Tasks:
         if task.state is not TaskState.DECLARED:
             return
 
-        # Queue all tasks referenced by this task's config.
-        def apply(_, val):
-            if isinstance(val, Task):
-                self.queue_task(val)
-            return val
-        map_variant(None, task.config, apply)
-
         # And now queue this task.
         self.queued.append(task)
         task.state = TaskState.QUEUED
 
-    async def await_done(self, task : Task):
-        self.queue_task(task)
-        if task.state is TaskState.QUEUED:
-            task.asyncio_task = asyncio.create_task(task.async_task_main())
-            task.state = TaskState.STARTED
-            self.count_started += 1
-        assert task.asyncio_task is not None
-        await task.asyncio_task
+    #async def await_done(self, task : Task):
+    #    self.queue_task(task)
+    #    if task.state is TaskState.QUEUED:
+    #        #task.asyncio_task = asyncio.create_task(task.async_task_main())
+    #        task_promise = async_task_main(self.top, task)
+    #        task.state = TaskState.STARTED
+    #        self.count_started += 1
 
-    async def async_run_tasks(self):
-        """ Run all tasks in the queue until we run out. """
+#endregion
+####################################################################################################
+#region async_run_tasks
 
-        # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
-        # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
-        # tasks after awaiting each one. Because we're awaiting tasks in the order they were
-        # created, this will effectively walk through all tasks in dependency order.
+async def async_run_tasks(top : HanchoTop):
+    """ Run all tasks in the queue until we run out. """
 
-        self.job_pool.reset(self.flags.max_jobs)
-        time_a = time.perf_counter()
-        log = self.log
+    # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
+    # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
+    # tasks after awaiting each one. Because we're awaiting tasks in the order they were
+    # created, this will effectively walk through all tasks in dependency order.
 
-        while self.queued or task.started:
-            if self.flags.shuffle:
-                log(f"Shufflin' {len(self.queued)} tasks")
-                random.shuffle(self.queued)
+    log = top.log
+    tasks = top.tasks
 
-            while task.queued:
-                task = self.queued.pop(0)
-                task.start()
-                self.started.append(task)
+    top.job_pool.reset(top.config.max_jobs)
+    time_a = time.perf_counter()
 
-            task = self.started.pop(0)
-            try:
-                await task.asyncio_task
-            except BaseException:  # pylint: disable=broad-exception-caught
-                log(color(255, 128, 0), end="")
-                log(f"Task failed: {task.desc}")
-                log(color(), end="")
-                log(str(task))
-                log(color(255, 128, 128), end="")
-                log(traceback.format_exc())
-                log(color(), end="")
-                fail_count = self.count_failed + self.count_cancelled + self.count_broken
-                if self.flags.keep_going and fail_count >= self.flags.keep_going:
-                    log("Too many failures, cancelling tasks and stopping build")
-                    for task in self.started:
-                        task.asyncio_task.cancel()
-                        self.count_cancelled += 1
-                    break
-            self.finished.append(task)
+    while tasks.queued or tasks.started:
+        if top.config.shuffle:
+            log(f"Shufflin' {len(tasks.queued)} tasks")
+            random.shuffle(tasks.queued)
 
-        time_b = time.perf_counter()
+        while task.queued:
+            task = tasks.queued.pop(0)
+            task.start()
+            tasks.started.append(task)
 
-        # if top.config.debug or top.config.verbosity:
-        self.log(f"Running {self.count_finished} tasks took {time_b-time_a:.3f} seconds")
+        task = tasks.started.pop(0)
+        try:
+            await task.asyncio_task
+        except BaseException:  # pylint: disable=broad-exception-caught
+            log(color(255, 128, 0), end="")
+            log(f"Task failed: {task.desc}")
+            log(color(), end="")
+            log(str(task))
+            log(color(255, 128, 128), end="")
+            log(traceback.format_exc())
+            log(color(), end="")
+            fail_count = tasks.count_failed + tasks.count_cancelled + tasks.count_broken
+            if top.config.keep_going and fail_count >= top.config.keep_going:
+                log("Too many failures, cancelling tasks and stopping build")
+                for task in tasks.started:
+                    task.asyncio_task.cancel()
+                    tasks.count_cancelled += 1
+                break
+        tasks.finished.append(task)
 
-        # Done, print status info if needed
-        if self.flags.debug or self.flags.verbosity:
-            self.log(f"tasks started:   {self.count_started}")
-            self.log(f"tasks finished:  {self.count_finished}")
-            self.log(f"tasks failed:    {self.count_failed}")
-            self.log(f"tasks skipped:   {self.count_skipped}")
-            self.log(f"tasks cancelled: {self.count_cancelled}")
-            self.log(f"tasks broken:    {self.count_broken}")
-            #self.log(f"mtime calls:     {self.count_mtime_calls}")
+    time_b = time.perf_counter()
 
-        if self.count_failed or self.count_broken:
-            self.log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
-        elif self.count_finished:
-            self.log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
-        else:
-            self.log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
+    # if top.config.debug or top.config.verbosity:
+    log(f"Running {tasks.count_finished} tasks took {time_b-time_a:.3f} seconds")
 
-        return -1 if self.count_failed or self.count_broken else 0
+    # Done, print status info if needed
+    if top.config.debug or top.config.verbosity:
+        log(f"tasks started:   {tasks.count_started}")
+        log(f"tasks finished:  {tasks.count_finished}")
+        log(f"tasks failed:    {tasks.count_failed}")
+        log(f"tasks skipped:   {tasks.count_skipped}")
+        log(f"tasks cancelled: {tasks.count_cancelled}")
+        log(f"tasks broken:    {tasks.count_broken}")
+        #log(f"mtime calls:     {tasks.count_mtime_calls}")
+
+    if tasks.count_failed or tasks.count_broken:
+        log(f"hancho: {color(255, 128, 128)}BUILD FAILED{color()}")
+    elif tasks.count_finished:
+        log(f"hancho: {color(128, 255, 128)}BUILD PASSED{color()}")
+    else:
+        log(f"hancho: {color(128, 128, 255)}BUILD CLEAN{color()}")
+
+    return -1 if tasks.count_failed or tasks.count_broken else 0
 
 #endregion
 ####################################################################################################
@@ -1343,11 +1280,8 @@ class HanchoTop:
     This class holds global state that is shared across all build scripts and 'import hancho's.
     """
 
-    def __init__(self, top_config : Config, log : Logger, dirstack, tasks : Tasks, job_pool):
-        self.reset(top_config, log, dirstack, tasks, job_pool)
-
-    def reset(self, top_config, log, dirstack, tasks, job_pool):
-        self.top_config = top_config
+    def __init__(self, config : Config, log : Logger, dirstack : Dirstack, tasks : Tasks, job_pool : JobPool):
+        self.config = config
         self.log = log
         self.dirstack = dirstack
         self.tasks = tasks
@@ -1357,54 +1291,62 @@ class HanchoTop:
         self.loaded_script_paths = []
         self.realpath_to_repo = {}
 
+    def reset(self, config : Config, log : Logger, dirstack : Dirstack, tasks : Tasks, job_pool : JobPool):
+        self.__init__(config, log, dirstack, tasks, job_pool)
+
 #endregion
 ####################################################################################################
-#region exec_script exec_module
+#region load_script
 
-def load_script(parent_api : HanchoAPI, script_path : str, log : Logger, realpath_to_repo : dict, dirstack : Dirstack, loaded_script_paths : list[str], is_repo : bool, *args, **kwargs):
+#def load_script(parent_api : HanchoAPI, script_path : str, log : Logger, realpath_to_repo : dict, dirstack : Dirstack, loaded_script_paths : list[str], is_repo : bool, *args, **kwargs):
+def load_script(top : HanchoTop, parent_api : HanchoAPI, script_path : str, is_repo : bool, *args, **kwargs):
+    log = top.log
     script_path = parent_api.config.expand(script_path) # type: ignore
     assert isinstance(script_path, str)
     script_path = path.abspath(script_path)
     script_path = path.realpath(script_path)
 
-    dedupe = realpath_to_repo.get(script_path, None)
+    dedupe = top.realpath_to_repo.get(script_path, None)
     if dedupe is not None:
         return dedupe
 
-    #script_path = rel_path(self.config.script_path, self.config.root_dir)
-    log(("┃ " * (len(dirstack.stack) - 1)), end="")
+    #script_path = rel_path(self.config.script_path, self.config.top_dir)
+    log(("┃ " * (len(top.dirstack.stack) - 1)), end="")
     if is_repo:
         log(color(128, 128, 255) + f"Loading repo {script_path}" + color())
     else:
         log(color(128, 255, 128) + f"Loading file {script_path}" + color())
 
     if is_repo:
-        new_api = create_repo_api(parent_api, script_path, *args, **kwargs)
+        new_config = create_repo_config(script_path, parent_api.config, *args, **kwargs)
     else:
-        new_api = create_script_api(parent_api, script_path, *args, **kwargs)
+        new_config = create_script_config(script_path, parent_api.config, *args, **kwargs)
 
     # We must chdir()s into the .hancho file directory before running it so that
     # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
     # context here so there should be no other threads trying to change cwd.
     try:
-        dirstack.pushdir(path.dirname(script_path))
-        result  = exec_script(script_path, new_api.config, log, dirstack, is_repo)
+        top.dirstack.pushdir(path.dirname(script_path))
+        # FIXME why isn't new_api used here?
+        result  = exec_script(script_path, new_config, log, top.dirstack, is_repo)
     finally:
-        dirstack.popdir()
+        top.dirstack.popdir()
 
-    realpath_to_repo[script_path] = result
-    loaded_script_paths.append(script_path)
+    top.realpath_to_repo[script_path] = result
+    top.loaded_script_paths.append(script_path)
 
     return result
 
 ####################################################################################################
-#region create_top_config create_repo_config create_script_config
+#region create_top_config
 
-def create_top_config(flags : Config, *args, **kwargs):
+def create_top_config(flags : Config):
+    assert path.isfile(flags.top_file)
+    assert path.isdir(flags.top_dir)
+    assert path.isdir(flags.top_dir)
 
-    top_config = Config(
-        flags,
-        *args,
+    defaults = Config(
+        hancho_dir  = path.dirname(path.realpath(__file__)),
 
         repo_path   = "{top_path}",
         repo_dir    = "{top_dir}",
@@ -1420,85 +1362,66 @@ def create_top_config(flags : Config, *args, **kwargs):
 
         source_dir  = "{script_dir}",
         task_dir    = "{source_dir}",
-
-        **kwargs
     )
+
+    return Config(defaults, flags)
 
     return top_config
 
 ########################################
 
-def create_repo_config(repo_script_path : str, flags : Config, realpath_to_repo : dict, *args, **kwargs):
-    assert path.isabs(repo_script_path)
-    assert repo_script_path == path.abspath(repo_script_path)
-    assert repo_script_path == path.realpath(repo_script_path)
-    assert repo_script_path not in realpath_to_repo
+def create_repo_config(script_path : str, flags : Config, *args, **kwargs):
+    assert path.isabs(script_path)
+    assert path.isfile(script_path)
 
-    # Repo config does _not_ inherit its parent config, only the flags.
+    # Repo config does _not_ inherit its parent config, it only sees the top-level flags.
 
-    repo_config = Config(
-        flags,
-        Config(
-            repo_path   = repo_script_path,
-            repo_dir    = path.split(repo_script_path)[0],
-            repo_file   = path.split(repo_script_path)[1],
+    defaults = Config(
+        repo_path   = script_path,
+        repo_dir    = path.split(script_path)[0],
+        repo_file   = path.split(script_path)[1],
 
-            build_root  = "{repo_dir}/build",
-            build_dir   = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
-            build_tag   = "",
+        build_root  = "{repo_dir}/build",
+        build_dir   = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
+        build_tag   = "",
 
-            script_path = "{repo_path}",
-            script_file = "{repo_file}",
-            script_dir  = "{repo_dir}",
+        script_path = "{repo_path}",
+        script_file = "{repo_file}",
+        script_dir  = "{repo_dir}",
 
-            source_dir  = "{script_dir}",
-            task_dir    = "{source_dir}"
-        ),
-        *args,
-        kwargs
+        source_dir  = "{script_dir}",
+        task_dir    = "{source_dir}"
     )
 
-    return repo_config
+    return Config(defaults, flags, *args, **kwargs)
 
 ########################################
 
-def create_script_config(parent_config : Config, script_path : str, *args, **kwargs):
-    script_path = parent_config.expand(script_path) #type:ignore
-    assert isinstance(script_path, str)
-    script_path = path.abspath(script_path)
+def create_script_config(script_path : str, parent_config : Config, *args, **kwargs):
+    assert path.isabs(script_path)
+    assert path.isfile(script_path)
+
     script_dir  = path.split(script_path)[0]
     script_file = path.split(script_path)[1]
     script_name = path.splitext(script_file)[0]
 
-    script_config = copy.deepcopy(parent_config)
+    defaults = Config(
+        script_name = script_name,
+        script_dir  = script_dir,
+        script_path = script_path,
+    )
 
-    script_config.script_name = script_name
-    script_config.script_dir  = script_dir
-    script_config.script_path = script_path
-    script_config = Config(script_config, *args, kwargs)
-
-    return script_config
+    return Config(copy.deepcopy(parent_config), defaults, *args, **kwargs)
 
 #endregion
 ####################################################################################################
-
-def create_repo_api(parent_api : HanchoAPI, script_path: str, flags : Config, realpath_to_repo : dict, *args, **kwargs):
-    #def create_repo_config(parent_api : HanchoAPI, flags : Config, repo_script_path : str, realpath_to_repo : dict, *args, **kwargs):
-
-    repo_config = create_repo_config(script_path, flags, realpath_to_repo, *args, **kwargs)
-    repo_api = HanchoAPI(repo_config, parent_api.log, parent_api.dirstack, True)
-    return repo_api
-
-def create_script_api(parent_api : HanchoAPI, script_path : str, *args, **kwargs):
-    script_config = create_script_config(parent_api.config, script_path, *args, **kwargs)
-    script_api = HanchoAPI(script_config, parent_api.log, parent_api.dirstack, False)
-    return script_api
-
-####################################################################################################
-# FIXME haven't tried this yet, this is supposed to be Python-er than exec_script
+#region exec_script
+# FIXME haven't tried this yet, this is supposed to be Python-er than what we had before
 
 def exec_script(script_path: str, config : Config, log : Logger, dirstack : Dirstack, is_repo):
-    script_path = path.abspath(script_path)
+    assert path.isabs(script_path)
+    assert path.isfile(script_path)
+
     script_dir  = path.split(script_path)[0]
     script_file = path.split(script_path)[1]
     script_name = path.splitext(script_file)[0]
@@ -1520,18 +1443,17 @@ def exec_script(script_path: str, config : Config, log : Logger, dirstack : Dirs
         dirstack.popdir()
     return user_module
 
-
 #endregion
 ####################################################################################################
 #region parse_flags
 
 def parse_flags(argv):
     # pylint: disable=line-too-long
-    # fmt: off
+    # fmt: off``
     parser = argparse.ArgumentParser()
     parser.add_argument("target",             default=None, nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
-    parser.add_argument("-C", "--root_dir",   default=os.getcwd(),     type=str,   help="Change directory before starting the build")
-    parser.add_argument("-f", "--top_path",   default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
+    parser.add_argument("-C", "--top_dir",    default=os.getcwd(),     type=str,   help="Change directory before starting the build")
+    parser.add_argument("-f", "--top_file",   default="build.hancho",  type=str,   help="The name of the .hancho file(s) to build")
     parser.add_argument("-j", "--jobs",       default=os.cpu_count(),  type=int,   dest="max_jobs", help="Run N jobs in parallel (default = cpu_count)")
 
     parser.add_argument("-k", "--keep_going", default=1,     type=int,             help="Keep going until N jobs fail (0 means infinity)")
@@ -1568,11 +1490,9 @@ def parse_flags(argv):
                         pass
             flags[key] = val
 
-    flags.hancho_dir  = path.dirname(path.realpath(__file__)),
-    flags.root_dir    = path.abspath(flags.root_dir)
-    flags.top_path    = path.abspath(flags.top_path)
-    flags.top_dir     = path.split(flags.top_path)[0],
-    flags.top_file    = path.split(flags.top_path)[1],
+    flags.top_path = path.join(flags.top_dir, flags.top_file)
+    assert path.isdir(flags.top_dir)
+    assert path.isfile(flags.top_path)
 
     return flags
 
@@ -1584,33 +1504,32 @@ def main():
     flags = parse_flags(sys.argv[1:])
     top_config = create_top_config(flags)
 
-    job_pool = JobPool(flags.max_jobs)
-    log = Logger(flags.quiet)
+    job_pool = JobPool(top_config.max_jobs)
+    log = Logger(top_config.quiet)
     dirstack = Dirstack()
+    tasks = Tasks()
 
-    tasks = Tasks(log, job_pool, flags)
+    top = HanchoTop(top_config, log, dirstack, tasks, job_pool)
 
-    top = HanchoTop(flags, log, dirstack, tasks)
+    assert path.isabs (top_config.top_dir)
+    assert path.isdir (top_config.top_dir)
 
-    all_tasks    = tasks.all
-    queued_tasks = tasks.queued
+    dirstack.pushdir(top_config.top_dir)
+
+    assert path.isabs (top_config.top_file)
+    assert path.isfile(top_config.top_file)
+
+    if not path.isfile(top_config.top_file):
+        print(f"Could not find build script {top_config.top_path}!")
+        sys.exit(-1)
 
     #----------
 
-    if not path.isfile(top_config.root_path):
-        print(f"Could not find build script {top_config.root_path}!")
-        sys.exit(-1)
-
-    assert path.isabs (top_config.root_path)
-    assert path.isfile(top_config.root_path)
-    assert path.isabs (top_config.root_dir)
-    assert path.isdir (top_config.root_dir)
-
-    expanded_repo_dir : str = top_config.expand(top_config.repo_dir) #type:ignore
-    os.chdir(expanded_repo_dir)
     time_a = time.perf_counter()
-    exec_script(top_config.root_path, top_config, log, dirstack, is_repo = True)
+    exec_script(top_config.top_path, top_config, log, dirstack, is_repo = True)
     time_b = time.perf_counter()
+
+    #----------
 
     if top_config.debug or top_config.verbosity:
         log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
@@ -1620,7 +1539,7 @@ def main():
         if top_config.tool == "clean":
             print("Deleting build directories")
             build_roots = set()
-            for task in all_tasks:
+            for task in tasks.all:
                 build_root = task.config.get_expanded("{build_root}")
                 assert isinstance(build_root, str)
                 build_root = path.abspath(build_root)
@@ -1658,32 +1577,21 @@ def main():
     for task in all_tasks:
             # If no target was specified, we queue up all tasks that build stuff in the root
             # repo
-
             # FIXME we are not currently doing that....
-
-            # build_dir = task.config.get_expanded("{build_dir}")
-            # build_dir = path.abspath(build_dir)
-            # repo_dir = root_mod.config.get_expanded("{repo_dir}")
-            # repo_dir = path.abspath(repo_dir)
-            # print(build_dir)
-            # print(repo_dir)
-            # if build_dir.startswith(repo_dir):
-            #    task.queue()
-            task.queue()
     """
 
-    for task in all_tasks:
+    for task in tasks.all:
         top.tasks.queue_task(task)
 
     time_b = time.perf_counter()
 
     # if top_config.debug or top_config.verbosity:
-    log(f"Queueing {len(queued_tasks)} tasks took {time_b-time_a} seconds")
+    log(f"Queueing {len(tasks.queued)} tasks took {time_b-time_a} seconds")
 
     result = -1
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    result = asyncio.run(top.tasks.async_run_tasks())
+    result = asyncio.run(async_run_tasks(top))
     loop.close()
 
     return result

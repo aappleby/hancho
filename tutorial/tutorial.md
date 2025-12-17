@@ -104,11 +104,11 @@ There's quite a lot of stuff in there:
 aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
 Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
 Task @ 0x727f0371d6a0 {
-  root_dir = "/home/aappleby/repos/hancho/tutorial",
-  root_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+  top_dir = "/home/aappleby/repos/hancho/tutorial",
+  top_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
   repo_name = "",
   repo_dir = "/home/aappleby/repos/hancho/tutorial",
-  build_root = "{root_dir}/build",
+  build_top = "{top_dir}/build",
   build_tag = "",
   script_name = "tut00",
   source_dir = "/home/aappleby/repos/hancho/tutorial",
@@ -121,7 +121,7 @@ Task @ 0x727f0371d6a0 {
   ],
   out_bin = "app",
   task_dir = "{source_dir}",
-  build_dir = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}",
+  build_dir = "{build_top}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}",
   _task_index = 0,
   _in_files = [],
   _out_files = [],
