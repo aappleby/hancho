@@ -3,7 +3,7 @@ import os
 ####################################################################################################
 # C++
 
-default_toolchain = config(
+default_toolchain = hancho.Config(
     arch = "x86-64",
     compiler = "x86_64-linux-gnu-g++",
     linker = "x86_64-linux-gnu-g++",

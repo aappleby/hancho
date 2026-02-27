@@ -1211,6 +1211,8 @@ class HanchoAPI:
         #  '__spec__': None,
         #}
 
+        self.Config = Config
+
         temp_globals = {
             "hancho"  : self,
             "config"  : Config,
