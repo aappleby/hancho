@@ -1212,6 +1212,8 @@ class HanchoAPI:
         #}
 
         self.Config = Config
+        self.Tool = Config
+        self.flatten = flatten
 
         temp_globals = {
             "hancho"  : self,
