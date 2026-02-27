@@ -54,7 +54,6 @@
       "request": "launch",
       "program": "${workspaceFolder}/scratch/scratch.py",
       "cwd": "${workspaceFolder}/scratch",
-      //"args": ["--force", "-j1"],
       "console": "integratedTerminal",
       "justMyCode": false,
       "preLaunchTask": "Wipe build",
