@@ -1,5 +1,7 @@
 # examples/examples.hancho
 
+import hancho
+
 hancho.repo("hello_world/build.hancho")
 hancho.repo("hello_gtk/build.hancho")
 hancho.repo("subrepos/build.hancho")

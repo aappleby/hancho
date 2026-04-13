@@ -1,8 +1,8 @@
 {
 	"folders": [
-		{
-			"path": "."
-		}
+    {
+      "path": "."
+    }
   ],
   "settings": {
     "files.exclude": {

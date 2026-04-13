@@ -42,28 +42,28 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 # and output filenames for a task. Hancho uses these fields to track
 # dependencies between tasks.
 
-compile_cpp = task(
+compile_cpp = hancho.Tool(
     desc = "Compiling C++ {in_src} -> {out_obj}",
     command = "g++ -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
 )
 
-# To make Hancho do some work, we pass tasks, configs and key-value pairs to hancho.task().
+# To make Hancho do some work, we pass tasks, configs and key-value pairs to hancho.Task().
 # It merges tasks and configs, expands templates, and queues an asynchronous task to run
 # the command.
 
-# The hancho.task() function returns a Task object, which is like a promise that
+# The hancho.Task() function creates a Task object, which is like a promise that
 # resolves to a list of output files when the task is complete.
 
-main_o = hancho.task(compile_cpp, in_src = "main.cpp")
-util_o = hancho.task(compile_cpp, in_src = "util.cpp")
+main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
+util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 
 # This task defines how to link objects into a binary file. Instead of passing
 # filenames to 'in_objs', we can provide the task objects created above.
 # Using a task object in place of a filename creates a dependency. Hancho uses
 # these dependencies to build a task graph and schedule parallel task execution.
 
-link_cpp_bin = task(
+link_cpp_bin = hancho.Tool(
     desc = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
@@ -71,7 +71,7 @@ link_cpp_bin = task(
 # Hancho will automatically parallelize independent tasks. Here, main.cpp and
 # util.cpp will be compiled in parallel before the link task starts.
 
-main_app = hancho.task(
+main_app = hancho.Task(
     link_cpp_bin,
     in_objs = [main_o, util_o],
     out_bin = "hello_world",

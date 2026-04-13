@@ -23,9 +23,10 @@ Hancho is a single-file Python build system (similar to Make/Ninja) that uses .h
 - Keep changes minimal and focused
 
 ### Key Architecture Notes
-- `Config` class: Dict-like with dot notation and recursive merging
+- `Dict` class: A Python dict with dot notation and recursive merging
+- `Tool` class: A Dict, just with a different name for debugging
 - `Task` class: Core build task with async execution
-- `HanchoAPI` class: What gets exposed to .hancho build files
+- `hancho` class: What gets exposed to .hancho build files
 - Text expansion system: Template strings with `{macro}` syntax
 - Job pool: Manages parallel task execution
 

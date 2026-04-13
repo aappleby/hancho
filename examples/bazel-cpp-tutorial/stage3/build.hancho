@@ -1,3 +1,5 @@
+import hancho
+
 hancho.config.includes = "-I{repo_dir}"
 
 hancho.rules = hancho.load("stage3_rules.hancho")

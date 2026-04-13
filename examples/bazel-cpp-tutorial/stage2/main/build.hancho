@@ -1,13 +1,15 @@
-hello_greet = hancho(
+import hancho
+
+hello_greet_lib = hancho.Task(
     hancho.rules.cc_library,
     in_srcs = ["hello-greet.cc"],
     in_hdrs = ["hello-greet.h"],
     out_lib = "hello-greet.a",
 )
 
-hancho(
+hello_greet_bin = hancho.Task(
     hancho.rules.cc_binary,
     in_srcs = ["hello-world.cc"],
-    in_libs = hello_greet,
+    in_libs = hello_greet_lib,
     out_bin = "hello-greet",
 )

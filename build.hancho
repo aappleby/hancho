@@ -1,3 +1,5 @@
+import hancho
+
 base_rules  = hancho.repo("{hancho_dir}/base_rules.hancho")
 fpga_rules  = hancho.repo("{hancho_dir}/fpga_rules.hancho")
 riscv_rules = hancho.repo("{hancho_dir}/riscv_rules.hancho")

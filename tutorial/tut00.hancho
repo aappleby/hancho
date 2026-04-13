@@ -1,13 +1,15 @@
+import hancho
+from glob import glob
 
 ####################################################################################################
 
-hancho(
+main_bin = hancho.Task(
     command = "g++ src/main.cpp src/util.cpp -o build/app",
 )
 
 ####################################################################################################
 
-hancho(
+main_bin = hancho.Task(
     command = "g++ {in_src} -o {out_bin}",
     in_src  = ["src/main.cpp", "src/util.cpp"],
     out_bin = "app",
@@ -15,19 +17,19 @@ hancho(
 
 ####################################################################################################
 
-main_o = hancho(
+main_o = hancho.Task(
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
 )
 
-util_o = hancho(
+util_o = hancho.Task(
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
 )
 
-hancho(
+main_bin = hancho.Task(
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = [main_o, util_o],
     out_bin = "app",
@@ -35,21 +37,21 @@ hancho(
 
 ####################################################################################################
 
-main_o = hancho(
+main_o = hancho.Task(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
     depfile = "main.d",
 )
 
-util_o = hancho(
+util_o = hancho.Task(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
     depfile = "util.d",
 )
 
-hancho(
+main_bin = hancho.Task(
     command = "g++ {in_objs} -o {out_bin}",
     in_objs = [main_o, util_o],
     out_bin = "app",
@@ -57,40 +59,40 @@ hancho(
 
 ####################################################################################################
 
-compile_cpp = task(
+compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = task(
+link_cpp = hancho.Tool(
     desc    = "Link {in_objs} into {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
-main_o = hancho(compile_cpp, in_src = "src/main.cpp")
-util_o = hancho(compile_cpp, in_src = "src/util.cpp")
-app    = hancho(link_cpp, in_objs = [main_o, util_o], out_bin = "app")
+main_o = hancho.Task(compile_cpp, in_src = "src/main.cpp")
+util_o = hancho.Task(compile_cpp, in_src = "src/util.cpp")
+app    = hancho.Task(link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 
 ####################################################################################################
 
 rules = hancho.load("rules.hancho")
 
-main_o = hancho(rules.compile_cpp, in_src = "src/main.cpp")
-util_o = hancho(rules.compile_cpp, in_src = "src/util.cpp")
-app    = hancho(rules.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
+main_o = hancho.Task(rules.compile_cpp, in_src = "src/main.cpp")
+util_o = hancho.Task(rules.compile_cpp, in_src = "src/util.cpp")
+app    = hancho.Task(rules.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 
 #----------------------------------------
 
-compile_cpp = task(
+compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = task(
+link_cpp = hancho.Tool(
     desc    = "Link {in_objs} into {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
@@ -99,25 +101,25 @@ link_cpp = task(
 
 rules = hancho.load("rules.hancho")
 
-app = hancho(rules.c_binary, glob("src/*.cpp"), "app")
+app = hancho.Task(rules.c_binary, glob("src/*.cpp"), "app")
 
 #----------------------------------------
 
-compile_cpp = task(
+compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
     depfile = "{ext(out_obj, '.d')}",
 )
 
-link_cpp = task(
+link_cpp = hancho.Tool(
     desc    = "Link {in_objs} -> {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
 def c_binary(hancho, *, in_srcs, out_bin, **kwargs):
-    objs = [hancho(compile_cpp, in_src = file, **kwargs) for file in in_srcs]
-    return hancho(link_cpp, in_objs = objs, out_bin = out_bin, **kwargs)
+    objs = [hancho.Task(compile_cpp, in_src = file, **kwargs) for file in in_srcs]
+    return hancho.Task(link_cpp, in_objs = objs, out_bin = out_bin, **kwargs)
 
 ####################################################################################################
 # Async/await and custom commands

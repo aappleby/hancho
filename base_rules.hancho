@@ -1,9 +1,10 @@
+import hancho
 import os
 
 ####################################################################################################
 # C++
 
-default_toolchain = hancho.Config(
+default_toolchain = hancho.Dict(
     arch = "x86-64",
     compiler = "x86_64-linux-gnu-g++",
     linker = "x86_64-linux-gnu-g++",
@@ -12,20 +13,20 @@ default_toolchain = hancho.Config(
 # ----------------------------------------
 
 check_cpp = hancho.Tool(
-    desc="Checking C++ syntax of {in_src}",
-    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} && touch {out_ok}",
+    desc = "Checking C++ syntax of {in_src}",
+    command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} && touch {out_ok}",
 
-    toolchain=default_toolchain,
-    flags=["-fsyntax-only", "-std={cpp_std}"],
+    toolchain = default_toolchain,
+    flags = ["-fsyntax-only", "-std={cpp_std}"],
     warnings = None,
     defines = None,
     includes = None,
     out_ok="{in_src}.ok",
 
-    cpp_std="gnu++2a",
-    joined_warnings="{join('-W', warnings)}",
-    joined_defines ="{join('-D', defines)}",
-    joined_includes="{join('-I', includes)}",
+    cpp_std = "gnu++2a",
+    joined_warnings = "{join('-W', warnings)}",
+    joined_defines  = "{join('-D', defines)}",
+    joined_includes = "{join('-I', includes)}",
 )
 
 # ----------------------------------------
@@ -79,19 +80,19 @@ link_cpp_bin = hancho.Tool(
 
 
 def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
-    in_objs = flatten(in_objs)
-    for file in flatten(in_srcs):
-        obj = hancho(compile_cpp, in_src=file, **kwargs)
+    in_objs = hancho.flatten(in_objs)
+    for file in hancho.flatten(in_srcs):
+        obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-    return hancho(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
+    return hancho.Task(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 
 
 def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    in_objs = flatten(in_objs)
-    for file in flatten(in_srcs):
-        obj = hancho(compile_cpp, in_src=file, **kwargs)
+    in_objs = hancho.flatten(in_objs)
+    for file in hancho.flatten(in_srcs):
+        obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-    return hancho(
+    return hancho.Task(
         link_cpp_bin,
         in_objs=[in_objs, in_libs],
         out_bin=out_bin,
@@ -103,34 +104,34 @@ def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwar
 # Makefiles
 
 def make(hancho, *, in_makefile, **kwargs):
-    cmd = task(
+    cmd = hancho.Tool(
         desc="Run makefile {in_makefile}",
         command="make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
         make_dir="{path.dirname(in_makefile)}",
         make_file="{path.basename(in_makefile)}",
         flags="--quiet",
     )
-    return hancho(cmd, in_makefile=in_makefile, **kwargs)
+    return hancho.Task(cmd, in_makefile=in_makefile, **kwargs)
 
 
 ####################################################################################################
 # Tests
 
-run_test = task(
+run_test = hancho.Tool(
     desc="Running test {in_test}",
     command="{in_test} {args} && touch {out_pass}",
     task_dir="{test_dir}",
-    test_dir="{mod_dir}",
+    test_dir="{source_dir}",
     args="",
     out_pass="{in_test}.pass",
 )
 
 def cpp_test(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    objs = [hancho(compile_cpp, in_src=src, **kwargs) for src in flatten(in_srcs)]
-    test_bin = hancho(
+    objs = [hancho.Task(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
+    test_bin = hancho.Task(
         link_cpp_bin,
         in_objs=[objs, in_objs, in_libs],
         out_bin=out_bin,
         **kwargs
     )
-    return hancho(run_test, in_test=test_bin, **kwargs)
+    return hancho.Task(run_test, in_test=test_bin, **kwargs)

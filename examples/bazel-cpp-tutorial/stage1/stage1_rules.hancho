@@ -1,6 +1,8 @@
 # Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
 # This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
 
+import hancho
+
 _gcc_flags = [
     "-U_FORTIFY_SOURCE",
     "-fstack-protector",
@@ -34,7 +36,7 @@ _ld_libs = [
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
-_compile_cpp = task(
+_compile_cpp = hancho.Tool(
     desc      = "Compiling C++ {in_src} -> {out_obj}",
     command   = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
     out_obj   = "{ext(in_src, '.o')}",
@@ -42,7 +44,7 @@ _compile_cpp = task(
     gcc_flags = _gcc_flags,
 )
 
-_link_cpp_bin = task(
+_link_cpp_bin = hancho.Tool(
     desc     = "Linking {out_bin}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {ld_libs}",
     ld_flags = _ld_flags,
@@ -50,6 +52,6 @@ _link_cpp_bin = task(
 )
 
 def cc_binary(hancho, *, in_srcs, out_bin):
-    objs = [hancho(_compile_cpp, in_src=src) for src in flatten(in_srcs)]
-    bin  = hancho(_link_cpp_bin, in_objs=objs, out_bin=out_bin)
+    objs = [hancho.Task(_compile_cpp, in_src=src) for src in flatten(in_srcs)]
+    bin  = hancho.Task(_link_cpp_bin, in_objs=objs, out_bin=out_bin)
     return bin

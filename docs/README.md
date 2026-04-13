@@ -107,7 +107,7 @@ If your project uses Git subrepos and your subrepo also builds with Hancho, you 
 base_rules = hancho.load("{hancho_path}/base_rules.hancho")
 awesomelib = hancho.repo("subrepos/awesomelib/build.hancho")
 
-hancho(
+hancho.Task(
   base_rules.cpp_binary,
   in_srcs = "main.cpp",
   in_libs = awesomelib.lib,
@@ -117,7 +117,7 @@ hancho(
 
 ## The global 'hancho' object you use when writing a script has some other stuff in it.
 
-In particular, there's a hancho.Context object named 'hancho.Context' (note the lowercase) that gets merged into all tasks when you call ```hancho()```. This context object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.Context - they will then be visible to all tasks in your build script.
+In particular, there's a hancho.Context object named 'hancho.Context' (note the lowercase) that gets merged into all tasks when you call ```hancho.Task()```. This context object contains default paths that Hancho uses for bookkeeping. You can also set your own fields on hancho.Context - they will then be visible to all tasks in your build script.
 
 ```py
 HanchoAPI @ 0x7cb6c8d0b110 {
@@ -327,21 +327,21 @@ Tasks take a Config that completely defines the input files, output files, and d
 
 Tasks are lazily executed - only tasks that are needed to build the selected outputs are executed. By default, all Tasks that originate from the repo we started the build in will be queued up for execution.
 
-## Calling ```hancho(...)``` merges ```hancho.Context``` with all the parameters passed to ```hancho()``` and creates a task from it.
+## Calling ```hancho.Task(...)``` merges ```hancho.config``` with all the parameters passed to ```hancho.Task()``` and creates a task from it.
 
 ```py
-echo_stuff = config(
+echo_stuff = hancho.Tool(
     command = "echo {in_file}",
 )
-hancho(echo_stuff, in_file = "foo.txt")
+hancho.Task(echo_stuff, in_file = "foo.txt")
 ```
 ## Tasks can be used as inputs to other tasks anywhere you'd use a filename.
 ```py
-foo_txt = hancho(
+foo_txt = hancho.Task(
     command = "echo I like turtles > {out_file}",
     out_file = "foo.txt"
 )
-hancho(
+hancho.Task(
     command = "cat {in_file}",
     in_file = foo_txt
 )
@@ -374,16 +374,16 @@ along with other object files or libraries into a larger C++ library.
 def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
     in_objs = flatten(in_objs)
     for file in flatten(in_srcs):
-        obj = hancho(compile_cpp, in_src=file, **kwargs)
+        obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
         in_objs.append(obj)
-    return hancho(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
+    return hancho.Task(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 ```
 
 You can of course call this function directly, but for easier integration with larger build scripts
-you can also pass ```cpp_lib``` as the first argument to ```hancho()```:
+you can also pass ```cpp_lib``` as the first argument to ```hancho.Task()```:
 
 ```
-hancho(
+hancho.Task(
   cpp_lib,
   in_srcs = glob.glob("src/*.cpp")
   out_lib = "foo.a"
@@ -393,12 +393,12 @@ hancho(
 Doing this is is exactly equivalent to the following:
 
 ```py
-temp_config = config(
+temp_config = hancho.Dict(
   hancho.Context,
   in_srcs = glob.glob("src/*.cpp"),
   out_lib = "foo.a"
 )
-cpp_lib(hancho, **temp_config)
+hancho.Task(cpp_lib, temp_config)
 ```
 
 ## Using callbacks as Hancho commands
@@ -414,7 +414,7 @@ async def my_callback(task):
   await asyncio.sleep(0.1)
   print(f"Hello from an asynchronous callback, my task is {task}")
 
-hancho(
+hancho.Task(
   command = my_callback,
 )
 ```

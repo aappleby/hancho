@@ -48,7 +48,7 @@ Hello World 42
 Here's how we run the same command using Hancho. First, we create ```build.hancho``` in the tutorial directory:
 
 ```py
-hancho(
+hancho.Task(
   command = [
     "mkdir -p build",
     "g++ src/main.cpp src/util.cpp -o build/app"
@@ -56,7 +56,7 @@ hancho(
 )
 ```
 
-Hancho build files are just Python code in a file ending in .hancho, with a few minor differences. Hancho build files always have access to a global ```hancho``` object, which we can also call as if it's a function to tell Hancho to do some work. The absolute minimum we can pass to ```hancho()``` is just the command to run.
+Hancho build files are just Python code in a file ending in .hancho, with a few minor differences. Hancho build files always have access to a global ```hancho``` object, which we can also call as if it's a function to tell Hancho to do some work. The absolute minimum we can pass to ```hancho.Task()``` is just the command to run.
 
 
 ```shell
@@ -69,12 +69,12 @@ Running 1 tasks took 0.054 seconds
 hancho: BUILD PASSED
 ```
 
-Of course we don't actually want to hardcode the file names into the command, so let's use Hancho's text templates to fix that. Templates in Hancho work almost identically to Python F-strings, except that they're lazily-evaluated and can only read variables from the ```hancho()``` invocation they're in.
+Of course we don't actually want to hardcode the file names into the command, so let's use Hancho's text templates to fix that. Templates in Hancho work almost identically to Python F-strings, except that they're lazily-evaluated and can only read variables from the ```hancho.Task()``` invocation they're in.
 
 In addition, parameters named ```in_*``` or ```out_*``` are special - strings inside them are assumed to be filenames, and Hancho will check for changes to any ```in_``` file before deciding to re-run the command.
 
 ```py
-hancho(
+hancho.Task(
   command = "g++ {in_src} -o {out_bin}",
   in_src  = ["src/main.cpp", "src/util.cpp"],
   out_bin = "app",
@@ -89,7 +89,7 @@ Let's see what's inside our task:
 ```py
 # tutorial/tut00.hancho
 
-task = hancho(
+task = hancho.Task(
   desc    = "Compile {in_src} -> {out_bin}",
   command = "g++ {in_src} -o {out_bin}",
   in_src  = ["src/main.cpp", "src/util.cpp"],
@@ -136,7 +136,7 @@ Task @ 0x727f0371d6a0 {
   _returncode = -1,
 }
 ```
-At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho()```, followed by the task-specific ```task_dir``` and ```build_dir```, and finally some private Hancho bookkeeping fields.
+At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho.Task()```, followed by the task-specific ```task_dir``` and ```build_dir```, and finally some private Hancho bookkeeping fields.
 
 
 In this build file we define a ```Rule``` that contains a

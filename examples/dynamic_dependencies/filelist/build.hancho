@@ -1,12 +1,14 @@
 # examples/dynamic_dependencies/filelist/build.hancho
 
+import hancho
 import random
+from glob import glob
 
-#hancho.verbosity = 1
+#hancho.config.verbosity = 1
 
 src_files = glob("src/*")
 
-random_touch = hancho(
+random_touch = hancho.Task(
     desc = "Touch 3 random files in src/ - {in_src}",
     command = [
         "touch {in_src[0]}",
@@ -22,7 +24,7 @@ def generate_filelist(task):
             #hancho.log(f"Writing {f} to {task.config.out_list}")
             file.write(str(f) + "\n")
 
-filelist_txt = hancho(
+filelist_txt = hancho.Task(
     desc     = "Write the names of 3 random files in src/ to {out_list}",
     command  = generate_filelist,
     out_list = "filelist.txt",
@@ -33,7 +35,7 @@ def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
     file = open(task.config.in_filelist, "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
-    new_task = hancho(
+    new_task = hancho.Task(
         desc      = "Concatenate {in_files} into {out_files}",
         command   = "cat {in_files} > {out_files}",
         in_files  = from_filelist,
@@ -43,13 +45,13 @@ def generate_result(task):
     # FIXME should we be doing this some other way?
     task._out_files.append(new_task)
 
-result_txt = hancho(
+result_txt = hancho.Task(
     desc = "Read {in_filelist} and use its contents to generate another task",
     command = generate_result,
     in_filelist = filelist_txt,
 )
 
-print_task = hancho(
+print_task = hancho.Task(
     desc = "Print the contents of {in_text}",
     command = "cat {in_text}",
     in_text = result_txt,
