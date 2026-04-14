@@ -36,8 +36,15 @@ import sys
 import time
 import traceback
 import types
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast, Type, overload
 from collections import abc
+
+type str_tree = str | list[str_tree]
+_MISSING = object()
+
+def check[T](type_: Type[T], t: object) -> T:
+    assert isinstance(t, type_), f"Expected {type_.__name__}, got {type(t).__name__}"
+    return t
 
 #endregion
 ####################################################################################################
@@ -91,22 +98,22 @@ class Dict(dict):
     #        value = copy.deepcopy(value)
     #    super().__setitem__(key, value)
 
-    def __setitem__(self, name, value):
+    def __setitem__(self, name : str, value : Any):
         raise NotImplementedError("Hancho.Dict is immutable", name, value)
 
-    def __delitem__(self, name):
+    def __delitem__(self, name : str):
         raise NotImplementedError("Hancho.Dict is immutable", name)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name : str):
         try:
             return self[name]
         except KeyError as e:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name : str, value : Any):
         raise NotImplementedError("Hancho.Dict is immutable", name, value)
 
-    def __delattr__(self, name):
+    def __delattr__(self, name : str):
         raise NotImplementedError("Hancho.Dict is immutable", name)
 
     #def __setattr__(self, name, value):
@@ -128,16 +135,27 @@ class Dict(dict):
     def dump(self, depth):
         return Dumper(depth).dump(self)
 
-    def expand(self, text):
-        return expand_variant(self, text)
+    @overload
+    def get_expanded[T](self, type_: Type[T], key: str) -> T: pass
+    @overload
+    def get_expanded[T](self, type_: Type[T], key: str, default: T) -> T: pass
 
-    def get_expanded(self, key, default=None):
-        macro = f"{{{key}}}"
-        expanded = expand_variant(self, macro)
-        if macro == expanded and default is not None:
+    def get_expanded[T](self, type_ : Type[T], key : str, default : Any = _MISSING) -> T:
+        macro = "{" + key + "}"
+        expanded = self.expand(type_, macro)
+        if macro == expanded:
+            assert default is not _MISSING, f"Key {key} not found and default is missing"
             return default
         else:
             return expanded
+
+    def expand[T](self, type_ : Type[T], text : str) -> T:
+        result = expand(text, self)
+        if type_ is not None:
+            assert isinstance(result, type_), f"Expected {type_.__name__}, got {type(result).__name__}"
+        return result
+
+########################################
 
 class Tool(Dict):
     pass
@@ -146,7 +164,7 @@ class Tool(Dict):
 ####################################################################################################
 #region Logging
 
-def log(message, *, sameline=False, **kwargs):
+def log(message : str, *, sameline=False, **kwargs):
     """Simple logger that can do same-line log messages like Ninja."""
     if not sys.stdout.isatty():
         sameline = False
@@ -161,7 +179,7 @@ def log(message, *, sameline=False, **kwargs):
     if not output:
         return
 
-    def log_line(message):
+    def log_line(message : str):
         g_app.log += message
         if not g_app.flags.quiet:
             sys.stdout.write(message)
@@ -182,102 +200,97 @@ def log(message, *, sameline=False, **kwargs):
 ####################################################################################################
 #region Path manipulation
 
-#RecursiveStrList = str | list[Any] | None
-
-#TypeThing = TypeVar('TypeThing', str, list[Any], None)
-
-def abs_path[T](raw_path):
-    if raw_path is None:
-        return None
-    elif listlike(raw_path):
+@overload
+def abs_path(raw_path : str) -> str: pass
+@overload
+def abs_path(raw_path : list[str_tree]) -> list[str_tree]: pass
+def abs_path(raw_path):
+    if listlike(raw_path):
         return [abs_path(p) for p in raw_path]
     elif isinstance(raw_path, str):
         return path.abspath(raw_path)
     else:
-        return None
+        assert False, f"abs_path() Don't know what to do with a {type(raw_path).__name__}"
 
+@overload
+def rel_path(path1 : str, path2 : str) -> str: pass
+@overload
+def rel_path(path1 : str_tree, path2 : str_tree) -> str_tree: pass
 def rel_path(path1, path2):
-    if path2 is None:
-        return path1
-
     if listlike(path1):
         return [rel_path(p, path2) for p in path1]
+    elif isinstance(path1, str):
+        # Generating relative paths in the presence of symlinks doesn't work with either
+        # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
+        # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
+        # should. What we really want is to just remove redundant cwd stuff off the beginning of the
+        # path, which we can do with simple string manipulation.
+        return path1.removeprefix(path2 + "/") if path1 != path2 else "."
+    else:
+        assert False, f"rel_path() Don't know what to do with a {type(path1).__name__}"
 
-    # Generating relative paths in the presence of symlinks doesn't work with either
-    # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
-    # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
-    # should. What we really want is to just remove redundant cwd stuff off the beginning of the
-    # path, which we can do with simple string manipulation.
-    return path1.removeprefix(path2 + "/") if path1 != path2 else "."
-
-def join_path(lhs, rhs, *args):
+@overload
+def join_path(lhs : str, rhs : str) -> str: pass
+@overload
+def join_path(lhs : str_tree, rhs : str_tree, *args : str_tree) -> str_tree: pass
+def join_path(lhs, rhs, *args) -> str_tree:
     if len(args) > 0:
         rhs = join_path(rhs, *args)
-    result = [path.join(l, r) for l in flatten(lhs) for r in flatten(rhs)]
+    flat_lhs = flatten(lhs)
+    flat_rhs = flatten(rhs)
+    result = [path.join(l, r) for l in flat_lhs for r in flat_rhs]
     return result[0] if len(result) == 1 else result
 
 
-def normalize_path(file_path):
-    assert isinstance(file_path, str)
-    assert not istemplate(file_path)
-
+def normalize_path(file_path : str) -> str:
+    assert not istemplate(file_path), f"Can't use a template as a path : {file_path}"
     file_path = path.abspath(path.join(os.getcwd(), file_path))
     file_path = path.normpath(file_path)
-
     assert path.isabs(file_path)
     return file_path
 
+@overload
+def normpath(val : str) -> str: pass
+@overload
+def normpath(val : str_tree) -> str_tree: pass
 def normpath(val):
-    if isinstance(val, list):
-        result = [normpath(v) for v in val]
-    elif val is None:
-        result = None
+    result : str_tree | None = None
+    if listlike(val):
+        return [normpath(v) for v in val]
     elif isinstance(val, str):
-        result = path.normpath(val)
+        return path.normpath(val)
     else:
-        assert False
-    return result
+        assert False, f"normpath() Don't know what to do with a {type(val).__name__}"
 
+@overload
+def prepend_dir(task_dir : str, val : str) -> str : pass
+@overload
+def prepend_dir(task_dir : str, val : str_tree) -> str_tree: pass
 def prepend_dir(task_dir, val):
     if isinstance(val, list):
-        result = [prepend_dir(task_dir, v) for v in val]
-    elif val is None:
-        result = None
+        return [prepend_dir(task_dir, v) for v in val]
     elif isinstance(val, str):
-        result = join_path(task_dir, val)
+        return join_path(task_dir, val)
     else:
-        assert False
-    return result
+        assert False, f"prepend_dir() Don't know what to do with a {type(val).__name__}"
 
 #endregion
 ####################################################################################################
 #region Helper Methods
 
-def istemplate(variant):
-    return isinstance(variant, str) and macro_regex.search(variant)
+def istemplate(variant : Any) -> bool:
+    return isinstance(variant, str) and macro_regex.search(variant) is not None
 
-def listlike(variant):
+def listlike(variant : Any) -> bool:
     return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
 
-def dictlike(variant):
+def dictlike(variant : Any) -> bool:
     return isinstance(variant, abc.Mapping)
 
-def flatten(variant):
-    if listlike(variant):
-        return [x for element in variant for x in flatten(element)]
-    if variant is None:
-        return []
-    return [variant]
-
-def join(lhs, rhs, *args):
+def join(lhs : str_tree, rhs : str_tree, *args : str_tree):
     if len(args) > 0:
         rhs = join(rhs, *args)
     return [l + r for l in flatten(lhs) for r in flatten(rhs)]
-
-def stem(filename):
-    filename = flatten(filename)[0]
-    filename = path.basename(filename)
-    return path.splitext(filename)[0]
 
 def color(red=None, green=None, blue=None):
     """Converts RGB color to ANSI format string."""
@@ -288,17 +301,20 @@ def color(red=None, green=None, blue=None):
         return "\x1B[0m"
     return f"\x1B[38;2;{red};{green};{blue}m"
 
-def run_cmd(cmd):
+def run_cmd(cmd : str):
     """Runs a console command synchronously and returns its stdout with whitespace stripped."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
-def ext(name, new_ext):
+def ext(name : str_tree, new_ext : str):
     """Replaces file extensions on either a single filename or a list of filenames."""
     if listlike(name):
         return [ext(n, new_ext) for n in name]
-    return path.splitext(name)[0] + new_ext
+    elif isinstance(name, str):
+        return path.splitext(name)[0] + new_ext
+    else:
+        assert False, f"ext() Don't know what to do with a {type(name).__name__}"
 
-def mtime(filename):
+def mtime(filename : str):
     """Gets the file's mtime and tracks how many times we've called mtime()"""
     g_app.mtime_calls += 1
     return os.stat(filename).st_mtime_ns
@@ -306,6 +322,20 @@ def mtime(filename):
 #endregion
 ####################################################################################################
 #region Helpers for managing variants
+
+def flatten(variant : Any) -> list[Any]:
+    if listlike(variant):
+        return [x for element in variant for x in flatten(element)]
+    if variant is None:
+        return []
+    return [variant]
+
+def stem(filename : str_tree):
+    flat_names : list[str] = flatten(filename)
+    flat_filename : str = flat_names[0]
+    base_filename : str = path.basename(flat_filename)
+    return path.splitext(base_filename)[0]
+
 
 # FIXME this doesn't work with immutable dicts
 def merge_dicts(*args, **kwargs):
@@ -873,20 +903,20 @@ class Task:
             command = Task.default_command,
         )
 
-        self._config = Dict(default_context, *args, **kwargs)
+        self._config : Dict = Dict(default_context, *args, **kwargs)
 
-        self._desc = None
-        self._command = None
-        self._in_files  = []
-        self._out_files = []
-        self._task_index = 0
-        self._state = TaskState.DECLARED
-        self._reason = None
-        self._asyncio_task = None
-        self._loaded_files = list(g_app.loaded_files)
-        self._stdout = ""
-        self._stderr = ""
-        self._returncode = -1
+        self._desc : str = ""
+        self._command : str = ""
+        self._in_files : list[Any] = []
+        self._out_files : list[Any] = []
+        self._task_index : int = 0
+        self._state : str = TaskState.DECLARED
+        self._reason : str = ""
+        self._asyncio_task : asyncio.Task | None = None
+        self._loaded_files : list[str] = list(g_app.loaded_files)
+        self._stdout : str = ""
+        self._stderr : str = ""
+        self._returncode : int = -1
 
         g_app.all_tasks.append(self)
 
@@ -937,7 +967,7 @@ class Task:
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
 
-        verbosity = self._config.get_expanded("verbosity", g_app.flags.verbosity)
+        verbosity = self._config.get_expanded(bool, "verbosity", check(g_app.flags.verbosity, bool))
         log(
             f"{color(128,255,196)}[{self._task_index}/{g_app.tasks_started}]{color()} {self._config.desc}",
             sameline=verbosity == 0,
@@ -948,14 +978,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self._config.get_expanded("verbosity", g_app.flags.verbosity)
-        debug     = self._config.get_expanded("debug",     g_app.flags.debug)
-        rebuild   = self._config.get_expanded("rebuild",   g_app.flags.rebuild)
-
-        assert isinstance(verbosity, bool)
-        assert isinstance(debug,     bool)
-        assert isinstance(rebuild,   bool)
-
+        verbosity = self._config.get_expanded(bool, "verbosity", g_app.flags.verbosity)
+        debug     = self._config.get_expanded(bool, "debug",     g_app.flags.debug)
+        rebuild   = self._config.get_expanded(bool, "rebuild",   g_app.flags.rebuild)
 
         # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -964,6 +989,7 @@ class Task:
             assert self._state is TaskState.STARTED
             self._state = TaskState.AWAITING_INPUTS
             for key, val in self._config.items():
+                # FIXME this isn't going to work with immutable Dicts
                 self._config[key] = await await_variant(val)
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
@@ -978,7 +1004,7 @@ class Task:
             # Note that we chdir to task_dir before initializing the task so that any path.abspath
             # or whatever happen from the right place
 
-            task_dir = self._config.get_expanded("task_dir")
+            task_dir = self._config.get_expanded(str, "task_dir")
             assert isinstance(task_dir, str)
             try:
                 g_app.pushdir(task_dir)
@@ -1056,13 +1082,9 @@ class Task:
 
         # pylint: disable=attribute-defined-outside-init
 
-        self._repo_dir   = abs_path(expand_variant(self._config, self._config.repo_dir))
-        self._task_dir   = abs_path(expand_variant(self._config, self._config.task_dir))
-        self._build_dir  = abs_path(expand_variant(self._config, self._config.build_dir))
-
-        assert isinstance(self._repo_dir, str)
-        assert isinstance(self._task_dir, str)
-        assert isinstance(self._build_dir, str)
+        self._repo_dir   = abs_path(self._config.get_expanded(str, "repo_dir"))
+        self._task_dir   = abs_path(self._config.get_expanded(str, "task_dir"))
+        self._build_dir  = abs_path(self._config.get_expanded(str, "build_dir"))
 
         # Check for missing input files/paths
         if not path.exists(self._task_dir):
@@ -1143,7 +1165,9 @@ class Task:
 
         # Gather all inputs to task._in_files and outputs to task._out_files
 
-        def move_to_builddir2(file):
+        def move_to_builddir2(file : str_tree) -> str_tree:
+            build_dir = check(str, self._build_dir)
+
             if isinstance(file, list):
                 return [move_to_builddir2(f) for f in file]
 
@@ -1152,46 +1176,43 @@ class Task:
 
             # Note this conditional needs to be first, as build_dir can itself be under
             # task_dir
-            if file.startswith(self._build_dir):
+            if file.startswith(build_dir):
                 # Absolute path under build_dir.
                 pass
-            elif file.startswith(self._task_dir):
+            elif file.startswith(build_dir):
                 # Absolute path under task_dir, move to build_dir
-                file = rel_path(file, self._task_dir)
+                file = rel_path(file, build_dir)
             elif path.isabs(file):
                 raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {file}")
 
-            file = join_path(self._build_dir, file)
+            file = join_path(check(str, build_dir), file)
             return file
 
         # pylint: disable=consider-using-dict-items
         for key in self._config.keys():
 
+            file1 : str = self._config[key]
+            file2 : str = self._config.expand(str, file1)
+
             if key.startswith("in_"):
-                file = self._config[key]
-                file = self._config.expand(file)
-                file = join_path(self._task_dir, normpath(file))
-                self._in_files.extend(flatten(file))
-                self._config[key] = file
+                file3 : str = join_path(self._task_dir, normpath(file2))
+                self._in_files.extend(flatten(file3))
+                self._config[key] = file3
 
             if key.startswith("out_"):
-                file = self._config[key]
-                file = self._config.expand(file)
-                file = move_to_builddir2(file)
-                self._out_files.extend(flatten(file))
-                self._config[key] = file
+                file3 : str = check(str, move_to_builddir2(file2))
+                self._out_files.extend(flatten(file3))
+                self._config[key] = file3
 
             if key == "depfile":
-                file = self._config[key]
-                file = self._config.expand(file)
-                file = move_to_builddir2(file)
-                self._config[key] = file
+                file3 : str = check(str, move_to_builddir2(file2))
+                self._config[key] = file3
 
         # ----------------------------------------
         # And now we can expand the command.
 
-        self._desc    = expand_variant(self._config, self._config.desc)
-        self._command = expand_variant(self._config, self._config.command)
+        self._desc    = cast(str, expand_variant(self._config, self._config.desc))
+        self._command = cast(str, expand_variant(self._config, self._config.command))
 
         if debug:
             log(f"\nTask after expand: {self}")
@@ -1233,8 +1254,8 @@ class Task:
         # Check for duplicate task outputs
         if self._config.command:
             for file in self._out_files:
-                #if file in app.all_out_files:
-                #    raise NameError(f"Multiple rules build {file}!")
+                if file in g_app.all_out_files:
+                    raise NameError(f"Multiple rules build {file}!")
                 g_app.all_out_files.add(file)
 
         # Make sure our output directories exist
@@ -1310,8 +1331,8 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbosity = self._config.get_expanded("verbosity", g_app.flags.verbosity)
-        debug     = self._config.get_expanded("debug", g_app.flags.debug)
+        verbosity = self._config.get_expanded(bool, "verbosity", g_app.flags.verbosity)
+        debug     = self._config.get_expanded(bool, "debug", g_app.flags.debug)
 
         if verbosity or debug:
             log(color(128, 128, 255), end="")
@@ -1354,7 +1375,7 @@ class Task:
 
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
-        self._returncode = proc.returncode
+        self._returncode = check(int, proc.returncode)
 
         # We need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
@@ -1507,7 +1528,7 @@ class HanchoAPI:
 ####################################################################################################
 #region Helper stuff that needs to go somewhere else
 
-def create_repo(mod_path : str, *args, **kwargs):
+def create_repo(mod_path : str, *args, **kwargs) -> HanchoAPI:
     assert path.isabs(mod_path)
     assert mod_path == normalize_path(mod_path)
     assert mod_path == path.realpath(mod_path)
@@ -1544,12 +1565,12 @@ def create_repo(mod_path : str, *args, **kwargs):
 
 ####################################################################################################
 
-def create_mod(parent_api : HanchoAPI, mod_path : str, *args, **kwargs):
+def create_mod(parent_api : HanchoAPI, in_mod_path : str, *args, **kwargs):
     assert isinstance(parent_api, HanchoAPI)
 
-    mod_path = normalize_path(expand_variant(parent_api.config, mod_path))
-    assert isinstance(mod_path, str)
-    mod_path = path.abspath(mod_path) # FIXME not needed?
+    mod_path : str = parent_api.config.expand(in_mod_path, str)
+    mod_path : str = normalize_path(mod_path)
+    mod_path : str = path.abspath(mod_path) # FIXME not needed?
     mod_dir  = path.split(mod_path)[0]
     mod_file = path.split(mod_path)[1]
     mod_name = path.splitext(mod_file)[0]
@@ -1632,36 +1653,37 @@ class App:
         self.extra_flags = Dict()
         self.target_regex = None
 
-        self.root_mod = None
-        self.loaded_files = []
-        self.dirstack = [os.getcwd()]
+        self.root_mod : HanchoAPI | None = None
+        self.loaded_files : list[str] = []
+        self.dirstack : list[str] = [os.getcwd()]
 
-        self.all_out_files = set()
-        self.filename_to_fingerprint = {}
+        self.all_out_files : set = set()
+        self.filename_to_fingerprint : dict[str, str] = {}
 
-        self.realpath_to_repo = {}
+        self.realpath_to_repo : dict[str, Dict] = {}
 
-        self.mtime_calls = 0
-        self.line_dirty = False
-        self.expand_depth = 0
-        self.shuffle = False
+        self.mtime_calls : int = 0
+        self.line_dirty : bool = False
+        self.expand_depth : int = 0
+        self.shuffle : bool = False
 
-        self.tasks_started = 0
-        self.tasks_running = 0
-        self.tasks_finished = 0
-        self.tasks_failed = 0
-        self.tasks_skipped = 0
-        self.tasks_cancelled = 0
-        self.tasks_broken = 0
+        self.tasks_started : int = 0
+        self.tasks_running : int = 0
+        self.tasks_finished : int = 0
+        self.tasks_failed : int = 0
+        self.tasks_skipped : int = 0
+        self.tasks_cancelled : int = 0
+        self.tasks_broken : int = 0
 
-        self.all_tasks = []
-        self.queued_tasks = []
-        self.started_tasks = []
-        self.finished_tasks = []
-        self.log = ""
+        self.all_tasks : list[Task] = []
+        self.queued_tasks : list[Task]  = []
+        self.started_tasks : list[Task]  = []
+        self.finished_tasks : list[Task]  = []
+        self.log : str = ""
 
-        self.job_pool = JobPool()
-        self.parse_flags([])
+        self.job_pool : JobPool = JobPool()
+
+    ########################################
 
     def reset(self):
         self.__init__()  # pylint: disable=unnecessary-dunder-call
@@ -1733,15 +1755,15 @@ class App:
         for key, val in self.extra_flags.items():
             setattr(root_mod.config, key, val)
 
-        return root_mod
-
-    ########################################
-
-    def main(self):
-        g_app.root_mod = self.create_root_mod()
+        g_app.root_mod = root_mod
 
         if g_app.root_mod.config.get_expanded("debug", None):
             log(f"root_mod = {Dumper(2).dump(g_app.root_mod)}")
+
+    ########################################
+
+    def load_root_mod(self):
+        assert g_app.root_mod is not None
 
         if not path.isfile(g_app.root_mod.config.repo_path):
             print(
@@ -1762,22 +1784,30 @@ class App:
         if g_app.flags.debug or g_app.flags.verbosity:
             log(f"Loading .hancho files took {time_b-time_a:.3f} seconds")
 
-        if g_app.flags.tool:
-            print(f"Running tool {g_app.flags.tool}")
-            if g_app.flags.tool == "clean":
-                print("Deleting build directories")
-                build_roots = set()
-                for task in g_app.all_tasks:
-                    build_root = expand("{build_root}", task.config)
-                    assert isinstance(build_root, str)
-                    build_root = normalize_path(build_root)
-                    build_root = path.realpath(build_root)
-                    if path.isdir(build_root):
-                        build_roots.add(build_root)
-                for root in build_roots:
-                    print(f"Deleting build root {root}")
-                    shutil.rmtree(root, ignore_errors=True)
+    ########################################
+
+    def run_tool(self, tool : str):
+        print(f"Running tool {tool}")
+
+        if tool == "clean":
+            print("Deleting build directories")
+            build_roots = set()
+            for task in g_app.all_tasks:
+                build_root = task._config.expand(str, "{build_root}")
+                build_root = normalize_path(build_root)
+                build_root = path.realpath(build_root)
+                if path.isdir(build_root):
+                    build_roots.add(build_root)
+            for root in build_roots:
+                print(f"Deleting build root {root}")
+                shutil.rmtree(root, ignore_errors=True)
             return 0
+
+        return 0
+
+    ########################################
+
+    def select_tasks(self):
 
         time_a = time.perf_counter()
 
@@ -1793,7 +1823,7 @@ class App:
                 #        queue_task = True
                 #        task_name = out_file
                 #        break
-                if name := task._config.get_expanded("name", None):
+                if name := task._config.get_expanded(str, "name", None):
                     if g_app.target_regex.search(name):
                         queue_task = True
                         task_name = name
@@ -1822,12 +1852,9 @@ class App:
         # if g_app.flags.debug or g_app.flags.verbosity:
         log(f"Queueing {len(g_app.queued_tasks)} tasks took {time_b-time_a:.3f} seconds")
 
-        result = self.build()
-        return result
-
     ########################################
 
-    def pushdir(self, new_dir: str):
+    def pushdir(self, new_dir : str):
         new_dir = abs_path(new_dir) # type: ignore
         if not path.exists(new_dir):
             raise FileNotFoundError(new_dir)
@@ -1879,8 +1906,10 @@ class App:
                 self.started_tasks.append(task)
 
             task = self.started_tasks.pop(0)
+            asyncio_task = check(asyncio.Task, task._asyncio_task)
+
             try:
-                await task._asyncio_task
+                await asyncio_task
             except BaseException:  # pylint: disable=broad-exception-caught
                 log(color(255, 128, 0), end="")
                 log(f"Task failed: {task._desc}")
@@ -1893,7 +1922,7 @@ class App:
                 if g_app.flags.keep_going and fail_count >= g_app.flags.keep_going:
                     log("Too many failures, cancelling tasks and stopping build")
                     for task in self.started_tasks:
-                        task._asyncio_task.cancel()
+                        asyncio_task.cancel()
                         g_app.tasks_cancelled += 1
                     break
             self.finished_tasks.append(task)
@@ -1932,7 +1961,14 @@ g_app = App()
 
 if __name__ == "__main__":
     g_app.parse_flags(sys.argv[1:])
-    sys.exit(g_app.main())
+    g_app.create_root_mod()
+    g_app.load_root_mod()
+    if g_app.flags.tool:
+        result = g_app.run_tool(g_app.flags.tool)
+        sys.exit(0)
+    g_app.select_tasks()
+    result = g_app.build()
+    sys.exit(result)
 
 # endregion
 ####################################################################################################

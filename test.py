@@ -16,4 +16,7 @@ print(foo)
 
 print(foo.dump(10))
 
-foo.a = 2
+try:
+    foo.a = 2
+except:
+    print("Couldn't set foo.a")
