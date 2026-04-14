@@ -36,6 +36,7 @@ import sys
 import time
 import traceback
 import types
+from typing import Any, TypeVar
 from collections import abc
 
 #endregion
@@ -68,7 +69,7 @@ class Dict(dict):
 
                 # Deep copy all other attributes.
                 elif lval is None or rval is not None:
-                    self[key] = rval
+                    dict.__setitem__(self, key, rval)
 
     def to_dict(self):
         return {k: v.to_dict() if isinstance(v, Dict) else v for k, v in self.items()}
@@ -91,10 +92,10 @@ class Dict(dict):
     #    super().__setitem__(key, value)
 
     def __setitem__(self, name, value):
-        raise NotImplementedError(name, value)
+        raise NotImplementedError("Hancho.Dict is immutable", name, value)
 
     def __delitem__(self, name):
-        raise NotImplementedError(name)
+        raise NotImplementedError("Hancho.Dict is immutable", name)
 
     def __getattr__(self, name):
         try:
@@ -103,10 +104,10 @@ class Dict(dict):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
 
     def __setattr__(self, name, value):
-        raise NotImplementedError(name, value)
+        raise NotImplementedError("Hancho.Dict is immutable", name, value)
 
     def __delattr__(self, name):
-        raise NotImplementedError(name)
+        raise NotImplementedError("Hancho.Dict is immutable", name)
 
     #def __setattr__(self, name, value):
     #    if hasattr(type(self), name):
@@ -123,6 +124,9 @@ class Dict(dict):
 
     def __repr__(self):
         return Dumper(2).dump(self)
+
+    def dump(self, depth):
+        return Dumper(depth).dump(self)
 
     def expand(self, text):
         return expand_variant(self, text)
@@ -178,12 +182,19 @@ def log(message, *, sameline=False, **kwargs):
 ####################################################################################################
 #region Path manipulation
 
-def abs_path(raw_path) -> str | list[str]:
+#RecursiveStrList = str | list[Any] | None
+
+#TypeThing = TypeVar('TypeThing', str, list[Any], None)
+
+def abs_path[T](raw_path):
     if raw_path is None:
         return None
-    if listlike(raw_path):
+    elif listlike(raw_path):
         return [abs_path(p) for p in raw_path]
-    return path.abspath(raw_path)
+    elif isinstance(raw_path, str):
+        return path.abspath(raw_path)
+    else:
+        return None
 
 def rel_path(path1, path2):
     if path2 is None:
@@ -356,7 +367,7 @@ async def await_variant(variant):
 
     if isinstance(variant, Task):
         await variant.await_done()
-        return await await_variant(variant.out_files)
+        return await await_variant(variant._out_files)
 
     if inspect.isawaitable(variant):
         return await await_variant(await variant)
@@ -429,28 +440,6 @@ class Dumper:
         return result
 
 # endregion
-####################################################################################################
-# region Utils
-
-class Utils:
-    # fmt: off
-    path        = path # path.dirname and path.basename used by makefile-related rules
-    re          = re # why is sub() not working?
-
-    color       = staticmethod(color)
-    flatten     = staticmethod(flatten)
-    glob        = staticmethod(glob.glob)
-    join        = staticmethod(join)
-    ext         = staticmethod(ext)
-    log         = staticmethod(log)
-    rel_path    = staticmethod(rel_path)  # used by build_path etc
-    run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
-    stem        = staticmethod(stem)      # FIXME used by metron/tests?
-
-    hancho_dir  = path.dirname(path.realpath(__file__))
-    # fmt: on
-
-#endregion
 ####################################################################################################
 # region Hancho's text expansion system.
 
@@ -566,7 +555,7 @@ class Expander:
 
     # Returns a relative path from the task directory to the sub_path.
     def rel(self, sub_path):
-        result = rel_path(sub_path, expand_variant(self.context, self.context.task_dir))
+        result = rel_path(sub_path, expand_variant(self.context, self._task_dir))
         return result
 
     def __repr__(self):
@@ -597,7 +586,7 @@ def eval_macro(config, macro : Macro):
     g_app.expand_depth += 1
 
     try:
-        result = eval(macro[1:-1], {}, Expander(config))  # pylint: disable=eval-used
+        result = eval(macro[1:-1], {}, Expander(config))  # type: ignore
     except BaseException:  # pylint: disable=broad-exception-caught
         # TEFINAE - Text Expansion Failure Is Not An Error, we return the original macro.
         failed = True
@@ -671,6 +660,21 @@ def expand_blocks(config, blocks):
 
 # ----------------------------------------
 
+#def expand_variant(context, variant):
+#    """Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
+#    expand someone else's data."""
+#
+#    if listlike(variant):
+#        result = [expand_variant(context, val) for val in variant]
+#    elif isinstance(variant, str):
+#        g_app.expand_depth += 1
+#        result = expand_text(context, variant)
+#        g_app.expand_depth -= 1
+#    else:
+#        result = variant
+#
+#    return result
+
 def expand_variant(config, variant):
     """Expands single templates and nested lists of templates. Returns non-templates unchanged."""
 
@@ -738,7 +742,7 @@ def expand_text(context, text):
         failed = False
 
         try:
-            result2 = eval(macro[1:-1], {}, Expander(context))  # pylint: disable=eval-used
+            result2 = eval(macro[1:-1], {}, Expander(context))  # type: ignore # pylint: disable=eval-used
         except RecursionError:
             raise
         except BaseException:  # pylint: disable=broad-exception-caught
@@ -773,26 +777,11 @@ def expand_text(context, text):
 
     return result
 
+# ----------------------------------------
 # FIXME all should go through this
+
 def expand(template, config):
     return expand_variant(config, template)
-
-# ----------------------------------------
-
-def expand_variant(context, variant):
-    """Expands all macros anywhere inside 'variant', making deep copies where needed so we don't
-    expand someone else's data."""
-
-    if listlike(variant):
-        result = [expand_variant(context, val) for val in variant]
-    elif isinstance(variant, str):
-        g_app.expand_depth += 1
-        result = expand_text(context, variant)
-        g_app.expand_depth -= 1
-    else:
-        result = variant
-
-    return result
 
 #endregion
 ####################################################################################################
@@ -810,12 +799,26 @@ class Utils:
     #join        = staticmethod(join)
     #ext         = staticmethod(ext)
     #log         = staticmethod(log)
-    rel_path    = staticmethod(rel_path)  # used by build_path etc
+    #rel_path    = staticmethod(rel_path)  # used by build_path etc
     #run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
     #stem        = staticmethod(stem)      # FIXME used by metron/tests?
 
     #expand      = staticmethod(expand_variant)
 
+    path        = path # path.dirname and path.basename used by makefile-related rules
+    re          = re # why is sub() not working?
+
+    color       = staticmethod(color)
+    flatten     = staticmethod(flatten)
+    glob        = staticmethod(glob.glob)
+    join        = staticmethod(join)
+    ext         = staticmethod(ext)
+    log         = staticmethod(log)
+    rel_path    = staticmethod(rel_path)  # used by build_path etc
+    run_cmd     = staticmethod(run_cmd)   # FIXME rename to run? cmd?
+    stem        = staticmethod(stem)      # FIXME used by metron/tests?
+
+    hancho_dir  = path.dirname(path.realpath(__file__))
     # fmt: on
 
 #endregion
@@ -908,7 +911,7 @@ class Task:
                 if isinstance(val, Task):
                     val.queue()
                 return val
-            map_variant(None, self.config, apply)
+            map_variant(None, self._config, apply)
 
             # And now queue this task.
             g_app.queued_tasks.append(self)
@@ -949,6 +952,11 @@ class Task:
         debug     = self._config.get_expanded("debug",     g_app.flags.debug)
         rebuild   = self._config.get_expanded("rebuild",   g_app.flags.rebuild)
 
+        assert isinstance(verbosity, bool)
+        assert isinstance(debug,     bool)
+        assert isinstance(rebuild,   bool)
+
+
         # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
         # downstream tasks.
@@ -970,7 +978,7 @@ class Task:
             # Note that we chdir to task_dir before initializing the task so that any path.abspath
             # or whatever happen from the right place
 
-            task_dir = self.config.get_expanded("task_dir")
+            task_dir = self._config.get_expanded("task_dir")
             assert isinstance(task_dir, str)
             try:
                 g_app.pushdir(task_dir)
@@ -1070,63 +1078,63 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        for key, val in self.context.items():
+        for key, val in self._config.items():
             if key.startswith("in_") or key.startswith("out_"):
                 def expand_path(_, val):
                     if not isinstance(val, str):
                         return val
-                    val = expand_variant(self.context, val)
-                    val = path.normpath(val)
+                    val = expand_variant(self._config, val)
+                    val = path.normpath(val) # type: ignore
                     return val
-                self.context[key] = map_variant(key, val, expand_path)
+                self._config[key] = map_variant(key, val, expand_path)
 
         # Make all in_ and out_ file paths absolute
         # FIXME feeling like in_depfile should really be io_depfile...
 
         # FIXME this did not merge cleanly and is broken
 
-        for key, val in self.context.items():
+        for key, val in self._config.items():
             if key.startswith("out_") or key == "in_depfile":
                 def move_to_builddir(_, val):
                     if not isinstance(val, str):
                         return val
                     # Note this conditional needs to be first, as build_dir can itself be under
                     # task_dir
-                    if val.startswith(self.context.build_dir):
+                    if val.startswith(self._config.build_dir):
                         # Absolute path under build_dir, do nothing.
                         pass
-                    elif val.startswith(self.context.task_dir):
+                    elif val.startswith(self._config.task_dir):
                         # Absolute path under task_dir, move to build_dir
-                        val = rel_path(val, self.context.task_dir)
-                        val = join_path(self.context.build_dir, val)
+                        val = rel_path(val, self._config.task_dir)
+                        val = join_path(self._config.build_dir, val)
                     elif path.isabs(val):
                         raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
                     else:
                         # Relative path, add build_dir
-                        val = join_path(self.context.build_dir, val)
+                        val = join_path(self._config.build_dir, val)
                     return val
-                self.context[key] = map_variant(key, val, move_to_builddir)
+                self._config[key] = map_variant(key, val, move_to_builddir)
             elif key.startswith("in_"):
                 def move_to_taskdir(key, val):
                     if not isinstance(val, str):
                         return val
                     if not path.isabs(val):
-                        val = join_path(self.context.task_dir, val)
+                        val = join_path(self._config.task_dir, val)
                     return val
-                self.context[key] = map_variant(key, val, move_to_taskdir)
+                self._config[key] = map_variant(key, val, move_to_taskdir)
 
         # Gather all inputs to task.in_files and outputs to task.out_files
 
-        for key, val in self.context.items():
+        for key, val in self._config.items():
             # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will fail a check
             # that all our inputs are present.
             if key == "in_depfile":
                 if path.isfile(val):
-                    self.in_files.append(val)
+                    self._in_files.append(val)
             elif key.startswith("out_"):
-                self.out_files.extend(flatten(val))
+                self._out_files.extend(flatten(val))
             elif key.startswith("in_"):
-                self.in_files.extend(flatten(val))
+                self._in_files.extend(flatten(val))
 
 
         # Make all in_ and out_ file paths absolute
@@ -1157,33 +1165,33 @@ class Task:
             return file
 
         # pylint: disable=consider-using-dict-items
-        for key in self.config.keys():
+        for key in self._config.keys():
 
             if key.startswith("in_"):
-                file = self.config[key]
-                file = self.config.expand(file)
+                file = self._config[key]
+                file = self._config.expand(file)
                 file = join_path(self._task_dir, normpath(file))
                 self._in_files.extend(flatten(file))
-                self.config[key] = file
+                self._config[key] = file
 
             if key.startswith("out_"):
-                file = self.config[key]
-                file = self.config.expand(file)
+                file = self._config[key]
+                file = self._config.expand(file)
                 file = move_to_builddir2(file)
                 self._out_files.extend(flatten(file))
-                self.config[key] = file
+                self._config[key] = file
 
             if key == "depfile":
-                file = self.config[key]
-                file = self.config.expand(file)
+                file = self._config[key]
+                file = self._config.expand(file)
                 file = move_to_builddir2(file)
-                self.config[key] = file
+                self._config[key] = file
 
         # ----------------------------------------
         # And now we can expand the command.
 
-        self._desc    = expand_variant(self.context, self.context.desc)
-        self._command = expand_variant(self.context, self.context.command)
+        self._desc    = expand_variant(self._config, self._config.desc)
+        self._command = expand_variant(self._config, self._config.command)
 
         if debug:
             log(f"\nTask after expand: {self}")
@@ -1204,8 +1212,8 @@ class Task:
         # Sanity checks
 
         # Check for missing input files/paths
-        if not path.exists(self.context.task_dir):
-            raise FileNotFoundError(self.context.task_dir)
+        if not path.exists(self._config.task_dir):
+            raise FileNotFoundError(self._config.task_dir)
 
         for file in self._in_files:
             if file is None:
@@ -1223,15 +1231,15 @@ class Task:
                 )
 
         # Check for duplicate task outputs
-        if self.context.command:
-            for file in self.out_files:
+        if self._config.command:
+            for file in self._out_files:
                 #if file in app.all_out_files:
                 #    raise NameError(f"Multiple rules build {file}!")
                 g_app.all_out_files.add(file)
 
         # Make sure our output directories exist
         if not g_app.flags.dry_run:
-            for file in self.out_files:
+            for file in self._out_files:
                 os.makedirs(path.dirname(file), exist_ok=True)
 
         if debug:
@@ -1820,7 +1828,7 @@ class App:
     ########################################
 
     def pushdir(self, new_dir: str):
-        new_dir = abs_path(new_dir)
+        new_dir = abs_path(new_dir) # type: ignore
         if not path.exists(new_dir):
             raise FileNotFoundError(new_dir)
         self.dirstack.append(new_dir)
