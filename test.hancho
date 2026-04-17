@@ -1,14 +1,16 @@
 import hancho
 
-base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
+#base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
+#
+#hancho.Task(base_rules.check_cpp, in_src = "tests/src/main.cpp")
+#
+#hancho.load("tutorial/tutorial.hancho")
+#hancho.load("examples/examples.hancho")
+#
+#hancho.Task(
+#    desc     = "Run all tests",
+#    command  = ["{repo_dir}/tests/run_tests.py"],
+#    task_dir = "{repo_dir}/tests",
+#)
 
-hancho.Task(base_rules.check_cpp, in_src = "tests/src/main.cpp")
-
-hancho.load("tutorial/tutorial.hancho")
-hancho.load("examples/examples.hancho")
-
-hancho.Task(
-    desc     = "Run all tests",
-    command  = ["{repo_dir}/tests/run_tests.py"],
-    task_dir = "{repo_dir}/tests",
-)
+print("done")
