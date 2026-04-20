@@ -1,0 +1,49 @@
+>>> from hancho import Dict
+
+# Names are looked up in the nearest context
+  >>> d = Dict(a = Dict(b = Dict(c = "{d}")), d = 10)
+  >>> d.eval("a.b.c")
+  '{d}'
+
+  >>> d = Dict(a = Dict(b = Dict(c = "{d}", d = 12)), d = 10)
+  >>> d.eval("a.b.c")
+  '12'
+
+# Expanding basic templates should work
+  >>> d = Dict(a = 1, b = 2, c = 3)
+  >>> d.expand("{a}{b}{c}")
+  '123'
+
+# Evaluating basic expressions should work
+  >>> d = Dict(a = 1, b = 2, c = 3)
+  >>> d.eval("a + b + c")
+  6
+
+# Wrapping a field in {} makes us expand it before eval
+  >>> d = Dict(a = 1, b = 2, c = 3, name_a = 'a', name_b = 'b', name_c = 'c')
+  >>> d.eval("name_a + name_b + name_c")
+  'abc'
+  >>> d.eval("{name_a} + {name_b} + {name_c}")
+  6
+
+# Expanding a template can assemble a new template from pieces, which then also gets expanded
+  >>> d = Dict(part_a = '{f', part_b = 'o', part_c = 'o}', foo = 10)
+  >>> d.eval("{part_a}{part_b}{part_c}")
+  10
+
+# And that can go multiple levels deep
+  >>> d = Dict(part_a1 = '{f', part_b1 = 'o', part_c1 = 'o}',
+  ...   foo = "{part_a2}{part_b2}{part_c2}",
+  ...   part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
+  ...   bar = 12)
+  >>> d.eval("{part_a1}{part_b1}{part_c1}")
+  12
+
+# Templates can call lambdas
+  >>> d = Dict(a = 1, b = lambda x : x + 1)
+  >>> d
+  Dict @ 0x... { a = 1, b = <function <lambda> at 0x...> }
+  >>> d.eval("b(a)")
+  2
+
+

@@ -43,123 +43,7 @@ from numpy import number
 
 type str_tree = str | list[str_tree]
 _MISSING = object()
-
-#endregion
-####################################################################################################
-#region Dict
-
-class Dict(dict):
-    """
-    This class extends 'dict' in a couple ways -
-    1. Dict supports "foo.bar" attribute access in addition to "foo['bar']"
-    2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
-    3. When merging Dicts, the rightmost not-None value of an attribute will be kept.
-    4. If two attributes with the same name are both Dicts, we will recursively merge them.
-    5. Dict behaves like a value type, merging will make copies of all its inputs.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        Dict.merge(self, *args, **kwargs)
-
-    @staticmethod
-    def merge(dest, *args, **kwargs):
-        """
-        >>> merge_dicts(dict(),           dict())
-        {}
-        >>> merge_dicts(dict(),           dict(bar = None))
-        {'bar': None}
-        >>> merge_dicts(dict(),           dict(bar = 3))
-        {'bar': 3}
-        >>> merge_dicts(dict(bar = None), dict())
-        {'bar': None}
-        >>> merge_dicts(dict(bar = None), dict(bar = None))
-        {'bar': None}
-        >>> merge_dicts(dict(bar = None), dict(bar = 3))
-        {'bar': 3}
-        >>> merge_dicts(dict(bar = 2),    dict())
-        {'bar': 2}
-        >>> merge_dicts(dict(bar = 2),    dict(bar = None))
-        {'bar': 2}
-        >>> merge_dicts(dict(bar = 2),    dict(bar = 3))
-        {'bar': 3}
-        """
-
-        for arg in (*args, kwargs):
-            if arg is None:
-                continue
-            assert Utils.dictlike(arg)
-            for key, rval in arg.items():
-                lval = dest.get(key, None)
-
-                # Upgrade rval dict to Dict
-                if type(rval) == dict:
-                    rval = Dict(rval)
-
-                # Recursively merge mapping-type attributes.
-                if isinstance(lval, abc.Mapping) and isinstance(rval, abc.Mapping):
-                    dict.__setitem__(dest, key, Dict(lval, rval))
-
-                # Deep copy all other attributes.
-                elif lval is None or rval is not None:
-                    dict.__setitem__(dest, key, copy.deepcopy(rval))
-        return dest
-
-    def __copy__(self):
-        return Dict(self)
-
-    def __deepcopy__(self, memo):
-        # FIXME this is kinda clunky
-        return Dict(copy.deepcopy(dict(self), memo))
-
-    def __setitem__(self, name : str, value : Any):
-        raise TypeError("Hancho.Dict is immutable", name, value)
-
-    def __delitem__(self, name : str):
-        raise TypeError("Hancho.Dict is immutable", name)
-
-    def __getattr__(self, name : str):
-        try:
-            return self[name]
-        except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
-
-    def __setattr__(self, name : str, value : Any):
-        raise TypeError("Hancho.Dict is immutable", name, value)
-
-    def __delattr__(self, name : str):
-        raise TypeError("Hancho.Dict is immutable", name)
-
-    def __repr__(self):
-        return Dumper(2).dump(self)
-
-    def dump(self, depth):
-        return Dumper(depth).dump(self)
-
-    @overload
-    def get_expanded[T](self, type_: Type[T], key: str) -> T: pass
-    @overload
-    def get_expanded[T](self, type_: Type[T], key: str, default: T) -> T: pass
-
-    def get_expanded[T](self, type_ : Type[T], key : str, default : Any = _MISSING) -> T:
-        macro = "{" + key + "}"
-        expanded = self.expand(type_, macro)
-        if macro == expanded:
-            assert default is not _MISSING, f"Key {key} not found and default is missing"
-            return default
-        else:
-            return expanded
-
-    def expand[T](self, type_ : Type[T], text : str) -> T:
-        assert type_ is not None
-        result = Expander.expand_variant(self, text)
-        assert isinstance(result, type_), f"Expected {type_.__name__}, got {type(result).__name__}"
-        return result
-
-########################################
-
-class Tool(Dict):
-    pass
+trace = False
 
 #endregion
 ####################################################################################################
@@ -301,413 +185,7 @@ class Path:
 
 #endregion
 ####################################################################################################
-# region Pretty-printer for various types
-
-class Dumper:
-    def __init__(self, max_depth=2):
-        self.depth = 0
-        self.max_depth = max_depth
-
-    def indent(self):
-        return "  " * self.depth
-
-    def dump(self, variant):
-        result = f"{type(variant).__name__} @ {hex(id(variant))} "
-        if isinstance(variant, Task):
-            result += self.dump_dict(variant.__dict__)
-        elif isinstance(variant, HanchoAPI):
-            result += self.dump_dict(variant.__dict__)
-        elif isinstance(variant, Dict):
-            result += self.dump_dict(variant)
-        elif isinstance(variant, Expander):
-            result += self.dump_dict(variant.config)
-        elif Utils.listlike(variant):
-            result += self.dump_list(variant)
-        elif Utils.dictlike(variant):
-            result = ""
-            result += self.dump_dict(variant)
-        elif isinstance(variant, str):
-            result = ""
-            result += '"' + str(variant) + '"'
-        else:
-            result = ""
-            result += str(variant)
-        return result
-
-    def dump_list(self, l):
-        if len(l) == 0:
-            return "[]"
-
-        if len(l) == 1:
-            return f"[{self.dump(l[0])}]"
-
-        if self.depth >= self.max_depth:
-            return "[...]"
-
-        result = "[\n"
-        self.depth += 1
-        for val in l:
-            result += self.indent() + self.dump(val) + ",\n"
-        self.depth -= 1
-        result += self.indent() + "]"
-        return result
-
-    def dump_dict(self, d):
-        if self.depth >= self.max_depth:
-            return "{...}"
-
-        result = "{\n"
-        self.depth += 1
-        for key, val in d.items():
-            result += self.indent() + f"{key} = " + self.dump(val) + ",\n"
-        self.depth -= 1
-        result += self.indent() + "}"
-        return result
-
-# endregion
-####################################################################################################
-# region Hancho's text expansion system.
-
-# Works similarly to Python's F-strings, but with quite a bit more power.
-#
-# The code here requires some explanation.
-#
-# We do not necessarily know in advance how the users will nest strings, macros, callbacks,
-# etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we always
-# end up with flat strings.
-#
-# The result of this is that the functions here are mutually recursive in a way that can lead to
-# confusing callstacks, but that should handle every possible case of stuff inside other stuff.
-#
-# The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
-# should suffice.
-#
-# Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
-# expandable by that dict. This allows nested dicts to contain templates that can only be expanded
-# an outer dict, and things will still Just Work.
-
-class Tracer:
-    @staticmethod
-    def id_to_color(obj):
-        random.seed(id(obj))
-        return Utils.color(random.randint(64, 255), random.randint(64, 255), random.randint(64, 255))
-
-    @staticmethod
-    def log_trace(config, text):
-        """Prints a trace message to the log."""
-        prefix = Tracer.id_to_color(config) + hex(id(config)) + Utils.color() + ": " + ("┃ " * g_app.expand_depth)
-        Utils.log(prefix + text)
-
-    @staticmethod
-    def trace_prefix(context):
-        """Prints the left-side trellis of the expansion traces."""
-        return hex(id(context)) + ": " + ("┃ " * g_app.expand_depth)
-
-    @staticmethod
-    def trace_variant(variant):
-        """Prints the right-side values of the expansion traces."""
-        if callable(variant):
-            return f"Callable @ {hex(id(variant))}"
-        elif isinstance(variant, Dict):
-            return f"Dict @ {hex(id(variant))}'"
-        elif isinstance(variant, Expander):
-            return f"Expander @ {hex(id(variant.context))}'"
-        else:
-            return f"'{variant}'"
-
-# ----------------------------------------
-
-class Expander:
-    """
-    This class is used to fetch and expand text templates from a dict during text expansion, and
-    also to provide utility methods like 'rel' that return relative paths from the task directory.
-    It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
-    (using `expander.key`), making it versatile for accessing template variables and methods.
-    """
-
-    # The maximum number of recursion levels we will do to expand a macro.
-    # Tests currently require MAX_EXPAND_DEPTH >= 6
-    MAX_EXPAND_DEPTH = 20
-
-    # Matches macros inside a string.
-    macro_regex = re.compile("{[^{}]*}")
-
-    class Macro(str):
-        pass
-
-    def __init__(self, context):
-        assert isinstance(context, dict)
-        self.context = context
-        # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self.trace = context.get("trace", g_app.flags.trace)
-
-    def __contains__(self, key):
-        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context
-
-    def __getitem__(self, key):
-        return self.get(key)
-
-    def __getattr__(self, key):
-        return self.get(key)
-
-    def get(self, key):
-        # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
-        # method is called on the Expander instance, not the class.
-        if hasattr(Expander, key):
-            val = getattr(self, key)
-        # Check to see if we're fetching a special method from the Utils class.
-        elif hasattr(Utils, key):
-            val = getattr(Utils, key)
-        # Neither of those special cases apply, so we fetch the key from the context and expand it
-        # immediately.
-        elif key in self.context:
-            val = Expander.expand_variant(self.context, self.context[key])
-        # If the key is not found, raise an AttributeError.
-        else:
-            if self.trace:
-                Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' failed")
-            raise AttributeError(key)
-
-        if self.trace:
-            Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' = {Tracer.trace_variant(val)}")
-
-        # If we fetched a dict, wrap it in an Expander so we expand its sub-fields.
-        if isinstance(val, dict):
-            val = Expander(val)
-        return val
-
-    # Returns a relative path from the task directory to the sub_path.
-    def rel(self, sub_path):
-        result = Path.rel_path(sub_path, Expander.expand_variant(self.context, self._task_dir))
-        return result
-
-    def __repr__(self):
-        result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
-        result += Dumper(2).dump(self.config)
-        return result
-
-    @staticmethod
-    def eval_macro(config, macro : Macro):
-        """
-        Evaluates the expression inside a {macro} and returns the result.
-        Returns the full macro (with curly braces) unchanged if evaluation fails.
-        """
-        trace = config.get("trace", g_app.flags.trace)
-        if trace:
-            Tracer.log_trace(config, f"┏ eval_macro {macro}")
-
-        if g_app.expand_depth >= Expander.MAX_EXPAND_DEPTH:
-            if trace:
-                Tracer.log_trace(config, f"┗ eval_macro {macro} failed due to recursion depth")
-            raise RecursionError(f"eval_macro('{macro}') failed to terminate")
-
-        failed = False
-        g_app.expand_depth += 1
-
-        try:
-            result = eval(macro[1:-1], {}, Expander(config))  # type: ignore
-        except BaseException:  # pylint: disable=broad-exception-caught
-            # TEFINAE - Text Expansion Failure Is Not An Error, we return the original macro.
-            failed = True
-            result = macro
-
-        g_app.expand_depth -= 1
-        if trace:
-            if failed:
-                Tracer.log_trace(config, f"┗ eval_macro {macro} failed")
-            else:
-                Tracer.log_trace(config, f"┗ eval_macro {macro} = {result}")
-
-        return result
-
-    # ----------------------------------------
-    # FIXME we need full-loop test cases for escaped {}s. Somewhere in the process we need to unescape
-    # them and I'm not sure where it goes.
-
-    @staticmethod
-    def split_template(text):
-        """
-        Extracts all innermost single-brace-delimited spans from a block of text and produces a list of
-        strings and macros. Escaped braces don't count as delimiters.
-        """
-        result = []
-        cursor = 0
-        lbrace = -1
-        rbrace = -1
-        escaped = False
-
-        for i, c in enumerate(text):
-            if escaped:
-                escaped = False
-            elif c == '\\':
-                escaped = True
-            elif c == '{':
-                lbrace = i
-            elif c == '}' and lbrace >= 0:
-                rbrace = i
-                if cursor < lbrace:
-                    result.append(text[cursor:lbrace])
-                result.append(Expander.Macro(text[lbrace:rbrace + 1]))
-                cursor = rbrace + 1
-                lbrace = -1
-                rbrace = -1
-
-        if cursor < len(text):
-            result.append(text[cursor:])
-
-        return result
-
-    # ----------------------------------------
-
-    @staticmethod
-    def expand_blocks(config, blocks):
-        trace = config.get("trace", g_app.flags.trace)
-        if trace:
-            Tracer.log_trace(config, f"┏ expand_blocks {blocks}")
-        g_app.expand_depth += 1
-
-        result = ""
-        for block in blocks:
-            if isinstance(block, Expander.Macro):
-                value = Expander.eval_macro(config, block)
-                result += Expander.stringify_variant(value)
-            else:
-                result += block
-
-        g_app.expand_depth -= 1
-        if trace:
-            Tracer.log_trace(config, f"┗ expand_blocks {blocks} = '{result}'")
-        return result
-
-    # ----------------------------------------
-
-    @staticmethod
-    def expand_variant(config, variant):
-        """Expands single templates and nested lists of templates. Returns non-templates unchanged."""
-
-        trace = config.get("trace", g_app.flags.trace)
-
-        if Utils.listlike(variant):
-            return [config.expand(val) for val in variant]
-
-        if not isinstance(variant, str):
-            return variant
-
-        blocks = Expander.split_template(variant)
-        if len(blocks) == 0 or (len(blocks) == 1 and not isinstance(blocks[0], Expander.Macro)):
-            # Empty string or plain string
-            return variant
-
-        if trace:
-            Tracer.log_trace(config, f"┏ expand_variant '{variant}'")
-        g_app.expand_depth += 1
-
-        if len(blocks) == 1:
-            result = Expander.eval_macro(config, blocks[0])
-        else:
-            result = Expander.expand_blocks(config, blocks)
-
-        if result != variant:
-            result = config.expand(result)
-
-        g_app.expand_depth -= 1
-        if trace:
-            Tracer.log_trace(config, f"┗ expand_variant '{variant}' = '{result}'")
-
-        return result
-
-    @staticmethod
-    def expand_text(context, text):
-        """Replaces all macros in 'text' with their expanded, stringified values."""
-
-        if not Utils.istemplate(text):
-            return text
-
-        trace = context.get("trace", g_app.flags.trace)
-
-        if trace:
-            Utils.log(Tracer.trace_prefix(context) + f"┏ expand_text '{text}'")
-
-        g_app.expand_depth += 1
-        if g_app.expand_depth > Expander.MAX_EXPAND_DEPTH:
-            raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
-
-        # ==========
-
-        old_text = text
-        temp = old_text
-        result = ""
-        while span := Expander.macro_regex.search(temp):
-            result += temp[0 : span.start()]
-            macro = temp[span.start() : span.end()]
-
-            if trace:
-                Utils.log(Tracer.trace_prefix(context) + f"┏ expand_macro '{macro}'")
-
-            # ==========
-
-            result2 = macro
-            failed = False
-
-            try:
-                result2 = eval(macro[1:-1], {}, Expander(context))  # type: ignore # pylint: disable=eval-used
-            except RecursionError:
-                raise
-            except BaseException:  # pylint: disable=broad-exception-caught
-                failed = True
-
-            # ==========
-
-            if trace:
-                if failed:
-                    Utils.log(Tracer.trace_prefix(context) + f"┗ expand_macro '{macro}' failed")
-                else:
-                    Utils.log(Tracer.trace_prefix(context) + f"┗ expand_macro '{macro}' = {result2}")
-
-            variant = result2
-
-            result += Expander.stringify_variant(variant)
-            temp = temp[span.end() :]
-        result += temp
-
-        # ==========
-
-        # If expansion changed the text, try to expand it again.
-        if result != old_text:
-            result = Expander.expand_text(context, result)
-
-        g_app.expand_depth -= 1
-        if g_app.expand_depth < 0:
-            raise RecursionError("Text expand_inc/dec unbalanced")
-
-        if trace:
-            Utils.log(Tracer.trace_prefix(context) + f"┗ expand_text '{old_text}' = '{result}'")
-
-        return result
-
-    @staticmethod
-    def expand[T](type_ : Type[T], text : str, config : Dict) -> T:
-        result = Expander.expand_variant(config, text)
-        if type_ is not None:
-            assert isinstance(result, type_), f"Expected {type_.__name__}, got {type(result).__name__}"
-        return result
-
-    @staticmethod
-    def stringify_variant(variant):
-        """Converts any type into a template-compatible string."""
-        if variant is None:
-            return ""
-        elif Utils.listlike(variant):
-            variant = [Expander.stringify_variant(val) for val in variant]
-            return " ".join(variant)
-        else:
-            return str(variant)
-
-
-
-#endregion
-####################################################################################################
-#region Utils - FIXME we should just merge these into the config the moment we wrap it in an Expander or something.
+#region Utils
 
 class Utils:
     # fmt: off
@@ -717,7 +195,7 @@ class Utils:
     ext         = staticmethod(Path.ext)
     rel_path    = staticmethod(Path.rel_path)  # used by build_path etc
     stem        = staticmethod(Path.stem)      # FIXME used by metron/tests?
-    hancho_dir  = path.dirname(path.realpath(__file__))
+    #hancho_dir  = path.dirname(path.realpath(__file__))
     # fmt: on
 
     @staticmethod
@@ -805,8 +283,487 @@ class Utils:
             return []
         return [variant]
 
+    #@staticmethod
+    #def to_dict():
+    #    result = {}
+    #    for (key, val) in Utils.__dict__.items():
+    #        if not key.startswith("_"):
+    #            result[key] = val
+    #    return result
 
+#endregion
+####################################################################################################
+#region Dict
 
+class Dict(dict):
+    """
+    This class extends 'dict' in a couple ways -
+    1. Dict supports "foo.bar" attribute access in addition to "foo['bar']"
+    2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
+    3. When merging Dicts, the rightmost not-None value of an attribute will be kept.
+    4. If two attributes with the same name are both Dicts, we will recursively merge them.
+    5. Dict behaves like a value type, merging will make copies of all its inputs.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+        # Ignore Nones and empty dicts.
+        for arg in filter(None, (*args, kwargs)):
+            assert Utils.dictlike(arg)
+            for key, rval in arg.items():
+                lval = dict.get(self, key, None)
+
+                # Upgrade rval dict to Dict
+                if isinstance(rval, abc.Mapping) and type(rval) != Dict:
+                    rval = Dict(rval)
+
+                # Recursively merge mapping-type attributes.
+                if isinstance(lval, abc.Mapping) and isinstance(rval, abc.Mapping):
+                    dict.__setitem__(self, key, Dict(lval, rval))
+
+                # Deep copy all other attributes.
+                elif lval is None or rval is not None:
+                    dict.__setitem__(self, key, copy.deepcopy(rval))
+
+    ########################################
+
+    def __copy__(self):
+        return Dict(self)
+
+    def __deepcopy__(self, memo):
+        return Dict(self)
+
+    ########################################
+    # Object
+
+    def __getattr__(self, name : str):
+        try:
+            return dict.__getitem__(self, name)
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+
+    def __setattr__(self, name : str, value : Any):
+        raise TypeError("Hancho.Dict is immutable", name, value)
+
+    def __delattr__(self, name : str):
+        raise TypeError("Hancho.Dict is immutable", name)
+
+    #######################################
+    # abc.Mapping
+
+    def __getitem__(self, name : str):
+        try:
+            return dict.__getitem__(self, name)
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+
+    def __setitem__(self, name : str, value : Any):
+        raise TypeError("Hancho.Dict is immutable", name, value)
+
+    def __delitem__(self, name : str):
+        raise TypeError("Hancho.Dict is immutable", name)
+
+    ########################################
+    # Debugging stuff
+
+    def __repr__(self):
+        return Dumper(2).dump(self)
+
+    def dump(self, depth):
+        return Dumper(depth).dump(self)
+
+    ########################################
+    # Expander stuff
+
+    def get(self, key : str, default : Any = _MISSING) -> Any:
+        # does it make sense to always expand the key?
+        #assert not Utils.istemplate(key)
+        key = Expander.expand(key, self)
+        result = Expander(self).get(key, default)
+        return result
+
+    def eval(self, expr : str) -> Any:
+        result = Expander.eval(expr, self)
+        return result
+
+    def expand(self, text : str):
+        result = Expander.expand(text, self)
+        return result
+
+########################################
+
+class Tool(Dict):
+    pass
+
+#endregion
+####################################################################################################
+#region Hancho's text expansion system.
+#
+# Works similarly to Python's F-strings, but with quite a bit more power.
+#
+# The code here requires some explanation.
+#
+# We do not necessarily know in advance how the users will nest strings, macros, callbacks,
+# etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we always
+# end up with flat strings.
+#
+# The result of this is that the functions here are mutually recursive in a way that can lead to
+# confusing callstacks, but that should handle every possible case of stuff inside other stuff.
+#
+# The depth checks are to prevent recursive runaway - the MAX_EXPAND_DEPTH limit is arbitrary but
+# should suffice.
+#
+# Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
+# expandable by that dict. This allows nested dicts to contain templates that can only be expanded
+# an outer dict, and things will still Just Work.
+
+class Expander(abc.Mapping):
+    """
+    This class is used to fetch and expand text templates from a dict during text expansion.
+    It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
+    (using `expander.key`), making it versatile for accessing template variables and methods.
+    """
+
+    # The maximum number of recursion levels we will do to expand a macro.
+    # Tests currently require MAX_EXPAND_DEPTH >= 6
+    MAX_EXPAND_DEPTH = 20
+
+    # Matches macros inside a string.
+    macro_regex = re.compile("{[^{}]*}")
+
+    expansion_globals = dict(
+        os   = os,
+        sys  = sys,
+        path = path,
+        re   = re,
+        glob = glob,
+
+        ext     = Utils.ext,
+        rel     = Utils.rel_path,
+        stem    = Utils.stem,
+        #name    = Utils.name
+        log     = Utils.log,
+        flatten = Utils.flatten,
+        run_cmd = Utils.run_cmd,
+        color   = Utils.color,
+        join    = Utils.join,
+    )
+
+    class Text(str): pass
+    class Expr(str): pass
+
+    ########################################
+
+    def __init__(self, context : Dict):
+        self.context = context
+        # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
+        #self.trace = context.get("trace", g_app.flags.trace)
+
+    def __contains__(self, key):
+        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __getattr__(self, key):
+        return self.get(key)
+
+    def __iter__(self):
+        return self.context.__iter__()
+
+    def __len__(self):
+        return self.context.__len__()
+
+    ########################################
+
+    def get(self, key : str, default = _MISSING) -> Any:
+        key = Expander.expand(key, self)
+
+        # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
+        # method is called on the Expander instance, not the class.
+        if hasattr(Expander, key):
+            val = getattr(self, key)
+        # Check to see if we're fetching a special method from the Utils class.
+        elif hasattr(Utils, key):
+            val = getattr(Utils, key)
+        # Neither of those special cases apply, so we fetch the key from the context and expand it
+        # immediately.
+        elif key in self.context:
+            val = Expander.expand(self.context[key], self.context)
+        elif default is not _MISSING:
+            val = default
+        # If the key is not found, raise an AttributeError.
+        else:
+            #if self.trace:
+            #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' failed")
+            raise AttributeError(key)
+
+        #if self.trace:
+        #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' = {Tracer.trace_variant(val)}")
+
+        # If we fetched a dict, wrap it in an Expander so we expand its sub-fields.
+        if isinstance(val, dict):
+            val = Expander(Dict(val))
+        return val
+
+    ########################################
+    # Returns a relative path from the task directory to the sub_path.
+    def rel(self, sub_path):
+        task_dir = Expander.expand(cast(str, self._task_dir), self.context)
+        result = Path.rel_path(sub_path, task_dir)
+        return result
+
+    ########################################
+
+    def __repr__(self):
+        result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
+        result += Dumper(2).dump(self.config)
+        return result
+
+    ########################################
+
+    @staticmethod
+    def stringify_variant(variant):
+        """Converts any type into a template-compatible string."""
+        if variant is None:
+            return ""
+        elif Utils.listlike(variant):
+            variant = [Expander.stringify_variant(val) for val in variant]
+            return " ".join(variant)
+        else:
+            return str(variant)
+
+    ########################################
+    # FIXME we need full-loop test cases for escaped {}s.
+    # Somewhere in the process we need to unescape them and I'm not sure where it goes.
+
+    @staticmethod
+    def split_template(text):
+        """
+        Extracts all innermost single-brace-delimited spans from a block of text and produces a list of
+        literals and macros. Escaped braces don't count as delimiters.
+        """
+        result = []
+        cursor = 0
+        lbrace = -1
+        rbrace = -1
+        escaped = False
+
+        for i, c in enumerate(text):
+            if escaped:
+                escaped = False
+            elif c == '\\':
+                escaped = True
+            elif c == '{':
+                lbrace = i
+            elif c == '}' and lbrace >= 0:
+                rbrace = i
+                if cursor < lbrace:
+                    result.append(Expander.Text(text[cursor:lbrace]))
+                result.append(Expander.Expr(text[lbrace + 1:rbrace]))
+                cursor = rbrace + 1
+                lbrace = -1
+                rbrace = -1
+
+        if cursor < len(text):
+            result.append(text[cursor:])
+
+        return result
+
+    ########################################
+
+    @staticmethod
+    def eval(expr : str, context : abc.Mapping) -> Any: # , trace : bool
+        """
+        Evaluates the expression within the given context (plus global helper methods) and returns
+        the result.
+        """
+
+        expr = Expander.expand(expr, context)
+        #assert not Utils.istemplate(expr)
+
+        #if trace:
+        #    Tracer.log_trace(config, f"┏ eval {expr}")
+
+        #if g_app.expand_depth >= Expander.MAX_EXPAND_DEPTH:
+        #    if trace:
+        #        Tracer.log_trace(config, f"┗ eval {expr} failed due to recursion depth")
+        #    raise RecursionError(f"eval('{expr}') failed to terminate")
+
+        #failed = False
+
+        # FIXME we should be using the global context param to hold all helper
+        # methods
+
+#        try:
+#            #globals = Utils.to_dict()
+#            result = eval(expr, Expander.expansion_globals, Expander(context))  # type: ignore
+#        except BaseException:  # pylint: disable=broad-exception-caught
+#            # TEFINAE - Text Expansion Failure Is Not An Error, we return the original macro.
+#            #failed = True
+#            result = expr
+
+        result = eval(expr, Expander.expansion_globals, Expander(context))  # type: ignore
+
+        #if trace:
+        #    if failed:
+        #        Tracer.log_trace(config, f"┗ eval {expr} failed")
+        #    else:
+        #        Tracer.log_trace(config, f"┗ eval {expr} = {result}")
+
+        return result
+
+    ########################################
+
+    @staticmethod
+    def expand(template : str, context : abc.Mapping) -> str:
+        if not Utils.istemplate(template):
+            return template
+
+        g_app.expand_depth += 1
+        if g_app.expand_depth > Expander.MAX_EXPAND_DEPTH:
+            raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
+
+        #if trace:
+        #    Tracer.log_trace(context, f"┏ expand_variant '{variant}'")
+
+        result = ""
+        blocks = Expander.split_template(template)
+
+        for block in blocks:
+            if isinstance(block, Expander.Expr):
+                try:
+                    value = Expander.eval(block, context)
+                except BaseException:
+                    # Stick the macro back in if eval fails
+                    value = '{' + block + '}'
+                result += Expander.stringify_variant(value)
+            elif isinstance(block, Expander.Text):
+                result += block
+            else:
+                assert False
+
+        if result != template:
+            result = Expander.expand(result, context)
+
+        #if trace:
+        #    Tracer.log_trace(context, f"┗ expand_variant '{variant}' = '{result}'")
+
+        g_app.expand_depth -= 1
+        return result
+
+#endregion
+####################################################################################################
+# region Expansion tracing class used by Expander
+
+class Tracer:
+    @staticmethod
+    def id_to_color(obj):
+        random.seed(id(obj))
+        return Utils.color(random.randint(64, 255), random.randint(64, 255), random.randint(64, 255))
+
+    @staticmethod
+    def log_trace(config, text):
+        """Prints a trace message to the log."""
+        prefix = Tracer.id_to_color(config) + hex(id(config)) + Utils.color() + ": " + ("┃ " * g_app.expand_depth)
+        Utils.log(prefix + text)
+
+    @staticmethod
+    def trace_prefix(context):
+        """Prints the left-side trellis of the expansion traces."""
+        return hex(id(context)) + ": " + ("┃ " * g_app.expand_depth)
+
+    @staticmethod
+    def trace_variant(variant):
+        """Prints the right-side values of the expansion traces."""
+        if callable(variant):
+            return f"Callable @ {hex(id(variant))}"
+        elif isinstance(variant, Dict):
+            return f"Dict @ {hex(id(variant))}'"
+        elif isinstance(variant, Expander):
+            return f"Expander @ {hex(id(variant.context))}'"
+        else:
+            return f"'{variant}'"
+
+#endregion
+####################################################################################################
+#region Pretty-printer for various types
+
+class Dumper:
+    def __init__(self, max_depth=2):
+        self.depth = 0
+        self.max_depth = max_depth
+
+    def indent(self):
+        return "  " * self.depth
+
+    def dump(self, variant):
+        result = f"{type(variant).__name__} @ {hex(id(variant))} "
+        if isinstance(variant, Task):
+            result += self.dump_dict(variant.__dict__)
+        elif isinstance(variant, HanchoAPI):
+            result += self.dump_dict(variant.__dict__)
+        elif isinstance(variant, Dict):
+            result += self.dump_dict(variant)
+        elif isinstance(variant, Expander):
+            result += self.dump_dict(variant.config)
+        elif Utils.listlike(variant):
+            result += self.dump_list(variant)
+        elif Utils.dictlike(variant):
+            result = ""
+            result += self.dump_dict(variant)
+        elif isinstance(variant, str):
+            result = ""
+            result += '"' + str(variant) + '"'
+        else:
+            result = ""
+            result += str(variant)
+        return result
+
+    def dump_list(self, l):
+        if len(l) == 0:
+            return "[]"
+
+        if len(l) == 1:
+            return f"[{self.dump(l[0])}]"
+
+        if self.depth >= self.max_depth:
+            return "[...]"
+
+        result = "[\n"
+        self.depth += 1
+        for val in l:
+            result += self.indent() + self.dump(val) + ",\n"
+        self.depth -= 1
+        result += self.indent() + "]"
+        return result
+
+    def dump_dict(self, d):
+        if self.depth >= self.max_depth:
+            return "{...}"
+#
+        #result = "{\n"
+        #self.depth += 1
+        #for key, val in d.items():
+        #    result += self.indent() + f"{key} = " + self.dump(val) + ",\n"
+        #self.depth -= 1
+        #result += self.indent() + "}"
+        #return result
+
+        result = "{\n"
+        self.depth += 1
+        last_index = len(d) - 1
+        for i, (key, val) in enumerate(d.items()):
+            result += self.indent()
+            result += f"{key} = "
+            result += self.dump(val)
+            if i != last_index:
+                result += ","
+            result += "\n"
+        self.depth -= 1
+        result += self.indent() + "}"
+        return result
 
 #endregion
 ####################################################################################################
@@ -874,6 +831,10 @@ class Task:
         self._stderr : str = ""
         self._returncode : int = -1
 
+        self._repo_dir : str = ""
+        self._task_dir : str = ""
+        self._build_dir : str = ""
+
         g_app.all_tasks.append(self)
 
     # ----------------------------------------
@@ -930,9 +891,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self._config.get_expanded(bool, "verbosity", g_app.flags.verbosity)
-        debug     = self._config.get_expanded(bool, "debug",     g_app.flags.debug)
-        rebuild   = self._config.get_expanded(bool, "rebuild",   g_app.flags.rebuild)
+        verbosity = self._config.get("{verbosity}", g_app.flags.verbosity)
+        debug     = self._config.get("{debug}",     g_app.flags.debug)
+        rebuild   = self._config.get("{rebuild}",   g_app.flags.rebuild)
 
         # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -1056,7 +1017,7 @@ class Task:
                 def expand_path(_, val):
                     if not isinstance(val, str):
                         return val
-                    val = Expander.expand_variant(self._config, val)
+                    val = Expander.expand(val, self._config)
                     val = path.normpath(val) # type: ignore
                     return val
                 self._config[key] = Task.map_variant(key, val, expand_path)
@@ -1143,10 +1104,11 @@ class Task:
         for key in self._config.keys():
 
             file1 : str = self._config[key]
-            file2 : str = self._config.expand(str, file1)
+            file2 : str = self._config.expand(file1)
 
             if key.startswith("in_"):
-                file3 : str = Path.join(self._task_dir, Path.normpath(file2))
+                file3 : str = Path.normpath(file2)
+                file3 : str = Path.join(self._task_dir, file3)
                 self._in_files.extend(Utils.flatten(file3))
                 self._config[key] = file3
 
@@ -1162,8 +1124,8 @@ class Task:
         # ----------------------------------------
         # And now we can expand the command.
 
-        self._desc    = cast(str, Expander.expand_variant(self._config, self._config.desc))
-        self._command = cast(str, Expander.expand_variant(self._config, self._config.command))
+        self._desc    = cast(str, Expander.expand(self._config.desc, self._config))
+        self._command = cast(str, Expander.expand(self._config.command, self._config))
 
         if debug:
             Utils.log(f"\nTask after expand: {self}")
@@ -1708,7 +1670,7 @@ class App:
             print("Deleting build directories")
             build_roots = set()
             for task in self.all_tasks:
-                build_root = Path.real(task._config.expand(str, "{build_root}"))
+                build_root = Path.real(task._config.expand("{build_root}"))
                 if path.isdir(build_root):
                     build_roots.add(build_root)
             for root in build_roots:
@@ -1864,7 +1826,7 @@ g_app = App()
 
 #endregion
 ####################################################################################################
-# region Main
+#region Main
 
 def parse_flags(argv):
     assert Utils.listlike(argv)
@@ -1960,10 +1922,15 @@ def main():
 
 # endregion
 ####################################################################################################
+#region end
 
 if __name__ == "__main__":
     main()
+else:
+    (g_app.flags, g_app.extra_flags) = parse_flags([])
 
 #import doctest
 #doctest.testmod(verbose=True)
 #doctest.testmod()
+
+#endregion
