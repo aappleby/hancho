@@ -20,9 +20,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 from os import path
 import argparse
 import asyncio
-import builtins
 import copy
-import functools
 import glob
 import inspect
 import io
@@ -36,10 +34,8 @@ import sys
 import time
 import traceback
 import types
-from typing import Any, TypeVar, cast, Type, overload, Sequence
+from typing import Any, cast, Type, overload
 from collections import abc
-
-from numpy import number
 
 type str_tree = str | list[str_tree]
 _MISSING = object()
@@ -48,7 +44,6 @@ trace = False
 #endregion
 ####################################################################################################
 #region Path manipulation
-
 class Path:
     @staticmethod
     @overload
@@ -237,16 +232,26 @@ class Utils:
         return t
 
     @staticmethod
-    def istemplate(variant : Any) -> bool:
-        return isinstance(variant, str) and Expander.macro_regex.search(variant) is not None
-
-    @staticmethod
     def listlike(variant : Any) -> bool:
         return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
 
     @staticmethod
     def dictlike(variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
+
+    @staticmethod
+    def istemplate(variant : Any) -> bool:
+        if not isinstance(variant, str):
+            return False
+        blocks = Expander.split(variant)
+        return len(blocks) > 1
+
+    @staticmethod
+    def ismacro(variant : Any) -> bool:
+        if not isinstance(variant, str):
+            return False
+        blocks = Expander.split(variant)
+        return len(blocks) == 1 and blocks[0][0] == '{' and blocks[0][-1] == '}'
 
     @staticmethod
     def join(lhs : str_tree, rhs : str_tree, *args : str_tree) -> list[str]:
@@ -377,10 +382,14 @@ class Dict(dict):
     # Expander stuff
 
     def get(self, key : str, default : Any = _MISSING) -> Any:
-        # does it make sense to always expand the key?
-        #assert not Utils.istemplate(key)
         key = Expander.expand(key, self)
-        result = Expander(self).get(key, default)
+        if key in self:
+            result = dict.get(self, key)
+        else:
+            if default == _MISSING:
+                raise AttributeError(f"Dict.get - did not have key {key} and no default provided")
+            else:
+                result = default
         return result
 
     def eval(self, expr : str) -> Any:
@@ -429,8 +438,7 @@ class Expander(abc.Mapping):
     # Tests currently require MAX_EXPAND_DEPTH >= 6
     MAX_EXPAND_DEPTH = 20
 
-    # Matches macros inside a string.
-    macro_regex = re.compile("{[^{}]*}")
+    # FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
 
     expansion_globals = dict(
         os   = os,
@@ -450,13 +458,18 @@ class Expander(abc.Mapping):
         join    = Utils.join,
     )
 
-    class Text(str): pass
-    class Expr(str): pass
+    class Literal(str):
+        def __repr__(self):
+            return "L" + str.__repr__(self)
+
+    class Macro(str):
+        def __repr__(self):
+            return "M" + str.__repr__(self)
 
     ########################################
 
-    def __init__(self, context : Dict):
-        self.context = context
+    def __init__(self, context : abc.Mapping):
+        object.__setattr__(self, "context", context)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         #self.trace = context.get("trace", g_app.flags.trace)
 
@@ -470,10 +483,22 @@ class Expander(abc.Mapping):
         return self.get(key)
 
     def __iter__(self):
-        return self.context.__iter__()
+        raise TypeError("Hancho.Expander cannot be iter'd")
 
     def __len__(self):
-        return self.context.__len__()
+        raise TypeError("Hancho.Expander cannot be len'd")
+
+    def __setattr__(self, name : str, value : Any):
+        raise TypeError("Hancho.Expander is immutable", name, value)
+
+    def __delattr__(self, name : str):
+        raise TypeError("Hancho.Expander is immutable", name)
+
+    def __setitem__(self, name : str, value : Any):
+        raise TypeError("Hancho.Expander is immutable", name, value)
+
+    def __delitem__(self, name : str):
+        raise TypeError("Hancho.Expander is immutable", name)
 
     ########################################
 
@@ -490,7 +515,9 @@ class Expander(abc.Mapping):
         # Neither of those special cases apply, so we fetch the key from the context and expand it
         # immediately.
         elif key in self.context:
-            val = Expander.expand(self.context[key], self.context)
+            val = self.context[key]
+            if isinstance(val, str):
+                val = Expander.expand(val, self.context)
         elif default is not _MISSING:
             val = default
         # If the key is not found, raise an AttributeError.
@@ -502,9 +529,9 @@ class Expander(abc.Mapping):
         #if self.trace:
         #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' = {Tracer.trace_variant(val)}")
 
-        # If we fetched a dict, wrap it in an Expander so we expand its sub-fields.
-        if isinstance(val, dict):
-            val = Expander(Dict(val))
+        # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
+        if isinstance(val, abc.Mapping):
+            val = Expander(val)
         return val
 
     ########################################
@@ -539,7 +566,7 @@ class Expander(abc.Mapping):
     # Somewhere in the process we need to unescape them and I'm not sure where it goes.
 
     @staticmethod
-    def split_template(text):
+    def split(text):
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a list of
         literals and macros. Escaped braces don't count as delimiters.
@@ -549,39 +576,54 @@ class Expander(abc.Mapping):
         lbrace = -1
         rbrace = -1
         escaped = False
+        squoted = False
+        dquoted = False
 
         for i, c in enumerate(text):
             if escaped:
                 escaped = False
+            elif squoted:
+                if c == '\'':
+                    squoted = False
+            elif dquoted:
+                if c == '"':
+                    dquoted = False
             elif c == '\\':
                 escaped = True
+            elif c == '\'':
+                squoted = True
+            elif c == '"':
+                dquoted = True
             elif c == '{':
                 lbrace = i
             elif c == '}' and lbrace >= 0:
                 rbrace = i
                 if cursor < lbrace:
-                    result.append(Expander.Text(text[cursor:lbrace]))
-                result.append(Expander.Expr(text[lbrace + 1:rbrace]))
+                    result.append(Expander.Literal(text[cursor:lbrace]))
+                result.append(Expander.Macro(text[lbrace+1:rbrace]))
                 cursor = rbrace + 1
                 lbrace = -1
                 rbrace = -1
 
         if cursor < len(text):
-            result.append(text[cursor:])
+            result.append(Expander.Literal(text[cursor:]))
 
         return result
 
     ########################################
 
+    def eval2(self, expr : str) -> Any:
+        return Expander.eval(expr, self)
+
     @staticmethod
     def eval(expr : str, context : abc.Mapping) -> Any: # , trace : bool
         """
-        Evaluates the expression within the given context (plus global helper methods) and returns
-        the result.
+        Expander.eval first expands the expression (to remove any templates) and then evaluates
+        and returns the result.
+        Eval _never_ recurses.
         """
 
         expr = Expander.expand(expr, context)
-        #assert not Utils.istemplate(expr)
 
         #if trace:
         #    Tracer.log_trace(config, f"┏ eval {expr}")
@@ -593,9 +635,6 @@ class Expander(abc.Mapping):
 
         #failed = False
 
-        # FIXME we should be using the global context param to hold all helper
-        # methods
-
 #        try:
 #            #globals = Utils.to_dict()
 #            result = eval(expr, Expander.expansion_globals, Expander(context))  # type: ignore
@@ -604,7 +643,7 @@ class Expander(abc.Mapping):
 #            #failed = True
 #            result = expr
 
-        result = eval(expr, Expander.expansion_globals, Expander(context))  # type: ignore
+        result = eval(expr, Expander.expansion_globals, context)
 
         #if trace:
         #    if failed:
@@ -618,7 +657,15 @@ class Expander(abc.Mapping):
 
     @staticmethod
     def expand(template : str, context : abc.Mapping) -> str:
-        if not Utils.istemplate(template):
+        """
+        Expander.expand replaces all innermost {expressions} with the result of evaluating the
+        expression and then recurses until either the expansion stops changing or we hit max
+        recursion depth.
+        Expand _always_ recurses until expansion does nothing.
+        """
+
+        if not isinstance(template, str):
+            print(f"??? type of template is {type(template)}")
             return template
 
         g_app.expand_depth += 1
@@ -629,17 +676,17 @@ class Expander(abc.Mapping):
         #    Tracer.log_trace(context, f"┏ expand_variant '{variant}'")
 
         result = ""
-        blocks = Expander.split_template(template)
+        blocks = Expander.split(template)
 
         for block in blocks:
-            if isinstance(block, Expander.Expr):
+            if isinstance(block, Expander.Macro):
                 try:
                     value = Expander.eval(block, context)
                 except BaseException:
                     # Stick the macro back in if eval fails
                     value = '{' + block + '}'
                 result += Expander.stringify_variant(value)
-            elif isinstance(block, Expander.Text):
+            elif isinstance(block, Expander.Literal):
                 result += block
             else:
                 assert False
@@ -1592,7 +1639,7 @@ def create_root_mod(flags, extra_flags):
     for key, val in extra_flags.items():
         setattr(root_mod.config, key, val)
 
-    if root_mod.config.get_expanded(bool, "debug", None):
+    if root_mod.config.get("debug", False):
         Utils.log(f"root_mod = {Dumper(2).dump(root_mod)}")
 
     return root_mod
@@ -1923,6 +1970,17 @@ def main():
 # endregion
 ####################################################################################################
 #region end
+
+manual_test = False
+
+if manual_test:
+    print("manual test")
+
+    d = Dict(a = "b", b = 1)
+    e = d.eval("{{a}}")
+    print(e)
+
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()

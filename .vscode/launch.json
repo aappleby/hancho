@@ -6,15 +6,12 @@
   "configurations": [
 
     {
-      "name": "Debug hancho.py",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/hancho.py",
-      "cwd": "${workspaceFolder}",
-      //"args": ["-f", "examples/gb_spu/gb_spu.hancho"],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "preLaunchTask": "Wipe build",
+        "name": "Python Debugger: Current File",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${file}",
+        "console": "integratedTerminal",
+        "justMyCode": true
     },
 
     {
