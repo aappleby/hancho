@@ -232,11 +232,9 @@
     'xy'
     >>> d.expand("{a}")
     ''
-
     >>> d = Dict(a = None)
     >>> d.eval("{a}")
     ''
-
     >>> d.eval("a") is None
     True
 
@@ -246,10 +244,8 @@
     'cc -O2 -Wall main.c'
     >>> d.expand("{flags}")
     '-O2 -Wall'
-
     >>> d.eval("{flags}")
     '-O2 -Wall'
-
     >>> d.eval("flags")
     ['-O2', '-Wall']
 

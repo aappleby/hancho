@@ -44,6 +44,7 @@ trace = False
 #endregion
 ####################################################################################################
 #region Path manipulation
+
 class Path:
     @staticmethod
     @overload
@@ -295,14 +296,6 @@ class Utils:
             return []
         return [variant]
 
-    #@staticmethod
-    #def to_dict():
-    #    result = {}
-    #    for (key, val) in Utils.__dict__.items():
-    #        if not key.startswith("_"):
-    #            result[key] = val
-    #    return result
-
 #endregion
 ####################################################################################################
 #region Dict
@@ -388,15 +381,11 @@ class Dict(dict):
     ########################################
     # Expander stuff
 
-    def get(self, key : str, default : Any = _MISSING) -> Any:
-        key = Expander(self).expand(key)
-        if key in self:
-            result = dict.get(self, key)
-        else:
-            if default == _MISSING:
-                raise AttributeError(f"Dict.get - did not have key {key} and no default provided")
-            else:
-                result = default
+    #def get(self, key : str, default : Any = _MISSING, type_ : type | None = None) -> Any:
+    def get(self, key : str, default : Any, type_ : type) -> Any:
+        result = Expander(self).get(key, default)
+        if type_ is not None:
+            assert (type(result) == type_)
         return result
 
     def eval(self, expr : str) -> Any:
@@ -473,10 +462,10 @@ class Expander(abc.Mapping):
 
     ########################################
 
-    def __init__(self, context : abc.Mapping):
+    def __init__(self, context : Dict):
         object.__setattr__(self, "_context", context)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        #self.trace = context.get("trace", g_app.flags.trace)
+        #object.__setattr__(self, "trace", context.get("trace", g_app.flags.trace, bool))
 
     def __contains__(self, key):
         return key in self._context
@@ -526,8 +515,9 @@ class Expander(abc.Mapping):
         #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' = {Tracer.trace_variant(val)}")
 
         # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
-        if isinstance(val, abc.Mapping):
+        if isinstance(val, Dict):
             val = Expander(val)
+
         return val
 
     ########################################
@@ -836,7 +826,7 @@ class Task:
     BROKEN = "BROKEN"
 
     default_desc = "{command}"
-    default_command = None
+    default_command = ""
     default_task_dir = "{mod_dir}"
     default_build_dir = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}"
     default_build_root = "{repo_dir}/build"
@@ -915,7 +905,7 @@ class Task:
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
 
-        verbosity = self._config.get_expanded(bool, "verbosity", Utils.check(g_app.flags.verbosity, bool))
+        verbosity = self._config.get("verbosity", g_app.flags.verbosity, bool)
         Utils.log(
             f"{Utils.color(128,255,196)}[{self._task_index}/{g_app.tasks_started}]{Utils.color()} {self._config.desc}",
             sameline=verbosity == 0,
@@ -924,9 +914,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self._config.get("{verbosity}", g_app.flags.verbosity)
-        debug     = self._config.get("{debug}",     g_app.flags.debug)
-        rebuild   = self._config.get("{rebuild}",   g_app.flags.rebuild)
+        verbosity = self._config.get("{verbosity}", g_app.flags.verbosity, bool)
+        debug     = self._config.get("{debug}",     g_app.flags.debug, bool)
+        rebuild   = self._config.get("{rebuild}",   g_app.flags.rebuild, bool)
 
         # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -950,7 +940,7 @@ class Task:
             # Note that we chdir to task_dir before initializing the task so that any path.abspath
             # or whatever happen from the right place
 
-            task_dir = self._config.get_expanded(str, "task_dir")
+            task_dir = self._config.get("task_dir", _MISSING, str)
             assert isinstance(task_dir, str)
             try:
                 g_app.pushdir(task_dir)
@@ -983,7 +973,7 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            job_count = self._config.get("job_count", 1)
+            job_count = self._config.get("job_count", 1, int)
             self._state = Task.AWAITING_JOBS
             await g_app.job_pool.acquire_jobs(job_count, self)
 
@@ -1018,7 +1008,7 @@ class Task:
 
         # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
-        debug = self._config.get("debug", g_app.flags.debug)
+        debug = self._config.get("debug", g_app.flags.debug, bool)
         if debug:
             Utils.log(f"\nTask before expand: {self}")
 
@@ -1027,9 +1017,9 @@ class Task:
 
         # pylint: disable=attribute-defined-outside-init
 
-        self._repo_dir   = Path.abs_path(self._config.get_expanded(str, "repo_dir"))
-        self._task_dir   = Path.abs_path(self._config.get_expanded(str, "task_dir"))
-        self._build_dir  = Path.abs_path(self._config.get_expanded(str, "build_dir"))
+        self._repo_dir   = Path.abs_path(self._config.get("repo_dir",  _MISSING, str))
+        self._task_dir   = Path.abs_path(self._config.get("task_dir",  _MISSING, str))
+        self._build_dir  = Path.abs_path(self._config.get("build_dir", _MISSING, str))
 
         # Check for missing input files/paths
         if not path.exists(self._task_dir):
@@ -1215,7 +1205,7 @@ class Task:
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug = self._config.get("debug", g_app.flags.debug)
+        debug = self._config.get("debug", g_app.flags.debug, bool)
 
         if rebuild:
             return f"Files {self._out_files} forced to rebuild"
@@ -1244,8 +1234,8 @@ class Task:
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if (in_depfile := self._config.get("in_depfile", None)) and path.exists(in_depfile):
-            depformat = self._config.get("depformat", "gcc")
+        if (in_depfile := self._config.get("in_depfile", None, str)) and path.exists(in_depfile):
+            depformat = self._config.get("depformat", "gcc", str)
             if debug:
                 Utils.log(f"Found C dependencies file {in_depfile}")
             with open(in_depfile, encoding="utf-8") as depfile:
@@ -1273,8 +1263,8 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbosity = self._config.get_expanded(bool, "verbosity", g_app.flags.verbosity)
-        debug     = self._config.get_expanded(bool, "debug", g_app.flags.debug)
+        verbosity = self._config.get("verbosity", g_app.flags.verbosity, bool)
+        debug     = self._config.get("debug", g_app.flags.debug, bool)
 
         if verbosity or debug:
             Utils.log(Utils.color(128, 128, 255), end="")
@@ -1321,7 +1311,7 @@ class Task:
 
         # We need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
-        command_pass = (self._returncode == 0) != self._config.get("should_fail", False)
+        command_pass = (self._returncode == 0) != self._config.get("should_fail", False, bool)
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
@@ -1726,7 +1716,7 @@ class App:
             #        queue_task = True
             #        task_name = out_file
             #        break
-            if name := task._config.get_expanded(str, "name", None):
+            if name := task._config.get("name", "<unnamed>", str):
                 if target_regex.search(name):
                     queue_task = True
                     task_name = name
