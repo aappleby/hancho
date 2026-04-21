@@ -1,18 +1,30 @@
 >>> from hancho import Dict, Expander
 
->>> d = Dict(a = "b", b = 1)
->>> d.eval("{{a}}")
-1
 
 ####################################################################################################
 
->>> d = Dict(a = 1, b = 2)
->>> d.eval("{a}")
-1
->>> d.eval("{b}")
-2
->>> d.eval("{a}{b}{a}{b}")
-1212
+# Basic evaluation should work
+  >>> d = Dict(a = 1, b = 2)
+  >>> d.eval("{a}")
+  1
+  >>> d.eval("{b}")
+  2
+  >>> d.eval("{a}{b}{a}{b}")
+  1212
+
+# Multiply-nested braces should work
+  >>> d = Dict(a = "b", b = 1)
+  >>> d.eval("{{a}}")
+  1
+  >>> d.eval("{{{{{{a}}}}}}")
+  1
+
+# Additional {} around an expression essentially adds extra evals
+    >>> d = Dict(a = "1 + 1", b = "{a}")
+    >>> d.expand("{a}")
+    '1 + 1'
+    >>> d.expand("{{a}}")
+    '2'
 
 ####################################################################################################
 
@@ -82,115 +94,166 @@
 ####################################################################################################
 
 # The splitter should tag each chunk of text as a literal or a macro
-  >>> Expander.split("foo")
-  [L'foo']
-  >>> Expander.split("{bar}")
-  [M'bar']
-  >>> Expander.split("foo {bar}")
-  [L'foo ', M'bar']
-  >>> Expander.split("{bar} baz")
-  [M'bar', L' baz']
-  >>> Expander.split("foo {bar} baz")
-  [L'foo ', M'bar', L' baz']
-  >>> Expander.split("foo {bar} baz {flp} zrk")
-  [L'foo ', M'bar', L' baz ', M'flp', L' zrk']
+    >>> Expander.split("foo")
+    [L'foo']
+    >>> Expander.split("{bar}")
+    [E'bar']
+    >>> Expander.split("foo {bar}")
+    [L'foo ', E'bar']
+    >>> Expander.split("{bar} baz")
+    [E'bar', L' baz']
+    >>> Expander.split("foo {bar} baz")
+    [L'foo ', E'bar', L' baz']
+    >>> Expander.split("foo {bar} baz {flp} zrk")
+    [L'foo ', E'bar', L' baz ', E'flp', L' zrk']
 
 # Mismatched braces shouldn't break anything
-  >>> Expander.split("{foo")
-  [L'{foo']
-  >>> Expander.split("foo}")
-  [L'foo}']
-  >>> Expander.split("{foo}}")
-  [M'foo', L'}']
-  >>> Expander.split("{{foo}")
-  [L'{', M'foo']
-  >>> Expander.split("{foo}}{")
-  [M'foo', L'}{']
-  >>> Expander.split("}{{foo}")
-  [L'}{', M'foo']
+    >>> Expander.split("{foo")
+    [L'{foo']
+    >>> Expander.split("foo}")
+    [L'foo}']
+    >>> Expander.split("{foo}}")
+    [E'foo', L'}']
+    >>> Expander.split("{{foo}")
+    [L'{', E'foo']
+    >>> Expander.split("{foo}}{")
+    [E'foo', L'}{']
+    >>> Expander.split("}{{foo}")
+    [L'}{', E'foo']
+
+# Escaped braces should pass through expand/eval
+    >>> d = Dict(a = 1, b = 2)
+    >>> d.expand(r"\{a\}")
+    '\\{a\\}'
+    >>> d = Dict(a = 1)
+    >>> d.expand(r"\{a\} = {a}")
+    '\\{a\\} = 1'
+    >>> d.expand(r"\\{a\\}")
+    '\\\\{a\\\\}'
 
 # Macros inside a string should _not_ be split
-  >>> Expander.split("foo '{bar}' baz")
-  [L"foo '{bar}' baz"]
-  >>> Expander.split('foo "{bar}" baz')
-  [L'foo "{bar}" baz']
+    >>> Expander.split("foo '{bar}' baz")
+    [L"foo '{bar}' baz"]
+    >>> Expander.split('foo "{bar}" baz')
+    [L'foo "{bar}" baz']
 
 # We should be extracting the innermost macros
-  >>> Expander.split("{{foo}}")
-  [L'{', M'foo', L'}']
+    >>> Expander.split("{{foo}}")
+    [L'{', E'foo', L'}']
 
 # ...unless the innermost macro is inside a string
-  >>> Expander.split('{foo + "{bar}"}')
-  [M'foo + "{bar}"']
-  >>> Expander.split("{foo + '{bar}'}")
-  [M"foo + '{bar}'"]
+    >>> Expander.split('{foo + "{bar}"}')
+    [E'foo + "{bar}"']
+    >>> Expander.split("{foo + '{bar}'}")
+    [E"foo + '{bar}'"]
 
 ####################################################################################################
 
 # Eval'ing basic templates should work
-  >>> d = Dict(a = 1, b = 2, c = 3)
-  >>> d.eval("{a}{b}{c}")
-  123
+    >>> d = Dict(a = 1, b = 2, c = 3)
+    >>> d.eval("{a}{b}{c}")
+    123
 
 # Expanding basic templates should work
-  >>> d = Dict(a = 1, b = 2, c = 3)
-  >>> d.expand("{a}{b}{c}")
-  '123'
+    >>> d = Dict(a = 1, b = 2, c = 3)
+    >>> d.expand("{a}{b}{c}")
+    '123'
 
 # We should be able to read from nested dicts
-  >>> d = Dict(a = Dict(b = "{c}"), c = 10)
-  >>> d.eval("a.b")
-  '{c}'
-  >>> d.eval("{a.b}")
-  10
-  >>> d.expand("a.b")
-  'a.b'
-  >>> d.expand("{a.b}")
-  '10'
+    >>> d = Dict(a = Dict(b = "{c}"), c = 10)
+    >>> d.eval("a.b")
+    '{c}'
+    >>> d.eval("{a.b}")
+    10
+    >>> d.expand("a.b")
+    'a.b'
+    >>> d.expand("{a.b}")
+    '10'
 
-# Using eval() to read a nested field from a Dict should read the outermost 'c',
-# as "{c}" is not automatically expanded when read from a Dict.
-  >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-  >>> d.eval("{a.b}")
-  20
+# Expand produces strings, but the below does _not_ try to add (string) "10" and (int) 0 because
+# expanding {a} -> {b} -> "10" then joins the "10" with " + 0" to produce "10 + 0" before the actual
+# eval.
+    >>> d = Dict(a = "{b}", b = 10)
+    >>> d.eval("{a} + 0")
+    10
 
-# Using eval() to read a nested field from an Expander should read the innermost 'c',
-# as it is expanded in the nested context.
-  >>> e = Expander(d)
-  >>> e.eval2("{a.b}")
-  10
-
+# Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
+# nested context.
+    >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
+    >>> d.expand("{a.b}")
+    '10'
+    >>> d.eval("{a.b}")
+    10
 
 # Evaluating basic expressions should work
-  >>> d = Dict(a = 1, b = 2, c = 3)
-  >>> d.eval("a + b + c")
-  6
+    >>> d = Dict(a = 1, b = 2, c = 3)
+    >>> d.eval("a + b + c")
+    6
 
 # Wrapping a field in {} makes us expand it before eval
-  >>> d = Dict(a = 1, b = 2, c = 3, name_a = 'a', name_b = 'b', name_c = 'c')
-  >>> d.eval("name_a + name_b + name_c")
-  'abc'
-  >>> d.eval("{name_a} + {name_b} + {name_c}")
-  6
+    >>> d = Dict(a = 1, b = 2, c = 3, name_a = 'a', name_b = 'b', name_c = 'c')
+    >>> d.eval("name_a + name_b + name_c")
+    'abc'
+    >>> d.eval("{name_a} + {name_b} + {name_c}")
+    6
 
 # Expanding a template can assemble a new template from pieces, which then also gets expanded
-  >>> d = Dict(part_a = '{f', part_b = 'o', part_c = 'o}', foo = 10)
-  >>> d.eval("{part_a}{part_b}{part_c}")
-  10
+    >>> d = Dict(part_a = '{f', part_b = 'o', part_c = 'o}', foo = 10)
+    >>> d.eval("{part_a}{part_b}{part_c}")
+    10
 
 # And that can go multiple levels deep
-  >>> d = Dict(part_a1 = '{f', part_b1 = 'o', part_c1 = 'o}',
-  ...   foo = "{part_a2}{part_b2}{part_c2}",
-  ...   part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
-  ...   bar = 12)
-  >>> d.eval("{part_a1}{part_b1}{part_c1}")
-  12
+    >>> d = Dict(part_a1 = '{f', part_b1 = 'o', part_c1 = 'o}',
+    ...   foo = "{part_a2}{part_b2}{part_c2}",
+    ...   part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
+    ...   bar = 12)
+    >>> d.eval("{part_a1}{part_b1}{part_c1}")
+    12
 
 # Templates can call lambdas
-  >>> d = Dict(a = 1, b = lambda x : x + 1)
-  >>> d
-  Dict @ 0x... { a = 1, b = <function <lambda> at 0x...> }
-  >>> d.eval("b(a)")
-  2
+    >>> d = Dict(a = 1, b = lambda x : x + 1)
+    >>> d
+    Dict @ 0x... { a = 1, b = <function <lambda> at 0x...> }
+    >>> d.expand("foo {b(a)} bar")
+    'foo 2 bar'
 
+# TEFINAE - Text Expansion Failure Is Not An Error
+    >>> d = Dict(a = 1)
+    >>> d.expand("{missing}")
+    '{missing}'
+    >>> d.expand("{a} {missing}")
+    '1 {missing}'
+    >>> d.expand("{a + missing}")
+    '{a + missing}'
 
+# Nones should turn into empty strings
+    >>> d = Dict(a = None, b = 2)
+    >>> d.expand("x{a}y")
+    'xy'
+    >>> d.expand("{a}")
+    ''
+
+    >>> d = Dict(a = None)
+    >>> d.eval("{a}")
+    ''
+
+    >>> d.eval("a") is None
+    True
+
+# Lists should be joined with spaces
+    >>> d = Dict(flags = ["-O2", "-Wall"])
+    >>> d.expand("cc {flags} main.c")
+    'cc -O2 -Wall main.c'
+    >>> d.expand("{flags}")
+    '-O2 -Wall'
+
+    >>> d.eval("{flags}")
+    '-O2 -Wall'
+
+    >>> d.eval("flags")
+    ['-O2', '-Wall']
+
+# Lists should be flattened before joining with spaces
+    >>> d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
+    >>> d.expand("{flags}")
+    'a b c d e f'

@@ -105,14 +105,14 @@ class Path:
 
     @staticmethod
     def norm(file_path : str) -> str:
-        assert not Utils.istemplate(file_path), f"Can't use a template as a path : {file_path}"
+        assert not Utils.is_template(file_path), f"Can't use a template as a path : {file_path}"
         file_path = path.join(os.getcwd(), file_path)
         file_path = path.normpath(file_path)
         return file_path
 
     @staticmethod
     def real(file_path : str) -> str:
-        assert not Utils.istemplate(file_path), f"Can't use a template as a path : {file_path}"
+        assert not Utils.is_template(file_path), f"Can't use a template as a path : {file_path}"
         file_path = Path.norm(file_path)
         file_path = path.realpath(file_path)
         return file_path
@@ -240,18 +240,25 @@ class Utils:
         return isinstance(variant, abc.Mapping)
 
     @staticmethod
-    def istemplate(variant : Any) -> bool:
+    def is_template(variant : Any) -> bool:
         if not isinstance(variant, str):
             return False
         blocks = Expander.split(variant)
         return len(blocks) > 1
 
     @staticmethod
-    def ismacro(variant : Any) -> bool:
+    def is_expr(variant : Any) -> bool:
         if not isinstance(variant, str):
             return False
         blocks = Expander.split(variant)
-        return len(blocks) == 1 and blocks[0][0] == '{' and blocks[0][-1] == '}'
+        return len(blocks) == 1 and type(blocks[0]) == Expander.Expr
+
+    @staticmethod
+    def is_lit(variant : Any) -> bool:
+        if not isinstance(variant, str):
+            return False
+        blocks = Expander.split(variant)
+        return len(blocks) == 1 and type(blocks[0]) == Expander.Lit
 
     @staticmethod
     def join(lhs : str_tree, rhs : str_tree, *args : str_tree) -> list[str]:
@@ -382,7 +389,7 @@ class Dict(dict):
     # Expander stuff
 
     def get(self, key : str, default : Any = _MISSING) -> Any:
-        key = Expander.expand(key, self)
+        key = Expander(self).expand(key)
         if key in self:
             result = dict.get(self, key)
         else:
@@ -393,12 +400,10 @@ class Dict(dict):
         return result
 
     def eval(self, expr : str) -> Any:
-        result = Expander.eval(expr, self)
-        return result
+        return Expander(self).eval(expr)
 
     def expand(self, text : str):
-        result = Expander.expand(text, self)
-        return result
+        return Expander(self).expand(text)
 
 ########################################
 
@@ -458,23 +463,23 @@ class Expander(abc.Mapping):
         join    = Utils.join,
     )
 
-    class Literal(str):
+    class Lit(str):
         def __repr__(self):
             return "L" + str.__repr__(self)
 
-    class Macro(str):
+    class Expr(str):
         def __repr__(self):
-            return "M" + str.__repr__(self)
+            return "E" + str.__repr__(self)
 
     ########################################
 
     def __init__(self, context : abc.Mapping):
-        object.__setattr__(self, "context", context)
+        object.__setattr__(self, "_context", context)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         #self.trace = context.get("trace", g_app.flags.trace)
 
     def __contains__(self, key):
-        return hasattr(Expander, key) or hasattr(Utils, key) or key in self.context
+        return key in self._context
 
     def __getitem__(self, key):
         return self.get(key)
@@ -503,25 +508,16 @@ class Expander(abc.Mapping):
     ########################################
 
     def get(self, key : str, default = _MISSING) -> Any:
-        key = Expander.expand(key, self)
+        key = self.expand(key)
 
-        # Check to see if we're fetching an Expander method. Note we getattr(self, key) so that the
-        # method is called on the Expander instance, not the class.
-        if hasattr(Expander, key):
-            val = getattr(self, key)
-        # Check to see if we're fetching a special method from the Utils class.
-        elif hasattr(Utils, key):
-            val = getattr(Utils, key)
-        # Neither of those special cases apply, so we fetch the key from the context and expand it
-        # immediately.
-        elif key in self.context:
-            val = self.context[key]
+        if key in self._context:
+            val = self._context[key]
             if isinstance(val, str):
-                val = Expander.expand(val, self.context)
+                val = self.expand(val)
         elif default is not _MISSING:
             val = default
-        # If the key is not found, raise an AttributeError.
         else:
+            # If the key is not found, raise an AttributeError.
             #if self.trace:
             #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' failed")
             raise AttributeError(key)
@@ -536,8 +532,9 @@ class Expander(abc.Mapping):
 
     ########################################
     # Returns a relative path from the task directory to the sub_path.
+
     def rel(self, sub_path):
-        task_dir = Expander.expand(cast(str, self._task_dir), self.context)
+        task_dir = self.eval("_task_dir")
         result = Path.rel_path(sub_path, task_dir)
         return result
 
@@ -568,8 +565,8 @@ class Expander(abc.Mapping):
     @staticmethod
     def split(text):
         """
-        Extracts all innermost single-brace-delimited spans from a block of text and produces a list of
-        literals and macros. Escaped braces don't count as delimiters.
+        Extracts all innermost single-brace-delimited spans from a block of text and produces a
+        list of string literals and expressions. Escaped braces don't count as delimiters.
         """
         result = []
         cursor = 0
@@ -599,64 +596,57 @@ class Expander(abc.Mapping):
             elif c == '}' and lbrace >= 0:
                 rbrace = i
                 if cursor < lbrace:
-                    result.append(Expander.Literal(text[cursor:lbrace]))
-                result.append(Expander.Macro(text[lbrace+1:rbrace]))
+                    result.append(Expander.Lit(text[cursor:lbrace]))
+                result.append(Expander.Expr(text[lbrace+1:rbrace]))
                 cursor = rbrace + 1
                 lbrace = -1
                 rbrace = -1
 
         if cursor < len(text):
-            result.append(Expander.Literal(text[cursor:]))
+            result.append(Expander.Lit(text[cursor:]))
 
         return result
 
     ########################################
 
-    def eval2(self, expr : str) -> Any:
-        return Expander.eval(expr, self)
-
-    @staticmethod
-    def eval(expr : str, context : abc.Mapping) -> Any: # , trace : bool
+    def eval(self, expr : str) -> Any: # , trace : bool
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
-        Eval _never_ recurses.
         """
 
-        expr = Expander.expand(expr, context)
+        expr = self.expand(expr)
 
-        #if trace:
-        #    Tracer.log_trace(config, f"┏ eval {expr}")
+        if trace:
+            Tracer.log_trace(self, f"┏ eval {expr}")
 
-        #if g_app.expand_depth >= Expander.MAX_EXPAND_DEPTH:
-        #    if trace:
-        #        Tracer.log_trace(config, f"┗ eval {expr} failed due to recursion depth")
-        #    raise RecursionError(f"eval('{expr}') failed to terminate")
+        try:
+            result = eval(expr, Expander.expansion_globals, self)
+            if trace:
+                Tracer.log_trace(self, f"┗ eval {expr} = {result}")
+        except SyntaxError:
+            # If the expression was not valid Python, return it verbatim.
+            if trace:
+                Tracer.log_trace(self, f"┗ eval failed, Python could not parse '{expr}'")
+            # We can tag the failed evals if needed
+            #result = "X" + expr
+            result = expr
+        except Exception as e:
+            # If any other error happened while evaluating the expression, return the expression verbatim.
+            if trace:
+                Tracer.log_trace(self, f"┗ eval failed, evaluating '{expr}' generated {type(e).__name__}: {e}")
+            # We can tag the failed evals if needed
+            #result = "X" + expr
+            result = expr
 
-        #failed = False
-
-#        try:
-#            #globals = Utils.to_dict()
-#            result = eval(expr, Expander.expansion_globals, Expander(context))  # type: ignore
-#        except BaseException:  # pylint: disable=broad-exception-caught
-#            # TEFINAE - Text Expansion Failure Is Not An Error, we return the original macro.
-#            #failed = True
-#            result = expr
-
-        result = eval(expr, Expander.expansion_globals, context)
-
-        #if trace:
-        #    if failed:
-        #        Tracer.log_trace(config, f"┗ eval {expr} failed")
-        #    else:
-        #        Tracer.log_trace(config, f"┗ eval {expr} = {result}")
+            # We can make this fatal instead of a no-op, not sure if that's more ergonomic...
+            #raise
 
         return result
 
     ########################################
 
-    @staticmethod
-    def expand(template : str, context : abc.Mapping) -> str:
+    def expand(self, template : str) -> str:
         """
         Expander.expand replaces all innermost {expressions} with the result of evaluating the
         expression and then recurses until either the expansion stops changing or we hit max
@@ -672,30 +662,26 @@ class Expander(abc.Mapping):
         if g_app.expand_depth > Expander.MAX_EXPAND_DEPTH:
             raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
 
-        #if trace:
-        #    Tracer.log_trace(context, f"┏ expand_variant '{variant}'")
+        if trace:
+            Tracer.log_trace(self, f"┏ expand '{template}'")
 
-        result = ""
         blocks = Expander.split(template)
+        for (i, block) in enumerate(blocks):
+            if isinstance(block, Expander.Lit):
+                continue
+            try:
+                block = eval(block, Expander.expansion_globals, self)
+                block = Expander.stringify_variant(block)
+            except:
+                block = "{" + block + "}"
+            blocks[i] = block
 
-        for block in blocks:
-            if isinstance(block, Expander.Macro):
-                try:
-                    value = Expander.eval(block, context)
-                except BaseException:
-                    # Stick the macro back in if eval fails
-                    value = '{' + block + '}'
-                result += Expander.stringify_variant(value)
-            elif isinstance(block, Expander.Literal):
-                result += block
-            else:
-                assert False
-
+        result = "".join(blocks)
         if result != template:
-            result = Expander.expand(result, context)
+            result = self.expand(result)
 
-        #if trace:
-        #    Tracer.log_trace(context, f"┗ expand_variant '{variant}' = '{result}'")
+        if trace:
+            Tracer.log_trace(self, f"┗ expand '{template}' = '{result}'")
 
         g_app.expand_depth -= 1
         return result
@@ -729,7 +715,7 @@ class Tracer:
         elif isinstance(variant, Dict):
             return f"Dict @ {hex(id(variant))}'"
         elif isinstance(variant, Expander):
-            return f"Expander @ {hex(id(variant.context))}'"
+            return f"Expander @ {hex(id(variant._context))}'"
         else:
             return f"'{variant}'"
 
@@ -826,9 +812,9 @@ class Promise:
         if len(self.args) == 0:
             return self.task.out_files
         elif len(self.args) == 1:
-            return self.task.context[self.args[0]]
+            return self.task._context[self.args[0]]
         else:
-            return [self.task.context[field] for field in self.args]
+            return [self.task._context[field] for field in self.args]
 
 #endregion
 ####################################################################################################
@@ -1064,7 +1050,7 @@ class Task:
                 def expand_path(_, val):
                     if not isinstance(val, str):
                         return val
-                    val = Expander.expand(val, self._config)
+                    val = self._config.expand(val)
                     val = path.normpath(val) # type: ignore
                     return val
                 self._config[key] = Task.map_variant(key, val, expand_path)
@@ -1171,8 +1157,8 @@ class Task:
         # ----------------------------------------
         # And now we can expand the command.
 
-        self._desc    = cast(str, Expander.expand(self._config.desc, self._config))
-        self._command = cast(str, Expander.expand(self._config.command, self._config))
+        self._desc    = cast(str, self._config.expand(self._config.desc))
+        self._command = cast(str, self._config.expand(self._config.command))
 
         if debug:
             Utils.log(f"\nTask after expand: {self}")
@@ -1182,7 +1168,7 @@ class Task:
 
         # FIXME need a test for this that uses symlinks
 
-        #if self._out_files and self.context.command is not None:
+        #if self._out_files and self._context.command is not None:
         for file in self._out_files:
             real_file = path.realpath(file)
             if real_file in g_app.filename_to_fingerprint:
@@ -1589,7 +1575,7 @@ def create_repo(mod_path : str, *args, **kwargs) -> HanchoAPI:
         mod_name   = mod_name,
         mod_ext    = mod_ext,
 
-        # These have to be here so that expand_variant(hancho.context, "{build_dir}") works.
+        # These have to be here so that expand_variant(hancho._context, "{build_dir}") works.
         build_root = Task.default_build_root,
         build_tag  = Task.default_build_tag,
         build_dir  = Task.default_build_dir,
@@ -1754,9 +1740,9 @@ class App:
 
     def select_root_tasks(self):
         for task in self.all_tasks:
-            # build_dir = expand_variant(task.context, task.context.build_dir)
+            # build_dir = expand_variant(task._context, task._context.build_dir)
             # build_dir = normalize_path(build_dir)
-            # repo_dir  = expand_variant(app.root_context.context, "{build_dir}")
+            # repo_dir  = expand_variant(app.root_context._context, "{build_dir}")
             # repo_dir  = normalize_path(repo_dir)
             # print(build_dir)
             # print(repo_dir)
