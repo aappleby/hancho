@@ -148,10 +148,14 @@
   >>> d.expand("{a.b}")
   '10'
 
-# Name resolution should happen starting in the deepest scope and works outwards.
+# Using eval() to read a nested field from a Dict should read the outermost 'c',
+# as "{c}" is not automatically expanded when read from a Dict.
   >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
   >>> d.eval("{a.b}")
   20
+
+# Using eval() to read a nested field from an Expander should read the innermost 'c',
+# as it is expanded in the nested context.
   >>> e = Expander(d)
   >>> e.eval2("{a.b}")
   10
