@@ -227,33 +227,42 @@
     '{a + missing}'
 
 # Nones should turn into empty strings
-    >>> d = Dict(a = None, b = 2)
-    >>> d.expand("x{a}y")
-    'xy'
-    >>> d.expand("{a}")
-    ''
-    >>> d = Dict(a = None)
+    >>> d = Dict(a = None, b = "x{a}y")
+    >>> d.eval("a") is None
+    True
     >>> d.eval("{a}")
     Traceback (most recent call last):
     ...
     SyntaxError: invalid syntax
-    >>> d.eval("a") is None
-    True
+    >>> d.expand("{a}")
+    ''
+    >>> d.expand("{b}")
+    'xy'
+    >>> d.expand("foo {b} bar")
+    'foo xy bar'
+
+
 
 # Lists should be joined with spaces
     >>> d = Dict(flags = ["-O2", "-Wall"])
     >>> d.expand("cc {flags} main.c")
     'cc -O2 -Wall main.c'
-    >>> d.expand("{flags}")
-    '-O2 -Wall'
+    >>> d.eval("flags")
+    ['-O2', '-Wall']
     >>> d.eval("{flags}")
     Traceback (most recent call last):
     ...
     AttributeError: 'Dict' object has no attribute 'O2'
-    >>> d.eval("flags")
-    ['-O2', '-Wall']
 
 # Lists should be flattened before joining with spaces
     >>> d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
     >>> d.expand("{flags}")
     'a b c d e f'
+    >>> d.eval("flags")
+    [[['a'], 'b'], 'c', 'd', ['e', 'f']]
+    >>> d.eval("{flags}")
+    Traceback (most recent call last):
+    ...
+        a b c d e f
+          ^
+    SyntaxError: invalid syntax
