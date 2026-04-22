@@ -1,10 +1,5 @@
+import hancho
 from hancho import Dict, Expander
 
-d = Dict(a = 1, b = 2)
-print(d.eval("{a}"))
-
-#d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-#print(d.eval("a.b"))
-#print(d.eval("{a.b}"))
-#e = Expander(d)
-#print(e.eval("{a.b}"))
+d = Dict(a = "1 + 1")
+d.expand("{a}")

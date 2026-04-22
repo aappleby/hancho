@@ -39,7 +39,7 @@ from collections import abc
 
 type str_tree = str | list[str_tree]
 _MISSING = object()
-trace = False
+global_trace = False
 
 #endregion
 ####################################################################################################
@@ -381,13 +381,6 @@ class Dict(dict):
     ########################################
     # Expander stuff
 
-    #def get(self, key : str, default : Any = _MISSING, type_ : type | None = None) -> Any:
-    def get(self, key : str, default : Any, type_ : type) -> Any:
-        result = Expander(self).get(key, default)
-        if type_ is not None:
-            assert (type(result) == type_)
-        return result
-
     def eval(self, expr : str) -> Any:
         return Expander(self).eval(expr)
 
@@ -428,6 +421,8 @@ class Expander(abc.Mapping):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
+    _context: Dict
+
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_EXPAND_DEPTH >= 6
     MAX_EXPAND_DEPTH = 20
@@ -465,16 +460,16 @@ class Expander(abc.Mapping):
     def __init__(self, context : Dict):
         object.__setattr__(self, "_context", context)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        #object.__setattr__(self, "trace", context.get("trace", g_app.flags.trace, bool))
+        #object.__setattr__(self, "trace", context.eval("trace"))
 
     def __contains__(self, key):
         return key in self._context
 
     def __getitem__(self, key):
-        return self.get(key)
+        return self._get(key)
 
     def __getattr__(self, key):
-        return self.get(key)
+        return self._get(key)
 
     def __iter__(self):
         raise TypeError("Hancho.Expander cannot be iter'd")
@@ -496,19 +491,23 @@ class Expander(abc.Mapping):
 
     ########################################
 
-    def get(self, key : str, default = _MISSING) -> Any:
-        key = self.expand(key)
+    def _get(self, key : str) -> Any:
+        orig_key = key
+        #if global_trace:
+        #    Tracer.log_trace(self, f"┏ get {orig_key}")
+        #g_app.expand_depth += 1
+
+        #key = self.expand(key)
 
         if key in self._context:
             val = self._context[key]
             if isinstance(val, str):
                 val = self.expand(val)
-        elif default is not _MISSING:
-            val = default
         else:
             # If the key is not found, raise an AttributeError.
             #if self.trace:
             #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' failed")
+            #g_app.expand_depth -= 1
             raise AttributeError(key)
 
         #if self.trace:
@@ -517,6 +516,10 @@ class Expander(abc.Mapping):
         # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
         if isinstance(val, Dict):
             val = Expander(val)
+
+        #g_app.expand_depth -= 1
+        if global_trace:
+            Tracer.log_trace(self, f"┗ get {orig_key} = {val}")
 
         return val
 
@@ -605,30 +608,36 @@ class Expander(abc.Mapping):
         and returns the result.
         """
 
-        expr = self.expand(expr)
+        orig_expr = expr
+        if global_trace:
+            Tracer.log_trace(self, f"┏ eval {orig_expr}")
+        g_app.expand_depth += 1
 
-        if trace:
-            Tracer.log_trace(self, f"┏ eval {expr}")
+        expr = self.expand(expr)
 
         try:
             result = eval(expr, Expander.expansion_globals, self)
-            if trace:
-                Tracer.log_trace(self, f"┗ eval {expr} = {result}")
+            g_app.expand_depth -= 1
+            if global_trace:
+                Tracer.log_trace(self, f"┗ eval {orig_expr} = {result}")
         except SyntaxError:
             # If the expression was not valid Python, return it verbatim.
-            if trace:
-                Tracer.log_trace(self, f"┗ eval failed, Python could not parse '{expr}'")
-            # We can tag the failed evals if needed
-            #result = "X" + expr
-            result = expr
-        except Exception as e:
-            # If any other error happened while evaluating the expression, return the expression verbatim.
-            if trace:
-                Tracer.log_trace(self, f"┗ eval failed, evaluating '{expr}' generated {type(e).__name__}: {e}")
             # We can tag the failed evals if needed
             #result = "X" + expr
             result = expr
 
+            g_app.expand_depth -= 1
+            if global_trace:
+                Tracer.log_trace(self, f"┗ eval failed, Python could not parse '{orig_expr}'")
+        except Exception as e:
+            # If any other error happened while evaluating the expression, return the expression verbatim.
+            # We can tag the failed evals if needed
+            #result = "X" + expr
+            result = expr
+
+            g_app.expand_depth -= 1
+            if global_trace:
+                Tracer.log_trace(self, f"┗ eval failed, evaluating '{orig_expr}' generated {type(e).__name__}: {e}")
             # We can make this fatal instead of a no-op, not sure if that's more ergonomic...
             #raise
 
@@ -644,18 +653,26 @@ class Expander(abc.Mapping):
         Expand _always_ recurses until expansion does nothing.
         """
 
+        original_template = template
+
         if not isinstance(template, str):
             print(f"??? type of template is {type(template)}")
             return template
 
-        g_app.expand_depth += 1
         if g_app.expand_depth > Expander.MAX_EXPAND_DEPTH:
             raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
 
-        if trace:
-            Tracer.log_trace(self, f"┏ expand '{template}'")
 
         blocks = Expander.split(template)
+
+        if len(blocks) == 1 and type(blocks[0]) == Expander.Lit:
+            return template
+
+        if global_trace:
+            Tracer.log_trace(self, f"┏ expand '{template}'")
+        g_app.expand_depth += 1
+
+
         for (i, block) in enumerate(blocks):
             if isinstance(block, Expander.Lit):
                 continue
@@ -670,10 +687,10 @@ class Expander(abc.Mapping):
         if result != template:
             result = self.expand(result)
 
-        if trace:
-            Tracer.log_trace(self, f"┗ expand '{template}' = '{result}'")
-
         g_app.expand_depth -= 1
+        if global_trace:
+            Tracer.log_trace(self, f"┗ expand '{original_template}' = '{result}'")
+
         return result
 
 #endregion
@@ -905,7 +922,7 @@ class Task:
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
 
-        verbosity = self._config.get("verbosity", g_app.flags.verbosity, bool)
+        verbosity = self._config.eval("verbosity")
         Utils.log(
             f"{Utils.color(128,255,196)}[{self._task_index}/{g_app.tasks_started}]{Utils.color()} {self._config.desc}",
             sameline=verbosity == 0,
@@ -914,9 +931,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        verbosity = self._config.get("{verbosity}", g_app.flags.verbosity, bool)
-        debug     = self._config.get("{debug}",     g_app.flags.debug, bool)
-        rebuild   = self._config.get("{rebuild}",   g_app.flags.rebuild, bool)
+        verbosity = self._config.eval("verbosity")
+        debug     = self._config.eval("debug")
+        rebuild   = self._config.eval("rebuild")
 
         # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
@@ -940,7 +957,7 @@ class Task:
             # Note that we chdir to task_dir before initializing the task so that any path.abspath
             # or whatever happen from the right place
 
-            task_dir = self._config.get("task_dir", _MISSING, str)
+            task_dir = self._config.eval("task_dir")
             assert isinstance(task_dir, str)
             try:
                 g_app.pushdir(task_dir)
@@ -973,7 +990,7 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            job_count = self._config.get("job_count", 1, int)
+            job_count = self._config.eval("job_count")
             self._state = Task.AWAITING_JOBS
             await g_app.job_pool.acquire_jobs(job_count, self)
 
@@ -1008,7 +1025,7 @@ class Task:
 
         # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
-        debug = self._config.get("debug", g_app.flags.debug, bool)
+        debug = self._config.eval("debug")
         if debug:
             Utils.log(f"\nTask before expand: {self}")
 
@@ -1017,9 +1034,9 @@ class Task:
 
         # pylint: disable=attribute-defined-outside-init
 
-        self._repo_dir   = Path.abs_path(self._config.get("repo_dir",  _MISSING, str))
-        self._task_dir   = Path.abs_path(self._config.get("task_dir",  _MISSING, str))
-        self._build_dir  = Path.abs_path(self._config.get("build_dir", _MISSING, str))
+        self._repo_dir   = Path.abs_path(self._config.eval("repo_dir"))
+        self._task_dir   = Path.abs_path(self._config.eval("task_dir"))
+        self._build_dir  = Path.abs_path(self._config.eval("build_dir"))
 
         # Check for missing input files/paths
         if not path.exists(self._task_dir):
@@ -1205,7 +1222,7 @@ class Task:
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug = self._config.get("debug", g_app.flags.debug, bool)
+        debug = self._config.eval("debug")
 
         if rebuild:
             return f"Files {self._out_files} forced to rebuild"
@@ -1234,8 +1251,8 @@ class Task:
                 return f"Rebuilding because {mod_filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if (in_depfile := self._config.get("in_depfile", None, str)) and path.exists(in_depfile):
-            depformat = self._config.get("depformat", "gcc", str)
+        if (in_depfile := self._config.eval("in_depfile")) and path.exists(in_depfile):
+            depformat = self._config.eval("depformat")
             if debug:
                 Utils.log(f"Found C dependencies file {in_depfile}")
             with open(in_depfile, encoding="utf-8") as depfile:
@@ -1263,8 +1280,8 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        verbosity = self._config.get("verbosity", g_app.flags.verbosity, bool)
-        debug     = self._config.get("debug", g_app.flags.debug, bool)
+        verbosity = self._config.eval("verbosity")
+        debug     = self._config.eval("debug")
 
         if verbosity or debug:
             Utils.log(Utils.color(128, 128, 255), end="")
@@ -1311,7 +1328,7 @@ class Task:
 
         # We need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
-        command_pass = (self._returncode == 0) != self._config.get("should_fail", False, bool)
+        command_pass = (self._returncode == 0) != self._config.eval("should_fail")
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
@@ -1693,7 +1710,7 @@ class App:
             print("Deleting build directories")
             build_roots = set()
             for task in self.all_tasks:
-                build_root = Path.real(task._config.expand("{build_root}"))
+                build_root = Path.real(task._config.eval("build_root"))
                 if path.isdir(build_root):
                     build_roots.add(build_root)
             for root in build_roots:
@@ -1716,7 +1733,7 @@ class App:
             #        queue_task = True
             #        task_name = out_file
             #        break
-            if name := task._config.get("name", "<unnamed>", str):
+            if name := task._config.eval("name"):
                 if target_regex.search(name):
                     queue_task = True
                     task_name = name
@@ -1903,7 +1920,7 @@ def parse_flags(argv):
 ########################################
 
 def main():
-    (g_app.flags, g_app.extra_flags) = parse_flags(sys.argv[1:])
+    #(g_app.flags, g_app.extra_flags) = parse_flags(sys.argv[1:])
 
     g_app.root_mod = create_root_mod(g_app.flags, g_app.extra_flags)
 
@@ -1947,24 +1964,9 @@ def main():
 ####################################################################################################
 #region end
 
-manual_test = False
-
-if manual_test:
-    print("manual test")
-
-    d = Dict(a = "b", b = 1)
-    e = d.eval("{{a}}")
-    print(e)
-
-    sys.exit(0)
-
 if __name__ == "__main__":
     main()
 else:
     (g_app.flags, g_app.extra_flags) = parse_flags([])
-
-#import doctest
-#doctest.testmod(verbose=True)
-#doctest.testmod()
 
 #endregion
