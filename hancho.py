@@ -40,6 +40,8 @@ from collections import abc
 type str_tree = str | list[str_tree]
 _MISSING = object()
 global_trace = False
+#global_trace = True
+global_dump_depth = 0
 
 #endregion
 ####################################################################################################
@@ -373,7 +375,10 @@ class Dict(dict):
     # Debugging stuff
 
     def __repr__(self):
-        return Dumper(2).dump(self)
+        if g_app.expand_depth > 0:
+            return Dumper(0).dump(self)
+        else:
+            return Dumper(2).dump(self)
 
     def dump(self, depth):
         return Dumper(depth).dump(self)
@@ -490,40 +495,6 @@ class Expander(abc.Mapping):
         raise TypeError("Hancho.Expander is immutable", name)
 
     ########################################
-
-    def _get(self, key : str) -> Any:
-        orig_key = key
-        #if global_trace:
-        #    Tracer.log_trace(self, f"┏ get {orig_key}")
-        #g_app.expand_depth += 1
-
-        #key = self.expand(key)
-
-        if key in self._context:
-            val = self._context[key]
-            if isinstance(val, str):
-                val = self.expand(val)
-        else:
-            # If the key is not found, raise an AttributeError.
-            #if self.trace:
-            #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' failed")
-            #g_app.expand_depth -= 1
-            raise AttributeError(key)
-
-        #if self.trace:
-        #    Utils.log(Tracer.trace_prefix(self) + f"┃ Read '{key}' = {Tracer.trace_variant(val)}")
-
-        # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
-        if isinstance(val, Dict):
-            val = Expander(val)
-
-        #g_app.expand_depth -= 1
-        if global_trace:
-            Tracer.log_trace(self, f"┗ get {orig_key} = {val}")
-
-        return val
-
-    ########################################
     # Returns a relative path from the task directory to the sub_path.
 
     def rel(self, sub_path):
@@ -534,8 +505,9 @@ class Expander(abc.Mapping):
     ########################################
 
     def __repr__(self):
-        result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
-        result += Dumper(2).dump(self.config)
+        result = f"{self.__class__.__name__} @ {hex(id(self))}"
+        #result = f"{self.__class__.__name__} @ {hex(id(self))} wraps "
+        #result += Dumper(0).dump(self._context)
         return result
 
     ########################################
@@ -602,25 +574,69 @@ class Expander(abc.Mapping):
 
     ########################################
 
+    def _get(self, key):
+        orig_key = key
+        if global_trace:
+            Tracer.log_trace(self, f"┏ get '{orig_key}'")
+        g_app.expand_depth += 1
+
+        result = "<_get failed>"
+        try:
+            #result = self._get2(key)
+
+            result = self._context[key]
+
+            # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
+            if isinstance(result, Dict):
+                result = Expander(result)
+
+            g_app.expand_depth -= 1
+            if global_trace:
+                if isinstance(result, str):
+                    Tracer.log_trace(self, f"┗ '{result}'")
+                else:
+                    Tracer.log_trace(self, f"┗ {result}")
+
+        except Exception as e:
+            g_app.expand_depth -= 1
+            if global_trace:
+                Tracer.log_trace(self, f"┗ {type(e).__name__}: {e}")
+            raise
+            return result
+
+        # If we fetched a string, expand it if needed
+        if isinstance(result, str):
+            result = self.expand(result)
+
+        return result
+
+    ########################################
+
     def eval(self, expr : str) -> Any: # , trace : bool
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
 
-        orig_expr = expr
-        if global_trace:
-            Tracer.log_trace(self, f"┏ eval {orig_expr}")
-        g_app.expand_depth += 1
+        if not isinstance(expr, str):
+            return expr
 
         expr = self.expand(expr)
+
+        orig_expr = expr
+        if global_trace:
+            Tracer.log_trace(self, f"┏ eval '{orig_expr}'")
+        g_app.expand_depth += 1
 
         try:
             result = eval(expr, Expander.expansion_globals, self)
             g_app.expand_depth -= 1
             if global_trace:
-                Tracer.log_trace(self, f"┗ eval {orig_expr} = {result}")
-        except SyntaxError:
+                if isinstance(result, str):
+                    Tracer.log_trace(self, f"┗ '{result}'")
+                else:
+                    Tracer.log_trace(self, f"┗ {result}")
+        except Exception as e:
             # If the expression was not valid Python, return it verbatim.
             # We can tag the failed evals if needed
             #result = "X" + expr
@@ -628,18 +644,20 @@ class Expander(abc.Mapping):
 
             g_app.expand_depth -= 1
             if global_trace:
-                Tracer.log_trace(self, f"┗ eval failed, Python could not parse '{orig_expr}'")
-        except Exception as e:
-            # If any other error happened while evaluating the expression, return the expression verbatim.
-            # We can tag the failed evals if needed
-            #result = "X" + expr
-            result = expr
+                Tracer.log_trace(self, f"┗ {type(e).__name__}: {e}")
+            raise
 
-            g_app.expand_depth -= 1
-            if global_trace:
-                Tracer.log_trace(self, f"┗ eval failed, evaluating '{orig_expr}' generated {type(e).__name__}: {e}")
-            # We can make this fatal instead of a no-op, not sure if that's more ergonomic...
-            #raise
+#        except Exception as e:
+#            # If any other error happened while evaluating the expression, return the expression verbatim.
+#            # We can tag the failed evals if needed
+#            #result = "X" + expr
+#            result = expr
+#
+#            g_app.expand_depth -= 1
+#            if global_trace:
+#                Tracer.log_trace(self, f"┗ {type(e).__name__}: {e}")
+#            # We can make this fatal instead of a no-op, not sure if that's more ergonomic...
+#            raise
 
         return result
 
@@ -677,19 +695,20 @@ class Expander(abc.Mapping):
             if isinstance(block, Expander.Lit):
                 continue
             try:
-                block = eval(block, Expander.expansion_globals, self)
+                block = self.eval(block)
                 block = Expander.stringify_variant(block)
             except:
                 block = "{" + block + "}"
             blocks[i] = block
 
         result = "".join(blocks)
-        if result != template:
-            result = self.expand(result)
 
         g_app.expand_depth -= 1
         if global_trace:
-            Tracer.log_trace(self, f"┗ expand '{original_template}' = '{result}'")
+            Tracer.log_trace(self, f"┗ '{result}'")
+
+        if result != template:
+            result = self.expand(result)
 
         return result
 

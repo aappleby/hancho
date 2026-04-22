@@ -6,7 +6,7 @@
   "configurations": [
 
     {
-        "name": "Python Debugger: Current File",
+        "name": "Python Debugger: scratch_test.py",
         "type": "debugpy",
         "request": "launch",
         //"program": "${file}",

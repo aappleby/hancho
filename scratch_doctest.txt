@@ -234,7 +234,9 @@
     ''
     >>> d = Dict(a = None)
     >>> d.eval("{a}")
-    ''
+    Traceback (most recent call last):
+    ...
+    SyntaxError: invalid syntax
     >>> d.eval("a") is None
     True
 
@@ -245,7 +247,9 @@
     >>> d.expand("{flags}")
     '-O2 -Wall'
     >>> d.eval("{flags}")
-    '-O2 -Wall'
+    Traceback (most recent call last):
+    ...
+    AttributeError: 'Dict' object has no attribute 'O2'
     >>> d.eval("flags")
     ['-O2', '-Wall']
 
