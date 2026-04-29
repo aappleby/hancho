@@ -1,5 +1,5 @@
 import hancho
 
-hancho.rules = hancho.load("stage1_rules.hancho")
+hancho.tools = hancho.load("tools_stage1.hancho")
 
 hancho.load("main/build.hancho")

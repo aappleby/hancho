@@ -1410,9 +1410,13 @@ class Task:
 
 class HanchoAPI:
 
-    def __init__(self, config, is_repo):
+    Dict = Dict
+    Tool = Tool
+    Task = Task
+    flatten = Utils.flatten
+
+    def __init__(self, config):
         self.config  = config
-        self.is_repo = is_repo
 
     def __repr__(self):
         return Dumper(2).dump(self)
@@ -1428,23 +1432,23 @@ class HanchoAPI:
             return arg1(self, **temp_config)
         return Task(self.config, arg1, *args, **kwargs)
 
-    def repo(self, mod_path, *args, **kwargs):
-        mod_path = self.config.expand(str, mod_path)
-        mod_path = Path.real(mod_path)
+    def repo(self, repo_path, *args, **kwargs):
+        repo_path = self.config.expand(str, repo_path)
+        repo_path = Path.real(repo_path)
         #real_path = path.realpath(mod_path)
 
-        dedupe = g_app.realpath_to_repo.get(mod_path, None)
+        dedupe = g_app.realpath_to_repo.get(repo_path, None)
         if dedupe is not None:
             return dedupe
 
-        new_api = create_repo(mod_path, *args, **kwargs)
+        new_api = create_repo(repo_path = repo_path, base_config = Dict(*args, **kwargs))
 
         result = new_api._load()
-        g_app.realpath_to_repo[mod_path] = result
+        g_app.realpath_to_repo[repo_path] = result
         return result
 
     def load(self, mod_path : str):
-        mod_path = self.config.expand(str, mod_path)
+        mod_path = self.config.expand(mod_path)
         mod_path = Path.norm(mod_path)
         new_module = create_mod(self, mod_path)
         return new_module._load()
@@ -1455,7 +1459,7 @@ class HanchoAPI:
             #mod_path = Path.rel_path(self.config.mod_path, self.config.repo_dir)
             mod_path = Path.rel_path(self.config.mod_path, g_app.flags.root_dir)
             Utils.log(("┃ " * (len(g_app.dirstack) - 1)), end="")
-            if self.is_repo:
+            if self.config.is_repo:
                 Utils.log(Utils.color(128, 128, 255) + f"Loading repo {self.config.mod_path}" + Utils.color())
             else:
                 Utils.log(Utils.color(128, 255, 128) + f"Loading file {self.config.mod_path}" + Utils.color())
@@ -1485,12 +1489,6 @@ class HanchoAPI:
         #  '__spec__': None,
         #}
 
-        self.Dict = Dict
-        self.Tool = Tool
-        self.flatten = Utils.flatten
-
-        #self.Task = lambda()
-
         temp_globals = {
             "hancho"  : self,
             #"glob"    : glob.glob,
@@ -1500,15 +1498,29 @@ class HanchoAPI:
 
         module_globals = dict(temp_globals)
 
+        #----------------------------------------
+        # THIS IS WHERE WE LOAD THE SUBMODULE
+
         # Pylint is just wrong here
         # pylint: disable=not-callable
+
+        old_hancho = sys.modules.get("hancho", None)
+
+        sys.modules["hancho"] = self # type: ignore
         types.FunctionType(code, module_globals)()
+        sys.modules["hancho"] = old_hancho # type: ignore
+
+        #----------------------------------------
+
+
         g_app.popdir()
 
         # Module loaded, turn the module's globals into a dict that doesn't include __builtins__,
         # hancho, imports, and private fields so we don't have files that end up transitively
         # containing the universe
-        new_module = Dict()
+
+        new_module = {}
+
         for key, val in module_globals.items():
             #if key.startswith("_") or key == "hancho" or key == "config" or key == "task" or isinstance(val, type(sys)):
             if key.startswith("_") or key in temp_globals or isinstance(val, type(sys)):
@@ -1518,7 +1530,7 @@ class HanchoAPI:
         # Tack the config onto the module so people who load it can see the paths it was built with, etc.
         new_module['config'] = Dict(self.config)
 
-        return new_module
+        return Dict(new_module)
 
 #endregion
 ####################################################################################################
@@ -1580,23 +1592,26 @@ class JobPool:
 ####################################################################################################
 #region Helper stuff that needs to go somewhere else
 
-def create_repo(mod_path : str, *args, **kwargs) -> HanchoAPI:
-    assert Path.isreal(mod_path)
-    assert mod_path not in g_app.realpath_to_repo
+def create_repo(*, repo_path : str, base_config : abc.Mapping) -> HanchoAPI:
+    assert Path.isreal(repo_path)
+    assert repo_path not in g_app.realpath_to_repo
 
     (hancho_dir, hancho_name, hancho_ext) = Path.split(__file__)
-    (mod_dir, mod_name, mod_ext) = Path.split(mod_path)
+    (mod_dir, mod_name, mod_ext) = Path.split(repo_path)
 
     mod_config = Dict(
+        base_config,
+
         hancho_dir  = hancho_dir,
         root_dir    = g_app.flags.root_dir,
 
-        repo_path  = mod_path,
+        is_repo    = True,
+        repo_path  = repo_path,
         repo_name  = mod_name,
         repo_dir   = mod_dir,
         repo_ext   = mod_ext,
 
-        mod_path   = mod_path,
+        mod_path   = repo_path,
         mod_dir    = mod_dir,
         mod_name   = mod_name,
         mod_ext    = mod_ext,
@@ -1607,11 +1622,9 @@ def create_repo(mod_path : str, *args, **kwargs) -> HanchoAPI:
         build_dir  = Task.default_build_dir,
 
         task_dir   = Task.default_task_dir,
-
-        *args, **kwargs
     )
 
-    mod_api = HanchoAPI(mod_config, True)
+    mod_api = HanchoAPI(mod_config)
     return mod_api
 
 ####################################################################################################
@@ -1619,37 +1632,36 @@ def create_repo(mod_path : str, *args, **kwargs) -> HanchoAPI:
 def create_mod(parent_api : HanchoAPI, in_mod_path : str, *args, **kwargs):
     assert isinstance(parent_api, HanchoAPI)
 
-    mod_path = cast(str, parent_api.config.expand(str, in_mod_path))
+    mod_path = cast(str, parent_api.config.expand(in_mod_path))
     mod_path = Path.real(mod_path)
     (mod_dir, mod_name, mod_ext) = Path.split(mod_path)
 
     mod_api = copy.deepcopy(parent_api)
-    mod_api.is_repo = False
 
-    mod_config = Dict(
-        mod_path = mod_path,
-        mod_dir  = mod_dir,
-        mod_name = mod_name,
-        mod_ext  = mod_ext,
+    mod_api.config = Dict(
+        mod_api.config,
+        Dict(
+            is_repo  = False,
+            mod_path = mod_path,
+            mod_dir  = mod_dir,
+            mod_name = mod_name,
+            mod_ext  = mod_ext,
+        ),
+        *args,
+        kwargs
     )
-
-    mod_api.config = Dict(mod_api.config, mod_config, *args, kwargs)
 
     return mod_api
 
 ########################################
 
-def create_root_mod(flags, extra_flags):
+def create_root_mod(config : Dict):
     """ Needs to be its own function, used by run_tests.py """
 
-    root_dir  = cast(str, flags.root_dir)
-    root_file = cast(str, flags.root_file)
+    root_dir  = cast(str, config.root_dir)
+    root_file = cast(str, config.root_file)
     root_path = Path.real(Path.join(root_dir, root_file))
-    root_mod  = create_repo(root_path)
-
-    # All the unrecognized flags get stuck on the root module's config.
-    for key, val in extra_flags.items():
-        setattr(root_mod.config, key, val)
+    root_mod  = create_repo(repo_path = root_path, base_config = config)
 
     if root_mod.config.get("debug", False):
         Utils.log(f"root_mod = {Dumper(2).dump(root_mod)}")
@@ -1665,7 +1677,6 @@ class App:
 
     def __init__(self):
         self.flags = argparse.Namespace()
-        self.extra_flags : dict[str, Any] = {}
 
         self.root_mod : HanchoAPI | None = None
         self.loaded_files : list[str] = []
@@ -1779,7 +1790,7 @@ class App:
     ########################################
 
     def pushdir(self, new_dir : str):
-        new_dir = abs_path(new_dir) # type: ignore
+        new_dir = Path.abs_path(new_dir) # type: ignore
         if not path.exists(new_dir):
             raise FileNotFoundError(new_dir)
         self.dirstack.append(new_dir)
@@ -1919,7 +1930,7 @@ def parse_flags(argv):
     for span in unrecognized:
         if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
             key = match.group(1)
-            val = match.group(2)
+            val = match.group(2) 
 
             if val is None:
                 val = True
@@ -1934,14 +1945,12 @@ def parse_flags(argv):
             #val = maybe_as_number(val) if val is not None else True
             extra_flags[key] = val
 
-    return (flags, extra_flags)
+    return Dict(vars(flags), extra_flags)
 
 ########################################
 
 def main():
-    #(g_app.flags, g_app.extra_flags) = parse_flags(sys.argv[1:])
-
-    g_app.root_mod = create_root_mod(g_app.flags, g_app.extra_flags)
+    g_app.root_mod = create_root_mod(g_app.flags)
 
     assert path.isabs (g_app.root_mod.config.repo_path)
     assert path.isfile(g_app.root_mod.config.repo_path)
@@ -1984,8 +1993,9 @@ def main():
 #region end
 
 if __name__ == "__main__":
+    g_app.flags = parse_flags(sys.argv[1:])
     main()
 else:
-    (g_app.flags, g_app.extra_flags) = parse_flags([])
+    g_app.flags = parse_flags([])
 
 #endregion
