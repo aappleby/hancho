@@ -456,29 +456,15 @@ class Utils:
         else:
             return str(variant)
 
-    # This doesn't work with immutable Dicts
-    #@staticmethod
-    #def map_variant(key, val, apply):
-    #    val = apply(key, val)
-    #    if Utils.dictlike(val):
-    #        for key2, val2 in val.items():
-    #            val[key2] = Utils.map_variant(key2, val2, apply)
-    #    elif Utils.listlike(val):
-    #        for key2, val2 in enumerate(val):
-    #            val[key2] = Utils.map_variant(key2, val2, apply)
-    #    return val
-
-
-    # This does work with immutable dicts
     @staticmethod
-    def map_variant2(key, val, map):
+    def map_variant(key, val, map):
         if Utils.dictlike(val):
-            dst = Dict({k: Utils.map_variant2(k, v, map) for k, v in val.items()})
+            val = Dict({k: Utils.map_variant(k, v, map) for k, v in val.items()})
         elif Utils.listlike(val):
-            dst = tuple(Utils.map_variant2(k, v, map) for k, v in enumerate(val))
+            val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
         else:
-            dst = map(key, val)
-        return dst
+            val = map(key, val)
+        return val
 
     @staticmethod
     def apply_variant(key, val, apply):
@@ -489,7 +475,6 @@ class Utils:
         elif Utils.listlike(val):
             for key2, val2 in enumerate(val):
                 Utils.apply_variant(key2, val2, apply)
-        return val
 
     @staticmethod
     async def await_variant(variant):
@@ -1445,7 +1430,6 @@ class Task:
             def apply(_, val):
                 if isinstance(val, Task):
                     val.queue()
-                return val
             Utils.apply_variant(None, self._config, apply)
 
             # And now queue this task.
@@ -1479,26 +1463,25 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        _config   = self._config
-        verbose   = _config.eval("verbose")
-        debug     = _config.eval("debug")
-        rebuild   = _config.eval("rebuild")
+        #_config   = self._config
+        verbose   = self._config.eval("verbose")
+        debug     = self._config.eval("debug")
+        rebuild   = self._config.eval("rebuild")
 
         # Await everything awaitable in this task's config.
         # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
         # downstream tasks.
 
-        awaitables = []
-        def apply(key, val):
-            pass
-        Utils.apply_variant(None, _config, apply)
+        def apply_await(_, val):
+            return Utils.await_variant(val)
+        self._config = Utils.map_variant(None, self._config, apply_await)
 
         try:
             assert self._state is Task.STARTED
             self._state = Task.AWAITING_INPUTS
-            for key, val in _config.items():
+            for key, val in self._config.items():
                 # FIXME this isn't going to work with immutable Dicts
-                _config[key] = await Utils.await_variant(val)
+                self._config[key] = await Utils.await_variant(val)
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = Task.CANCELLED
@@ -1512,7 +1495,7 @@ class Task:
             # Note that we chdir to task_dir before initializing the task so that any path.abspath
             # or whatever happen from the right place
 
-            task_dir = _config.eval("task_dir")
+            task_dir = self._config.eval("task_dir")
             assert isinstance(task_dir, str)
             old_cwd = os.getcwd()
             try:
@@ -1546,7 +1529,7 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            job_count = _config.eval("job_count")
+            job_count = self._config.eval("job_count")
             self._state = Task.AWAITING_JOBS
             await JobPool.acquire_jobs(job_count, self)
 
@@ -1576,7 +1559,7 @@ class Task:
         self._state = Task.FINISHED
         Stats.tasks_finished += 1
 
-    def move_to_builddir(self, _key, val):
+    def move_to_builddir(self, val):
         if not isinstance(val, str):
             return val
         # Note this conditional needs to be first, as build_dir can itself be under
@@ -1595,35 +1578,12 @@ class Task:
             val = Path.join(self._config.build_dir, val)
         return val
 
-    def move_to_taskdir(self, _key, val):
+    def move_to_taskdir(self, val):
         if not isinstance(val, str):
             return val
         if not os.path.isabs(val):
             val = Path.join(self._config.task_dir, val)
         return val
-
-    def move_to_builddir2(self, file : str_tree) -> str_tree:
-        build_dir = Utils.check(str, self._build_dir)
-
-        if isinstance(file, list):
-            return [self.move_to_builddir2(f) for f in file]
-
-        # needed for test_bad_build_path
-        file = os.path.normpath(file)
-
-        # Note this conditional needs to be first, as build_dir can itself be under
-        # task_dir
-        if file.startswith(build_dir):
-            # Absolute path under build_dir.
-            pass
-        elif file.startswith(build_dir):
-            # Absolute path under task_dir, move to build_dir
-            file = Path.rel_path(file, build_dir)
-        elif os.path.isabs(file):
-            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {file}")
-
-        file = Path.join(Utils.check(str, build_dir), file)
-        return file
 
     def task_init(self):
         """All the setup steps needed before we run a task."""
@@ -1666,33 +1626,20 @@ class Task:
                 val = path.normpath(val) # type: ignore
             return val
 
-        #for key, val in self._config.items():
-        #    if key.startswith("in_") or key.startswith("out_"):
-        #        self._config[key] = Utils.map_variant(key, val, expand_path)
-        self._config = Utils.map_variant2(None, self._config, expand_path)
+        self._config = Utils.map_variant(None, self._config, expand_path)
 
         # ----------------------------------------
         # Make all in_ and out_ file paths absolute
-        # FIXME feeling like in_depfile should really be io_depfile...
-
-        # FIXME this did not merge cleanly and is broken
 
         def move_stuff(key, val):
             if key.startswith("out_") or key == "in_depfile":
-                #self._config[key] = Utils.map_variant(key, val, self.move_to_builddir)
-                return self.move_to_builddir(key, val)
+                return self.move_to_builddir(val)
             elif key.startswith("in_"):
-                #self._config[key] = Utils.map_variant(key, val, self.move_to_taskdir)
-                return self.move_to_taskdir(key, val)
+                return self.move_to_taskdir(val)
 
-        self._config = Utils.map_variant2(None, self._config, move_stuff)
+        self._config = Utils.map_variant(None, self._config, move_stuff)
 
-        #for key, val in self._config.items():
-        #    if key.startswith("out_") or key == "in_depfile":
-        #        self._config[key] = Utils.map_variant(key, val, self.move_to_builddir)
-        #    elif key.startswith("in_"):
-        #        self._config[key] = Utils.map_variant(key, val, self.move_to_taskdir)
-
+        # ----------------------------------------
         # Gather all inputs to task.in_files and outputs to task.out_files
 
         def collect_stuff(key, val):
@@ -1707,46 +1654,6 @@ class Task:
                 self._in_files.append(val)
 
         Utils.apply_variant(None, self._config, collect_stuff)
-
-
-        #for key, val in self._config.items():
-        #    # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will fail a check
-        #    # that all our inputs are present.
-        #    if key == "in_depfile":
-        #        if os.path.isfile(val):
-        #            self._in_files.append(val)
-        #    elif key.startswith("out_"):
-        #        self._out_files.extend(Utils.flatten(val))
-        #    elif key.startswith("in_"):
-        #        self._in_files.extend(Utils.flatten(val))
-
-
-        # Make all in_ and out_ file paths absolute
-
-        # FIXME I dislike all this "move_to" stuff
-
-        # Gather all inputs to task._in_files and outputs to task._out_files
-
-        # pylint: disable=consider-using-dict-items
-        for key in self._config.keys():
-
-            file1 : str = self._config[key]
-            file2 : str = self._config.expand(file1)
-
-            if key.startswith("in_"):
-                file3 : str = Path.normpath(file2)
-                file3 : str = Path.join(self._task_dir, file3)
-                self._in_files.extend(Utils.flatten(file3))
-                self._config[key] = file3
-
-            if key.startswith("out_"):
-                file3 : str = Utils.check(str, self.move_to_builddir2(file2))
-                self._out_files.extend(Utils.flatten(file3))
-                self._config[key] = file3
-
-            if key == "depfile":
-                file3 : str = Utils.check(str, self.move_to_builddir2(file2))
-                self._config[key] = file3
 
         # ----------------------------------------
         # And now we can expand the command.
@@ -2269,7 +2176,7 @@ def main():
 if __name__ == "__main__":
     a = Dict(a = 1, b = 2, c = 3, d = [4, 5, 6], e = Dict(f = 5, g = 6))
     print(a)
-    b = Utils.map_variant2(None, a, lambda key, val: val + 1)
+    b = Utils.map_variant(None, a, lambda key, val: val + 1)
     print(b)
     sys.exit(0)
 
