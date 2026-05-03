@@ -6,6 +6,26 @@
   "configurations": [
 
     {
+      "name"    : "Debug scratch/build.hancho",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/scratch",
+      "console" : "integratedTerminal",
+    },
+
+
+    {
+        "name": "Python Debugger: scratch_test.py",
+        "type": "debugpy",
+        "request": "launch",
+        //"program": "${file}",
+        "program": "scratch_test.py",
+        "console": "integratedTerminal",
+        "justMyCode": true
+    },
+
+    {
         "name": "Python Debugger: scratch_test.py",
         "type": "debugpy",
         "request": "launch",
@@ -66,17 +86,6 @@
     //  "type": "debugpy",
     //  "request": "launch",
     //  "program": "${workspaceFolder}/scratch/scratch.py",
-    //  "cwd": "${workspaceFolder}/scratch",
-    //  "console": "integratedTerminal",
-    //  "justMyCode": false,
-    //  "preLaunchTask": "Wipe build",
-    //},
-
-    //{
-    //  "name": "Debug scratch/build.hancho",
-    //  "type": "debugpy",
-    //  "request": "launch",
-    //  "program": "${workspaceFolder}/hancho.py",
     //  "cwd": "${workspaceFolder}/scratch",
     //  "console": "integratedTerminal",
     //  "justMyCode": false,

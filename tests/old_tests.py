@@ -507,9 +507,9 @@ class TestHancho1(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         """Passing arbitrary flags to Hancho should work"""
-        hancho_py.app.reset()
-        hancho_py.app.parse_flags(["--quiet", "--flarpy=flarp.txt"])
-        self.hancho = hancho_py.app.create_root_mod()
+        hancho.reset()
+        hancho.parse_flags(["--quiet", "--flarpy=flarp.txt"])
+        self.hancho = hancho.create_root_mod()
         self.assertEqual("flarp.txt", self.hancho.config.flarpy)
 
         self.hancho(

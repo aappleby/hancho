@@ -327,7 +327,7 @@ Tasks take a Config that completely defines the input files, output files, and d
 
 Tasks are lazily executed - only tasks that are needed to build the selected outputs are executed. By default, all Tasks that originate from the repo we started the build in will be queued up for execution.
 
-## Calling ```hancho.Task(...)``` merges ```hancho.config``` with all the parameters passed to ```hancho.Task()``` and creates a task from it.
+## Calling ```hancho.Task(...)``` merges ```config``` with all the parameters passed to ```hancho.Task()``` and creates a task from it.
 
 ```py
 echo_stuff = hancho.Tool(

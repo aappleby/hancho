@@ -4,7 +4,7 @@ import hancho
 import random
 from glob import glob
 
-#hancho.config.verbosity = 1
+#config.verbosity = 1
 
 src_files = glob("src/*")
 
