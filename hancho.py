@@ -1468,33 +1468,26 @@ class Task:
         debug     = self._config.eval("debug")
         rebuild   = self._config.eval("rebuild")
 
-        # Await everything awaitable in this task's config.
-        # If any of this tasks's dependencies were cancelled, we propagate the cancellation to
-        # downstream tasks.
+        # Await everything awaitable in this task's config. If any of this tasks's dependencies
+        # were cancelled, we propagate the cancellation to downstream tasks.
 
-        def apply_await(_, val):
-            return Utils.await_variant(val)
-        self._config = Utils.map_variant(None, self._config, apply_await)
+        assert self._state is Task.STARTED
+        self._state = Task.AWAITING_INPUTS
 
         try:
-            assert self._state is Task.STARTED
-            self._state = Task.AWAITING_INPUTS
-            for key, val in self._config.items():
-                # FIXME this isn't going to work with immutable Dicts
-                self._config[key] = await Utils.await_variant(val)
+            def apply_await(_, val):
+                return Utils.await_variant(val)
+            self._config = Utils.map_variant(None, self._config, apply_await)
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = Task.CANCELLED
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
 
-        # Everything awaited, task_init runs synchronously.
+        # Everything awaited, task_init runs synchronously. Note that we chdir to task_dir before
+        # initializing the task so that any path.abspath or whatever happen from the right place.
         try:
             self._state = Task.TASK_INIT
-
-            # Note that we chdir to task_dir before initializing the task so that any path.abspath
-            # or whatever happen from the right place
-
             task_dir = self._config.eval("task_dir")
             assert isinstance(task_dir, str)
             old_cwd = os.getcwd()
@@ -1774,28 +1767,27 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        _config   = self._config
-        verbose   = _config.eval("verbose")
-        debug     = _config.eval("debug")
+        verbose   = self._config.eval("verbose")
+        debug     = self._config.eval("debug")
 
         if verbose or debug:
             Log.log(Utils.color(128, 128, 255), end="")
-            if _config.dry_run:
+            if self._config.dry_run:
                 Log.log("(DRY RUN) ", end="")
-            Log.log(f"{Path.rel_path(_config.task_dir, _config.repo_dir)}$ ", end="")
+            Log.log(f"{Path.rel_path(self._config.task_dir, self._config.repo_dir)}$ ", end="")
             Log.log(Utils.color(), end="")
             Log.log(command)
 
         # Dry runs get early-out'ed before we do anything.
-        if _config.dry_run:
+        if self._config.dry_run:
             return
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             old_cwd = os.getcwd()
             try:
-                os.chdir(_config.task_dir)
-                await Utils.await_variant(command(self))
+                os.chdir(self._config.task_dir)
+                command(self)
             finally:
                 os.chdir(old_cwd)
                 self._returncode = 0
@@ -1811,7 +1803,7 @@ class Task:
 
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd    = _config.task_dir,
+            cwd    = self._config.task_dir,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
         )
@@ -1824,9 +1816,9 @@ class Task:
         self._stderr = stderr_data.decode()
         self._returncode = Utils.check(int, proc.returncode)
 
-        # We need a better way to handle "should fail" so we don't constantly keep rerunning
+        # FIXME We need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
-        command_pass = (self._returncode == 0) != _config.eval("should_fail")
+        command_pass = (self._returncode == 0) != self._config.eval("should_fail")
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
