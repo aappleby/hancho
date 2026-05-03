@@ -10,6 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
+      "args"    : ["-v"],
       "cwd"     : "${workspaceFolder}/scratch",
       "console" : "integratedTerminal",
     },
