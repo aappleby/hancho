@@ -532,6 +532,11 @@ class Dict(dict):
     5. Dict behaves like a value type, merging will make copies of all its inputs.
     """
 
+    _NOCOPY = (type(None), bool, int, float, complex, str, bytes,
+            types.ModuleType, types.FunctionType, types.BuiltinFunctionType)
+    _COPY = (dict, list, tuple, set)
+    _WHITELIST = _NOCOPY + _COPY
+
     def __init__(self, *args, **kwargs):
         super().__init__()
 
@@ -541,24 +546,21 @@ class Dict(dict):
             for key, rval in arg.items():
                 lval = dict.get(self, key, None)
 
-                # Upgrade rval dict to Dict
-                if isinstance(rval, abc.Mapping) and type(rval) != Dict:
-                    rval = Dict(rval)
+                if isinstance(rval, abc.Mapping):
+                    # Upgrade rval to Dict and recursively merge mappings.
+                    if type(rval) != Dict:
+                        rval = Dict(rval)
+                    if isinstance(lval, abc.Mapping):
+                        rval = Dict(lval, rval)
+                elif isinstance(rval, Dict._NOCOPY):
+                    pass
+                elif isinstance(rval, Dict._COPY):
+                    rval = copy.deepcopy(rval)
+                else:
+                    raise TypeError(f"Can't put type {type(rval)} into a Dict.")
 
-                # Recursively merge mapping-type attributes.
-                if isinstance(lval, abc.Mapping) and isinstance(rval, abc.Mapping):
-                    dict.__setitem__(self, key, Dict(lval, rval))
-
-                # Deep copy all other attributes.
-                elif lval is None or rval is not None:
-                    try:
-                        if type(rval) == types.ModuleType:
-                            dict.__setitem__(self, key, rval)
-                        else:
-                            dict.__setitem__(self, key, copy.deepcopy(rval))
-                    except:
-                        print("?")
-                        raise
+                if lval is None or rval is not None:
+                    dict.__setitem__(self, key, rval)
 
     ########################################
 
@@ -701,11 +703,8 @@ class Expander(abc.Mapping):
     def __init__(self, context : Dict):
         object.__setattr__(self, "_context", context)
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        try:
-            object.__setattr__(self, "trace", context.trace)
-        except:
-            print("wat?")
-            raise
+        trace = dict.get(context, "trace", False)
+        object.__setattr__(self, "trace", trace)
 
     def __contains__(self, key):
         return key in self._context

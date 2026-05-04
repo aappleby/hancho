@@ -44,7 +44,7 @@ if __name__ == "__main__":
     run_module_doctests(hancho)
 
     print("Running external doctests")
-    run_file_doctests("scratch_doctest.txt")
+    run_file_doctests("tests/doctest_all.txt")
 
     #run_hancho_doctests()
     for mod in TEST_MODULES:
