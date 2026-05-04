@@ -25,6 +25,20 @@ class TestDict(unittest.TestCase):
         with self.assertRaises(AttributeError):
             _ = d['missing']
 
+    def doctest_dict_upgrades(self):
+        # Internal dicts should be upgraded to hancho.Dict
+        """
+        >>> d = Dict(a = {'b' : {'c' : 1}})
+        >>> type(d)
+        <class 'hancho.Dict'>
+        >>> type(d.a)
+        <class 'hancho.Dict'>
+        >>> type(d.a.b)
+        <class 'hancho.Dict'>
+        >>> type(d.a.b.c)
+        <class 'int'>
+        """
+
     def test_init_upgrades_dict(self):
         d = Dict(child = {'x': 1})
         self.assertIsInstance(d.child, Dict)
@@ -53,26 +67,10 @@ class TestDict(unittest.TestCase):
         d2.a.append(3)
         self.assertEqual(d1.a, [1, 2])  # d1 should not be affected
 
-    def run_doctest(self, docstring):
-        parser = doctest.DocTestParser()
-        test = parser.get_doctest(
-            docstring,
-            globs=globals(),
-            name=self._testMethodName,
-            filename=__file__,
-            lineno=0,
-        )
-        flags = doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
-        runner = doctest.DocTestRunner(optionflags=flags)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            runner.run(test)
-        self.assertEqual(
-            runner.failures, 0,
-            f"{runner.failures} doctest failure(s):\n{buf.getvalue()}"
-        )
-
 ####################################################################################################
 
-if __name__ == "__main__":
-    unittest.main()
+def load_tests(loader, tests, ignore):
+    tests.addTests(doctest.DocTestSuite(
+        optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE,
+    ))
+    return tests

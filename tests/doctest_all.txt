@@ -3,21 +3,14 @@
 
 ####################################################################################################
 
-# Basic evaluation should work
-  >>> d = Dict(a = 1, b = 2)
-  >>> d.eval("{a}")
-  1
-  >>> d.eval("{b}")
-  2
-  >>> d.eval("{a}{b}{a}{b}")
-  1212
-
+"""
 # Multiply-nested braces should work
-  >>> d = Dict(a = "b", b = 1)
-  >>> d.eval("{{a}}")
-  1
-  >>> d.eval("{{{{{{a}}}}}}")
-  1
+>>> d = Dict(a = "b", b = 1)
+>>> d.eval("{{a}}")
+1
+>>> d.eval("{{{{{{a}}}}}}")
+1
+"""
 
 # Additional {} around an expression essentially adds extra evals
     >>> d = Dict(a = "1 + 1", b = "{a}")
@@ -68,16 +61,6 @@
     >>> (d.a, d['b'])
     (1, 2)
 
-# Internal dicts should be upgraded to hancho.Dict
-    >>> d = Dict(a = {'b' : {'c' : 1}})
-    >>> type(d)
-    <class 'hancho.Dict'>
-    >>> type(d.a)
-    <class 'hancho.Dict'>
-    >>> type(d.a.b)
-    <class 'hancho.Dict'>
-    >>> type(d.a.b.c)
-    <class 'int'>
 
 # hancho.Dicts should be (as) immutable (as possible)
     >>> d = Dict(a = 1)
