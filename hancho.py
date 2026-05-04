@@ -693,10 +693,22 @@ class Expander(abc.Mapping):
     class Lit(str):
         def __repr__(self):
             return "L" + str.__repr__(self)
+        def __eq__(self, b):
+            if type(b) == Expander.Expr:
+                return False
+            return str.__eq__(self, b)
+        def __hash__(self):
+            return str.__hash__(self)
 
     class Expr(str):
         def __repr__(self):
             return "E" + str.__repr__(self)
+        def __eq__(self, b):
+            if type(b) == Expander.Lit:
+                return False
+            return str.__eq__(self, b)
+        def __hash__(self):
+            return str.__hash__(self)
 
     ########################################
 
@@ -2311,13 +2323,23 @@ def main():
 #endregion
 ####################################################################################################
 
-if __name__ == "__main__":
-    #a = Dict(a = 1, b = 2, c = 3, d = [4, 5, 6], e = Dict(f = 5, g = 6))
-    #print(a)
-    #b = Utils.map_variant(None, a, lambda key, val: val + 1)
-    #print(b)
-    #sys.exit(0)
+def scratch():
+    #x = Expander.split(r"a \{a\} a")
 
+    x = Expander.split("a{b}")
+    print(x)
+    print(repr(x))
+    print(x == ['a', 'b'])
+
+    #x = Expander.split("a {b} c")
+    #print(x)
+    #print(repr(x))
+    #print(x == ['a ', '{b}', ' c'])
+
+    sys.exit(0)
+
+if __name__ == "__main__":
+    scratch()
     sys.exit(main())
 
 # This is here to make the type checker not complain about references to "hancho.config" in build

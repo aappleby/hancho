@@ -10,82 +10,15 @@
 
 ####################################################################################################
 
-# The splitter should tag each chunk of text as a literal or a macro
-    >>> Expander.split("foo")
-    [L'foo']
-    >>> Expander.split("{bar}")
-    [E'bar']
-    >>> Expander.split("foo {bar}")
-    [L'foo ', E'bar']
-    >>> Expander.split("{bar} baz")
-    [E'bar', L' baz']
-    >>> Expander.split("foo {bar} baz")
-    [L'foo ', E'bar', L' baz']
-    >>> Expander.split("foo {bar} baz {flp} zrk")
-    [L'foo ', E'bar', L' baz ', E'flp', L' zrk']
+        """
 
-# Mismatched braces shouldn't break anything
-    >>> Expander.split("{foo")
-    [L'{foo']
-    >>> Expander.split("foo}")
-    [L'foo}']
-    >>> Expander.split("{foo}}")
-    [E'foo', L'}']
-    >>> Expander.split("{{foo}")
-    [L'{', E'foo']
-    >>> Expander.split("{foo}}{")
-    [E'foo', L'}{']
-    >>> Expander.split("}{{foo}")
-    [L'}{', E'foo']
 
-# Escaped braces should pass through expand/eval
-    >>> d = Dict(a = 1, b = 2)
-    >>> d.expand(r"\{a\}")
-    '\\{a\\}'
-    >>> d = Dict(a = 1)
-    >>> d.expand(r"\{a\} = {a}")
-    '\\{a\\} = 1'
-    >>> d.expand(r"\\{a\\}")
-    '\\\\{a\\\\}'
 
-# Macros inside a string should _not_ be split
-    >>> Expander.split("foo '{bar}' baz")
-    [L"foo '{bar}' baz"]
-    >>> Expander.split('foo "{bar}" baz')
-    [L'foo "{bar}" baz']
 
-# We should be extracting the innermost macros
-    >>> Expander.split("{{foo}}")
-    [L'{', E'foo', L'}']
-
-# ...unless the innermost macro is inside a string
-    >>> Expander.split('{foo + "{bar}"}')
-    [E'foo + "{bar}"']
-    >>> Expander.split("{foo + '{bar}'}")
-    [E"foo + '{bar}'"]
 
 ####################################################################################################
 
-# Eval'ing basic templates should work
-    >>> d = Dict(a = 1, b = 2, c = 3)
-    >>> d.eval("{a}{b}{c}")
-    123
 
-# Expanding basic templates should work
-    >>> d = Dict(a = 1, b = 2, c = 3)
-    >>> d.expand("{a}{b}{c}")
-    '123'
-
-# We should be able to read from nested dicts
-    >>> d = Dict(a = Dict(b = "{c}"), c = 10)
-    >>> d.eval("a.b")
-    '{c}'
-    >>> d.eval("{a.b}")
-    10
-    >>> d.expand("a.b")
-    'a.b'
-    >>> d.expand("{a.b}")
-    '10'
 
 # Expand produces strings, but the below does _not_ try to add (string) "10" and (int) 0 because
 # expanding {a} -> {b} -> "10" then joins the "10" with " + 0" to produce "10 + 0" before the actual

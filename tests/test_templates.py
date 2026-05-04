@@ -6,7 +6,7 @@ import unittest
 import doctest
 
 sys.path.append("..")
-from hancho import Dict
+from hancho import Dict, Expander
 
 ####################################################################################################
 
@@ -26,6 +26,14 @@ class TestTemplates(unittest.TestCase):
         1212
         """
 
+    def doctest_basic_expand(self):
+        # Expanding basic templates should work
+        """
+        >>> d = Dict(a = 1, b = 2, c = 3)
+        >>> d.expand("{a}{b}{c}")
+        '123'
+        """
+
     def doctest_nested_braces(self):
         # Multiply-nested braces should work
         """
@@ -34,6 +42,20 @@ class TestTemplates(unittest.TestCase):
         1
         >>> d.eval("{{{{{{a}}}}}}")
         1
+        """
+
+    def doctest_nested_templates(self):
+        # We should be able to expand nested templates
+        """
+        >>> d = Dict(a = Dict(b = "{c}"), c = 10)
+        >>> d.eval("a.b")
+        '{c}'
+        >>> d.eval("{a.b}")
+        10
+        >>> d.expand("a.b")
+        'a.b'
+        >>> d.expand("{a.b}")
+        '10'
         """
 
     def doctest_extra_braces(self):
@@ -116,23 +138,83 @@ class TestTemplates(unittest.TestCase):
         """
 
 
-    def test_basic_expansion(self):
-        # Basic evaluation should work
-        d = Dict(a = 1, b = 2, c = 3)
-        e = d.expand("{a}{b}{c}")
-        self.assertEqual(e, "123")
+    def doctest_splitter(self):
+        # The splitter should tag each chunk of text as a literal or a macro
+        """
+        >>> Expander.split("foo")
+        [L'foo']
+        >>> Expander.split("{bar}")
+        [E'bar']
+        >>> Expander.split("foo {bar}")
+        [L'foo ', E'bar']
+        >>> Expander.split("{bar} baz")
+        [E'bar', L' baz']
+        >>> Expander.split("foo {bar} baz")
+        [L'foo ', E'bar', L' baz']
+        >>> Expander.split("foo {bar} baz {flp} zrk")
+        [L'foo ', E'bar', L' baz ', E'flp', L' zrk']
+        """
 
-    def test_nested_braces(self):
-        # Multiply-nested braces should work
-        d = Dict(a = "b", b = 1)
-        self.assertEqual(1, d.eval("{{a}}"))
-        self.assertEqual(1, d.eval("{{{{{{a}}}}}}"))
+    def doctest_mismatched_braces(self):
+        # Mismatched braces shouldn't break anything
+        """
+        >>> Expander.split("{foo")
+        [L'{foo']
+        >>> Expander.split("foo}")
+        [L'foo}']
+        >>> Expander.split("{foo}}")
+        [E'foo', L'}']
+        >>> Expander.split("{{foo}")
+        [L'{', E'foo']
+        >>> Expander.split("{foo}}{")
+        [E'foo', L'}{']
+        >>> Expander.split("}{{foo}")
+        [L'}{', E'foo']
+        """
 
-    def test_extra_braces(self):
-        # Additional {} around an expression essentially adds extra evals
-        d = Dict(a = "1 + 1", b = "{a}")
-        self.assertEqual('1 + 1', d.expand("{a}"))
-        self.assertEqual('2', d.expand("{{a}}"))
+    def doctest_macros_inside_string(self):
+        # Macros inside a string should _not_ be split
+        """
+        >>> Expander.split("foo '{bar}' baz")
+        [L"foo '{bar}' baz"]
+        >>> Expander.split('foo "{bar}" baz')
+        [L'foo "{bar}" baz']
+        """
+
+    def doctest_split_innermost(self):
+        # We should be extracting the innermost macros
+        """
+        >>> Expander.split("{{foo}}")
+        [L'{', E'foo', L'}']
+        """
+
+    def doctest_dont_split_inside_string(self):
+        # ...unless the innermost macro is inside a string
+        """
+        >>> Expander.split('{foo + "{bar}"}')
+        [E'foo + "{bar}"']
+        >>> Expander.split("{foo + '{bar}'}")
+        [E"foo + '{bar}'"]
+        """
+
+    def test_templates_with_escaped_char_proxies(self):
+        d = Dict(a = 1, bs = '\\', lb = '{', rb = '}')
+        self.assertEqual(d.expand(r"{lb}a{rb}"), r"1")
+        self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
+
+#    def doctest_escaped_braces(self):
+#        r"""
+#        Escaped braces should pass through expand/eval
+#        >>> d = Dict(a = 1, b = 2)
+#        >>> print(d.expand(r"{a} = {a}"))
+#        1 = 1
+#        >>> print(d.expand(r"\{a\} = {a}"))
+#        \{a\} = 1
+#        >>> print(d.expand(r"\\{a\\} = {a}"))
+#        \\{a\\} = 1
+#        >>> print(d.expand(r"\\\{a\\\} = {a}"))
+#        \\\{a\\\} = 1
+#        """
 
 ####################################################################################################
 

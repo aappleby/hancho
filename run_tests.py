@@ -8,6 +8,7 @@ import importlib
 TEST_MODULES = [
     "tests.test_dict",
     "tests.test_templates",
+    "tests.test_split",
 ]
 
 #def run_file_doctests(filename):
