@@ -197,24 +197,36 @@ class TestTemplates(unittest.TestCase):
         [E"foo + '{bar}'"]
         """
 
+    def doctest_order_of_expansion(self):
+        """
+        # Expand produces strings, but the below does _not_ try to add (string) "10" and (int) 0
+        # because expanding {a} -> {b} -> "10" then joins the "10" with " + 0" to produce "10 + 0"
+        # before the final eval.
+
+        ┏ expand '{a} + 0'
+        ┃ ┏ eval 'a'
+        ┃ ┃ ┏ get 'a'
+        ┃ ┃ ┗ '{b}'
+        ┃ ┃ ┏ expand '{b}'
+        ┃ ┃ ┃ ┏ eval 'b'
+        ┃ ┃ ┃ ┃ ┏ get 'b'
+        ┃ ┃ ┃ ┃ ┗ 10
+        ┃ ┃ ┃ ┗ 10
+        ┃ ┃ ┗ '10'
+        ┃ ┗ '10'
+        ┗ '10 + 0'
+        ┏ eval '10 + 0'
+        ┗ 10
+
+        >>> d = Dict(a = "{b}", b = 10)
+        >>> d.eval("{a} + 0")
+        10
+        """
+
     def test_templates_with_escaped_char_proxies(self):
         d = Dict(a = 1, bs = '\\', lb = '{', rb = '}')
         self.assertEqual(d.expand(r"{lb}a{rb}"), r"1")
         self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
-
-#    def doctest_escaped_braces(self):
-#        r"""
-#        Escaped braces should pass through expand/eval
-#        >>> d = Dict(a = 1, b = 2)
-#        >>> print(d.expand(r"{a} = {a}"))
-#        1 = 1
-#        >>> print(d.expand(r"\{a\} = {a}"))
-#        \{a\} = 1
-#        >>> print(d.expand(r"\\{a\\} = {a}"))
-#        \\{a\\} = 1
-#        >>> print(d.expand(r"\\\{a\\\} = {a}"))
-#        \\\{a\\\} = 1
-#        """
 
 ####################################################################################################
 

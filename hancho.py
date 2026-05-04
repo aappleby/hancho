@@ -43,10 +43,7 @@ from enum import Enum
 type str_tree = str | list[str_tree]
 _MISSING = object()
 
-#if typing.TYPE_CHECKING:
-#    from . import hancho
-#else:
-#    hancho = sys.modules[__name__]
+# FIXME make sure objects added to the hancho proxy are preserved in submodules
 
 #endregion
 ####################################################################################################
@@ -194,6 +191,11 @@ class Log:
     @classmethod
     def log_line(cls, message : str):
         cls.buffer += message
+
+        if not "root_config" in globals():
+            print("where did root_config go?")
+            print("where did root_config go?")
+
         if not root_config.quiet:
             sys.stdout.write(message)
             sys.stdout.flush()
@@ -687,7 +689,9 @@ class Expander(abc.Mapping):
         run_cmd = Utils.run_cmd,
         color   = Utils.color,
         join    = Utils.join,
-        rel_path = Path.rel_path
+        rel_path = Path.rel_path,
+
+        #root_config = root_config,
     )
 
     class Lit(str):
@@ -2128,33 +2132,84 @@ class Runner:
 
 #endregion
 ####################################################################################################
+#region Config defaults
+# We spell all these defaults out explicitly so that when this config gets merged with flags and
+# task configs the fields stay in the same order.
+
+config_defaults = Dict(
+
+    desc       = "<description missing>",
+    command    = "<command missing>",
+
+    root_dir   = os.getcwd(),
+    root_file  = "build.hancho",
+
+    repo_dir   = "{root_dir}",
+    repo_file  = "{root_file}",
+
+    this_dir   = "{root_dir}",
+    this_file  = "{root_file}",
+
+    task_dir   = "{this_dir}",
+    build_root = "{repo_dir}/build",
+    build_dir  = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
+
+    depformat   = "gcc",
+    in_depfile  = "",
+
+    build_tag   = "",
+    target      = "",
+    tool        = "",
+
+    job_count   = 1,
+    job_max     = os.cpu_count(),
+
+    keep_going  = False,
+    verbose     = False,
+    debug       = False,
+    dry_run     = False,
+    quiet       = False,
+    rebuild     = False,
+    shuffle     = False,
+    trace       = False,
+    use_color   = True,
+    should_fail = False
+)
+
+#endregion
+####################################################################################################
 #region flags
 
 def parse_flags(argv):
     assert Utils.listlike(argv)
 
+    d = config_defaults
+
     # pylint: disable=line-too-long
     # fmt: off
     parser = argparse.ArgumentParser()
-    parser.add_argument("target",             default="",    nargs="?", type=str,   help="A regex that selects the targets to build. Defaults to all targets.")
-    parser.add_argument("-v", "--verbose",    default=False, action="store_true",  help="Show verbose build info")
-    parser.add_argument("-q", "--quiet",      default=False, action="store_true",  help="Mute all output")
 
-    parser.add_argument("-C", "--root_dir",   default=os.getcwd(),     type=str,   help="Change directory before starting the build")
-    parser.add_argument("-f", "--root_file",  default="build.hancho",  type=str,   help="Input .hancho file - defaults to 'build.hancho'")
+    # These flags are in Ninja order
+    parser.add_argument("target",             default=d.target,     nargs="?", type=str,  help="A regex that selects the targets to build. Defaults to all targets.")
+    parser.add_argument("-v", "--verbose",    default=d.verbose,    action="store_true",  help="Show verbose build info")
+    parser.add_argument("-q", "--quiet",      default=d.quiet,      action="store_true",  help="Mute all output")
 
-    parser.add_argument("-j", "--job_max",    default=os.cpu_count(),  type=int,   help="Run N jobs in parallel (default = cpu_count)")
-    parser.add_argument("-k", "--keep_going", default=1,     type=int,             help="Keep going until N jobs fail (0 means infinity)")
-    parser.add_argument("-n", "--dry_run",    default=False, action="store_true",  help="Do not run commands")
+    parser.add_argument("-C", "--root_dir",   default=d.root_dir,   type=str,             help="Change directory before starting the build")
+    parser.add_argument("-f", "--root_file",  default=d.root_file,  type=str,             help="Input .hancho file - defaults to 'build.hancho'")
 
-    parser.add_argument("-d", "--debug",      default=False, action="store_true",  help="Print debugging information")
-    parser.add_argument("-t", "--tool",       default="",    type=str,             help="Run a subtool.")
+    parser.add_argument("-j", "--job_max",    default=d.job_max,    type=int,             help="Run N jobs in parallel (default = cpu_count)")
+    parser.add_argument("-k", "--keep_going", default=d.keep_going, type=int,             help="Keep going until N jobs fail (0 means infinity)")
+    parser.add_argument("-n", "--dry_run",    default=d.dry_run,    action="store_true",  help="Do not run commands")
 
-    parser.add_argument("--build_tag",        default="",    type=str,             help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
-    parser.add_argument("--rebuild",          default=False, action="store_true",  help="Rebuild everything")
-    parser.add_argument("--shuffle",          default=False, action="store_true",  help="Shuffle task order to shake out dependency issues")
-    parser.add_argument("--trace",            default=False, action="store_true",  help="Trace all text expansion")
-    parser.add_argument("--use_color",        default=True,  action="store_true",  help="Use color in the console output")
+    parser.add_argument("-d", "--debug",      default=d.debug,      action="store_true",  help="Print debugging information")
+    parser.add_argument("-t", "--tool",       default=d.tool,       type=str,             help="Run a subtool.")
+
+    # These are Hancho-specific
+    parser.add_argument("--build_tag",        default=d.build_tag,  type=str,             help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
+    parser.add_argument("--rebuild",          default=d.rebuild,    action="store_true",  help="Rebuild everything")
+    parser.add_argument("--shuffle",          default=d.shuffle,    action="store_true",  help="Shuffle task order to shake out dependency issues")
+    parser.add_argument("--trace",            default=d.trace,      action="store_true",  help="Trace all text expansion")
+    parser.add_argument("--use_color",        default=d.use_color,  action="store_true",  help="Use color in the console output")
     # fmt: on
 
     (flags, unrecognized) = parser.parse_known_args(argv)
@@ -2182,35 +2237,43 @@ def parse_flags(argv):
 
     return (Dict(vars(flags)), Dict(extra_flags))
 
-#endregion
-####################################################################################################
-#region API
-# Everything in here is what the client's .hancho files should be using.
+########################################
+# We need to initialze the global root_config even if we're not loaded as __main__ - not sure where
+# to put this
 
-# This is explicitly set by the top-level Hancho module, and is set by parent modules for each
-# child module.
-
-#config = Dict()
-# load
-# repo
-# Dict
-# Task
-# Tool
-# flatten, other stuff from utils
-
-# fmt: off
-#path        = path # path.dirname and path.basename used by makefile-related rules
-#re          = re # why is sub() not working?
-#glob        = staticmethod(glob.glob)
-#ext         = staticmethod(Path.ext)
-#rel_path    = staticmethod(Path.rel_path)  # used by build_path etc
-#stem        = staticmethod(Path.stem)      # FIXME used by metron/tests?
-# fmt: on
-
+(flags, extra_flags) = parse_flags(sys.argv[1:])
+root_config = Dict(config_defaults, flags, extra_flags)
 
 #endregion
 ####################################################################################################
 #region Main
+
+def main(config : Dict):
+    root_path = os.path.join(config.root_dir, config.root_file)
+    root_path_real = os.path.realpath(root_path)
+    (root_dir_real, root_file_real) = os.path.split(root_path_real)
+
+    assert os.path.isabs (root_file_real)
+    assert os.path.isfile(root_file_real)
+    assert os.path.isabs (root_dir_real)
+    assert os.path.isdir (root_dir_real)
+
+    time_a = time.perf_counter()
+    root_script_path = os.path.join(config.root_dir, config.root_file)
+    root_mod = Loader.load_repo(root_script_path, config)
+    Stats.time_load = time.perf_counter() - time_a
+    if config.debug or config.verbose:
+        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
+
+    if root_mod.hancho.config.tool:
+        result = Runner.run_tool(root_mod.hancho.config.tool)
+    else:
+        queue_tasks(root_mod)
+        result = run_tasks(root_mod)
+
+    return result
+
+########################################
 
 def queue_tasks(root_mod):
     time_a = time.perf_counter()
@@ -2223,7 +2286,7 @@ def queue_tasks(root_mod):
     # if flags.debug or flags.verbose:
     Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
-####################################################################################################
+########################################
 
 def run_tasks(root_mod):
     time_a = time.perf_counter()
@@ -2232,96 +2295,9 @@ def run_tasks(root_mod):
     Stats.print_build_stats()
     return result
 
-####################################################################################################
-
-def main():
-    (flags, extra_flags) = parse_flags(sys.argv[1:])
-
-    root_path = os.path.join(flags.root_dir, flags.root_file)
-    root_path_real = os.path.realpath(root_path)
-    (root_dir_real, root_file) = os.path.split(root_path_real)
-
-    assert os.path.isabs (root_path_real)
-    assert os.path.isfile(root_path_real)
-    assert os.path.isabs (root_dir_real)
-    assert os.path.isdir (root_dir_real)
-
-    # We spell all these defaults out explicitly so that when this config gets merged with task
-    # configs the fields stay in the same order.
-
-    config_defaults = dict(
-
-        desc       = "<description missing>",
-        command    = "<command missing>",
-
-        root_dir   = root_dir_real,
-        root_file  = root_file,
-
-        repo_dir   = root_dir_real,
-        repo_file  = root_file,
-
-        this_dir   = root_dir_real,
-        this_file  = root_file,
-
-        task_dir   = "{this_dir}",
-        build_root = "{repo_dir}/build",
-        build_dir  = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
-
-        depformat   = "gcc",
-        in_depfile  = "",
-
-        build_tag   = flags.build_tag,
-        target      = flags.target,
-        tool        = flags.tool,
-
-        job_count   = 1,
-        job_max     = flags.job_max,
-
-        keep_going  = flags.keep_going,
-        verbose     = flags.verbose,
-        debug       = flags.debug,
-        dry_run     = flags.dry_run,
-        quiet       = flags.quiet,
-        rebuild     = flags.rebuild,
-        shuffle     = flags.shuffle,
-        trace       = flags.trace,
-        use_color   = flags.use_color,
-        should_fail = False
-    )
-
-    # FIXME forcing verbose on here
-    global root_config
-    #root_config = Dict(config_defaults, extra_flags, verbose = True)
-    root_config = Dict(config_defaults, extra_flags)
-
-#    ########################################
-#    ### XXX REMOVE ME
-#
-#    print(config)
-#
-#    if True:
-#        sys.exit(0)
-#
-#    ### XXX REMOVE ME
-#    ########################################
-
-    time_a = time.perf_counter()
-    root_script_path =os.path.join(root_config.root_dir, root_config.root_file)
-    root_mod = Loader.load_repo(root_script_path, root_config)
-    Stats.time_load = time.perf_counter() - time_a
-    if root_config.debug or root_config.verbose:
-        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
-
-    if root_mod.hancho.config.tool:
-        result = Runner.run_tool(root_mod.hancho.config.tool)
-    else:
-        queue_tasks(root_mod)
-        result = run_tasks(root_mod)
-
-    return result
-
 #endregion
 ####################################################################################################
+#region scratchpad
 
 def scratch():
     #x = Expander.split(r"a \{a\} a")
@@ -2338,14 +2314,39 @@ def scratch():
 
     sys.exit(0)
 
+#endregion
+####################################################################################################
+#region __name__ == __main__
+
 if __name__ == "__main__":
-    scratch()
-    sys.exit(main())
+    result = main(root_config)
+    sys.exit(result)
+
+####################################################################################################
+#region API decls
+# Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
+# here are so that .hancho files don't trigger type checking errors.
+
+#config = Dict()
+# load
+# repo
+# Dict
+# Task
+# Tool
+# flatten, other stuff from utils
+
+#path        = path # path.dirname and path.basename used by makefile-related rules
+#re          = re # why is sub() not working?
+#glob        = staticmethod(glob.glob)
+#ext         = staticmethod(Path.ext)
+#rel_path    = staticmethod(Path.rel_path)  # used by build_path etc
+#stem        = staticmethod(Path.stem)      # FIXME used by metron/tests?
 
 # This is here to make the type checker not complain about references to "hancho.config" in build
 # scripts, even though it's not declared in this module. The script loader will inject a script-
 # specific config object via hancho.config before the script runs, so it will resolve correctly
 # at runtime.
+
 config : Dict
 
 # These two functions are to make the type checker not complain about load/repo, which are actually
@@ -2358,3 +2359,6 @@ def repo(script_path, *args, **kwargs):
 
 def task(*args, **kwargs):
     assert False, "Nothing should be using the top-level hancho.task stub!"
+
+#endregion
+####################################################################################################
