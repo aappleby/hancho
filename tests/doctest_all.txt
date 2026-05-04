@@ -3,76 +3,10 @@
 
 ####################################################################################################
 
-"""
-# Multiply-nested braces should work
->>> d = Dict(a = "b", b = 1)
->>> d.eval("{{a}}")
-1
->>> d.eval("{{{{{{a}}}}}}")
-1
-"""
 
-# Additional {} around an expression essentially adds extra evals
-    >>> d = Dict(a = "1 + 1", b = "{a}")
-    >>> d.expand("{a}")
-    '1 + 1'
-    >>> d.expand("{{a}}")
-    '2'
 
 ####################################################################################################
 
-# Basic merging should work
-    >>> Dict()
-    Dict @ ... { }
-    >>> Dict(Dict(), dict(), dict())
-    Dict @ ... { }
-    >>> Dict(dict(), dict(bar = None))
-    Dict @ ... { bar = None }
-    >>> Dict(dict(), dict(bar = 3))
-    Dict @ ... { bar = 3 }
-    >>> Dict(foo = 1, bar = 2)
-    Dict @ ... { foo = 1, bar = 2 }
-    >>> Dict(dict(bar = None), dict())
-    Dict @ ... { bar = None }
-    >>> Dict(dict(bar = None), dict(bar = None))
-    Dict @ ... { bar = None }
-
-# Right side should always override left side if right val is not None
-    >>> Dict(dict(bar = None), dict(bar = 3))
-    Dict @ ... { bar = 3 }
-    >>> Dict(dict(bar = 2), dict(bar = 3))
-    Dict @ ... { bar = 3 }
-
-# Right side should _not_ override left side if its val is None
-    >>> Dict(dict(bar = 2), dict(bar = None))
-    Dict @ ... { bar = 2 }
-    >>> Dict({'a': 1}, a = None)
-    Dict @ ... { a = 1 }
-
->>> Dict({'a': 1}, b = 2, c = 3)
-    Dict @ ... { a = 1, b = 2, c = 3 }
-
-# Empty right side should not clobber left side
-    >>> Dict(dict(bar = 2), dict())
-    Dict @ ... { bar = 2 }
-
-# Both dict['foo'] and dict.foo should work
-    >>> d = Dict({'a': 1, 'b': 2})
-    >>> (d.a, d['b'])
-    (1, 2)
-
-
-# hancho.Dicts should be (as) immutable (as possible)
-    >>> d = Dict(a = 1)
-    >>> d.a = 2
-    Traceback (most recent call last):
-    ...
-    TypeError: ('Hancho.Dict is immutable', 'a', 2)
-
-    >>> d['a'] = 2
-    Traceback (most recent call last):
-    ...
-    TypeError: ('Hancho.Dict is immutable', 'a', 2)
 
 ####################################################################################################
 

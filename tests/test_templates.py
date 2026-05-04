@@ -36,6 +36,16 @@ class TestTemplates(unittest.TestCase):
         1
         """
 
+    def doctest_extra_braces(self):
+        # Additional {} around an expression essentially adds extra evals
+        """
+        >>> d = Dict(a = "1 + 1", b = "{a}")
+        >>> d.expand("{a}")
+        '1 + 1'
+        >>> d.expand("{{a}}")
+        '2'
+        """
+
     def doctest_basic_merging(self):
         # Basic merging should work
         """
@@ -53,6 +63,56 @@ class TestTemplates(unittest.TestCase):
         Dict @ ... { bar = None }
         >>> Dict(dict(bar = None), dict(bar = None))
         Dict @ ... { bar = None }
+        """
+
+    def doctest_right_overrides_left(self):
+        # Right side should always override left side if right val is not None
+        """
+        >>> Dict(dict(bar = None), dict(bar = 3))
+        Dict @ ... { bar = 3 }
+        >>> Dict(dict(bar = 2), dict(bar = 3))
+        Dict @ ... { bar = 3 }
+        """
+
+    def doctest_none_doesnt_override(self):
+        # Right side should _not_ override left side if its val is None
+        """
+        >>> Dict(dict(bar = 2), dict(bar = None))
+        Dict @ ... { bar = 2 }
+        >>> Dict({'a': 1}, a = None)
+        Dict @ ... { a = 1 }
+        >>> Dict({'a': 1}, b = 2, c = 3)
+        Dict @ ... { a = 1, b = 2, c = 3 }
+        """
+
+    def doctest_empty_dict_doesnt_override(self):
+        # Empty right side should not clobber left side
+        """
+        >>> Dict(dict(bar = 2), dict())
+        Dict @ ... { bar = 2 }
+        """
+
+    def doctest_attribute_and_item(self):
+        # Both dict['foo'] and dict.foo should work
+        """
+        >>> d = Dict({'a': 1, 'b': 2})
+        >>> (d.a, d['b'])
+        (1, 2)
+        """
+
+    def doctest_immutable_dicts(self):
+        # hancho.Dicts should be (as) immutable (as possible)
+        """
+        >>> d = Dict(a = 1)
+        >>> d.a = 2
+        Traceback (most recent call last):
+        ...
+        TypeError: ('Hancho.Dict is immutable', 'a', 2)
+
+        >>> d['a'] = 2
+        Traceback (most recent call last):
+        ...
+        TypeError: ('Hancho.Dict is immutable', 'a', 2)
         """
 
 
