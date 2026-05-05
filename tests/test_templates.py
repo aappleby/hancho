@@ -15,8 +15,8 @@ class TestTemplates(unittest.TestCase):
         sys.stdout.flush()
 
     def doctest_basic_eval(self):
+        r"""
         # Basic evaluation should work
-        """
         >>> d = Dict(a = 1, b = 2)
         >>> d.eval("{a}")
         1
@@ -27,16 +27,16 @@ class TestTemplates(unittest.TestCase):
         """
 
     def doctest_basic_expand(self):
+        r"""
         # Expanding basic templates should work
-        """
         >>> d = Dict(a = 1, b = 2, c = 3)
         >>> d.expand("{a}{b}{c}")
         '123'
         """
 
     def doctest_nested_braces(self):
+        r"""
         # Multiply-nested braces should work
-        """
         >>> d = Dict(a = "b", b = 1)
         >>> d.eval("{{a}}")
         1
@@ -45,8 +45,8 @@ class TestTemplates(unittest.TestCase):
         """
 
     def doctest_nested_templates(self):
+        r"""
         # We should be able to expand nested templates
-        """
         >>> d = Dict(a = Dict(b = "{c}"), c = 10)
         >>> d.eval("a.b")
         '{c}'
@@ -59,8 +59,8 @@ class TestTemplates(unittest.TestCase):
         """
 
     def doctest_extra_braces(self):
+        r"""
         # Additional {} around an expression essentially adds extra evals
-        """
         >>> d = Dict(a = "1 + 1", b = "{a}")
         >>> d.expand("{a}")
         '1 + 1'
@@ -68,137 +68,85 @@ class TestTemplates(unittest.TestCase):
         '2'
         """
 
-    def doctest_basic_merging(self):
-        # Basic merging should work
-        """
-        >>> Dict()
-        Dict @ ... { }
-        >>> Dict(Dict(), dict(), dict())
-        Dict @ ... { }
-        >>> Dict(dict(), dict(bar = None))
-        Dict @ ... { bar = None }
-        >>> Dict(dict(), dict(bar = 3))
-        Dict @ ... { bar = 3 }
-        >>> Dict(foo = 1, bar = 2)
-        Dict @ ... { foo = 1, bar = 2 }
-        >>> Dict(dict(bar = None), dict())
-        Dict @ ... { bar = None }
-        >>> Dict(dict(bar = None), dict(bar = None))
-        Dict @ ... { bar = None }
+    def doctest_read_nested_c_first(self):
+        r"""
+        # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
+        # nested context.
+        >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
+        >>> d.expand("{a.b}")
+        '10'
+        >>> d.eval("{a.b}")
+        10
         """
 
-    def doctest_right_overrides_left(self):
-        # Right side should always override left side if right val is not None
-        """
-        >>> Dict(dict(bar = None), dict(bar = 3))
-        Dict @ ... { bar = 3 }
-        >>> Dict(dict(bar = 2), dict(bar = 3))
-        Dict @ ... { bar = 3 }
-        """
-
-    def doctest_none_doesnt_override(self):
-        # Right side should _not_ override left side if its val is None
-        """
-        >>> Dict(dict(bar = 2), dict(bar = None))
-        Dict @ ... { bar = 2 }
-        >>> Dict({'a': 1}, a = None)
-        Dict @ ... { a = 1 }
-        >>> Dict({'a': 1}, b = 2, c = 3)
-        Dict @ ... { a = 1, b = 2, c = 3 }
+    def doctest_expand_before_eval(self):
+        r"""
+        # Wrapping a field in {} makes us expand it before eval
+        >>> d = Dict(a = 1, b = 2, c = 3, name_a = 'a', name_b = 'b', name_c = 'c')
+        >>> d.eval("name_a + name_b + name_c")
+        'abc'
+        >>> d.eval("{name_a} + {name_b} + {name_c}")
+        6
         """
 
-    def doctest_empty_dict_doesnt_override(self):
-        # Empty right side should not clobber left side
-        """
-        >>> Dict(dict(bar = 2), dict())
-        Dict @ ... { bar = 2 }
+    def doctest_assemble_pieces(self):
+        r"""
+        # Expanding a template can assemble a new template from pieces, which then also gets expanded
+        >>> d = Dict(part_a = '{f', part_b = 'o', part_c = 'o}', foo = 10)
+        >>> d.eval("{part_a}{part_b}{part_c}")
+        10
+
+        # And that can go multiple levels deep
+        >>> d = Dict(part_a1 = '{f', part_b1 = 'o', part_c1 = 'o}',
+        ...   foo = "{part_a2}{part_b2}{part_c2}",
+        ...   part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
+        ...   bar = 12)
+        >>> d.eval("{part_a1}{part_b1}{part_c1}")
+        12
         """
 
-    def doctest_attribute_and_item(self):
-        # Both dict['foo'] and dict.foo should work
-        """
-        >>> d = Dict({'a': 1, 'b': 2})
-        >>> (d.a, d['b'])
-        (1, 2)
+    def doctest_template_lambdas(self):
+        r"""
+        # Templates can call lambdas
+        >>> d = Dict(a = 1, b = lambda x : x + 1)
+        >>> d
+        Dict @ 0x... { a = 1, b = <function <lambda> at 0x...> }
+        >>> d.expand("foo {b(a)} bar")
+        'foo 2 bar'
         """
 
-    def doctest_immutable_dicts(self):
-        # hancho.Dicts should be (as) immutable (as possible)
-        """
+    def doctest_TEFINAE(self):
+        r"""
+        # TEFINAE - Text Expansion Failure Is Not An Error
         >>> d = Dict(a = 1)
-        >>> d.a = 2
+        >>> d.expand("{missing}")
+        '{missing}'
+        >>> d.expand("{a} {missing}")
+        '1 {missing}'
+        >>> d.expand("{a + missing}")
+        '{a + missing}'
+        """
+
+    def doctest_template_nones(self):
+        r"""
+        # Nones should turn into empty strings
+        >>> d = Dict(a = None, b = "x{a}y")
+        >>> d.eval("a") is None
+        True
+        >>> d.eval("{a}")
         Traceback (most recent call last):
         ...
-        TypeError: ('Hancho.Dict is immutable', 'a', 2)
-
-        >>> d['a'] = 2
-        Traceback (most recent call last):
-        ...
-        TypeError: ('Hancho.Dict is immutable', 'a', 2)
-        """
-
-
-    def doctest_splitter(self):
-        # The splitter should tag each chunk of text as a literal or a macro
-        """
-        >>> Expander.split("foo")
-        [L'foo']
-        >>> Expander.split("{bar}")
-        [E'bar']
-        >>> Expander.split("foo {bar}")
-        [L'foo ', E'bar']
-        >>> Expander.split("{bar} baz")
-        [E'bar', L' baz']
-        >>> Expander.split("foo {bar} baz")
-        [L'foo ', E'bar', L' baz']
-        >>> Expander.split("foo {bar} baz {flp} zrk")
-        [L'foo ', E'bar', L' baz ', E'flp', L' zrk']
-        """
-
-    def doctest_mismatched_braces(self):
-        # Mismatched braces shouldn't break anything
-        """
-        >>> Expander.split("{foo")
-        [L'{foo']
-        >>> Expander.split("foo}")
-        [L'foo}']
-        >>> Expander.split("{foo}}")
-        [E'foo', L'}']
-        >>> Expander.split("{{foo}")
-        [L'{', E'foo']
-        >>> Expander.split("{foo}}{")
-        [E'foo', L'}{']
-        >>> Expander.split("}{{foo}")
-        [L'}{', E'foo']
-        """
-
-    def doctest_macros_inside_string(self):
-        # Macros inside a string should _not_ be split
-        """
-        >>> Expander.split("foo '{bar}' baz")
-        [L"foo '{bar}' baz"]
-        >>> Expander.split('foo "{bar}" baz')
-        [L'foo "{bar}" baz']
-        """
-
-    def doctest_split_innermost(self):
-        # We should be extracting the innermost macros
-        """
-        >>> Expander.split("{{foo}}")
-        [L'{', E'foo', L'}']
-        """
-
-    def doctest_dont_split_inside_string(self):
-        # ...unless the innermost macro is inside a string
-        """
-        >>> Expander.split('{foo + "{bar}"}')
-        [E'foo + "{bar}"']
-        >>> Expander.split("{foo + '{bar}'}")
-        [E"foo + '{bar}'"]
+        SyntaxError: invalid syntax
+        >>> d.expand("{a}")
+        ''
+        >>> d.expand("{b}")
+        'xy'
+        >>> d.expand("foo {b} bar")
+        'foo xy bar'
         """
 
     def doctest_order_of_expansion(self):
-        """
+        r"""
         # Expand produces strings, but the below does _not_ try to add (string) "10" and (int) 0
         # because expanding {a} -> {b} -> "10" then joins the "10" with " + 0" to produce "10 + 0"
         # before the final eval.
@@ -223,7 +171,41 @@ class TestTemplates(unittest.TestCase):
         10
         """
 
+    def doctest_join_lists(self):
+        r"""
+        # Lists should be joined with spaces
+        >>> d = Dict(flags = ["-O2", "-Wall"])
+        >>> d.expand("cc {flags} main.c")
+        'cc -O2 -Wall main.c'
+        >>> d.eval("flags")
+        ('-O2', '-Wall')
+
+#        >>> d.eval("{flags}")
+#        Traceback (most recent call last):
+#        ...
+#        AttributeError: 'Dict' object has no attribute 'O2'
+        """
+
+    def doctest_flatten_lists(self):
+        r"""
+        # Lists should be flattened before joining with spaces
+        >>> d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
+        >>> d.expand("{flags}")
+        'a b c d e f'
+        >>> d.eval("flags")
+        ((('a',), 'b'), 'c', 'd', ('e', 'f'))
+        >>> d.eval("{flags}")
+        Traceback (most recent call last):
+        ...
+            a b c d e f
+              ^
+        SyntaxError: invalid syntax
+        """
+
     def test_templates_with_escaped_char_proxies(self):
+        # Testing escape sequences in templates is annoying. Double-check that we can use proxies
+        # to build strings with escape sequences.
+
         d = Dict(a = 1, bs = '\\', lb = '{', rb = '}')
         self.assertEqual(d.expand(r"{lb}a{rb}"), r"1")
         self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")

@@ -6,6 +6,7 @@ TEST_MODULES = [
     "tests.test_dict",
     "tests.test_templates",
     "tests.test_split",
+    "tests.test_scratch",
 ]
 
 def run_test_suite(mod_name):

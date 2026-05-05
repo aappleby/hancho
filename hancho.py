@@ -45,24 +45,33 @@ _MISSING = object()
 
 # FIXME make sure objects added to the hancho proxy are preserved in submodules
 
+root_config : "Dict"
+
 #endregion
 ####################################################################################################
 #region Job pool
 
 class JobPool:
-    jobs_available = os.cpu_count() or 1
-    jobs_lock = asyncio.Condition()
-    job_slots = [None] * jobs_available
+    job_max : int
+    jobs_available : int
+    job_slots : list[Any]
+    jobs_lock : asyncio.Condition
 
     @classmethod
-    def reset(cls, job_max):
+    def init(cls, job_max):
+        cls.job_max = job_max
         cls.jobs_available = job_max
         cls.job_slots = [None] * cls.jobs_available
+        cls.jobs_lock = asyncio.Condition()
+
+    @classmethod
+    def reset(cls):
+        cls.init(cls.job_max)
 
     ########################################
 
     @classmethod
-    async def acquire_jobs(cls, count, token):
+    async def acquire_jobs(cls, count, token : Any):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
         if count > root_config.job_max:
@@ -108,28 +117,56 @@ class JobPool:
 #region Files
 
 class Files:
-    loaded_files : list[str] = []
-    all_out_files : set = set()
-    filename_to_fingerprint : dict[str, str] = {}
+    loaded_files : list[str]
+    all_out_files : set
+    filename_to_fingerprint : dict[str, str]
+
+    @classmethod
+    def init(cls):
+        cls.loaded_files = []
+        cls.all_out_files = set()
+        cls.filename_to_fingerprint = dict()
+
+    @classmethod
+    def reset(cls):
+        cls.init()
 
 #endregion
 ####################################################################################################
 #region Stats
 
 class Stats:
-    mtime_calls : int = 0
+    mtime_calls : int
 
-    time_load  : float = 0
-    time_queue : float = 0
-    time_build : float = 0
+    time_load  : float
+    time_queue : float
+    time_build : float
 
-    tasks_started : int = 0
-    tasks_running : int = 0
-    tasks_finished : int = 0
-    tasks_failed : int = 0
-    tasks_skipped : int = 0
-    tasks_cancelled : int = 0
-    tasks_broken : int = 0
+    tasks_started : int
+    tasks_running : int
+    tasks_finished : int
+    tasks_failed : int
+    tasks_skipped : int
+    tasks_cancelled : int
+    tasks_broken : int
+
+    @classmethod
+    def init(cls):
+        cls.mtime_calls = 0
+        cls.time_load  = 0
+        cls.time_queue = 0
+        cls.time_build = 0
+        cls.tasks_started = 0
+        cls.tasks_running = 0
+        cls.tasks_finished = 0
+        cls.tasks_failed = 0
+        cls.tasks_skipped = 0
+        cls.tasks_cancelled = 0
+        cls.tasks_broken = 0
+
+    @classmethod
+    def reset(cls):
+        cls.init()
 
     @classmethod
     def print_build_stats(cls):
@@ -158,8 +195,16 @@ class Stats:
 #region Log
 
 class Log:
-    buffer : str = ""
-    line_dirty : bool = False
+    buffer : str
+    line_dirty : bool
+
+    @classmethod
+    def init(cls):
+        cls.buffer = ""
+        cls.line_dirty = False
+
+    @classmethod
+    def reset(cls): cls.init()
 
     @classmethod
     def log(cls, message : str, *, sameline : bool = False, **kwargs):
@@ -210,49 +255,51 @@ class Path:
 
     # FIXME this could use some cleanup, I don't think we need _all_ these methods.
 
-    @staticmethod
+    @classmethod
     @overload
-    def abs_path(raw_path : str) -> str: pass
-    @staticmethod
+    def abs_path(cls, raw_path : str) -> str: pass
+    @classmethod
     @overload
-    def abs_path(raw_path : list[str_tree]) -> list[str_tree]: pass
-    @staticmethod
-    def abs_path(raw_path):
-        if Utils.listlike(raw_path):
+    def abs_path(cls, raw_path : list[str_tree]) -> list[str_tree]: pass
+    @classmethod
+    def abs_path(cls, raw_path):
+        if Utils.is_iterable(raw_path):
             return [Path.abs_path(p) for p in raw_path]
         elif isinstance(raw_path, str):
             return os.path.abspath(raw_path)
         else:
             assert False, f"abs_path() Don't know what to do with a {type(raw_path).__name__}"
 
-    @staticmethod
+    @classmethod
     @overload
-    def rel_path(path1 : str, path2 : str) -> str: pass
-    @staticmethod
+    def rel_path(cls, path1 : str, path2 : str) -> str: pass
+    @classmethod
     @overload
-    def rel_path(path1 : str_tree, path2 : str_tree) -> str_tree: pass
-    @staticmethod
-    def rel_path(path1, path2):
-        if Utils.listlike(path1):
-            return [Path.rel_path(p, path2) for p in path1]
+    def rel_path(cls, path1 : str_tree, path2 : str_tree) -> str_tree: pass
+    @classmethod
+    def rel_path(cls, path1, path2):
+        if Utils.is_iterable(path1):
+            result = [Path.rel_path(p, path2) for p in path1]
         elif isinstance(path1, str):
             # Generating relative paths in the presence of symlinks doesn't work with either
             # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
             # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
             # should. What we really want is to just remove redundant cwd stuff off the beginning of the
             # path, which we can do with simple string manipulation.
-            return path1.removeprefix(path2 + "/") if path1 != path2 else "."
+            result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
         else:
             assert False, f"rel_path() Don't know what to do with a {type(path1).__name__}"
 
-    @staticmethod
+        return result
+
+    @classmethod
     @overload
-    def join(lhs : str, rhs : str) -> str: pass
-    @staticmethod
+    def join(cls, lhs : str, rhs : str) -> str: pass
+    @classmethod
     @overload
-    def join(lhs : str_tree, rhs : str_tree, *args : str_tree) -> str_tree: pass
-    @staticmethod
-    def join(lhs, rhs, *args) -> str_tree:
+    def join(cls, lhs : str_tree, rhs : str_tree, *args : str_tree) -> str_tree: pass
+    @classmethod
+    def join(cls, lhs, rhs, *args) -> str_tree:
         if len(args) > 0:
             rhs = Path.join(rhs, *args)
         flat_lhs = Utils.flatten(lhs)
@@ -260,56 +307,56 @@ class Path:
         result = [os.path.join(l, r) for l in flat_lhs for r in flat_rhs]
         return result[0] if len(result) == 1 else result
 
-    @staticmethod
-    def isnorm(file_path : str) -> bool:
+    @classmethod
+    def isnorm(cls, file_path : str) -> bool:
         return file_path == Path.norm(file_path)
 
-    @staticmethod
-    def isreal(file_path : str) -> bool:
+    @classmethod
+    def isreal(cls, file_path : str) -> bool:
         return file_path == Path.real(file_path)
 
-    @staticmethod
-    def norm(_path : str) -> str:
+    @classmethod
+    def norm(cls, _path : str) -> str:
         assert not Utils.is_template(_path), f"Can't use a template as a path : {_path}"
         _path = os.path.join(os.getcwd(), _path)
         _path = os.path.normpath(_path)
         return _path
 
-    @staticmethod
-    def real(file_path : str) -> str:
+    @classmethod
+    def real(cls, file_path : str) -> str:
         assert not Utils.is_template(file_path), f"Can't use a template as a path : {file_path}"
         file_path = Path.norm(file_path)
         file_path = os.path.realpath(file_path)
         return file_path
 
-    @staticmethod
-    def split(file_path : str) -> tuple[str, str]:
+    @classmethod
+    def split(cls, file_path : str) -> tuple[str, str]:
         result = os.path.split(file_path)
         return result
 
-    @staticmethod
+    @classmethod
     @overload
-    def normpath(val : str) -> str: pass
-    @staticmethod
+    def normpath(cls, val : str) -> str: pass
+    @classmethod
     @overload
-    def normpath(val : str_tree) -> str_tree: pass
-    @staticmethod
-    def normpath(val):
+    def normpath(cls, val : str_tree) -> str_tree: pass
+    @classmethod
+    def normpath(cls, val):
         result : str_tree | None = None
-        if Utils.listlike(val):
+        if Utils.is_iterable(val):
             return [Path.normpath(v) for v in val]
         elif isinstance(val, str):
             return os.path.normpath(val)
         else:
             assert False, f"normpath() Don't know what to do with a {type(val).__name__}"
 
-    #@staticmethod
+    #@classmethod
     #@overload
     #def prepend_dir(task_dir : str, val : str) -> str : pass
-    #@staticmethod
+    #@classmethod
     #@overload
     #def prepend_dir(task_dir : str, val : str_tree) -> str_tree: pass
-    #@staticmethod
+    #@classmethod
     #def prepend_dir(task_dir, val):
     #    if isinstance(val, list):
     #        return [Path.prepend_dir(task_dir, v) for v in val]
@@ -318,16 +365,16 @@ class Path:
     #    else:
     #        assert False, f"prepend_dir() Don't know what to do with a {type(val).__name__}"
 
-    @staticmethod
+    @classmethod
     @overload
-    def ext(name : str, new_ext : str) -> str : pass
-    @staticmethod
+    def ext(cls, name : str, new_ext : str) -> str : pass
+    @classmethod
     @overload
-    def ext(name : str_tree, new_ext : str) -> str_tree : pass
-    @staticmethod
-    def ext(name : str_tree, new_ext : str):
+    def ext(cls, name : str_tree, new_ext : str) -> str_tree : pass
+    @classmethod
+    def ext(cls, name : str_tree, new_ext : str):
         """Replaces file extensions on either a single filename or a list of filenames."""
-        if Utils.listlike(name):
+        if Utils.is_iterable(name):
             return [Path.ext(n, new_ext) for n in name]
         elif isinstance(name, str):
             return os.path.splitext(name)[0] + new_ext
@@ -335,8 +382,8 @@ class Path:
             assert False, f"ext() Don't know what to do with a {type(name).__name__}"
 
     #FIXME shouldn't this do the dynamic dispatch thing like above?
-    @staticmethod
-    def stem(filename : str_tree) -> str:
+    @classmethod
+    def stem(cls, filename : str_tree) -> str:
         flat_names : list[str] = Utils.flatten(filename)
         flat_filename : str = flat_names[0]
         base_filename : str = os.path.basename(flat_filename)
@@ -347,70 +394,93 @@ class Path:
 #region Utils
 
 class Utils:
-    rand = random.Random()
+    rand : random.Random
 
-    @staticmethod
-    def hash(v):
-        if isinstance(v, (int, float, bool, str, type(None))):
-            pass
-        elif isinstance(v, dict):
-            v = frozenset(Utils.hash(kv) for kv in v.items())
-        elif isinstance(v, (list, tuple)):
-            v = tuple(Utils.hash(x) for x in v)
-        elif isinstance(v, set):
-            v = frozenset(Utils.hash(x) for x in v)
-        else:
-            raise TypeError(f"Don't know how to hash {v}")
+    @classmethod
+    def init(cls):
+        cls.rand = random.Random()
+
+    @classmethod
+    def reset(cls):
+        cls.init()
+
+    @classmethod
+    def hash(cls, v):
         return hash(v)
+        #if isinstance(v, (int, float, bool, str, type(None))):
+        #    pass
+        #elif isinstance(v, dict):
+        #    v = frozenset(Utils.hash(kv) for kv in v.items())
+        #elif isinstance(v, (list, tuple)):
+        #    v = tuple(Utils.hash(x) for x in v)
+        #elif isinstance(v, set):
+        #    v = frozenset(Utils.hash(x) for x in v)
+        #else:
+        #    raise TypeError(f"Don't know how to hash {v}")
+        #return hash(v)
 
-    @staticmethod
-    def check[T](type_: Type[T], t: object) -> T:
+    @classmethod
+    def check[T](cls, type_: Type[T], t: object) -> T:
         assert isinstance(t, type_), f"Expected {type_.__name__}, got {type(t).__name__}"
         return t
 
-    @staticmethod
-    def listlike(variant : Any) -> bool:
-        return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
+    @classmethod
+    def tuplify(cls, obj):
+        if not Utils.is_iterable(obj):
+            return obj
+        result = tuple(Utils.tuplify(x) for x in obj)
+        return result
 
-    @staticmethod
-    def dictlike(variant : Any) -> bool:
+    @classmethod
+    def is_iterable(cls, variant : Any) -> bool:
+        #return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
+        # Note we exclude 'str' and 'bytes' as we don't want to turn those into tuples of chars/bytes
+        return not isinstance(variant, abc.Mapping) and isinstance(variant, abc.Iterable) and not isinstance(variant, (str, bytes, bytearray))
+
+    @classmethod
+    def is_mapping(cls, variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
 
-    @staticmethod
-    def is_template(variant : Any) -> bool:
+    @classmethod
+    def is_whitelisted(cls, variant : Any) -> bool:
+        whitelist = (type(None), bool, int, float, complex, str, bytes, Dict, tuple, types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
+        return type(variant) in whitelist
+
+    @classmethod
+    def is_template(cls, variant : Any) -> bool:
         if not isinstance(variant, str):
             return False
         blocks = Expander.split(variant)
         return len(blocks) > 1
 
-    @staticmethod
-    def is_expr(variant : Any) -> bool:
+    @classmethod
+    def is_expr(cls, variant : Any) -> bool:
         if not isinstance(variant, str):
             return False
         blocks = Expander.split(variant)
         return len(blocks) == 1 and type(blocks[0]) == Expander.Expr
 
-    @staticmethod
-    def is_lit(variant : Any) -> bool:
+    @classmethod
+    def is_lit(cls, variant : Any) -> bool:
         if not isinstance(variant, str):
             return False
         blocks = Expander.split(variant)
         return len(blocks) == 1 and type(blocks[0]) == Expander.Lit
 
-    @staticmethod
-    def join(lhs : str_tree, rhs : str_tree, *args : str_tree) -> list[str]:
+    @classmethod
+    def join(cls, lhs : str_tree, rhs : str_tree, *args : str_tree) -> list[str]:
         lhs2 = Utils.flatten(lhs)
         rhs2 = Utils.join(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
         return [l + r for l in lhs2 for r in rhs2]
 
     ########################################
 
-    @staticmethod
-    def color(red : int = 0, green : int = 0, blue : int = 0) -> str:
+    @classmethod
+    def color(cls, red : int = 0, green : int = 0, blue : int = 0) -> str:
         """Converts RGB color to ANSI format string."""
         # Color strings don't work in Windows console, so don't emit them.
-        # if not flags.use_color or os.name == "nt":
-        #    return ""
+        if not root_config.use_color or os.name == "nt":
+            return ""
         if red == 0 and green == 0 and blue == 0:
             return "\x1B[0m"
         return f"\x1B[38;2;{red};{green};{blue}m"
@@ -423,24 +493,24 @@ class Utils:
 
     ########################################
 
-    @staticmethod
-    def run_cmd(cmd : str):
+    @classmethod
+    def run_cmd(cls, cmd : str):
         """Runs a console command synchronously and returns its stdout with whitespace stripped."""
         return subprocess.check_output(cmd, shell=True, text=True).strip()
 
     ########################################
 
-    @staticmethod
-    def mtime(filename : str):
+    @classmethod
+    def mtime(cls, filename : str):
         """Gets the file's mtime and tracks how many times we've called mtime()"""
         Stats.mtime_calls += 1
         return os.stat(filename).st_mtime_ns
 
     ########################################
 
-    @staticmethod
-    def flatten(variant : Any) -> list[Any]:
-        if Utils.listlike(variant):
+    @classmethod
+    def flatten(cls, variant : Any) -> list[Any]:
+        if Utils.is_iterable(variant):
             return [x for element in variant for x in Utils.flatten(element)]
         if variant is None:
             return []
@@ -453,55 +523,56 @@ class Utils:
         """Converts any type into a template-compatible string."""
         if variant is None:
             return ""
-        elif Utils.listlike(variant):
+        elif Utils.is_iterable(variant):
             variant = [cls.stringify_variant(val) for val in variant]
             return " ".join(variant)
         else:
             return str(variant)
 
-    @staticmethod
-    def map_variant(key, val, map):
-        if Utils.dictlike(val):
+    @classmethod
+    def map_variant(cls, key, val, map):
+        if Utils.is_mapping(val):
             val = Dict({k: Utils.map_variant(k, v, map) for k, v in val.items()})
-        elif Utils.listlike(val):
+        elif Utils.is_iterable(val):
             val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
         else:
             val = map(key, val)
         return val
 
-    @staticmethod
-    async def async_map_variant(key, val, map):
-        if Utils.dictlike(val):
+    @classmethod
+    async def async_map_variant(cls, key, val, map):
+        if Utils.is_mapping(val):
             #val = Dict({k: await Utils.map_variant(k, v, map) for k, v in val.items()})
             result = {}
             for k, v in val.items():
                 result[k] = await Utils.async_map_variant(k, v, map)
             val = Dict(result)
-        elif Utils.listlike(val):
+        elif Utils.is_iterable(val):
             #val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
             result = []
             for k, v in enumerate(val):
-                result[k] = await Utils.async_map_variant(k, v, map)
+                #result[k] = await Utils.async_map_variant(k, v, map)
+                result.append(await Utils.async_map_variant(k, v, map))
             val = tuple(result)
         else:
             val = await map(key, val)
         return val
 
-    @staticmethod
-    def apply_variant(key, val, apply):
+    @classmethod
+    def apply_variant(cls, key, val, apply):
         val = apply(key, val)
-        if Utils.dictlike(val):
+        if Utils.is_mapping(val):
             for key2, val2 in val.items():
                 Utils.apply_variant(key2, val2, apply)
-        elif Utils.listlike(val):
+        elif Utils.is_iterable(val):
             for key2, val2 in enumerate(val):
                 Utils.apply_variant(key2, val2, apply)
 
-    @staticmethod
-    async def await_variant(variant):
+    @classmethod
+    async def await_variant(cls, variant):
         """Recursively replaces every awaitable in the variant with its awaited value."""
 
-        if Utils.listlike(variant):
+        if Utils.is_iterable(variant):
             for key, val in enumerate(variant):
                 variant[key] = await Utils.await_variant(val)
             return variant
@@ -534,46 +605,43 @@ class Dict(dict):
     5. Dict behaves like a value type, merging will make copies of all its inputs.
     """
 
-    _NOCOPY = (type(None), bool, int, float, complex, str, bytes,
-            types.ModuleType, types.FunctionType, types.BuiltinFunctionType)
-    _COPY = (dict, list, tuple, set)
-    _WHITELIST = _NOCOPY + _COPY
-
     def __init__(self, *args, **kwargs):
         super().__init__()
 
         # Ignore Nones and empty dicts.
         for arg in filter(None, (*args, kwargs)):
-            assert Utils.dictlike(arg)
+            assert Utils.is_mapping(arg)
             for key, rval in arg.items():
                 lval = dict.get(self, key, None)
 
-                if isinstance(rval, abc.Mapping):
-                    # Upgrade rval to Dict and recursively merge mappings.
-                    if type(rval) != Dict:
-                        rval = Dict(rval)
-                    if isinstance(lval, abc.Mapping):
-                        rval = Dict(lval, rval)
-                elif isinstance(rval, Dict._NOCOPY):
-                    pass
-                elif isinstance(rval, Dict._COPY):
-                    rval = copy.deepcopy(rval)
-                else:
+                # Mappings get turned into Dicts.
+                if Utils.is_mapping(rval) and type(rval) != Dict:
+                    rval = Dict(rval)
+
+                # Iterables get turned into tuples.
+                if Utils.is_iterable(rval) and type(rval) != tuple:
+                    rval = Utils.tuplify(rval)
+
+                # Pairs of mappings get merged together as needed.
+                if Utils.is_mapping(lval) and Utils.is_mapping(rval):
+                    rval = Dict(lval, rval)
+
+                # Non-whitelisted types get rejected.
+                if not Utils.is_whitelisted(rval):
+                    Utils.is_whitelisted(rval)
                     raise TypeError(f"Can't put type {type(rval)} into a Dict.")
 
                 if lval is None or rval is not None:
                     dict.__setitem__(self, key, rval)
 
     ########################################
+    # Dicts are immutable, so copying them should do nothing.
 
     def __copy__(self):
-        return Dict(self)
+        return self
 
     def __deepcopy__(self, memo):
-        return Dict(self)
-
-    def __hash__(self):
-        return Utils.hash(self)
+        return self
 
     ########################################
     # Object
@@ -594,10 +662,7 @@ class Dict(dict):
     # abc.Mapping
 
     def __getitem__(self, name : str):
-        try:
-            return dict.__getitem__(self, name)
-        except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+        return dict.__getitem__(self, name)
 
     def __setitem__(self, name : str, value : Any):
         raise TypeError("Hancho.Dict is immutable", name, value)
@@ -607,6 +672,9 @@ class Dict(dict):
 
     ########################################
     # Debugging stuff
+
+    def __hash__(self):
+        return Utils.hash(self)
 
     def __repr__(self):
         if Expander.depth > 0:
@@ -661,38 +729,25 @@ class Expander(abc.Mapping):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    depth : int = 0
-
-    _context: Dict
-
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_DEPTH >= 6
-    MAX_DEPTH = 20
+    MAX_DEPTH : int
+
+    depth : int
+
+    #depth = 0
+    #MAX_DEPTH = 20
+
+    @classmethod
+    def init(cls, max_depth):
+        cls.depth = 0
+        cls.MAX_DEPTH = max_depth
+
+    @classmethod
+    def reset(cls):
+        cls.init(cls.MAX_DEPTH)
 
     # FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
-    # FIXME It feels slightly odd to have expansion_globals, should we just use the hancho.py
-    # module itself?
-
-    expansion_globals = Dict(
-        os   = os,
-        sys  = sys,
-        path = os.path,
-        re   = re,
-        glob = glob,
-
-        #ext     = Utils.ext,
-        #rel     = Utils.rel_path,
-        #stem    = Utils.stem,
-        #name    = Utils.name
-        #log     = Log.log,
-        flatten = Utils.flatten,
-        run_cmd = Utils.run_cmd,
-        color   = Utils.color,
-        join    = Utils.join,
-        rel_path = Path.rel_path,
-
-        #root_config = root_config,
-    )
 
     class Lit(str):
         def __repr__(self):
@@ -717,9 +772,11 @@ class Expander(abc.Mapping):
     ########################################
 
     def __init__(self, context : Dict):
-        object.__setattr__(self, "_context", context)
+        #print("************Expander.__init__************")
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         trace = dict.get(context, "trace", False)
+
+        object.__setattr__(self, "_context", context)
         object.__setattr__(self, "trace", trace)
 
     def __contains__(self, key):
@@ -813,36 +870,69 @@ class Expander(abc.Mapping):
     ########################################
 
     def _get(self, key):
-        orig_key = key
-        if self.trace:
-            Tracer.log(self, f"┏ get '{orig_key}'")
-        Expander.depth += 1
+        trace_color = Utils.color(0, 255, 0)
 
-        result = "<_get failed>"
-        try:
-            result = self._context[key]
+        cached = False
+
+        if key in self.__dict__:
+            cached = True
+            result = self.__dict__[key]
+            #Tracer.log2(self, f"Cache hit - {key} = {result}")
+
+            #print(f"Expander 0x{hex(id(self))} - Found {key} : {result}")
+            #return result
+
+        if self.trace:
+            Tracer.log(self, trace_color, "┏", f" get '{key}'")
+
+        if not cached:
+
+            Tracer.push(trace_color)
+            Expander.depth += 1
+
+            result = "<_get failed>"
+            e = None
+
+            if key in self._context:
+                result = self._context[key]
+            elif key in expansion_globals:
+                result = expansion_globals[key]
+            else:
+                e = KeyError(key)
 
             # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
             if isinstance(result, Dict):
                 result = Expander(result)
 
-            Expander.depth -= 1
-            if self.trace:
-                if isinstance(result, str):
-                    Tracer.log(self, f"┗ '{result}'")
-                else:
-                    Tracer.log(self, f"┗ {result}")
+            # If we fetched a string, expand it if needed
+            if isinstance(result, str):
+                result = self.expand(result)
 
-        except Exception as e:
             Expander.depth -= 1
-            if self.trace:
-                Tracer.log(self, f"┗ {type(e).__name__}: {e}")
-            raise
-            return result
+            Tracer.pop()
 
-        # If we fetched a string, expand it if needed
-        if isinstance(result, str):
-            result = self.expand(result)
+            if e:
+                if self.trace:
+                    Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
+                raise e
+
+            # Since Dicts are immutable, it's safe to cache the result of expansion here.
+            #if self.trace:
+            #    Tracer.log(self, trace_color, "┃", f" Caching {key} : '{result}'")
+            self.__dict__[key] = result
+
+        if self.trace:
+            message = ""
+
+            if cached:
+                message += " (Cached)"
+
+            if isinstance(result, str):
+                message += f" '{result}'"
+            else:
+                message += f" {result}"
+
+            Tracer.log(self, trace_color, "┗", message)
 
         return result
 
@@ -853,6 +943,7 @@ class Expander(abc.Mapping):
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
+        trace_color = Utils.color(0, 0, 255)
 
         if not isinstance(expr, str):
             return expr
@@ -861,39 +952,31 @@ class Expander(abc.Mapping):
 
         orig_expr = expr
         if self.trace:
-            Tracer.log(self, f"┏ eval '{orig_expr}'")
+            Tracer.log(self, trace_color, "┏", f" eval '{orig_expr}'")
+
+        Tracer.push(trace_color)
         Expander.depth += 1
 
+        e = None
         try:
-            result = eval(expr, self.expansion_globals, self)
-            Expander.depth -= 1
-            if self.trace:
-                if isinstance(result, str):
-                    Tracer.log(self, f"┗ '{result}'")
-                else:
-                    Tracer.log(self, f"┗ {result}")
-        except Exception as e:
+            result = eval(expr, None, self)
+        except Exception as _e:
             # If the expression was not valid Python, return it verbatim.
             # We can tag the failed evals if needed
-            #result = "X" + expr
             result = expr
-
-            Expander.depth -= 1
-            if self.trace:
-                Tracer.log(self, f"┗ {type(e).__name__}: {e}")
+            e = _e
             raise
+        finally:
+            Expander.depth -= 1
+            Tracer.pop()
 
-#        except Exception as e:
-#            # If any other error happened while evaluating the expression, return the expression verbatim.
-#            # We can tag the failed evals if needed
-#            #result = "X" + expr
-#            result = expr
-#
-#            Expander.depth -= 1
-#            if self.trace:
-#                Tracer.log_trace(self, f"┗ {type(e).__name__}: {e}")
-#            # We can make this fatal instead of a no-op, not sure if that's more ergonomic...
-#            raise
+            if self.trace:
+                if e is not None:
+                    Tracer.log(self, trace_color, "┗", f" {type(e).__name__}: {e}")
+                elif isinstance(result, str):
+                    Tracer.log(self, trace_color, "┗", f" '{result}'")
+                else:
+                    Tracer.log(self, trace_color, "┗", f" {result}")
 
         return result
 
@@ -907,22 +990,28 @@ class Expander(abc.Mapping):
         Expand _always_ recurses until expansion does nothing.
         """
 
+        trace_color = Utils.color(255, 0, 0)
+
         if not isinstance(template, str):
             print(f"??? type of template is {type(template)}")
             return template
 
         if Expander.depth > Expander.MAX_DEPTH:
-            raise RecursionError("TemplateRecursion: Text expansion failed to terminate")
-
+            raise RecursionError("Text expansion failed to terminate")
 
         blocks = Expander.split(template)
+
+        if len(blocks) == 0:
+            return template
 
         if len(blocks) == 1 and type(blocks[0]) == Expander.Lit:
             return template
 
         if self.trace:
-            Tracer.log(self, f"┏ expand '{template}'")
+            Tracer.log(self, trace_color, "┏", f" expand '{template}'")
+
         Expander.depth += 1
+        Tracer.push(trace_color)
 
 
         for (i, block) in enumerate(blocks):
@@ -938,8 +1027,10 @@ class Expander(abc.Mapping):
         result = "".join(blocks)
 
         Expander.depth -= 1
+        Tracer.pop()
+
         if self.trace:
-            Tracer.log(self, f"┗ '{result}'")
+            Tracer.log(self, trace_color, "┗", f" '{result}'")
 
         if result != template:
             result = self.expand(result)
@@ -953,13 +1044,68 @@ class Expander(abc.Mapping):
 
 class Tracer:
 
+    trellis_stack : list[str]
+
     @classmethod
-    def log(cls, source : Any, text : str):
+    def init(cls):
+        cls.trellis_stack = []
+
+    @classmethod
+    def reset(cls):
+        cls.init()
+
+    @classmethod
+    def push(cls, color):
+        Tracer.trellis_stack.append(color + "┃ ")
+
+    @classmethod
+    def pop(cls):
+        Tracer.trellis_stack.pop()
+
+    @classmethod
+    def log(cls, source : Any, trellis_color : str, trellis_bar: str, text : str):
         """Prints a trace message to the log."""
         source_id = id(source)
-        color  = Utils.id_to_color(source_id)
-        prefix = hex(source_id) + Utils.color() + ": " + ("┃ " * Expander.depth)
-        Log.log(color + prefix + text)
+
+        #if trellis_bar[0] == '┗':
+        #    Tracer.pop()
+
+        buffer = ""
+        buffer += Utils.id_to_color(source_id)
+        buffer += hex(source_id)
+        buffer += Utils.color()
+        buffer += ": "
+
+        buffer += "".join(Tracer.trellis_stack)
+        buffer += trellis_color
+        buffer += trellis_bar
+        buffer += Utils.color()
+
+        buffer += text
+
+        Log.log(buffer)
+
+        #if trellis_bar[0] == '┏':
+        #    Tracer.push(trellis_color)
+
+        if len(trellis_bar) and trellis_bar[0] == '┗' and Expander.depth == 0:
+            Log.log("")
+
+    @classmethod
+    def log2(cls, source : Any, text : str):
+        """Prints a trace message to the log."""
+        source_id = id(source)
+
+        buffer = ""
+        buffer += Utils.id_to_color(source_id)
+        buffer += hex(source_id)
+        buffer += Utils.color()
+        buffer += ": "
+        buffer += "".join(Tracer.trellis_stack)
+        buffer += Utils.color()
+        buffer += text
+
+        Log.log(buffer)
 
     #@classmethod
     #def prefix(cls, context):
@@ -1001,9 +1147,11 @@ class Dumper:
             result += self.dump_dict(variant)
         elif isinstance(variant, Expander):
             result += self.dump_dict(variant.config)
-        elif Utils.listlike(variant):
-            result += self.dump_list(variant)
-        elif Utils.dictlike(variant):
+        elif isinstance(variant, tuple):
+            result += self.dump_list(variant, '(', ')')
+        elif Utils.is_iterable(variant):
+            result += self.dump_list(variant, '[', ']')
+        elif Utils.is_mapping(variant):
             result = ""
             result += self.dump_dict(variant)
         elif isinstance(variant, str):
@@ -1014,22 +1162,22 @@ class Dumper:
             result += str(variant)
         return result
 
-    def dump_list(self, l):
-        if len(l) == 0:
-            return "[]"
+    def dump_list(self, val, ld, rd):
+        if len(val) == 0:
+            return f"{ld}{rd}"
 
-        if len(l) == 1:
-            return f"[{self.dump(l[0])}]"
+        if len(val) == 1:
+            return f"{ld}{self.dump(val[0])}{rd}"
 
         if self.depth >= self.max_depth:
             return "[...]"
 
-        result = "[\n"
+        result = f"{ld}\n"
         self.depth += 1
-        for val in l:
+        for val in val:
             result += self.indent() + self.dump(val) + ",\n"
         self.depth -= 1
-        result += self.indent() + "]"
+        result += f"{self.indent()}{rd}"
         return result
 
     def dump_dict(self, d):
@@ -1098,8 +1246,17 @@ class HanchoProxy(types.ModuleType):
 
 class Loader:
 
-    depth : int = 0
-    script_to_repo : dict[tuple[str, Dict], types.ModuleType] = {}
+    depth : int
+    script_to_repo : dict[tuple[str, Dict], types.ModuleType]
+
+    @classmethod
+    def init(cls):
+        cls.depth = 0
+        cls.script_to_repo = {}
+
+    @classmethod
+    def reset(cls):
+        cls.init()
 
 #    @classmethod
 #    def _load(cls, new_module : Hancho) -> Hancho:
@@ -1580,44 +1737,45 @@ class Task:
         # TASK EXPANSION HERE
 
         if True:
-            e = Expander(self._config)
+            c = self._config
+            e = Expander(c)
             check = Utils.check
 
-            self._desc       = check(str, e.desc)
-            self._command    = check(str, e.command)
+            self._desc       = check(str, e.eval("desc"))
+            self._command    = check(str, e.eval("command"))
 
-            self._root_dir   = Path.abs_path(check(str, e.root_dir))
-            self._root_file  = Path.abs_path(check(str, e.root_file))
+            self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
+            self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
 
-            self._repo_dir   = Path.abs_path(check(str, e.repo_dir))
-            self._repo_file  = Path.abs_path(check(str, e.repo_file))
+            self._repo_dir   = Path.abs_path(check(str, e.eval("repo_dir")))
+            self._repo_file  = Path.abs_path(check(str, e.eval("repo_file")))
 
-            self._this_dir   = Path.abs_path(check(str, e.this_dir))
-            self._this_file  = Path.abs_path(check(str, e.this_file))
+            self._this_dir   = Path.abs_path(check(str, e.eval("this_dir")))
+            self._this_file  = Path.abs_path(check(str, e.eval("this_file")))
 
-            self._task_dir   = Path.abs_path(check(str, e.task_dir))
+            self._task_dir   = Path.abs_path(check(str, e.eval("task_dir")))
 
-            self._build_root = Path.abs_path(check(str, e.build_root))
-            self._build_dir  = Path.abs_path(check(str, e.build_dir))
+            self._build_root = Path.abs_path(check(str, e.eval("build_root")))
+            self._build_dir  = Path.abs_path(check(str, e.eval("build_dir")))
 
-            self._depformat   = check(str, e.depformat)
-            self._in_depfile  = Path.abs_path(check(str, e.in_depfile))
+            self._depformat   = check(str, e.eval("depformat"))
+            self._in_depfile  = Path.abs_path(check(str, e.eval("in_depfile")))
 
-            self._build_tag   = check(str, e.build_tag)
-            self._target      = check(str, e.target)
-            self._tool        = check(str, e.tool)
+            self._build_tag   = check(str, e.eval("build_tag"))
+            self._target      = check(str, e.eval("target"))
+            self._tool        = check(str, e.eval("tool"))
 
-            self._job_count   = check(int, e.job_count)
-            self._keep_going  = check(int, e.keep_going)
+            self._job_count   = check(int, e.eval("job_count"))
+            self._keep_going  = check(int, e.eval("keep_going"))
 
-            self._verbose     = check(bool, e.verbose)
-            self._debug       = check(bool, e.debug)
-            self._dry_run     = check(bool, e.dry_run)
-            self._quiet       = check(bool, e.quiet)
-            self._rebuild     = check(bool, e.rebuild)
-            self._shuffle     = check(bool, e.shuffle)
-            self._trace       = check(bool, e.trace)
-            self._should_fail = check(bool, e.should_fail)
+            self._verbose     = check(bool, e.eval("verbose"))
+            self._debug       = check(bool, e.eval("debug"))
+            self._dry_run     = check(bool, e.eval("dry_run"))
+            self._quiet       = check(bool, e.eval("quiet"))
+            self._rebuild     = check(bool, e.eval("rebuild"))
+            self._shuffle     = check(bool, e.eval("shuffle"))
+            self._trace       = check(bool, e.eval("trace"))
+            self._should_fail = check(bool, e.eval("should_fail"))
 
         ########################################
         # Check for missing input files/paths
@@ -1754,8 +1912,8 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        def expand_path(key, val):
-            if key is None:
+        def expand_path(key : str, val : str):
+            if key is not str:
                 pass
             elif key.startswith("in_") or key.startswith("out_"):
                 if not isinstance(val, str):
@@ -1770,9 +1928,12 @@ class Task:
         # Make all in_ and out_ file paths absolute
 
         def move_stuff(key, val):
-            if key is None:
-                pass
-            elif key.startswith("out_") or key == "in_depfile":
+            if key is not str:
+                return val
+
+            key = cast(str, key)
+
+            if key.startswith("out_") or key == "in_depfile":
                 return self.move_to_builddir(val)
             elif key.startswith("in_"):
                 return self.move_to_taskdir(val)
@@ -1787,9 +1948,12 @@ class Task:
         def collect_stuff(key, val):
             # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will fail a
             # check that all our inputs are present.
-            if key is None:
-                pass
-            elif key == "in_depfile":
+            if key is not str:
+                return
+
+            key = cast(str, key)
+
+            if key == "in_depfile":
                 if os.path.isfile(val):
                     self._in_files.append(val)
             elif key.startswith("out_"):
@@ -1998,10 +2162,20 @@ class Task:
 
 class Runner:
 
-    all_tasks      : list[Task] = []
-    queued_tasks   : list[Task] = []
-    started_tasks  : list[Task] = []
-    finished_tasks : list[Task] = []
+    all_tasks : list[Task]
+    queued_tasks : list[Task]
+    started_tasks : list[Task]
+    finished_tasks : list[Task]
+
+    @classmethod
+    def init(cls):
+        cls.all_tasks = []
+        cls.queued_tasks = []
+        cls.started_tasks = []
+        cls.finished_tasks = []
+
+    @classmethod
+    def reset(cls): cls.init()
 
     @classmethod
     def run_tool(cls, tool : str):
@@ -2044,11 +2218,17 @@ class Runner:
                 task.queue()
 
     ########################################
-    # If no target was specified, we queue up all tasks that build stuff in the root repo
-    # FIXME we are not currently doing that....
 
     @classmethod
-    def select_root_tasks(cls, _root_mod):
+    def queue_all_tasks(cls):
+        for task in cls.all_tasks:
+            task.queue()
+
+    @classmethod
+    def queue_root_tasks(cls, _root_mod):
+        # If no target was specified, we queue up all tasks that build stuff in the root repo
+        # FIXME we are not currently doing that....
+        cls.queue_all_tasks()
         for task in cls.all_tasks:
             # build_dir = expand_variant(task._context, task._context.build_dir)
             # build_dir = normalize_path(build_dir)
@@ -2065,7 +2245,6 @@ class Runner:
     @classmethod
     def run_tasks(cls):
         """Run tasks until we're done with all of them."""
-        JobPool.reset(root_config.job_max)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         result = asyncio.run(cls._async_run_tasks())
@@ -2181,7 +2360,7 @@ config_defaults = Dict(
 #region flags
 
 def parse_flags(argv):
-    assert Utils.listlike(argv)
+    assert Utils.is_iterable(argv)
 
     d = config_defaults
 
@@ -2237,19 +2416,42 @@ def parse_flags(argv):
 
     return (Dict(vars(flags)), Dict(extra_flags))
 
-########################################
-# We need to initialze the global root_config even if we're not loaded as __main__ - not sure where
-# to put this
-
-(flags, extra_flags) = parse_flags(sys.argv[1:])
-root_config = Dict(config_defaults, flags, extra_flags)
-
 #endregion
 ####################################################################################################
 #region Main
 
-def main(config : Dict):
-    root_path = os.path.join(config.root_dir, config.root_file)
+def init(args):
+    (flags, extra_flags) = parse_flags(args)
+    global root_config
+    root_config = Dict(config_defaults, flags, extra_flags)
+    JobPool.init(root_config.job_max)
+    Files.init()
+    Stats.init()
+    Log.init()
+    Utils.init()
+    Expander.init(max_depth = 20)
+    Tracer.init()
+    Loader.init()
+    Runner.init()
+
+def reset(args):
+    init(args)
+
+def main():
+    root_path = os.path.join(root_config.root_dir, root_config.root_file)
+    root_mod = load_root_script(root_path)
+
+    if root_mod.hancho.config.tool:
+        result = Runner.run_tool(root_mod.hancho.config.tool)
+    else:
+        queue_tasks(root_mod)
+        result = run_tasks(root_mod)
+
+    return result
+
+########################################
+
+def load_root_script(root_path : str) -> types.ModuleType:
     root_path_real = os.path.realpath(root_path)
     (root_dir_real, root_file_real) = os.path.split(root_path_real)
 
@@ -2264,14 +2466,7 @@ def main(config : Dict):
     Stats.time_load = time.perf_counter() - time_a
     if config.debug or config.verbose:
         Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
-
-    if root_mod.hancho.config.tool:
-        result = Runner.run_tool(root_mod.hancho.config.tool)
-    else:
-        queue_tasks(root_mod)
-        result = run_tasks(root_mod)
-
-    return result
+    return root_mod
 
 ########################################
 
@@ -2281,9 +2476,9 @@ def queue_tasks(root_mod):
         target_regex = re.compile(root_mod.hancho.config.target)
         Runner.select_tasks_by_regex(target_regex)
     else:
-        Runner.select_root_tasks(root_mod)
+        Runner.queue_root_tasks(root_mod)
     Stats.time_queue = time.perf_counter() - time_a
-    # if flags.debug or flags.verbose:
+    # if root_config.debug or root_config.verbose:
     Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
 ########################################
@@ -2319,9 +2514,11 @@ def scratch():
 #region __name__ == __main__
 
 if __name__ == "__main__":
-    result = main(root_config)
+    init(sys.argv[1:])
+    result = main()
     sys.exit(result)
 
+#endregion
 ####################################################################################################
 #region API decls
 # Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
@@ -2349,16 +2546,50 @@ if __name__ == "__main__":
 
 config : Dict
 
+# FIXME It feels slightly odd to have expansion_globals, should we just use the hancho.py
+# module itself?
+
+expansion_globals = Dict(
+    os   = os,
+    sys  = sys,
+    path = os.path,
+    re   = re,
+    glob = glob,
+
+    #ext     = Utils.ext,
+    #rel     = Utils.rel_path,
+    #stem    = Utils.stem,
+    #name    = Utils.name
+    #log     = Log.log,
+    flatten = Utils.flatten,
+    run_cmd = Utils.run_cmd,
+    color   = Utils.color,
+    join    = Utils.join,
+    rel_path = Path.rel_path,
+
+    #root_config = root_config,
+)
+
+
 # These two functions are to make the type checker not complain about load/repo, which are actually
 # lambdas bound to the current script's config in HanchoProxy.
 def load(script_path, *args, **kwargs):
-    assert False, "Nothing should be using the top-level hancho.load stub!"
+    Loader.load_script(script_path, root_config, *args, kwargs)
+    #assert False, "Nothing should be using the top-level hancho.load stub!"
 
 def repo(script_path, *args, **kwargs):
-    assert False, "Nothing should be using the top-level hancho.repo stub!"
+    Loader.load_repo(script_path, root_config, *args, kwargs)
+    #assert False, "Nothing should be using the top-level hancho.repo stub!"
 
 def task(*args, **kwargs):
-    assert False, "Nothing should be using the top-level hancho.task stub!"
+    #assert False, "Nothing should be using the top-level hancho.task stub!"
+    Task(root_config, *args, **kwargs)
+
+#load_lambda = lambda script_path, *args, **kwargs : Loader.load_script(script_path, config, *args, kwargs)
+#repo_lambda = lambda script_path, *args, **kwargs : Loader.load_repo(script_path, config, *args, kwargs)
+#task_lambda = lambda *args, **kwargs : Task(config, *args, **kwargs)
+
+rel_path = Path.rel_path
 
 #endregion
 ####################################################################################################

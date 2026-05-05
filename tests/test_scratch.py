@@ -1,21 +1,42 @@
 import hancho
 from hancho import Dict, Expander
 
-#d = Dict(sum = "{a} + {b} + {c.d}", a = 1, b = 2, c = Dict(d = 3))
-#d.eval("{sum}")
+hancho.init([])
 
-#d = Dict(a = "{b}", b = "{c}", c = "{d}", d = 10)
-#d.eval("a")
+print("<test_scratch.py>")
 
+#d = hancho.Dumper(2)
+#
+#def gen_things():
+#    yield "Foo"
+#    yield "Bar"
+#    yield "Baz"
+#
+#cfg = hancho.Dict(
+#    message = ["Hello", "World", "Boop"],
+#    range   = range(10),
+#    gen     = gen_things(),
+#    slkdjf = "lksdjflskj",
+#    rhiweurie = b"kjfskdjlsf",
+#)
+#
+#print(d.dump(cfg))
 
-#d = Dict(part_a1 = '{f', part_b1 = 'o', part_c1 = 'o}',
-#  foo = "{part_a2}{part_b2}{part_c2}",
-#  part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
-#  bar = 12)
-#d.expand("{part_a1}{part_b1}{part_c1}")
+blah = hancho.task(
+    desc    = "dummy task 1",
+    command = "echo {message}",
+    message = ["Hello", "World", "Boop"],
+    #verbose = True,
+    #trace   = True,
+)
 
-d = Dict(a = Dict(b = Dict(c = "{d}", d = 10)))
-d.expand("{a.b.c}")
+blee = hancho.task(
+    desc    = "dummy task 2",
+    command = "echo {message}",
+    message = ["Goodbye", "Star", "Beep"],
+    #verbose = True,
+)
 
-d = Dict(a = Dict(b = Dict(c = "{d}")), d = 10)
-d.expand("{a.b.c}")
+hancho.Runner.queue_all_tasks()
+hancho.Runner.run_tasks()
+hancho.reset([])

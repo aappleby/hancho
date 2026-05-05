@@ -8,12 +8,16 @@ import unittest
 import doctest
 
 sys.path.append("..")
+import hancho
 from hancho import Dict
+
+hancho.init(args = [])
 
 ####################################################################################################
 
 class TestDict(unittest.TestCase):
     def setUp(self):
+        print("*((*(*&((*&(*(&(*&()))))))))")
         sys.stdout.flush()
 
     def test_basic_access(self):
@@ -22,7 +26,7 @@ class TestDict(unittest.TestCase):
         self.assertEqual(d['b'], 2)
         with self.assertRaises(AttributeError):
             _ = d.missing
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(KeyError):
             _ = d['missing']
 
     def doctest_dict_upgrades(self):
@@ -61,11 +65,74 @@ class TestDict(unittest.TestCase):
         self.assertEqual(merged.a.y, 3)
         self.assertEqual(merged.a.z, 4)
 
-    def test_value_semantics(self):
-        d1 = Dict({'a': [1, 2]})
-        d2 = Dict(d1)
-        d2.a.append(3)
-        self.assertEqual(d1.a, [1, 2])  # d1 should not be affected
+    def doctest_basic_merging(self):
+        # Basic merging should work
+        r"""
+        >>> Dict()
+        Dict @ ... { }
+        >>> Dict(Dict(), dict(), dict())
+        Dict @ ... { }
+        >>> Dict(dict(), dict(bar = None))
+        Dict @ ... { bar = None }
+        >>> Dict(dict(), dict(bar = 3))
+        Dict @ ... { bar = 3 }
+        >>> Dict(foo = 1, bar = 2)
+        Dict @ ... { foo = 1, bar = 2 }
+        >>> Dict(dict(bar = None), dict())
+        Dict @ ... { bar = None }
+        >>> Dict(dict(bar = None), dict(bar = None))
+        Dict @ ... { bar = None }
+        """
+
+    def doctest_none_doesnt_override(self):
+        # Right side should _not_ override left side if its val is None
+        r"""
+        >>> Dict(dict(bar = 2), dict(bar = None))
+        Dict @ ... { bar = 2 }
+        >>> Dict({'a': 1}, a = None)
+        Dict @ ... { a = 1 }
+        >>> Dict({'a': 1}, b = 2, c = 3)
+        Dict @ ... { a = 1, b = 2, c = 3 }
+        """
+
+    def doctest_empty_dict_doesnt_override(self):
+        # Empty right side should not clobber left side
+        r"""
+        >>> Dict(dict(bar = 2), dict())
+        Dict @ ... { bar = 2 }
+        """
+
+    def doctest_attribute_and_item(self):
+        # Both dict['foo'] and dict.foo should work
+        r"""
+        >>> d = Dict({'a': 1, 'b': 2})
+        >>> (d.a, d['b'])
+        (1, 2)
+        """
+
+    def doctest_immutable_dicts(self):
+        # hancho.Dicts should be (as) immutable (as possible)
+        r"""
+        >>> d = Dict(a = 1)
+        >>> d.a = 2
+        Traceback (most recent call last):
+        ...
+        TypeError: ('Hancho.Dict is immutable', 'a', 2)
+
+        >>> d['a'] = 2
+        Traceback (most recent call last):
+        ...
+        TypeError: ('Hancho.Dict is immutable', 'a', 2)
+        """
+
+    def doctest_right_overrides_left(self):
+        # Right side should always override left side if right val is not None
+        r"""
+        >>> Dict(dict(bar = None), dict(bar = 3))
+        Dict @ ... { bar = 3 }
+        >>> Dict(dict(bar = 2), dict(bar = 3))
+        Dict @ ... { bar = 3 }
+        """
 
 ####################################################################################################
 

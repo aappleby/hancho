@@ -13,13 +13,72 @@ class TestSplitTemplate(unittest.TestCase):
 
     def doctest_basic(self):
         r"""
-        Templates split into literal (L) and expression (E) chunks.
+        #Templates split into literal (L) and expression (E) chunks.
         >>> Expander.split(r"a {b} c")
         [L'a ', E'b', L' c']
         >>> Expander.split(r"a \{b\} c")
         [L'a \\{b\\} c']
         >>> Expander.split(r"{a}{b}{c}")
         [E'a', E'b', E'c']
+        """
+
+    def doctest_splitter(self):
+        r"""
+        # The splitter should tag each chunk of text as a literal or a macro
+        >>> Expander.split("foo")
+        [L'foo']
+        >>> Expander.split("{bar}")
+        [E'bar']
+        >>> Expander.split("foo {bar}")
+        [L'foo ', E'bar']
+        >>> Expander.split("{bar} baz")
+        [E'bar', L' baz']
+        >>> Expander.split("foo {bar} baz")
+        [L'foo ', E'bar', L' baz']
+        >>> Expander.split("foo {bar} baz {flp} zrk")
+        [L'foo ', E'bar', L' baz ', E'flp', L' zrk']
+        """
+
+    def doctest_mismatched_braces(self):
+        r"""
+        # Mismatched braces shouldn't break anything
+        >>> Expander.split("{foo")
+        [L'{foo']
+        >>> Expander.split("foo}")
+        [L'foo}']
+        >>> Expander.split("{foo}}")
+        [E'foo', L'}']
+        >>> Expander.split("{{foo}")
+        [L'{', E'foo']
+        >>> Expander.split("{foo}}{")
+        [E'foo', L'}{']
+        >>> Expander.split("}{{foo}")
+        [L'}{', E'foo']
+        """
+
+    def doctest_macros_inside_string(self):
+        r"""
+        # Macros inside a string should _not_ be split
+        >>> Expander.split("foo '{bar}' baz")
+        [L"foo '{bar}' baz"]
+        >>> Expander.split('foo "{bar}" baz')
+        [L'foo "{bar}" baz']
+        """
+
+    def doctest_split_innermost(self):
+        """
+        # We should be extracting the innermost macros
+        >>> Expander.split("{{foo}}")
+        [L'{', E'foo', L'}']
+        """
+
+    def doctest_dont_split_inside_string(self):
+        r"""
+        # ...unless the innermost macro is inside a string
+        >>> Expander.split('{foo + "{bar}"}')
+        [E'foo + "{bar}"']
+        >>> Expander.split("{foo + '{bar}'}")
+        [E"foo + '{bar}'"]
         """
 
     def test_hash_matches_str(self):
