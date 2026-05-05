@@ -10,6 +10,7 @@ TEST_MODULES = [
     "tests.test_templates",
     "tests.test_split",
     "tests.test_scratch",
+    "tests.test_tasks",
 ]
 
 def run_test_suite(mod_name):

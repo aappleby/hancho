@@ -2,14 +2,12 @@
 """Test cases for Hancho"""
 
 import sys
-import os
 from os import path
 import random
 #import subprocess
 import unittest
 import shutil
 import glob
-from pathlib import Path
 import time
 
 sys.path.append("..")
@@ -41,40 +39,6 @@ Dict = hancho_py.Dict
 #  old_mtime = new_mtime
 
 ####################################################################################################
-
-def mtime_ns(filename):
-    return os.stat(filename).st_mtime_ns
-
-def force_touch(filename):
-    if not Path(filename).exists():
-        Path(filename).touch()
-    old_mtime = mtime_ns(filename)
-    while old_mtime == mtime_ns(filename):
-        os.utime(filename, None)
-
-####################################################################################################
-
-def color(red=None, green=None, blue=None):
-    """Converts RGB color to ANSI format string."""
-    # Color strings don't work in Windows console, so don't emit them.
-    if os.name == "nt":
-        return ""
-    if red is None:
-        return "\x1B[0m"
-    return f"\x1B[38;2;{red};{green};{blue}m"
-
-####################################################################################################
-
-class TestContext(unittest.TestCase):
-    """Test cases for weird things our Context objects can do"""
-
-    def setUp(self):
-        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
-        #sys.stdout.flush()
-        pass
-
-    def test_nothing(self):
-        pass
 
 ####################################################################################################
 
