@@ -11,8 +11,6 @@ sys.path.append("..")
 import hancho
 from hancho import Dict
 
-hancho.init(args = [])
-
 ####################################################################################################
 
 class TestDict(unittest.TestCase):

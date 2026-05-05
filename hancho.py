@@ -404,9 +404,9 @@ class Utils:
     def reset(cls):
         cls.init()
 
-    @classmethod
-    def hash(cls, v):
-        return hash(v)
+    #@classmethod
+    #def hash(cls, v):
+    #    return hash(v)
         #if isinstance(v, (int, float, bool, str, type(None))):
         #    pass
         #elif isinstance(v, dict):
@@ -673,8 +673,8 @@ class Dict(dict):
     ########################################
     # Debugging stuff
 
-    def __hash__(self):
-        return Utils.hash(self)
+    #def __hash__(self):
+    #    return Utils.hash(self)
 
     def __repr__(self):
         if Expander.depth > 0:

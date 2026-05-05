@@ -1,8 +1,6 @@
 import hancho
 from hancho import Dict, Expander
 
-hancho.init([])
-
 print("<test_scratch.py>")
 
 #d = hancho.Dumper(2)

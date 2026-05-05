@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import sys
 import unittest
+import hancho
+
+hancho.init(args = sys.argv[1:])
 
 TEST_MODULES = [
     "tests.test_dict",
