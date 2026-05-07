@@ -263,7 +263,7 @@ class Path:
     def abs_path(cls, raw_path : list[str_tree]) -> list[str_tree]: pass
     @classmethod
     def abs_path(cls, raw_path):
-        if Utils.is_iterable(raw_path):
+        if Utils.is_collection(raw_path):
             return [Path.abs_path(p) for p in raw_path]
         elif isinstance(raw_path, str):
             return os.path.abspath(raw_path)
@@ -278,7 +278,7 @@ class Path:
     def rel_path(cls, path1 : str_tree, path2 : str_tree) -> str_tree: pass
     @classmethod
     def rel_path(cls, path1, path2):
-        if Utils.is_iterable(path1):
+        if Utils.is_collection(path1):
             result = [Path.rel_path(p, path2) for p in path1]
         elif isinstance(path1, str):
             # Generating relative paths in the presence of symlinks doesn't work with either
@@ -343,7 +343,7 @@ class Path:
     @classmethod
     def normpath(cls, val):
         result : str_tree | None = None
-        if Utils.is_iterable(val):
+        if Utils.is_collection(val):
             return [Path.normpath(v) for v in val]
         elif isinstance(val, str):
             return os.path.normpath(val)
@@ -374,7 +374,7 @@ class Path:
     @classmethod
     def ext(cls, name : str_tree, new_ext : str):
         """Replaces file extensions on either a single filename or a list of filenames."""
-        if Utils.is_iterable(name):
+        if Utils.is_collection(name):
             return [Path.ext(n, new_ext) for n in name]
         elif isinstance(name, str):
             return os.path.splitext(name)[0] + new_ext
@@ -426,16 +426,26 @@ class Utils:
 
     @classmethod
     def tuplify(cls, obj):
-        if not Utils.is_iterable(obj):
+        if not Utils.is_collection(obj):
             return obj
         result = tuple(Utils.tuplify(x) for x in obj)
         return result
 
     @classmethod
-    def is_iterable(cls, variant : Any) -> bool:
-        #return isinstance(variant, abc.Sequence) and not isinstance(variant, (str, bytes))
-        # Note we exclude 'str' and 'bytes' as we don't want to turn those into tuples of chars/bytes
-        return not isinstance(variant, abc.Mapping) and isinstance(variant, abc.Iterable) and not isinstance(variant, (str, bytes, bytearray))
+    def listify(cls, obj):
+        if not Utils.is_collection(obj):
+            return obj
+        result = [Utils.listify(x) for x in obj]
+        return result
+
+    @classmethod
+    def is_collection(cls, variant : Any) -> bool:
+        """
+        Mappings and non-array iterables are not considered Collections in Hancho so that
+        we don't turn "foo" into ('f', 'o', 'o').
+        """
+        if isinstance(variant, (str, bytes, bytearray, abc.Mapping)): return False
+        return isinstance(variant, abc.Collection)
 
     @classmethod
     def is_mapping(cls, variant : Any) -> bool:
@@ -443,7 +453,7 @@ class Utils:
 
     @classmethod
     def is_whitelisted(cls, variant : Any) -> bool:
-        whitelist = (type(None), bool, int, float, complex, str, bytes, Dict, tuple, types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
+        whitelist = (type(None), bool, int, float, complex, str, bytes, Dict, list, tuple, types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
         return type(variant) in whitelist
 
     @classmethod
@@ -496,7 +506,8 @@ class Utils:
     @classmethod
     def run_cmd(cls, cmd : str):
         """Runs a console command synchronously and returns its stdout with whitespace stripped."""
-        return subprocess.check_output(cmd, shell=True, text=True).strip()
+        result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+        return result
 
     ########################################
 
@@ -510,7 +521,7 @@ class Utils:
 
     @classmethod
     def flatten(cls, variant : Any) -> list[Any]:
-        if Utils.is_iterable(variant):
+        if Utils.is_collection(variant):
             return [x for element in variant for x in Utils.flatten(element)]
         if variant is None:
             return []
@@ -523,7 +534,7 @@ class Utils:
         """Converts any type into a template-compatible string."""
         if variant is None:
             return ""
-        elif Utils.is_iterable(variant):
+        elif Utils.is_collection(variant):
             variant = [cls.stringify_variant(val) for val in variant]
             return " ".join(variant)
         else:
@@ -533,7 +544,7 @@ class Utils:
     def map_variant(cls, key, val, map):
         if Utils.is_mapping(val):
             val = Dict({k: Utils.map_variant(k, v, map) for k, v in val.items()})
-        elif Utils.is_iterable(val):
+        elif Utils.is_collection(val):
             val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
         else:
             val = map(key, val)
@@ -547,7 +558,7 @@ class Utils:
             for k, v in val.items():
                 result[k] = await Utils.async_map_variant(k, v, map)
             val = Dict(result)
-        elif Utils.is_iterable(val):
+        elif Utils.is_collection(val):
             #val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
             result = []
             for k, v in enumerate(val):
@@ -564,7 +575,7 @@ class Utils:
         if Utils.is_mapping(val):
             for key2, val2 in val.items():
                 Utils.apply_variant(key2, val2, apply)
-        elif Utils.is_iterable(val):
+        elif Utils.is_collection(val):
             for key2, val2 in enumerate(val):
                 Utils.apply_variant(key2, val2, apply)
 
@@ -572,7 +583,7 @@ class Utils:
     async def await_variant(cls, variant):
         """Recursively replaces every awaitable in the variant with its awaited value."""
 
-        if Utils.is_iterable(variant):
+        if Utils.is_collection(variant):
             for key, val in enumerate(variant):
                 variant[key] = await Utils.await_variant(val)
             return variant
@@ -618,9 +629,9 @@ class Dict(dict):
                 if Utils.is_mapping(rval) and type(rval) != Dict:
                     rval = Dict(rval)
 
-                # Iterables get turned into tuples.
-                if Utils.is_iterable(rval) and type(rval) != tuple:
-                    rval = Utils.tuplify(rval)
+                # Collections get turned into lists.
+                if Utils.is_collection(rval) and type(rval) != list:
+                    rval = Utils.listify(rval)
 
                 # Pairs of mappings get merged together as needed.
                 if Utils.is_mapping(lval) and Utils.is_mapping(rval):
@@ -646,11 +657,11 @@ class Dict(dict):
     ########################################
     # Object
 
-    def __getattr__(self, name : str):
+    def __getattr__(self, key : str):
         try:
-            return dict.__getitem__(self, name)
+            return dict.__getitem__(self, key)
         except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'") from e
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
 
     def __setattr__(self, name : str, value : Any):
         raise TypeError("Hancho.Dict is immutable", name, value)
@@ -1149,7 +1160,7 @@ class Dumper:
             result += self.dump_dict(variant.config)
         elif isinstance(variant, tuple):
             result += self.dump_list(variant, '(', ')')
-        elif Utils.is_iterable(variant):
+        elif Utils.is_collection(variant):
             result += self.dump_list(variant, '[', ']')
         elif Utils.is_mapping(variant):
             result = ""
@@ -1601,7 +1612,7 @@ class Task:
         # Expanded task config stuff
 
         self._desc : str      = None
-        self._command : str    = None
+        self._command : Any = None
 
         self._root_dir : str   = None
         self._root_file : str  = None
@@ -2360,7 +2371,7 @@ config_defaults = Dict(
 #region flags
 
 def parse_flags(argv):
-    assert Utils.is_iterable(argv)
+    assert Utils.is_collection(argv)
 
     d = config_defaults
 
@@ -2513,10 +2524,11 @@ def scratch():
 ####################################################################################################
 #region __name__ == __main__
 
+init(sys.argv[1:])
+
 if __name__ == "__main__":
-    init(sys.argv[1:])
-    result = main()
-    sys.exit(result)
+    scratch()
+    sys.exit(main())
 
 #endregion
 ####################################################################################################

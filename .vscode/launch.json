@@ -6,6 +6,16 @@
   "configurations": [
 
     {
+      "name"    : "Debug ${workspaceFolder]/hancho.py",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "args"    : [],
+      "cwd"     : "${workspaceFolder}",
+      "console" : "integratedTerminal",
+    },
+
+    {
       "name"    : "Debug scratch/build.hancho",
       "type"    : "debugpy",
       "request" : "launch",

@@ -178,7 +178,7 @@ class TestTemplates(unittest.TestCase):
         >>> d.expand("cc {flags} main.c")
         'cc -O2 -Wall main.c'
         >>> d.eval("flags")
-        ('-O2', '-Wall')
+        ['-O2', '-Wall']
 
 #        >>> d.eval("{flags}")
 #        Traceback (most recent call last):
@@ -193,7 +193,7 @@ class TestTemplates(unittest.TestCase):
         >>> d.expand("{flags}")
         'a b c d e f'
         >>> d.eval("flags")
-        ((('a',), 'b'), 'c', 'd', ('e', 'f'))
+        [[['a'], 'b'], 'c', 'd', ['e', 'f']]
         >>> d.eval("{flags}")
         Traceback (most recent call last):
         ...

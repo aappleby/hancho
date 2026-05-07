@@ -1,82 +1,12 @@
-#!/usr/bin/python3
-"""Test cases for Hancho"""
-
-import sys
-from os import path
-import random
-#import subprocess
-import unittest
-import shutil
-import glob
-import time
-
-sys.path.append("..")
-import hancho as hancho_py
-
-Dict = hancho_py.Dict
-
-# tests still needed -
-# calling hancho in src dir
-# meta deps changed
-# transitive dependencies
-# dry run not creating files/dirs
-# all the predefined directories need test cases
-
-# min delta seems to be 4 msec on linux (wsl), 1 msec on windows?
-
-#os.system("touch blahblah.txt")
-#old_mtime = os.stat("blahblah.txt").st_mtime_ns
-#print(old_mtime)
-#min_delta = 100000000000
-#for _ in range(10000):
-#  #os.system("touch blahblah.txt")
-#  os.utime("blahblah.txt", None)
-#  new_mtime = os.stat("blahblah.txt").st_mtime_ns
-#  delta = new_mtime - old_mtime
-#  if delta and delta < min_delta:
-#    print(delta)
-#    min_delta = delta
-#  old_mtime = new_mtime
-
-####################################################################################################
-
-####################################################################################################
 
 # pylint: disable=too-many-public-methods
 class TestHancho1(unittest.TestCase):
     """Basic test cases"""
 
-    def setUp(self):
-        print(f"Running {self.__class__.__name__}::{self._testMethodName}")
-        sys.stdout.flush()
-
-        # Always wipe the build dir before a test
-        shutil.rmtree("build", ignore_errors=True)
-        hancho_py.app.reset()
-        hancho_py.app.parse_flags(["--quiet"])
-        #hancho_py.app.parse_flags([])
-        #hancho_py.app.parse_flags(["-v"])
-        #hancho_py.app.parse_flags(["-d"])
-        self.hancho = hancho_py.app.create_root_mod()
+    ########################################
 
     ########################################
 
-    def tearDown(self):
-        """And wipe the build dir after a test too."""
-        shutil.rmtree("build", ignore_errors=True)
-
-    ########################################
-
-    def test_dummy(self):
-        self.assertEqual(0, 0)
-
-    ########################################
-
-    def test_run_cmd(self):
-        #hancho_py.app.reset()
-        #self.hancho = hancho_py.app.create_root_mod()
-        task = self.hancho.Task(command = "echo \'{run_cmd('ls')}\'")
-        self.assertEqual(0, hancho_py.app.build_all())
 
     ########################################
 

@@ -4,6 +4,7 @@
 import sys
 import unittest
 import os
+import shutil
 from pathlib import Path
 
 sys.path.append("..")
@@ -33,4 +34,52 @@ def color(red=None, green=None, blue=None):
 
 class TestTasks(unittest.TestCase):
     def setUp(self):
+        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         sys.stdout.flush()
+
+        # Always wipe the build dir before a test
+        shutil.rmtree("build", ignore_errors=True)
+
+        #hancho_py.app.reset()
+        #hancho_py.app.parse_flags(["--quiet"])
+        #hancho_py.app.parse_flags([])
+        #hancho_py.app.parse_flags(["-v"])
+        #hancho_py.app.parse_flags(["-d"])
+        #self.hancho = hancho_py.app.create_root_mod()
+        hancho.init(['-q'])
+
+    def tearDown(self):
+        """And wipe the build dir after a test too."""
+        shutil.rmtree("build", ignore_errors=True)
+
+    def run_tasks(self):
+        hancho.Runner.queue_all_tasks()
+        result = hancho.Runner.run_tasks()
+        self.assertEqual(result, 0)
+
+    ########################################
+
+    def test_dummy(self):
+        self.assertEqual(0, 0)
+
+    def test_should_pass(self):
+        hancho.task(command = "echo Hello World")
+        self.run_tasks()
+
+    def test_command_lists(self):
+        hancho.init(['-v', '-d'])
+        hancho.task(
+            command = "echo Hello File >> {out_file}",
+            out_file = "test_command_lists.txt"
+        )
+        self.run_tasks()
+
+    def test_run_cmd(self):
+        command = r"echo I am runnning the {run_cmd('uname')} operating system."
+        hancho.task(desc = "Working run_cmd", command = command)
+        self.run_tasks()
+
+    def test_broken_run_cmd(self):
+        command = r"echo {run_cmd('This is totally not a valid command.')}",
+        hancho.task(desc = "Broken run_cmd", command = command, should_fail = True)
+        self.run_tasks()
