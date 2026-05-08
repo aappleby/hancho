@@ -67,7 +67,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks()
 
     def test_command_lists(self):
-        hancho.init(['-v', '-d'])
+        #hancho.init(['-v', '-d'])
         hancho.task(
             command = "echo Hello File >> {out_file}",
             out_file = "test_command_lists.txt"

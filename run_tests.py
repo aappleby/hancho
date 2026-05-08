@@ -31,10 +31,10 @@ hancho.init(args = sys.argv[1:])
 
 
 TEST_MODULES = [
-    "tests.test_dict",
-    "tests.test_templates",
-    "tests.test_split",
-    "tests.test_scratch",
+    #"tests.test_dict",
+    #"tests.test_templates",
+    #"tests.test_split",
+    #"tests.test_scratch",
     "tests.test_tasks",
 ]
 

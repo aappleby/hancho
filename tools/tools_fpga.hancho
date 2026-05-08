@@ -2,7 +2,7 @@
 
 import hancho
 
-hancho.base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
+tools_base = hancho.repo("{hancho_dir}/tools/tools_base.hancho")
 
 def gen_ivparams(params):
     result = []
@@ -21,14 +21,14 @@ iverilog = hancho.Tool(
 )
 
 verilated_o = hancho.Task(
-    hancho.base_rules.compile_cpp,
+    tools_base.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated.cpp",
     out_obj = "verilated.o",
     build_dir = "{build_root}/verilator",
 )
 
 verilated_threads_o = hancho.Task(
-    hancho.base_rules.compile_cpp,
+    tools_base.compile_cpp,
     in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
     out_obj = "verilated_threads.o",
     build_dir = "{build_root}/verilator",
@@ -60,7 +60,7 @@ def verilator(hancho, *, in_top, **kwargs):
     )
 
     compiled = hancho.Task(
-        hancho.base_rules.make,
+        tools_base.make,
         kwargs,
         in_makefile = verilated.promise("out_makefile"),
         out_obj = "{ext(in_makefile, '__ALL.o')}",
@@ -70,7 +70,7 @@ def verilator(hancho, *, in_top, **kwargs):
     )
 
     lib = hancho.Task(
-        hancho.base_rules.cpp_lib,
+        tools_base.cpp_lib,
         kwargs,
         in_top  = in_top,
         in_objs = [verilated_threads_o, verilated_o, compiled],

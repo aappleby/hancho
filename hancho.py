@@ -21,7 +21,6 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 
 import argparse
 import asyncio
-import copy
 import glob
 import inspect
 import io
@@ -350,21 +349,6 @@ class Path:
         else:
             assert False, f"normpath() Don't know what to do with a {type(val).__name__}"
 
-    #@classmethod
-    #@overload
-    #def prepend_dir(task_dir : str, val : str) -> str : pass
-    #@classmethod
-    #@overload
-    #def prepend_dir(task_dir : str, val : str_tree) -> str_tree: pass
-    #@classmethod
-    #def prepend_dir(task_dir, val):
-    #    if isinstance(val, list):
-    #        return [Path.prepend_dir(task_dir, v) for v in val]
-    #    elif isinstance(val, str):
-    #        return Path.join_path(task_dir, val)
-    #    else:
-    #        assert False, f"prepend_dir() Don't know what to do with a {type(val).__name__}"
-
     @classmethod
     @overload
     def ext(cls, name : str, new_ext : str) -> str : pass
@@ -404,21 +388,6 @@ class Utils:
     def reset(cls):
         cls.init()
 
-    #@classmethod
-    #def hash(cls, v):
-    #    return hash(v)
-        #if isinstance(v, (int, float, bool, str, type(None))):
-        #    pass
-        #elif isinstance(v, dict):
-        #    v = frozenset(Utils.hash(kv) for kv in v.items())
-        #elif isinstance(v, (list, tuple)):
-        #    v = tuple(Utils.hash(x) for x in v)
-        #elif isinstance(v, set):
-        #    v = frozenset(Utils.hash(x) for x in v)
-        #else:
-        #    raise TypeError(f"Don't know how to hash {v}")
-        #return hash(v)
-
     @classmethod
     def check[T](cls, type_: Type[T], t: object) -> T:
         assert isinstance(t, type_), f"Expected {type_.__name__}, got {type(t).__name__}"
@@ -450,11 +419,6 @@ class Utils:
     @classmethod
     def is_mapping(cls, variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
-
-    @classmethod
-    def is_whitelisted(cls, variant : Any) -> bool:
-        whitelist = (type(None), bool, int, float, complex, str, bytes, Dict, list, tuple, types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
-        return type(variant) in whitelist
 
     @classmethod
     def is_template(cls, variant : Any) -> bool:
@@ -530,6 +494,29 @@ class Utils:
     ########################################
 
     @classmethod
+    def walk(cls, d, func):
+        if Utils.is_mapping(d):
+            for key, val in d.items():
+                func(d, key, val)
+                Utils.walk(val, func)
+        elif Utils.is_collection(d):
+            for key, val in enumerate(d):
+                func(d, key, val)
+                Utils.walk(val, func)
+
+
+    @classmethod
+    async def async_walk(cls, d, async_func):
+        if Utils.is_mapping(d):
+            for key, val in d.items():
+                await async_func(d, key, val)
+                await Utils.async_walk(val, async_func)
+        elif Utils.is_collection(d):
+            for key, val in enumerate(d):
+                await async_func(d, key, val)
+                await Utils.async_walk(val, async_func)
+
+    @classmethod
     def stringify_variant(cls, variant):
         """Converts any type into a template-compatible string."""
         if variant is None:
@@ -541,66 +528,15 @@ class Utils:
             return str(variant)
 
     @classmethod
-    def map_variant(cls, key, val, map):
-        if Utils.is_mapping(val):
-            val = Dict({k: Utils.map_variant(k, v, map) for k, v in val.items()})
-        elif Utils.is_collection(val):
-            val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
-        else:
-            val = map(key, val)
-        return val
-
-    @classmethod
-    async def async_map_variant(cls, key, val, map):
-        if Utils.is_mapping(val):
-            #val = Dict({k: await Utils.map_variant(k, v, map) for k, v in val.items()})
-            result = {}
-            for k, v in val.items():
-                result[k] = await Utils.async_map_variant(k, v, map)
-            val = Dict(result)
-        elif Utils.is_collection(val):
-            #val = tuple(Utils.map_variant(k, v, map) for k, v in enumerate(val))
-            result = []
-            for k, v in enumerate(val):
-                #result[k] = await Utils.async_map_variant(k, v, map)
-                result.append(await Utils.async_map_variant(k, v, map))
-            val = tuple(result)
-        else:
-            val = await map(key, val)
-        return val
-
-    @classmethod
-    def apply_variant(cls, key, val, apply):
-        val = apply(key, val)
-        if Utils.is_mapping(val):
-            for key2, val2 in val.items():
-                Utils.apply_variant(key2, val2, apply)
-        elif Utils.is_collection(val):
-            for key2, val2 in enumerate(val):
-                Utils.apply_variant(key2, val2, apply)
-
-    @classmethod
-    async def await_variant(cls, variant):
-        """Recursively replaces every awaitable in the variant with its awaited value."""
-
-        if Utils.is_collection(variant):
-            for key, val in enumerate(variant):
-                variant[key] = await Utils.await_variant(val)
-            return variant
-
-        if isinstance(variant, Promise):
-            return await Utils.await_variant(await variant.get())
-
-        if isinstance(variant, Task):
-            await variant.await_done()
-            return await Utils.await_variant(variant._out_files)
-
-        if inspect.isawaitable(variant):
-            return await Utils.await_variant(await variant)
-
-        return variant
-
-
+    async def await_variant(cls, c):
+        async def wait(c, k, v):
+            if isinstance(v, Promise):
+                c[k] = await Utils.await_variant(await v.get())
+            elif isinstance(v, Task):
+                c[k] = v.await_done()
+            elif inspect.isawaitable(v):
+                c[k] = await Utils.await_variant(await v)
+        await Utils.async_walk(c, wait)
 
 #endregion
 ####################################################################################################
@@ -637,22 +573,8 @@ class Dict(dict):
                 if Utils.is_mapping(lval) and Utils.is_mapping(rval):
                     rval = Dict(lval, rval)
 
-                # Non-whitelisted types get rejected.
-                if not Utils.is_whitelisted(rval):
-                    Utils.is_whitelisted(rval)
-                    raise TypeError(f"Can't put type {type(rval)} into a Dict.")
-
                 if lval is None or rval is not None:
                     dict.__setitem__(self, key, rval)
-
-    ########################################
-    # Dicts are immutable, so copying them should do nothing.
-
-    def __copy__(self):
-        return self
-
-    def __deepcopy__(self, memo):
-        return self
 
     ########################################
     # Object
@@ -663,29 +585,20 @@ class Dict(dict):
         except KeyError as e:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
 
-    def __setattr__(self, name : str, value : Any):
-        raise TypeError("Hancho.Dict is immutable", name, value)
+    def __setattr__(self, key : str, val : Any):
+        try:
+            return dict.__setattr__(self, key, val)
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
 
-    def __delattr__(self, name : str):
-        raise TypeError("Hancho.Dict is immutable", name)
-
-    #######################################
-    # abc.Mapping
-
-    def __getitem__(self, name : str):
-        return dict.__getitem__(self, name)
-
-    def __setitem__(self, name : str, value : Any):
-        raise TypeError("Hancho.Dict is immutable", name, value)
-
-    def __delitem__(self, name : str):
-        raise TypeError("Hancho.Dict is immutable", name)
+    def __delattr__(self, key : str):
+        try:
+            return dict.__delattr__(self, key)
+        except KeyError as e:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
 
     ########################################
     # Debugging stuff
-
-    #def __hash__(self):
-    #    return Utils.hash(self)
 
     def __repr__(self):
         if Expander.depth > 0:
@@ -783,7 +696,6 @@ class Expander(abc.Mapping):
     ########################################
 
     def __init__(self, context : Dict):
-        #print("************Expander.__init__************")
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         trace = dict.get(context, "trace", False)
 
@@ -883,60 +795,40 @@ class Expander(abc.Mapping):
     def _get(self, key):
         trace_color = Utils.color(0, 255, 0)
 
-        cached = False
-
-        if key in self.__dict__:
-            cached = True
-            result = self.__dict__[key]
-            #Tracer.log2(self, f"Cache hit - {key} = {result}")
-
-            #print(f"Expander 0x{hex(id(self))} - Found {key} : {result}")
-            #return result
-
         if self.trace:
             Tracer.log(self, trace_color, "┏", f" get '{key}'")
 
-        if not cached:
+        Tracer.push(trace_color)
+        Expander.depth += 1
 
-            Tracer.push(trace_color)
-            Expander.depth += 1
+        result = "<_get failed>"
+        e = None
 
-            result = "<_get failed>"
-            e = None
+        if key in self._context:
+            result = self._context[key]
+        elif key in expansion_globals:
+            result = expansion_globals[key]
+        else:
+            e = KeyError(key)
 
-            if key in self._context:
-                result = self._context[key]
-            elif key in expansion_globals:
-                result = expansion_globals[key]
-            else:
-                e = KeyError(key)
+        # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
+        if isinstance(result, Dict):
+            result = Expander(result)
 
-            # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
-            if isinstance(result, Dict):
-                result = Expander(result)
+        # If we fetched a string, expand it if needed
+        if isinstance(result, str):
+            result = self.expand(result)
 
-            # If we fetched a string, expand it if needed
-            if isinstance(result, str):
-                result = self.expand(result)
+        Expander.depth -= 1
+        Tracer.pop()
 
-            Expander.depth -= 1
-            Tracer.pop()
-
-            if e:
-                if self.trace:
-                    Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
-                raise e
-
-            # Since Dicts are immutable, it's safe to cache the result of expansion here.
-            #if self.trace:
-            #    Tracer.log(self, trace_color, "┃", f" Caching {key} : '{result}'")
-            self.__dict__[key] = result
+        if e:
+            if self.trace:
+                Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
+            raise e
 
         if self.trace:
             message = ""
-
-            if cached:
-                message += " (Cached)"
 
             if isinstance(result, str):
                 message += f" '{result}'"
@@ -1118,23 +1010,6 @@ class Tracer:
 
         Log.log(buffer)
 
-    #@classmethod
-    #def prefix(cls, context):
-    #    """Prints the left-side trellis of the expansion traces."""
-    #    return hex(id(context)) + ": " + ("┃ " * Expander.depth)
-
-    #@classmethod
-    #def variant(cls, variant):
-    #    """Prints the right-side values of the expansion traces."""
-    #    if callable(variant):
-    #        return f"Callable @ {hex(id(variant))}"
-    #    elif isinstance(variant, Dict):
-    #        return f"Dict @ {hex(id(variant))}'"
-    #    elif isinstance(variant, Expander):
-    #        return f"Expander @ {hex(id(variant._context))}'"
-    #    else:
-    #        return f"'{variant}'"
-
 #endregion
 ####################################################################################################
 #region Dumper
@@ -1149,11 +1024,10 @@ class Dumper:
         return "  " * self.depth
 
     def dump(self, variant):
-        result = f"{type(variant).__name__} @ {hex(id(variant))} "
+        #result = f"{type(variant).__name__} @ {hex(id(variant))} "
+        result = f"{type(variant).__name__}"
         if isinstance(variant, Task):
             result += self.dump_dict(variant.__dict__)
-        #elif isinstance(variant, HanchoAPI):
-        #    result += self.dump_dict(variant.__dict__)
         elif isinstance(variant, Dict):
             result += self.dump_dict(variant)
         elif isinstance(variant, Expander):
@@ -1195,14 +1069,6 @@ class Dumper:
         if self.depth >= self.max_depth:
             return "{...}"
 
-        #result = "{\n"
-        #self.depth += 1
-        #for key, val in d.items():
-        #    result += self.indent() + f"{key} = " + self.dump(val) + ",\n"
-        #self.depth -= 1
-        #result += self.indent() + "}"
-        #return result
-
         result = "{\n"
         self.depth += 1
         last_index = len(d) - 1
@@ -1234,10 +1100,12 @@ class HanchoProxy(types.ModuleType):
         repo_lambda = lambda script_path, *args, **kwargs : Loader.load_repo(script_path, config, *args, kwargs)
         task_lambda = lambda *args, **kwargs : Task(config, *args, **kwargs)
 
+        # FIXME we have these in the dict but we also have the global load/repo at the bottom?
+
         self.__dict__.update(
             load = load_lambda,
             repo = repo_lambda,
-            task = task_lambda,
+            Task = task_lambda,
             config = config
         )
 
@@ -1250,7 +1118,6 @@ class HanchoProxy(types.ModuleType):
     def __dir__(self):
         return dir(HanchoProxy.hancho_ref)
 
-
 #endregion
 ####################################################################################################
 #region Loader
@@ -1258,7 +1125,7 @@ class HanchoProxy(types.ModuleType):
 class Loader:
 
     depth : int
-    script_to_repo : dict[tuple[str, Dict], types.ModuleType]
+    script_to_repo : dict[tuple[str, str], types.ModuleType]
 
     @classmethod
     def init(cls):
@@ -1269,132 +1136,18 @@ class Loader:
     def reset(cls):
         cls.init()
 
-#    @classmethod
-#    def _load(cls, new_module : Hancho) -> Hancho:
-#        this_path = Path.join(config.this_dir, config.this_file)
-#        if True:
-#            rel_path = Path.rel_path(this_path, config.root_dir)
-#            Log.log(("┃ " * Loader.depth, end="")
-#            if config.is_repo:
-#                Log.log(Utils.color(128, 128, 255) + f"Loading repo {rel_path}" + Utils.color())
-#            else:
-#                Log.log(Utils.color(128, 255, 128) + f"Loading module {rel_path}" + Utils.color())
-#
-#        Files.loaded_files.append(this_path) # type:ignore
-#
-#        # We're using compile() and FunctionType()() here beause exec() doesn't preserve source
-#        # code for debugging.
-#        file = open(config.this_file, encoding="utf-8")
-#        source = file.read()
-#        code = compile(source, config.this_file, "exec", dont_inherit=True)
-#
-#        #----------------------------------------
-#        # THIS IS WHERE WE EXEC THE SUBMODULE
-#
-#        try:
-#            # We must chdir()s into the .hancho file directory before running it so that
-#            # glob() can resolve files relative to the .hancho file itself. We are _not_ in an async
-#            # context here so there should be no other threads trying to change cwd.
-#            Path.pushdir(os.path.dirname(config.this_dir))
-#            old_proxy = sys.modules.get("hancho", None)
-#            sys.modules["hancho"] = new_proxy
-#            types.FunctionType(code, new_module.__dict__)()
-#
-#        finally:
-#            sys.modules["hancho"] = old_proxy # type: ignore
-#            Path.popdir()
-#
-#        #----------------------------------------
-#
-#        return new_module
-
-    ########################################
-
-#    @classmethod
-#    def create_mod_config(cls, parent_config : Dict, in_path : str, *args, **kwargs) -> Dict:
-#        this_path = cast(str, parent_config.expand(in_path))
-#        this_path = Path.real(this_path)
-#        (this_dir, this_file) = Path.split(this_path)
-#
-#        this_config = Dict(
-#            parent_config,
-#            Dict(
-#                is_repo  = False,
-#                this_dir  = this_dir,
-#                this_file = this_file,
-#            ),
-#            *args,
-#            kwargs
-#        )
-#
-#        return this_config
-
-    ########################################
-
-#    @classmethod
-#    def create_mod(cls, parent : Hancho, in_path : str, *args, **kwargs):
-#        new_config = cls.create_mod_config(parent.config, in_path, *args, **kwargs)
-#        # FIXME redo this like repo()
-#        assert False
-
-    ########################################
-
-
-
-
-
-
-
-
-
-
-#    @classmethod
-#    def load_hancho(cls, parent_config, task_path : str, *args, **kwargs) -> Hancho:
-#        task_path = config.expand(task_path)
-#        task_path = Path.norm(task_path)
-#        (task_dir, task_file) = Path.split(task_path)
-#
-#        if config.verbose:
-#            rel_path = Path.rel_path(task_path, config.root_dir)
-#            Log.log(("┃ " * (len(Path.dirstack) - 1)), end="")
-#            Log.log(Utils.color(128, 255, 128) + f"Loading module {rel_path}" + Utils.color())
-#
-#        #----------------------------------------
-#        # Create the new Hancho proxy
-#
-#        #def create_mod(parent : Hancho, in_task_path : str, *args, **kwargs):
-#        new_module = cls.create_mod(hancho, task_path)
-#
-#        new_config = Dict(
-#            parent_config,
-#            Dict(
-#                is_repo  = False,
-#                this_dir  = task_dir,
-#                this_file = task_name,
-#            ),
-#            *args,
-#            kwargs,
-#        )
-#
-#        return new_config
-
-
-
-
-
-
     #-----------------------------------------------------------------------------------------------
 
     @classmethod
-    def create_mod(cls, script_real : str, config : Dict):
+    def create_mod(cls, script_path : str, config : Dict):
         """
         Creates a new module for the given script + config pair.
         """
 
-        assert Path.isreal(script_real)
-        mod = types.ModuleType(os.path.basename(script_real))
+        assert os.path.isfile(script_path)
+        mod = types.ModuleType(os.path.basename(script_path))
         mod.__dict__.update(
-            __file__ = script_real,
+            __file__ = script_path,
             __code__ = None,
             hancho   = HanchoProxy(config)
         )
@@ -1491,22 +1244,20 @@ class Loader:
         # there are symlinks in the path.
 
         script_path = parent_config.expand(script_path)
-        script_path_real = os.path.realpath(script_path)
-
-        assert os.path.isabs (script_path_real)
-        assert os.path.isfile(script_path_real)
 
         #----------------------------------------
         # Create the repo-specific config that points the 'repo' and 'this' path at the given
         # script.
 
-        repo_config = Loader.create_repo_config(script_path_real, parent_config, *args, **kwargs)
+        repo_config = Loader.create_repo_config(script_path, parent_config, *args, **kwargs)
 
         #----------------------------------------
         # Dedupe the repo load if needed. Repos are only deduped if their configurations are
         # _identical_, which may bite users.
 
-        dedupe_key = (script_path_real, repo_config)
+        script_path_real = os.path.realpath(script_path)
+        repo_key = str(repo_config)
+        dedupe_key = (script_path_real, str(repo_config))
         dedupe = cls.script_to_repo.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1515,11 +1266,10 @@ class Loader:
         # Create the new module and run its script.
 
         if repo_config.verbose:
-            script_path_rel = Path.rel_path(script_path_real, repo_config.root_dir)
             Log.log("┃ " * Loader.depth, end="")
-            Log.log(Utils.color(128, 128, 255) + f"Loading repo {script_path_rel}" + Utils.color())
+            Log.log(Utils.color(128, 128, 255) + f"Loading repo {script_path}" + Utils.color())
 
-        repo_module = Loader.create_mod(script_path_real, repo_config)
+        repo_module = Loader.create_mod(script_path, repo_config)
         Loader.compile_mod(repo_module)
         Loader.exec_mod(repo_module)
 
@@ -1600,6 +1350,8 @@ class TaskState(Enum):
     SKIPPED = "SKIPPED"
     BROKEN = "BROKEN"
 
+# --------------------------------------------------------------------------------------------------
+
 class Task:
 
     # Linter doesn't like us assigning all these to None
@@ -1613,6 +1365,7 @@ class Task:
 
         self._desc : str      = None
         self._command : Any = None
+        self._in_depfile : str   = None
 
         self._root_dir : str   = None
         self._root_file : str  = None
@@ -1628,15 +1381,13 @@ class Task:
         self._build_root : str = None
         self._build_dir : str  = None
 
-        self._depformat : str    = None
-        self._in_depfile : str   = None
+        self._job_count : int    = None
+        self._keep_going : int   = None
 
+        self._depformat : str    = None
         self._build_tag : str    = None
         self._target : str       = None
         self._tool : str         = None
-
-        self._job_count : int    = None
-        self._keep_going : int   = None
 
         self._verbose : bool     = None
         self._debug : bool       = None
@@ -1681,10 +1432,10 @@ class Task:
     def queue(self):
         if self._state is TaskState.DECLARED:
             # Queue all tasks referenced by this task's config.
-            def apply(_, val):
-                if isinstance(val, Task):
-                    val.queue()
-            Utils.apply_variant(None, self._config, apply)
+            def apply(c, k, v):
+                if isinstance(v, Task):
+                    v.queue()
+            Utils.walk(self._config, apply)
 
             # And now queue this task.
             Runner.queued_tasks.append(self)
@@ -1701,6 +1452,7 @@ class Task:
         self.start()
         assert self._asyncio_task is not None
         await self._asyncio_task
+        return self._out_files
 
     def promise(self, *args):
         return Promise(self, *args)
@@ -1713,6 +1465,8 @@ class Task:
             sameline = not self._verbose,
         )
 
+    # ----------------------------------------
+
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
@@ -1724,24 +1478,13 @@ class Task:
         self._state = TaskState.AWAITING_INPUTS
 
         try:
-            async def map_await(_, val):
-                if inspect.isawaitable(val):
-                    return await val
-                else:
-                    return val
-            new_config = await Utils.async_map_variant(None, self._config, map_await)
-            self._config = Utils.check(Dict, new_config)
+            await Utils.await_variant(self._config)
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
             self._state = TaskState.CANCELLED
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
-
-
-
-
-
 
 
         ########################################
@@ -1751,9 +1494,6 @@ class Task:
             c = self._config
             e = Expander(c)
             check = Utils.check
-
-            self._desc       = check(str, e.eval("desc"))
-            self._command    = check(str, e.eval("command"))
 
             self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
             self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
@@ -1769,15 +1509,14 @@ class Task:
             self._build_root = Path.abs_path(check(str, e.eval("build_root")))
             self._build_dir  = Path.abs_path(check(str, e.eval("build_dir")))
 
-            self._depformat   = check(str, e.eval("depformat"))
-            self._in_depfile  = Path.abs_path(check(str, e.eval("in_depfile")))
-
-            self._build_tag   = check(str, e.eval("build_tag"))
-            self._target      = check(str, e.eval("target"))
-            self._tool        = check(str, e.eval("tool"))
-
             self._job_count   = check(int, e.eval("job_count"))
             self._keep_going  = check(int, e.eval("keep_going"))
+
+            # these are none if not set
+            self._depformat   = e.eval("depformat")
+            self._build_tag   = e.eval("build_tag")
+            self._target      = e.eval("target")
+            self._tool        = e.eval("tool")
 
             self._verbose     = check(bool, e.eval("verbose"))
             self._debug       = check(bool, e.eval("debug"))
@@ -1818,11 +1557,11 @@ class Task:
             self._state = TaskState.CANCELLED
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
+
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             self._state = TaskState.BROKEN
             Stats.tasks_broken += 1
             raise ex
-
 
         ########################################
         # Early-out if this is a no-op task
@@ -1884,8 +1623,7 @@ class Task:
     def move_to_builddir(self, val):
         if not isinstance(val, str):
             return val
-        # Note this conditional needs to be first, as build_dir can itself be under
-        # task_dir
+        # Note this conditional needs to be first, as build_dir can itself be under task_dir
         if val.startswith(self._build_dir):
             # Absolute path under build_dir, do nothing.
             pass
@@ -1900,13 +1638,6 @@ class Task:
             val = Path.join(self._build_dir, val)
         return val
 
-    def move_to_taskdir(self, val):
-        if not isinstance(val, str):
-            return val
-        if not os.path.isabs(val):
-            val = Path.join(self._task_dir, val)
-        return val
-
     ################################################################################################
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
 
@@ -1919,63 +1650,45 @@ class Task:
             Log.log(f"\nTask before expand: {self}")
 
         # ----------------------------------------
-        # Expand all in_ and out_ filenames
-        # We _must_ expand these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        def expand_path(key : str, val : str):
-            if key is not str:
-                pass
-            elif key.startswith("in_") or key.startswith("out_"):
-                if not isinstance(val, str):
-                    return val
-                val = self._config.expand(val)
-                val = Path.normpath(val) # type: ignore
-            return val
+        def move_stuff(c, k, v):
+            if isinstance(k, str) and isinstance(v, str):
+                # Expand all in_ and out_ filenames
+                # We _must_ expand these first before joining paths or the paths will be incorrect:
+                # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        self._config = Utils.map_variant(None, self._config, expand_path)
+                if k.startswith("in_"):
+                    v = self._config.expand(v)
+                    v = Path.normpath(v) # type: ignore
+                elif k.startswith("out_"):
+                    v = self._config.expand(v)
+                    v = Path.normpath(v) # type: ignore
 
-        # ----------------------------------------
-        # Make all in_ and out_ file paths absolute
+                # Make all in_ and out_ file paths absolute
+                if k.startswith("out_") or k == "in_depfile":
+                    v = self.move_to_builddir(v)
+                elif k.startswith("in_"):
+                    if not os.path.isabs(v):
+                        v = Path.join(self._task_dir, v)
 
-        def move_stuff(key, val):
-            if key is not str:
-                return val
+                # Gather all inputs to task.in_files and outputs to task.out_files
+                if k == "in_depfile":
+                    if os.path.isfile(v):
+                        self._in_files.append(v)
+                elif k.startswith("out_"):
+                    self._out_files.append(v)
+                elif k.startswith("in_"):
+                    self._in_files.append(v)
 
-            key = cast(str, key)
+                c[k] = v
 
-            if key.startswith("out_") or key == "in_depfile":
-                return self.move_to_builddir(val)
-            elif key.startswith("in_"):
-                return self.move_to_taskdir(val)
-            else:
-                return val
-
-        self._config = Utils.map_variant(None, self._config, move_stuff)
-
-        # ----------------------------------------
-        # Gather all inputs to task.in_files and outputs to task.out_files
-
-        def collect_stuff(key, val):
-            # Note - we only add the depfile to in_files _if_it_exists_, otherwise we will fail a
-            # check that all our inputs are present.
-            if key is not str:
-                return
-
-            key = cast(str, key)
-
-            if key == "in_depfile":
-                if os.path.isfile(val):
-                    self._in_files.append(val)
-            elif key.startswith("out_"):
-                self._out_files.append(val)
-            elif key.startswith("in_"):
-                self._in_files.append(val)
-
-        Utils.apply_variant(None, self._config, collect_stuff)
+        Utils.walk(self._config, move_stuff)
 
         # ----------------------------------------
         # And now we can expand the command.
+
+        self._desc    = self._config.eval("desc")
+        self._command = self._config.eval("command")
 
         if self._debug:
             Log.log(f"\nTask after expand: {self}")
@@ -1985,7 +1698,6 @@ class Task:
 
         # FIXME need a test for this that uses symlinks
 
-        #if self._out_files and self._context.command is not None:
         for file in self._out_files:
             real_file = os.path.realpath(file)
             if real_file in Files.filename_to_fingerprint:
@@ -2280,7 +1992,8 @@ class Runner:
         Log.log(Utils.color(), end="")
         Log.log(str(task))
         Log.log(Utils.color(255, 128, 128), end="")
-        Log.log(traceback.format_exc())
+        blah = traceback.format_exc()
+        Log.log(blah)
         Log.log(Utils.color(), end="")
 
     ########################################
@@ -2331,6 +2044,8 @@ config_defaults = Dict(
     desc       = "<description missing>",
     command    = "<command missing>",
 
+    hancho_dir = os.path.dirname(__file__),
+
     root_dir   = os.getcwd(),
     root_file  = "build.hancho",
 
@@ -2344,15 +2059,15 @@ config_defaults = Dict(
     build_root = "{repo_dir}/build",
     build_dir  = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
 
-    depformat   = "gcc",
-    in_depfile  = "",
-
-    build_tag   = "",
-    target      = "",
-    tool        = "",
-
     job_count   = 1,
     job_max     = os.cpu_count(),
+
+    depformat   = None,
+    in_depfile  = None,
+
+    build_tag   = None,
+    target      = None,
+    tool        = None,
 
     keep_going  = False,
     verbose     = False,
@@ -2449,55 +2164,33 @@ def reset(args):
     init(args)
 
 def main():
-    root_path = os.path.join(root_config.root_dir, root_config.root_file)
-    root_mod = load_root_script(root_path)
-
-    if root_mod.hancho.config.tool:
-        result = Runner.run_tool(root_mod.hancho.config.tool)
-    else:
-        queue_tasks(root_mod)
-        result = run_tasks(root_mod)
-
-    return result
-
-########################################
-
-def load_root_script(root_path : str) -> types.ModuleType:
-    root_path_real = os.path.realpath(root_path)
-    (root_dir_real, root_file_real) = os.path.split(root_path_real)
-
-    assert os.path.isabs (root_file_real)
-    assert os.path.isfile(root_file_real)
-    assert os.path.isabs (root_dir_real)
-    assert os.path.isdir (root_dir_real)
+    if root_config.tool:
+        result = Runner.run_tool(root_config.tool)
+        return result
 
     time_a = time.perf_counter()
-    root_script_path = os.path.join(config.root_dir, config.root_file)
-    root_mod = Loader.load_repo(root_script_path, config)
+    script_path = os.path.join(root_config.root_dir, root_config.root_file)
+    root_mod = Loader.load_repo(script_path, root_config)
     Stats.time_load = time.perf_counter() - time_a
-    if config.debug or config.verbose:
+
+    if root_config.debug or root_config.verbose:
         Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
-    return root_mod
 
-########################################
-
-def queue_tasks(root_mod):
     time_a = time.perf_counter()
-    if root_mod.hancho.config.target:
-        target_regex = re.compile(root_mod.hancho.config.target)
+    if root_config.target:
+        target_regex = re.compile(root_config.target)
         Runner.select_tasks_by_regex(target_regex)
     else:
         Runner.queue_root_tasks(root_mod)
     Stats.time_queue = time.perf_counter() - time_a
-    # if root_config.debug or root_config.verbose:
-    Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
-########################################
+    if root_config.debug or root_config.verbose:
+        Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
-def run_tasks(root_mod):
     time_a = time.perf_counter()
     result = Runner.run_tasks()
     Stats.time_build = time.perf_counter() - time_a
+
     Stats.print_build_stats()
     return result
 
@@ -2506,29 +2199,15 @@ def run_tasks(root_mod):
 #region scratchpad
 
 def scratch():
-    #x = Expander.split(r"a \{a\} a")
-
-    x = Expander.split("a{b}")
-    print(x)
-    print(repr(x))
-    print(x == ['a', 'b'])
-
-    #x = Expander.split("a {b} c")
-    #print(x)
-    #print(repr(x))
-    #print(x == ['a ', '{b}', ' c'])
+    Task(
+        desc = "testing out_file",
+        command = "echo {out_file}",
+        out_file = "test_command_lists.txt"
+    )
+    Runner.queue_all_tasks()
+    result = Runner.run_tasks()
 
     sys.exit(0)
-
-#endregion
-####################################################################################################
-#region __name__ == __main__
-
-init(sys.argv[1:])
-
-if __name__ == "__main__":
-    scratch()
-    sys.exit(main())
 
 #endregion
 ####################################################################################################
@@ -2582,26 +2261,28 @@ expansion_globals = Dict(
     #root_config = root_config,
 )
 
-
 # These two functions are to make the type checker not complain about load/repo, which are actually
 # lambdas bound to the current script's config in HanchoProxy.
-def load(script_path, *args, **kwargs):
-    Loader.load_script(script_path, root_config, *args, kwargs)
-    #assert False, "Nothing should be using the top-level hancho.load stub!"
+def load(script_path, *args, **kwargs) -> types.ModuleType:
+    return Loader.load_script(script_path, root_config, *args, kwargs)
 
-def repo(script_path, *args, **kwargs):
-    Loader.load_repo(script_path, root_config, *args, kwargs)
-    #assert False, "Nothing should be using the top-level hancho.repo stub!"
+def repo(script_path, *args, **kwargs) -> types.ModuleType:
+    return Loader.load_repo(script_path, root_config, *args, kwargs)
 
-def task(*args, **kwargs):
-    #assert False, "Nothing should be using the top-level hancho.task stub!"
-    Task(root_config, *args, **kwargs)
-
-#load_lambda = lambda script_path, *args, **kwargs : Loader.load_script(script_path, config, *args, kwargs)
-#repo_lambda = lambda script_path, *args, **kwargs : Loader.load_repo(script_path, config, *args, kwargs)
-#task_lambda = lambda *args, **kwargs : Task(config, *args, **kwargs)
+#def task(*args, **kwargs):
+#    return Task(root_config, *args, **kwargs)
 
 rel_path = Path.rel_path
+
+#endregion
+####################################################################################################
+#region __name__ == __main__
+
+init(sys.argv[1:])
+
+if __name__ == "__main__":
+    #scratch()
+    sys.exit(main())
 
 #endregion
 ####################################################################################################
