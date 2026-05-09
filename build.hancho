@@ -2,5 +2,5 @@ import hancho
 
 tools_base  = hancho.load("{hancho_dir}/tools/tools_base.hancho")
 tools_fpga  = hancho.load("{hancho_dir}/tools/tools_fpga.hancho")
-#tools_riscv = hancho.repo("{hancho_dir}/riscv_rules.hancho")
-#tools_wasm  = hancho.repo("{hancho_dir}/wasm_rules.hancho")
+tools_riscv = hancho.load("{hancho_dir}/tools/tools_riscv.hancho")
+tools_wasm  = hancho.repo("{hancho_dir}/tools/tools_wasm.hancho")
