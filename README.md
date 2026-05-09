@@ -13,12 +13,13 @@ Hancho should suffice for small to medium sized projects.
 Grab a copy of ```hancho.py``` and put it somewhere in your path. That's it.
 
 ``` bash
-user@host:~$ wget https://raw.githubusercontent.com/user/hancho/main/hancho.py
+user@host:~$ wget https://raw.githubusercontent.com/aappleby/hancho/refs/heads/main/hancho.py
 user@host:~$ chmod +x hancho.py
 user@host:~$ ./hancho.py --help
-usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace] [-j JOBS] [-q] [-n] [-s]
-                 [--use_color]
+usage: hancho.py [-h] [-C ROOT_DIR] [-f ROOT_FILE] [-j JOBS] [-k KEEP_GOING] [-t TOOL]
+                 [-v] [-d] [-n] [-q] [-r] [-s] [--trace] [--use_color]
                  [target]
+
 <snip>
 ```
 
