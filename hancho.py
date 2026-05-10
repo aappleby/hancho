@@ -573,8 +573,8 @@ class Dict(dict):
         else:
             return Dumper(2).dump(self)
 
-    def dump(self, depth):
-        return Dumper(depth).dump(self)
+    def dump(self, depth, print_id = True):
+        return Dumper(depth, print_id = print_id).dump(self)
 
     ########################################
     # Expander stuff
@@ -997,16 +997,20 @@ class Tracer:
 # Pretty-printer for various types
 
 class Dumper:
-    def __init__(self, max_depth=2):
-        self.depth = 0
+    def __init__(self, max_depth=2, print_id = True):
+        self.depth     = 0
         self.max_depth = max_depth
+        self.print_id  = print_id
 
     def indent(self):
         return "  " * self.depth
 
     def dump(self, variant):
-        #result = f"{type(variant).__name__} @ {hex(id(variant))} "
-        result = f"{type(variant).__name__}"
+        if self.print_id:
+            result = f"{type(variant).__name__} @ {hex(id(variant))} "
+        else:
+            result = f"{type(variant).__name__} "
+
         if isinstance(variant, Task):
             result += self.dump_dict(variant.__dict__)
         elif isinstance(variant, Dict):
@@ -1077,8 +1081,8 @@ class HanchoProxy(types.ModuleType):
         super().__init__(__name__)
         self.__dict__.update(hancho_ref = sys.modules[__name__])
 
-    def init(self, args):
-        self.bind(init(args))
+    def init(self, *args, **kwargs):
+        self.bind(init(*args, kwargs))
 
     def bind(self, config):
         """
@@ -1110,15 +1114,14 @@ class Loader:
 
     dedupe : dict[tuple[str, str], types.ModuleType]
     stack : list[types.ModuleType]
-    flags : Dict
     root_config : Dict
 
     @classmethod
-    def init(cls, args):
+    def init(cls, config):
+        assert Utils.is_mapping(config)
         cls.dedupe = {}
         cls.stack = []
-        cls.flags = cls.parse_flags(args)
-        cls.root_config = Dict(cls.config_defaults, cls.flags)
+        cls.root_config = Dict(cls.config_defaults, config)
 
     @classmethod
     def check_init(cls):
@@ -1174,8 +1177,8 @@ class Loader:
     #-----------------------------------------------------------------------------------------------
 
     @classmethod
-    def parse_flags(cls, argv):
-        assert Utils.is_collection(argv)
+    def parse_flags(cls, args : list[str]):
+        assert Utils.is_collection(args)
 
         d = cls.config_defaults
 
@@ -1184,22 +1187,22 @@ class Loader:
         parser = argparse.ArgumentParser()
 
         # These flags are in Ninja order
-        parser.add_argument("target",             default=d.target,     nargs="?", type=str,  help="A regex that selects the targets to build. Defaults to all targets.")
+        parser.add_argument("target",             default=d.target,     nargs="?", type=str.strip,  help="A regex that selects the targets to build. Defaults to all targets.")
         parser.add_argument("-v", "--verbose",    default=d.verbose,    action="store_true",  help="Show verbose build info")
         parser.add_argument("-q", "--quiet",      default=d.quiet,      action="store_true",  help="Mute all output")
 
-        parser.add_argument("-C", "--root_dir",   default=d.root_dir,   type=str,             help="Change directory before starting the build")
-        parser.add_argument("-f", "--root_file",  default=d.root_file,  type=str,             help="Input .hancho file - defaults to 'build.hancho'")
+        parser.add_argument("-C", "--root_dir",   default=d.root_dir,   type=str.strip,       help="Change directory before starting the build")
+        parser.add_argument("-f", "--root_file",  default=d.root_file,  type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
 
         parser.add_argument("-j", "--job_max",    default=d.job_max,    type=int,             help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-k", "--keep_going", default=d.keep_going, type=int,             help="Keep going until N jobs fail (0 means infinity)")
         parser.add_argument("-n", "--dry_run",    default=d.dry_run,    action="store_true",  help="Do not run commands")
 
         parser.add_argument("-d", "--debug",      default=d.debug,      action="store_true",  help="Print debugging information")
-        parser.add_argument("-t", "--tool",       default=d.tool,       type=str,             help="Run a subtool.")
+        parser.add_argument("-t", "--tool",       default=d.tool,       type=str.strip,       help="Run a subtool.")
 
         # These are Hancho-specific
-        parser.add_argument("--build_tag",        default=d.build_tag,  type=str,             help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument("--build_tag",        default=d.build_tag,  type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
         parser.add_argument("--rebuild",          default=d.rebuild,    action="store_true",  help="Rebuild everything")
         parser.add_argument("--shuffle",          default=d.shuffle,    action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--trace",            default=d.trace,      action="store_true",  help="Trace all text expansion")
@@ -1207,7 +1210,7 @@ class Loader:
         # fmt: on
 
         # Ignore the name of the script that loaded Hancho
-        (flags, unrecognized) = parser.parse_known_args(argv[1:])
+        (flags, unrecognized) = parser.parse_known_args(args)
 
         # Unrecognized command line parameters also become module config fields if they are
         # flag-like
@@ -1230,8 +1233,8 @@ class Loader:
                 #val = maybe_as_number(val) if val is not None else True
                 extra_flags[key] = val
 
-        cls.flags = Dict(vars(flags), extra_flags)
-        return cls.flags
+        flags = Dict(vars(flags), extra_flags)
+        return flags
 
     #-----------------------------------------------------------------------------------------------
 
@@ -1263,7 +1266,7 @@ class Loader:
         # _identical_, which may bite users.
 
         script_path_real = os.path.realpath(script_path)
-        dedupe_key = (script_path_real, str(script_config))
+        dedupe_key = (script_path_real, script_config.dump(2, print_id = False))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1347,21 +1350,21 @@ class Promise:
 #region Task
 # Task object + bookkeeping
 
-class Task:
+class TaskState(Enum):
+    DECLARED = "DECLARED"
+    QUEUED = "QUEUED"
+    STARTED = "STARTED"
+    AWAITING_INPUTS = "AWAITING_INPUTS"
+    TASK_INIT = "TASK_INIT"
+    AWAITING_JOBS = "AWAITING_JOBS"
+    RUNNING_COMMANDS = "RUNNING_COMMANDS"
+    FINISHED = "FINISHED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    BROKEN = "BROKEN"
 
-    class State(Enum):
-        DECLARED = "DECLARED"
-        QUEUED = "QUEUED"
-        STARTED = "STARTED"
-        AWAITING_INPUTS = "AWAITING_INPUTS"
-        TASK_INIT = "TASK_INIT"
-        AWAITING_JOBS = "AWAITING_JOBS"
-        RUNNING_COMMANDS = "RUNNING_COMMANDS"
-        FINISHED = "FINISHED"
-        CANCELLED = "CANCELLED"
-        FAILED = "FAILED"
-        SKIPPED = "SKIPPED"
-        BROKEN = "BROKEN"
+class Task:
 
     #--------------------------------------------------------------------------------
     # Linter doesn't like us assigning all these to None
@@ -1410,7 +1413,7 @@ class Task:
         # Bookkeeping stuff
 
         self._task_index : int = 0
-        self._state : Task.State = Task.State.DECLARED
+        self._state : TaskState = TaskState.DECLARED
         self._reason : str = ""
         self._asyncio_task : asyncio.Task | None = None
         self._stdout : str = ""
@@ -1439,7 +1442,7 @@ class Task:
     # ----------------------------------------
 
     def queue(self):
-        if self._state is Task.State.DECLARED:
+        if self._state is TaskState.DECLARED:
             # Queue all tasks referenced by this task's config.
             def apply(c, k, v):
                 if isinstance(v, Task):
@@ -1448,13 +1451,13 @@ class Task:
 
             # And now queue this task.
             Runner.queued_tasks.append(self)
-            self._state = Task.State.QUEUED
+            self._state = TaskState.QUEUED
 
     def start(self):
         self.queue()
-        if self._state is Task.State.QUEUED:
+        if self._state is TaskState.QUEUED:
             self._asyncio_task = asyncio.create_task(self.task_main())
-            self._state = Task.State.STARTED
+            self._state = TaskState.STARTED
             Stats.tasks_started += 1
 
     async def await_done(self):
@@ -1539,15 +1542,15 @@ class Task:
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # were cancelled, we propagate the cancellation to downstream tasks.
 
-        assert self._state is Task.State.STARTED
-        self._state = Task.State.AWAITING_INPUTS
+        assert self._state is TaskState.STARTED
+        self._state = TaskState.AWAITING_INPUTS
 
         try:
             await Utils.await_variant(self._config)
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
-            self._state = Task.State.CANCELLED
+            self._state = TaskState.CANCELLED
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
 
@@ -1559,7 +1562,7 @@ class Task:
         if self._debug:
             Log.log(f"\nTask before expand: {self}")
 
-        self._state = Task.State.TASK_INIT
+        self._state = TaskState.TASK_INIT
         old_cwd = os.getcwd()
         self._task_dir = Path.abs_path(self._config.eval("task_dir"))
         os.chdir(self._task_dir)
@@ -1671,12 +1674,12 @@ class Task:
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
-            self._state = Task.State.CANCELLED
+            self._state = TaskState.CANCELLED
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
-            self._state = Task.State.BROKEN
+            self._state = TaskState.BROKEN
             Stats.tasks_broken += 1
             raise ex
 
@@ -1691,7 +1694,7 @@ class Task:
 
         if self._command is None:
             Stats.tasks_finished += 1
-            self._state = Task.State.FINISHED
+            self._state = TaskState.FINISHED
             return
 
         #--------------------------------------------------------------------------------
@@ -1700,7 +1703,7 @@ class Task:
         self._reason = self.needs_rerun(self._rebuild)
         if not self._reason:
             Stats.tasks_skipped += 1
-            self._state = Task.State.SKIPPED
+            self._state = TaskState.SKIPPED
             return
 
         #--------------------------------------------------------------------------------
@@ -1708,11 +1711,11 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            self._state = Task.State.AWAITING_JOBS
+            self._state = TaskState.AWAITING_JOBS
             await JobPool.acquire_jobs(self._job_count, self)
 
             # Run the commands.
-            self._state = Task.State.RUNNING_COMMANDS
+            self._state = TaskState.RUNNING_COMMANDS
             Stats.tasks_running += 1
             self._task_index = Stats.tasks_running
 
@@ -1729,7 +1732,7 @@ class Task:
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # If any command failed, we propagate the error to downstream tasks.
-            self._state = Task.State.FAILED
+            self._state = TaskState.FAILED
             Stats.tasks_failed += 1
             raise ex
         finally:
@@ -1738,7 +1741,7 @@ class Task:
         #--------------------------------------------------------------------------------
         # Task finished successfully
 
-        self._state = Task.State.FINISHED
+        self._state = TaskState.FINISHED
         Stats.tasks_finished += 1
 
     #--------------------------------------------------------------------------------
@@ -2029,8 +2032,9 @@ class Runner:
 ####################################################################################################
 #region Main
 
-def init(args):
-    Loader.init(args)
+# FIXME this should be taking a config instead of sys.argv
+def init(*args, **kwargs):
+    Loader.init(Dict(*args, kwargs))
     JobPool.init(Loader.root_config.job_max)
     Files.init()
     Stats.init()
@@ -2119,7 +2123,7 @@ def main():
 #region __name__ == __main__
 
 if __name__ == "__main__":
-    init(sys.argv)
+    init(sys.argv[1:])
     sys.exit(main())
 else:
     sys.modules[__name__] = HanchoProxy()

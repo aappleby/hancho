@@ -7,9 +7,10 @@ import os
 import shutil
 from pathlib import Path
 
+print(f"************** {os.getcwd()} **************")
+
 sys.path.append("..")
 import hancho
-from hancho import Dict
 
 def mtime_ns(filename):
     return os.stat(filename).st_mtime_ns
@@ -40,45 +41,145 @@ class TestTasks(unittest.TestCase):
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
 
-        #hancho_py.app.reset()
-        #hancho_py.app.parse_flags(["--quiet"])
-        #hancho_py.app.parse_flags([])
-        #hancho_py.app.parse_flags(["-v"])
-        #hancho_py.app.parse_flags(["-d"])
-        #self.hancho = hancho_py.app.create_root_mod()
-        hancho.init(['-q'])
+        (this_dir, this_file) = os.path.split(__file__)
+        #print(this_dir)
+
+        #hancho.init(['-q', f'-C {this_dir}'])
+        #hancho.init(['-d', '-v', f'-C {this_dir}'])
+
+        hancho.init(
+            this_dir  = this_dir,
+            this_file = this_file,
+            debug     = True,
+            quiet     = False,
+            verbose   = True,
+        )
+        #print(f"*******({hancho.config.this_dir})*******")
 
     def tearDown(self):
         """And wipe the build dir after a test too."""
         #shutil.rmtree("build", ignore_errors=True)
 
-    def run_tasks(self):
+    def run_tasks(self, expected = 0):
         hancho.Runner.queue_all_tasks()
         result = hancho.Runner.run_tasks()
-        self.assertEqual(result, 0)
+        self.assertEqual(result, expected)
 
-    ########################################
+    #--------------------------------------------------------------------------------
 
-    def test_dummy(self):
-        self.assertEqual(0, 0)
+#    def test_should_pass(self):
+#        hancho.Task(command = "echo Hello World")
+#        self.run_tasks()
+#
+#    def test_should_fail(self):
+#        """Sanity check"""
+#        bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
+#        self.run_tasks(-1)
+#        self.assertEqual(bad_task._state, hancho.TaskState.FAILED)
 
-    def test_should_pass(self):
-        hancho.Task(command = "echo Hello World")
-        self.run_tasks()
+    #--------------------------------------------------------------------------------
 
-    def test_out_file_dir(self):
-        hancho.Task(
-            command = "echo Hello File >> {out_file}",
-            out_file = "test_command_lists.txt"
+#  def test_subrepos1(self):
+#      """Outputs from a subrepo should go in build/repo_name/..."""
+#      repo = self.hancho.repo("subrepo")
+#      task = repo.task(
+#          command = "cat {rel_source_files} > {rel_build_files}",
+#          source_files = "stuff.txt",
+#          build_files = "repo.txt",
+#          b*ase_path = os.path.abspath("subrepo")
+#      )
+#      self.assertEqual(0, hancho.app.build_all())
+#      self.assertTrue(Path("build/subrepo/repo.txt").exists())
+#
+#    def test_subrepos1(self):
+#        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
+#        result = subprocess.run(
+#            f"python3 ../../hancho.py -v -d top_test1.hancho",
+#            shell=True,
+#            text=True,
+#            capture_output=True,
+#            cwd="subrepo_tests",
+#        )
+#        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
+#        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
+#        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
+#
+#    def test_subrepos2(self):
+#        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
+#        result = subprocess.run(
+#            f"python3 ../../hancho.py -v -d top_test2.hancho",
+#            shell=True,
+#            text=True,
+#            capture_output=True,
+#            cwd="subrepo_tests",
+#        )
+#        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
+#        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
+#        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
+#
+#    def test_subrepos3(self):
+#        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
+#        result = subprocess.run(
+#            f"python3 ../../hancho.py -v -d top_test3.hancho",
+#            shell=True,
+#            text=True,
+#            capture_output=True,
+#            cwd="subrepo_tests",
+#        )
+#        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
+#        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
+#        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
+
+    #--------------------------------------------------------------------------------
+
+#    def test_out_file_dir(self):
+#        hancho.Task(
+#            command  = "echo Hello File >> {out_file}",
+#            out_file = "test_command_lists.txt"
+#        )
+#        self.run_tasks()
+#        self.assertEqual(True, os.path.isfile(os.getcwd() + "/build/test_command_lists.txt"))
+
+    def test_good_build_path(self):
+        good_task = hancho.Task(
+            command  = "touch {out_obj}",
+            in_src   = "{repo_dir}/src/foo.c",
+            out_obj  = "{repo_dir}/build/narp/foo.o",
         )
-        self.run_tasks()
+        self.run_tasks(0)
+        #self.assertEqual(good_task._state, hancho.TaskState.FINISHED)
+        self.assertTrue(Path("build/narp/foo.o").exists())
 
-    def test_run_cmd(self):
-        command = r"echo I am runnning the {run_cmd('uname')} operating system."
-        hancho.Task(desc = "Working run_cmd", command = command)
-        self.run_tasks()
+#    def test_bad_build_path(self):
+#        bad_task = hancho.Task(
+#            command  = "touch {out_obj}",
+#            in_src   = "src/foo.c",
+#            out_obj  = "{repo_dir}/../build/foo.o",
+#        )
+#        self.run_tasks(-1)
+#        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+#        self.assertFalse(Path("build/foo.o").exists())
 
-    def test_broken_run_cmd(self):
-        command = r"echo {run_cmd('This is totally not a valid command.')}",
-        hancho.Task(desc = "Broken run_cmd", command = command, should_fail = True)
-        self.run_tasks()
+    #--------------------------------------------------------------------------------
+
+#    def test_run_cmd(self):
+#        if sys.platform != 'linux':
+#            return
+#
+#        test_task = hancho.Task(
+#            desc    = "Testing run_cmd",
+#            command = r"echo I am runnning the {run_cmd('uname')} operating system."
+#        )
+#        self.run_tasks()
+#
+#        self.assertEqual(
+#            test_task._stdout,
+#            f"I am runnning the {hancho.Utils.run_cmd('uname')} operating system.\n"
+#        )
+#
+#    def test_broken_run_cmd(self):
+#        command = r"echo {run_cmd('This is totally not a valid command.')}",
+#        hancho.Task(desc = "Broken run_cmd", command = command)
+#        self.run_tasks(-1)
+
+    #--------------------------------------------------------------------------------

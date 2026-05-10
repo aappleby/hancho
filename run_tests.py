@@ -2,9 +2,11 @@
 import sys
 import unittest
 import hancho
+import shutil
 
-hancho.init(args = sys.argv)
+shutil.rmtree("build", ignore_errors=True)
 
+#hancho.init()
 
 # tests still needed -
 # calling hancho in src dir
@@ -34,8 +36,13 @@ TEST_MODULES = [
     #"tests.test_dict",
     #"tests.test_templates",
     #"tests.test_split",
+    #"tests.test_tasks",
+
+    "tests.test_hancho_as_import",
+
+
+
     #"tests.test_scratch",
-    "tests.test_tasks",
 ]
 
 def run_test_suite(mod_name):

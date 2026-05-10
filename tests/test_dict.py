@@ -15,7 +15,6 @@ from hancho import Dict
 
 class TestDict(unittest.TestCase):
     def setUp(self):
-        print("*((*(*&((*&(*(&(*&()))))))))")
         sys.stdout.flush()
 
     def test_basic_access(self):
@@ -108,20 +107,22 @@ class TestDict(unittest.TestCase):
         (1, 2)
         """
 
-    def doctest_immutable_dicts(self):
-        # hancho.Dicts should be (as) immutable (as possible)
-        r"""
-        >>> d = Dict(a = 1)
-        >>> d.a = 2
-        Traceback (most recent call last):
-        ...
-        TypeError: ('Hancho.Dict is immutable', 'a', 2)
+    # Immutability disabled for now, going to revisit with MappingProxyType later
 
-        >>> d['a'] = 2
-        Traceback (most recent call last):
-        ...
-        TypeError: ('Hancho.Dict is immutable', 'a', 2)
-        """
+#    def doctest_immutable_dicts(self):
+#        # hancho.Dicts should be (as) immutable (as possible)
+#        r"""
+#        >>> d = Dict(a = 1)
+#        >>> d.a = 2
+#        Traceback (most recent call last):
+#        ...
+#        TypeError: ('Hancho.Dict is immutable', 'a', 2)
+#
+#        >>> d['a'] = 2
+#        Traceback (most recent call last):
+#        ...
+#        TypeError: ('Hancho.Dict is immutable', 'a', 2)
+#        """
 
     def doctest_right_overrides_left(self):
         # Right side should always override left side if right val is not None

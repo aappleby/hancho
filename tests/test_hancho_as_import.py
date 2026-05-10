@@ -7,7 +7,8 @@ import os
 sys.path.append("..")
 import hancho
 
-hancho.init(sys.argv)
+(this_dir, this_file) = os.path.split(__file__)
+hancho.init(this_dir = this_dir, this_file = this_file)
 
 hancho.Task(
     desc = "Write to {out_file}",
@@ -23,4 +24,7 @@ hancho.Task(
 
 hancho.Runner.queue_all_tasks()
 hancho.Runner.run_tasks()
-hancho.Log.log("Done!")
+
+build_dir = hancho.config.eval("build_dir")
+assert os.path.isfile(os.path.join(build_dir, "foo.txt"))
+assert os.path.isfile(os.path.join(build_dir, "bar.txt"))
