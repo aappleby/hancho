@@ -16,6 +16,8 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 
 # FIXME - should we be using mappingproxy to make Dicts immutable?
 # FIXME make sure objects added to the hancho proxy are preserved in submodules?
+# FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs
+# a revisit
 
 ####################################################################################################
 #region imports
@@ -133,6 +135,7 @@ class Stats:
     tasks_skipped : int
     tasks_cancelled : int
     tasks_broken : int
+    tasks_shouldfail : int
 
     @classmethod
     def init(cls):
@@ -147,6 +150,7 @@ class Stats:
         cls.tasks_skipped = 0
         cls.tasks_cancelled = 0
         cls.tasks_broken = 0
+        cls.tasks_shouldfail = 0
 
     @classmethod
     def print_build_stats(cls):
@@ -155,13 +159,14 @@ class Stats:
         Log.log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds")
 
         if Loader.root_config.debug or Loader.root_config.verbose:
-            Log.log(f"tasks started:   {cls.tasks_started}")
-            Log.log(f"tasks finished:  {cls.tasks_finished}")
-            Log.log(f"tasks failed:    {cls.tasks_failed}")
-            Log.log(f"tasks skipped:   {cls.tasks_skipped}")
-            Log.log(f"tasks cancelled: {cls.tasks_cancelled}")
-            Log.log(f"tasks broken:    {cls.tasks_broken}")
-            Log.log(f"mtime calls:     {cls.mtime_calls}")
+            Log.log(f"tasks started:    {cls.tasks_started}")
+            Log.log(f"tasks finished:   {cls.tasks_finished}")
+            Log.log(f"tasks failed:     {cls.tasks_failed}")
+            Log.log(f"tasks skipped:    {cls.tasks_skipped}")
+            Log.log(f"tasks cancelled:  {cls.tasks_cancelled}")
+            Log.log(f"tasks broken:     {cls.tasks_broken}")
+            Log.log(f"tasks shouldfail: {cls.tasks_shouldfail}")
+            Log.log(f"mtime calls:      {cls.mtime_calls}")
 
         if cls.tasks_failed or cls.tasks_broken:
             Log.log(f"hancho: {Utils.color(255, 128, 128)}BUILD FAILED{Utils.color()}")
@@ -623,7 +628,6 @@ class Expander(abc.Mapping):
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_DEPTH >= 6
     MAX_DEPTH : int
-
     depth : int
 
     #depth = 0
@@ -1572,6 +1576,8 @@ class Task:
             e = Expander(c)
             check = Utils.check
 
+            self._desc    = self._config.eval("desc")
+
             #self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
             #self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
 
@@ -1608,7 +1614,6 @@ class Task:
 
             # And now we can expand the command.
 
-            self._desc    = self._config.eval("desc")
             self._command = self._config.eval("command")
 
             if self._debug:
@@ -1679,8 +1684,12 @@ class Task:
             raise asyncio.CancelledError() from ex
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
+            if self._should_fail:
+                # Failure during task init because task is broken
+                Stats.tasks_shouldfail += 1
+            else:
+                Stats.tasks_broken += 1
             self._state = TaskState.BROKEN
-            Stats.tasks_broken += 1
             raise ex
 
         finally:
@@ -1732,8 +1741,12 @@ class Task:
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # If any command failed, we propagate the error to downstream tasks.
+            if self._should_fail:
+                # Failure during run_command, task failed
+                Stats.tasks_shouldfail += 1
+            else:
+                Stats.tasks_failed += 1
             self._state = TaskState.FAILED
-            Stats.tasks_failed += 1
             raise ex
         finally:
             await JobPool.release_jobs(self._job_count, self)
@@ -1856,7 +1869,7 @@ class Task:
 
         # FIXME We need a better way to handle "should fail" so we don't constantly keep rerunning
         # intentionally-failing tests every build
-        command_pass = (self._returncode == 0) != self._should_fail
+        command_pass = (self._returncode == 0)
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
@@ -1976,12 +1989,16 @@ class Runner:
                 await asyncio_task
                 cls.finished_tasks.append(task)
             except BaseException:  # pylint: disable=broad-exception-caught
+                # Both broken and failed tasks should end up here.
                 cls.log_task_failure(task)
-                fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
-                if Loader.root_config.keep_going and fail_count >= Loader.root_config.keep_going:
-                    Log.log("Too many failures, cancelling tasks and stopping build")
-                    cls.cancel_all_tasks()
-                    break
+                if task._should_fail:
+                    cls.finished_tasks.append(task)
+
+            fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
+            if Loader.root_config.keep_going and fail_count >= Loader.root_config.keep_going:
+                Log.log("Too many failures, cancelling tasks and stopping build")
+                cls.cancel_all_tasks()
+                break
 
         return -1 if Stats.tasks_failed or Stats.tasks_broken else 0
 
@@ -2018,14 +2035,11 @@ class Runner:
 
     @classmethod
     def log_task_failure(cls, task):
-        Log.log(Utils.color(255, 128, 0), end="")
-        Log.log(f"Task failed: {task._desc}")
-        Log.log(Utils.color(), end="")
-        Log.log(str(task))
-        Log.log(Utils.color(255, 128, 128), end="")
-        blah = traceback.format_exc()
-        Log.log(blah)
-        Log.log(Utils.color(), end="")
+        Log.log("")
+        Log.log(f"{Utils.color(255, 128, 0)}Task failed: {task._desc}{Utils.color()}")
+        Log.log(f"{Utils.color(255, 128, 128)}{traceback.format_exc()}{Utils.color()}")
+        if Loader.root_config.debug or Loader.root_config.verbose:
+            Log.log(str(task))
 
 
 #endregion

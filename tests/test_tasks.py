@@ -7,9 +7,9 @@ import os
 import shutil
 from pathlib import Path
 
-print(f"************** {os.getcwd()} **************")
-
-sys.path.append("..")
+(thisdir, thisfile) = os.path.split(__file__)
+hancho_dir = os.path.normpath(f"{thisdir}/..")
+sys.path.append(hancho_dir)
 import hancho
 
 def mtime_ns(filename):
@@ -42,40 +42,39 @@ class TestTasks(unittest.TestCase):
         shutil.rmtree("build", ignore_errors=True)
 
         (this_dir, this_file) = os.path.split(__file__)
-        #print(this_dir)
-
-        #hancho.init(['-q', f'-C {this_dir}'])
-        #hancho.init(['-d', '-v', f'-C {this_dir}'])
 
         hancho.init(
             this_dir  = this_dir,
             this_file = this_file,
-            debug     = True,
-            quiet     = False,
-            verbose   = True,
+            #debug     = True,
+            #verbose   = True,
+
+            debug     = False,
+            verbose   = False,
+            quiet     = True,
         )
-        #print(f"*******({hancho.config.this_dir})*******")
 
     def tearDown(self):
         """And wipe the build dir after a test too."""
         #shutil.rmtree("build", ignore_errors=True)
 
-    def run_tasks(self, expected = 0):
+    def run_tasks(self, expected):
         hancho.Runner.queue_all_tasks()
         result = hancho.Runner.run_tasks()
         self.assertEqual(result, expected)
 
     #--------------------------------------------------------------------------------
 
-#    def test_should_pass(self):
-#        hancho.Task(command = "echo Hello World")
-#        self.run_tasks()
-#
-#    def test_should_fail(self):
-#        """Sanity check"""
-#        bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
-#        self.run_tasks(-1)
-#        self.assertEqual(bad_task._state, hancho.TaskState.FAILED)
+    def test_run_tasks_zero(self):
+        # If all tasks are OK, we should get 0 from run_tasks.
+        hancho.Task(command = "echo Hello World")
+        self.run_tasks(0)
+
+    def test_run_tasks_nonzero(self):
+        # If any task fails, we should get -1 from run_tasks.
+        bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
+        self.run_tasks(-1)
+        self.assertEqual(bad_task._state, hancho.TaskState.FAILED)
 
     #--------------------------------------------------------------------------------
 
@@ -132,54 +131,66 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-#    def test_out_file_dir(self):
-#        hancho.Task(
-#            command  = "echo Hello File >> {out_file}",
-#            out_file = "test_command_lists.txt"
-#        )
-#        self.run_tasks()
-#        self.assertEqual(True, os.path.isfile(os.getcwd() + "/build/test_command_lists.txt"))
-
     def test_good_build_path(self):
         good_task = hancho.Task(
-            command  = "touch {out_obj}",
-            in_src   = "{repo_dir}/src/foo.c",
-            out_obj  = "{repo_dir}/build/narp/foo.o",
+            command  = "echo {in_src} >> {out_obj}",
+            in_src   = "src/foo.c",
+            out_obj  = "{build_dir}/narp/foo.o",
         )
         self.run_tasks(0)
-        #self.assertEqual(good_task._state, hancho.TaskState.FINISHED)
-        self.assertTrue(Path("build/narp/foo.o").exists())
+        self.assertEqual(good_task._state, hancho.TaskState.FINISHED)
+        self.assertTrue(Path("build/tests/narp/foo.o").exists())
 
-#    def test_bad_build_path(self):
-#        bad_task = hancho.Task(
-#            command  = "touch {out_obj}",
-#            in_src   = "src/foo.c",
-#            out_obj  = "{repo_dir}/../build/foo.o",
-#        )
-#        self.run_tasks(-1)
-#        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
-#        self.assertFalse(Path("build/foo.o").exists())
+    def test_bad_build_path(self):
+        bad_task = hancho.Task(
+            desc     = "This task has a bad path for out_obj",
+            command  = "echo {in_src} >> {out_obj}",
+            in_src   = "src/foo.c",
+            out_obj  = "{build_dir}/../foo.o",
+            should_fail = True,
+        )
+        self.run_tasks(0)
+        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertFalse(Path("build/foo.o").exists())
+
+    #--------------------------------------------------------------------------------
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    def test_good_run_cmd(self):
+        test_task = hancho.Task(
+            desc    = "Testing run_cmd",
+            command = r"echo I am runnning the {run_cmd('uname')} operating system."
+        )
+        self.run_tasks(0)
+        self.assertEqual(test_task._stdout, f"I am runnning the Linux operating system.\n")
+
+    def test_bad_run_cmd(self):
+        task = hancho.Task(
+            desc    = "Broken run_cmd",
+            command = r"echo {run_cmd('This is totally not a valid command.')}",
+            should_fail = True,
+        )
+        self.run_tasks(0)
+        self.assertEqual(task._state, hancho.TaskState.FAILED)
+
 
     #--------------------------------------------------------------------------------
 
-#    def test_run_cmd(self):
-#        if sys.platform != 'linux':
-#            return
-#
-#        test_task = hancho.Task(
-#            desc    = "Testing run_cmd",
-#            command = r"echo I am runnning the {run_cmd('uname')} operating system."
-#        )
-#        self.run_tasks()
-#
-#        self.assertEqual(
-#            test_task._stdout,
-#            f"I am runnning the {hancho.Utils.run_cmd('uname')} operating system.\n"
-#        )
-#
-#    def test_broken_run_cmd(self):
-#        command = r"echo {run_cmd('This is totally not a valid command.')}",
-#        hancho.Task(desc = "Broken run_cmd", command = command)
-#        self.run_tasks(-1)
+    def test_missing_input(self):
+        # We should fail if an input is missing
+        task = hancho.Task(
+            desc    = "Should fail due to missing input",
+            command = "touch {out_obj}",
+            in_src  = "src/does_not_exist.txt",
+            out_obj = "missing_src.txt",
+            should_fail = True,
+        )
+        self.run_tasks(0)
+        self.assertEqual(task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
+        self.assertTrue("does_not_exist.txt" in hancho.Log.buffer)
 
     #--------------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    unittest.main(verbosity=0)

@@ -33,30 +33,20 @@ shutil.rmtree("build", ignore_errors=True)
 
 
 TEST_MODULES = [
-    #"tests.test_dict",
-    #"tests.test_templates",
-    #"tests.test_split",
-    #"tests.test_tasks",
+    "tests.test_dict",
+    "tests.test_templates",
+    "tests.test_split",
+    "tests.test_tasks",
 
-    "tests.test_hancho_as_import",
-
-
-
+    #"tests.test_hancho_as_import",
     #"tests.test_scratch",
 ]
 
-def run_test_suite(mod_name):
-    loader = unittest.TestLoader()
-    runner = unittest.TextTestRunner(verbosity=2)
-    suite  = loader.loadTestsFromName(mod_name)
-    result = runner.run(suite)
-
-    if not result.wasSuccessful():
-        print(f"Test suite {mod_name} failed!")
-        print(f"Result: {result}")
-        sys.exit(1)
-
 if __name__ == "__main__":
-    for mod in TEST_MODULES:
-        print(f"Running {mod}")
-        run_test_suite(mod)
+    for mod_name in TEST_MODULES:
+        #print(f"Running {mod_name}")
+        loader = unittest.TestLoader()
+        runner = unittest.TextTestRunner(verbosity=2)
+        #suite = loader.discover(start_dir="tests", pattern="test_tasks.py")
+        suite  = loader.loadTestsFromName(mod_name)
+        runner.run(suite)

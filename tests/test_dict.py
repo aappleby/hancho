@@ -15,6 +15,7 @@ from hancho import Dict
 
 class TestDict(unittest.TestCase):
     def setUp(self):
+        hancho.init()
         sys.stdout.flush()
 
     def test_basic_access(self):

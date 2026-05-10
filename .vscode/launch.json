@@ -30,7 +30,7 @@
         "name": "Debug other stuff",
         "type": "debugpy",
         "request": "launch",
-        "program": "test_hancho_as_import.py",
+        "program": "test_tasks.py",
         "cwd": "${workspaceFolder}/tests",
         "console": "integratedTerminal",
         "justMyCode": true

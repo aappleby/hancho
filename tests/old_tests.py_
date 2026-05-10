@@ -1,39 +1,6 @@
-
-# pylint: disable=too-many-public-methods
-class TestHancho1(unittest.TestCase):
-    """Basic test cases"""
-
     ########################################
 
-    ########################################
-    # FIXME do we really need to support raw tasks?
 
-    #def test_raw_task(self):
-    #    self.hancho.Task(
-    #        command    = "touch {out_obj}",
-    #        in_src     = "src/foo.c",
-    #        out_obj    = "foo.o",
-    #        repo_dir   = os.getcwd(),
-    #        task_dir   = ".",
-    #        build_dir = "build"
-    #    )
-    #    #print(task)
-    #    self.assertEqual(0, hancho_py.app.build_all())
-    #    self.assertTrue(Path("build/foo.o").exists())
-
-    ########################################
-
-    def test_missing_input(self):
-        """We should fail if an input is missing"""
-        bad_task = self.hancho(
-            command = "touch {out_obj}",
-            in_src  = "src/does_not_exist.txt",
-            out_obj = "missing_src.txt"
-        )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("FileNotFoundError" in hancho_py.app.log)
-        self.assertTrue("does_not_exist.txt" in hancho_py.app.log)
 
     ########################################
 
