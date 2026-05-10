@@ -7,10 +7,14 @@ import os
 import shutil
 from pathlib import Path
 
-(thisdir, thisfile) = os.path.split(__file__)
-hancho_dir = os.path.normpath(f"{thisdir}/..")
+print(f"getcwd = {os.getcwd()}")
+
+(this_dir, this_file) = os.path.split(os.path.abspath(__file__))
+hancho_dir = os.path.normpath(f"{this_dir}/..")
 sys.path.append(hancho_dir)
 import hancho
+
+#os.chdir(this_dir)
 
 def mtime_ns(filename):
     return os.stat(filename).st_mtime_ns
@@ -40,8 +44,6 @@ class TestTasks(unittest.TestCase):
 
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
-
-        (this_dir, this_file) = os.path.split(__file__)
 
         hancho.init(
             this_dir  = this_dir,
@@ -173,7 +175,6 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(task._state, hancho.TaskState.FAILED)
 
-
     #--------------------------------------------------------------------------------
 
     def test_missing_input(self):
@@ -181,7 +182,7 @@ class TestTasks(unittest.TestCase):
         task = hancho.Task(
             desc    = "Should fail due to missing input",
             command = "touch {out_obj}",
-            in_src  = "src/does_not_exist.txt",
+            in_src  = "tests/src/does_not_exist.txt",
             out_obj = "missing_src.txt",
             should_fail = True,
         )
@@ -189,6 +190,24 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(task._state, hancho.TaskState.BROKEN)
         self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
         self.assertTrue("does_not_exist.txt" in hancho.Log.buffer)
+
+    #--------------------------------------------------------------------------------
+
+    def test_absolute_inputs(self):
+        #"""
+        #If input filenames are absolute paths, we should still end up with build files under
+        #build_root.
+        #"""
+
+        t = hancho.Task(
+            desc    = "In_src is absolute path",
+            command = "cp {in_src} {out_obj}",
+            in_src  = os.path.abspath("tests/src/foo.c"),
+            out_obj = "{ext(in_src, '.o')}",
+        )
+
+        self.run_tasks(0)
+        self.assertTrue(Path("build/tests/src/foo.o").exists())
 
     #--------------------------------------------------------------------------------
 

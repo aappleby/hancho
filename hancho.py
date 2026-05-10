@@ -670,7 +670,7 @@ class Expander(abc.Mapping):
         re   = re,
         glob = glob,
 
-        #ext     = Utils.ext,
+        ext     = Path.ext,
         #rel     = Utils.rel_path,
         #stem    = Utils.stem,
         #name    = Utils.name

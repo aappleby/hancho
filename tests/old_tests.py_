@@ -4,20 +4,6 @@
 
     ########################################
 
-    def test_absolute_inputs(self):
-        """
-        If input filenames are absolute paths, we should still end up with build files under
-        build_root.
-        """
-
-        self.hancho(
-            command = "cp {in_src} {out_obj}",
-            in_src  = path.abspath("src/foo.c"),
-            out_obj = "{ext(in_src, '.o')}",
-        )
-
-        self.assertEqual(0, hancho_py.app.build_all())
-        self.assertTrue(Path("build/src/foo.o").exists())
 
 
     ########################################
