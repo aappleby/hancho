@@ -20,7 +20,7 @@ print("<test_scratch.py>")
 #
 #print(d.dump(cfg))
 
-blah = hancho.task(
+blah = hancho.Task(
     desc    = "dummy task 1",
     command = "echo {message}",
     message = ["Hello", "World", "Boop"],
@@ -28,7 +28,7 @@ blah = hancho.task(
     #trace   = True,
 )
 
-blee = hancho.task(
+blee = hancho.Task(
     desc    = "dummy task 2",
     command = "echo {message}",
     message = ["Goodbye", "Star", "Beep"],

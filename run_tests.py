@@ -3,7 +3,7 @@ import sys
 import unittest
 import hancho
 
-hancho.init(args = sys.argv[1:])
+hancho.init(args = sys.argv)
 
 
 # tests still needed -

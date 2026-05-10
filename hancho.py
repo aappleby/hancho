@@ -15,6 +15,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # pylint: disable=bad-indentation
 
 # FIXME - should we be using mappingproxy to make Dicts immutable?
+# FIXME make sure objects added to the hancho proxy are preserved in submodules?
 
 ####################################################################################################
 #region imports
@@ -34,17 +35,9 @@ import sys
 import time
 import traceback
 import types
-import typing
-from typing import Any, cast, Type, overload, no_type_check
+from typing import Any, Type, overload, no_type_check
 from collections import abc
 from enum import Enum
-
-type str_tree = str | list[str_tree]
-_MISSING = object()
-
-# FIXME make sure objects added to the hancho proxy are preserved in submodules
-
-root_config : "Dict"
 
 #endregion
 ####################################################################################################
@@ -63,18 +56,14 @@ class JobPool:
         cls.job_slots = [None] * cls.jobs_available
         cls.jobs_lock = asyncio.Condition()
 
-    @classmethod
-    def reset(cls):
-        cls.init(cls.job_max)
-
     ########################################
 
     @classmethod
     async def acquire_jobs(cls, count, token : Any):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > root_config.job_max:
-            raise ValueError(f"Need {count} jobs, but pool is {root_config.job_max}.")
+        if count > Loader.root_config.job_max:
+            raise ValueError(f"Need {count} jobs, but pool is {Loader.root_config.job_max}.")
 
         await cls.jobs_lock.acquire()
         await cls.jobs_lock.wait_for(lambda: cls.jobs_available >= count)
@@ -126,10 +115,6 @@ class Files:
         cls.all_out_files = set()
         cls.filename_to_fingerprint = dict()
 
-    @classmethod
-    def reset(cls):
-        cls.init()
-
 #endregion
 ####################################################################################################
 #region Stats
@@ -164,16 +149,12 @@ class Stats:
         cls.tasks_broken = 0
 
     @classmethod
-    def reset(cls):
-        cls.init()
-
-    @classmethod
     def print_build_stats(cls):
         # Done, print status info if needed
 
         Log.log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds")
 
-        if root_config.debug or root_config.verbose:
+        if Loader.root_config.debug or Loader.root_config.verbose:
             Log.log(f"tasks started:   {cls.tasks_started}")
             Log.log(f"tasks finished:  {cls.tasks_finished}")
             Log.log(f"tasks failed:    {cls.tasks_failed}")
@@ -201,9 +182,6 @@ class Log:
     def init(cls):
         cls.buffer = ""
         cls.line_dirty = False
-
-    @classmethod
-    def reset(cls): cls.init()
 
     @classmethod
     def log(cls, message : str, *, sameline : bool = False, **kwargs):
@@ -235,16 +213,9 @@ class Log:
     @classmethod
     def log_line(cls, message : str):
         cls.buffer += message
-
-        if not "root_config" in globals():
-            print("where did root_config go?")
-            print("where did root_config go?")
-
-        if not root_config.quiet:
+        if not Loader.root_config.quiet:
             sys.stdout.write(message)
             sys.stdout.flush()
-
-
 
 #endregion
 ####################################################################################################
@@ -259,7 +230,7 @@ class Path:
     def abs_path(cls, raw_path : str) -> str: pass
     @classmethod
     @overload
-    def abs_path(cls, raw_path : list[str_tree]) -> list[str_tree]: pass
+    def abs_path(cls, raw_path : list[Any]) -> list[Any]: pass
     @classmethod
     def abs_path(cls, raw_path):
         if Utils.is_collection(raw_path):
@@ -274,7 +245,7 @@ class Path:
     def rel_path(cls, path1 : str, path2 : str) -> str: pass
     @classmethod
     @overload
-    def rel_path(cls, path1 : str_tree, path2 : str_tree) -> str_tree: pass
+    def rel_path(cls, path1, path2 : list[Any]) -> list[Any]: pass
     @classmethod
     def rel_path(cls, path1, path2):
         if Utils.is_collection(path1):
@@ -296,9 +267,9 @@ class Path:
     def join(cls, lhs : str, rhs : str) -> str: pass
     @classmethod
     @overload
-    def join(cls, lhs : str_tree, rhs : str_tree, *args : str_tree) -> str_tree: pass
+    def join(cls, lhs : list[Any], rhs : list[Any], *args) -> list[Any]: pass
     @classmethod
-    def join(cls, lhs, rhs, *args) -> str_tree:
+    def join(cls, lhs, rhs, *args):
         if len(args) > 0:
             rhs = Path.join(rhs, *args)
         flat_lhs = Utils.flatten(lhs)
@@ -338,10 +309,9 @@ class Path:
     def normpath(cls, val : str) -> str: pass
     @classmethod
     @overload
-    def normpath(cls, val : str_tree) -> str_tree: pass
+    def normpath(cls, val : list[Any]) -> list[Any]: pass
     @classmethod
     def normpath(cls, val):
-        result : str_tree | None = None
         if Utils.is_collection(val):
             return [Path.normpath(v) for v in val]
         elif isinstance(val, str):
@@ -354,9 +324,9 @@ class Path:
     def ext(cls, name : str, new_ext : str) -> str : pass
     @classmethod
     @overload
-    def ext(cls, name : str_tree, new_ext : str) -> str_tree : pass
+    def ext(cls, name, new_ext : str) -> list[Any] : pass
     @classmethod
-    def ext(cls, name : str_tree, new_ext : str):
+    def ext(cls, name, new_ext : str):
         """Replaces file extensions on either a single filename or a list of filenames."""
         if Utils.is_collection(name):
             return [Path.ext(n, new_ext) for n in name]
@@ -367,7 +337,7 @@ class Path:
 
     #FIXME shouldn't this do the dynamic dispatch thing like above?
     @classmethod
-    def stem(cls, filename : str_tree) -> str:
+    def stem(cls, filename : list[Any]) -> str:
         flat_names : list[str] = Utils.flatten(filename)
         flat_filename : str = flat_names[0]
         base_filename : str = os.path.basename(flat_filename)
@@ -383,10 +353,6 @@ class Utils:
     @classmethod
     def init(cls):
         cls.rand = random.Random()
-
-    @classmethod
-    def reset(cls):
-        cls.init()
 
     @classmethod
     def check[T](cls, type_: Type[T], t: object) -> T:
@@ -442,7 +408,7 @@ class Utils:
         return len(blocks) == 1 and type(blocks[0]) == Expander.Lit
 
     @classmethod
-    def join(cls, lhs : str_tree, rhs : str_tree, *args : str_tree) -> list[str]:
+    def join(cls, lhs, rhs, *args) -> list[str]:
         lhs2 = Utils.flatten(lhs)
         rhs2 = Utils.join(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
         return [l + r for l in lhs2 for r in rhs2]
@@ -453,7 +419,7 @@ class Utils:
     def color(cls, red : int = 0, green : int = 0, blue : int = 0) -> str:
         """Converts RGB color to ANSI format string."""
         # Color strings don't work in Windows console, so don't emit them.
-        if not root_config.use_color or os.name == "nt":
+        if not Loader.root_config.use_color or os.name == "nt":
             return ""
         if red == 0 and green == 0 and blue == 0:
             return "\x1B[0m"
@@ -491,7 +457,7 @@ class Utils:
             return []
         return [variant]
 
-    ########################################
+    #--------------------------------------------------------------------------------
 
     @classmethod
     def walk(cls, d, func):
@@ -504,7 +470,6 @@ class Utils:
                 func(d, key, val)
                 Utils.walk(val, func)
 
-
     @classmethod
     async def async_walk(cls, d, async_func):
         if Utils.is_mapping(d):
@@ -515,6 +480,8 @@ class Utils:
             for key, val in enumerate(d):
                 await async_func(d, key, val)
                 await Utils.async_walk(val, async_func)
+
+    #--------------------------------------------------------------------------------
 
     @classmethod
     def stringify_variant(cls, variant):
@@ -667,10 +634,6 @@ class Expander(abc.Mapping):
         cls.depth = 0
         cls.MAX_DEPTH = max_depth
 
-    @classmethod
-    def reset(cls):
-        cls.init(cls.MAX_DEPTH)
-
     # FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
 
     class Lit(str):
@@ -692,6 +655,28 @@ class Expander(abc.Mapping):
             return str.__eq__(self, b)
         def __hash__(self):
             return str.__hash__(self)
+
+    # FIXME It feels slightly odd to have expansion_globals, should we just use the hancho.py
+    # module itself?
+
+    expansion_globals = Dict(
+        os   = os,
+        sys  = sys,
+        path = os.path,
+        re   = re,
+        glob = glob,
+
+        #ext     = Utils.ext,
+        #rel     = Utils.rel_path,
+        #stem    = Utils.stem,
+        #name    = Utils.name
+        #log     = Log.log,
+        flatten = Utils.flatten,
+        run_cmd = Utils.run_cmd,
+        color   = Utils.color,
+        join    = Utils.join,
+        rel_path = Path.rel_path,
+    )
 
     ########################################
 
@@ -806,8 +791,8 @@ class Expander(abc.Mapping):
 
         if key in self._context:
             result = self._context[key]
-        elif key in expansion_globals:
-            result = expansion_globals[key]
+        elif key in Expander.expansion_globals:
+            result = Expander.expansion_globals[key]
         else:
             e = KeyError(key)
 
@@ -954,10 +939,6 @@ class Tracer:
         cls.trellis_stack = []
 
     @classmethod
-    def reset(cls):
-        cls.init()
-
-    @classmethod
     def push(cls, color):
         Tracer.trellis_stack.append(color + "┃ ")
 
@@ -1088,35 +1069,38 @@ class Dumper:
 #region HanchoProxy
 # Hancho build scripts don't get direct access to the Hancho module, they go through this proxy so
 # that each build script can have its own hancho.config object without breaking the global
-# hancho.config.
+# root_config.
 
 class HanchoProxy(types.ModuleType):
-    hancho_ref = sys.modules[__name__]
 
-    def __init__(self, config):
+    def __init__(self):
         super().__init__(__name__)
+        self.__dict__.update(hancho_ref = sys.modules[__name__])
 
-        load_lambda = lambda script_path, *args, **kwargs : Loader.load_script(script_path, config, *args, kwargs)
-        repo_lambda = lambda script_path, *args, **kwargs : Loader.load_repo(script_path, config, *args, kwargs)
-        task_lambda = lambda *args, **kwargs : Task(config, *args, **kwargs)
+    def init(self, args):
+        self.bind(init(args))
 
-        # FIXME we have these in the dict but we also have the global load/repo at the bottom?
-
+    def bind(self, config):
+        """
+        Overrides (from the script module's point of view) the top level load/repo/Task so that the
+        bound config will always be injected into them.
+        """
         self.__dict__.update(
-            load = load_lambda,
-            repo = repo_lambda,
-            Task = task_lambda,
+            load = lambda path, *args, **kwargs : Loader.load(path, False, config, *args, kwargs),
+            repo = lambda path, *args, **kwargs : Loader.load(path, True,  config, *args, kwargs),
+            Task = lambda *args, **kwargs : Task(config, *args, **kwargs),
             config = config
         )
 
-    def __getattr__(self, key):
-        return getattr(HanchoProxy.hancho_ref, key)
-
-    def __setattr__(self, key, _):
-        raise AttributeError(f"Can't set attribute {key!r} on a Hancho proxy")
-
     def __dir__(self):
-        return dir(HanchoProxy.hancho_ref)
+        return dir(self.hancho_ref) + ["config"]
+
+    def __getattr__(self, key):
+        return getattr(self.hancho_ref, key)
+
+    def __setattr__(self, key, val):
+        #self.__dict__.update({key:val})
+        raise AttributeError(f"Can't set attribute {key!r} on a Hancho proxy")
 
 #endregion
 ####################################################################################################
@@ -1124,193 +1108,220 @@ class HanchoProxy(types.ModuleType):
 
 class Loader:
 
-    depth : int
-    script_to_repo : dict[tuple[str, str], types.ModuleType]
+    dedupe : dict[tuple[str, str], types.ModuleType]
+    stack : list[types.ModuleType]
+    flags : Dict
+    root_config : Dict
 
     @classmethod
-    def init(cls):
-        cls.depth = 0
-        cls.script_to_repo = {}
+    def init(cls, args):
+        cls.dedupe = {}
+        cls.stack = []
+        cls.flags = cls.parse_flags(args)
+        cls.root_config = Dict(cls.config_defaults, cls.flags)
 
     @classmethod
-    def reset(cls):
-        cls.init()
+    def check_init(cls):
+        if not hasattr(Loader, "root_config"):
+            raise RuntimeError("You have to call hancho.init(sys.argv) (or similar) before using Hancho.")
+
+    # We spell all these defaults out explicitly so that when this config gets merged with flags and
+    # task configs the fields stay in the same order.
+
+    config_defaults = Dict(
+
+        desc       = "<description missing>",
+        command    = "<command missing>",
+
+        hancho_dir = os.path.dirname(__file__),
+
+        root_dir   = os.getcwd(),
+        root_file  = "build.hancho",
+
+        repo_dir   = "{root_dir}",
+        repo_file  = "{root_file}",
+
+        this_dir   = "{root_dir}",
+        this_file  = "{root_file}",
+
+        task_dir   = "{this_dir}",
+        build_root = "{repo_dir}/build",
+        build_dir  = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
+
+        job_count   = 1,
+        job_max     = os.cpu_count(),
+
+        depformat   = None,
+        in_depfile  = None,
+
+        build_tag   = None,
+        target      = None,
+        tool        = None,
+
+        keep_going  = False,
+        verbose     = False,
+        debug       = False,
+        dry_run     = False,
+        quiet       = False,
+        rebuild     = False,
+        shuffle     = False,
+        trace       = False,
+        use_color   = True,
+        should_fail = False
+    )
+
 
     #-----------------------------------------------------------------------------------------------
 
     @classmethod
-    def create_mod(cls, script_path : str, config : Dict):
-        """
-        Creates a new module for the given script + config pair.
-        """
+    def parse_flags(cls, argv):
+        assert Utils.is_collection(argv)
+
+        d = cls.config_defaults
+
+        # pylint: disable=line-too-long
+        # fmt: off
+        parser = argparse.ArgumentParser()
+
+        # These flags are in Ninja order
+        parser.add_argument("target",             default=d.target,     nargs="?", type=str,  help="A regex that selects the targets to build. Defaults to all targets.")
+        parser.add_argument("-v", "--verbose",    default=d.verbose,    action="store_true",  help="Show verbose build info")
+        parser.add_argument("-q", "--quiet",      default=d.quiet,      action="store_true",  help="Mute all output")
+
+        parser.add_argument("-C", "--root_dir",   default=d.root_dir,   type=str,             help="Change directory before starting the build")
+        parser.add_argument("-f", "--root_file",  default=d.root_file,  type=str,             help="Input .hancho file - defaults to 'build.hancho'")
+
+        parser.add_argument("-j", "--job_max",    default=d.job_max,    type=int,             help="Run N jobs in parallel (default = cpu_count)")
+        parser.add_argument("-k", "--keep_going", default=d.keep_going, type=int,             help="Keep going until N jobs fail (0 means infinity)")
+        parser.add_argument("-n", "--dry_run",    default=d.dry_run,    action="store_true",  help="Do not run commands")
+
+        parser.add_argument("-d", "--debug",      default=d.debug,      action="store_true",  help="Print debugging information")
+        parser.add_argument("-t", "--tool",       default=d.tool,       type=str,             help="Run a subtool.")
+
+        # These are Hancho-specific
+        parser.add_argument("--build_tag",        default=d.build_tag,  type=str,             help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument("--rebuild",          default=d.rebuild,    action="store_true",  help="Rebuild everything")
+        parser.add_argument("--shuffle",          default=d.shuffle,    action="store_true",  help="Shuffle task order to shake out dependency issues")
+        parser.add_argument("--trace",            default=d.trace,      action="store_true",  help="Trace all text expansion")
+        parser.add_argument("--use_color",        default=d.use_color,  action="store_true",  help="Use color in the console output")
+        # fmt: on
+
+        # Ignore the name of the script that loaded Hancho
+        (flags, unrecognized) = parser.parse_known_args(argv[1:])
+
+        # Unrecognized command line parameters also become module config fields if they are
+        # flag-like
+        extra_flags = {}
+        for span in unrecognized:
+            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+                key = match.group(1)
+                val = match.group(2)
+
+                if val is None:
+                    val = True
+                else:
+                    for converter in (float, int, bool, str):
+                        try:
+                            val = converter(val)
+                            break
+                        except ValueError:
+                            pass
+
+                #val = maybe_as_number(val) if val is not None else True
+                extra_flags[key] = val
+
+        cls.flags = Dict(vars(flags), extra_flags)
+        return cls.flags
+
+    #-----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def load(cls, script_path : str, is_repo : bool, parent_config : Dict, *args, **kwargs) -> types.ModuleType:
+        cls.check_init()
+
+        script_path = parent_config.expand(script_path)
+
+        if parent_config.verbose:
+            Log.log("┃ " * len(Loader.stack), end="")
+            script_type = "repo" if is_repo else "script"
+            Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color())
+
+        #----------------------------------------
+        # Create the script-specific config that points the 'repo' and 'this' paths at the given
+        # script.
+
+        (script_dir, script_file) = os.path.split(script_path)
+
+        tweaks = Dict(is_repo = False, this_dir = script_dir, this_file = script_file)
+        if is_repo:
+            tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
+
+        script_config = Dict(parent_config, tweaks, *args, kwargs)
+
+        #----------------------------------------
+        # Dedupe the load if needed. Modules are only deduped if their configurations are
+        # _identical_, which may bite users.
+
+        script_path_real = os.path.realpath(script_path)
+        dedupe_key = (script_path_real, str(script_config))
+        dedupe = cls.dedupe.get(dedupe_key, None)
+        if dedupe is not None:
+            return dedupe
+
+        #----------------------------------------
+        #new_module = Loader.create_mod(script_path, script_config)
 
         assert os.path.isfile(script_path)
-        mod = types.ModuleType(os.path.basename(script_path))
-        mod.__dict__.update(
+        new_module = types.ModuleType(os.path.basename(script_path))
+        cls.dedupe[dedupe_key] = new_module
+
+        new_module.__dict__.update(
             __file__ = script_path,
             __code__ = None,
-            hancho   = HanchoProxy(config)
+            #hancho   = proxy,
         )
-        return mod
 
-    #----------------------------------------
+        #----------------------------------------
+        #Loader.compile_mod(new_module)
 
-    @classmethod
-    def compile_mod(cls, mod : types.ModuleType):
-        """
-        Compiles a module's script and stores the result in 'mod.__code__'.
-        """
-
-        path_real = Utils.check(str, mod.__file__)
-        Files.loaded_files.append(path_real)
-        with open(path_real, encoding="utf-8") as file:
+        with open(script_path, encoding="utf-8") as file:
+            Files.loaded_files.append(script_path)
             source = file.read()
-        code = compile(source, path_real, "exec", dont_inherit=True)
-        mod.__dict__.update(__code__ = code)
+            code = compile(source, script_path, "exec", dont_inherit=True)
+            new_module.__dict__.update(__code__ = code)
 
-    #----------------------------------------
-
-    @classmethod
-    def exec_mod(cls, mod : types.ModuleType):
-        """
-        Execs the module's compiled script, which is stored in 'mod.__code__'.
-        """
+        #----------------------------------------
+        #Loader.exec_mod(new_module)
 
         old_cwd = os.getcwd()
         old_hancho = sys.modules.get("hancho", None)
 
         try:
-            sys.modules["hancho"] = mod.hancho
-            Loader.depth += 1
-            (dir_real, _) = os.path.split(Utils.check(str, mod.__file__))
-            os.chdir(dir_real)
-            exec(mod.__code__, mod.__dict__)
+
+            proxy = HanchoProxy()
+            proxy.bind(script_config)
+            sys.modules["hancho"] = proxy
+
+            os.chdir(script_dir)
+            cls.stack.append(new_module)
+            cls.top = cls.stack[-1]
+
+            exec(new_module.__code__, new_module.__dict__)
+
         finally:
+
+            cls.stack.pop()
+            cls.top = cls.stack[-1]
             os.chdir(old_cwd)
-            Loader.depth -= 1
+
             if old_hancho is None:
                 sys.modules.pop("hancho", None)
             else:
                 sys.modules["hancho"] = old_hancho
 
-    #-----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def create_repo_config(cls, script_path_real : str, parent_config : Dict, *args, **kwargs):
-        """
-        Creates a config object for the given script that points (repo|this)_(dir|file) at the
-        given script.
-        """
-        (dir_real, script_file) = os.path.split(script_path_real)
-
-        config = Dict(
-            parent_config,
-            Dict(
-                is_repo   = True,
-                repo_dir  = dir_real,
-                repo_file = script_file,
-                this_dir  = dir_real,
-                this_file = script_file,
-            ),
-            *args,
-            kwargs,
-        )
-        return config
-
-    @classmethod
-    def create_script_config(cls, script_path_real : str, parent_config : Dict, *args, **kwargs) -> Dict:
-        (dir_real, script_file) = os.path.split(script_path_real)
-
-        config = Dict(
-            parent_config,
-            Dict(
-                is_repo  = False,
-                this_dir  = dir_real,
-                this_file = script_file,
-            ),
-            *args,
-            kwargs
-        )
-
-        return config
-
-    #-----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def load_repo(cls, script_path : str, parent_config : Dict, *args, **kwargs) -> types.ModuleType:
-
         #----------------------------------------
-        # Normalize the script path. It _must_ be a real path, otherwise repo dedupe will break if
-        # there are symlinks in the path.
 
-        script_path = parent_config.expand(script_path)
-
-        #----------------------------------------
-        # Create the repo-specific config that points the 'repo' and 'this' path at the given
-        # script.
-
-        repo_config = Loader.create_repo_config(script_path, parent_config, *args, **kwargs)
-
-        #----------------------------------------
-        # Dedupe the repo load if needed. Repos are only deduped if their configurations are
-        # _identical_, which may bite users.
-
-        script_path_real = os.path.realpath(script_path)
-        repo_key = str(repo_config)
-        dedupe_key = (script_path_real, str(repo_config))
-        dedupe = cls.script_to_repo.get(dedupe_key, None)
-        if dedupe is not None:
-            return dedupe
-
-        #----------------------------------------
-        # Create the new module and run its script.
-
-        if repo_config.verbose:
-            Log.log("┃ " * Loader.depth, end="")
-            Log.log(Utils.color(128, 128, 255) + f"Loading repo {script_path}" + Utils.color())
-
-        repo_module = Loader.create_mod(script_path, repo_config)
-        Loader.compile_mod(repo_module)
-        Loader.exec_mod(repo_module)
-
-        #----------------------------------------
-        # Add the new module to the dedupe list now that we're done.
-
-        cls.script_to_repo[dedupe_key] = repo_module
-
-        return repo_module
-
-    @classmethod
-    def load_script(cls, script_path : str, parent_config : Dict, *args, **kwargs) -> types.ModuleType:
-
-        #----------------------------------------
-        # Normalize the script path. It _must_ be a real path, otherwise repo dedupe will break if
-        # there are symlinks in the path.
-
-        script_path = parent_config.expand(script_path)
-        script_path_real = os.path.realpath(script_path)
-
-        assert os.path.isabs (script_path_real)
-        assert os.path.isfile(script_path_real)
-
-        #----------------------------------------
-        # Create the script-specific config that points the 'this' path at the given script.
-
-        script_config = Loader.create_script_config(script_path_real, parent_config, *args, **kwargs)
-
-        #----------------------------------------
-        # Create the new module and run its script.
-
-        if script_config.verbose:
-            script_path_rel = Path.rel_path(script_path_real, script_config.root_dir)
-            Log.log("┃ " * Loader.depth, end="")
-            Log.log(Utils.color(128, 128, 255) + f"Loading repo {script_path_rel}" + Utils.color())
-
-        script_module = Loader.create_mod(script_path_real, script_config)
-        Loader.compile_mod(script_module)
-        Loader.exec_mod(script_module)
-
-        return script_module
+        return new_module
 
 #endregion
 ####################################################################################################
@@ -1336,36 +1347,34 @@ class Promise:
 #region Task
 # Task object + bookkeeping
 
-class TaskState(Enum):
-    DECLARED = "DECLARED"
-    QUEUED = "QUEUED"
-    STARTED = "STARTED"
-    AWAITING_INPUTS = "AWAITING_INPUTS"
-    TASK_INIT = "TASK_INIT"
-    AWAITING_JOBS = "AWAITING_JOBS"
-    RUNNING_COMMANDS = "RUNNING_COMMANDS"
-    FINISHED = "FINISHED"
-    CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
-    SKIPPED = "SKIPPED"
-    BROKEN = "BROKEN"
-
-# --------------------------------------------------------------------------------------------------
-
 class Task:
 
+    class State(Enum):
+        DECLARED = "DECLARED"
+        QUEUED = "QUEUED"
+        STARTED = "STARTED"
+        AWAITING_INPUTS = "AWAITING_INPUTS"
+        TASK_INIT = "TASK_INIT"
+        AWAITING_JOBS = "AWAITING_JOBS"
+        RUNNING_COMMANDS = "RUNNING_COMMANDS"
+        FINISHED = "FINISHED"
+        CANCELLED = "CANCELLED"
+        FAILED = "FAILED"
+        SKIPPED = "SKIPPED"
+        BROKEN = "BROKEN"
+
+    #--------------------------------------------------------------------------------
     # Linter doesn't like us assigning all these to None
 
     @no_type_check
     def __init__(self, *args, **kwargs):
+        Loader.check_init()
 
         self._config : Dict = Dict(*args, **kwargs)
 
-        # Expanded task config stuff
-
-        self._desc : str      = None
-        self._command : Any = None
-        self._in_depfile : str   = None
+        self._desc : str       = None
+        self._command : Any    = None
+        self._in_depfile : str = None
 
         self._root_dir : str   = None
         self._root_file : str  = None
@@ -1401,7 +1410,7 @@ class Task:
         # Bookkeeping stuff
 
         self._task_index : int = 0
-        self._state : TaskState = TaskState.DECLARED
+        self._state : Task.State = Task.State.DECLARED
         self._reason : str = ""
         self._asyncio_task : asyncio.Task | None = None
         self._stdout : str = ""
@@ -1430,7 +1439,7 @@ class Task:
     # ----------------------------------------
 
     def queue(self):
-        if self._state is TaskState.DECLARED:
+        if self._state is Task.State.DECLARED:
             # Queue all tasks referenced by this task's config.
             def apply(c, k, v):
                 if isinstance(v, Task):
@@ -1439,13 +1448,13 @@ class Task:
 
             # And now queue this task.
             Runner.queued_tasks.append(self)
-            self._state = TaskState.QUEUED
+            self._state = Task.State.QUEUED
 
     def start(self):
         self.queue()
-        if self._state is TaskState.QUEUED:
+        if self._state is Task.State.QUEUED:
             self._asyncio_task = asyncio.create_task(self.task_main())
-            self._state = TaskState.STARTED
+            self._state = Task.State.STARTED
             Stats.tasks_started += 1
 
     async def await_done(self):
@@ -1459,166 +1468,12 @@ class Task:
 
     def print_status(self):
         """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
-
         Log.log(
             f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} {self._desc}",
             sameline = not self._verbose,
         )
 
-    # ----------------------------------------
-
-    async def task_main(self):
-        """Entry point for async task stuff, handles exceptions generated during task execution."""
-
-        ########################################
-        # Await everything awaitable in this task's config. If any of this tasks's dependencies
-        # were cancelled, we propagate the cancellation to downstream tasks.
-
-        assert self._state is TaskState.STARTED
-        self._state = TaskState.AWAITING_INPUTS
-
-        try:
-            await Utils.await_variant(self._config)
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
-            self._state = TaskState.CANCELLED
-            Stats.tasks_cancelled += 1
-            raise asyncio.CancelledError() from ex
-
-
-        ########################################
-        # TASK EXPANSION HERE
-
-        if True:
-            c = self._config
-            e = Expander(c)
-            check = Utils.check
-
-            self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
-            self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
-
-            self._repo_dir   = Path.abs_path(check(str, e.eval("repo_dir")))
-            self._repo_file  = Path.abs_path(check(str, e.eval("repo_file")))
-
-            self._this_dir   = Path.abs_path(check(str, e.eval("this_dir")))
-            self._this_file  = Path.abs_path(check(str, e.eval("this_file")))
-
-            self._task_dir   = Path.abs_path(check(str, e.eval("task_dir")))
-
-            self._build_root = Path.abs_path(check(str, e.eval("build_root")))
-            self._build_dir  = Path.abs_path(check(str, e.eval("build_dir")))
-
-            self._job_count   = check(int, e.eval("job_count"))
-            self._keep_going  = check(int, e.eval("keep_going"))
-
-            # these are none if not set
-            self._depformat   = e.eval("depformat")
-            self._build_tag   = e.eval("build_tag")
-            self._target      = e.eval("target")
-            self._tool        = e.eval("tool")
-
-            self._verbose     = check(bool, e.eval("verbose"))
-            self._debug       = check(bool, e.eval("debug"))
-            self._dry_run     = check(bool, e.eval("dry_run"))
-            self._quiet       = check(bool, e.eval("quiet"))
-            self._rebuild     = check(bool, e.eval("rebuild"))
-            self._shuffle     = check(bool, e.eval("shuffle"))
-            self._trace       = check(bool, e.eval("trace"))
-            self._should_fail = check(bool, e.eval("should_fail"))
-
-        ########################################
-        # Check for missing input files/paths
-
-        if not os.path.exists(self._task_dir):
-            raise FileNotFoundError(self._task_dir)
-
-        if not self._build_dir.startswith(self._repo_dir):
-            raise ValueError(
-                f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
-            )
-
-        ########################################
-        # Everything awaited, task_init runs synchronously. Note that we chdir to task_dir before
-        # initializing the task so that any path.abspath or whatever happen from the right place.
-
-        try:
-            self._state = TaskState.TASK_INIT
-            assert isinstance(self._task_dir, str)
-            old_cwd = os.getcwd()
-            try:
-                os.chdir(self._task_dir)
-                self.task_init()
-            finally:
-                os.chdir(old_cwd)
-
-        except asyncio.CancelledError as ex:
-            # We discovered during init that we don't need to run this task.
-            self._state = TaskState.CANCELLED
-            Stats.tasks_cancelled += 1
-            raise asyncio.CancelledError() from ex
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            self._state = TaskState.BROKEN
-            Stats.tasks_broken += 1
-            raise ex
-
-        ########################################
-        # Early-out if this is a no-op task
-
-        if self._command is None:
-            Stats.tasks_finished += 1
-            self._state = TaskState.FINISHED
-            return
-
-        ########################################
-        # Check if we need a rebuild
-
-        self._reason = self.needs_rerun(self._rebuild)
-        if not self._reason:
-            Stats.tasks_skipped += 1
-            self._state = TaskState.SKIPPED
-            return
-
-        ########################################
-        # Run the task!
-
-        try:
-            # Wait for enough jobs to free up to run this task.
-            self._state = TaskState.AWAITING_JOBS
-            await JobPool.acquire_jobs(self._job_count, self)
-
-            # Run the commands.
-            self._state = TaskState.RUNNING_COMMANDS
-            Stats.tasks_running += 1
-            self._task_index = Stats.tasks_running
-
-            # Print our status bar
-            self.print_status()
-            if self._verbose or self._debug:
-                Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
-
-            # And run the actual task (finally!)
-            for command in Utils.flatten(self._command):
-                await self.run_command(command)
-                if self._returncode != 0:
-                    break
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # If any command failed, we print the error and propagate it to downstream tasks.
-            self._state = TaskState.FAILED
-            Stats.tasks_failed += 1
-            raise ex
-        finally:
-            await JobPool.release_jobs(self._job_count, self)
-
-        ########################################
-        # Task finished successfully
-
-        self._state = TaskState.FINISHED
-        Stats.tasks_finished += 1
-
-    ################################################################################################
+    #--------------------------------------------------------------------------------
 
     def move_to_builddir(self, val):
         if not isinstance(val, str):
@@ -1638,110 +1493,255 @@ class Task:
             val = Path.join(self._build_dir, val)
         return val
 
-    ################################################################################################
+    #--------------------------------------------------------------------------------
+
+    def move_stuff(self, c, k, v):
+        if not isinstance(k, str) or not isinstance(v, str):
+            return
+
+        # Expand all in_ and out_ filenames
+        # We _must_ expand these first before joining paths or the paths will be incorrect:
+        # prefix + swap(abs_path) != abs(prefix + swap(path))
+
+        if k.startswith("in_"):
+            v = self._config.expand(v)
+            v = Path.normpath(v) # type: ignore
+        elif k.startswith("out_"):
+            v = self._config.expand(v)
+            v = Path.normpath(v) # type: ignore
+
+        # Make all in_ and out_ file paths absolute
+        if k.startswith("out_") or k == "in_depfile":
+            v = self.move_to_builddir(v)
+        elif k.startswith("in_"):
+            if not os.path.isabs(v):
+                v = Path.join(self._task_dir, v)
+
+        # Gather all inputs to task.in_files and outputs to task.out_files
+        if k == "in_depfile":
+            if os.path.isfile(v):
+                self._in_files.append(v)
+        elif k.startswith("out_"):
+            self._out_files.append(v)
+        elif k.startswith("in_"):
+            self._in_files.append(v)
+
+        c[k] = v
+
+    #--------------------------------------------------------------------------------
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
+    # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
-    def task_init(self):
-        """All the setup steps needed before we run a task."""
+    async def task_main(self):
+        """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
+        #--------------------------------------------------------------------------------
+        # Await everything awaitable in this task's config. If any of this tasks's dependencies
+        # were cancelled, we propagate the cancellation to downstream tasks.
+
+        assert self._state is Task.State.STARTED
+        self._state = Task.State.AWAITING_INPUTS
+
+        try:
+            await Utils.await_variant(self._config)
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
+            self._state = Task.State.CANCELLED
+            Stats.tasks_cancelled += 1
+            raise asyncio.CancelledError() from ex
+
+        #--------------------------------------------------------------------------------
+        # Everything awaited, start expanding the task config. Note that we chdir to task_dir
+        # before initializing the task so that any path.abspath or whatever happen from the right
+        # place.
 
         if self._debug:
             Log.log(f"\nTask before expand: {self}")
 
-        # ----------------------------------------
+        self._state = Task.State.TASK_INIT
+        old_cwd = os.getcwd()
+        self._task_dir = Path.abs_path(self._config.eval("task_dir"))
+        os.chdir(self._task_dir)
 
-        def move_stuff(c, k, v):
-            if isinstance(k, str) and isinstance(v, str):
-                # Expand all in_ and out_ filenames
-                # We _must_ expand these first before joining paths or the paths will be incorrect:
-                # prefix + swap(abs_path) != abs(prefix + swap(path))
+        try:
+            c = self._config
+            e = Expander(c)
+            check = Utils.check
 
-                if k.startswith("in_"):
-                    v = self._config.expand(v)
-                    v = Path.normpath(v) # type: ignore
-                elif k.startswith("out_"):
-                    v = self._config.expand(v)
-                    v = Path.normpath(v) # type: ignore
+            #self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
+            #self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
 
-                # Make all in_ and out_ file paths absolute
-                if k.startswith("out_") or k == "in_depfile":
-                    v = self.move_to_builddir(v)
-                elif k.startswith("in_"):
-                    if not os.path.isabs(v):
-                        v = Path.join(self._task_dir, v)
+            self._repo_dir   = Path.abs_path(check(str, e.eval("repo_dir")))
+            #self._repo_file  = Path.abs_path(check(str, e.eval("repo_file")))
 
-                # Gather all inputs to task.in_files and outputs to task.out_files
-                if k == "in_depfile":
-                    if os.path.isfile(v):
-                        self._in_files.append(v)
-                elif k.startswith("out_"):
-                    self._out_files.append(v)
-                elif k.startswith("in_"):
-                    self._in_files.append(v)
+            #self._this_dir   = Path.abs_path(check(str, e.eval("this_dir")))
+            #self._this_file  = Path.abs_path(check(str, e.eval("this_file")))
 
-                c[k] = v
+            #self._build_root = Path.abs_path(check(str, e.eval("build_root")))
+            self._build_dir  = Path.abs_path(check(str, e.eval("build_dir")))
 
-        Utils.walk(self._config, move_stuff)
+            self._job_count   = check(int, e.eval("job_count"))
+            #self._keep_going  = check(int, e.eval("keep_going"))
 
-        # ----------------------------------------
-        # And now we can expand the command.
+            # these are none if not set
+            self._depformat   = e.eval("depformat")
+            #self._build_tag   = e.eval("build_tag")
+            #self._target      = e.eval("target")
+            #self._tool        = e.eval("tool")
 
-        self._desc    = self._config.eval("desc")
-        self._command = self._config.eval("command")
+            self._verbose     = check(bool, e.eval("verbose"))
+            self._debug       = check(bool, e.eval("debug"))
+            self._dry_run     = check(bool, e.eval("dry_run"))
+            #self._quiet       = check(bool, e.eval("quiet"))
+            self._rebuild     = check(bool, e.eval("rebuild"))
+            #self._shuffle     = check(bool, e.eval("shuffle"))
+            #self._trace       = check(bool, e.eval("trace"))
+            self._should_fail = check(bool, e.eval("should_fail"))
 
-        if self._debug:
-            Log.log(f"\nTask after expand: {self}")
+            # Fix up all in/out paths
 
-        # ----------------------------------------
-        # Check for task collisions
+            Utils.walk(self._config, self.move_stuff)
 
-        # FIXME need a test for this that uses symlinks
+            # And now we can expand the command.
 
-        for file in self._out_files:
-            real_file = os.path.realpath(file)
-            if real_file in Files.filename_to_fingerprint:
-                raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-            Files.filename_to_fingerprint[real_file] = real_file
+            self._desc    = self._config.eval("desc")
+            self._command = self._config.eval("command")
 
-        # ----------------------------------------
-        # Sanity checks
+            if self._debug:
+                Log.log(f"\nTask after expand: {self}")
 
-        # Check for missing input files/paths
-        if not os.path.exists(self._task_dir):
-            raise FileNotFoundError(self._task_dir)
+            # ----------------------------------------
+            # Check for missing input/output paths
 
-        for file in self._in_files:
-            if file is None:
-                raise ValueError("_in_files contained a None")
-            if not os.path.exists(file):
-                raise FileNotFoundError(file)
+            assert isinstance(self._task_dir, str)
 
-        # Check that all build files would end up under build_dir
-        for file in self._out_files:
-            if file is None:
-                raise ValueError("_out_files contained a None")
-            if not file.startswith(self._build_dir):
+            if not os.path.exists(self._task_dir):
+                raise FileNotFoundError(self._task_dir)
+
+            if not self._build_dir.startswith(self._repo_dir):
                 raise ValueError(
-                    f"Path error, output file {file} is not under build_dir {self._build_dir}"
+                    f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
                 )
 
-        # Check for duplicate task outputs
-        if self._command:
-            for file in self._out_files:
-                if file in Files.all_out_files:
-                    raise NameError(f"Multiple rules build {file}!")
-                Files.all_out_files.add(file)
+            # ----------------------------------------
+            # Check for task collisions
 
-        # Make sure our output directories exist
-        if not self._dry_run:
+            # FIXME need a test for this that uses symlinks
+
             for file in self._out_files:
-                os.makedirs(os.path.dirname(file), exist_ok=True)
+                real_file = os.path.realpath(file)
+                if real_file in Files.filename_to_fingerprint:
+                    raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+                Files.filename_to_fingerprint[real_file] = real_file
+
+            # ----------------------------------------
+            # Sanity checks
+
+            # Check for missing input files/paths
+            if not os.path.exists(self._task_dir):
+                raise FileNotFoundError(self._task_dir)
+
+            for file in self._in_files:
+                if file is None:
+                    raise ValueError("_in_files contained a None")
+                if not os.path.exists(file):
+                    raise FileNotFoundError(file)
+
+            # Check that all build files would end up under build_dir
+            for file in self._out_files:
+                if file is None:
+                    raise ValueError("_out_files contained a None")
+                if not file.startswith(self._build_dir):
+                    raise ValueError(
+                        f"Path error, output file {file} is not under build_dir {self._build_dir}"
+                    )
+
+            # Check for duplicate task outputs
+            if self._command:
+                for file in self._out_files:
+                    if file in Files.all_out_files:
+                        raise NameError(f"Multiple rules build {file}!")
+                    Files.all_out_files.add(file)
+
+            # Make sure our output directories exist
+            if not self._dry_run:
+                for file in self._out_files:
+                    os.makedirs(os.path.dirname(file), exist_ok=True)
+
+        except asyncio.CancelledError as ex:
+            # We discovered during init that we don't need to run this task.
+            self._state = Task.State.CANCELLED
+            Stats.tasks_cancelled += 1
+            raise asyncio.CancelledError() from ex
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            self._state = Task.State.BROKEN
+            Stats.tasks_broken += 1
+            raise ex
+
+        finally:
+            os.chdir(old_cwd)
 
         if self._debug:
             Log.log(f"\nTask after expand: {self}")
 
-    ################################################################################################
+        #--------------------------------------------------------------------------------
+        # Early-out if this is a no-op task
+
+        if self._command is None:
+            Stats.tasks_finished += 1
+            self._state = Task.State.FINISHED
+            return
+
+        #--------------------------------------------------------------------------------
+        # Check if we need a rebuild
+
+        self._reason = self.needs_rerun(self._rebuild)
+        if not self._reason:
+            Stats.tasks_skipped += 1
+            self._state = Task.State.SKIPPED
+            return
+
+        #--------------------------------------------------------------------------------
+        # Run the task!
+
+        try:
+            # Wait for enough jobs to free up to run this task.
+            self._state = Task.State.AWAITING_JOBS
+            await JobPool.acquire_jobs(self._job_count, self)
+
+            # Run the commands.
+            self._state = Task.State.RUNNING_COMMANDS
+            Stats.tasks_running += 1
+            self._task_index = Stats.tasks_running
+
+            # Print our status bar
+            self.print_status()
+            if self._verbose or self._debug:
+                Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
+
+            # And run the actual task (finally!)
+            for command in Utils.flatten(self._command):
+                await self.run_command(command)
+                if self._returncode != 0:
+                    break
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # If any command failed, we propagate the error to downstream tasks.
+            self._state = Task.State.FAILED
+            Stats.tasks_failed += 1
+            raise ex
+        finally:
+            await JobPool.release_jobs(self._job_count, self)
+
+        #--------------------------------------------------------------------------------
+        # Task finished successfully
+
+        self._state = Task.State.FINISHED
+        Stats.tasks_finished += 1
+
+    #--------------------------------------------------------------------------------
 
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -1774,20 +1774,19 @@ class Task:
 
         # Check all dependencies in the C dependencies file, if present.
         if self._in_depfile and os.path.exists(self._in_depfile):
-            depformat = self._depformat
             if self._debug:
                 Log.log(f"Found C dependencies file {self._in_depfile}")
             with open(self._in_depfile, encoding="utf-8") as depfile:
                 deplines = None
-                if depformat == "msvc":
+                if self._depformat == "msvc":
                     # MSVC /sourceDependencies
                     deplines = json.load(depfile)["Data"]["Includes"]
-                elif depformat == "gcc":
+                elif self._depformat == "gcc":
                     # GCC -MMD
                     deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise ValueError(f"Invalid dependency file format {depformat}")
+                    raise ValueError(f"Invalid dependency file format {self._depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [os.path.join(self._task_dir, d) for d in deplines]
@@ -1799,7 +1798,9 @@ class Task:
         # Empty string = no reason to rebuild
         return ""
 
-    async def run_command(self, command):
+    #--------------------------------------------------------------------------------
+
+    async def run_command(self, command : str):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         if self._verbose or self._debug:
@@ -1857,13 +1858,9 @@ class Task:
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
             if self._stdout:
-                message += "Stdout:\n"
-                message += self._stdout
-                message += "\n"
+                message += f"==========\nStdout:\n{self._stdout}\n"
             if self._stderr:
-                message += "Stderr:\n"
-                message += self._stderr
-                message += "\n"
+                message += f"==========\nStderr:\n{self._stderr}\n"
             raise ValueError(message)
 
         elif self._debug or self._verbose:
@@ -1871,13 +1868,9 @@ class Task:
                 f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} Task passed - '{self._desc}'"
             )
             if self._stdout:
-                Log.log("Stdout:")
-                Log.log(self._stdout, end="")
-                Log.log("")
+                Log.log(f"==========\nStdout:\n{self._stdout}\n")
             if self._stderr:
-                Log.log("Stderr:")
-                Log.log(self._stderr, end="")
-                #Log.log("")
+                Log.log(f"==========\nStderr:\n{self._stderr}\n")
 
 #endregion
 ####################################################################################################
@@ -1897,50 +1890,8 @@ class Runner:
         cls.started_tasks = []
         cls.finished_tasks = []
 
-    @classmethod
-    def reset(cls): cls.init()
-
-    @classmethod
-    def run_tool(cls, tool : str):
-        print(f"Running tool {tool}")
-
-        if tool == "clean":
-            print("Deleting build directories")
-            build_roots = set()
-            for task in cls.all_tasks:
-                build_root = Path.real(task._config.eval("build_root"))
-                if os.path.isdir(build_root):
-                    build_roots.add(build_root)
-            for root in build_roots:
-                print(f"Deleting build root {root}")
-                shutil.rmtree(root, ignore_errors=True)
-            return 0
-
-        assert False, f"Don't know how to run tool {tool}"
-
-    ########################################
+    #--------------------------------------------------------------------------------
     # FIXME selecting targets by regex needs revisiting
-
-    @classmethod
-    def select_tasks_by_regex(cls, target_regex : re.Pattern[str]):
-        for task in cls.all_tasks:
-            queue_task = False
-            task_name = None
-            # This doesn't work because we haven't expanded output filenames yet
-            # for out_file in flatten(task._out_files):
-            #    if self.target_regex.search(out_file):
-            #        queue_task = True
-            #        task_name = out_file
-            #        break
-            if name := task._config.eval("name"):
-                if target_regex.search(name):
-                    queue_task = True
-                    task_name = name
-            if queue_task:
-                Log.log(f"Queueing task for '{task_name}'")
-                task.queue()
-
-    ########################################
 
     @classmethod
     def queue_all_tasks(cls):
@@ -1963,7 +1914,26 @@ class Runner:
             #    task.queue()
             task.queue()
 
-    ########################################
+    @classmethod
+    def queue_tasks_by_regex(cls, target_regex : re.Pattern[str]):
+        for task in cls.all_tasks:
+            queue_task = False
+            task_name = None
+            # This doesn't work because we haven't expanded output filenames yet
+            # for out_file in flatten(task._out_files):
+            #    if self.target_regex.search(out_file):
+            #        queue_task = True
+            #        task_name = out_file
+            #        break
+            if name := task._config.eval("name"):
+                if target_regex.search(name):
+                    queue_task = True
+                    task_name = name
+            if queue_task:
+                Log.log(f"Queueing task for '{task_name}'")
+                task.queue()
+
+    #--------------------------------------------------------------------------------
 
     @classmethod
     def run_tasks(cls):
@@ -1972,31 +1942,10 @@ class Runner:
         asyncio.set_event_loop(loop)
         result = asyncio.run(cls._async_run_tasks())
         loop.close()
+        #Log.log("<tasks complete>")
         return result
 
-    ########################################
-
-    @classmethod
-    def cancel_all_tasks(cls):
-        for task in cls.started_tasks:
-            if task._asyncio_task is not None:
-                task._asyncio_task.cancel()
-                tasks_cancelled += 1
-
-    ########################################
-
-    @classmethod
-    def log_task_failure(cls, task):
-        Log.log(Utils.color(255, 128, 0), end="")
-        Log.log(f"Task failed: {task._desc}")
-        Log.log(Utils.color(), end="")
-        Log.log(str(task))
-        Log.log(Utils.color(255, 128, 128), end="")
-        blah = traceback.format_exc()
-        Log.log(blah)
-        Log.log(Utils.color(), end="")
-
-    ########################################
+    #--------------------------------------------------------------------------------
 
     @classmethod
     async def _async_run_tasks(cls):
@@ -2008,7 +1957,7 @@ class Runner:
         # created, this will effectively walk through all tasks in dependency order.
 
         while cls.queued_tasks or cls.started_tasks:
-            if root_config.shuffle:
+            if Loader.root_config.shuffle:
                 Log.log(f"Shufflin' {len(cls.queued_tasks)} tasks")
                 random.shuffle(cls.queued_tasks)
 
@@ -2026,202 +1975,76 @@ class Runner:
             except BaseException:  # pylint: disable=broad-exception-caught
                 cls.log_task_failure(task)
                 fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
-                if root_config.keep_going and fail_count >= root_config.keep_going:
+                if Loader.root_config.keep_going and fail_count >= Loader.root_config.keep_going:
                     Log.log("Too many failures, cancelling tasks and stopping build")
                     cls.cancel_all_tasks()
                     break
 
         return -1 if Stats.tasks_failed or Stats.tasks_broken else 0
 
-#endregion
-####################################################################################################
-#region Config defaults
-# We spell all these defaults out explicitly so that when this config gets merged with flags and
-# task configs the fields stay in the same order.
+    #--------------------------------------------------------------------------------
 
-config_defaults = Dict(
+    @classmethod
+    def cancel_all_tasks(cls):
+        for task in cls.started_tasks:
+            if task._asyncio_task is not None:
+                task._asyncio_task.cancel()
+                tasks_cancelled += 1
 
-    desc       = "<description missing>",
-    command    = "<command missing>",
+    #--------------------------------------------------------------------------------
 
-    hancho_dir = os.path.dirname(__file__),
+    @classmethod
+    def run_tool(cls, tool : str):
+        print(f"Running tool {tool}")
 
-    root_dir   = os.getcwd(),
-    root_file  = "build.hancho",
+        if tool == "clean":
+            print("Deleting build directories")
+            build_roots = set()
+            for task in cls.all_tasks:
+                build_root = Path.real(task._config.eval("build_root"))
+                if os.path.isdir(build_root):
+                    build_roots.add(build_root)
+            for root in build_roots:
+                print(f"Deleting build root {root}")
+                shutil.rmtree(root, ignore_errors=True)
+            return 0
 
-    repo_dir   = "{root_dir}",
-    repo_file  = "{root_file}",
+        assert False, f"Don't know how to run tool {tool}"
 
-    this_dir   = "{root_dir}",
-    this_file  = "{root_file}",
+    #--------------------------------------------------------------------------------
 
-    task_dir   = "{this_dir}",
-    build_root = "{repo_dir}/build",
-    build_dir  = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
+    @classmethod
+    def log_task_failure(cls, task):
+        Log.log(Utils.color(255, 128, 0), end="")
+        Log.log(f"Task failed: {task._desc}")
+        Log.log(Utils.color(), end="")
+        Log.log(str(task))
+        Log.log(Utils.color(255, 128, 128), end="")
+        blah = traceback.format_exc()
+        Log.log(blah)
+        Log.log(Utils.color(), end="")
 
-    job_count   = 1,
-    job_max     = os.cpu_count(),
-
-    depformat   = None,
-    in_depfile  = None,
-
-    build_tag   = None,
-    target      = None,
-    tool        = None,
-
-    keep_going  = False,
-    verbose     = False,
-    debug       = False,
-    dry_run     = False,
-    quiet       = False,
-    rebuild     = False,
-    shuffle     = False,
-    trace       = False,
-    use_color   = True,
-    should_fail = False
-)
-
-#endregion
-####################################################################################################
-#region flags
-
-def parse_flags(argv):
-    assert Utils.is_collection(argv)
-
-    d = config_defaults
-
-    # pylint: disable=line-too-long
-    # fmt: off
-    parser = argparse.ArgumentParser()
-
-    # These flags are in Ninja order
-    parser.add_argument("target",             default=d.target,     nargs="?", type=str,  help="A regex that selects the targets to build. Defaults to all targets.")
-    parser.add_argument("-v", "--verbose",    default=d.verbose,    action="store_true",  help="Show verbose build info")
-    parser.add_argument("-q", "--quiet",      default=d.quiet,      action="store_true",  help="Mute all output")
-
-    parser.add_argument("-C", "--root_dir",   default=d.root_dir,   type=str,             help="Change directory before starting the build")
-    parser.add_argument("-f", "--root_file",  default=d.root_file,  type=str,             help="Input .hancho file - defaults to 'build.hancho'")
-
-    parser.add_argument("-j", "--job_max",    default=d.job_max,    type=int,             help="Run N jobs in parallel (default = cpu_count)")
-    parser.add_argument("-k", "--keep_going", default=d.keep_going, type=int,             help="Keep going until N jobs fail (0 means infinity)")
-    parser.add_argument("-n", "--dry_run",    default=d.dry_run,    action="store_true",  help="Do not run commands")
-
-    parser.add_argument("-d", "--debug",      default=d.debug,      action="store_true",  help="Print debugging information")
-    parser.add_argument("-t", "--tool",       default=d.tool,       type=str,             help="Run a subtool.")
-
-    # These are Hancho-specific
-    parser.add_argument("--build_tag",        default=d.build_tag,  type=str,             help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
-    parser.add_argument("--rebuild",          default=d.rebuild,    action="store_true",  help="Rebuild everything")
-    parser.add_argument("--shuffle",          default=d.shuffle,    action="store_true",  help="Shuffle task order to shake out dependency issues")
-    parser.add_argument("--trace",            default=d.trace,      action="store_true",  help="Trace all text expansion")
-    parser.add_argument("--use_color",        default=d.use_color,  action="store_true",  help="Use color in the console output")
-    # fmt: on
-
-    (flags, unrecognized) = parser.parse_known_args(argv)
-
-    # Unrecognized command line parameters also become module config fields if they are
-    # flag-like
-    extra_flags = {}
-    for span in unrecognized:
-        if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-            key = match.group(1)
-            val = match.group(2)
-
-            if val is None:
-                val = True
-            else:
-                for converter in (float, int, bool, str):
-                    try:
-                        val = converter(val)
-                        break
-                    except ValueError:
-                        pass
-
-            #val = maybe_as_number(val) if val is not None else True
-            extra_flags[key] = val
-
-    return (Dict(vars(flags)), Dict(extra_flags))
 
 #endregion
 ####################################################################################################
 #region Main
 
 def init(args):
-    (flags, extra_flags) = parse_flags(args)
-    global root_config
-    root_config = Dict(config_defaults, flags, extra_flags)
-    JobPool.init(root_config.job_max)
+    Loader.init(args)
+    JobPool.init(Loader.root_config.job_max)
     Files.init()
     Stats.init()
     Log.init()
     Utils.init()
     Expander.init(max_depth = 20)
     Tracer.init()
-    Loader.init()
     Runner.init()
+    return Loader.root_config
 
-def reset(args):
-    init(args)
+#--------------------------------------------------------------------------------
 
-def main():
-    if root_config.tool:
-        result = Runner.run_tool(root_config.tool)
-        return result
-
-    time_a = time.perf_counter()
-    script_path = os.path.join(root_config.root_dir, root_config.root_file)
-    root_mod = Loader.load_repo(script_path, root_config)
-    Stats.time_load = time.perf_counter() - time_a
-
-    if root_config.debug or root_config.verbose:
-        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
-
-    time_a = time.perf_counter()
-    if root_config.target:
-        target_regex = re.compile(root_config.target)
-        Runner.select_tasks_by_regex(target_regex)
-    else:
-        Runner.queue_root_tasks(root_mod)
-    Stats.time_queue = time.perf_counter() - time_a
-
-    if root_config.debug or root_config.verbose:
-        Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
-
-    time_a = time.perf_counter()
-    result = Runner.run_tasks()
-    Stats.time_build = time.perf_counter() - time_a
-
-    Stats.print_build_stats()
-    return result
-
-#endregion
-####################################################################################################
-#region scratchpad
-
-def scratch():
-    Task(
-        desc = "testing out_file",
-        command = "echo {out_file}",
-        out_file = "test_command_lists.txt"
-    )
-    Runner.queue_all_tasks()
-    result = Runner.run_tasks()
-
-    sys.exit(0)
-
-#endregion
-####################################################################################################
-#region API decls
 # Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
 # here are so that .hancho files don't trigger type checking errors.
-
-#config = Dict()
-# load
-# repo
-# Dict
-# Task
-# Tool
-# flatten, other stuff from utils
 
 #path        = path # path.dirname and path.basename used by makefile-related rules
 #re          = re # why is sub() not working?
@@ -2237,52 +2060,69 @@ def scratch():
 
 config : Dict
 
-# FIXME It feels slightly odd to have expansion_globals, should we just use the hancho.py
-# module itself?
-
-expansion_globals = Dict(
-    os   = os,
-    sys  = sys,
-    path = os.path,
-    re   = re,
-    glob = glob,
-
-    #ext     = Utils.ext,
-    #rel     = Utils.rel_path,
-    #stem    = Utils.stem,
-    #name    = Utils.name
-    #log     = Log.log,
-    flatten = Utils.flatten,
-    run_cmd = Utils.run_cmd,
-    color   = Utils.color,
-    join    = Utils.join,
-    rel_path = Path.rel_path,
-
-    #root_config = root_config,
-)
-
 # These two functions are to make the type checker not complain about load/repo, which are actually
 # lambdas bound to the current script's config in HanchoProxy.
+
 def load(script_path, *args, **kwargs) -> types.ModuleType:
-    return Loader.load_script(script_path, root_config, *args, kwargs)
+    return Loader.load(script_path, False, Loader.root_config, *args, kwargs)
 
 def repo(script_path, *args, **kwargs) -> types.ModuleType:
-    return Loader.load_repo(script_path, root_config, *args, kwargs)
+    return Loader.load(script_path, True, Loader.root_config, *args, kwargs)
 
-#def task(*args, **kwargs):
-#    return Task(root_config, *args, **kwargs)
+#--------------------------------------------------------------------------------
 
-rel_path = Path.rel_path
+def main():
+    if Loader.root_config.tool:
+        result = Runner.run_tool(Loader.root_config.tool)
+        return result
+
+    #----------------------------------------
+    # Load all build scripts
+
+    time_a = time.perf_counter()
+    script_path = os.path.join(Loader.root_config.root_dir, Loader.root_config.root_file)
+    root_mod = Loader.load(script_path, True, Loader.root_config)
+    Stats.time_load = time.perf_counter() - time_a
+
+    if Loader.root_config.debug or Loader.root_config.verbose:
+        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
+
+    #----------------------------------------
+    # Queue all tasks
+
+    time_a = time.perf_counter()
+    if Loader.root_config.target:
+        target_regex = re.compile(Loader.root_config.target)
+        Runner.queue_tasks_by_regex(target_regex)
+    else:
+        Runner.queue_root_tasks(root_mod)
+    Stats.time_queue = time.perf_counter() - time_a
+
+    if Loader.root_config.debug or Loader.root_config.verbose:
+        Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
+
+    #----------------------------------------
+    # Run all tasks
+
+    time_a = time.perf_counter()
+    result = Runner.run_tasks()
+    Stats.time_build = time.perf_counter() - time_a
+
+    #----------------------------------------
+    # Done
+
+    Stats.print_build_stats()
+    return result
 
 #endregion
 ####################################################################################################
 #region __name__ == __main__
 
-init(sys.argv[1:])
-
 if __name__ == "__main__":
-    #scratch()
+    init(sys.argv)
     sys.exit(main())
+else:
+    sys.modules[__name__] = HanchoProxy()
 
 #endregion
 ####################################################################################################

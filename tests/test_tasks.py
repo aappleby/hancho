@@ -50,7 +50,7 @@ class TestTasks(unittest.TestCase):
 
     def tearDown(self):
         """And wipe the build dir after a test too."""
-        shutil.rmtree("build", ignore_errors=True)
+        #shutil.rmtree("build", ignore_errors=True)
 
     def run_tasks(self):
         hancho.Runner.queue_all_tasks()
@@ -63,12 +63,11 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(0, 0)
 
     def test_should_pass(self):
-        hancho.task(command = "echo Hello World")
+        hancho.Task(command = "echo Hello World")
         self.run_tasks()
 
-    def test_command_lists(self):
-        #hancho.init(['-v', '-d'])
-        hancho.task(
+    def test_out_file_dir(self):
+        hancho.Task(
             command = "echo Hello File >> {out_file}",
             out_file = "test_command_lists.txt"
         )
@@ -76,10 +75,10 @@ class TestTasks(unittest.TestCase):
 
     def test_run_cmd(self):
         command = r"echo I am runnning the {run_cmd('uname')} operating system."
-        hancho.task(desc = "Working run_cmd", command = command)
+        hancho.Task(desc = "Working run_cmd", command = command)
         self.run_tasks()
 
     def test_broken_run_cmd(self):
         command = r"echo {run_cmd('This is totally not a valid command.')}",
-        hancho.task(desc = "Broken run_cmd", command = command, should_fail = True)
+        hancho.Task(desc = "Broken run_cmd", command = command, should_fail = True)
         self.run_tasks()
