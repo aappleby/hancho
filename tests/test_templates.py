@@ -1,17 +1,33 @@
 #!/usr/bin/python3
 """Test cases for Hancho's text templating system"""
 
+import os
+from reprlib import recursive_repr
 import sys
 import unittest
 import doctest
 
-sys.path.append("..")
+#sys.path.append("..")
+(this_dir, this_file) = os.path.split(os.path.abspath(__file__))
+hancho_dir = os.path.normpath(f"{this_dir}/..")
+sys.path.append(hancho_dir)
+import hancho
+
+
 from hancho import Dict, Expander
 
 ####################################################################################################
 
 class TestTemplates(unittest.TestCase):
     def setUp(self):
+        hancho.init(
+            this_dir  = this_dir,
+            this_file = this_file,
+            debug     = False,
+            verbose   = False,
+            quiet     = True,
+        )
+
         sys.stdout.flush()
 
     def doctest_basic_eval(self):
@@ -210,10 +226,32 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(d.expand(r"{lb}a{rb}"), r"1")
         self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
 
+    def test_expand_failed_to_terminate1(self):
+        # Single recursion
+        with self.assertRaises(RecursionError):
+            bad_dict = Dict(flarp = "asdf {flarp}")
+            bad_dict.expand("{flarp}")
+
+        # Double recursion
+        with self.assertRaises(RecursionError):
+            bad_dict = Dict(foo = "asdf {bar}", bar = "qwer {foo}")
+            bad_dict.eval("foo")
+
+        # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
+        # in 'bad_dict'
+        with self.assertRaises(RecursionError):
+            subthing = Dict(foo = "{subthing.foo} x")
+            bad_dict = Dict(command = "{subthing.foo}", subthing = subthing)
+            bad_dict.eval("command")
+
+
 ####################################################################################################
 
 def load_tests(loader, tests, ignore):
     tests.addTests(doctest.DocTestSuite(
-        optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE,
+        optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
     ))
     return tests
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

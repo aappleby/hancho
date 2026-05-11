@@ -1,25 +1,3 @@
-    ########################################
-
-
-
-    ########################################
-
-
-
-    ########################################
-
-    def test_missing_dep(self):
-        """Missing dep should fail"""
-        bad_task = self.hancho(
-            command = "touch {out_obj}",
-            in_src  = "src/test.cpp",
-            in_dep  = ["missing_dep.txt"],
-            out_obj = "result.txt",
-        )
-        self.assertNotEqual(0, hancho_py.app.build_all())
-        self.assertEqual(bad_task._state, hancho_py.TaskState.BROKEN)
-        self.assertTrue("FileNotFoundError" in hancho_py.app.log)
-        self.assertTrue("missing_dep.txt" in hancho_py.app.log)
 
     ########################################
     # A recursive text template should cause an 'expand failed to terminate' error.

@@ -7,14 +7,10 @@ import os
 import shutil
 from pathlib import Path
 
-print(f"getcwd = {os.getcwd()}")
-
 (this_dir, this_file) = os.path.split(os.path.abspath(__file__))
 hancho_dir = os.path.normpath(f"{this_dir}/..")
 sys.path.append(hancho_dir)
 import hancho
-
-#os.chdir(this_dir)
 
 def mtime_ns(filename):
     return os.stat(filename).st_mtime_ns
@@ -182,7 +178,7 @@ class TestTasks(unittest.TestCase):
         task = hancho.Task(
             desc    = "Should fail due to missing input",
             command = "touch {out_obj}",
-            in_src  = "tests/src/does_not_exist.txt",
+            in_src  = "src/does_not_exist.txt",
             out_obj = "missing_src.txt",
             should_fail = True,
         )
@@ -190,6 +186,20 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(task._state, hancho.TaskState.BROKEN)
         self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
         self.assertTrue("does_not_exist.txt" in hancho.Log.buffer)
+
+    def test_missing_dep(self):
+        task = hancho.Task(
+            desc    = "Missing dep should fail",
+            command = "touch {out_obj}",
+            in_src  = "src/test.cpp",
+            in_dep  = ["missing_dep.txt"],
+            out_obj = "result.txt",
+            should_fail  = True,
+        )
+        self.run_tasks(0)
+        self.assertEqual(task._state, hancho.TaskState.BROKEN)
+        self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
+        self.assertTrue("missing_dep.txt" in hancho.Log.buffer)
 
     #--------------------------------------------------------------------------------
 
@@ -212,4 +222,4 @@ class TestTasks(unittest.TestCase):
     #--------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    unittest.main(verbosity=0)
+    unittest.main(verbosity=1)

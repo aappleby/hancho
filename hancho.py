@@ -37,7 +37,7 @@ import sys
 import time
 import traceback
 import types
-from typing import Any, Type, overload, no_type_check
+from typing import Any, Type, overload, no_type_check, cast
 from collections import abc
 from enum import Enum
 
@@ -611,12 +611,23 @@ class Tool(Dict):
 # The result of this is that the functions here are mutually recursive in a way that can lead to
 # confusing callstacks, but that should handle every possible case of stuff inside other stuff.
 #
-# The depth checks are to prevent recursive runaway - the MAX_Expander.depth limit is arbitrary but
-# should suffice.
+# The depth checks are to prevent recursive runaway - the MAX_DEPTH limit is arbitrary but should
+# suffice.
 #
 # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
 # expandable by that dict. This allows nested dicts to contain templates that can only be expanded
 # an outer dict, and things will still Just Work.
+
+def track_depth(f):
+    def track_depth(*args, **kwargs):
+        Expander.depth += 1
+        try:
+            if Expander.depth > Expander.MAX_DEPTH:
+                raise RecursionError("Template expansion failed to terminate")
+            return f(*args, **kwargs)
+        finally:
+            Expander.depth -= 1
+    return track_depth
 
 class Expander(abc.Mapping):
     """
@@ -629,9 +640,6 @@ class Expander(abc.Mapping):
     # Tests currently require MAX_DEPTH >= 6
     MAX_DEPTH : int
     depth : int
-
-    #depth = 0
-    #MAX_DEPTH = 20
 
     @classmethod
     def init(cls, max_depth):
@@ -781,6 +789,7 @@ class Expander(abc.Mapping):
 
     ########################################
 
+    @track_depth
     def _get(self, key):
         trace_color = Utils.color(0, 255, 0)
 
@@ -788,93 +797,86 @@ class Expander(abc.Mapping):
             Tracer.log(self, trace_color, "┏", f" get '{key}'")
 
         Tracer.push(trace_color)
-        Expander.depth += 1
 
-        result = "<_get failed>"
-        e = None
+        try:
+            result = "<_get failed>"
+            e = None
 
-        if key in self._context:
-            result = self._context[key]
-        elif key in Expander.expansion_globals:
-            result = Expander.expansion_globals[key]
-        else:
-            e = KeyError(key)
+            if key in self._context:
+                result = self._context[key]
+            elif key in Expander.expansion_globals:
+                result = Expander.expansion_globals[key]
+            else:
+                e = KeyError(key)
+                if self.trace:
+                    Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
+                raise e
 
-        # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
-        if isinstance(result, Dict):
-            result = Expander(result)
+            # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
+            if isinstance(result, Dict):
+                result = Expander(result)
 
-        # If we fetched a string, expand it if needed
-        if isinstance(result, str):
-            result = self.expand(result)
-
-        Expander.depth -= 1
-        Tracer.pop()
-
-        if e:
-            if self.trace:
-                Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
-            raise e
+            # If we fetched a string, expand it if needed
+            if isinstance(result, str):
+                result = self.expand(result)
+        finally:
+            Tracer.pop()
 
         if self.trace:
             message = ""
-
             if isinstance(result, str):
                 message += f" '{result}'"
             else:
                 message += f" {result}"
-
             Tracer.log(self, trace_color, "┗", message)
 
         return result
 
     ########################################
 
+    @track_depth
     def eval(self, expr : str) -> Any: # , trace : bool
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
         trace_color = Utils.color(0, 0, 255)
+        Tracer.push(trace_color)
 
         if not isinstance(expr, str):
             return expr
 
-        expr = self.expand(expr)
+        expr = cast(str, self.expand(expr))
 
         orig_expr = expr
         if self.trace:
             Tracer.log(self, trace_color, "┏", f" eval '{orig_expr}'")
 
-        Tracer.push(trace_color)
-        Expander.depth += 1
-
-        e = None
         try:
             result = eval(expr, None, self)
-        except Exception as _e:
+        except RecursionError as err:
+            raise err
+        except BaseException as err:
             # If the expression was not valid Python, return it verbatim.
-            # We can tag the failed evals if needed
             result = expr
-            e = _e
-            raise
+            if self.trace:
+                Tracer.log(self, trace_color, "┗", f" {type(err).__name__}: {err}")
+            raise err
         finally:
-            Expander.depth -= 1
             Tracer.pop()
 
-            if self.trace:
-                if e is not None:
-                    Tracer.log(self, trace_color, "┗", f" {type(e).__name__}: {e}")
-                elif isinstance(result, str):
-                    Tracer.log(self, trace_color, "┗", f" '{result}'")
-                else:
-                    Tracer.log(self, trace_color, "┗", f" {result}")
+        if self.trace:
+            if isinstance(result, str):
+                Tracer.log(self, trace_color, "┗", f" '{result}'")
+            else:
+                Tracer.log(self, trace_color, "┗", f" {result}")
 
         return result
 
     ########################################
 
-    def expand(self, template : str) -> str:
+    @track_depth
+    def expand(self, template : str | list) -> str | list:
         """
         Expander.expand replaces all innermost {expressions} with the result of evaluating the
         expression and then recurses until either the expansion stops changing or we hit max
@@ -882,14 +884,16 @@ class Expander(abc.Mapping):
         Expand _always_ recurses until expansion does nothing.
         """
 
+        if Utils.is_collection(template):
+            result = [self.expand(v) for v in template]
+            return template
+
         trace_color = Utils.color(255, 0, 0)
 
         if not isinstance(template, str):
             print(f"??? type of template is {type(template)}")
             return template
 
-        if Expander.depth > Expander.MAX_DEPTH:
-            raise RecursionError("Text expansion failed to terminate")
 
         blocks = Expander.split(template)
 
@@ -902,9 +906,7 @@ class Expander(abc.Mapping):
         if self.trace:
             Tracer.log(self, trace_color, "┏", f" expand '{template}'")
 
-        Expander.depth += 1
         Tracer.push(trace_color)
-
 
         for (i, block) in enumerate(blocks):
             if isinstance(block, Expander.Lit):
@@ -912,13 +914,14 @@ class Expander(abc.Mapping):
             try:
                 block = self.eval(block)
                 block = Utils.stringify_variant(block)
+            except RecursionError as e:
+                raise e
             except:
                 block = "{" + block + "}"
             blocks[i] = block
 
         result = "".join(blocks)
 
-        Expander.depth -= 1
         Tracer.pop()
 
         if self.trace:
@@ -1246,7 +1249,7 @@ class Loader:
     def load(cls, script_path : str, is_repo : bool, parent_config : Dict, *args, **kwargs) -> types.ModuleType:
         cls.check_init()
 
-        script_path = parent_config.expand(script_path)
+        script_path = cast(str, parent_config.expand(script_path))
 
         if parent_config.verbose:
             Log.log("┃ " * len(Loader.stack), end="")
@@ -1503,7 +1506,11 @@ class Task:
     #--------------------------------------------------------------------------------
 
     def move_stuff(self, c, k, v):
-        if not isinstance(k, str) or not isinstance(v, str):
+        if not isinstance(k, str):
+            return
+        if not k.startswith("in_") and not k.startswith("out_"):
+            return
+        if v is None:
             return
 
         # Expand all in_ and out_ filenames
@@ -1521,12 +1528,12 @@ class Task:
         if k.startswith("out_") or k == "in_depfile":
             v = self.move_to_builddir(v)
         elif k.startswith("in_"):
-            if not os.path.isabs(v):
-                v = Path.join(self._task_dir, v)
+            #if not os.path.isabs(v):
+            v = Path.join(self._task_dir, cast(str, v))
 
         # Gather all inputs to task.in_files and outputs to task.out_files
         if k == "in_depfile":
-            if os.path.isfile(v):
+            if os.path.isfile(cast(str, v)):
                 self._in_files.append(v)
         elif k.startswith("out_"):
             self._out_files.append(v)

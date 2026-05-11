@@ -46,7 +46,7 @@ if __name__ == "__main__":
     for mod_name in TEST_MODULES:
         #print(f"Running {mod_name}")
         loader = unittest.TestLoader()
-        runner = unittest.TextTestRunner(verbosity=2)
+        runner = unittest.TextTestRunner(verbosity=1)
         #suite = loader.discover(start_dir="tests", pattern="test_tasks.py")
         suite  = loader.loadTestsFromName(mod_name)
         runner.run(suite)
