@@ -85,7 +85,7 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-#  def _test_subrepos1(self):
+#  def test_subrepos1(self):
 #      """Outputs from a subrepo should go in build/repo_name/..."""
 #      repo = self.hancho.repo("subrepo")
 #      task = repo.task(
@@ -97,7 +97,7 @@ class TestTasks(unittest.TestCase):
 #      self.assertEqual(0, hancho.app.build_all())
 #      self.assertTrue(Path("build/subrepo/repo.txt").exists())
 #
-#    def _test_subrepos1(self):
+#    def test_subrepos1(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
 #        result = subprocess.run(
 #            f"python3 ../../hancho.py -v -d top_test1.hancho",
@@ -110,7 +110,7 @@ class TestTasks(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
 #
-#    def _test_subrepos2(self):
+#    def test_subrepos2(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
 #        result = subprocess.run(
 #            f"python3 ../../hancho.py -v -d top_test2.hancho",
@@ -123,7 +123,7 @@ class TestTasks(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
 #
-#    def _test_subrepos3(self):
+#    def test_subrepos3(self):
 #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
 #        result = subprocess.run(
 #            f"python3 ../../hancho.py -v -d top_test3.hancho",

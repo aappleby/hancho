@@ -487,6 +487,16 @@ class Utils:
                 await async_func(d, key, val)
                 await Utils.async_walk(val, async_func)
 
+    @classmethod
+    def walk2(cls, d, func):
+        """Like walk, but does not automatically recurse"""
+        if Utils.is_mapping(d):
+            for key, val in d.items():
+                func(d, key, val)
+        elif Utils.is_collection(d):
+            for key, val in enumerate(d):
+                func(d, key, val)
+
     #--------------------------------------------------------------------------------
 
     @classmethod
@@ -591,7 +601,7 @@ class Dict(dict):
     def eval(self, expr : str) -> Any:
         return Expander(self).eval(expr)
 
-    def expand(self, text : str_tree):
+    def expand(self, text):
         return Expander(self).expand(text)
 
 ########################################
@@ -844,6 +854,7 @@ class Expander(abc.Mapping):
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
+
         trace_color = Utils.color(0, 0, 255)
         Tracer.push(trace_color)
 
@@ -1500,60 +1511,52 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def move_stuff(self, c, k, v):
-        if not isinstance(k, str):
-            return
-        if not k.startswith("in_") and not k.startswith("out_"):
-            return
-        if v is None:
-            return
+    def move_to_build_dir(self, v : str):
+        # Note this conditional needs to be first, as build_dir can itself be under task_dir
+        if v.startswith(self._build_dir):
+            # Absolute path under build_dir, do nothing.
+            pass
+
+        # If an input source had an absolute path and we swap the extension on it to make the
+        # output filename, we'll have a '.o' file or similar inside task_dir. Remap it so it lives
+        # under build_dir.
+        elif v.startswith(self._task_dir):
+            v = Path.rel_path(v, self._task_dir)
+            v = Path.join(self._build_dir, v)
+            v = Path.normpath(v)
+        elif os.path.isabs(v):
+            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {v}")
+        else:
+            # Relative path, add build_dir
+            v = Path.join(self._build_dir, v)
+            v = Path.normpath(v)
+        return v
+
+    def move_to_task_dir(self, v : str):
+        v = Path.join(self._task_dir, cast(str, v))
+        v = Path.normpath(v)
+        return v
+
+    def fix_path1(self, k, v):
+        return v
+
+    def fix_path2(self, k : str, v : str):
 
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-
-        if k == "in_depfile":
-            v = self._config.expand(v)
-            v = Path.normpath(v) # type: ignore
-        elif k.startswith("in_"):
-            v = self._config.expand(v)
-            v = Path.normpath(v) # type: ignore
-        elif k.startswith("out_"):
-            v = self._config.expand(v)
-            v = Path.normpath(v) # type: ignore
-        else:
-            return
+        v = cast(str, self._config.expand(v))
+        v = Path.normpath(v) # type: ignore
 
         # Make all in_ and out_ file paths absolute
-        if k.startswith("out_") or k == "in_depfile":
-            #v = self.move_to_builddir(v)
-
-            if isinstance(v, str):
-                # Note this conditional needs to be first, as build_dir can itself be under task_dir
-                if v.startswith(self._build_dir):
-                    # Absolute path under build_dir, do nothing.
-                    pass
-
-                # If an input source had an absolute path and we swap the extension on it to make the
-                # output filename, we'll have a '.o' file or similar inside task_dir. Remap it so it lives
-                # under build_dir.
-                elif v.startswith(self._task_dir):
-                    v = Path.rel_path(v, self._task_dir)
-                    v = Path.join(self._build_dir, v)
-
-                elif os.path.isabs(v):
-                    raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {v}")
-                else:
-                    # Relative path, add build_dir
-                    v = Path.join(self._build_dir, v)
-
+        if k == "in_depfile":
+            v = self.move_to_build_dir(v)
+        elif k.startswith("out_"):
+            v = self.move_to_build_dir(v)
         elif k.startswith("in_"):
-            #if not os.path.isabs(v):
-            v = Path.join(self._task_dir, cast(str, v))
+            v = self.move_to_task_dir(v)
 
-        # have to norm after joining dir to get rid of foo/../../foo etc.
-        v = Path.normpath(v)
 
         # Gather all inputs to task.in_files and outputs to task.out_files
         if k == "in_depfile":
@@ -1564,7 +1567,35 @@ class Task:
         elif k.startswith("in_"):
             self._in_files.append(v)
 
-        c[k] = v
+        return v
+
+    def move_stuff1(self, c, k, v):
+        if not isinstance(k, str):
+            return
+        if not k.startswith("in_") and not k.startswith("out_"):
+            return
+        if v is None:
+            return
+
+        if Utils.is_collection(v):
+            for (i, v2) in enumerate(v):
+                v[i] = self.fix_path1(k, v2)
+        else:
+            c[k] = self.fix_path1(k, v)
+
+    def move_stuff2(self, c, k, v):
+        if not isinstance(k, str):
+            return
+        if not k.startswith("in_") and not k.startswith("out_"):
+            return
+        if v is None:
+            return
+
+        if Utils.is_collection(v):
+            for (i, v2) in enumerate(v):
+                v[i] = self.fix_path2(k, v2)
+        else:
+            c[k] = self.fix_path2(k, v)
 
     #--------------------------------------------------------------------------------
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
@@ -1594,15 +1625,20 @@ class Task:
         # before initializing the task so that any path.abspath or whatever happen from the right
         # place.
 
+
+        #----------------------------------------
+
         if self._debug:
             Log.log(f"\nTask before expand: {self}")
 
-        self._state = TaskState.TASK_INIT
-        old_cwd = os.getcwd()
-        self._task_dir = Path.abs_path(self._config.eval("task_dir"))
-        os.chdir(self._task_dir)
+        #----------------------------------------
 
         try:
+            old_cwd = os.getcwd()
+            self._task_dir = Path.abs_path(self._config.eval("task_dir"))
+            os.chdir(self._task_dir)
+            self._state = TaskState.TASK_INIT
+
             c = self._config
             e = Expander(c)
             check = Utils.check
@@ -1640,8 +1676,8 @@ class Task:
             self._should_fail = check(bool, e.eval("should_fail"))
 
             # Fix up all in/out paths
-
-            Utils.walk(self._config, self.move_stuff)
+            Utils.walk(self._config, self.move_stuff1)
+            Utils.walk(self._config, self.move_stuff2)
 
             # FIXME this flatten should happen somewhere else
             self._in_files = Utils.flatten(self._in_files)
@@ -1650,20 +1686,10 @@ class Task:
 
             # And now we can expand the command.
 
-            #self._command = self._config.expand_variant("{command}")
-            #self._command = e.expand_variant(self._config.command)
-            #self._command = e.eval("command")
-
-            #command1 = e.expand_variant(self._config.command)
-            #command2 = e.eval("command")
-
             if (callable(self._config.command)):
                 self._command = self._config.command
             else:
                 self._command = e.expand_variant(self._config.command)
-
-            if self._debug:
-                Log.log(f"\nTask after expand: {self}")
 
             # ----------------------------------------
             # Check for missing input/output paths
@@ -1740,6 +1766,11 @@ class Task:
 
         finally:
             os.chdir(old_cwd)
+
+        #----------------------------------------
+
+        if self._debug:
+            Log.log(f"\nTask after expand: {self}")
 
         #--------------------------------------------------------------------------------
         # Early-out if this is a no-op task
