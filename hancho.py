@@ -505,9 +505,12 @@ class Utils:
             if isinstance(v, Promise):
                 c[k] = await Utils.await_variant(await v.get())
             elif isinstance(v, Task):
-                c[k] = v.await_done()
+                c[k] = await v.await_done()
             elif inspect.isawaitable(v):
                 c[k] = await Utils.await_variant(await v)
+            else:
+                #print(f"??? {type(v)}")
+                pass
         await Utils.async_walk(c, wait)
 
 #endregion
@@ -1647,7 +1650,10 @@ class Task:
             #command1 = e.expand_variant(self._config.command)
             #command2 = e.eval("command")
 
-            self._command = e.expand_variant(self._config.command)
+            if (callable(self._config.command)):
+                self._command = self._config.command
+            else:
+                self._command = e.expand_variant(self._config.command)
 
             if self._debug:
                 Log.log(f"\nTask after expand: {self}")

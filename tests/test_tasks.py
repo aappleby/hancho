@@ -388,7 +388,68 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/bar.txt"))
         self.assertTrue(os.path.exists("build/baz.txt"))
 
+    def _test_arbitrary_flags(self):
+        """Passing arbitrary flags to Hancho should work"""
+        hancho.init(quiet = True, flarpy="flarp.txt")
+        self.assertEqual("flarp.txt", hancho.config.flarpy)
 
+        hancho.Task(
+            command = "touch {out_file}",
+            source_files = [],
+            out_file = "{flarpy}",
+        )
+        self.run_tasks(0)
+        self.assertTrue(os.path.exists("build/flarp.txt"))
+
+    def _test_sync_command(self):
+        def sync_command(task):
+            force_touch(task._config.out_obj)
+
+        hancho.Task(
+            desc = "The 'command' field of rules should be OK handling a sync function",
+            command = sync_command,
+            in_src  = [],
+            out_obj = "{name}",
+            name = "result.txt",
+        )
+        self.run_tasks(0)
+        self.assertTrue(os.path.exists("build/result.txt"))
+
+    def _test_cancellation(self):
+        """A task that receives a cancellation exception should not run."""
+
+        # Note: not using -k0 will break the cancellation test
+        hancho.init(quiet = True, keep_going = 0)
+        #hancho.init(debug = True, keep_going = 0, job_max = 1)
+
+        task_that_fails = hancho.Task(
+            desc    = "task that fails",
+            command = "(exit 255)",
+            in_src  = [],
+            out_obj = "fail_result.txt",
+        )
+        task_that_passes = hancho.Task(
+            desc    = "task that passes",
+            command = "touch {out_obj}",
+            in_src  = [],
+            out_obj = "pass_result.txt",
+        )
+        should_be_cancelled = hancho.Task(
+            desc    = "should be cancelled",
+            command = "touch {out_obj}",
+            in_src  = [task_that_fails, task_that_passes],
+            out_obj = "should_not_be_created.txt",
+        )
+        self.run_tasks(-1)
+        self.assertEqual(1, hancho.Stats.tasks_finished)
+        self.assertEqual(1, hancho.Stats.tasks_failed)
+        self.assertEqual(1, hancho.Stats.tasks_cancelled)
+        self.assertEqual(task_that_fails._state, hancho.TaskState.FAILED)
+        self.assertEqual(task_that_passes._state, hancho.TaskState.FINISHED)
+        self.assertEqual(should_be_cancelled._state, hancho.TaskState.CANCELLED)
+        self.assertTrue(os.path.exists("build/pass_result.txt"))
+        self.assertFalse(os.path.exists("build/fail_result.txt"))
+        self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
 
 
