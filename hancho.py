@@ -38,9 +38,11 @@ import sys
 import time
 import traceback
 import types
-from typing import Any, Type, overload, no_type_check, cast
+from typing import Any, Type, overload, no_type_check, cast, TypeVar
 from collections import abc
 from enum import Enum
+
+StrTree = str | list["StrTree"]
 
 #endregion
 ####################################################################################################
@@ -231,12 +233,7 @@ class Path:
 
     # FIXME this could use some cleanup, I don't think we need _all_ these methods.
 
-    @classmethod
-    @overload
-    def abs_path(cls, raw_path : str) -> str: pass
-    @classmethod
-    @overload
-    def abs_path(cls, raw_path : list[Any]) -> list[Any]: pass
+
     @classmethod
     def abs_path(cls, raw_path):
         if Utils.is_collection(raw_path):
@@ -244,19 +241,15 @@ class Path:
         elif isinstance(raw_path, str):
             return os.path.abspath(raw_path)
         else:
-            assert False, f"abs_path() Don't know what to do with a {type(raw_path).__name__}"
+            assert False, f"abs_path() Don't know how to abs_path a {type(raw_path).__name__}"
 
-    @classmethod
-    @overload
-    def rel_path(cls, path1 : str, path2 : str) -> str: pass
-    @classmethod
-    @overload
-    def rel_path(cls, path1, path2 : list[Any]) -> list[Any]: pass
     @classmethod
     def rel_path(cls, path1, path2):
         if Utils.is_collection(path1):
             result = [Path.rel_path(p, path2) for p in path1]
-        elif isinstance(path1, str):
+        elif Utils.is_collection(path2):
+            result = [Path.rel_path(path1, p) for p in path2]
+        elif isinstance(path1, str) and isinstance(path2, str):
             # Generating relative paths in the presence of symlinks doesn't work with either
             # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
             # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
@@ -264,16 +257,9 @@ class Path:
             # path, which we can do with simple string manipulation.
             result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
         else:
-            assert False, f"rel_path() Don't know what to do with a {type(path1).__name__}"
-
+            assert False, f"rel_path() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
         return result
 
-    @classmethod
-    @overload
-    def join(cls, lhs : str, rhs : str) -> str: pass
-    @classmethod
-    @overload
-    def join(cls, lhs : list[Any], rhs : list[Any], *args) -> list[Any]: pass
     @classmethod
     def join(cls, lhs, rhs, *args):
         if len(args) > 0:
@@ -284,38 +270,32 @@ class Path:
         return result[0] if len(result) == 1 else result
 
     @classmethod
-    def isnorm(cls, file_path : str) -> bool:
-        return file_path == Path.norm(file_path)
+    def isnorm(cls, path):
+        return path == Path.norm(path)
 
     @classmethod
-    def isreal(cls, file_path : str) -> bool:
-        return file_path == Path.real(file_path)
+    def isreal(cls, path):
+        return path == Path.real(path)
 
     @classmethod
-    def norm(cls, _path : str) -> str:
-        assert not Utils.is_template(_path), f"Can't use a template as a path : {_path}"
-        _path = os.path.join(os.getcwd(), _path)
-        _path = os.path.normpath(_path)
-        return _path
+    def norm(cls, path):
+        assert not Utils.is_template(path), f"Can't use a template as a path : {path}"
+        path = os.path.join(os.getcwd(), path)
+        path = os.path.normpath(path)
+        return path
 
     @classmethod
-    def real(cls, file_path : str) -> str:
-        assert not Utils.is_template(file_path), f"Can't use a template as a path : {file_path}"
-        file_path = Path.norm(file_path)
-        file_path = os.path.realpath(file_path)
-        return file_path
+    def real(cls, path : str) -> str:
+        assert not Utils.is_template(path), f"Can't use a template as a path : {path}"
+        path = Path.norm(path)
+        path = os.path.realpath(path)
+        return path
 
     @classmethod
-    def split(cls, file_path : str) -> tuple[str, str]:
-        result = os.path.split(file_path)
+    def split(cls, path : str) -> tuple[str, str]:
+        result = os.path.split(path)
         return result
 
-    @classmethod
-    @overload
-    def normpath(cls, val : str) -> str: pass
-    @classmethod
-    @overload
-    def normpath(cls, val : list[Any]) -> list[Any]: pass
     @classmethod
     def normpath(cls, val):
         if Utils.is_collection(val):
@@ -326,12 +306,6 @@ class Path:
             assert False, f"normpath() Don't know what to do with a {type(val).__name__}"
 
     @classmethod
-    @overload
-    def ext(cls, name : str, new_ext : str) -> str : pass
-    @classmethod
-    @overload
-    def ext(cls, name, new_ext : str) -> list[Any] : pass
-    @classmethod
     def ext(cls, name, new_ext : str):
         """Replaces file extensions on either a single filename or a list of filenames."""
         if Utils.is_collection(name):
@@ -341,13 +315,12 @@ class Path:
         else:
             assert False, f"ext() Don't know what to do with a {type(name).__name__}"
 
-    #FIXME shouldn't this do the dynamic dispatch thing like above?
     @classmethod
-    def stem(cls, filename : list[Any]) -> str:
-        flat_names : list[str] = Utils.flatten(filename)
-        flat_filename : str = flat_names[0]
-        base_filename : str = os.path.basename(flat_filename)
-        return os.path.splitext(base_filename)[0]
+    def stem(cls, path : str) -> str:
+        #flat_names : list[str] = Utils.flatten(filename)
+        #flat_filename : str = flat_names[0]
+        #base_filename : str = os.path.basename(flat_filename)
+        return os.path.splitext(os.path.basename(path))[0]
 
 #endregion
 ####################################################################################################
@@ -1511,45 +1484,63 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def move_to_build_dir(self, v : str):
+    #@overload
+    #def move_to_build_dir(self, path : list) -> list : pass
+    #@overload
+    #def move_to_build_dir(self, path : str) -> str : pass
+
+    def move_to_build_dir(self, path : StrTree) -> StrTree:
+        if isinstance(path, list):
+            return [self.move_to_build_dir(p) for p in path]
+        if not isinstance(path, str):
+            return path
+
+        assert os.path.isabs(self._task_dir)
+        assert os.path.isabs(self._build_dir)
+
         # Note this conditional needs to be first, as build_dir can itself be under task_dir
-        if v.startswith(self._build_dir):
+        if path.startswith(self._build_dir):
             # Absolute path under build_dir, do nothing.
             pass
-
-        # If an input source had an absolute path and we swap the extension on it to make the
-        # output filename, we'll have a '.o' file or similar inside task_dir. Remap it so it lives
-        # under build_dir.
-        elif v.startswith(self._task_dir):
-            v = Path.rel_path(v, self._task_dir)
-            v = Path.join(self._build_dir, v)
-            v = Path.normpath(v)
-        elif os.path.isabs(v):
-            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {v}")
+        elif path.startswith(self._task_dir):
+            # If an input source had an absolute path and we swap the extension on it to make the
+            # output filename, we'll have a '.o' file or similar inside task_dir. Move it so it
+            # lives under build_dir.
+            path = Path.rel_path(path, self._task_dir)
+            path = Path.join(self._build_dir, path)
+            path = Path.normpath(path)
+        elif os.path.isabs(path):
+            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {path}")
         else:
             # Relative path, add build_dir
-            v = Path.join(self._build_dir, v)
-            v = Path.normpath(v)
-        return v
+            path = Path.join(self._build_dir, path)
+            path = Path.normpath(path)
 
-    def move_to_task_dir(self, v : str):
-        v = Path.join(self._task_dir, cast(str, v))
-        v = Path.normpath(v)
-        return v
+        assert isinstance(path, str)
 
-    def fix_path1(self, k, v):
-        return v
+        assert os.path.isabs(path)
+        return path
 
-    def fix_path2(self, k : str, v : str):
+    def move_to_task_dir(self, path : StrTree):
+        assert os.path.isabs(self._task_dir)
+        path = Path.join(self._task_dir, cast(str, path))
+        path = Path.normpath(path)
+        return path
 
+    #--------------------------------------------------------------------------------
+
+    def expand_path(self, k : str, v : StrTree):
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
         v = cast(str, self._config.expand(v))
         v = Path.normpath(v) # type: ignore
+        return v
 
-        # Make all in_ and out_ file paths absolute
+    def fixup_path(self, k : str, v : StrTree):
+
+        # Make all in_ and out_ file paths absolute.
         if k == "in_depfile":
             v = self.move_to_build_dir(v)
         elif k.startswith("out_"):
@@ -1557,8 +1548,7 @@ class Task:
         elif k.startswith("in_"):
             v = self.move_to_task_dir(v)
 
-
-        # Gather all inputs to task.in_files and outputs to task.out_files
+        # Gather all absolute file paths to _in/_out_files.
         if k == "in_depfile":
             if os.path.isfile(cast(str, v)):
                 self._in_files.append(v)
@@ -1567,7 +1557,12 @@ class Task:
         elif k.startswith("in_"):
             self._in_files.append(v)
 
+        # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
+        # all paths so that the command line won't be huge after expansion.
+        v = Path.rel_path(v, self._task_dir)
         return v
+
+    #--------------------------------------------------------------------------------
 
     def move_stuff1(self, c, k, v):
         if not isinstance(k, str):
@@ -1579,9 +1574,9 @@ class Task:
 
         if Utils.is_collection(v):
             for (i, v2) in enumerate(v):
-                v[i] = self.fix_path1(k, v2)
+                v[i] = self.expand_path(k, v2)
         else:
-            c[k] = self.fix_path1(k, v)
+            c[k] = self.expand_path(k, v)
 
     def move_stuff2(self, c, k, v):
         if not isinstance(k, str):
@@ -1593,9 +1588,9 @@ class Task:
 
         if Utils.is_collection(v):
             for (i, v2) in enumerate(v):
-                v[i] = self.fix_path2(k, v2)
+                v[i] = self.fixup_path(k, v2)
         else:
-            c[k] = self.fix_path2(k, v)
+            c[k] = self.fixup_path(k, v)
 
     #--------------------------------------------------------------------------------
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
@@ -1634,37 +1629,37 @@ class Task:
         #----------------------------------------
 
         try:
+            check = Utils.check
             old_cwd = os.getcwd()
-            self._task_dir = Path.abs_path(self._config.eval("task_dir"))
+            self._task_dir = check(str, Path.abs_path(self._config.eval("task_dir")))
             os.chdir(self._task_dir)
             self._state = TaskState.TASK_INIT
 
             c = self._config
             e = Expander(c)
-            check = Utils.check
 
             self._desc    = self._config.eval("desc")
 
-            #self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
-            #self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
+            self._root_dir   = check(str, Path.abs_path(check(str, e.eval("root_dir"))))
+            self._root_file  = check(str, Path.abs_path(check(str, e.eval("root_file"))))
 
-            self._repo_dir   = Path.abs_path(check(str, e.eval("repo_dir")))
-            #self._repo_file  = Path.abs_path(check(str, e.eval("repo_file")))
+            self._repo_dir   = check(str, Path.abs_path(check(str, e.eval("repo_dir"))))
+            self._repo_file  = check(str, Path.abs_path(check(str, e.eval("repo_file"))))
 
-            #self._this_dir   = Path.abs_path(check(str, e.eval("this_dir")))
-            #self._this_file  = Path.abs_path(check(str, e.eval("this_file")))
+            self._this_dir   = check(str, Path.abs_path(check(str, e.eval("this_dir"))))
+            self._this_file  = check(str, Path.abs_path(check(str, e.eval("this_file"))))
 
-            #self._build_root = Path.abs_path(check(str, e.eval("build_root")))
-            self._build_dir  = Path.abs_path(check(str, e.eval("build_dir")))
+            self._build_root = check(str, Path.abs_path(check(str, e.eval("build_root"))))
+            self._build_dir  = check(str, Path.abs_path(check(str, e.eval("build_dir"))))
 
             self._job_count   = check(int, e.eval("job_count"))
-            #self._keep_going  = check(int, e.eval("keep_going"))
+            self._keep_going  = check(int, e.eval("keep_going"))
 
             # these are none if not set
-            self._depformat   = e.eval("depformat")
-            #self._build_tag   = e.eval("build_tag")
-            #self._target      = e.eval("target")
-            #self._tool        = e.eval("tool")
+            self._depformat   = check(str, e.eval("depformat"))
+            #self._build_tag   = check(str, e.eval("build_tag"))
+            #self._target      = check(str, e.eval("target"))
+            #self._tool        = check(str, e.eval("tool"))
 
             self._verbose     = check(bool, e.eval("verbose"))
             self._debug       = check(bool, e.eval("debug"))
