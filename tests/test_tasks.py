@@ -72,12 +72,12 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-    def _test_run_tasks_zero(self):
+    def test_run_tasks_zero(self):
         # If all tasks are OK, we should get 0 from run_tasks.
         hancho.Task(command = "echo Hello World")
         self.run_tasks(0)
 
-    def _test_run_tasks_nonzero(self):
+    def test_run_tasks_nonzero(self):
         # If any task fails, we should get -1 from run_tasks.
         bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
         self.run_tasks(-1)
@@ -138,7 +138,7 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-    def _test_good_build_path(self):
+    def test_good_build_path(self):
         good_task = hancho.Task(
             command  = "echo {in_src} >> {out_obj}",
             in_src   = "src/foo.c",
@@ -148,13 +148,12 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(good_task._state, hancho.TaskState.FINISHED)
         self.assertTrue(Path("build/narp/foo.o").exists())
 
-    def _test_bad_build_path(self):
-        hancho.init(debug=True)
+    def test_bad_build_path(self):
         bad_task = hancho.Task(
             desc     = "This task has a bad path for out_obj",
             command  = "echo {in_src} >> {out_obj}",
             in_src   = "src/foo.c",
-            out_obj  = "{repo_dir}/foo.o",
+            out_obj  = "../../../foo.o",
             should_fail = True,
         )
         self.run_tasks(0)
@@ -164,7 +163,7 @@ class TestTasks(unittest.TestCase):
     #--------------------------------------------------------------------------------
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
-    def _test_good_run_cmd(self):
+    def test_good_run_cmd(self):
         test_task = hancho.Task(
             desc    = "Testing run_cmd",
             command = r"echo I am runnning the {run_cmd('uname')} operating system."
@@ -172,7 +171,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(test_task._stdout, f"I am runnning the Linux operating system.\n")
 
-    def _test_bad_run_cmd(self):
+    def test_bad_run_cmd(self):
         task = hancho.Task(
             desc    = "Broken run_cmd",
             command = r"echo {run_cmd('This is totally not a valid command.')}",
@@ -181,7 +180,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(task._state, hancho.TaskState.FAILED)
 
-    def _test_garbage_command(self):
+    def test_garbage_command(self):
         """Non-existent command line commands should cause Hancho to fail the build."""
         garbage_task = hancho.Task(
             command = "aklsjdflksjdlfkjldfk",
@@ -190,7 +189,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(garbage_task._state, hancho.TaskState.FAILED)
         self.assertTrue("CommandFailure" in hancho.Log.buffer)
 
-    def _test_task_collision(self):
+    def test_task_collision(self):
         """If multiple distinct commands generate the same output file, that's an error."""
         hancho.Task(
             command = "touch {out_obj}",
@@ -207,7 +206,7 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-    def _test_always_rebuild_if_no_inputs(self):
+    def test_always_rebuild_if_no_inputs(self):
         # A rule with no inputs should always rebuild
 
         def run():
@@ -227,7 +226,7 @@ class TestTasks(unittest.TestCase):
         self.assertLess(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-    def _test_dep_changed(self):
+    def test_dep_changed(self):
         # Changing a file in in_files[] should trigger a rebuild
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
         # FIXME ok dealing with repo-relative and tests/-relative paths here is annoying.
@@ -258,7 +257,7 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-    def _test_missing_input(self):
+    def test_missing_input(self):
         # We should fail if an input is missing
         task = hancho.Task(
             desc    = "Should fail due to missing input",
@@ -272,7 +271,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
         self.assertTrue("does_not_exist.txt" in hancho.Log.buffer)
 
-    def _test_missing_dep(self):
+    def test_missing_dep(self):
         # We should fail if a dependency is missing even if it's not used by the command.
         task = hancho.Task(
             desc    = "Missing dep should fail",
@@ -289,7 +288,7 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-    def _test_absolute_inputs(self):
+    def test_absolute_inputs(self):
         # If input filenames are absolute paths, we should still end up with build files under
         # build_root.
 
@@ -305,7 +304,7 @@ class TestTasks(unittest.TestCase):
 
     #--------------------------------------------------------------------------------
 
-    def _test_does_create_output(self):
+    def test_does_create_output(self):
         # Output files should appear in build/ by default
         hancho.Task(
             command = "touch {out_obj}",
@@ -315,7 +314,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
-    def _test_doesnt_create_output(self):
+    def test_doesnt_create_output(self):
         # Having a file mentioned in out_obj should not magically create it
         hancho.Task(
             command = "echo",
@@ -325,7 +324,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertFalse(os.path.exists("../build/tetts/result.txt"))
 
-    def _test_header_changed(self):
+    def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
             #hancho.init(quiet = True, this_dir = this_dir, this_file = this_file)
@@ -348,7 +347,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-    def _test_input_changed(self):
+    def test_input_changed(self):
         """Changing a source file should trigger a rebuild"""
         def run():
             hancho.init(quiet = True)
@@ -370,7 +369,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-    def _test_multiple_commands(self):
+    def test_multiple_commands(self):
         """Rules with arrays of commands should run all of them"""
         hancho.Task(
             command = [
@@ -388,7 +387,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/bar.txt"))
         self.assertTrue(os.path.exists("build/baz.txt"))
 
-    def _test_arbitrary_flags(self):
+    def test_arbitrary_flags(self):
         """Passing arbitrary flags to Hancho should work"""
         hancho.init(quiet = True, flarpy="flarp.txt")
         self.assertEqual("flarp.txt", hancho.config.flarpy)
@@ -401,7 +400,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/flarp.txt"))
 
-    def _test_sync_command(self):
+    def test_sync_command(self):
         def sync_command(task):
             force_touch(task._config.out_obj)
 
@@ -415,12 +414,11 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
-    def _test_cancellation(self):
+    def test_cancellation(self):
         """A task that receives a cancellation exception should not run."""
 
         # Note: not using -k0 will break the cancellation test
         hancho.init(quiet = True, keep_going = 0)
-        #hancho.init(debug = True, keep_going = 0, job_max = 1)
 
         task_that_fails = hancho.Task(
             desc    = "task that fails",

@@ -35,9 +35,9 @@ import hancho
 
 
 TEST_MODULES = [
-#    "test_dict",
-#    "test_templates",
-#    "test_split",
+    "test_dict",
+    "test_templates",
+    "test_split",
     "test_tasks",
 
     #"tests.test_hancho_as_import",

@@ -18,6 +18,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # FIXME make sure objects added to the hancho proxy are preserved in submodules?
 # FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs
 # a revisit
+# FIXME All the context and singleton stuff can probably be moved to a ContextVar?
 
 ####################################################################################################
 #region imports
@@ -889,7 +890,7 @@ class Expander(abc.Mapping):
 
         if Utils.is_collection(template):
             result = [self.expand(v) for v in template]
-            return template
+            return result
 
         trace_color = Utils.color(255, 0, 0)
 
@@ -1499,29 +1500,6 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def move_to_builddir(self, val):
-        if not isinstance(val, str):
-            return val
-        # Note this conditional needs to be first, as build_dir can itself be under task_dir
-        if val.startswith(self._build_dir):
-            # Absolute path under build_dir, do nothing.
-            pass
-
-        # FIXME - why were we doing this? output files should never be in task_dir...
-        #elif val.startswith(self._task_dir):
-        #    # Absolute path under task_dir, move to build_dir
-        #    val = Path.rel_path(val, self._task_dir)
-        #    val = Path.join(self._build_dir, val)
-
-        elif os.path.isabs(val):
-            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
-        else:
-            # Relative path, add build_dir
-            val = Path.join(self._build_dir, val)
-        return val
-
-    #--------------------------------------------------------------------------------
-
     def move_stuff(self, c, k, v):
         if not isinstance(k, str):
             return
@@ -1534,19 +1512,48 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        if k.startswith("in_"):
+
+        if k == "in_depfile":
+            v = self._config.expand(v)
+            v = Path.normpath(v) # type: ignore
+        elif k.startswith("in_"):
             v = self._config.expand(v)
             v = Path.normpath(v) # type: ignore
         elif k.startswith("out_"):
             v = self._config.expand(v)
             v = Path.normpath(v) # type: ignore
+        else:
+            return
 
         # Make all in_ and out_ file paths absolute
         if k.startswith("out_") or k == "in_depfile":
-            v = self.move_to_builddir(v)
+            #v = self.move_to_builddir(v)
+
+            if isinstance(v, str):
+                # Note this conditional needs to be first, as build_dir can itself be under task_dir
+                if v.startswith(self._build_dir):
+                    # Absolute path under build_dir, do nothing.
+                    pass
+
+                # If an input source had an absolute path and we swap the extension on it to make the
+                # output filename, we'll have a '.o' file or similar inside task_dir. Remap it so it lives
+                # under build_dir.
+                elif v.startswith(self._task_dir):
+                    v = Path.rel_path(v, self._task_dir)
+                    v = Path.join(self._build_dir, v)
+
+                elif os.path.isabs(v):
+                    raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {v}")
+                else:
+                    # Relative path, add build_dir
+                    v = Path.join(self._build_dir, v)
+
         elif k.startswith("in_"):
             #if not os.path.isabs(v):
             v = Path.join(self._task_dir, cast(str, v))
+
+        # have to norm after joining dir to get rid of foo/../../foo etc.
+        v = Path.normpath(v)
 
         # Gather all inputs to task.in_files and outputs to task.out_files
         if k == "in_depfile":
