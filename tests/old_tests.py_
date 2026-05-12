@@ -2,49 +2,7 @@
 
     ########################################
 
-    def test_input_changed(self):
-        """Changing a source file should trigger a rebuild"""
-        def run():
-            hancho_py.app.reset()
-            hancho_py.app.parse_flags(["--quiet"])
-            time.sleep(0.01)
-            compile = hancho_py.Dict(
-                command = "gcc -MMD -c {in_src} -o {out_obj}",
-                out_obj = "{ext(in_src, '.o')}",
-                depfile = "{ext(out_obj, '.d')}",
-            )
-            self.hancho(compile, in_src = "src/test.cpp")
-            self.assertEqual(0, hancho_py.app.build_all())
-            return mtime_ns("build/src/test.o")
-
-        mtime1 = run()
-        mtime2 = run()
-        force_touch("src/test.cpp")
-        mtime3 = run()
-
-        self.assertEqual(mtime1, mtime2)
-        self.assertLess(mtime2, mtime3)
-
     ########################################
-
-    def test_multiple_commands(self):
-        """Rules with arrays of commands should run all of them"""
-        self.hancho(
-            command = [
-                "echo foo > {out_foo}",
-                "echo bar > {out_bar}",
-                "echo baz > {out_baz}",
-            ],
-            in_src  = __file__,
-            out_foo = "foo.txt",
-            out_bar = "bar.txt",
-            out_baz = "baz.txt",
-        )
-
-        self.assertEqual(0, hancho_py.app.build_all())
-        self.assertTrue(path.exists("build/foo.txt"))
-        self.assertTrue(path.exists("build/bar.txt"))
-        self.assertTrue(path.exists("build/baz.txt"))
 
     ########################################
 

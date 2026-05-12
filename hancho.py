@@ -587,7 +587,7 @@ class Dict(dict):
     def eval(self, expr : str) -> Any:
         return Expander(self).eval(expr)
 
-    def expand(self, text : str):
+    def expand(self, text : str_tree):
         return Expander(self).expand(text)
 
 ########################################
@@ -931,6 +931,19 @@ class Expander(abc.Mapping):
             result = self.expand(result)
 
         return result
+
+    def expand_variant(self, variant):
+        if Utils.is_collection(variant) or Utils.is_mapping(variant):
+            def apply(c, k, v):
+                if isinstance(v, str):
+                    c[k] = self.expand(v)
+            Utils.walk(variant, apply)
+            return variant
+        elif isinstance(variant, str):
+            result = self.expand(variant)
+            return result
+        else:
+            Log.log(f"Don't know how to expand_variant a {type(variant)}!")
 
 #endregion
 ####################################################################################################
@@ -1627,7 +1640,14 @@ class Task:
 
             # And now we can expand the command.
 
-            self._command = self._config.eval("command")
+            #self._command = self._config.expand_variant("{command}")
+            #self._command = e.expand_variant(self._config.command)
+            #self._command = e.eval("command")
+
+            #command1 = e.expand_variant(self._config.command)
+            #command2 = e.eval("command")
+
+            self._command = e.expand_variant(self._config.command)
 
             if self._debug:
                 Log.log(f"\nTask after expand: {self}")

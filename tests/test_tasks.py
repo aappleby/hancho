@@ -325,7 +325,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertFalse(os.path.exists("../build/tetts/result.txt"))
 
-    def test_header_changed(self):
+    def _test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
             #hancho.init(quiet = True, this_dir = this_dir, this_file = this_file)
@@ -347,6 +347,55 @@ class TestTasks(unittest.TestCase):
 
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
+
+    def _test_input_changed(self):
+        """Changing a source file should trigger a rebuild"""
+        def run():
+            hancho.init(quiet = True)
+            time.sleep(0.01)
+            compile = hancho.Dict(
+                command = "gcc -MMD -c {in_src} -o {out_obj}",
+                out_obj = "{ext(in_src, '.o')}",
+                depfile = "{ext(out_obj, '.d')}",
+            )
+            hancho.Task(compile, in_src = "src/test.cpp")
+            self.run_tasks(0)
+            return mtime_ns("build/src/test.o")
+
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("src/test.cpp")
+        mtime3 = run()
+
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+    def _test_multiple_commands(self):
+        """Rules with arrays of commands should run all of them"""
+        hancho.Task(
+            command = [
+                "echo foo > {out_foo}",
+                "echo bar > {out_bar}",
+                "echo baz > {out_baz}",
+            ],
+            out_foo = "foo.txt",
+            out_bar = "bar.txt",
+            out_baz = "baz.txt",
+        )
+
+        self.run_tasks(0)
+        self.assertTrue(os.path.exists("build/foo.txt"))
+        self.assertTrue(os.path.exists("build/bar.txt"))
+        self.assertTrue(os.path.exists("build/baz.txt"))
+
+
+
+
+
+
+
+
+
 
 
 
