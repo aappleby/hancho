@@ -6,34 +6,49 @@
   "configurations": [
 
     {
-      "name"    : "Debug ${workspaceFolder]/hancho.py",
+      "name"    : "Debug hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
+      "cwd"     : "${workspaceFolder}",
       "program" : "${workspaceFolder}/hancho.py",
       "args"    : [],
-      "cwd"     : "${workspaceFolder}",
       "console" : "integratedTerminal",
     },
 
+//    {
+//      "name"    : "Debug tests/build.hancho",
+//      "type"    : "debugpy",
+//      "request" : "launch",
+//      "cwd"     : "${workspaceFolder}",
+//      "program" : "${workspaceFolder}/hancho.py",
+//      "args"    : ["-f", "tests/build.hancho"],
+//      "console" : "integratedTerminal",
+//
+//      //"justMyCode": false,
+//      //"preLaunchTask": "Wipe build",
+//    },
+
     {
-      "name": "Debug run_tests.py in repo root",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/run_tests.py",
-      "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "preLaunchTask": "Wipe build",
+      "name"    : "Debug tests/run_tests.py",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "cwd"     : "${workspaceFolder}/tests",
+      "program" : "${workspaceFolder}/tests/run_tests.py",
+      "console" : "integratedTerminal",
+
+      //"justMyCode": false,
+      //"preLaunchTask": "Wipe build",
     },
 
     {
-        "name": "Debug other stuff",
-        "type": "debugpy",
-        "request": "launch",
-        "program": "test_tasks.py",
-        "cwd": "${workspaceFolder}/tests",
-        "console": "integratedTerminal",
-        "justMyCode": true
+      "name"    : "Debug other stuff",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "cwd"     : "${workspaceFolder}/tests",
+      "program" : "test_tasks.py",
+      "console" : "integratedTerminal",
+
+      //"justMyCode": true
     },
 
     //{

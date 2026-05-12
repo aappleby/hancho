@@ -1161,7 +1161,7 @@ class Loader:
         job_count   = 1,
         job_max     = os.cpu_count(),
 
-        depformat   = None,
+        depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
         in_depfile  = None,
 
         build_tag   = None,
@@ -1314,14 +1314,12 @@ class Loader:
 
             os.chdir(script_dir)
             cls.stack.append(new_module)
-            cls.top = cls.stack[-1]
 
             exec(new_module.__code__, new_module.__dict__)
 
         finally:
 
             cls.stack.pop()
-            cls.top = cls.stack[-1]
             os.chdir(old_cwd)
 
             if old_hancho is None:
@@ -1492,10 +1490,13 @@ class Task:
         if val.startswith(self._build_dir):
             # Absolute path under build_dir, do nothing.
             pass
-        elif val.startswith(self._task_dir):
-            # Absolute path under task_dir, move to build_dir
-            val = Path.rel_path(val, self._task_dir)
-            val = Path.join(self._build_dir, val)
+
+        # FIXME - why were we doing this? output files should never be in task_dir...
+        #elif val.startswith(self._task_dir):
+        #    # Absolute path under task_dir, move to build_dir
+        #    val = Path.rel_path(val, self._task_dir)
+        #    val = Path.join(self._build_dir, val)
+
         elif os.path.isabs(val):
             raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {val}")
         else:
@@ -1619,6 +1620,11 @@ class Task:
 
             Utils.walk(self._config, self.move_stuff)
 
+            # FIXME this flatten should happen somewhere else
+            self._in_files = Utils.flatten(self._in_files)
+            self._out_files = Utils.flatten(self._out_files)
+            self._in_depfile = e.eval("in_depfile")
+
             # And now we can expand the command.
 
             self._command = self._config.eval("command")
@@ -1701,9 +1707,6 @@ class Task:
 
         finally:
             os.chdir(old_cwd)
-
-        if self._debug:
-            Log.log(f"\nTask after expand: {self}")
 
         #--------------------------------------------------------------------------------
         # Early-out if this is a no-op task
@@ -2144,7 +2147,8 @@ def main():
 #region __name__ == __main__
 
 if __name__ == "__main__":
-    init(sys.argv[1:])
+    flags = Loader.parse_flags(sys.argv[1:])
+    init(flags)
     sys.exit(main())
 else:
     sys.modules[__name__] = HanchoProxy()

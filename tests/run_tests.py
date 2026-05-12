@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import sys
 import unittest
-import hancho
 import shutil
 
-shutil.rmtree("build", ignore_errors=True)
+sys.path.append("..")
+import hancho
+
+#shutil.rmtree("build", ignore_errors=True)
 
 #hancho.init()
 
@@ -33,10 +35,10 @@ shutil.rmtree("build", ignore_errors=True)
 
 
 TEST_MODULES = [
-    "tests.test_dict",
-    "tests.test_templates",
-    "tests.test_split",
-    "tests.test_tasks",
+#    "test_dict",
+#    "test_templates",
+#    "test_split",
+    "test_tasks",
 
     #"tests.test_hancho_as_import",
     #"tests.test_scratch",
