@@ -38,11 +38,9 @@ import sys
 import time
 import traceback
 import types
-from typing import Any, Type, overload, no_type_check, cast, TypeVar
+from typing import Any, no_type_check, cast
 from collections import abc
 from enum import Enum
-
-StrTree = str | list["StrTree"]
 
 #endregion
 ####################################################################################################
@@ -107,24 +105,12 @@ class JobPool:
 
 #endregion
 ####################################################################################################
-#region Files
-
-class Files:
-    loaded_files : list[str]
-    all_out_files : set
-    filename_to_fingerprint : dict[str, str]
-
-    @classmethod
-    def init(cls):
-        cls.loaded_files = []
-        cls.all_out_files = set()
-        cls.filename_to_fingerprint = dict()
-
-#endregion
-####################################################################################################
 #region Stats
 
 class Stats:
+    all_out_files : set
+    filename_to_fingerprint : dict[str, str]
+
     mtime_calls : int
 
     time_load  : float
@@ -142,6 +128,9 @@ class Stats:
 
     @classmethod
     def init(cls):
+        cls.all_out_files = set()
+        cls.filename_to_fingerprint = dict()
+
         cls.mtime_calls = 0
         cls.time_load  = 0
         cls.time_queue = 0
@@ -334,7 +323,7 @@ class Utils:
         cls.rand = random.Random()
 
     @classmethod
-    def check[T](cls, type_: Type[T], t: object) -> T:
+    def check(cls, type_, t):
         assert isinstance(t, type_), f"Expected {type_.__name__}, got {type(t).__name__}"
         return t
 
@@ -1123,6 +1112,7 @@ class Loader:
     dedupe : dict[tuple[str, str], types.ModuleType]
     stack : list[types.ModuleType]
     root_config : Dict
+    loaded_files : list[str]
 
     @classmethod
     def init(cls, config):
@@ -1130,6 +1120,7 @@ class Loader:
         cls.dedupe = {}
         cls.stack = []
         cls.root_config = Dict(cls.config_defaults, config)
+        cls.loaded_files = []
 
     @classmethod
     def check_init(cls):
@@ -1296,7 +1287,7 @@ class Loader:
         #Loader.compile_mod(new_module)
 
         with open(script_path, encoding="utf-8") as file:
-            Files.loaded_files.append(script_path)
+            Loader.loaded_files.append(script_path)
             source = file.read()
             code = compile(source, script_path, "exec", dont_inherit=True)
             new_module.__dict__.update(__code__ = code)
@@ -1429,7 +1420,10 @@ class Task:
         self._in_files  = []
         self._out_files = []
 
-        self._loaded_files : list[str] = list(Files.loaded_files)
+        # Tasks depend on all .hancho files that were loaaded when the task was created.
+        # This is probably too wide a net, but tracking dependencies between .hancho files is not
+        # really possible.
+        self._loaded_files : list[str] = list(Loader.loaded_files)
 
         Runner.all_tasks.append(self)
 
@@ -1484,12 +1478,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    #@overload
-    #def move_to_build_dir(self, path : list) -> list : pass
-    #@overload
-    #def move_to_build_dir(self, path : str) -> str : pass
-
-    def move_to_build_dir(self, path : StrTree) -> StrTree:
+    def move_to_build_dir(self, path):
         if isinstance(path, list):
             return [self.move_to_build_dir(p) for p in path]
         if not isinstance(path, str):
@@ -1521,7 +1510,7 @@ class Task:
         assert os.path.isabs(path)
         return path
 
-    def move_to_task_dir(self, path : StrTree):
+    def move_to_task_dir(self, path):
         assert os.path.isabs(self._task_dir)
         path = Path.join(self._task_dir, cast(str, path))
         path = Path.normpath(path)
@@ -1529,7 +1518,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def expand_path(self, k : str, v : StrTree):
+    def expand_path(self, k, v):
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
@@ -1538,7 +1527,7 @@ class Task:
         v = Path.normpath(v) # type: ignore
         return v
 
-    def fixup_path(self, k : str, v : StrTree):
+    def fixup_path(self, k, v):
 
         # Make all in_ and out_ file paths absolute.
         if k == "in_depfile":
@@ -1574,7 +1563,10 @@ class Task:
 
         if Utils.is_collection(v):
             for (i, v2) in enumerate(v):
-                v[i] = self.expand_path(k, v2)
+                v2 = cast(str, self._config.expand(v2))
+                v2 = Path.normpath(v2) # type: ignore
+                v[i] = v2
+
         else:
             c[k] = self.expand_path(k, v)
 
@@ -1656,18 +1648,18 @@ class Task:
             self._keep_going  = check(int, e.eval("keep_going"))
 
             # these are none if not set
-            self._depformat   = check(str, e.eval("depformat"))
-            #self._build_tag   = check(str, e.eval("build_tag"))
-            #self._target      = check(str, e.eval("target"))
-            #self._tool        = check(str, e.eval("tool"))
+            self._depformat   = check(str | None, e.eval("depformat"))
+            self._build_tag   = check(str | None, e.eval("build_tag"))
+            self._target      = check(str | None, e.eval("target"))
+            self._tool        = check(str | None, e.eval("tool"))
 
             self._verbose     = check(bool, e.eval("verbose"))
             self._debug       = check(bool, e.eval("debug"))
             self._dry_run     = check(bool, e.eval("dry_run"))
-            #self._quiet       = check(bool, e.eval("quiet"))
+            self._quiet       = check(bool, e.eval("quiet"))
             self._rebuild     = check(bool, e.eval("rebuild"))
-            #self._shuffle     = check(bool, e.eval("shuffle"))
-            #self._trace       = check(bool, e.eval("trace"))
+            self._shuffle     = check(bool, e.eval("shuffle"))
+            self._trace       = check(bool, e.eval("trace"))
             self._should_fail = check(bool, e.eval("should_fail"))
 
             # Fix up all in/out paths
@@ -1675,8 +1667,8 @@ class Task:
             Utils.walk(self._config, self.move_stuff2)
 
             # FIXME this flatten should happen somewhere else
-            self._in_files = Utils.flatten(self._in_files)
-            self._out_files = Utils.flatten(self._out_files)
+            self._in_files   = Utils.flatten(self._in_files)
+            self._out_files  = Utils.flatten(self._out_files)
             self._in_depfile = e.eval("in_depfile")
 
             # And now we can expand the command.
@@ -1706,9 +1698,9 @@ class Task:
 
             for file in self._out_files:
                 real_file = os.path.realpath(file)
-                if real_file in Files.filename_to_fingerprint:
+                if real_file in Stats.filename_to_fingerprint:
                     raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-                Files.filename_to_fingerprint[real_file] = real_file
+                Stats.filename_to_fingerprint[real_file] = real_file
 
             # ----------------------------------------
             # Sanity checks
@@ -1735,9 +1727,9 @@ class Task:
             # Check for duplicate task outputs
             if self._command:
                 for file in self._out_files:
-                    if file in Files.all_out_files:
+                    if file in Stats.all_out_files:
                         raise NameError(f"Multiple rules build {file}!")
-                    Files.all_out_files.add(file)
+                    Stats.all_out_files.add(file)
 
             # Make sure our output directories exist
             if not self._dry_run:
@@ -2119,7 +2111,6 @@ class Runner:
 def init(*args, **kwargs):
     Loader.init(Dict(*args, kwargs))
     JobPool.init(Loader.root_config.job_max)
-    Files.init()
     Stats.init()
     Log.init()
     Utils.init()
