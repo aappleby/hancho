@@ -15,6 +15,7 @@ from hancho import Dict
 
 class TestDict(unittest.TestCase):
     def setUp(self):
+        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         hancho.init()
         sys.stdout.flush()
 
@@ -137,7 +138,11 @@ class TestDict(unittest.TestCase):
 ####################################################################################################
 
 def load_tests(loader, tests, ignore):
-    tests.addTests(doctest.DocTestSuite(
-        optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE,
-    ))
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None
+    tests.addTests(doctests)
     return tests
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

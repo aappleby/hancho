@@ -20,6 +20,7 @@ from hancho import Dict, Expander
 
 class TestTemplates(unittest.TestCase):
     def setUp(self):
+        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         hancho.init(
             this_dir  = this_dir,
             this_file = this_file,
@@ -248,9 +249,10 @@ class TestTemplates(unittest.TestCase):
 ####################################################################################################
 
 def load_tests(loader, tests, ignore):
-    tests.addTests(doctest.DocTestSuite(
-        optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE
-    ))
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None
+    tests.addTests(doctests)
     return tests
 
 if __name__ == "__main__":

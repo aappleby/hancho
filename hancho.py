@@ -1539,8 +1539,7 @@ class Task:
 
         # Gather all absolute file paths to _in/_out_files.
         if k == "in_depfile":
-            if os.path.isfile(cast(str, v)):
-                self._in_files.append(v)
+            if os.path.isfile(cast(str, v)): self._in_files.append(v)
         elif k.startswith("out_"):
             self._out_files.append(v)
         elif k.startswith("in_"):

@@ -39,16 +39,13 @@ TEST_MODULES = [
     "test_templates",
     "test_split",
     "test_tasks",
-
-    #"tests.test_hancho_as_import",
-    #"tests.test_scratch",
 ]
 
 if __name__ == "__main__":
     for mod_name in TEST_MODULES:
         #print(f"Running {mod_name}")
         loader = unittest.TestLoader()
-        runner = unittest.TextTestRunner(verbosity=1)
+        runner = unittest.TextTestRunner(verbosity=2)
         #suite = loader.discover(start_dir="tests", pattern="test_tasks.py")
         suite  = loader.loadTestsFromName(mod_name)
         runner.run(suite)

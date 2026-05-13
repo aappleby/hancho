@@ -7,13 +7,14 @@ import os
 import shutil
 from pathlib import Path
 import time
-
-#(this_dir, this_file) = os.path.split(os.path.abspath(__file__))
-#hancho_dir = os.path.normpath(f"{this_dir}/..")
-#sys.path.append(hancho_dir)
+import random
+from typing import cast
+import doctest
 
 sys.path.append("..")
 import hancho
+
+####################################################################################################
 
 def setUpModule():
     # Change to your desired directory
@@ -50,20 +51,12 @@ class TestTasks(unittest.TestCase):
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
 
-        hancho.init(
-            #this_dir  = this_dir,
-            #this_file = this_file,
-            #debug     = True,
-            #verbose   = True,
-
-            debug     = False,
-            verbose   = False,
-            quiet     = True,
-        )
+        hancho.init(debug = False, verbose = False, quiet = True)
 
     def tearDown(self):
-        """And wipe the build dir after a test too."""
+        # And wipe the build dir after a test too.
         #shutil.rmtree("build", ignore_errors=True)
+        pass
 
     def run_tasks(self, expected):
         hancho.Runner.queue_all_tasks()
@@ -86,7 +79,7 @@ class TestTasks(unittest.TestCase):
     #--------------------------------------------------------------------------------
 
 #  def test_subrepos1(self):
-#      """Outputs from a subrepo should go in build/repo_name/..."""
+#      # Outputs from a subrepo should go in build/repo_name/...
 #      repo = self.hancho.repo("subrepo")
 #      task = repo.task(
 #          command = "cat {rel_source_files} > {rel_build_files}",
@@ -181,7 +174,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(task._state, hancho.TaskState.FAILED)
 
     def test_garbage_command(self):
-        """Non-existent command line commands should cause Hancho to fail the build."""
+        # Non-existent command line commands should cause Hancho to fail the build.
         garbage_task = hancho.Task(
             command = "aklsjdflksjdlfkjldfk",
         )
@@ -190,7 +183,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue("CommandFailure" in hancho.Log.buffer)
 
     def test_task_collision(self):
-        """If multiple distinct commands generate the same output file, that's an error."""
+        # If multiple distinct commands generate the same output file, that's an error.
         hancho.Task(
             command = "touch {out_obj}",
             in_src  = __file__,
@@ -348,7 +341,7 @@ class TestTasks(unittest.TestCase):
         self.assertLess(mtime2, mtime3)
 
     def test_input_changed(self):
-        """Changing a source file should trigger a rebuild"""
+        # Changing a source file should trigger a rebuild
         def run():
             hancho.init(quiet = True)
             time.sleep(0.01)
@@ -370,7 +363,7 @@ class TestTasks(unittest.TestCase):
         self.assertLess(mtime2, mtime3)
 
     def test_multiple_commands(self):
-        """Rules with arrays of commands should run all of them"""
+        # Rules with arrays of commands should run all of them
         hancho.Task(
             command = [
                 "echo foo > {out_foo}",
@@ -388,7 +381,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/baz.txt"))
 
     def test_arbitrary_flags(self):
-        """Passing arbitrary flags to Hancho should work"""
+        # Passing arbitrary flags to Hancho should work
         hancho.init(quiet = True, flarpy="flarp.txt")
         self.assertEqual("flarp.txt", hancho.config.flarpy)
 
@@ -415,7 +408,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/result.txt"))
 
     def test_cancellation(self):
-        """A task that receives a cancellation exception should not run."""
+        # A task that receives a cancellation exception should not run.
 
         # Note: not using -k0 will break the cancellation test
         hancho.init(quiet = True, keep_going = 0)
@@ -449,14 +442,89 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
+    def test_task_creates_task(self):
+        # Tasks using callbacks can create new tasks when they run.
+        def callback(task):
+            new_task = hancho.Task(
+                command = "touch {out_obj}",
+                in_src  = [],
+                out_obj = "dummy.txt"
+            )
+            # FIXME these should auto-queue
+            new_task.queue()
+            return []
 
+        hancho.Task(
+            command = callback,
+            in_src  = [],
+            out_obj = []
+        )
 
+        self.run_tasks(0)
+        self.assertTrue(Path("build/dummy.txt").exists())
 
+    def test_tons_of_tasks(self):
+        # We should be able to queue up 1000+ tasks at once.
+        for i in range(1000):
+            hancho.Task(
+                desc    = "I am task {index}",
+                command = "echo {index} > {out_obj}",
+                in_src  = [],
+                out_obj = "dummy{index}.txt",
+                index   = i
+            )
+        self.run_tasks(0)
 
+        import glob
+        self.assertEqual(1000, len(glob.glob("build/*")))
 
+    def test_job_count(self):
+        # We should be able to dispatch tasks that require various numbers of jobs/cores.
+        # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
+        # another batch of 100 tasks that use random numbers of cores.
 
+        for i in range(100):
+            hancho.Task(
+                desc    = "I am task {index}, I use {job_count} cores",
+                command = "(exit 0)",
+                in_src  = [],
+                out_obj = [],
+                job_count = random.randrange(1, cast(int, os.cpu_count()) + 1),
+                index = i
+            )
 
+        hancho.Task(
+            desc = "********** I am the slow task, I eat all the cores **********",
+            command = [
+                "touch {out_obj}",
+                "sleep 0.3",
+            ],
+            job_count = os.cpu_count(),
+            in_src  = [],
+            out_obj = "slow_result.txt",
+        )
 
+        for i in range(100):
+            hancho.Task(
+                desc = "I am task {index}, I use {job_count} cores",
+                command = "(exit 0)",
+                in_src  = [],
+                out_obj = [],
+                job_count = random.randrange(1, cast(int, os.cpu_count()) + 1),
+                index = 100 + i
+            )
+
+        self.run_tasks(0)
+        self.assertTrue(Path("build/slow_result.txt").exists())
+
+####################################################################################################
+
+def load_tests(loader, tests, ignore):
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None
+    tests.addTests(doctests)
+    return tests
 
 if __name__ == "__main__":
-    unittest.main(verbosity=1)
+    unittest.main(verbosity=0)
