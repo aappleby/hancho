@@ -1099,9 +1099,9 @@ class HanchoProxy(types.ModuleType):
     def __getattr__(self, key):
         return getattr(self.hancho_ref, key)
 
-    def __setattr__(self, key, val):
-        #self.__dict__.update({key:val})
-        raise AttributeError(f"Can't set attribute {key!r} on a Hancho proxy")
+    #def __setattr__(self, key, val):
+    #    #self.__dict__.update({key:val})
+    #    raise AttributeError(f"Can't set attribute {key!r} on a Hancho proxy")
 
 #endregion
 ####################################################################################################
@@ -1242,8 +1242,10 @@ class Loader:
         cls.check_init()
 
         script_path = cast(str, parent_config.expand(script_path))
+        script_path = os.path.abspath(script_path)
 
-        if parent_config.verbose:
+        #if parent_config.verbose:
+        if True:
             Log.log("┃ " * len(Loader.stack), end="")
             script_type = "repo" if is_repo else "script"
             Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color())

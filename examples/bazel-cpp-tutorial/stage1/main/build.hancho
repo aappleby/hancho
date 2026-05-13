@@ -1,7 +1,8 @@
 import hancho
 
-hancho.Task(
-    hancho.tools.cc_binary,
+hancho.config.tools.cc_binary(
+    hancho  = hancho,
     in_srcs = "hello-world.cc",
-    out_bin = "hello-world",
+    out_bin = "hello-world"
 )
+

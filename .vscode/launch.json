@@ -44,8 +44,8 @@
       "name"    : "Debug other stuff",
       "type"    : "debugpy",
       "request" : "launch",
-      "cwd"     : "${workspaceFolder}/tests",
-      "program" : "test_tasks.py",
+      "cwd"     : "${workspaceFolder}/examples/bazel-cpp-tutorial/stage1",
+      "program" : "${workspaceFolder}/hancho.py",
       "console" : "integratedTerminal",
 
       //"justMyCode": true
