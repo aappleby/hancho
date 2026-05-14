@@ -1,12 +1,7 @@
 import hancho
 
-print("LKSJDLFKSJLKFJ")
-print(hancho.__dict__)
-print("LKSJDLFKSJLKFJ")
-
-#hancho.tools.cc_binary(
-#    hancho  = hancho,
-#    in_srcs = "hello-world.cc",
-#    out_bin = "hello-world"
-#)
+hancho.tools.cc_binary(
+    in_srcs = "hello-world.cc",
+    out_bin = "hello-world"
+)
 

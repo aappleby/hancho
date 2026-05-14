@@ -561,7 +561,7 @@ class Dict(dict):
 
     def __setattr__(self, key : str, val : Any):
         try:
-            return dict.__setattr__(self, key, val)
+            return dict.__setitem__(self, key, val)
         except KeyError as e:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
 
