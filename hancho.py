@@ -21,7 +21,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # FIXME All the context and singleton stuff can probably be moved to a ContextVar?
 
 ####################################################################################################
-#region imports
+# region imports
 
 import argparse
 import asyncio
@@ -38,13 +38,40 @@ import sys
 import time
 import traceback
 import types
+from contextvars import ContextVar
 from typing import Any, no_type_check, cast
 from collections import abc
 from enum import Enum
+from types import MappingProxyType
 
-#endregion
 ####################################################################################################
-#region Job pool
+# region context var stuff
+
+hancho = sys.modules[__name__]
+if __name__ == "__main__" and "hancho" not in sys.modules:
+    sys.modules["hancho"] = hancho
+
+cv_config = ContextVar("config")
+
+def __getattr__(name):
+    if name == "config":
+        return cv_config.get()
+    raise AttributeError(f"Module {__name__} has no attribute {name}")
+
+def __dir__():
+    return [
+        "Task",
+        "Tool",
+        "Dict",
+        "init",
+        "load",
+        "repo",
+        "config",
+    ]
+
+# endregion
+####################################################################################################
+# region Job pool
 
 class JobPool:
     job_max : int
@@ -53,9 +80,9 @@ class JobPool:
     jobs_lock : asyncio.Condition
 
     @classmethod
-    def init(cls, job_max):
-        cls.job_max = job_max
-        cls.jobs_available = job_max
+    def reset(cls):
+        cls.job_max = hancho.config.job_max
+        cls.jobs_available = hancho.config.job_max
         cls.job_slots = [None] * cls.jobs_available
         cls.jobs_lock = asyncio.Condition()
 
@@ -65,8 +92,8 @@ class JobPool:
     async def acquire_jobs(cls, count, token : Any):
         """Waits until 'count' jobs are available and then removes them from the job pool."""
 
-        if count > Loader.root_config.job_max:
-            raise ValueError(f"Need {count} jobs, but pool is {Loader.root_config.job_max}.")
+        if count > hancho.config.job_max:
+            raise ValueError(f"Need {count} jobs, but pool is {cls.job_max}.")
 
         await cls.jobs_lock.acquire()
         await cls.jobs_lock.wait_for(lambda: cls.jobs_available >= count)
@@ -103,9 +130,9 @@ class JobPool:
         cls.jobs_lock.notify_all()
         cls.jobs_lock.release()
 
-#endregion
+# endregion
 ####################################################################################################
-#region Stats
+# region Stats
 
 class Stats:
     all_out_files : set
@@ -127,7 +154,7 @@ class Stats:
     tasks_shouldfail : int
 
     @classmethod
-    def init(cls):
+    def reset(cls):
         cls.all_out_files = set()
         cls.filename_to_fingerprint = dict()
 
@@ -150,7 +177,7 @@ class Stats:
 
         Log.log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds")
 
-        if Loader.root_config.debug or Loader.root_config.verbose:
+        if hancho.config.debug or hancho.config.verbose:
             Log.log(f"tasks started:    {cls.tasks_started}")
             Log.log(f"tasks finished:   {cls.tasks_finished}")
             Log.log(f"tasks failed:     {cls.tasks_failed}")
@@ -167,16 +194,16 @@ class Stats:
         else:
             Log.log(f"hancho: {Utils.color(128, 128, 255)}BUILD CLEAN{Utils.color()}")
 
-#endregion
+# endregion
 ####################################################################################################
-#region Log
+# region Log
 
 class Log:
     buffer : str
     line_dirty : bool
 
     @classmethod
-    def init(cls):
+    def reset(cls):
         cls.buffer = ""
         cls.line_dirty = False
 
@@ -210,13 +237,13 @@ class Log:
     @classmethod
     def log_line(cls, message : str):
         cls.buffer += message
-        if not Loader.root_config.quiet:
+        if not hancho.config.quiet:
             sys.stdout.write(message)
             sys.stdout.flush()
 
-#endregion
+# endregion
 ####################################################################################################
-#region Path
+# region Path
 
 class Path:
 
@@ -311,15 +338,15 @@ class Path:
         #base_filename : str = os.path.basename(flat_filename)
         return os.path.splitext(os.path.basename(path))[0]
 
-#endregion
+# endregion
 ####################################################################################################
-#region Utils
+# region Utils
 
 class Utils:
     rand : random.Random
 
     @classmethod
-    def init(cls):
+    def reset(cls):
         cls.rand = random.Random()
 
     @classmethod
@@ -387,7 +414,7 @@ class Utils:
     def color(cls, red : int = 0, green : int = 0, blue : int = 0) -> str:
         """Converts RGB color to ANSI format string."""
         # Color strings don't work in Windows console, so don't emit them.
-        if not Loader.root_config.use_color or os.name == "nt":
+        if not hancho.config.use_color or os.name == "nt":
             return ""
         if red == 0 and green == 0 and blue == 0:
             return "\x1B[0m"
@@ -482,13 +509,12 @@ class Utils:
             elif inspect.isawaitable(v):
                 c[k] = await Utils.await_variant(await v)
             else:
-                #print(f"??? {type(v)}")
                 pass
         await Utils.async_walk(c, wait)
 
-#endregion
+# endregion
 ####################################################################################################
-#region Dict
+# region Dict
 
 class Dict(dict):
     """
@@ -545,6 +571,9 @@ class Dict(dict):
         except KeyError as e:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
 
+    def __or__(self, other):
+        return Dict(self, other)
+
     ########################################
     # Debugging stuff
 
@@ -571,9 +600,9 @@ class Dict(dict):
 class Tool(Dict):
     pass
 
-#endregion
+# endregion
 ####################################################################################################
-#region Expander
+# region Expander
 # Hancho's text expansion system.
 #
 # Works similarly to Python's F-strings, but with quite a bit more power.
@@ -614,13 +643,12 @@ class Expander(abc.Mapping):
 
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_DEPTH >= 6
-    MAX_DEPTH : int
-    depth : int
+    MAX_DEPTH : int = 20
+    depth : int = 0
 
     @classmethod
-    def init(cls, max_depth):
+    def reset(cls):
         cls.depth = 0
-        cls.MAX_DEPTH = max_depth
 
     # FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
 
@@ -868,9 +896,7 @@ class Expander(abc.Mapping):
         trace_color = Utils.color(255, 0, 0)
 
         if not isinstance(template, str):
-            print(f"??? type of template is {type(template)}")
             return template
-
 
         blocks = Expander.split(template)
 
@@ -922,7 +948,7 @@ class Expander(abc.Mapping):
         else:
             Log.log(f"Don't know how to expand_variant a {type(variant)}!")
 
-#endregion
+# endregion
 ####################################################################################################
 # region Tracer
 # Expansion tracing class used by Expander
@@ -932,7 +958,7 @@ class Tracer:
     trellis_stack : list[str]
 
     @classmethod
-    def init(cls):
+    def reset(cls):
         cls.trellis_stack = []
 
     @classmethod
@@ -988,9 +1014,9 @@ class Tracer:
 
         Log.log(buffer)
 
-#endregion
+# endregion
 ####################################################################################################
-#region Dumper
+# region Dumper
 # Pretty-printer for various types
 
 class Dumper:
@@ -1065,67 +1091,28 @@ class Dumper:
         result += self.indent() + "}"
         return result
 
-#endregion
+# endregion
 ####################################################################################################
-#region HanchoProxy
-# Hancho build scripts don't get direct access to the Hancho module, they go through this proxy so
-# that each build script can have its own hancho.config object without breaking the global
-# root_config.
-
-class HanchoProxy(types.ModuleType):
-
-    def __init__(self):
-        super().__init__(__name__)
-        self.__dict__.update(hancho_ref = sys.modules[__name__])
-
-    def init(self, *args, **kwargs):
-        self.bind(init(*args, kwargs))
-
-    def bind(self, config):
-        """
-        Overrides (from the script module's point of view) the top level load/repo/Task so that the
-        bound config will always be injected into them.
-        """
-        self.__dict__.update(
-            load = lambda path, *args, **kwargs : Loader.load(path, False, config, *args, kwargs),
-            repo = lambda path, *args, **kwargs : Loader.load(path, True,  config, *args, kwargs),
-            Task = lambda *args, **kwargs : Task(config, *args, **kwargs),
-            config = config
-        )
-
-    def __dir__(self):
-        return dir(self.hancho_ref) + ["config"]
-
-    def __getattr__(self, key):
-        return getattr(self.hancho_ref, key)
-
-    #def __setattr__(self, key, val):
-    #    #self.__dict__.update({key:val})
-    #    raise AttributeError(f"Can't set attribute {key!r} on a Hancho proxy")
-
-#endregion
-####################################################################################################
-#region Loader
+# region Loader
 
 class Loader:
 
     dedupe : dict[tuple[str, str], types.ModuleType]
     stack : list[types.ModuleType]
-    root_config : Dict
     loaded_files : list[str]
 
     @classmethod
-    def init(cls, config):
-        assert Utils.is_mapping(config)
+    def reset(cls):
         cls.dedupe = {}
         cls.stack = []
-        cls.root_config = Dict(cls.config_defaults, config)
         cls.loaded_files = []
 
     @classmethod
     def check_init(cls):
-        if not hasattr(Loader, "root_config"):
-            raise RuntimeError("You have to call hancho.init(sys.argv) (or similar) before using Hancho.")
+        try:
+            cv_config.get()
+        except:
+            raise RuntimeError("You have to call hancho.init(debug = True, verbose = False...) or similar before using Hancho.")
 
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
@@ -1238,10 +1225,10 @@ class Loader:
     #-----------------------------------------------------------------------------------------------
 
     @classmethod
-    def load(cls, script_path : str, is_repo : bool, parent_config : Dict, *args, **kwargs) -> types.ModuleType:
+    def load(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
         cls.check_init()
 
-        script_path = cast(str, parent_config.expand(script_path))
+        script_path = cast(str, hancho.config.expand(script_path))
         script_path = os.path.abspath(script_path)
 
         #if parent_config.verbose:
@@ -1260,7 +1247,7 @@ class Loader:
         if is_repo:
             tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
 
-        script_config = Dict(parent_config, tweaks, *args, kwargs)
+        script_config = Dict(hancho.config, tweaks, *args, kwargs)
 
         #----------------------------------------
         # Dedupe the load if needed. Modules are only deduped if their configurations are
@@ -1298,36 +1285,25 @@ class Loader:
         #Loader.exec_mod(new_module)
 
         old_cwd = os.getcwd()
-        old_hancho = sys.modules.get("hancho", None)
 
         try:
 
-            proxy = HanchoProxy()
-            proxy.bind(script_config)
-            sys.modules["hancho"] = proxy
-
             os.chdir(script_dir)
             cls.stack.append(new_module)
-
-            exec(new_module.__code__, new_module.__dict__)
+            with cv_config.set(script_config):
+                exec(new_module.__code__, new_module.__dict__)
 
         finally:
-
             cls.stack.pop()
             os.chdir(old_cwd)
-
-            if old_hancho is None:
-                sys.modules.pop("hancho", None)
-            else:
-                sys.modules["hancho"] = old_hancho
 
         #----------------------------------------
 
         return new_module
 
-#endregion
+# endregion
 ####################################################################################################
-#region Promise
+# region Promise
 # Promise selects subsets of _out_files
 
 class Promise:
@@ -1344,9 +1320,9 @@ class Promise:
         else:
             return [self.task._context[field] for field in self.args]
 
-#endregion
+# endregion
 ####################################################################################################
-#region Task
+# region Task
 # Task object + bookkeeping
 
 class TaskState(Enum):
@@ -1950,9 +1926,9 @@ class Task:
             if self._stderr:
                 Log.log(f"==========\nStderr:\n{self._stderr}\n")
 
-#endregion
+# endregion
 ####################################################################################################
-#region Runner
+# region Runner
 
 class Runner:
 
@@ -1962,7 +1938,7 @@ class Runner:
     finished_tasks : list[Task]
 
     @classmethod
-    def init(cls):
+    def reset(cls):
         cls.all_tasks = []
         cls.queued_tasks = []
         cls.started_tasks = []
@@ -1986,8 +1962,6 @@ class Runner:
             # build_dir = normalize_path(build_dir)
             # repo_dir  = expand_variant(app.root_context._context, "{build_dir}")
             # repo_dir  = normalize_path(repo_dir)
-            # print(build_dir)
-            # print(repo_dir)
             # if build_dir.startswith(repo_dir):
             #    task.queue()
             task.queue()
@@ -2035,7 +2009,7 @@ class Runner:
         # created, this will effectively walk through all tasks in dependency order.
 
         while cls.queued_tasks or cls.started_tasks:
-            if Loader.root_config.shuffle:
+            if hancho.config.shuffle:
                 Log.log(f"Shufflin' {len(cls.queued_tasks)} tasks")
                 random.shuffle(cls.queued_tasks)
 
@@ -2057,7 +2031,7 @@ class Runner:
                     cls.finished_tasks.append(task)
 
             fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
-            if Loader.root_config.keep_going and fail_count >= Loader.root_config.keep_going:
+            if hancho.config.keep_going and fail_count >= hancho.config.keep_going:
                 Log.log("Too many failures, cancelling tasks and stopping build")
                 cls.cancel_all_tasks()
                 break
@@ -2077,17 +2051,13 @@ class Runner:
 
     @classmethod
     def run_tool(cls, tool : str):
-        print(f"Running tool {tool}")
-
         if tool == "clean":
-            print("Deleting build directories")
             build_roots = set()
             for task in cls.all_tasks:
                 build_root = Path.real(task._config.eval("build_root"))
                 if os.path.isdir(build_root):
                     build_roots.add(build_root)
             for root in build_roots:
-                print(f"Deleting build root {root}")
                 shutil.rmtree(root, ignore_errors=True)
             return 0
 
@@ -2100,27 +2070,13 @@ class Runner:
         Log.log("")
         Log.log(f"{Utils.color(255, 128, 0)}Task failed: {task._desc}{Utils.color()}")
         Log.log(f"{Utils.color(255, 128, 128)}{traceback.format_exc()}{Utils.color()}")
-        if Loader.root_config.debug or Loader.root_config.verbose:
+        if hancho.config.debug or hancho.config.verbose:
             Log.log(str(task))
 
 
-#endregion
+# endregion
 ####################################################################################################
-#region Main
-
-# FIXME this should be taking a config instead of sys.argv
-def init(*args, **kwargs):
-    Loader.init(Dict(*args, kwargs))
-    JobPool.init(Loader.root_config.job_max)
-    Stats.init()
-    Log.init()
-    Utils.init()
-    Expander.init(max_depth = 20)
-    Tracer.init()
-    Runner.init()
-    return Loader.root_config
-
-#--------------------------------------------------------------------------------
+# region Main
 
 # Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
 # here are so that .hancho files don't trigger type checking errors.
@@ -2132,52 +2088,55 @@ def init(*args, **kwargs):
 #rel_path    = staticmethod(Path.rel_path)  # used by build_path etc
 #stem        = staticmethod(Path.stem)      # FIXME used by metron/tests?
 
-# This is here to make the type checker not complain about references to "hancho.config" in build
-# scripts, even though it's not declared in this module. The script loader will inject a script-
-# specific config object via hancho.config before the script runs, so it will resolve correctly
-# at runtime.
+def init(*args, **kwargs):
+    new_config = Dict(Loader.config_defaults, *args, kwargs)
+    cv_config.set(new_config)
+    reset()
 
-config : Dict
-
-# These two functions are to make the type checker not complain about load/repo, which are actually
-# lambdas bound to the current script's config in HanchoProxy.
+def reset():
+    Loader.reset()
+    JobPool.reset()
+    Stats.reset()
+    Log.reset()
+    Utils.reset()
+    Expander.reset()
+    Tracer.reset()
+    Runner.reset()
 
 def load(script_path, *args, **kwargs) -> types.ModuleType:
-    return Loader.load(script_path, False, Loader.root_config, *args, kwargs)
+    return Loader.load(script_path, False, *args, kwargs)
 
 def repo(script_path, *args, **kwargs) -> types.ModuleType:
-    return Loader.load(script_path, True, Loader.root_config, *args, kwargs)
-
-#--------------------------------------------------------------------------------
+    return Loader.load(script_path, True, *args, kwargs)
 
 def main():
-    if Loader.root_config.tool:
-        result = Runner.run_tool(Loader.root_config.tool)
+    if hancho.config.tool:
+        result = Runner.run_tool(hancho.config.tool)
         return result
 
     #----------------------------------------
     # Load all build scripts
 
     time_a = time.perf_counter()
-    script_path = os.path.join(Loader.root_config.root_dir, Loader.root_config.root_file)
-    root_mod = Loader.load(script_path, True, Loader.root_config)
+    script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
+    root_mod = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 
-    if Loader.root_config.debug or Loader.root_config.verbose:
+    if hancho.config.debug or hancho.config.verbose:
         Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
 
     #----------------------------------------
     # Queue all tasks
 
     time_a = time.perf_counter()
-    if Loader.root_config.target:
-        target_regex = re.compile(Loader.root_config.target)
+    if hancho.config.target:
+        target_regex = re.compile(hancho.config.target)
         Runner.queue_tasks_by_regex(target_regex)
     else:
         Runner.queue_root_tasks(root_mod)
     Stats.time_queue = time.perf_counter() - time_a
 
-    if Loader.root_config.debug or Loader.root_config.verbose:
+    if hancho.config.debug or hancho.config.verbose:
         Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
     #----------------------------------------
@@ -2193,16 +2152,19 @@ def main():
     Stats.print_build_stats()
     return result
 
-#endregion
+# endregion
 ####################################################################################################
-#region __name__ == __main__
+# region __name__ == __main__
 
 if __name__ == "__main__":
     flags = Loader.parse_flags(sys.argv[1:])
-    init(flags)
+    base_config = Loader.config_defaults | flags
+    cv_config.set(base_config)
+    reset()
     sys.exit(main())
 else:
-    sys.modules[__name__] = HanchoProxy()
+    cv_config.set(Loader.config_defaults)
+    reset()
 
-#endregion
+# endregion
 ####################################################################################################

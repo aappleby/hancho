@@ -9,33 +9,19 @@
       "name"    : "Debug hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
-      "cwd"     : "${workspaceFolder}",
+      "console" : "integratedTerminal",
       "program" : "${workspaceFolder}/hancho.py",
       "args"    : [],
-      "console" : "integratedTerminal",
+      "cwd"     : "${workspaceFolder}",
     },
-
-//    {
-//      "name"    : "Debug tests/build.hancho",
-//      "type"    : "debugpy",
-//      "request" : "launch",
-//      "cwd"     : "${workspaceFolder}",
-//      "program" : "${workspaceFolder}/hancho.py",
-//      "args"    : ["-f", "tests/build.hancho"],
-//      "console" : "integratedTerminal",
-//
-//      //"justMyCode": false,
-//      //"preLaunchTask": "Wipe build",
-//    },
 
     {
       "name"    : "Debug tests/run_tests.py",
       "type"    : "debugpy",
       "request" : "launch",
-      "cwd"     : "${workspaceFolder}/tests",
-      "program" : "${workspaceFolder}/tests/run_tests.py",
       "console" : "integratedTerminal",
-
+      "program" : "${workspaceFolder}/tests/run_tests.py",
+      "cwd"     : "${workspaceFolder}/tests",
       //"justMyCode": false,
       //"preLaunchTask": "Wipe build",
     },
@@ -44,23 +30,21 @@
       "name"    : "Debug other stuff",
       "type"    : "debugpy",
       "request" : "launch",
-      "cwd"     : "${workspaceFolder}/examples/bazel-cpp-tutorial/stage1",
-      "program" : "${workspaceFolder}/hancho.py",
       "console" : "integratedTerminal",
-
-      //"justMyCode": true
+      "program" : "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/scratch",
     },
 
-    //{
-    //  "name": "Debug Megabuild",
-    //  "type": "debugpy",
-    //  "request": "launch",
-    //  "program": "${workspaceFolder}/hancho.py",
-    //  "cwd": "${workspaceFolder}/..",
-    //  //"args": ["--force", "-j1"],
-    //  "console": "integratedTerminal",
-    //  "justMyCode": false,
-    //  "preLaunchTask": "Wipe build",
-    //},
+    {
+      "name": "Debug Megabuild",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd": "${workspaceFolder}/..",
+      //"args": ["--force", "-j1"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      //"preLaunchTask": "Wipe build",
+    },
   ]
 }

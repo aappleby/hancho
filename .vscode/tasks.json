@@ -3,20 +3,23 @@
   // for the documentation about the tasks.json format
   "version": "2.0.0",
   "tasks": [
-    {
-      "label": "Test build",
-      "type": "shell",
-      "command": "./hancho.py -v",
-      "problemMatcher": [],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
-    },
+//    {
+//      "label": "Test build",
+//      "type": "shell",
+//      "command": "./hancho.py -v",
+//      "problemMatcher": [],
+//      "group": {
+//        "kind": "build",
+//        "isDefault": true
+//      }
+//    },
     {
       "label": "Wipe build",
       "type": "shell",
-      "command": "rm -rf build tutorial/build scratch/build",
+      "command": "rm -rf build tutorial/build scratch/build tests/build examples/build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
     }
   ]
 }
