@@ -346,9 +346,10 @@ class TestTasks(unittest.TestCase):
             hancho.init(quiet = True)
             time.sleep(0.01)
             compile = hancho.Dict(
-                command = "gcc -MMD -c {in_src} -o {out_obj}",
-                out_obj = "{ext(in_src, '.o')}",
-                depfile = "{ext(out_obj, '.d')}",
+                command    = "gcc -MMD -c {in_src} -o {out_obj}",
+                in_src     = None,
+                in_depfile = "{ext(out_obj, '.d')}",
+                out_obj    = "{ext(in_src, '.o')}",
             )
             hancho.Task(compile, in_src = "src/test.cpp")
             self.run_tasks(0)

@@ -1,7 +1,9 @@
 import hancho
 
-hancho.tools.cc_binary(
-    in_srcs = "hello-world.cc",
-    out_bin = "hello-world"
+tools = hancho.load("tools_stage1.hancho")
+
+tools.cc_binary(
+    name    = "hello-world",
+    in_srcs = ["hello-world.cc"],
 )
 

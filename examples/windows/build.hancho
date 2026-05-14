@@ -4,9 +4,9 @@ import hancho
 
 compile_cpp = hancho.Tool(
     desc      = "Compile {in_src} -> {out_obj}",
-    command   = "cl.exe /nologo /c {in_src} /sourceDependencies {depfile} /Fo:{out_obj}",
+    command   = "cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
     out_obj   = "{ext(in_src, '.o')}",
-    depfile   = "{ext(out_obj, '.d')}",
+    in_depfile   = "{ext(out_obj, '.d')}",
     depformat = "msvc",
 )
 

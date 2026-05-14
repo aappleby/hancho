@@ -3,7 +3,7 @@
 
 import hancho
 
-_gcc_flags = [
+gcc_flags = [
     "-U_FORTIFY_SOURCE",
     "-fstack-protector",
     "-Wall",
@@ -11,7 +11,7 @@ _gcc_flags = [
     "-Wno-free-nonheap-object",
     "-fno-omit-frame-pointer",
     "-std=c++14",
-    "-MD -MF {depfile}",
+    "-MD -MF {in_depfile}",
     "-frandom-seed={out_obj}",
     "-fPIC",
     "-iquote .",
@@ -22,7 +22,7 @@ _gcc_flags = [
     "-D__TIME__=\"redacted\"",
 ]
 
-_ld_flags = [
+ld_flags = [
     "-Wl,-S",
     "-Wl,-no-as-needed",
     "-Wl,-z,relro,-z,now",
@@ -31,27 +31,38 @@ _ld_flags = [
     "-pass-exit-codes",
 ]
 
-_ld_libs = [
+ld_libs = [
     "-Wl,--push-state,-as-needed -lstdc++ -Wl,--pop-state",
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
-_compile_cpp = hancho.Tool(
-    desc      = "Compiling C++ {in_src} -> {out_obj}",
-    command   = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
-    out_obj   = "{ext(in_src, '.o')}",
-    depfile   = "{ext(out_obj, '.d')}",
-    gcc_flags = _gcc_flags,
+compile_cpp = hancho.Tool(
+    desc       = "Compiling C++ {in_src} -> {out_obj}",
+    command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
+    #----------
+    gcc_flags  = gcc_flags,
+    #----------
+    in_src     = None,
+    in_depfile = "{ext(out_obj, '.d')}",
+    out_obj    = "{ext(in_src, '.o')}",
 )
 
-_link_cpp_bin = hancho.Tool(
-    desc     = "Linking {out_bin}",
+link_cpp_bin = hancho.Tool(
+    name     = None,
+    desc     = "Linking {name}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {ld_libs}",
-    ld_flags = _ld_flags,
-    ld_libs  = _ld_libs,
+    #----------
+    ld_flags = ld_flags,
+    ld_libs  = ld_libs,
+    #----------
+    in_objs  = None,
+    out_bin  = "{name}",
 )
 
-def cc_binary(*, in_srcs, out_bin):
-    objs = [hancho.Task(_compile_cpp, in_src=src) for src in hancho.Utils.flatten(in_srcs)]
-    bin  = hancho.Task(_link_cpp_bin, in_objs=objs, out_bin=out_bin)
+def cc_binary(*, name, in_srcs):
+    objs = [
+        hancho.Task(compile_cpp, in_src = src)
+        for src in hancho.Utils.flatten(in_srcs)
+    ]
+    bin = hancho.Task(link_cpp_bin, name = name, in_objs = objs)
     return bin

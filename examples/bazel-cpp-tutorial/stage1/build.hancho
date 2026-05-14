@@ -1,5 +1,3 @@
-# pyright: reportAttributeAccessIssue=false
 import hancho
 
-hancho.tools = hancho.load("tools_stage1.hancho")
 hancho.load("main/build.hancho")

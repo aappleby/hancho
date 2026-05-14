@@ -10,8 +10,8 @@
       "type"    : "debugpy",
       "request" : "launch",
       "console" : "integratedTerminal",
-      "cwd"     : "${workspaceFolder}/tests",
-      "program" : "${workspaceFolder}/tests/test_tasks.py",
+      "cwd"     : "${workspaceFolder}/examples/bazel-cpp-tutorial/stage2",
+      "program" : "${workspaceFolder}/hancho.py",
     },
 
     {

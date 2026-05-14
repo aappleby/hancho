@@ -3,25 +3,15 @@
 import hancho
 
 riscv64_toolchain = hancho.Dict(
-    arch="riscv64",
-    compiler="riscv64-unknown-elf-g++",
-    linker="riscv64-unknown-elf-g++",
+    arch     = "riscv64",
+    compiler = "{arch}-unknown-elf-g++",
+    linker   = "{arch}-unknown-elf-g++",
 )
 
 rv_config = hancho.Dict(
-    rv_toolchain = "riscv64-unknown-elf",
-    rv_flags_c = [
-        "{rv_opt_mode}",
-        "-std=gnu++2a",
-        "-mabi=ilp32",
-        "-march=rv32i_zicsr", # _zicsr needed with newer GCC?
-        "-mstrict-align",
-        "-g",
-        "-MMD"
-    ],
-    rv_opt_mode = "-O0",
+    opt_mode = "-O0",
     warnings = None,
-    defines = None,
+    defines  = None,
     includes = None,
 
     joined_warnings = "{join('-W', warnings)}",
@@ -29,20 +19,41 @@ rv_config = hancho.Dict(
     joined_includes = "{join('-I', includes)}",
 )
 
+rv_flags_c = [
+    "{opt_mode}",
+    "-std=gnu++2a",
+    "-mabi=ilp32",
+    "-march=rv32i_zicsr", # _zicsr needed with newer GCC?
+    "-mstrict-align",
+    "-g",
+    "-MMD"
+]
+
+rv_flags_ld = rv_flags_c + [
+    "-nostdlib",
+    "-nostartfiles",
+    "-Wl,-T {linkerscript}",
+]
+
 rv_compile = hancho.Tool(
     rv_config,
-    command = "{rv_toolchain}-g++ {rv_flags_c} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
-    out_obj = "{ext(in_src, '.o')}",
-    depfile = "{ext(out_obj, '.d')}",
+    #----------
+    toolchain  = riscv64_toolchain,
+    command    = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
+    flags      = rv_flags_c,
+    #----------
+    in_src     = None,
+    in_depfile = "{ext(out_obj, '.d')}",
+    out_obj    = "{ext(in_src, '.o')}",
 )
 
 rv_link = hancho.Tool(
     rv_config,
-    command = "{rv_toolchain}-gcc {rv_flags_c} {in_objs} -o {out_bin} -lgcc",
-    rv_flags_c = rv_config.rv_flags_c + [
-        "-nostdlib",
-        "-nostartfiles",
-        "-Wl,-T {linkerscript}",
-    ],
+    #----------
+    command      = "{toolchain.linker} {flags} {in_objs} -o {out_bin} -lgcc",
+    flags        = rv_flags_ld,
+    toolchain    = riscv64_toolchain,
     linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
+    #----------
+    in_objs      = None,
 )

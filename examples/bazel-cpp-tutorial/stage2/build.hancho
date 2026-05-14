@@ -1,5 +1,3 @@
 import hancho
 
-hancho.rules = hancho.load("stage2_rules.hancho")
-
 hancho.load("main/build.hancho")

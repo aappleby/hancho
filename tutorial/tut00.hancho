@@ -41,14 +41,14 @@ main_o = hancho.Task(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/main.cpp",
     out_obj = "main.o",
-    depfile = "main.d",
+    in_depfile = "main.d",
 )
 
 util_o = hancho.Task(
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     in_src  = "src/util.cpp",
     out_obj = "util.o",
-    depfile = "util.d",
+    in_depfile = "util.d",
 )
 
 main_bin = hancho.Task(
@@ -63,7 +63,7 @@ compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
-    depfile = "{ext(out_obj, '.d')}",
+    in_depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Tool(
@@ -89,7 +89,7 @@ compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
-    depfile = "{ext(out_obj, '.d')}",
+    in_depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Tool(
@@ -109,7 +109,7 @@ compile_cpp = hancho.Tool(
     desc    = "Compile {in_src} -> {out_obj}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
-    depfile = "{ext(out_obj, '.d')}",
+    in_depfile = "{ext(out_obj, '.d')}",
 )
 
 link_cpp = hancho.Tool(

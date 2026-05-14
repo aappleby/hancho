@@ -1,0 +1,87 @@
+# Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
+# This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
+
+import hancho
+
+gcc_flags = [
+    "-U_FORTIFY_SOURCE",
+    "-fstack-protector",
+    "-Wall",
+    "-Wunused-but-set-parameter",
+    "-Wno-free-nonheap-object",
+    "-fno-omit-frame-pointer",
+    "-std=c++14",
+    "-MD -MF {in_depfile}",
+    "-frandom-seed={out_obj}",
+    "-fPIC",
+    "-iquote .",
+    "-fno-canonical-system-headers",
+    "-Wno-builtin-macro-redefined",
+    "-D__DATE__=\"redacted\"",
+    "-D__TIMESTAMP__=\"redacted\"",
+    "-D__TIME__=\"redacted\"",
+]
+
+ld_flags = [
+    "-Wl,-S",
+    "-Wl,-no-as-needed",
+    "-Wl,-z,relro,-z,now",
+    "-fuse-ld=gold",
+    "-B/usr/bin",
+    "-pass-exit-codes",
+]
+
+ld_libs = [
+    "-Wl,--push-state,-as-needed -lstdc++ -Wl,--pop-state",
+    "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
+]
+
+compile_cpp = hancho.Tool(
+    desc       = "Compiling C++ {in_src} -> {out_obj}",
+    command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
+    #----------
+    gcc_flags  = gcc_flags,
+    includes   = None,
+    #----------
+    in_src     = None,
+    in_depfile = "{ext(out_obj, '.d')}",
+    out_obj    = "{ext(in_src, '.o')}",
+)
+
+link_cpp_lib = hancho.Tool(
+    name     = None,
+    desc     = "Bundling C++ library {name}",
+    command  = "ar rcs {out_lib} {in_objs}",
+    #----------
+    in_objs  = None,
+    out_lib  = "{name}.a",
+)
+
+link_cpp_bin = hancho.Tool(
+    name     = None,
+    desc     = "Linking {name}",
+    command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_deps} {ld_libs}",
+    #----------
+    ld_flags = ld_flags,
+    ld_libs  = ld_libs,
+    #----------
+    in_objs  = None,
+    in_deps  = None,
+    out_bin  = "{name}",
+)
+
+def cc_library(*, name, in_deps = None, in_srcs = None, in_data = None, in_hdrs = None):
+    objs = [
+        hancho.Task(compile_cpp, in_src = src)
+        for src in hancho.flatten(in_srcs)
+    ]
+    bin  = hancho.Task(link_cpp_lib, name = name, in_objs=objs)
+    return bin
+
+def cc_binary(*, name, in_deps = None, in_srcs = None, in_data = None):
+    objs = [
+        hancho.Task(compile_cpp, in_src=src)
+        for src in hancho.flatten(in_srcs)
+    ]
+    bin = hancho.Task(link_cpp_bin, name = name, in_objs=objs, in_deps=in_deps)
+    return bin

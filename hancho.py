@@ -2087,6 +2087,7 @@ class Runner:
 #ext         = staticmethod(Path.ext)
 #rel_path    = staticmethod(Path.rel_path)  # used by build_path etc
 #stem        = staticmethod(Path.stem)      # FIXME used by metron/tests?
+flatten = Utils.flatten
 
 def init(*args, **kwargs):
     new_config = Dict(Loader.config_defaults, *args, kwargs)
@@ -2172,3 +2173,4 @@ else:
 
 # endregion
 ####################################################################################################
+
