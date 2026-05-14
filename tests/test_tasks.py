@@ -67,7 +67,7 @@ class TestTasks(unittest.TestCase):
 
     def test_run_tasks_zero(self):
         # If all tasks are OK, we should get 0 from run_tasks.
-        hancho.Task(command = "echo Hello World")
+        t = hancho.Task(command = "echo Hello World", debug = True)
         self.run_tasks(0)
 
     def test_run_tasks_nonzero(self):
@@ -527,4 +527,4 @@ def load_tests(loader, tests, ignore):
     return tests
 
 if __name__ == "__main__":
-    unittest.main(verbosity=0)
+    unittest.main(verbosity=2)

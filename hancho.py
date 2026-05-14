@@ -1348,7 +1348,7 @@ class Task:
     def __init__(self, *args, **kwargs):
         Loader.check_init()
 
-        self._config : Dict = Dict(*args, **kwargs)
+        self._config : Dict = Dict(hancho.config, *args, **kwargs)
 
         self._desc : str       = None
         self._command : Any    = None
@@ -2119,6 +2119,10 @@ def main():
 
     time_a = time.perf_counter()
     script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
+    if not os.path.exists(script_path):
+        path = os.path.relpath(script_path, os.getcwd())
+        print(f"Could not load build script {path}")
+        sys.exit(-1)
     root_mod = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 

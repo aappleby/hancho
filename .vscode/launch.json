@@ -6,6 +6,15 @@
   "configurations": [
 
     {
+      "name"    : "CUSTOM",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "console" : "integratedTerminal",
+      "cwd"     : "${workspaceFolder}/tests",
+      "program" : "${workspaceFolder}/tests/test_tasks.py",
+    },
+
+    {
       "name"    : "Debug hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
@@ -24,15 +33,6 @@
       "cwd"     : "${workspaceFolder}/tests",
       //"justMyCode": false,
       //"preLaunchTask": "Wipe build",
-    },
-
-    {
-      "name"    : "Debug other stuff",
-      "type"    : "debugpy",
-      "request" : "launch",
-      "console" : "integratedTerminal",
-      "program" : "${workspaceFolder}/hancho.py",
-      "cwd"     : "${workspaceFolder}/scratch",
     },
 
     {
