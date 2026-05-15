@@ -3,8 +3,7 @@
 import hancho
 import random
 from glob import glob
-
-#config.verbosity = 1
+import os
 
 src_files = glob("src/*")
 
@@ -19,40 +18,42 @@ random_touch = hancho.Task(
 )
 
 def generate_filelist(task):
-    with open(task.config.out_list, "w", encoding="utf-8") as file:
-        for f in random.sample(task.config.src_files, 3):
-            #hancho.log(f"Writing {f} to {task.config.out_list}")
+    with open(task._config.out_list, "w", encoding="utf-8") as file:
+        for f in random.sample(task._config.in_src, 3):
+            #hancho.log(f"Writing {f} to {task._config.out_list}")
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
-    desc     = "Write the names of 3 random files in src/ to {out_list}",
+    desc     = "Write the names of 3 random files in src/ to {rel(out_list, repo_dir)}",
     command  = generate_filelist,
+    in_src   = src_files,
     out_list = "filelist.txt",
-    src_files = src_files
 )
 
 def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
-    file = open(task.config.in_filelist, "r", encoding="utf-8")
+    file = open(task._config.in_filelist[0], "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
     new_task = hancho.Task(
-        desc      = "Concatenate {in_files} into {out_files}",
+        desc      = "Concatenate {rel(in_files, repo_dir)} into {rel(out_files, repo_dir)}",
         command   = "cat {in_files} > {out_files}",
         in_files  = from_filelist,
+        in_deps   = [random_touch, filelist_txt],
         out_files = "result.txt",
-        other_files = [random_touch, filelist_txt],
     )
-    # FIXME should we be doing this some other way?
-    task._out_files.append(new_task)
+    # FIXME tasks should auto-queue if they're created dynamically?
+    new_task.queue()
+
+    print_task = hancho.Task(
+        desc    = "Copy the contents of {rel(in_text, repo_dir)} to {rel(out_cat, repo_dir)}",
+        command = "cat {in_text} >> {out_cat}",
+        in_text = new_task,
+        out_cat = "result2.txt"
+    )
+    print_task.queue()
 
 result_txt = hancho.Task(
-    desc = "Read {in_filelist} and use its contents to generate another task",
-    command = generate_result,
+    desc        = "Read {rel(in_filelist, repo_dir)} and use its contents to generate another task",
+    command     = generate_result,
     in_filelist = filelist_txt,
-)
-
-print_task = hancho.Task(
-    desc = "Print the contents of {in_text}",
-    command = "cat {in_text}",
-    in_text = result_txt,
 )

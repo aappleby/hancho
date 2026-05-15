@@ -10,8 +10,10 @@
       "type"    : "debugpy",
       "request" : "launch",
       "console" : "integratedTerminal",
-      "cwd"     : "${workspaceFolder}/examples/bazel-cpp-tutorial/stage2",
+      "cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       "program" : "${workspaceFolder}/hancho.py",
+      //"args"    : ["-d", "-j1"],
+      "args"    : ["-j1"],
     },
 
     {

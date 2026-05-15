@@ -38,11 +38,10 @@ import sys
 import time
 import traceback
 import types
-from contextvars import ContextVar
+import contextvars
 from typing import Any, no_type_check, cast
 from collections import abc
 from enum import Enum
-from types import MappingProxyType
 
 ####################################################################################################
 # region context var stuff
@@ -51,7 +50,7 @@ hancho = sys.modules[__name__]
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
-cv_config = ContextVar("config")
+cv_config = contextvars.ContextVar("config")
 
 def __getattr__(name):
     if name == "config":
@@ -271,6 +270,8 @@ class Path:
             # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
             # should. What we really want is to just remove redundant cwd stuff off the beginning of the
             # path, which we can do with simple string manipulation.
+            path1 = os.path.normpath(path1)
+            path2 = os.path.normpath(path2)
             result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
         else:
             assert False, f"rel_path() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
@@ -1327,17 +1328,18 @@ class Promise:
 
 class TaskState(Enum):
     DECLARED = "DECLARED"
-    QUEUED = "QUEUED"
-    STARTED = "STARTED"
-    AWAITING_INPUTS = "AWAITING_INPUTS"
-    TASK_INIT = "TASK_INIT"
-    AWAITING_JOBS = "AWAITING_JOBS"
-    RUNNING_COMMANDS = "RUNNING_COMMANDS"
-    FINISHED = "FINISHED"
+    QUEUED   = "QUEUED"
+    STARTED  = "STARTED"
+    WAITING  = "WAITING"
+    INIT     = "INIT"
+    GET_JOBS = "GET_JOBS"
+    RUNNING  = "RUN"
+
+    FINISHED  = "FINISHED"
     CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
-    SKIPPED = "SKIPPED"
-    BROKEN = "BROKEN"
+    FAILED    = "FAILED"
+    SKIPPED   = "SKIPPED"
+    BROKEN    = "BROKEN"
 
 class Task:
 
@@ -1349,6 +1351,11 @@ class Task:
         Loader.check_init()
 
         self._config : Dict = Dict(hancho.config, *args, **kwargs)
+        self._context : contextvars.Context = contextvars.copy_context()
+
+        # We don't immediately create an asyncio.Task here because we may not
+        # actually need to run this task if its outputs are up to date.
+        self._asyncio_task : asyncio.Task | None
 
         self._desc : str       = None
         self._command : Any    = None
@@ -1390,7 +1397,6 @@ class Task:
         self._task_index : int = 0
         self._state : TaskState = TaskState.DECLARED
         self._reason : str = ""
-        self._asyncio_task : asyncio.Task | None = None
         self._stdout : str = ""
         self._stderr : str = ""
         self._returncode : int = -1
@@ -1407,6 +1413,35 @@ class Task:
 
     # ----------------------------------------
 
+    transitions = {
+        TaskState.DECLARED : [TaskState.QUEUED],
+        TaskState.QUEUED   : [TaskState.STARTED],
+
+        TaskState.STARTED  : [TaskState.WAITING],
+        TaskState.WAITING  : [TaskState.INIT, TaskState.CANCELLED],
+
+        TaskState.INIT     : [
+            TaskState.CANCELLED,
+            TaskState.BROKEN,
+            TaskState.FINISHED,
+            TaskState.SKIPPED,
+            TaskState.GET_JOBS
+        ],
+
+        TaskState.GET_JOBS : [TaskState.RUNNING],
+        TaskState.RUNNING  : [TaskState.FAILED, TaskState.FINISHED],
+    }
+
+    def to_state(self, new_state):
+        if not self._state in Task.transitions:
+            raise RuntimeError(f"State {self._state} has no edges in the transition table")
+        edges = Task.transitions[self._state]
+        if not new_state in edges:
+            raise RuntimeError(f"Can't transition from {self._state} to {new_state}!")
+        self._state = new_state
+
+    # ----------------------------------------
+
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
     def __copy__(self):
         assert False, "Don't copy Tasks!"
@@ -1420,26 +1455,30 @@ class Task:
     # ----------------------------------------
 
     def queue(self):
-        if self._state is TaskState.DECLARED:
-            # Queue all tasks referenced by this task's config.
-            def apply(c, k, v):
-                if isinstance(v, Task):
-                    v.queue()
-            Utils.walk(self._config, apply)
+        self.to_state(TaskState.QUEUED)
 
-            # And now queue this task.
-            Runner.queued_tasks.append(self)
-            self._state = TaskState.QUEUED
+        # Queue all tasks referenced by this task's config.
+        def apply(c, k, v):
+            if isinstance(v, Task):
+                if v._state is TaskState.DECLARED:
+                    v.queue()
+        Utils.walk(self._config, apply)
+
+        # And now queue this task.
+        Runner.queued_tasks.append(self)
+
 
     def start(self):
-        self.queue()
-        if self._state is TaskState.QUEUED:
-            self._asyncio_task = asyncio.create_task(self.task_main())
-            self._state = TaskState.STARTED
-            Stats.tasks_started += 1
+        self.to_state(TaskState.STARTED)
+
+        self._asyncio_task = asyncio.create_task(self.task_main(), context = self._context)
+        Stats.tasks_started += 1
 
     async def await_done(self):
-        self.start()
+        if self._state is TaskState.DECLARED:
+            self.queue()
+        if self._state is TaskState.QUEUED:
+            self.start()
         assert self._asyncio_task is not None
         await self._asyncio_task
         return self._out_files
@@ -1572,15 +1611,14 @@ class Task:
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # were cancelled, we propagate the cancellation to downstream tasks.
 
-        assert self._state is TaskState.STARTED
-        self._state = TaskState.AWAITING_INPUTS
+        self.to_state(TaskState.WAITING)
 
         try:
             await Utils.await_variant(self._config)
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
-            self._state = TaskState.CANCELLED
+            self.to_state(TaskState.CANCELLED)
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
 
@@ -1602,12 +1640,10 @@ class Task:
             old_cwd = os.getcwd()
             self._task_dir = check(str, Path.abs_path(self._config.eval("task_dir")))
             os.chdir(self._task_dir)
-            self._state = TaskState.TASK_INIT
+            self.to_state(TaskState.INIT)
 
             c = self._config
             e = Expander(c)
-
-            self._desc    = self._config.eval("desc")
 
             self._root_dir   = check(str, Path.abs_path(check(str, e.eval("root_dir"))))
             self._root_file  = check(str, Path.abs_path(check(str, e.eval("root_file"))))
@@ -1648,7 +1684,9 @@ class Task:
             self._out_files  = Utils.flatten(self._out_files)
             self._in_depfile = e.eval("in_depfile")
 
-            # And now we can expand the command.
+            # And now we can expand the description and command.
+
+            self._desc = check(str, e.expand("{desc}"))
 
             if (callable(self._config.command)):
                 self._command = self._config.command
@@ -1715,7 +1753,7 @@ class Task:
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
-            self._state = TaskState.CANCELLED
+            self.to_state(TaskState.CANCELLED)
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
 
@@ -1725,7 +1763,7 @@ class Task:
                 Stats.tasks_shouldfail += 1
             else:
                 Stats.tasks_broken += 1
-            self._state = TaskState.BROKEN
+            self.to_state(TaskState.BROKEN)
             raise ex
 
         finally:
@@ -1741,7 +1779,7 @@ class Task:
 
         if self._command is None:
             Stats.tasks_finished += 1
-            self._state = TaskState.FINISHED
+            self.to_state(TaskState.FINISHED)
             return
 
         #--------------------------------------------------------------------------------
@@ -1750,7 +1788,7 @@ class Task:
         self._reason = self.needs_rerun(self._rebuild)
         if not self._reason:
             Stats.tasks_skipped += 1
-            self._state = TaskState.SKIPPED
+            self.to_state(TaskState.SKIPPED)
             return
 
         #--------------------------------------------------------------------------------
@@ -1758,11 +1796,11 @@ class Task:
 
         try:
             # Wait for enough jobs to free up to run this task.
-            self._state = TaskState.AWAITING_JOBS
+            self.to_state(TaskState.GET_JOBS)
             await JobPool.acquire_jobs(self._job_count, self)
 
             # Run the commands.
-            self._state = TaskState.RUNNING_COMMANDS
+            self.to_state(TaskState.RUNNING)
             Stats.tasks_running += 1
             self._task_index = Stats.tasks_running
 
@@ -1776,6 +1814,11 @@ class Task:
                 await self.run_command(command)
                 if self._returncode != 0:
                     break
+            Log.log(
+                f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} Task passed - '{self._desc}'",
+                sameline = not self._verbose,
+            )
+
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # If any command failed, we propagate the error to downstream tasks.
@@ -1784,7 +1827,7 @@ class Task:
                 Stats.tasks_shouldfail += 1
             else:
                 Stats.tasks_failed += 1
-            self._state = TaskState.FAILED
+            self.to_state(TaskState.FAILED)
             raise ex
         finally:
             await JobPool.release_jobs(self._job_count, self)
@@ -1792,7 +1835,7 @@ class Task:
         #--------------------------------------------------------------------------------
         # Task finished successfully
 
-        self._state = TaskState.FINISHED
+        self.to_state(TaskState.FINISHED)
         Stats.tasks_finished += 1
 
     #--------------------------------------------------------------------------------
@@ -1858,14 +1901,16 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         if self._verbose or self._debug:
-
             Log.log(Utils.color(128, 128, 255), end="")
             if self._dry_run:
                 Log.log("(DRY RUN) ", end="")
-            #Log.log(f"{Path.rel_path(self._task_dir, self._repo_dir)}$ ", end="")
-            Log.log(f"{self._task_dir}$ ", end="")
+            Log.log(f"{Path.rel_path(self._task_dir, os.getcwd())}$ ", end="")
+            #Log.log(f"{self._task_dir}$ ", end="")
             Log.log(Utils.color(), end="")
-            Log.log(command)
+            if callable(command):
+                Log.log(f"call {command}")
+            else:
+                Log.log(command)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
@@ -1918,9 +1963,6 @@ class Task:
             raise ValueError(message)
 
         elif self._debug or self._verbose:
-            Log.log(
-                f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} Task passed - '{self._desc}'"
-            )
             if self._stdout:
                 Log.log(f"==========\nStdout:\n{self._stdout}\n")
             if self._stderr:
@@ -1957,17 +1999,19 @@ class Runner:
         # If no target was specified, we queue up all tasks that build stuff in the root repo
         # FIXME we are not currently doing that....
         cls.queue_all_tasks()
-        for task in cls.all_tasks:
-            # build_dir = expand_variant(task._context, task._context.build_dir)
-            # build_dir = normalize_path(build_dir)
-            # repo_dir  = expand_variant(app.root_context._context, "{build_dir}")
-            # repo_dir  = normalize_path(repo_dir)
-            # if build_dir.startswith(repo_dir):
-            #    task.queue()
-            task.queue()
+
+        # This doesn't work, I think because we haven't expanded the configs yet
+        #for task in cls.all_tasks:
+        #    build_dir = expand_variant(task._context, task._context.build_dir)
+        #    build_dir = normalize_path(build_dir)
+        #    repo_dir  = expand_variant(app.root_context._context, "{build_dir}")
+        #    repo_dir  = normalize_path(repo_dir)
+        #    if build_dir.startswith(repo_dir):
+        #       task.queue()
 
     @classmethod
-    def queue_tasks_by_regex(cls, target_regex : re.Pattern[str]):
+    #def queue_tasks_by_regex(cls, target_regex : re.Pattern[str]):
+    def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             queue_task = False
             task_name = None
@@ -1988,13 +2032,12 @@ class Runner:
     #--------------------------------------------------------------------------------
 
     @classmethod
-    def run_tasks(cls):
-        """Run tasks until we're done with all of them."""
+    def sync_run_tasks(cls):
+        """Synchronously run all queued tasks until we're done with all of them."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         result = asyncio.run(cls._async_run_tasks())
         loop.close()
-        #Log.log("<tasks complete>")
         return result
 
     #--------------------------------------------------------------------------------
@@ -2081,12 +2124,12 @@ class Runner:
 # Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
 # here are so that .hancho files don't trigger type checking errors.
 
-#path        = path # path.dirname and path.basename used by makefile-related rules
-#re          = re # why is sub() not working?
-#glob        = staticmethod(glob.glob)
-#ext         = staticmethod(Path.ext)
-#rel_path    = staticmethod(Path.rel_path)  # used by build_path etc
-#stem        = staticmethod(Path.stem)      # FIXME used by metron/tests?
+path    = os.path # path.dirname and path.basename used by makefile-related rules
+re      = re # why is sub() not working?
+glob    = staticmethod(glob.glob)
+ext     = staticmethod(Path.ext)
+stem    = staticmethod(Path.stem)      # FIXME used by metron/tests?
+rel     = Path.rel_path
 flatten = Utils.flatten
 
 def init(*args, **kwargs):
@@ -2110,7 +2153,7 @@ def load(script_path, *args, **kwargs) -> types.ModuleType:
 def repo(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, True, *args, kwargs)
 
-def main():
+async def main():
     if hancho.config.tool:
         result = Runner.run_tool(hancho.config.tool)
         return result
@@ -2148,7 +2191,7 @@ def main():
     # Run all tasks
 
     time_a = time.perf_counter()
-    result = Runner.run_tasks()
+    result = await Runner.async_run_tasks()
     Stats.time_build = time.perf_counter() - time_a
 
     #----------------------------------------
@@ -2166,11 +2209,11 @@ if __name__ == "__main__":
     base_config = Loader.config_defaults | flags
     cv_config.set(base_config)
     reset()
-    sys.exit(main())
+    result = asyncio.run(main())
+    sys.exit(result)
 else:
     cv_config.set(Loader.config_defaults)
     reset()
 
 # endregion
 ####################################################################################################
-

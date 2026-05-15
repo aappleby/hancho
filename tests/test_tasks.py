@@ -60,7 +60,7 @@ class TestTasks(unittest.TestCase):
 
     def run_tasks(self, expected):
         hancho.Runner.queue_all_tasks()
-        result = hancho.Runner.run_tasks()
+        result = hancho.Runner.sync_run_tasks()
         self.assertEqual(result, expected)
 
     #--------------------------------------------------------------------------------
