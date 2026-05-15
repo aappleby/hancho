@@ -313,9 +313,6 @@ Type "help", "copyright", "credits" or "license" for more information.
 "What's a bear?"
 ```
 
-FIXME - there should be a ```Read 'msg'``` line and a ```Read 'thing'``` line in that trace - where did they go?
-
-
 
 ## Tasks are nodes in Hancho's build graph.
 

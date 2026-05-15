@@ -1,0 +1,3 @@
+import hancho
+print("sticky3")
+assert hancho.foo == 100

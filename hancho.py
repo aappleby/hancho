@@ -2162,7 +2162,6 @@ def repo(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, True, *args, kwargs)
 
 async def main():
-    print("main()")
 
     #----------------------------------------
     # Load all build scripts
@@ -2183,11 +2182,8 @@ async def main():
     # Run tools if needed
 
     if hancho.config.tool:
-        print("has tool")
         result = Runner.run_tool(hancho.config.tool)
         return result
-    else:
-        print("no tool")
 
     #----------------------------------------
     # Queue all tasks

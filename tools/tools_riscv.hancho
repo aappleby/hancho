@@ -2,13 +2,13 @@
 
 import hancho
 
-riscv64_toolchain = hancho.Dict(
+rv_toolchain = hancho.Dict(
     arch     = "riscv64",
     compiler = "{arch}-unknown-elf-g++",
     linker   = "{arch}-unknown-elf-g++",
 )
 
-rv_config = hancho.Dict(
+gcc_config = hancho.Dict(
     opt_mode = "-O0",
     warnings = None,
     defines  = None,
@@ -19,7 +19,7 @@ rv_config = hancho.Dict(
     joined_includes = "{join('-I', includes)}",
 )
 
-rv_flags_c = [
+flags_c = [
     "{opt_mode}",
     "-std=gnu++2a",
     "-mabi=ilp32",
@@ -29,18 +29,18 @@ rv_flags_c = [
     "-MMD"
 ]
 
-rv_flags_ld = rv_flags_c + [
+flags_ld = flags_c + [
     "-nostdlib",
     "-nostartfiles",
     "-Wl,-T {linkerscript}",
 ]
 
 rv_compile = hancho.Tool(
-    rv_config,
+    gcc_config,
     #----------
-    toolchain  = riscv64_toolchain,
+    toolchain  = rv_toolchain,
     command    = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
-    flags      = rv_flags_c,
+    flags      = flags_c,
     #----------
     in_src     = None,
     in_depfile = "{ext(out_obj, '.d')}",
@@ -48,11 +48,11 @@ rv_compile = hancho.Tool(
 )
 
 rv_link = hancho.Tool(
-    rv_config,
+    gcc_config,
     #----------
     command      = "{toolchain.linker} {flags} {in_objs} -o {out_bin} -lgcc",
-    flags        = rv_flags_ld,
-    toolchain    = riscv64_toolchain,
+    flags        = flags_ld,
+    toolchain    = rv_toolchain,
     linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
     #----------
     in_objs      = None,

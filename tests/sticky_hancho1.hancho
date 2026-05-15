@@ -1,0 +1,5 @@
+import hancho
+print("sticky1")
+hancho.foo = 100
+hancho.load("sticky_hancho2.hancho")
+hancho.repo("sticky_hancho3.hancho")

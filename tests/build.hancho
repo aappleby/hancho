@@ -10,5 +10,6 @@ run_test = hancho.Tool(
     sys     = sys,
 )
 
-for file in glob.glob("test_*.py"):
+tests = glob.glob("test_*.py")
+for file in tests:
     hancho.Task(run_test, test_mod = os.path.basename(file))

@@ -129,7 +129,7 @@ iceprog = hancho.Tool(
     command = "iceprog -S {in_bin}",
 )
 
-# FIXME Remove this and replace with "def synth(hancho, *, ...):"
+# FIXME Remove this and replace with "def synth(*, ...):"
 
 synth = hancho.Tool(
     desc    = "Synth {in_sv}",
