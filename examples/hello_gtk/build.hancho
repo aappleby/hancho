@@ -1,10 +1,11 @@
+# You'll need to run "sudo apt-get install libgtk-3-dev" to compile this example.
 import hancho
 
-base_rules = hancho.repo("{hancho_dir}/base_rules.hancho")
+base_rules = hancho.repo("{hancho_dir}/tools/tools_base.hancho")
 
-gtk_flags = run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
-gtk_incs  = run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
-gtk_libs  = run_cmd('pkg-config gtk+-3.0 --libs')
+gtk_flags = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+gtk_incs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+gtk_libs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --libs')
 
 main_o = hancho.Task(
     base_rules.compile_cpp,

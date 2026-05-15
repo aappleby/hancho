@@ -1,0 +1,10 @@
+import hancho
+import sys
+
+hancho.Task(
+    desc    = r"Run test suite '{test_mod}'",
+    command = "{sys.executable} -m unittest {test_mod}",
+    sys = sys,
+    test_mod = "test_test",
+    #verbose = True,
+)

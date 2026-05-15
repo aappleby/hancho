@@ -22,8 +22,8 @@ World" application consisting of two files, ```main.cpp``` and ```util.cpp```:
 #include <stdio.h>
 
 int main(int argc, char** argv) {
-  printf("Hello World %d\n", get_value());
-  return 0;
+    printf("Hello World %d\n", get_value());
+    return 0;
 }
 ```
 ```cpp
@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
 #include <stdint.h>
 
 int32_t get_value() {
-  return 42;
+    return 42;
 }
 ```
 
@@ -48,11 +48,13 @@ Hello World 42
 Here's how we run the same command using Hancho. First, we create ```build.hancho``` in the tutorial directory:
 
 ```py
+import hancho
+
 hancho.Task(
-  command = [
-    "mkdir -p build",
-    "g++ src/main.cpp src/util.cpp -o build/app"
-  ]
+    command = [
+        "mkdir -p build",
+        "g++ src/main.cpp src/util.cpp -o build/app"
+    ]
 )
 ```
 
@@ -75,9 +77,9 @@ In addition, parameters named ```in_*``` or ```out_*``` are special - strings in
 
 ```py
 hancho.Task(
-  command = "g++ {in_src} -o {out_bin}",
-  in_src  = ["src/main.cpp", "src/util.cpp"],
-  out_bin = "app",
+    command = "g++ {in_src} -o {out_bin}",
+    in_src  = ["src/main.cpp", "src/util.cpp"],
+    out_bin = "app",
 )
 ```
 
@@ -90,10 +92,10 @@ Let's see what's inside our task:
 # tutorial/tut00.hancho
 
 task = hancho.Task(
-  desc    = "Compile {in_src} -> {out_bin}",
-  command = "g++ {in_src} -o {out_bin}",
-  in_src  = ["src/main.cpp", "src/util.cpp"],
-  out_bin = "app",
+    desc    = "Compile {in_src} -> {out_bin}",
+    command = "g++ {in_src} -o {out_bin}",
+    in_src  = ["src/main.cpp", "src/util.cpp"],
+    out_bin = "app",
 )
 
 print(task)
@@ -104,36 +106,36 @@ There's quite a lot of stuff in there:
 aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
 Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
 Task @ 0x727f0371d6a0 {
-  root_dir = "/home/aappleby/repos/hancho/tutorial",
-  root_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
-  repo_name = "",
-  repo_dir = "/home/aappleby/repos/hancho/tutorial",
-  build_root = "{root_dir}/build",
-  build_tag = "",
-  mod_name = "tut00",
-  mod_dir = "/home/aappleby/repos/hancho/tutorial",
-  mod_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
-  desc = "Compile {in_src} -> {out_bin}",
-  command = "g++ {in_src} -o {out_bin}",
-  in_src = [
-    "src/main.cpp",
-    "src/util.cpp",
-  ],
-  out_bin = "app",
-  task_dir = "{mod_dir}",
-  build_dir = "{build_root}/{build_tag}/{repo_name}/{rel_path(task_dir, repo_dir)}",
-  _task_index = 0,
-  _in_files = [],
-  _out_files = [],
-  _state = 0,
-  _reason = None,
-  _asyncio_task = None,
-  _loaded_files = [
-    "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
-  ],
-  _stdout = "",
-  _stderr = "",
-  _returncode = -1,
+    root_dir = "/home/aappleby/repos/hancho/tutorial",
+    root_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+    repo_name = "",
+    repo_dir = "/home/aappleby/repos/hancho/tutorial",
+    build_root = "{root_dir}/build",
+    build_tag = "",
+    mod_name = "tut00",
+    mod_dir = "/home/aappleby/repos/hancho/tutorial",
+    mod_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+    desc = "Compile {in_src} -> {out_bin}",
+    command = "g++ {in_src} -o {out_bin}",
+    in_src = [
+        "src/main.cpp",
+        "src/util.cpp",
+    ],
+    out_bin = "app",
+    task_dir = "{mod_dir}",
+    build_dir = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
+    _task_index = 0,
+    _in_files = [],
+    _out_files = [],
+    _state = 0,
+    _reason = None,
+    _asyncio_task = None,
+    _loaded_files = [
+        "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+    ],
+    _stdout = "",
+    _stderr = "",
+    _returncode = -1,
 }
 ```
 At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho.Task()```, followed by the task-specific ```task_dir``` and ```build_dir```, and finally some private Hancho bookkeeping fields.

@@ -48,4 +48,5 @@ if __name__ == "__main__":
         runner = unittest.TextTestRunner(verbosity=2)
         #suite = loader.discover(start_dir="tests", pattern="test_tasks.py")
         suite  = loader.loadTestsFromName(mod_name)
-        runner.run(suite)
+        result = runner.run(suite)
+        print(result)

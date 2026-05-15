@@ -761,21 +761,24 @@ class Expander(abc.Mapping):
         squoted = False
         dquoted = False
 
+        # Turning off quote detection, because we want templates like "Run test suite '{test_mod}'"
+        # to turn into "Run test suite 'my_tests'" - we _do_ want to expand inside quotes there.
+
         for i, c in enumerate(text):
             if escaped:
                 escaped = False
-            elif squoted:
-                if c == '\'':
-                    squoted = False
-            elif dquoted:
-                if c == '"':
-                    dquoted = False
+            #elif squoted:
+            #    if c == '\'':
+            #        squoted = False
+            #elif dquoted:
+            #    if c == '"':
+            #        dquoted = False
             elif c == '\\':
                 escaped = True
-            elif c == '\'':
-                squoted = True
-            elif c == '"':
-                dquoted = True
+            #elif c == '\'':
+            #    squoted = True
+            #elif c == '"':
+            #    dquoted = True
             elif c == '{':
                 lbrace = i
             elif c == '}' and lbrace >= 0:
@@ -1686,7 +1689,7 @@ class Task:
 
             # And now we can expand the description and command.
 
-            self._desc = check(str, e.expand("{desc}"))
+            self._desc = check(str, e.eval("desc"))
 
             if (callable(self._config.command)):
                 self._command = self._config.command
@@ -1819,7 +1822,6 @@ class Task:
                 sameline = not self._verbose,
             )
 
-
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # If any command failed, we propagate the error to downstream tasks.
             if self._should_fail:
@@ -1917,14 +1919,17 @@ class Task:
             return
 
         # Custom commands just get called and then early-out'ed.
+
         if callable(command):
             old_cwd = os.getcwd()
             try:
                 os.chdir(self._task_dir)
-                command(self)
+                result = command(self)
+                if inspect.isawaitable(result):
+                    result = await result
+                self._returncode = result
             finally:
                 os.chdir(old_cwd)
-                self._returncode = 0
             return
 
         # Non-string non-callable commands are not valid
@@ -1959,14 +1964,14 @@ class Task:
             if self._stdout:
                 message += f"==========\nStdout:\n{self._stdout}\n"
             if self._stderr:
-                message += f"==========\nStderr:\n{self._stderr}\n"
+                message += f"==========\nStderr:\n#{self._stderr}#\n"
             raise ValueError(message)
 
         elif self._debug or self._verbose:
             if self._stdout:
                 Log.log(f"==========\nStdout:\n{self._stdout}\n")
             if self._stderr:
-                Log.log(f"==========\nStderr:\n{self._stderr}\n")
+                Log.log(f"==========\nStderr:\n#{self._stderr}#\n")
 
 # endregion
 ####################################################################################################
@@ -2036,14 +2041,14 @@ class Runner:
         """Synchronously run all queued tasks until we're done with all of them."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        result = asyncio.run(cls._async_run_tasks())
+        result = asyncio.run(cls.async_run_tasks())
         loop.close()
         return result
 
     #--------------------------------------------------------------------------------
 
     @classmethod
-    async def _async_run_tasks(cls):
+    async def async_run_tasks(cls):
         """Run all tasks in the queue until we run out."""
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of

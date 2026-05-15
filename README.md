@@ -34,7 +34,7 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 
 # Hancho templates use {brackets} like Python f-strings with a few differences:
 #   - Templates are lazily-evaluated
-#   - Templates look up fields from a Config
+#   - Templates look up fields from a Dict
 #   - Templates can use built-in functions like ext() for common filename
 #     operations
 
@@ -43,14 +43,13 @@ usage: hancho.py [-h] [-f ROOT_FILE] [-C ROOT_DIR] [-v] [-d] [--force] [--trace]
 # dependencies between tasks.
 
 compile_cpp = hancho.Tool(
-    desc = "Compiling C++ {in_src} -> {out_obj}",
+    desc    = "Compiling C++ {in_src} -> {out_obj}",
     command = "g++ -c {in_src} -o {out_obj}",
     out_obj = "{ext(in_src, '.o')}",
 )
 
-# To make Hancho do some work, we pass tasks, configs and key-value pairs to hancho.Task().
-# It merges tasks and configs, expands templates, and queues an asynchronous task to run
-# the command.
+# To make Hancho do some work, we pass tools, dicts, and key-value pairs to hancho.Task().
+# It merges all dicts, expands templates, and queues an asynchronous task to run the command.
 
 # The hancho.Task() function creates a Task object, which is like a promise that
 # resolves to a list of output files when the task is complete.
@@ -64,7 +63,7 @@ util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 # these dependencies to build a task graph and schedule parallel task execution.
 
 link_cpp_bin = hancho.Tool(
-    desc = "Linking C++ bin {out_bin}",
+    desc    = "Linking C++ bin {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
@@ -81,8 +80,9 @@ main_app = hancho.Task(
 # same directory.
 ```
 
-More documentation (still a work in progress) can be found at [docs/README.md](docs/README.md). The currently-broken step-by-step tutorial is in [tutorial](tutorial). Working examples are in [examples](examples). There are also sample build tools for [C++](base_tools.hancho), [WASM](wasm_tools.hancho), and [FPGA synthesis](fpga_tools.hancho).
+More documentation (still a work in progress) can be found at [docs/README.md](docs/README.md). The currently-broken step-by-step tutorial is in [tutorial](tutorial). Working examples are in [examples](examples). There are also sample build tools for [C++](tools/tools_base.hancho), [WASM](tools/tools_wasm.hancho), and [FPGA synthesis](tools/tools_fpga.hancho).
 
 ## Updates
+ - 2026-05-14 - Revisiting and rewriting this project after a long absence.
  - 2024-11-03 - I'm stripping out obsolete documentation and trimming the tutorials down to the essentials.
  - 2024-11-02 - We're now on version v040 and the API has (hopefully) stabilized. Working on docs and tutorials now.

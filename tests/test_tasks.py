@@ -10,6 +10,8 @@ import time
 import random
 from typing import cast
 import doctest
+import asyncio
+import glob
 
 sys.path.append("..")
 import hancho
@@ -45,18 +47,16 @@ def color(red=None, green=None, blue=None):
 class TestTasks(unittest.TestCase):
 
     def setUp(self):
-        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
-        sys.stdout.flush()
-
+        self.startTime = time.time()
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
-
         hancho.init(debug = False, verbose = False, quiet = True)
+        sys.stdout.flush()
 
     def tearDown(self):
-        # And wipe the build dir after a test too.
-        #shutil.rmtree("build", ignore_errors=True)
-        pass
+        duration = time.time() - self.startTime
+        print(f"{duration:.3f}s ", end="")
+        sys.stdout.flush()
 
     def run_tasks(self, expected):
         hancho.Runner.queue_all_tasks()
@@ -79,7 +79,6 @@ class TestTasks(unittest.TestCase):
     #--------------------------------------------------------------------------------
 
 #  def test_subrepos1(self):
-#      # Outputs from a subrepo should go in build/repo_name/...
 #      repo = self.hancho.repo("subrepo")
 #      task = repo.task(
 #          command = "cat {rel_source_files} > {rel_build_files}",
@@ -137,6 +136,7 @@ class TestTasks(unittest.TestCase):
             in_src   = "src/foo.c",
             out_obj  = "{build_dir}/narp/foo.o",
         )
+        self.assertFalse(Path("build/narp/foo.o").exists())
         self.run_tasks(0)
         self.assertEqual(good_task._state, hancho.TaskState.FINISHED)
         self.assertTrue(Path("build/narp/foo.o").exists())
@@ -292,6 +292,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "{ext(in_src, '.o')}",
         )
 
+        self.assertFalse(Path("build/src/foo.o").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/src/foo.o").exists())
 
@@ -304,6 +305,7 @@ class TestTasks(unittest.TestCase):
             in_src  = [],
             out_obj = "result.txt",
         )
+        self.assertFalse(os.path.exists("build/result.txt"))
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
@@ -314,6 +316,7 @@ class TestTasks(unittest.TestCase):
             in_src  = [],
             out_obj = "result.txt"
         )
+        self.assertFalse(os.path.exists("../build/tetts/result.txt"))
         self.run_tasks(0)
         self.assertFalse(os.path.exists("../build/tetts/result.txt"))
 
@@ -376,6 +379,9 @@ class TestTasks(unittest.TestCase):
             out_baz = "baz.txt",
         )
 
+        self.assertFalse(os.path.exists("build/foo.txt"))
+        self.assertFalse(os.path.exists("build/bar.txt"))
+        self.assertFalse(os.path.exists("build/baz.txt"))
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/foo.txt"))
         self.assertTrue(os.path.exists("build/bar.txt"))
@@ -391,6 +397,7 @@ class TestTasks(unittest.TestCase):
             source_files = [],
             out_file = "{flarpy}",
         )
+        self.assertFalse(os.path.exists("build/flarp.txt"))
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/flarp.txt"))
 
@@ -405,6 +412,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "{name}",
             name = "result.txt",
         )
+        self.assertFalse(os.path.exists("build/result.txt"))
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
@@ -432,6 +440,7 @@ class TestTasks(unittest.TestCase):
             in_src  = [task_that_fails, task_that_passes],
             out_obj = "should_not_be_created.txt",
         )
+        self.assertFalse(os.path.exists("build/pass_result.txt"))
         self.run_tasks(-1)
         self.assertEqual(1, hancho.Stats.tasks_finished)
         self.assertEqual(1, hancho.Stats.tasks_failed)
@@ -461,6 +470,7 @@ class TestTasks(unittest.TestCase):
             out_obj = []
         )
 
+        self.assertFalse(Path("build/dummy.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/dummy.txt").exists())
 
@@ -474,9 +484,8 @@ class TestTasks(unittest.TestCase):
                 out_obj = "dummy{index}.txt",
                 index   = i
             )
+        self.assertEqual(0, len(glob.glob("build/*")))
         self.run_tasks(0)
-
-        import glob
         self.assertEqual(1000, len(glob.glob("build/*")))
 
     def test_job_count(self):
@@ -515,8 +524,22 @@ class TestTasks(unittest.TestCase):
                 index = 100 + i
             )
 
+        self.assertFalse(Path("build/slow_result.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/slow_result.txt").exists())
+
+    def test_async_callback(self):
+        async def callback(task):
+            await asyncio.sleep(0.1)
+            force_touch(task._config.out_file)
+        t = hancho.Task(
+            command = callback,
+            out_file = "test_async_callback.txt"
+        )
+        self.assertFalse(Path("build/test_async_callback.txt").exists())
+        self.run_tasks(0)
+        self.assertTrue(Path("build/test_async_callback.txt").exists())
+
 
 ####################################################################################################
 
@@ -528,4 +551,4 @@ def load_tests(loader, tests, ignore):
     return tests
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main(verbosity=999)

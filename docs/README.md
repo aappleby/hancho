@@ -2,18 +2,18 @@
 
 Hancho is built out of a few simple pieces - the ```hancho``` object, Configs, Templates, and Tasks. This document is a quick overview of each of those pieces, along with a few examples of more complex usage.
 
-For more detailed and up-to-date information, check out the examples folder and the '*_rules.hancho' files in the root directory of this repo.
+For more detailed and up-to-date information, check out the examples folder and the tools/*.hancho files in this repo.
 
 ## Configs in Hancho are just dicts a few special properties
 
-Inside a ```.hancho``` file, ```Config```s are just dicts with some useful additions
+Inside a ```.hancho``` file, ```Dict```s are just Python dicts with some useful additions
 
 For example, it comes with a pretty-printer:
 
 ```py
->>> foo = Config(a = 1, b = "two", c = ['th','ree'])
+>>> foo = Dict(a = 1, b = "two", c = ['th','ree'])
 >>> foo
-Config @ 0x788c818610e0 {
+Dict @ 0x788c818610e0 {
   a = 1,
   b = "two",
   c = list @ 0x788c8147db40 [
@@ -25,35 +25,31 @@ Config @ 0x788c818610e0 {
 
 ## Hancho comes with some built-in functions
 
-Both ```hancho.Context``` and ```hancho.HanchoAPI``` (the class of the global ```hancho``` object) derive from ```hancho.Utils``` to pick up various built-in functions that you may want to use in your scripts or templates. Most functions can accept either single values or arrays of values as their params and will generally do the right thing.
+
 
 | Built-in       | Description |
 | --------       | ----------- |
 |```log```        | Logs messages to the console and to Hancho's internal log. Also plays nicer with console output from parallel tasks than ```print()```|
-|```print```      | Python's built-in ```print()```.|
-|```len```        | Python's built-in ```len()```|
 |```abs_path```   | Converts a relative path to an absolute, physical path.|
 |```rel_path```   | Removes a common prefix from an absolute path to make a relative path. ```rel_path('/foo/bar/baz', '/foo')``` -> ```'bar/baz'```
 |```join```       | Joins arbitrary arrays of strings together, combinatorially. ```join(['a','b'],['c','d'])``` -> ```['ac', 'ad', 'bc', 'bd']```|
 |```join_path```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
 |```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
 |```ext```        | Replaces a filename's extension.|
-|```color```      | Returns escape codes that change the terminal's text color. Used for color-coding Hancho output.|
 |```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
 |```hancho_dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho_dir}/base_rules.hancho")```|
 |```glob```       | Python's ```glob.glob```|
 |```re```         | Python's ```re``` regular expression module|
 |```path```       | Python's ```os.path``` module|
 |```run_cmd```    | Runs a CLI command and returns the command's ```stdout```.|
-|```rel```        | Only usable by ```Config```s. Removes ```task_dir``` from a file path if present. Makes descriptions and commands a bit more readable.|
-|```merge```      | Only usable by ```Config```s. Merges additional ```Config```s or key-value pairs into this one.|
-|```expand```     | Only usable by ```Config```s. Expands a text template.|
+|```rel```        | Only usable by ```Dict```s. Removes ```task_dir``` from a file path if present. Makes descriptions and commands a bit more readable.|
+|```expand```     | Only usable by ```Dict```s. Expands a text template.|
 
 ## Splitting your build into multiple ```.hancho``` files
 
 Hancho is explicitly designed to allow for build scripts that span multiple files, multiple directories, and multiple repos.
 
-To load the contents of another ```.hancho``` file into the current one, use ```hancho.load(filename)```. The return value from ```load()``` will be a Config containing all the global variables defined in the file, minus imported modules and 'private' variables prefixed with an underscore.
+To load the contents of another ```.hancho``` file into the current one, use ```hancho.load(filename)```. The return value from ```load()``` will be a Dict containing all the global variables defined in the file, minus imported modules and 'private' variables prefixed with an underscore.
 
 ```py
 # stuff.hancho
@@ -72,7 +68,7 @@ print(stuff)
 ```sh
 user@host:~/temp$ hancho
 Loading /home/user/temp/build.hancho
-Config @ 0x7cda59023480 {
+Dict @ 0x7cda59023480 {
   helper_function = <function helper_function at 0x7cda5902f100>,
 }
 hancho: BUILD CLEAN
@@ -138,7 +134,7 @@ HanchoAPI @ 0x7cb6c8d0b110 {
 ```
 
 Special fields and methods in ```hancho```
-'Config',
+'Dict',
 'Task',
 '__call__',
 'context',
@@ -167,15 +163,15 @@ Fields automatically added to ```hancho.Context```:
 The rule for merging two configs A and B is: ***If a field in B is not None, it overrides the corresponding field in A***.
 
 ```py
->>> foo = config(a = 1)
->>> bar = config(a = 2)
->>> config(foo, bar)
-Config @ 0x746cb87f3ed0 {
+>>> foo = Dict(a = 1)
+>>> bar = Dict(a = 2)
+>>> Dict(foo, bar)
+Dict @ 0x746cb87f3ed0 {
   a = 2,
 }
->>> bar = config(a = None)
->>> config(foo, bar)
-Config @ 0x746cb87f3f20 {
+>>> bar = Dict(a = None)
+>>> Dict(foo, bar)
+Dict @ 0x746cb87f3f20 {
   a = 1,
 }
 ```
@@ -183,11 +179,11 @@ Config @ 0x746cb87f3f20 {
 This works for nested Configs as well:
 
 ```py
->>> foo = config(child = config(bar = 1, baz = 2))
->>> bar = config(child = config(baz = 3, cow = 4))
->>> config(foo, bar)
-Config @ 0x746cb87f3f70 {
-  child = Config @ 0x746cb8610640 {
+>>> foo = Dict(child = Dict(bar = 1, baz = 2))
+>>> bar = Dict(child = Dict(baz = 3, cow = 4))
+>>> Dict(foo, bar)
+Dict @ 0x746cb87f3f70 {
+  child = Dict @ 0x746cb8610640 {
     bar = 1,
     baz = 3,
     cow = 4,
@@ -201,51 +197,51 @@ Like Python's F-strings, Hancho's templates can contain ```{arbi + trary * expre
 
 Instead, we call ```context.expand(template)``` and the values in ```context``` are used to fill in the blanks in ```template```.
 ```py
->>> foo = config(a = 1, b = 2)
+>>> foo = Dict(a = 1, b = 2)
 >>> foo.expand("The sum of a and b is {a+b}.")
 'The sum of a and b is 3.'
 ```
 
 A template that evaluates to an array will have each element stringified and then joined with spaces
 ```py
->>> foo = config(a = [1, 2, 3])
+>>> foo = Dict(a = [1, 2, 3])
 >>> foo.expand("These are numbers - {a}")
 'These are numbers - 1 2 3'
 ```
 
 Nested arrays get flattened before joining
 ```py
->>> foo = config(a = [[1, [2]], [[3]]])
+>>> foo = Dict(a = [[1, [2]], [[3]]])
 >>> foo.expand("These are numbers - {a}")
 'These are numbers - 1 2 3'
 ```
 
 And a ```None``` will turn into an empty string.
 ```py
->>> foo = config(a = None, b = None, c = None)
+>>> foo = Dict(a = None, b = None, c = None)
 >>> foo.expand("a=({a}), b=({b}), c=({c})")
 'a=(), b=(), c=()'
 ```
 
 If the result of a template expansion contains more templates, Hancho will keep expanding until the string stops changing.
 ```py
->>> foo = config(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
+>>> foo = Dict(a = "a{b}", b = "b{c}", c = "c{d}", d = "d{e}", e = 1000)
 >>> foo.expand("{a}")
 'abcd1000'
 ```
 
 Expanding templates based on configs inside configs also works:
 ```py
->>> foo = config(a = 1, b = 2)
->>> bar = config(c = foo)
->>> baz = config(d = bar)
+>>> foo = Dict(a = 1, b = 2)
+>>> bar = Dict(c = foo)
+>>> baz = Dict(d = bar)
 >>> baz.expand("d.c.a = {d.c.a}, d.c.a = {d.c.b}")
 'd.c.a = 1, d.c.a = 2'
 ```
 
 ## Configs can contain functions, templates can call functions.
 
-Any function attached to a ```Config``` can be used in a template, along with a set of built-in utility methods.
+Any function attached to a ```Dict``` can be used in a template, along with a set of built-in utility methods.
 
 ```py
 # FIXME this is out of date
@@ -256,7 +252,7 @@ Any function attached to a ```Config``` can be used in a template, along with a 
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:
 
 ```py
->>> foo = config()
+>>> foo = Dict()
 >>> foo.expand("{color(255,0,0)}")
 '\x1b[38;2;255;0;0m'
 >>> print(foo.expand("The color is now {color(255,0,0)}RED"))
@@ -268,7 +264,7 @@ You can also attach your own functions to a context:
 
 ```py
 >>> def get_number(): return 7
->>> a = config(get_number = get_number)
+>>> a = Dict(get_number = get_number)
 >>> a.expand("Calling get_number equals {get_number()}")
 'Calling get_number equals 7'
 ```
@@ -278,21 +274,21 @@ You can also attach your own functions to a context:
 Failure to expand a template is _not an error_, it just passes the unexpanded template through.
 
 ```py
->>> foo = config(a = 1)
+>>> foo = Dict(a = 1)
 >>> foo.expand("A equals {a}, B equals {b}")
 'A equals 1, B equals {b}'
 ```
 
 While this might seem like a bad idea, it allows for Configs to hold templates that they can't expand until they're needed later by a parent or grandparent context.
 ```py
->>> foo = config(msg = "What's a {bar.thing}?")
->>> bar = config(thing = "bear")
->>> baz = config(foo = foo, bar = bar)
+>>> foo = Dict(msg = "What's a {bar.thing}?")
+>>> bar = Dict(thing = "bear")
+>>> baz = Dict(foo = foo, bar = bar)
 >>> baz.expand("{foo.msg}")
 "What's a bear?"
 ```
 
-Hancho comes with a simple text-expansion tracing tool for debugging your build scripts. It can be enabled by setting ```trace=True``` on a Config, or via ```--trace``` on the command line.
+Hancho comes with a simple text-expansion tracing tool for debugging your build scripts. It can be enabled by setting ```trace=True``` on a Dict, or via ```--trace``` on the command line.
 
 Here's what the tracer generates for the above example:
 
@@ -300,18 +296,18 @@ Here's what the tracer generates for the above example:
 Python 3.12.3 (main, Sep 11 2024, 14:17:37) [GCC 13.2.0] on linux
 Type "help", "copyright", "credits" or "license" for more information.
 >>> import hancho
->>> foo = config(msg = "What's a {bar.thing}?")
->>> bar = config(thing = "bear")
->>> baz = config(foo = foo, bar = bar, trace=True)
+>>> foo = Dict(msg = "What's a {bar.thing}?")
+>>> bar = Dict(thing = "bear")
+>>> baz = Dict(foo = foo, bar = bar, trace=True)
 >>> baz.expand("{foo.msg}")
 0x76beaa7eebc0: ┏ expand_text '{foo.msg}'
 0x76beaa7eebc0: ┃ ┏ expand_macro '{foo.msg}'
-0x76beaa7eebc0: ┃ ┃ Read 'foo' = Config @ 0x76beaa7eec60'
+0x76beaa7eebc0: ┃ ┃ Read 'foo' = Dict @ 0x76beaa7eec60'
 0x76beaa7eebc0: ┃ ┗ expand_macro '{foo.msg}' = What's a {bar.thing}?
 0x76beaa7eebc0: ┗ expand_text '{foo.msg}' = 'What's a {bar.thing}?'
 0x76beaa7eebc0: ┏ expand_text 'What's a {bar.thing}?'
 0x76beaa7eebc0: ┃ ┏ expand_macro '{bar.thing}'
-0x76beaa7eebc0: ┃ ┃ Read 'bar' = Config @ 0x76beaa7eecb0'
+0x76beaa7eebc0: ┃ ┃ Read 'bar' = Dict @ 0x76beaa7eecb0'
 0x76beaa7eebc0: ┃ ┗ expand_macro '{bar.thing}' = bear
 0x76beaa7eebc0: ┗ expand_text 'What's a {bar.thing}?' = 'What's a bear?'
 "What's a bear?"
@@ -323,7 +319,7 @@ FIXME - there should be a ```Read 'msg'``` line and a ```Read 'thing'``` line in
 
 ## Tasks are nodes in Hancho's build graph.
 
-Tasks take a Config that completely defines the input files, output files, and directories needed to run a command and adds it to Hancho's build graph.
+Tasks take a Dict that completely defines the input files, output files, and directories needed to run a command and adds it to Hancho's build graph.
 
 Tasks are lazily executed - only tasks that are needed to build the selected outputs are executed. By default, all Tasks that originate from the repo we started the build in will be queued up for execution.
 
@@ -347,23 +343,6 @@ hancho.Task(
 )
 ```
 
-## Raw tasks for corner cases
-
-Normally Hancho will inject ```hancho.Context``` into your Tasks to provide the path information
-needed for the build.
-
-If you'd rather control all the paths yourself, you can create a Task directly. You'll need to
-supply ```task_dir``` and ```build_dir``` so that Hancho knows where to look for input and output
-files.
-
-```py
-hancho.Task(
-  command = "echo hello world",
-  task_dir = ".",
-  build_dir = "."
-)
-```
-
 ## Using task-generating functions to simplify your build
 
 Sometimes you may need to create multiple small tasks to accomplish a larger task. For example,
@@ -379,33 +358,23 @@ def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwar
     return hancho.Task(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 ```
 
-You can of course call this function directly, but for easier integration with larger build scripts
-you can also pass ```cpp_lib``` as the first argument to ```hancho.Task()```:
+And using them is straightforward:
 
-```
-hancho.Task(
-  cpp_lib,
+```py
+cpp_lib(
   in_srcs = glob.glob("src/*.cpp")
   out_lib = "foo.a"
 )
 ```
 
-Doing this is is exactly equivalent to the following:
-
-```py
-temp_config = hancho.Dict(
-  hancho.Context,
-  in_srcs = glob.glob("src/*.cpp"),
-  out_lib = "foo.a"
-)
-hancho.Task(cpp_lib, temp_config)
-```
-
 ## Using callbacks as Hancho commands
 
 If you pass a function as the ```command``` field for a task, Hancho will call it with the task as
-an argument. The callbacks can be synchronous or asynchronous - both work fine. If you need to do
-some custom Python stuff during a build, this is the easiest way to do it.
+an argument when it's ready to run.
+
+The callbacks can be synchronous or asynchronous - both work fine.
+
+If you need to do some custom Python stuff during a build, this is the easiest way to do it.
 
 ```py
 import asyncio

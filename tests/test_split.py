@@ -56,15 +56,6 @@ class TestSplitTemplate(unittest.TestCase):
         [L'}{', E'foo']
         """
 
-    def doctest_macros_inside_string(self):
-        r"""
-        # Macros inside a string should _not_ be split
-        >>> Expander.split("foo '{bar}' baz")
-        [L"foo '{bar}' baz"]
-        >>> Expander.split('foo "{bar}" baz')
-        [L'foo "{bar}" baz']
-        """
-
     def doctest_split_innermost(self):
         """
         # We should be extracting the innermost macros
@@ -72,14 +63,25 @@ class TestSplitTemplate(unittest.TestCase):
         [L'{', E'foo', L'}']
         """
 
-    def doctest_dont_split_inside_string(self):
-        r"""
-        # ...unless the innermost macro is inside a string
-        >>> Expander.split('{foo + "{bar}"}')
-        [E'foo + "{bar}"']
-        >>> Expander.split("{foo + '{bar}'}")
-        [E"foo + '{bar}'"]
-        """
+    # Temporarily disabled until we figure out what we want
+#    def doctest_dont_split_inside_string(self):
+#        r"""
+#        # ...unless the innermost macro is inside a string
+#        >>> Expander.split('{foo + "{bar}"}')
+#        [E'foo + "{bar}"']
+#        >>> Expander.split("{foo + '{bar}'}")
+#        [E"foo + '{bar}'"]
+#        """
+#
+#    def doctest_macros_inside_string(self):
+#        r"""
+#        # Macros inside a string should _not_ be split
+#        >>> Expander.split("foo '{bar}' baz")
+#        [L"foo '{bar}' baz"]
+#        >>> Expander.split('foo "{bar}" baz')
+#        [L'foo "{bar}" baz']
+#        """
+
 
     def test_hash_matches_str(self):
         self.assertEqual(hash(L('a')), hash('a'))

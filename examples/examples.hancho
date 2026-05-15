@@ -2,8 +2,9 @@
 
 import hancho
 
-hancho.repo("hello_world/build.hancho")
-hancho.repo("hello_gtk/build.hancho")
-hancho.repo("subrepos/build.hancho")
-hancho.repo("dynamic_dependencies/build.hancho")
 hancho.repo("bazel-cpp-tutorial/build.hancho")
+hancho.repo("dynamic_dependencies/build.hancho")
+hancho.repo("hello_gtk/build.hancho")
+hancho.repo("hello_world/build.hancho")
+hancho.repo("subrepos/build.hancho")
+#hancho.repo("windows/build.hancho")

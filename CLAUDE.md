@@ -1,7 +1,7 @@
 # Working with Claude on Hancho
 
 ## Project Overview
-Hancho is a single-file Python build system (similar to Make/Ninja) that uses .hancho files as build scripts. The main implementation is in `hancho.py` (~1700 lines).
+Hancho is a single-file Python build system (similar to Make/Ninja) that uses .hancho files as build scripts. The main implementation is in `hancho.py`.
 
 ## Interaction Guidelines
 
@@ -23,23 +23,20 @@ Hancho is a single-file Python build system (similar to Make/Ninja) that uses .h
 - Keep changes minimal and focused
 
 ### Key Architecture Notes
+- Build scripts are just Python modules with a `.hancho` suffix (optional).
 - `Dict` class: A Python dict with dot notation and recursive merging
 - `Tool` class: A Dict, just with a different name for debugging
 - `Task` class: Core build task with async execution
-- `hancho` class: What gets exposed to .hancho build files
+- To use Hancho, just `import hancho`.
+- Every build script gets its own ```hancho.config``` object, which is also automatically included in any ```Task```s created in that build script.
 - Text expansion system: Template strings with `{macro}` syntax
 - Job pool: Manages parallel task execution
 
 ### Current State
-- `main` branch: Stable, all tests passing
-- Feature branches (`late_await`, `one_point_o`, `onlydicts`): Incomplete, may be broken
-- Goal: Consolidate user-visible API into the `hancho` object (e.g., `hancho.Task()` instead of bare `task()`)
+- `main` branch: Stable, all tests passing. All other branches have been merged in to get ready for 1.0.
 
 ### Common Tasks
 - Run tests: `cd tests && python run_tests.py`
 - Run hancho: `python hancho.py` or `./hancho.py`
 - Test suite uses unittest framework
 - Build artifacts go in `build/` directories (gitignored)
-
-## API Migration Goals
-Working toward making all user-facing functionality available through the `hancho` object passed to .hancho files, rather than injecting functions into the global namespace.

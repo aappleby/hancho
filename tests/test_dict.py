@@ -144,5 +144,8 @@ def load_tests(loader, tests, ignore):
     tests.addTests(doctests)
     return tests
 
-if __name__ == "__main__":
+def run():
     unittest.main(verbosity=1)
+
+if __name__ == "__main__":
+    run()
