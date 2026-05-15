@@ -14,8 +14,6 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # pylint: disable=unused-argument
 # pylint: disable=bad-indentation
 
-# FIXME - should we be using mappingproxy to make Dicts immutable?
-# FIXME make sure objects added to the hancho proxy are preserved in submodules?
 # FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs
 # a revisit
 # FIXME All the context and singleton stuff can probably be moved to a ContextVar?
@@ -1129,6 +1127,7 @@ class Loader:
 
     config_defaults = Dict(
 
+        name       = "<name missing>",
         desc       = "<description missing>",
         command    = "<command missing>",
 
@@ -1633,7 +1632,6 @@ class Task:
         # before initializing the task so that any path.abspath or whatever happen from the right
         # place.
 
-
         #----------------------------------------
 
         if self._debug:
@@ -2107,8 +2105,11 @@ class Runner:
         if tool == "clean":
             for task in cls.all_tasks:
                 build_root = Path.real(task._config.eval("build_root"))
+                build_root = Path.rel_path(build_root, os.getcwd())
                 if os.path.isdir(build_root):
+                    Log.log(f"Wiping build_root {build_root}")
                     shutil.rmtree(build_root, ignore_errors=True)
+            Log.log("Clean done")
             return 0
         else:
             assert False, f"Don't know how to run tool {tool}"
@@ -2170,12 +2171,13 @@ async def main():
     script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
     if not os.path.exists(script_path):
         path = os.path.relpath(script_path, os.getcwd())
-        print(f"Could not load build script {path}")
+        Log.log(f"Could not load build script {path}")
         sys.exit(-1)
     root_mod = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 
-    if hancho.config.debug or hancho.config.verbose:
+    #if hancho.config.debug or hancho.config.verbose:
+    if True:
         Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
 
     #----------------------------------------
@@ -2198,6 +2200,13 @@ async def main():
 
     if hancho.config.debug or hancho.config.verbose:
         Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
+
+
+    #for t in Runner.all_tasks:
+    #    Log.log(f"{t._config.this_dir}/{t._config.this_file}")
+    #    Log.log(f"    {t._state} - {t._config.name} - {t._config.desc}")
+    #sys.exit(0)
+
 
     #----------------------------------------
     # Run all tasks

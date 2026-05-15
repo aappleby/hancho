@@ -48,6 +48,7 @@ Hello World 42
 Here's how we run the same command using Hancho. First, we create ```build.hancho``` in the tutorial directory:
 
 ```py
+# hancho/tutorial/build.hancho
 import hancho
 
 hancho.Task(
@@ -89,8 +90,6 @@ Strings in Hancho tasks use Python-style f-string syntax, minus the 'f' prefix. 
 Let's see what's inside our task:
 
 ```py
-# tutorial/tut00.hancho
-
 task = hancho.Task(
     desc    = "Compile {in_src} -> {out_bin}",
     command = "g++ {in_src} -o {out_bin}",
@@ -103,18 +102,18 @@ print(task)
 
 There's quite a lot of stuff in there:
 ```shell
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
-Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
+aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -v
+Loading /home/aappleby/repos/hancho/tutorial/build.hancho
 Task @ 0x727f0371d6a0 {
     root_dir = "/home/aappleby/repos/hancho/tutorial",
-    root_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+    root_path = "/home/aappleby/repos/hancho/tutorial/build.hancho",
     repo_name = "",
     repo_dir = "/home/aappleby/repos/hancho/tutorial",
     build_root = "{root_dir}/build",
     build_tag = "",
-    mod_name = "tut00",
+    mod_name = "build",
     mod_dir = "/home/aappleby/repos/hancho/tutorial",
-    mod_path = "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+    mod_path = "/home/aappleby/repos/hancho/tutorial/build.hancho",
     desc = "Compile {in_src} -> {out_bin}",
     command = "g++ {in_src} -o {out_bin}",
     in_src = [
@@ -131,7 +130,7 @@ Task @ 0x727f0371d6a0 {
     _reason = None,
     _asyncio_task = None,
     _loaded_files = [
-        "/home/aappleby/repos/hancho/tutorial/tut00.hancho",
+        "/home/aappleby/repos/hancho/tutorial/build.hancho",
     ],
     _stdout = "",
     _stderr = "",
@@ -150,8 +149,8 @@ can see with the ```-v``` (verbosity) flag:
 
 ```shell
 user@host:~/hancho/tutorial$ rm -rf build
-user@host:~/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
-Loading /home/user/hancho/tutorial/tut00.hancho
+user@host:~/hancho/tutorial$ ../hancho.py -v
+Loading /home/user/hancho/tutorial/build.hancho
 Loading .hancho files took 0.000 seconds
 [1/1] Compile /home/user/hancho/tutorial/src/main.cpp /home/user/hancho/tutorial/src/util.cpp -> /home/user/hancho/tutorial/build/app
 Reason: Rebuilding because /home/user/hancho/tutorial/build/app is missing
@@ -166,8 +165,8 @@ If we run Hancho a second time, nothing will happen because nothing in
 ```in_*``` has changed.
 
 ```shell
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
-Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
+aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -v
+Loading /home/aappleby/repos/hancho/tutorial/build.hancho
 Loading .hancho files took 0.000 seconds
 ```
 
@@ -175,8 +174,8 @@ If we change a source file and run Hancho again, it will do a rebuild.
 
 ```shell
 aappleby@Neurotron:~/repos/hancho/tutorial$ touch src/main.cpp
-aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -f tut00.hancho -v
-Loading /home/aappleby/repos/hancho/tutorial/tut00.hancho
+aappleby@Neurotron:~/repos/hancho/tutorial$ ../hancho.py -v
+Loading /home/aappleby/repos/hancho/tutorial/build.hancho
 Loading .hancho files took 0.000 seconds
 [1/1] Compile /home/aappleby/repos/hancho/tutorial/src/main.cpp /home/aappleby/repos/hancho/tutorial/src/util.cpp -> /home/aappleby/repos/hancho/tutorial/build/app
 Reason: Rebuilding because /home/aappleby/repos/hancho/tutorial/src/main.cpp has changed
