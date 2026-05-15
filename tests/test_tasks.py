@@ -55,7 +55,7 @@ class TestTasks(unittest.TestCase):
 
     def tearDown(self):
         duration = time.time() - self.startTime
-        print(f"{duration:.3f}s ", end="")
+        print(f"{duration:.3f}s ", end="", file = sys.stderr)
         sys.stdout.flush()
 
     def run_tasks(self, expected):
@@ -75,6 +75,65 @@ class TestTasks(unittest.TestCase):
         bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
         self.run_tasks(-1)
         self.assertEqual(bad_task._state, hancho.TaskState.FAILED)
+
+    #--------------------------------------------------------------------------------
+
+    def test_manual_queue1(self):
+        # If a task is _not_ queued, it should _not_ run.
+        t = hancho.Task(
+            command  = "touch {out_file}",
+            out_file = "test_manual_queue.txt",
+        )
+        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
+        result = hancho.Runner.sync_run_tasks()
+        self.assertEqual(result, 0)
+        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
+
+    def test_manual_queue2(self):
+        # If a task _is_ manually queued, it _should_ run.
+        t = hancho.Task(
+            command  = "touch {out_file}",
+            out_file = "test_manual_queue.txt",
+        )
+        t.queue()
+        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
+        result = hancho.Runner.sync_run_tasks()
+        self.assertEqual(result, 0)
+        self.assertTrue(os.path.exists("build/test_manual_queue.txt"))
+
+    def test_manual_queue3(self):
+        # A manually queued task should trigger its inputs to run.
+
+        # t0 is _not_ queued
+        t0 = hancho.Task(
+            command  = "touch {out_file}",
+            out_file = "test_manual_queue3a.txt",
+        )
+
+        # t1 is _not_ queued
+        t1 = hancho.Task(
+            command  = "touch {out_file}",
+            out_file = "test_manual_queue3b.txt",
+        )
+
+        # t2 depends on t0 but not t1, t0 should be transitively queued
+        t2 = hancho.Task(
+            command  = "touch {out_file}",
+            in_file  = t0,
+            out_file = "test_manual_queue3c.txt",
+        )
+        t2.queue()
+
+        self.assertFalse(os.path.exists("build/test_manual_queue3a.txt"))
+        self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
+        self.assertFalse(os.path.exists("build/test_manual_queue3c.txt"))
+
+        result = hancho.Runner.sync_run_tasks()
+        self.assertEqual(result, 0)
+
+        self.assertTrue(os.path.exists("build/test_manual_queue3a.txt"))
+        self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
+        self.assertTrue(os.path.exists("build/test_manual_queue3c.txt"))
 
     #--------------------------------------------------------------------------------
 

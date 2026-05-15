@@ -19,6 +19,10 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs
 # a revisit
 # FIXME All the context and singleton stuff can probably be moved to a ContextVar?
+# FIXME need to ensure that all the stuff accessible to the clients through hancho is
+# clean. Right now it's messy.
+# FIXME we should select tasks to build (if not building all) by doing a regex test after init but
+# before commands are executed
 
 ####################################################################################################
 # region imports
@@ -71,6 +75,8 @@ def __dir__():
 # endregion
 ####################################################################################################
 # region Job pool
+
+# FIXME this needs to use a semaphore
 
 class JobPool:
     job_max : int
@@ -1235,11 +1241,11 @@ class Loader:
         script_path = cast(str, hancho.config.expand(script_path))
         script_path = os.path.abspath(script_path)
 
-        #if parent_config.verbose:
-        if True:
+        verbose = hancho.config.debug or hancho.config.verbose
+        if verbose:
             Log.log("┃ " * len(Loader.stack), end="")
-            script_type = "repo" if is_repo else "script"
-            Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color())
+        script_type = "repo" if is_repo else "script"
+        Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
 
         #----------------------------------------
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
@@ -1264,7 +1270,6 @@ class Loader:
             return dedupe
 
         #----------------------------------------
-        #new_module = Loader.create_mod(script_path, script_config)
 
         assert os.path.isfile(script_path)
         new_module = types.ModuleType(os.path.basename(script_path))
@@ -1277,7 +1282,6 @@ class Loader:
         )
 
         #----------------------------------------
-        #Loader.compile_mod(new_module)
 
         with open(script_path, encoding="utf-8") as file:
             Loader.loaded_files.append(script_path)
@@ -1286,7 +1290,6 @@ class Loader:
             new_module.__dict__.update(__code__ = code)
 
         #----------------------------------------
-        #Loader.exec_mod(new_module)
 
         old_cwd = os.getcwd()
 
@@ -1961,17 +1964,19 @@ class Task:
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
-            if self._stdout:
-                message += f"==========\nStdout:\n{self._stdout}\n"
-            if self._stderr:
-                message += f"==========\nStderr:\n#{self._stderr}#\n"
+            message += f"========== Stdout ==========\n"
+            message += self._stdout
+            message += f"========== Stderr ==========\n"
+            message += self._stderr
+            message += f"============================\n"
             raise ValueError(message)
 
         elif self._debug or self._verbose:
-            if self._stdout:
-                Log.log(f"==========\nStdout:\n{self._stdout}\n")
-            if self._stderr:
-                Log.log(f"==========\nStderr:\n#{self._stderr}#\n")
+            Log.log(f"========== Stdout ==========")
+            Log.log(self._stdout)
+            Log.log(f"========== Stderr ==========")
+            Log.log(self._stderr)
+            Log.log(f"============================")
 
 # endregion
 ####################################################################################################
@@ -2007,9 +2012,9 @@ class Runner:
 
         # This doesn't work, I think because we haven't expanded the configs yet
         #for task in cls.all_tasks:
-        #    build_dir = expand_variant(task._context, task._context.build_dir)
+        #    build_dir = expand_variant(task._config, task._config.build_dir)
         #    build_dir = normalize_path(build_dir)
-        #    repo_dir  = expand_variant(app.root_context._context, "{build_dir}")
+        #    repo_dir  = expand_variant(app.root_context._config, "{build_dir}")
         #    repo_dir  = normalize_path(repo_dir)
         #    if build_dir.startswith(repo_dir):
         #       task.queue()
@@ -2100,16 +2105,14 @@ class Runner:
     @classmethod
     def run_tool(cls, tool : str):
         if tool == "clean":
-            build_roots = set()
             for task in cls.all_tasks:
                 build_root = Path.real(task._config.eval("build_root"))
                 if os.path.isdir(build_root):
-                    build_roots.add(build_root)
-            for root in build_roots:
-                shutil.rmtree(root, ignore_errors=True)
+                    shutil.rmtree(build_root, ignore_errors=True)
             return 0
-
-        assert False, f"Don't know how to run tool {tool}"
+        else:
+            assert False, f"Don't know how to run tool {tool}"
+            return -1
 
     #--------------------------------------------------------------------------------
 
@@ -2159,9 +2162,7 @@ def repo(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, True, *args, kwargs)
 
 async def main():
-    if hancho.config.tool:
-        result = Runner.run_tool(hancho.config.tool)
-        return result
+    print("main()")
 
     #----------------------------------------
     # Load all build scripts
@@ -2177,6 +2178,16 @@ async def main():
 
     if hancho.config.debug or hancho.config.verbose:
         Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
+
+    #----------------------------------------
+    # Run tools if needed
+
+    if hancho.config.tool:
+        print("has tool")
+        result = Runner.run_tool(hancho.config.tool)
+        return result
+    else:
+        print("no tool")
 
     #----------------------------------------
     # Queue all tasks

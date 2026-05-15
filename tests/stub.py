@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Test cases for Hancho's Dict class"""
+"""Template file for creating new test cases"""
 
 import sys
 import unittest
@@ -48,8 +48,6 @@ class TestTest(unittest.TestCase):
 
     def test_foo(self):
         pass
-
-
 
 ####################################################################################################
 

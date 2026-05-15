@@ -1,10 +1,14 @@
 import hancho
 import sys
+import glob
+import os
+import time
 
-hancho.Task(
+run_test = hancho.Tool(
     desc    = r"Run test suite '{test_mod}'",
-    command = "{sys.executable} -m unittest {test_mod}",
-    sys = sys,
-    test_mod = "test_test",
-    #verbose = True,
+    command = "{sys.executable} -m unittest {test_mod} -v",
+    sys     = sys,
 )
+
+for file in glob.glob("test_*.py"):
+    hancho.Task(run_test, test_mod = os.path.basename(file))

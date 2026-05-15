@@ -5,5 +5,5 @@ tools_fpga  = hancho.load("tools/tools_fpga.hancho")
 tools_riscv = hancho.load("tools/tools_riscv.hancho")
 tools_wasm  = hancho.repo("tools/tools_wasm.hancho")
 
-hancho.load("examples/examples.hancho")
-#hancho.load("tests/build.hancho")
+hancho.repo("examples/examples.hancho")
+hancho.repo("tests/build.hancho")
