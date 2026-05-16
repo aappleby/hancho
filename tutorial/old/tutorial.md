@@ -134,7 +134,6 @@ Task @ 0x727f0371d6a0 {
     ],
     _stdout = "",
     _stderr = "",
-    _returncode = -1,
 }
 ```
 At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho.Task()```, followed by the task-specific ```task_dir``` and ```build_dir```, and finally some private Hancho bookkeeping fields.

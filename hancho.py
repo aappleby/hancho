@@ -14,13 +14,9 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # pylint: disable=unused-argument
 # pylint: disable=bad-indentation
 
-# FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs
-# a revisit
+# FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit
 # FIXME All the context and singleton stuff can probably be moved to a ContextVar?
-# FIXME need to ensure that all the stuff accessible to the clients through hancho is
-# clean. Right now it's messy.
-# FIXME we should select tasks to build (if not building all) by doing a regex test after init but
-# before commands are executed
+# FIXME need to ensure that all the stuff accessible to the clients through hancho is clean. Right now it's messy.
 # FIXME test Promise thingy
 
 ####################################################################################################
@@ -45,6 +41,7 @@ import contextvars
 from typing import Any, no_type_check, cast
 from collections import abc
 from enum import Enum
+from contextlib import chdir
 
 ####################################################################################################
 # region context var stuff
@@ -54,10 +51,13 @@ if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
 cv_config = contextvars.ContextVar("config")
+cv_script = contextvars.ContextVar("script")
 
 def __getattr__(name):
     if name == "config":
         return cv_config.get()
+    if name == "script":
+        return cv_script.get()
     raise AttributeError(f"Module {__name__} has no attribute {name}")
 
 def __dir__():
@@ -1281,7 +1281,7 @@ class Loader:
         new_module.__dict__.update(
             __file__ = script_path,
             __code__ = None,
-            #hancho   = proxy,
+            hancho   = hancho,
         )
 
         #----------------------------------------
@@ -1294,18 +1294,8 @@ class Loader:
 
         #----------------------------------------
 
-        old_cwd = os.getcwd()
-
-        try:
-
-            os.chdir(script_dir)
-            cls.stack.append(new_module)
-            with cv_config.set(script_config):
-                exec(new_module.__code__, new_module.__dict__)
-
-        finally:
-            cls.stack.pop()
-            os.chdir(old_cwd)
+        with (chdir(script_dir), cv_script.set(new_module), cv_config.set(script_config)):
+            exec(new_module.__code__, new_module.__dict__)
 
         #----------------------------------------
 
@@ -1414,7 +1404,6 @@ class Task:
         self._reason : str = ""
         self._stdout : str = ""
         self._stderr : str = ""
-        self._returncode : int = -1
 
         self._in_files  = []
         self._out_files = []
@@ -1624,6 +1613,106 @@ class Task:
             assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
 
     #--------------------------------------------------------------------------------
+
+    def task_init(self):
+        self.to_state(TaskState.INIT)
+
+        check = Utils.check
+        c = self._config
+        e = Expander(c)
+
+        self._root_dir   = check(str, Path.abs_path(check(str, e.eval("root_dir"))))
+        self._root_file  = check(str, Path.abs_path(check(str, e.eval("root_file"))))
+
+        self._repo_dir   = check(str, Path.abs_path(check(str, e.eval("repo_dir"))))
+        self._repo_file  = check(str, Path.abs_path(check(str, e.eval("repo_file"))))
+
+        self._this_dir   = check(str, Path.abs_path(check(str, e.eval("this_dir"))))
+        self._this_file  = check(str, Path.abs_path(check(str, e.eval("this_file"))))
+
+        self._build_root = check(str, Path.abs_path(check(str, e.eval("build_root"))))
+        self._build_dir  = check(str, Path.abs_path(check(str, e.eval("build_dir"))))
+
+        self._job_count   = check(int, e.eval("job_count"))
+        self._keep_going  = check(int, e.eval("keep_going"))
+
+        # Fix up all in/out paths
+        Utils.walk(self._config, self.move_stuff1)
+
+        self._in_depfile = e.eval("in_depfile")
+
+        # And now we can expand the name, description, and command.
+
+        self._name = check(str, e.eval("name"))
+        self._desc = check(str, e.eval("desc"))
+
+        if (callable(self._config.command)):
+            self._command = self._config.command
+        else:
+            self._command = e.expand_variant(self._config.command)
+
+        # ----------------------------------------
+        # Check for missing input/output paths
+
+        assert isinstance(self._task_dir, str)
+
+        if not os.path.exists(self._task_dir):
+            raise FileNotFoundError(self._task_dir)
+
+        if not self._build_dir.startswith(self._repo_dir):
+            raise ValueError(
+                f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
+            )
+
+        # ----------------------------------------
+        # Check for task collisions
+
+        # FIXME need a test for task output collision that uses symlinks
+
+        for file in self._out_files:
+            real_file = os.path.realpath(file)
+            if real_file in Stats.filename_to_fingerprint:
+                raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+            Stats.filename_to_fingerprint[real_file] = real_file
+
+        # ----------------------------------------
+        # Sanity checks
+
+        # Check for missing input files/paths
+        if not os.path.exists(self._task_dir):
+            raise FileNotFoundError(self._task_dir)
+
+        if not self._dry_run:
+            for file in self._in_files:
+                if file is None:
+                    raise ValueError("_in_files contained a None")
+                if not os.path.exists(file):
+                    raise FileNotFoundError(file)
+
+        # Check that all build files would end up under build_dir
+        for file in self._out_files:
+            if file is None:
+                raise ValueError("_out_files contained a None")
+            file = os.path.abspath(file)
+            if not file.startswith(self._build_dir):
+                raise ValueError(
+                    f"Path error, output file {file} is not under build_dir {self._build_dir}"
+                )
+
+        # Check for duplicate task outputs
+        if self._command:
+            for file in self._out_files:
+                file = os.path.abspath(file)
+                if file in Stats.all_out_files:
+                    raise NameError(f"Multiple rules build {file}!")
+                Stats.all_out_files.add(file)
+
+        # Make sure our output directories exist
+        if not self._dry_run:
+            for file in self._out_files:
+                os.makedirs(os.path.dirname(file), exist_ok=True)
+
+    #--------------------------------------------------------------------------------
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
     # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
@@ -1683,110 +1772,15 @@ class Task:
             Log()
             Log.log(prefix + suffix)
 
-        if self._verbose or self._debug:
-            Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
-
         if self._debug:
             Log.log(f"\nTask before expand: {self}")
 
         #----------------------------------------
 
         try:
-            old_cwd = os.getcwd()
             self._task_dir = check(str, Path.abs_path(self._config.eval("task_dir")))
-            os.chdir(self._task_dir)
-            self.to_state(TaskState.INIT)
-
-            self._root_dir   = check(str, Path.abs_path(check(str, e.eval("root_dir"))))
-            self._root_file  = check(str, Path.abs_path(check(str, e.eval("root_file"))))
-
-            self._repo_dir   = check(str, Path.abs_path(check(str, e.eval("repo_dir"))))
-            self._repo_file  = check(str, Path.abs_path(check(str, e.eval("repo_file"))))
-
-            self._this_dir   = check(str, Path.abs_path(check(str, e.eval("this_dir"))))
-            self._this_file  = check(str, Path.abs_path(check(str, e.eval("this_file"))))
-
-            self._build_root = check(str, Path.abs_path(check(str, e.eval("build_root"))))
-            self._build_dir  = check(str, Path.abs_path(check(str, e.eval("build_dir"))))
-
-            self._job_count   = check(int, e.eval("job_count"))
-            self._keep_going  = check(int, e.eval("keep_going"))
-
-            # Fix up all in/out paths
-            Utils.walk(self._config, self.move_stuff1)
-
-            self._in_depfile = e.eval("in_depfile")
-
-            # And now we can expand the name, description, and command.
-
-            self._name = check(str, e.eval("name"))
-            self._desc = check(str, e.eval("desc"))
-
-            if (callable(self._config.command)):
-                self._command = self._config.command
-            else:
-                self._command = e.expand_variant(self._config.command)
-
-            # ----------------------------------------
-            # Check for missing input/output paths
-
-            assert isinstance(self._task_dir, str)
-
-            if not os.path.exists(self._task_dir):
-                raise FileNotFoundError(self._task_dir)
-
-            if not self._build_dir.startswith(self._repo_dir):
-                raise ValueError(
-                    f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
-                )
-
-            # ----------------------------------------
-            # Check for task collisions
-
-            # FIXME need a test for task output collision that uses symlinks
-
-            for file in self._out_files:
-                real_file = os.path.realpath(file)
-                if real_file in Stats.filename_to_fingerprint:
-                    raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-                Stats.filename_to_fingerprint[real_file] = real_file
-
-            # ----------------------------------------
-            # Sanity checks
-
-            # Check for missing input files/paths
-            if not os.path.exists(self._task_dir):
-                raise FileNotFoundError(self._task_dir)
-
-            if not self._dry_run:
-                for file in self._in_files:
-                    if file is None:
-                        raise ValueError("_in_files contained a None")
-                    if not os.path.exists(file):
-                        raise FileNotFoundError(file)
-
-            # Check that all build files would end up under build_dir
-            for file in self._out_files:
-                if file is None:
-                    raise ValueError("_out_files contained a None")
-                file = os.path.abspath(file)
-                if not file.startswith(self._build_dir):
-                    raise ValueError(
-                        f"Path error, output file {file} is not under build_dir {self._build_dir}"
-                    )
-
-            # Check for duplicate task outputs
-            if self._command:
-                for file in self._out_files:
-                    file = os.path.abspath(file)
-                    if file in Stats.all_out_files:
-                        raise NameError(f"Multiple rules build {file}!")
-                    Stats.all_out_files.add(file)
-
-            # Make sure our output directories exist
-            if not self._dry_run:
-                for file in self._out_files:
-                    os.makedirs(os.path.dirname(file), exist_ok=True)
+            with chdir(self._task_dir):
+                self.task_init()
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
@@ -1795,16 +1789,13 @@ class Task:
             raise asyncio.CancelledError() from ex
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Failure during task init because task is broken
+            self.to_state(TaskState.BROKEN)
             if self._should_fail:
-                # Failure during task init because task is broken
                 Stats.tasks_shouldfail += 1
             else:
                 Stats.tasks_broken += 1
-            self.to_state(TaskState.BROKEN)
             raise ex
-
-        finally:
-            os.chdir(old_cwd)
 
         #----------------------------------------
 
@@ -1827,6 +1818,8 @@ class Task:
             Stats.tasks_skipped += 1
             self.to_state(TaskState.SKIPPED)
             return
+        if self._verbose or self._debug:
+            Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
 
         #--------------------------------------------------------------------------------
         # Run the task!
@@ -1838,22 +1831,19 @@ class Task:
 
             # Run the commands.
             self.to_state(TaskState.RUNNING)
-
-            # And run the actual task (finally!)
             for command in Utils.flatten(self._command):
                 await self.run_command(command)
-                if self._returncode != 0:
-                    break
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Failure during run_command, task failed
             # If any command failed, we propagate the error to downstream tasks.
+            self.to_state(TaskState.FAILED)
             if self._should_fail:
-                # Failure during run_command, task failed
                 Stats.tasks_shouldfail += 1
+                return
             else:
                 Stats.tasks_failed += 1
-            self.to_state(TaskState.FAILED)
-            raise ex
+                raise ex
         finally:
             await JobPool.release_jobs(self._job_count, self)
 
@@ -1922,7 +1912,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    async def run_command(self, command : str):
+    async def run_command(self, command : str) -> None:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # Non-string non-callable commands are not valid
@@ -1945,46 +1935,36 @@ class Task:
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
-            old_cwd = os.getcwd()
             try:
-                os.chdir(self._task_dir)
-                result = command(self)
-                if inspect.isawaitable(result):
-                    result = await result
-                self._returncode = 0
-            finally:
-                os.chdir(old_cwd)
-                if (self._debug or self._verbose) and self._returncode == 0:
-                    prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-                    suffix = f"Command '{command}' done"
-                    Log.log(prefix + suffix, sameline = not self._verbose)
+                with chdir(self._task_dir):
+                    result = command(self)
+                    while inspect.isawaitable(result):
+                        result = await result
+                    if self._debug or self._verbose:
+                        prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+                        suffix = f"Command '{command}' done"
+                        Log.log(prefix + suffix, sameline = not self._verbose)
+            except:
+                Log.log(f"{Utils.color(255,0,0)}Running command function {command} raised an exception{Utils.color()}")
+                raise
             return
 
         # Create the subprocess via asyncio and then await the result.
-        if self._debug:
-            Log.log(f"Task {hex(id(self))} subprocess start '{command}'")
-
+        if self._debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'")
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd    = self._task_dir,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
         )
+        if self._debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}'")
+
         (stdout_data, stderr_data) = await proc.communicate()
-
-        if self._debug:
-            Log.log(f"Task {hex(id(self))} subprocess done '{command}'")
-
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
-        self._returncode = Utils.check(int, proc.returncode)
 
-        # FIXME We need a better way to handle "should fail" so we don't constantly keep rerunning
-        # intentionally-failing tests every build
-        command_pass = (self._returncode == 0)
-
-        if not command_pass:
-            message = f"CommandFailure: Command exited with return code {self._returncode}\n"
+        if proc.returncode:
+            message = f"CommandFailure: Command exited with return code {proc.returncode}\n"
             if self._stdout or self._stderr:
                 message += f"========== Stdout ==========\n"
                 message += self._stdout
@@ -2001,7 +1981,7 @@ class Task:
                 Log.log(self._stderr)
                 Log.log(f"============================")
 
-        if (self._debug or self._verbose) and command_pass:
+        if (self._debug or self._verbose) and not proc.returncode:
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = f"Command '{command}' done"
             Log.log(prefix + suffix, sameline = not self._verbose)
@@ -2026,7 +2006,6 @@ class Runner:
         cls.finished_tasks = []
 
     #--------------------------------------------------------------------------------
-    # FIXME selecting targets by regex needs revisiting
 
     @classmethod
     def queue_all_tasks(cls):
@@ -2034,38 +2013,32 @@ class Runner:
             task.queue()
 
     @classmethod
-    def queue_root_tasks(cls, _root_mod):
+    def queue_root_tasks(cls):
         # If no target was specified, we queue up all tasks that build stuff in the root repo
-        # FIXME we are not currently doing that....
-        cls.queue_all_tasks()
+
+        #repo_path = Path.join(hancho.config.eval("repo_dir"), hancho.config.eval("repo_file"))
+        repo_dir = hancho.config.eval("repo_dir")
 
         # This doesn't work, I think because we haven't expanded the configs yet
-        #for task in cls.all_tasks:
-        #    build_dir = expand_variant(task._config, task._config.build_dir)
-        #    build_dir = normalize_path(build_dir)
-        #    repo_dir  = expand_variant(app.root_context._config, "{build_dir}")
-        #    repo_dir  = normalize_path(repo_dir)
-        #    if build_dir.startswith(repo_dir):
-        #       task.queue()
+        for task in cls.all_tasks:
+            build_dir = task._config.eval("build_dir")
+            build_dir = Path.norm(build_dir)
+            if build_dir.startswith(repo_dir):
+                task.queue()
+            #build_dir = task._config, task._config.build_dir)
+            #build_dir = normalize_path(build_dir)
+            #repo_dir  = expand_variant(app.root_context._config, "{build_dir}")
+            #repo_dir  = normalize_path(repo_dir)
+            #this_path = Path.join(task._config.eval("this_dir"), task._config.eval("this_file"))
+
+        #cls.queue_all_tasks()
 
     @classmethod
-    #def queue_tasks_by_regex(cls, target_regex : re.Pattern[str]):
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
-            queue_task = False
-            task_name = None
-            # This doesn't work because we haven't expanded output filenames yet
-            # for out_file in flatten(task._out_files):
-            #    if self.target_regex.search(out_file):
-            #        queue_task = True
-            #        task_name = out_file
-            #        break
-            if name := task._config.eval("name"):
-                if target_regex.search(name):
-                    queue_task = True
-                    task_name = name
-            if queue_task:
-                Log.log(f"Queueing task for '{task_name}'")
+            name = task._config.eval("name")
+            if target_regex.search(name):
+                Log.log(f"Queueing task for '{name}'")
                 task.queue()
 
     #--------------------------------------------------------------------------------
@@ -2174,6 +2147,7 @@ flatten = Utils.flatten
 def init(*args, **kwargs):
     new_config = Dict(Loader.defaults, *args, kwargs)
     cv_config.set(new_config)
+    cv_script.set(hancho)
     reset()
 
 def reset():
@@ -2225,7 +2199,7 @@ async def main():
         target_regex = re.compile(hancho.config.target)
         Runner.queue_tasks_by_regex(target_regex)
     else:
-        Runner.queue_root_tasks(root_mod)
+        Runner.queue_root_tasks()
     Stats.time_queue = time.perf_counter() - time_a
 
     if hancho.config.debug or hancho.config.verbose:

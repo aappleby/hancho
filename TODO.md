@@ -22,9 +22,7 @@ need test case for:
 
 
 # FIXME should we be using mappingproxy to make Dicts immutable?
-# FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit
 # FIXME need to ensure that all the stuff accessible to the clients through hancho is clean. Right now it's messy.
-# FIXME we should select tasks to build (if not building all) by doing a regex test after init but before commands are executed
 # FIXME this needs to use a semaphore
 # FIXME this could use some cleanup, I don't think we need _all_ these methods.
 # FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
@@ -34,8 +32,6 @@ need test case for:
 # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 # FIXME need a test for task output collision that uses symlinks
 # FIXME We need a better way to handle "should fail" so we don't constantly keep rerunning
-# FIXME selecting targets by regex needs revisiting
 # FIXME we are not currently doing that.... (If no target was specified, we queue up all tasks that build stuff in the root repo)
 # FIXME need a test for dry run
-
-
+# FIXME try: with contextlib.chdir(): is a bit deep

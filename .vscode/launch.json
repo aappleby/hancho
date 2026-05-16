@@ -10,10 +10,10 @@
       "type"    : "debugpy",
       "request" : "launch",
       "console" : "integratedTerminal",
-      "cwd"     : "${workspaceFolder}/tests",
-      "program" : "test_tasks.py",
+      "cwd"     : "${workspaceFolder}/scratch2",
+      "program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["-d", "-j1"],
-      "args"    : ["TestTasks.test_async_callback"],
+      //"args"    : ["TestTasks.test_async_callback"],
     },
 
     {
