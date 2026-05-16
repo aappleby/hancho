@@ -234,8 +234,6 @@ class Log:
             return
 
         if sameline:
-            # FIXME this is trimming too much because of escape codes
-            output = output[: os.get_terminal_size().columns - 1]
             output = "\r" + output + "\x1B[K"
             cls.log_line(output)
         else:
@@ -346,9 +344,6 @@ class Path:
 
     @classmethod
     def stem(cls, path : str) -> str:
-        #flat_names : list[str] = Utils.flatten(filename)
-        #flat_filename : str = flat_names[0]
-        #base_filename : str = os.path.basename(flat_filename)
         return os.path.splitext(os.path.basename(path))[0]
 
 # endregion
@@ -1599,12 +1594,12 @@ class Task:
         # Gather all absolute file paths to _in/_out_files.
         # These filenames must be absolute as they may be read from other repos.
         if k == "in_depfile":
-            if os.path.isfile(cast(str, abs_v)):
+            if isinstance(abs_v, str) and os.path.isfile(abs_v):
                 self._in_files.append(abs_v)
         elif k.startswith("out_"):
-            self._out_files.append(abs_v)
+            self._out_files.extend(Utils.flatten(abs_v))
         elif k.startswith("in_"):
-            self._in_files.append(abs_v)
+            self._in_files.extend(Utils.flatten(abs_v))
 
         # For the same reason, we probably can't return rel_v here even though it makes
         # the command lines shorter...
@@ -1679,31 +1674,17 @@ class Task:
         if self._config.eval("verbose") or self._config.eval("debug"):
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = "Task"
+            if self._dry_run: suffix += " (DRY RUN)"
             if self._config.name is not Loader.defaults.name:
                 suffix += f" '{self._config.name}'"
             elif self._config.desc is not Loader.defaults.desc:
                 suffix += f" '{self._config.desc}'"
             suffix += f" starting"
             Log()
-            Log.log("=" * (os.get_terminal_size().columns - 1))
             Log.log(prefix + suffix)
 
         if self._verbose or self._debug:
             Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
-
-        #if self._verbose or self._debug:
-        #    Log.log(Utils.color(128, 128, 255), end="")
-        #    if self._dry_run:
-        #        Log.log("(DRY RUN) ", end="")
-        #    Log.log(f"{Path.rel_path(self._task_dir, os.getcwd())}$ ", end="")
-        #    #Log.log(f"{self._task_dir}$ ", end="")
-        #    Log.log(Utils.color(), end="")
-        #    if callable(command):
-        #        Log.log(f"call {command}")
-        #    else:
-        #        Log.log(command)
-
-        #----------------------------------------
 
         if self._debug:
             Log.log(f"\nTask before expand: {self}")
@@ -1734,9 +1715,6 @@ class Task:
             # Fix up all in/out paths
             Utils.walk(self._config, self.move_stuff1)
 
-            # FIXME this flatten should happen somewhere else
-            self._in_files   = Utils.flatten(self._in_files)
-            self._out_files  = Utils.flatten(self._out_files)
             self._in_depfile = e.eval("in_depfile")
 
             # And now we can expand the name, description, and command.
@@ -1765,7 +1743,7 @@ class Task:
             # ----------------------------------------
             # Check for task collisions
 
-            # FIXME need a test for this that uses symlinks
+            # FIXME need a test for task output collision that uses symlinks
 
             for file in self._out_files:
                 real_file = os.path.realpath(file)
@@ -1780,11 +1758,12 @@ class Task:
             if not os.path.exists(self._task_dir):
                 raise FileNotFoundError(self._task_dir)
 
-            for file in self._in_files:
-                if file is None:
-                    raise ValueError("_in_files contained a None")
-                if not os.path.exists(file):
-                    raise FileNotFoundError(file)
+            if not self._dry_run:
+                for file in self._in_files:
+                    if file is None:
+                        raise ValueError("_in_files contained a None")
+                    if not os.path.exists(file):
+                        raise FileNotFoundError(file)
 
             # Check that all build files would end up under build_dir
             for file in self._out_files:
@@ -1975,7 +1954,7 @@ class Task:
                 self._returncode = 0
             finally:
                 os.chdir(old_cwd)
-                if self._returncode == 0:
+                if (self._debug or self._verbose) and self._returncode == 0:
                     prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
                     suffix = f"Command '{command}' done"
                     Log.log(prefix + suffix, sameline = not self._verbose)
@@ -2022,7 +2001,7 @@ class Task:
                 Log.log(self._stderr)
                 Log.log(f"============================")
 
-        if command_pass:
+        if (self._debug or self._verbose) and command_pass:
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = f"Command '{command}' done"
             Log.log(prefix + suffix, sameline = not self._verbose)
@@ -2189,7 +2168,6 @@ path    = os.path # path.dirname and path.basename used by makefile-related rule
 re      = re # why is sub() not working?
 glob    = staticmethod(glob.glob)
 ext     = staticmethod(Path.ext)
-stem    = staticmethod(Path.stem)      # FIXME used by metron/tests?
 rel     = Path.rel_path
 flatten = Utils.flatten
 
