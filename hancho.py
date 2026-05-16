@@ -21,6 +21,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # clean. Right now it's messy.
 # FIXME we should select tasks to build (if not building all) by doing a regex test after init but
 # before commands are executed
+# FIXME test Promise thingy
 
 ####################################################################################################
 # region imports
@@ -201,6 +202,12 @@ class Stats:
 ####################################################################################################
 # region Log
 
+
+#def remove_ansi_escape_codes(text):
+#    # Regex for matching ANSI escape sequences
+#    ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
+#    return ansi_escape.sub('', text)
+
 class Log:
     buffer : str
     line_dirty : bool
@@ -227,6 +234,7 @@ class Log:
             return
 
         if sameline:
+            # FIXME this is trimming too much because of escape codes
             output = output[: os.get_terminal_size().columns - 1]
             output = "\r" + output + "\x1B[K"
             cls.log_line(output)
@@ -356,7 +364,8 @@ class Utils:
 
     @classmethod
     def check(cls, type_, t):
-        assert isinstance(t, type_), f"Expected {type_.__name__}, got {type(t).__name__}"
+        if not isinstance(t, type_):
+            assert isinstance(t, type_), f"Expected {type_.__name__}, got {type(t).__name__} = {t}"
         return t
 
     @classmethod
@@ -1125,7 +1134,7 @@ class Loader:
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
 
-    config_defaults = Dict(
+    defaults = Dict(
 
         name       = "<name missing>",
         desc       = "<description missing>",
@@ -1175,7 +1184,7 @@ class Loader:
     def parse_flags(cls, args : list[str]):
         assert Utils.is_collection(args)
 
-        d = cls.config_defaults
+        d = cls.defaults
 
         # pylint: disable=line-too-long
         # fmt: off
@@ -1313,18 +1322,21 @@ class Loader:
 # Promise selects subsets of _out_files
 
 class Promise:
-    def __init__(self, task, *args):
-        self.task = task
+    def __init__(self, task : Task, *args):
+        self.task : Task = task
         self.args = args
 
     async def get(self):
         await self.task.await_done()
         if len(self.args) == 0:
-            return self.task.out_files
+            result = self.task._out_files
+            return result
         elif len(self.args) == 1:
-            return self.task._context[self.args[0]]
+            field = self.args[0]
+            result = self.task._config[field]
+            return result
         else:
-            return [self.task._context[field] for field in self.args]
+            return [self.task._config[field] for field in self.args]
 
 # endregion
 ####################################################################################################
@@ -1356,12 +1368,15 @@ class Task:
         Loader.check_init()
 
         self._config : Dict = Dict(hancho.config, *args, **kwargs)
-        self._context : contextvars.Context = contextvars.copy_context()
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task | None
 
+        # But we do have to save the context, we will use it when we create the asyncio.Task
+        self._context : contextvars.Context = contextvars.copy_context()
+
+        self._name : str       = None
         self._desc : str       = None
         self._command : Any    = None
         self._in_depfile : str = None
@@ -1491,12 +1506,13 @@ class Task:
     def promise(self, *args):
         return Promise(self, *args)
 
-    def print_status(self):
-        """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
-        Log.log(
-            f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} {self._desc}",
-            sameline = not self._verbose,
-        )
+#    def print_status(self, command):
+#        """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
+#        desc = self._desc if self._desc is not "<description missing>" else command
+#        Log.log(
+#            f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} {self._desc}",
+#            sameline = not self._verbose,
+#        )
 
     #--------------------------------------------------------------------------------
 
@@ -1540,16 +1556,22 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def expand_path(self, k, v):
+#    def expand_path(self, k, v):
+#        # Expand all in_ and out_ filenames
+#        # We _must_ expand these first before joining paths or the paths will be incorrect:
+#        # prefix + swap(abs_path) != abs(prefix + swap(path))
+#
+#        v = cast(str, self._config.expand(v))
+#        v = Path.normpath(v) # type: ignore
+#        return v
+
+    def fixup_path(self, k, v):
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
         v = cast(str, self._config.expand(v))
         v = Path.normpath(v) # type: ignore
-        return v
-
-    def fixup_path(self, k, v):
 
         # Make all in_ and out_ file paths absolute.
         if k == "in_depfile":
@@ -1559,18 +1581,34 @@ class Task:
         elif k.startswith("in_"):
             v = self.move_to_task_dir(v)
 
-        # Gather all absolute file paths to _in/_out_files.
-        if k == "in_depfile":
-            if os.path.isfile(cast(str, v)): self._in_files.append(v)
-        elif k.startswith("out_"):
-            self._out_files.append(v)
-        elif k.startswith("in_"):
-            self._in_files.append(v)
-
         # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
         # all paths so that the command line won't be huge after expansion.
-        v = Path.rel_path(v, self._task_dir)
-        return v
+        #v = Path.rel_path(v, self._task_dir)
+        #print()
+        #print(f"<<< {v}")
+        #print(f">>> {Path.rel_path(v, self._task_dir)}")
+
+        #abs_v = os.path.abspath(Utils.check(str, v))
+        #rel_v = os.path.relpath(abs_v, self._task_dir)
+        abs_v = Path.abs_path(v)
+        rel_v = Path.rel_path(v, self._task_dir)
+
+        # We can't actually do this everywhere,
+        #v = Path.rel_path(v, self._task_dir)
+
+        # Gather all absolute file paths to _in/_out_files.
+        # These filenames must be absolute as they may be read from other repos.
+        if k == "in_depfile":
+            if os.path.isfile(cast(str, abs_v)):
+                self._in_files.append(abs_v)
+        elif k.startswith("out_"):
+            self._out_files.append(abs_v)
+        elif k.startswith("in_"):
+            self._in_files.append(abs_v)
+
+        # For the same reason, we probably can't return rel_v here even though it makes
+        # the command lines shorter...
+        return abs_v
 
     #--------------------------------------------------------------------------------
 
@@ -1584,26 +1622,11 @@ class Task:
 
         if Utils.is_collection(v):
             for (i, v2) in enumerate(v):
-                v2 = cast(str, self._config.expand(v2))
-                v2 = Path.normpath(v2) # type: ignore
-                v[i] = v2
-
-        else:
-            c[k] = self.expand_path(k, v)
-
-    def move_stuff2(self, c, k, v):
-        if not isinstance(k, str):
-            return
-        if not k.startswith("in_") and not k.startswith("out_"):
-            return
-        if v is None:
-            return
-
-        if Utils.is_collection(v):
-            for (i, v2) in enumerate(v):
                 v[i] = self.fixup_path(k, v2)
-        else:
+        elif isinstance(v, str):
             c[k] = self.fixup_path(k, v)
+        else:
+            assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
 
     #--------------------------------------------------------------------------------
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
@@ -1611,6 +1634,24 @@ class Task:
 
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
+
+        check = Utils.check
+        c = self._config
+        e = Expander(c)
+
+        self._depformat   = check(str | None, e.eval("depformat"))
+        self._build_tag   = check(str | None, e.eval("build_tag"))
+        self._target      = check(str | None, e.eval("target"))
+        self._tool        = check(str | None, e.eval("tool"))
+
+        self._verbose     = check(bool, e.eval("verbose"))
+        self._debug       = check(bool, e.eval("debug"))
+        self._dry_run     = check(bool, e.eval("dry_run"))
+        self._quiet       = check(bool, e.eval("quiet"))
+        self._rebuild     = check(bool, e.eval("rebuild"))
+        self._shuffle     = check(bool, e.eval("shuffle"))
+        self._trace       = check(bool, e.eval("trace"))
+        self._should_fail = check(bool, e.eval("should_fail"))
 
         #--------------------------------------------------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
@@ -1632,6 +1673,36 @@ class Task:
         # before initializing the task so that any path.abspath or whatever happen from the right
         # place.
 
+        Stats.tasks_running += 1
+        self._task_index = Stats.tasks_running
+
+        if self._config.eval("verbose") or self._config.eval("debug"):
+            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+            suffix = "Task"
+            if self._config.name is not Loader.defaults.name:
+                suffix += f" '{self._config.name}'"
+            elif self._config.desc is not Loader.defaults.desc:
+                suffix += f" '{self._config.desc}'"
+            suffix += f" starting"
+            Log()
+            Log.log("=" * (os.get_terminal_size().columns - 1))
+            Log.log(prefix + suffix)
+
+        if self._verbose or self._debug:
+            Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
+
+        #if self._verbose or self._debug:
+        #    Log.log(Utils.color(128, 128, 255), end="")
+        #    if self._dry_run:
+        #        Log.log("(DRY RUN) ", end="")
+        #    Log.log(f"{Path.rel_path(self._task_dir, os.getcwd())}$ ", end="")
+        #    #Log.log(f"{self._task_dir}$ ", end="")
+        #    Log.log(Utils.color(), end="")
+        #    if callable(command):
+        #        Log.log(f"call {command}")
+        #    else:
+        #        Log.log(command)
+
         #----------------------------------------
 
         if self._debug:
@@ -1640,14 +1711,10 @@ class Task:
         #----------------------------------------
 
         try:
-            check = Utils.check
             old_cwd = os.getcwd()
             self._task_dir = check(str, Path.abs_path(self._config.eval("task_dir")))
             os.chdir(self._task_dir)
             self.to_state(TaskState.INIT)
-
-            c = self._config
-            e = Expander(c)
 
             self._root_dir   = check(str, Path.abs_path(check(str, e.eval("root_dir"))))
             self._root_file  = check(str, Path.abs_path(check(str, e.eval("root_file"))))
@@ -1664,32 +1731,17 @@ class Task:
             self._job_count   = check(int, e.eval("job_count"))
             self._keep_going  = check(int, e.eval("keep_going"))
 
-            # these are none if not set
-            self._depformat   = check(str | None, e.eval("depformat"))
-            self._build_tag   = check(str | None, e.eval("build_tag"))
-            self._target      = check(str | None, e.eval("target"))
-            self._tool        = check(str | None, e.eval("tool"))
-
-            self._verbose     = check(bool, e.eval("verbose"))
-            self._debug       = check(bool, e.eval("debug"))
-            self._dry_run     = check(bool, e.eval("dry_run"))
-            self._quiet       = check(bool, e.eval("quiet"))
-            self._rebuild     = check(bool, e.eval("rebuild"))
-            self._shuffle     = check(bool, e.eval("shuffle"))
-            self._trace       = check(bool, e.eval("trace"))
-            self._should_fail = check(bool, e.eval("should_fail"))
-
             # Fix up all in/out paths
             Utils.walk(self._config, self.move_stuff1)
-            Utils.walk(self._config, self.move_stuff2)
 
             # FIXME this flatten should happen somewhere else
             self._in_files   = Utils.flatten(self._in_files)
             self._out_files  = Utils.flatten(self._out_files)
             self._in_depfile = e.eval("in_depfile")
 
-            # And now we can expand the description and command.
+            # And now we can expand the name, description, and command.
 
+            self._name = check(str, e.eval("name"))
             self._desc = check(str, e.eval("desc"))
 
             if (callable(self._config.command)):
@@ -1738,6 +1790,7 @@ class Task:
             for file in self._out_files:
                 if file is None:
                     raise ValueError("_out_files contained a None")
+                file = os.path.abspath(file)
                 if not file.startswith(self._build_dir):
                     raise ValueError(
                         f"Path error, output file {file} is not under build_dir {self._build_dir}"
@@ -1746,6 +1799,7 @@ class Task:
             # Check for duplicate task outputs
             if self._command:
                 for file in self._out_files:
+                    file = os.path.abspath(file)
                     if file in Stats.all_out_files:
                         raise NameError(f"Multiple rules build {file}!")
                     Stats.all_out_files.add(file)
@@ -1805,23 +1859,12 @@ class Task:
 
             # Run the commands.
             self.to_state(TaskState.RUNNING)
-            Stats.tasks_running += 1
-            self._task_index = Stats.tasks_running
-
-            # Print our status bar
-            self.print_status()
-            if self._verbose or self._debug:
-                Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
 
             # And run the actual task (finally!)
             for command in Utils.flatten(self._command):
                 await self.run_command(command)
                 if self._returncode != 0:
                     break
-            Log.log(
-                f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} Task passed - '{self._desc}'",
-                sameline = not self._verbose,
-            )
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # If any command failed, we propagate the error to downstream tasks.
@@ -1903,24 +1946,25 @@ class Task:
     async def run_command(self, command : str):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
+        # Non-string non-callable commands are not valid
+        if not isinstance(command, str) and not callable(command):
+            raise ValueError(f"Don't know what to do with {command}")
+
         if self._verbose or self._debug:
-            Log.log(Utils.color(128, 128, 255), end="")
-            if self._dry_run:
-                Log.log("(DRY RUN) ", end="")
-            Log.log(f"{Path.rel_path(self._task_dir, os.getcwd())}$ ", end="")
-            #Log.log(f"{self._task_dir}$ ", end="")
-            Log.log(Utils.color(), end="")
-            if callable(command):
-                Log.log(f"call {command}")
-            else:
-                Log.log(command)
+            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+            suffix = "Task"
+            if self._name is not Loader.defaults.name:
+                suffix += f" '{self._name}'"
+            elif self._desc is not Loader.defaults.desc:
+                suffix += f" '{self._desc}'"
+            suffix += f" running command '{command}'"
+            Log.log(prefix + suffix, sameline = not self._verbose)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
             return
 
         # Custom commands just get called and then early-out'ed.
-
         if callable(command):
             old_cwd = os.getcwd()
             try:
@@ -1928,14 +1972,14 @@ class Task:
                 result = command(self)
                 if inspect.isawaitable(result):
                     result = await result
-                self._returncode = result
+                self._returncode = 0
             finally:
                 os.chdir(old_cwd)
+                if self._returncode == 0:
+                    prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+                    suffix = f"Command '{command}' done"
+                    Log.log(prefix + suffix, sameline = not self._verbose)
             return
-
-        # Non-string non-callable commands are not valid
-        if not isinstance(command, str):
-            raise ValueError(f"Don't know what to do with {command}")
 
         # Create the subprocess via asyncio and then await the result.
         if self._debug:
@@ -1962,19 +2006,27 @@ class Task:
 
         if not command_pass:
             message = f"CommandFailure: Command exited with return code {self._returncode}\n"
-            message += f"========== Stdout ==========\n"
-            message += self._stdout
-            message += f"========== Stderr ==========\n"
-            message += self._stderr
-            message += f"============================\n"
+            if self._stdout or self._stderr:
+                message += f"========== Stdout ==========\n"
+                message += self._stdout
+                message += f"========== Stderr ==========\n"
+                message += self._stderr
+                message += f"============================\n"
             raise ValueError(message)
 
         elif self._debug or self._verbose:
-            Log.log(f"========== Stdout ==========")
-            Log.log(self._stdout)
-            Log.log(f"========== Stderr ==========")
-            Log.log(self._stderr)
-            Log.log(f"============================")
+            if self._stdout or self._stderr:
+                Log.log(f"========== Stdout ==========")
+                Log.log(self._stdout)
+                Log.log(f"========== Stderr ==========")
+                Log.log(self._stderr)
+                Log.log(f"============================")
+
+        if command_pass:
+            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+            suffix = f"Command '{command}' done"
+            Log.log(prefix + suffix, sameline = not self._verbose)
+
 
 # endregion
 ####################################################################################################
@@ -2120,7 +2172,7 @@ class Runner:
     @classmethod
     def log_task_failure(cls, task):
         Log.log("")
-        Log.log(f"{Utils.color(255, 128, 0)}Task failed: {task._desc}{Utils.color()}")
+        Log.log(f"{Utils.color(255, 128, 0)}Task failed: {task._name} {task._desc} {task._command} {Utils.color()}")
         Log.log(f"{Utils.color(255, 128, 128)}{traceback.format_exc()}{Utils.color()}")
         if hancho.config.debug or hancho.config.verbose:
             Log.log(str(task))
@@ -2142,7 +2194,7 @@ rel     = Path.rel_path
 flatten = Utils.flatten
 
 def init(*args, **kwargs):
-    new_config = Dict(Loader.config_defaults, *args, kwargs)
+    new_config = Dict(Loader.defaults, *args, kwargs)
     cv_config.set(new_config)
     reset()
 
@@ -2227,13 +2279,13 @@ async def main():
 
 if __name__ == "__main__":
     flags = Loader.parse_flags(sys.argv[1:])
-    base_config = Loader.config_defaults | flags
+    base_config = Loader.defaults | flags
     cv_config.set(base_config)
     reset()
     result = asyncio.run(main())
     sys.exit(result)
 else:
-    cv_config.set(Loader.config_defaults)
+    cv_config.set(Loader.defaults)
     reset()
 
 # endregion
