@@ -347,15 +347,19 @@ class Utils:
         return not Utils.is_mapping(val) and not Utils.is_collection(val)
 
     @classmethod
-    def _walk(cls, c, k, v, func):
-        if Utils.is_scalar(v):
-            func(c, k, v)
-        elif Utils.is_mapping(v):
+    def _walk2(cls, c, k, v, func):
+        if Utils.is_mapping(v):
             for k2, v2 in v.items():
-                Utils._walk(v, k2, v2, func)
+                Utils._walk2(v, k2, v2, func)
         elif Utils.is_collection(v):
             for k2, v2 in enumerate(v):
-                Utils._walk(v, k2, v2, func)
+                Utils._walk2(v, k2, v2, func)
+        else:
+            return func(c, k, v)
+
+    @classmethod
+    def walk2(cls, c, func):
+        return cls._walk2(None, None, c, func)
 
     @classmethod
     def walk(cls, d, func):
@@ -368,31 +372,25 @@ class Utils:
                 func(d, key, val)
                 Utils.walk(val, func)
 
-    @classmethod
-    async def async_walk(cls, d, async_func):
-        if Utils.is_mapping(d):
-            for key, val in d.items():
-                await async_func(d, key, val)
-                await Utils.async_walk(val, async_func)
-        elif Utils.is_collection(d):
-            for key, val in enumerate(d):
-                await async_func(d, key, val)
-                await Utils.async_walk(val, async_func)
+    @staticmethod
+    def _map(k, v, func):
+        if Utils.is_scalar(v):
+            return func(k, v)
+        elif Utils.is_collection(v):
+            return [Utils._map(k2, v2, func) for k2, v2 in enumerate(v)]
+        elif Utils.is_mapping(v):
+            return Dict({k2 : Utils._map(k2, v2, func) for k2, v2 in v.items()})
+        else:
+            assert False, f"Don't know what to do with a {type(v)}"
 
-    @classmethod
-    def walk2(cls, d, func):
-        """Like walk, but does not automatically recurse"""
-        if Utils.is_mapping(d):
-            for key, val in d.items():
-                func(d, key, val)
-        elif Utils.is_collection(d):
-            for key, val in enumerate(d):
-                func(d, key, val)
+    @staticmethod
+    def map(v, func):
+        return Utils._map(None, v, func)
 
     #--------------------------------------------------------------------------------
 
     @staticmethod
-    def stringify_variant(variant):
+    def stringify_variant(variant) -> str:
         """Converts any type into a template-compatible string."""
         if variant is None:
             return ""
@@ -402,18 +400,30 @@ class Utils:
         else:
             return str(variant)
 
+    #--------------------------------------------------------------------------------
+
     @staticmethod
-    async def await_variant(c):
-        async def wait(c, k, v):
-            if isinstance(v, Promise):
-                c[k] = await Utils.await_variant(await v.get())
-            elif isinstance(v, Task):
-                c[k] = await v.await_done()
-            elif inspect.isawaitable(v):
-                c[k] = await Utils.await_variant(await v)
-            else:
-                pass
-        await Utils.async_walk(c, wait)
+    async def await_scalar(v):
+        if isinstance(v, Promise):
+            return await Utils.await_variant(await v.get())
+        elif isinstance(v, Task):
+            return await Utils.await_variant(await v.await_done())
+        elif inspect.isawaitable(v):
+            return await Utils.await_variant(await v)
+        else:
+            return v
+
+    @staticmethod
+    async def await_variant(v):
+        if Utils.is_scalar(v):
+            return await Utils.await_scalar(v)
+        elif Utils.is_collection(v):
+            return [await Utils.await_variant(v2) for v2 in v]
+        elif Utils.is_mapping(v):
+            return Dict({k2 : await Utils.await_variant(v2) for k2, v2 in v.items()})
+        else:
+            assert False, f"Don't know what to do with a {type(v)}"
+
 
 # endregion
 ####################################################################################################
@@ -813,7 +823,7 @@ class Expander(abc.Mapping):
         if not isinstance(template, str):
             return template
 
-        blocks = Expander.split(template)
+        blocks : list[str] = Expander.split(template)
 
         if len(blocks) == 0:
             return template
@@ -830,8 +840,7 @@ class Expander(abc.Mapping):
             if isinstance(block, Expander.Lit):
                 continue
             try:
-                block = self.eval(block)
-                block = Utils.stringify_variant(block)
+                block = Utils.stringify_variant(self.eval(block))
             except RecursionError as e:
                 raise e
             except:
@@ -1291,8 +1300,10 @@ class Task:
 
         self._task_dir   = check(str, Path.abspath(self._config.eval("task_dir")))
 
-        self._build_root = check(str, Path.abspath(check(str, e.eval("build_root"))))
+        self._build_root = Path.abspath(e.eval("build_root"))
         self._build_dir  = check(str, Path.abspath(check(str, e.eval("build_dir"))))
+
+        self._in_depfile : str = e.eval("in_depfile", str)
 
         self._job_count   = check(int, e.eval("job_count"))
         self._keep_going  = check(int, e.eval("keep_going"))
@@ -1324,7 +1335,6 @@ class Task:
 
         self._in_files  = []
         self._out_files = []
-        self._in_depfile : str = ""
 
         Runner.all_tasks.append(self)
 
@@ -1374,12 +1384,12 @@ class Task:
     def queue(self):
         self.to_state(TaskState.QUEUED)
 
-        # Queue all tasks referenced by this task's config.
-        def apply(c, k, v):
-            if isinstance(v, Task):
-                if v._state is TaskState.DECLARED:
-                    v.queue()
-        Utils.walk(self._config, apply)
+        # Queue all tasks referenced by this task's config.F
+        def apply2(k, v):
+            if isinstance(v, Task) and v._state is TaskState.DECLARED:
+                v.queue()
+            return v
+        self._config = Utils.map(self._config, apply2)
 
         # And now queue this task.
         Runner.queued_tasks.append(self)
@@ -1431,6 +1441,10 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
+        assert isinstance(k, str)
+        assert k.startswith("in_") or k.startswith("out_")
+        assert v is not None
+
         v = cast(str, self._config.expand(v))
         v = Path.normpath(v) # type: ignore
 
@@ -1439,6 +1453,8 @@ class Task:
             v = self.move_to_build_dir(v)
         elif k.startswith("in_"):
             v = Path.join(self._task_dir,v)
+        else:
+            return v
 
         # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
         # all paths so that the command line won't be huge after expansion.
@@ -1465,6 +1481,15 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
+    def move_stuff2(self, k, v):
+        if not isinstance(k, str):
+            return v
+        if not k.startswith("in_") and not k.startswith("out_"):
+            return v
+        if v is None:
+            return v
+        return self.fixup_path(k, v)
+
     def move_stuff1(self, c, k, v):
         if not isinstance(k, str):
             return
@@ -1475,7 +1500,8 @@ class Task:
 
         if Utils.is_collection(v):
             for (i, v2) in enumerate(v):
-                v[i] = self.fixup_path(k, v2)
+                if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+                    v[i] = self.fixup_path(k, v2)
         elif isinstance(v, str):
             c[k] = self.fixup_path(k, v)
         else:
@@ -1490,6 +1516,7 @@ class Task:
         c = self._config
         e = Expander(c)
 
+
         # Fix up all in/out paths
         Utils.walk(self._config, self.move_stuff1)
 
@@ -1498,11 +1525,11 @@ class Task:
 
         # And now we can expand the name, description, and command.
 
-        self._name = check(str, e.eval("name"))
-        self._desc = check(str, e.eval("desc"))
+        self._name = e.eval("name", str)
+        self._desc = e.eval("desc", str)
 
         if (callable(self._config.command)):
-            self._command = self._config.command
+            self._command = cast(Any, self._config.command)
         else:
             self._command = e.expand(self._config.command)
 
@@ -1585,7 +1612,7 @@ class Task:
         self.to_state(TaskState.WAITING)
 
         try:
-            await Utils.await_variant(self._config)
+            self._config = cast(Dict, await Utils.await_variant(self._config))
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
