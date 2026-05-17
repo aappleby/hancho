@@ -40,7 +40,7 @@ import time
 import traceback
 import types
 import contextvars
-from typing import Any, cast
+from typing import Any, cast, TypeVar
 from collections import abc
 from enum import Enum
 from contextlib import chdir
@@ -66,6 +66,8 @@ def recursify(func):
         else:
             return func(val, *args, **kwargs)
     return result
+
+T = TypeVar('T')
 
 # endregion
 ####################################################################################################
@@ -341,6 +343,21 @@ class Utils:
     #--------------------------------------------------------------------------------
 
     @classmethod
+    def is_scalar(cls, val):
+        return not Utils.is_mapping(val) and not Utils.is_collection(val)
+
+    @classmethod
+    def _walk(cls, c, k, v, func):
+        if Utils.is_scalar(v):
+            func(c, k, v)
+        elif Utils.is_mapping(v):
+            for k2, v2 in v.items():
+                Utils._walk(v, k2, v2, func)
+        elif Utils.is_collection(v):
+            for k2, v2 in enumerate(v):
+                Utils._walk(v, k2, v2, func)
+
+    @classmethod
     def walk(cls, d, func):
         if Utils.is_mapping(d):
             for key, val in d.items():
@@ -475,11 +492,13 @@ class Dict(dict):
     ########################################
     # Expander stuff
 
-    def eval(self, expr : str) -> Any:
-        return Expander(self).eval(expr)
+    def eval[T](self, expr : str, as_type: type[T] = object) -> T:
+        result = Expander(self).eval(expr)
+        assert isinstance(result, as_type)
+        return result
 
-    def expand(self, text):
-        return Expander(self).expand(text)
+    def expand(self, template : str_tree) -> str_tree:
+        return Expander(self).expand(template)
 
 ########################################
 
@@ -633,7 +652,7 @@ class Expander(abc.Mapping):
     # Somewhere in the process we need to unescape them and I'm not sure where it goes.
 
     @classmethod
-    def split(cls, text):
+    def split(cls, text) -> list[str]:
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
         list of string literals and expressions. Escaped braces don't count as delimiters.
@@ -728,7 +747,7 @@ class Expander(abc.Mapping):
     ########################################
 
     @track_depth
-    def eval(self, expr : str) -> Any: # , trace : bool
+    def _eval(self, expr : str) -> Any: # , trace : bool
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
@@ -767,10 +786,19 @@ class Expander(abc.Mapping):
 
         return result
 
+    def eval[T](self, expr : str, as_type : type[T] = object) -> T:
+        result = self._eval(expr)
+        if not isinstance(result, as_type):
+            print()
+            print(type(result))
+            print(as_type)
+        #assert isinstance(result, as_type)
+        return result
+
     ########################################
 
     @track_depth
-    def expand(self, template : str | list) -> str | list:
+    def _expand(self, template : str) -> str:
         """
         Expander.expand replaces all innermost {expressions} with the result of evaluating the
         expression and then recurses until either the expansion stops changing or we hit max
@@ -778,9 +806,7 @@ class Expander(abc.Mapping):
         Expand _always_ recurses until expansion does nothing.
         """
 
-        if Utils.is_collection(template):
-            result = [self.expand(v) for v in template]
-            return result
+        assert isinstance(template, str)
 
         trace_color = Utils.color(255, 0, 0)
 
@@ -820,22 +846,14 @@ class Expander(abc.Mapping):
             Tracer.log(self, trace_color, "┗", f" '{result}'")
 
         if result != template:
-            result = self.expand(result)
+            result = self._expand(result)
 
         return result
 
-    def expand_variant(self, variant):
-        if Utils.is_collection(variant) or Utils.is_mapping(variant):
-            def apply(c, k, v):
-                if isinstance(v, str):
-                    c[k] = self.expand(v)
-            Utils.walk(variant, apply)
-            return variant
-        elif isinstance(variant, str):
-            result = self.expand(variant)
-            return result
-        else:
-            Log.log(f"Don't know how to expand_variant a {type(variant)}!")
+    def expand(self, template):
+        if Utils.is_collection(template):
+            return [self.expand(v) for v in template]
+        return self._expand(template)
 
 # endregion
 ####################################################################################################
@@ -1032,7 +1050,7 @@ class Loader:
         job_max     = os.cpu_count(),
 
         depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
-        in_depfile  = None,
+        in_depfile  = "",
 
         build_tag   = None,
         target      = None,
@@ -1294,7 +1312,7 @@ class Task:
         self._should_fail = check(bool, e.eval("should_fail"))
 
         # Command can't be expanded until inputs are ready
-        self._command : str = None
+        self._command : str | list[str] | function = ""
 
         # Bookkeeping stuff
 
@@ -1388,14 +1406,6 @@ class Task:
     #--------------------------------------------------------------------------------
 
     def move_to_build_dir(self, path):
-        if isinstance(path, list):
-            return [self.move_to_build_dir(p) for p in path]
-        if not isinstance(path, str):
-            return path
-
-        assert os.path.isabs(self._task_dir)
-        assert os.path.isabs(self._build_dir)
-
         # Note this conditional needs to be first, as build_dir can itself be under task_dir
         if path.startswith(self._build_dir):
             # Absolute path under build_dir, do nothing.
@@ -1404,25 +1414,14 @@ class Task:
             # If an input source had an absolute path and we swap the extension on it to make the
             # output filename, we'll have a '.o' file or similar inside task_dir. Move it so it
             # lives under build_dir.
-            path = Path.rel_path(path, self._task_dir)
-            path = Path.join(self._build_dir, path)
-            path = Path.normpath(path)
+            path = os.path.join(self._build_dir, os.path.relpath(path, self._task_dir))
         elif os.path.isabs(path):
             raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {path}")
         else:
             # Relative path, add build_dir
-            path = Path.join(self._build_dir, path)
-            path = Path.normpath(path)
+            path = os.path.join(self._build_dir, path)
 
-        assert isinstance(path, str)
-
-        assert os.path.isabs(path)
-        return path
-
-    def move_to_task_dir(self, path):
-        assert os.path.isabs(self._task_dir)
-        path = Path.join(self._task_dir, cast(str, path))
-        path = Path.normpath(path)
+        path = os.path.abspath(path)
         return path
 
     #--------------------------------------------------------------------------------
@@ -1436,12 +1435,10 @@ class Task:
         v = Path.normpath(v) # type: ignore
 
         # Make all in_ and out_ file paths absolute.
-        if k == "in_depfile":
-            v = self.move_to_build_dir(v)
-        elif k.startswith("out_"):
+        if k == "in_depfile" or k.startswith("out_"):
             v = self.move_to_build_dir(v)
         elif k.startswith("in_"):
-            v = self.move_to_task_dir(v)
+            v = Path.join(self._task_dir,v)
 
         # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
         # all paths so that the command line won't be huge after expansion.
@@ -1497,7 +1494,7 @@ class Task:
         Utils.walk(self._config, self.move_stuff1)
 
         # Do we need to fix this one too?
-        self._in_depfile = e.eval("in_depfile")
+        self._in_depfile = e.eval("in_depfile", str)
 
         # And now we can expand the name, description, and command.
 
@@ -1507,7 +1504,7 @@ class Task:
         if (callable(self._config.command)):
             self._command = self._config.command
         else:
-            self._command = e.expand_variant(self._config.command)
+            self._command = e.expand(self._config.command)
 
         # ----------------------------------------
         # Check for missing input/output paths
@@ -1648,7 +1645,7 @@ class Task:
         #--------------------------------------------------------------------------------
         # Early-out if this is a no-op task
 
-        if self._command is None:
+        if not self._command:
             Stats.tasks_finished += 1
             self.to_state(TaskState.FINISHED)
             return
