@@ -3,7 +3,7 @@ import hancho
 tools_base  = hancho.load("tools/tools_base.hancho")
 tools_fpga  = hancho.load("tools/tools_fpga.hancho")
 tools_riscv = hancho.load("tools/tools_riscv.hancho")
-tools_wasm  = hancho.repo("tools/tools_wasm.hancho")
+tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
-hancho.repo("examples/examples.hancho")
-hancho.repo("tests/build.hancho")
+hancho.load("examples/examples.hancho")
+hancho.load("tests/build.hancho")

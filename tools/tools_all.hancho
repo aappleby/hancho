@@ -1,13 +1,6 @@
 import hancho
 
-_base_rules  = hancho.repo("base_rules.hancho")
-_fpga_rules  = hancho.repo("fpga_rules.hancho")
-_riscv_rules = hancho.repo("riscv_rules.hancho")
-_wasm_rules  = hancho.repo("wasm_rules.hancho")
-
-rules = hancho.Dict(
-    _base_rules,
-    _fpga_rules,
-    _riscv_rules,
-    _wasm_rules
-)
+tools_base  = hancho.load("base.hancho")
+tools_fpga  = hancho.load("fpga.hancho")
+tools_riscv = hancho.load("riscv.hancho")
+tools_wasm  = hancho.load("wasm.hancho")

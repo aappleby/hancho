@@ -50,89 +50,10 @@ hancho = sys.modules[__name__]
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
-cv_config = contextvars.ContextVar("config")
-cv_script = contextvars.ContextVar("script")
+cv_context = contextvars.ContextVar("context")
 
 def __getattr__(name):
-    if name == "config":
-        return cv_config.get()
-    if name == "script":
-        return cv_script.get()
-    raise AttributeError(f"Module {__name__} has no attribute {name}")
-
-def __dir__():
-    return [
-        "Task",
-        "Tool",
-        "Dict",
-        "init",
-        "load",
-        "repo",
-        "config",
-    ]
-
-# endregion
-####################################################################################################
-# region Job pool
-
-# FIXME this needs to use a semaphore
-
-class JobPool:
-    job_max : int
-    jobs_available : int
-    job_slots : list[Any]
-    jobs_lock : asyncio.Condition
-
-    @classmethod
-    def reset(cls):
-        cls.job_max = hancho.config.job_max
-        cls.jobs_available = hancho.config.job_max
-        cls.job_slots = [None] * cls.jobs_available
-        cls.jobs_lock = asyncio.Condition()
-
-    ########################################
-
-    @classmethod
-    async def acquire_jobs(cls, count, token : Any):
-        """Waits until 'count' jobs are available and then removes them from the job pool."""
-
-        if count > hancho.config.job_max:
-            raise ValueError(f"Need {count} jobs, but pool is {cls.job_max}.")
-
-        await cls.jobs_lock.acquire()
-        await cls.jobs_lock.wait_for(lambda: cls.jobs_available >= count)
-
-        slots_remaining = count
-        for i, val in enumerate(cls.job_slots):
-            if val is None and slots_remaining:
-                cls.job_slots[i] = token
-                slots_remaining -= 1
-
-        cls.jobs_available -= count
-        cls.jobs_lock.release()
-
-    ########################################
-    # NOTE: The notify_all here is required because we don't know in advance which tasks will
-    # be capable of running after we return jobs to the pool. HOWEVER, this also creates an
-    # O(N^2) slowdown when we have a very large number of pending tasks (>1000) due to the
-    # "Thundering Herd" problem - all tasks will wake up, only a few will acquire jobs, the
-    # rest will go back to sleep again, this will repeat for every call to release_jobs().
-
-    @classmethod
-    async def release_jobs(cls, count, token):
-        """Returns 'count' jobs back to the job pool."""
-
-        await cls.jobs_lock.acquire()
-        cls.jobs_available += count
-
-        slots_remaining = count
-        for i, val in enumerate(cls.job_slots):
-            if val == token:
-                cls.job_slots[i] = None
-                slots_remaining -= 1
-
-        cls.jobs_lock.notify_all()
-        cls.jobs_lock.release()
+    return getattr(cv_context.get(), name)
 
 # endregion
 ####################################################################################################
@@ -1109,6 +1030,7 @@ class Dumper:
 
 class Loader:
 
+    root_mod : types.ModuleType
     dedupe : dict[tuple[str, str], types.ModuleType]
     stack : list[types.ModuleType]
     loaded_files : list[str]
@@ -1122,7 +1044,7 @@ class Loader:
     @classmethod
     def check_init(cls):
         try:
-            cv_config.get()
+            cv_context.get()
         except:
             raise RuntimeError("You have to call hancho.init(debug = True, verbose = False...) or similar before using Hancho.")
 
@@ -1245,10 +1167,11 @@ class Loader:
         script_path = os.path.abspath(script_path)
 
         verbose = hancho.config.debug or hancho.config.verbose
+
         if verbose:
-            Log.log("┃ " * len(Loader.stack), end="")
-        script_type = "repo" if is_repo else "script"
-        Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
+            #Log.log("┃ " * len(Loader.stack), end="")
+            script_type = "repo" if is_repo else "script"
+            Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
 
         #----------------------------------------
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
@@ -1260,14 +1183,14 @@ class Loader:
         if is_repo:
             tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
 
-        script_config = Dict(hancho.config, tweaks, *args, kwargs)
+        new_config = Dict(hancho.config, tweaks, *args, kwargs)
 
         #----------------------------------------
         # Dedupe the load if needed. Modules are only deduped if their configurations are
         # _identical_, which may bite users.
 
         script_path_real = os.path.realpath(script_path)
-        dedupe_key = (script_path_real, script_config.dump(2, print_id = False))
+        dedupe_key = (script_path_real, new_config.dump(2, print_id = False))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1294,7 +1217,15 @@ class Loader:
 
         #----------------------------------------
 
-        with (chdir(script_dir), cv_script.set(new_module), cv_config.set(script_config)):
+        old_context = cv_context.get()
+        new_context = Dict(
+            old_context,
+            config    = new_config,
+            this_repo = new_module if is_repo else old_context.this_repo,
+            this_mod  = new_module,
+        )
+
+        with (chdir(script_dir), cv_context.set(new_context)):
             exec(new_module.__code__, new_module.__dict__)
 
         #----------------------------------------
@@ -1352,14 +1283,22 @@ class Task:
     def __init__(self, *args, **kwargs):
         Loader.check_init()
 
-        self._config : Dict = Dict(hancho.config, *args, **kwargs)
+        # Save the context, we will use it when we create the asyncio.Task
+        self._context     = contextvars.copy_context()
+        self._parent_repo = hancho.this_repo
+        self._parent_mod  = hancho.this_mod
+        self._config      = Dict(hancho.config, *args, **kwargs)
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task | None
 
-        # But we do have to save the context, we will use it when we create the asyncio.Task
-        self._context : contextvars.Context = contextvars.copy_context()
+        # Tasks depend on all .hancho files that were loaaded when the task was created.
+        # This is probably too wide a net, but tracking dependencies between .hancho files is not
+        # really possible.
+        self._loaded_files : list[str] = list(Loader.loaded_files)
+
+        # Expanded config options
 
         self._name : str       = None
         self._desc : str       = None
@@ -1407,11 +1346,6 @@ class Task:
 
         self._in_files  = []
         self._out_files = []
-
-        # Tasks depend on all .hancho files that were loaaded when the task was created.
-        # This is probably too wide a net, but tracking dependencies between .hancho files is not
-        # really possible.
-        self._loaded_files : list[str] = list(Loader.loaded_files)
 
         Runner.all_tasks.append(self)
 
@@ -1490,14 +1424,6 @@ class Task:
     def promise(self, *args):
         return Promise(self, *args)
 
-#    def print_status(self, command):
-#        """Print the "[1/N] Compiling foo.cpp -> foo.o" status line and debug information"""
-#        desc = self._desc if self._desc is not "<description missing>" else command
-#        Log.log(
-#            f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} {self._desc}",
-#            sameline = not self._verbose,
-#        )
-
     #--------------------------------------------------------------------------------
 
     def move_to_build_dir(self, path):
@@ -1540,15 +1466,6 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-#    def expand_path(self, k, v):
-#        # Expand all in_ and out_ filenames
-#        # We _must_ expand these first before joining paths or the paths will be incorrect:
-#        # prefix + swap(abs_path) != abs(prefix + swap(path))
-#
-#        v = cast(str, self._config.expand(v))
-#        v = Path.normpath(v) # type: ignore
-#        return v
-
     def fixup_path(self, k, v):
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
@@ -1567,17 +1484,11 @@ class Task:
 
         # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
         # all paths so that the command line won't be huge after expansion.
-        #v = Path.rel_path(v, self._task_dir)
-        #print()
-        #print(f"<<< {v}")
-        #print(f">>> {Path.rel_path(v, self._task_dir)}")
 
-        #abs_v = os.path.abspath(Utils.check(str, v))
-        #rel_v = os.path.relpath(abs_v, self._task_dir)
         abs_v = Path.abs_path(v)
         rel_v = Path.rel_path(v, self._task_dir)
 
-        # We can't actually do this everywhere,
+        # We can't actually do this everywhere, it breaks stuff
         #v = Path.rel_path(v, self._task_dir)
 
         # Gather all absolute file paths to _in/_out_files.
@@ -1827,7 +1738,7 @@ class Task:
         try:
             # Wait for enough jobs to free up to run this task.
             self.to_state(TaskState.GET_JOBS)
-            await JobPool.acquire_jobs(self._job_count, self)
+            await Runner.acquire(self._job_count)
 
             # Run the commands.
             self.to_state(TaskState.RUNNING)
@@ -1845,7 +1756,7 @@ class Task:
                 Stats.tasks_failed += 1
                 raise ex
         finally:
-            await JobPool.release_jobs(self._job_count, self)
+            await Runner.release(self._job_count)
 
         #--------------------------------------------------------------------------------
         # Task finished successfully
@@ -1986,6 +1897,10 @@ class Task:
             suffix = f"Command '{command}' done"
             Log.log(prefix + suffix, sameline = not self._verbose)
 
+    def dump(self):
+        result = f"{type(self).__name__} @ {hex(id(self))} : '{self._name}'"
+        print(result)
+
 
 # endregion
 ####################################################################################################
@@ -1997,13 +1912,33 @@ class Runner:
     queued_tasks : list[Task]
     started_tasks : list[Task]
     finished_tasks : list[Task]
+    job_max  : int
+    job_sem  : asyncio.Semaphore
+    job_lock : asyncio.Lock
 
     @classmethod
-    def reset(cls):
+    def reset(cls, job_max):
         cls.all_tasks = []
         cls.queued_tasks = []
         cls.started_tasks = []
         cls.finished_tasks = []
+        cls.job_max  = job_max
+        cls.job_sem  = asyncio.Semaphore(job_max)
+        cls.job_lock = asyncio.Lock()
+
+    #--------------------------------------------------------------------------------
+    # Job pool
+
+    @classmethod
+    async def acquire(cls, count):
+        async with cls.job_lock:
+            for _ in range(count):
+                await cls.job_sem.acquire()
+
+    @classmethod
+    async def release(cls, count):
+        for _ in range(count):
+            cls.job_sem.release()
 
     #--------------------------------------------------------------------------------
 
@@ -2014,24 +1949,27 @@ class Runner:
 
     @classmethod
     def queue_root_tasks(cls):
-        # If no target was specified, we queue up all tasks that build stuff in the root repo
+        # This doesn't work in practice, just queue everything...
+        # FIXME really we need to build everything load()ed by the root repo
+        cls.queue_all_tasks()
+        ## If no target was specified, we queue up all tasks that build stuff in the root repo
+        #repo_path1 = Path.join(hancho.config.eval("repo_dir"), hancho.config.eval("repo_file"))
+        #for task in cls.all_tasks:
+        #    repo_path2 = Path.join(task._config.eval("repo_dir"), task._config.eval("repo_file"))
+        #    if repo_path1 == repo_path2:
+        #        task.queue()
 
-        #repo_path = Path.join(hancho.config.eval("repo_dir"), hancho.config.eval("repo_file"))
-        repo_dir = hancho.config.eval("repo_dir")
-
-        # This doesn't work, I think because we haven't expanded the configs yet
-        for task in cls.all_tasks:
-            build_dir = task._config.eval("build_dir")
-            build_dir = Path.norm(build_dir)
-            if build_dir.startswith(repo_dir):
-                task.queue()
-            #build_dir = task._config, task._config.build_dir)
-            #build_dir = normalize_path(build_dir)
-            #repo_dir  = expand_variant(app.root_context._config, "{build_dir}")
-            #repo_dir  = normalize_path(repo_dir)
-            #this_path = Path.join(task._config.eval("this_dir"), task._config.eval("this_file"))
-
-        #cls.queue_all_tasks()
+#        #print(f"root_mod {hex(id(Loader.root_mod))}")
+#        print(f"root_mod {Loader.root_mod}")
+#
+#        for task in cls.all_tasks:
+#            print(task._parent_repo)
+#            #if task._repo == Loader.root_mod:
+#            #    print(f"task_mod {hex(id(task))}")
+#            #    #task.dump()
+#
+#        sys.exit(0)
+#        pass
 
     @classmethod
     def queue_tasks_by_regex(cls, target_regex):
@@ -2145,20 +2083,22 @@ rel     = Path.rel_path
 flatten = Utils.flatten
 
 def init(*args, **kwargs):
-    new_config = Dict(Loader.defaults, *args, kwargs)
-    cv_config.set(new_config)
-    cv_script.set(hancho)
+    context = Dict(
+        config    = Dict(Loader.defaults, *args, kwargs),
+        this_repo   = hancho,
+        this_mod = hancho,
+    )
+    cv_context.set(context)
     reset()
 
 def reset():
     Loader.reset()
-    JobPool.reset()
     Stats.reset()
     Log.reset()
     Utils.reset()
     Expander.reset()
     Tracer.reset()
-    Runner.reset()
+    Runner.reset(hancho.config.job_max)
 
 def load(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, False, *args, kwargs)
@@ -2177,7 +2117,7 @@ async def main():
         path = os.path.relpath(script_path, os.getcwd())
         Log.log(f"Could not load build script {path}")
         sys.exit(-1)
-    root_mod = Loader.load(script_path, True)
+    Loader.root_mod = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 
     #if hancho.config.debug or hancho.config.verbose:
@@ -2205,13 +2145,6 @@ async def main():
     if hancho.config.debug or hancho.config.verbose:
         Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
-
-    #for t in Runner.all_tasks:
-    #    Log.log(f"{t._config.this_dir}/{t._config.this_file}")
-    #    Log.log(f"    {t._state} - {t._config.name} - {t._config.desc}")
-    #sys.exit(0)
-
-
     #----------------------------------------
     # Run all tasks
 
@@ -2231,14 +2164,11 @@ async def main():
 
 if __name__ == "__main__":
     flags = Loader.parse_flags(sys.argv[1:])
-    base_config = Loader.defaults | flags
-    cv_config.set(base_config)
-    reset()
+    init(Loader.defaults | flags)
     result = asyncio.run(main())
     sys.exit(result)
 else:
-    cv_config.set(Loader.defaults)
-    reset()
+    init()
 
 # endregion
 ####################################################################################################
