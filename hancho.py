@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# region header
 
 """
 Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system.
@@ -19,6 +20,7 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # FIXME need to ensure that all the stuff accessible to the clients through hancho is clean. Right now it's messy.
 # FIXME test Promise thingy
 
+# endregion
 ####################################################################################################
 # region imports
 
@@ -38,13 +40,14 @@ import time
 import traceback
 import types
 import contextvars
-from typing import Any, no_type_check, cast
+from typing import Any, cast
 from collections import abc
 from enum import Enum
 from contextlib import chdir
 
+# endregion
 ####################################################################################################
-# region context var stuff
+# region globals, decls, etc.
 
 hancho = sys.modules[__name__]
 if __name__ == "__main__" and "hancho" not in sys.modules:
@@ -63,8 +66,6 @@ def recursify(func):
         else:
             return func(val, *args, **kwargs)
     return result
-
-
 
 # endregion
 ####################################################################################################
@@ -182,7 +183,11 @@ class Log:
 
 class Path:
 
-    # FIXME this could use some cleanup, I don't think we need _all_ these methods.
+    # Generating relative paths in the presence of symlinks doesn't work with either
+    # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
+    # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
+    # should. What we really want is to just remove redundant cwd stuff off the beginning of the
+    # path, which we can do with simple string manipulation.
 
     @classmethod
     def rel_path(cls, path1, path2):
@@ -191,11 +196,6 @@ class Path:
         elif Utils.is_collection(path2):
             result = [Path.rel_path(path1, p) for p in path2]
         elif isinstance(path1, str) and isinstance(path2, str):
-            # Generating relative paths in the presence of symlinks doesn't work with either
-            # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
-            # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
-            # should. What we really want is to just remove redundant cwd stuff off the beginning of the
-            # path, which we can do with simple string manipulation.
             path1 = os.path.normpath(path1)
             path2 = os.path.normpath(path2)
             result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
@@ -219,19 +219,11 @@ class Path:
         path = os.path.normpath(path)
         return path
 
-    @staticmethod
-    def real(path : str) -> str:
-        assert not Utils.is_template(path), f"Can't use a template as a path : {path}"
-        path = Path.norm(path)
-        path = os.path.realpath(path)
-        return path
-
-    abs_path = recursify(os.path.abspath)
+    abspath  = recursify(os.path.abspath)
     basename = recursify(os.path.basename)
     normpath = recursify(os.path.normpath)
-
+    realpath = recursify(os.path.realpath)
     ext      = recursify(lambda name, ext: os.path.splitext(name)[0] + ext)
-
 
     @classmethod
     def stem(cls, path : str) -> str:
@@ -356,11 +348,9 @@ class Utils:
 
     @classmethod
     def flatten(cls, variant : Any) -> list[Any]:
-        if Utils.is_collection(variant):
+        if Utils.is_iterable(variant):
             return [x for element in variant for x in Utils.flatten(element)]
-        if variant is None:
-            return []
-        return [variant]
+        return [] if variant is None else [variant]
 
     #--------------------------------------------------------------------------------
 
@@ -398,19 +388,19 @@ class Utils:
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    def stringify_variant(cls, variant):
+    @staticmethod
+    def stringify_variant(variant):
         """Converts any type into a template-compatible string."""
         if variant is None:
             return ""
         elif Utils.is_collection(variant):
-            variant = [cls.stringify_variant(val) for val in variant]
+            variant = [Utils.stringify_variant(val) for val in variant]
             return " ".join(variant)
         else:
             return str(variant)
 
-    @classmethod
-    async def await_variant(cls, c):
+    @staticmethod
+    async def await_variant(c):
         async def wait(c, k, v):
             if isinstance(v, Promise):
                 c[k] = await Utils.await_variant(await v.get())
@@ -1286,40 +1276,39 @@ class Task:
 
         check = Utils.check
 
-        self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
-        self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
+        self._root_dir   = Path.abspath(check(str, e.eval("root_dir")))
+        self._root_file  = Path.abspath(check(str, e.eval("root_file")))
 
-        self._repo_dir   = Path.abs_path(check(str, e.eval("repo_dir")))
-        self._repo_file  = Path.abs_path(check(str, e.eval("repo_file")))
+        self._repo_dir   = Path.abspath(check(str, e.eval("repo_dir")))
+        self._repo_file  = Path.abspath(check(str, e.eval("repo_file")))
 
-        self._this_dir   = check(str, Path.abs_path(check(str, e.eval("this_dir"))))
-        self._this_file  = check(str, Path.abs_path(check(str, e.eval("this_file"))))
+        self._this_dir   = check(str, Path.abspath(check(str, e.eval("this_dir"))))
+        self._this_file  = check(str, Path.abspath(check(str, e.eval("this_file"))))
 
-        self._task_dir   = check(str, Path.abs_path(self._config.eval("task_dir")))
+        self._task_dir   = check(str, Path.abspath(self._config.eval("task_dir")))
 
-        self._build_root = check(str, Path.abs_path(check(str, e.eval("build_root"))))
-        self._build_dir  = check(str, Path.abs_path(check(str, e.eval("build_dir"))))
+        self._build_root = check(str, Path.abspath(check(str, e.eval("build_root"))))
+        self._build_dir  = check(str, Path.abspath(check(str, e.eval("build_dir"))))
 
         self._job_count   = check(int, e.eval("job_count"))
         self._keep_going  = check(int, e.eval("keep_going"))
 
+        self._depformat   = check(str | None, e.eval("depformat"))
+        self._build_tag   = check(str | None, e.eval("build_tag"))
+        self._target      = check(str | None, e.eval("target"))
+        self._tool        = check(str | None, e.eval("tool"))
 
-        self._command : Any    = None # can't be expanded until inputs are ready
-        self._in_depfile : str = None
+        self._verbose     = check(bool, e.eval("verbose"))
+        self._debug       = check(bool, e.eval("debug"))
+        self._dry_run     = check(bool, e.eval("dry_run"))
+        self._quiet       = check(bool, e.eval("quiet"))
+        self._rebuild     = check(bool, e.eval("rebuild"))
+        self._shuffle     = check(bool, e.eval("shuffle"))
+        self._trace       = check(bool, e.eval("trace"))
+        self._should_fail = check(bool, e.eval("should_fail"))
 
-        self._depformat : str    = None
-        self._build_tag : str    = None
-        self._target : str       = None
-        self._tool : str         = None
-
-        self._verbose : bool     = None
-        self._debug : bool       = None
-        self._dry_run : bool     = None
-        self._quiet : bool       = None
-        self._rebuild : bool     = None
-        self._shuffle : bool     = None
-        self._trace : bool       = None
-        self._should_fail : bool = None
+        # Command can't be expanded until inputs are ready
+        self._command : str = None
 
         # Bookkeeping stuff
 
@@ -1331,6 +1320,7 @@ class Task:
 
         self._in_files  = []
         self._out_files = []
+        self._in_depfile : str = ""
 
         Runner.all_tasks.append(self)
 
@@ -1470,7 +1460,7 @@ class Task:
         # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
         # all paths so that the command line won't be huge after expansion.
 
-        abs_v = Path.abs_path(v)
+        abs_v = Path.abspath(v)
         rel_v = Path.rel_path(v, self._task_dir)
 
         # We can't actually do this everywhere, it breaks stuff
@@ -1604,20 +1594,6 @@ class Task:
         check = Utils.check
         c = self._config
         e = Expander(c)
-
-        self._depformat   = check(str | None, e.eval("depformat"))
-        self._build_tag   = check(str | None, e.eval("build_tag"))
-        self._target      = check(str | None, e.eval("target"))
-        self._tool        = check(str | None, e.eval("tool"))
-
-        self._verbose     = check(bool, e.eval("verbose"))
-        self._debug       = check(bool, e.eval("debug"))
-        self._dry_run     = check(bool, e.eval("dry_run"))
-        self._quiet       = check(bool, e.eval("quiet"))
-        self._rebuild     = check(bool, e.eval("rebuild"))
-        self._shuffle     = check(bool, e.eval("shuffle"))
-        self._trace       = check(bool, e.eval("trace"))
-        self._should_fail = check(bool, e.eval("should_fail"))
 
         #--------------------------------------------------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
