@@ -99,7 +99,7 @@ yosys = hancho.Tool(
     out_json = "{ext(in_sv, '.json')}",
     params = {},
     gen_chparams = gen_chparams,
-    top = "{path.splitext(in_sv)[0]}",
+    top = "{os.path.splitext(in_sv)[0]}",
     joined_includes = "{join('-I', includes)}",
 )
 

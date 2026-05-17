@@ -50,10 +50,21 @@ hancho = sys.modules[__name__]
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
-cv_context = contextvars.ContextVar("context")
+type str_tree = str | abc.Iterable[str_tree]
 
+cv_context = contextvars.ContextVar("context")
 def __getattr__(name):
     return getattr(cv_context.get(), name)
+
+def recursify(func):
+    def result(val, *args, **kwargs):
+        if Utils.is_iterable(val):
+            return [result(v, *args, **kwargs) for v in val]
+        else:
+            return func(val, *args, **kwargs)
+    return result
+
+
 
 # endregion
 ####################################################################################################
@@ -123,12 +134,6 @@ class Stats:
 ####################################################################################################
 # region Log
 
-
-#def remove_ansi_escape_codes(text):
-#    # Regex for matching ANSI escape sequences
-#    ansi_escape = re.compile(r'(\x9B|\x1B\[)[0-?]*[ -/]*[@-~]')
-#    return ansi_escape.sub('', text)
-
 class Log:
     buffer : str
     line_dirty : bool
@@ -179,16 +184,6 @@ class Path:
 
     # FIXME this could use some cleanup, I don't think we need _all_ these methods.
 
-
-    @classmethod
-    def abs_path(cls, raw_path):
-        if Utils.is_collection(raw_path):
-            return [Path.abs_path(p) for p in raw_path]
-        elif isinstance(raw_path, str):
-            return os.path.abspath(raw_path)
-        else:
-            assert False, f"abs_path() Don't know how to abs_path a {type(raw_path).__name__}"
-
     @classmethod
     def rel_path(cls, path1, path2):
         if Utils.is_collection(path1):
@@ -208,8 +203,8 @@ class Path:
             assert False, f"rel_path() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
         return result
 
-    @classmethod
-    def join(cls, lhs, rhs, *args):
+    @staticmethod
+    def join(lhs, rhs, *args):
         if len(args) > 0:
             rhs = Path.join(rhs, *args)
         flat_lhs = Utils.flatten(lhs)
@@ -217,51 +212,26 @@ class Path:
         result = [os.path.join(l, r) for l in flat_lhs for r in flat_rhs]
         return result[0] if len(result) == 1 else result
 
-    @classmethod
-    def isnorm(cls, path):
-        return path == Path.norm(path)
-
-    @classmethod
-    def isreal(cls, path):
-        return path == Path.real(path)
-
-    @classmethod
-    def norm(cls, path):
+    @staticmethod
+    def norm(path):
         assert not Utils.is_template(path), f"Can't use a template as a path : {path}"
         path = os.path.join(os.getcwd(), path)
         path = os.path.normpath(path)
         return path
 
-    @classmethod
-    def real(cls, path : str) -> str:
+    @staticmethod
+    def real(path : str) -> str:
         assert not Utils.is_template(path), f"Can't use a template as a path : {path}"
         path = Path.norm(path)
         path = os.path.realpath(path)
         return path
 
-    @classmethod
-    def split(cls, path : str) -> tuple[str, str]:
-        result = os.path.split(path)
-        return result
+    abs_path = recursify(os.path.abspath)
+    basename = recursify(os.path.basename)
+    normpath = recursify(os.path.normpath)
 
-    @classmethod
-    def normpath(cls, val):
-        if Utils.is_collection(val):
-            return [Path.normpath(v) for v in val]
-        elif isinstance(val, str):
-            return os.path.normpath(val)
-        else:
-            assert False, f"normpath() Don't know what to do with a {type(val).__name__}"
+    ext      = recursify(lambda name, ext: os.path.splitext(name)[0] + ext)
 
-    @classmethod
-    def ext(cls, name, new_ext : str):
-        """Replaces file extensions on either a single filename or a list of filenames."""
-        if Utils.is_collection(name):
-            return [Path.ext(n, new_ext) for n in name]
-        elif isinstance(name, str):
-            return os.path.splitext(name)[0] + new_ext
-        else:
-            assert False, f"ext() Don't know what to do with a {type(name).__name__}"
 
     @classmethod
     def stem(cls, path : str) -> str:
@@ -298,6 +268,9 @@ class Utils:
         result = [Utils.listify(x) for x in obj]
         return result
 
+    # Mappings and non-array iterables are not considered Collections in Hancho so that
+    # we don't turn "foo" into ('f', 'o', 'o').
+
     @classmethod
     def is_collection(cls, variant : Any) -> bool:
         """
@@ -308,11 +281,18 @@ class Utils:
         return isinstance(variant, abc.Collection)
 
     @classmethod
+    def is_iterable(cls, variant : Any) -> bool:
+        if isinstance(variant, (str, bytes, bytearray, abc.Mapping)): return False
+        return isinstance(variant, abc.Iterable)
+
+    @classmethod
     def is_mapping(cls, variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
 
     @classmethod
     def is_template(cls, variant : Any) -> bool:
+        # This is kinda dumb as we split the string just to see how many blocks it has, and then
+        # throw away the result. But whatev, this isn't performance-critical at the moment.
         if not isinstance(variant, str):
             return False
         blocks = Expander.split(variant)
@@ -1279,7 +1259,7 @@ class Task:
     #--------------------------------------------------------------------------------
     # Linter doesn't like us assigning all these to None
 
-    @no_type_check
+    #@no_type_check
     def __init__(self, *args, **kwargs):
         Loader.check_init()
 
@@ -1299,28 +1279,33 @@ class Task:
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
         # Expanded config options
+        e = Expander(self._config)
 
-        self._name : str       = None
-        self._desc : str       = None
-        self._command : Any    = None
+        self._name = e.name
+        self._desc = e.desc
+
+        check = Utils.check
+
+        self._root_dir   = Path.abs_path(check(str, e.eval("root_dir")))
+        self._root_file  = Path.abs_path(check(str, e.eval("root_file")))
+
+        self._repo_dir   = Path.abs_path(check(str, e.eval("repo_dir")))
+        self._repo_file  = Path.abs_path(check(str, e.eval("repo_file")))
+
+        self._this_dir   = check(str, Path.abs_path(check(str, e.eval("this_dir"))))
+        self._this_file  = check(str, Path.abs_path(check(str, e.eval("this_file"))))
+
+        self._task_dir   = check(str, Path.abs_path(self._config.eval("task_dir")))
+
+        self._build_root = check(str, Path.abs_path(check(str, e.eval("build_root"))))
+        self._build_dir  = check(str, Path.abs_path(check(str, e.eval("build_dir"))))
+
+        self._job_count   = check(int, e.eval("job_count"))
+        self._keep_going  = check(int, e.eval("keep_going"))
+
+
+        self._command : Any    = None # can't be expanded until inputs are ready
         self._in_depfile : str = None
-
-        self._root_dir : str   = None
-        self._root_file : str  = None
-
-        self._repo_dir : str   = None
-        self._repo_file : str  = None
-
-        self._this_dir : str   = None
-        self._this_file : str  = None
-
-        self._task_dir : str   = None
-
-        self._build_root : str = None
-        self._build_dir : str  = None
-
-        self._job_count : int    = None
-        self._keep_going : int   = None
 
         self._depformat : str    = None
         self._build_tag : str    = None
@@ -1532,24 +1517,10 @@ class Task:
         c = self._config
         e = Expander(c)
 
-        self._root_dir   = check(str, Path.abs_path(check(str, e.eval("root_dir"))))
-        self._root_file  = check(str, Path.abs_path(check(str, e.eval("root_file"))))
-
-        self._repo_dir   = check(str, Path.abs_path(check(str, e.eval("repo_dir"))))
-        self._repo_file  = check(str, Path.abs_path(check(str, e.eval("repo_file"))))
-
-        self._this_dir   = check(str, Path.abs_path(check(str, e.eval("this_dir"))))
-        self._this_file  = check(str, Path.abs_path(check(str, e.eval("this_file"))))
-
-        self._build_root = check(str, Path.abs_path(check(str, e.eval("build_root"))))
-        self._build_dir  = check(str, Path.abs_path(check(str, e.eval("build_dir"))))
-
-        self._job_count   = check(int, e.eval("job_count"))
-        self._keep_going  = check(int, e.eval("keep_going"))
-
         # Fix up all in/out paths
         Utils.walk(self._config, self.move_stuff1)
 
+        # Do we need to fix this one too?
         self._in_depfile = e.eval("in_depfile")
 
         # And now we can expand the name, description, and command.
@@ -1689,7 +1660,6 @@ class Task:
         #----------------------------------------
 
         try:
-            self._task_dir = check(str, Path.abs_path(self._config.eval("task_dir")))
             with chdir(self._task_dir):
                 self.task_init()
 
@@ -2046,8 +2016,8 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = Path.real(task._config.eval("build_root"))
-                build_root = Path.rel_path(build_root, os.getcwd())
+                build_root = os.path.realpath(task._config.eval("build_root"))
+                build_root = os.path.relpath(build_root, os.getcwd())
                 if os.path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}")
                     shutil.rmtree(build_root, ignore_errors=True)
