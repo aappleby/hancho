@@ -204,30 +204,16 @@ class Path:
         return result
 
     @staticmethod
-    def join(lhs, rhs, *args):
-        if len(args) > 0:
-            rhs = Path.join(rhs, *args)
-        flat_lhs = Utils.flatten(lhs)
-        flat_rhs = Utils.flatten(rhs)
-        result = [os.path.join(l, r) for l in flat_lhs for r in flat_rhs]
+    def join(lhs, rhs):
+        result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
-
-    @staticmethod
-    def norm(path):
-        assert not Utils.is_template(path), f"Can't use a template as a path : {path}"
-        path = os.path.join(os.getcwd(), path)
-        path = os.path.normpath(path)
-        return path
 
     abspath  = recursify(os.path.abspath)
     basename = recursify(os.path.basename)
     normpath = recursify(os.path.normpath)
     realpath = recursify(os.path.realpath)
     ext      = recursify(lambda name, ext: os.path.splitext(name)[0] + ext)
-
-    @classmethod
-    def stem(cls, path : str) -> str:
-        return os.path.splitext(os.path.basename(path))[0]
+    stem     = recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
 # endregion
 ####################################################################################################
