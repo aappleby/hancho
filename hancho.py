@@ -112,30 +112,32 @@ class Stats:
     def print_build_stats(cls):
         # Done, print status info if needed
 
-        Log.log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds")
+        Log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds")
 
         if hancho.config.debug or hancho.config.verbose:
-            Log.log(f"tasks started:    {cls.tasks_started}")
-            Log.log(f"tasks finished:   {cls.tasks_finished}")
-            Log.log(f"tasks failed:     {cls.tasks_failed}")
-            Log.log(f"tasks skipped:    {cls.tasks_skipped}")
-            Log.log(f"tasks cancelled:  {cls.tasks_cancelled}")
-            Log.log(f"tasks broken:     {cls.tasks_broken}")
-            Log.log(f"tasks shouldfail: {cls.tasks_shouldfail}")
-            Log.log(f"mtime calls:      {cls.mtime_calls}")
+            Log(f"tasks started:    {cls.tasks_started}")
+            Log(f"tasks finished:   {cls.tasks_finished}")
+            Log(f"tasks failed:     {cls.tasks_failed}")
+            Log(f"tasks skipped:    {cls.tasks_skipped}")
+            Log(f"tasks cancelled:  {cls.tasks_cancelled}")
+            Log(f"tasks broken:     {cls.tasks_broken}")
+            Log(f"tasks shouldfail: {cls.tasks_shouldfail}")
+            Log(f"mtime calls:      {cls.mtime_calls}")
 
         if cls.tasks_failed or cls.tasks_broken:
-            Log.log(f"hancho: {Utils.color(255, 128, 128)}BUILD FAILED{Utils.color()}")
+            Log(f"hancho: {Utils.color(255, 128, 128)}BUILD FAILED{Utils.color()}")
         elif cls.tasks_finished:
-            Log.log(f"hancho: {Utils.color(128, 255, 128)}BUILD PASSED{Utils.color()}")
+            Log(f"hancho: {Utils.color(128, 255, 128)}BUILD PASSED{Utils.color()}")
         else:
-            Log.log(f"hancho: {Utils.color(128, 128, 255)}BUILD CLEAN{Utils.color()}")
+            Log(f"hancho: {Utils.color(128, 128, 255)}BUILD CLEAN{Utils.color()}")
 
 # endregion
 ####################################################################################################
 # region Log
 
 class Log:
+    """Simple logger that can do same-line log messages like Ninja."""
+
     buffer : str
     line_dirty : bool
 
@@ -144,9 +146,7 @@ class Log:
         cls.buffer = ""
         cls.line_dirty = False
 
-    @classmethod
-    def log(cls, message : str, *, sameline : bool = False, **kwargs):
-        """Simple logger that can do same-line log messages like Ninja."""
+    def __new__(cls, message : str, *, sameline : bool = False, **kwargs):
         if not sys.stdout.isatty():
             sameline = False
 
@@ -538,17 +538,6 @@ class Tool(Dict):
 # expandable by that dict. This allows nested dicts to contain templates that can only be expanded
 # an outer dict, and things will still Just Work.
 
-def track_depth(f):
-    def track_depth(*args, **kwargs):
-        Expander.depth += 1
-        try:
-            if Expander.depth > Expander.MAX_DEPTH:
-                raise RecursionError("Template expansion failed to terminate")
-            return f(*args, **kwargs)
-        finally:
-            Expander.depth -= 1
-    return track_depth
-
 class Expander(abc.Mapping[str, object]):
     """
     This class is used to fetch and expand text templates from a dict during text expansion.
@@ -592,7 +581,7 @@ class Expander(abc.Mapping[str, object]):
     def __init__(self, context : Dict):
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         self._context = context
-        self._trace = dict.get(context, "trace", False)
+        self.trace = dict.get(context, "trace", False)
 
     def __contains__(self, key):
         return key in self._context
@@ -674,25 +663,27 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
+    @staticmethod
+    def track_depth(func : types.FunctionType):
+        def track_depth(*args, **kwargs):
+            Expander.depth += 1
+            try:
+                if Expander.depth > Expander.MAX_DEPTH:
+                    raise RecursionError("Template expansion failed to terminate")
+                return func(*args, **kwargs)
+            finally:
+                Expander.depth -= 1
+        return track_depth
+
+    ########################################
+
     @track_depth
     def _get(self, key):
         trace_color = Utils.color(192, 255, 192)
 
-        if self._trace:
-            Tracer.log(self, trace_color, "┏", f" get '{key}'")
+        Tracer.log(self, trace_color, "┏", f" get '{key}'")
 
-        Tracer.push(trace_color)
-
-        try:
-#            result = "<_get failed>"
-#            e = None
-#
-#            if key in self._context:
-#                result = self._context[key]
-#            else:
-#                if self.trace:
-#                    Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
-#                raise KeyError(key)
+        with Tracer(trace_color) as t:
             result = self._context[key]
 
             # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
@@ -702,16 +693,9 @@ class Expander(abc.Mapping[str, object]):
             # If we fetched a string, expand it if needed
             if isinstance(result, str):
                 result = self.expand(result)
-        finally:
-            Tracer.pop()
 
-        if self._trace:
-            message = ""
-            if isinstance(result, str):
-                message += f" '{result}'"
-            else:
-                message += f" {result}"
-            Tracer.log(self, trace_color, "┗", message)
+        message = f" '{result}'" if isinstance(result, str) else f" {result}"
+        Tracer.log(self, trace_color, "┗", message)
 
         return result
 
@@ -723,7 +707,7 @@ class Expander(abc.Mapping[str, object]):
     ########################################
 
     @track_depth
-    def eval[T](self, expr : str, as_type : type[T] = object) -> T:
+    def _eval(self, expr):
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
@@ -731,33 +715,25 @@ class Expander(abc.Mapping[str, object]):
 
         trace_color = Utils.color(192, 192, 255)
 
-        if self._trace:
-            Tracer.log(self, trace_color, "┏", f" eval '{expr}'")
+        Tracer.log(self, trace_color, "┏", f" eval '{expr}'")
 
-        Tracer.push(trace_color)
-
-        #if not isinstance(expr, str):
-        #    return expr
-
-        expr = self.expand(expr, str)
-
-        try:
-            result = eval(expr, hancho.__dict__, self)
-        except RecursionError as err:
-            raise err
-        except BaseException as err:
-            if self._trace:
+        with Tracer(trace_color):
+            try:
+                expr = self.expand(expr, str)
+                result = eval(expr, hancho.__dict__, self)
+            except RecursionError as err:
+                raise err
+            except BaseException as err:
                 Tracer.log(self, Utils.color(255, 0, 0), "┗", f" {type(err).__name__}: {err}")
-            raise err
-        finally:
-            Tracer.pop()
+                raise err
 
-        if self._trace:
-            if isinstance(result, str):
-                Tracer.log(self, trace_color, "┗", f" '{result}'")
-            else:
-                Tracer.log(self, trace_color, "┗", f" {result}")
+        message = f" '{result}'" if isinstance(result, str) else f" {result}"
+        Tracer.log(self, trace_color, "┗", message)
 
+        return result
+
+    def eval[T](self, key : str, as_type : type[T] = object) -> T:
+        result = self._eval(key)
         assert isinstance(result, as_type)
         return result
 
@@ -772,43 +748,31 @@ class Expander(abc.Mapping[str, object]):
         Expand _always_ recurses until expansion does nothing.
         """
 
-        assert isinstance(template, str)
+        blocks : list[str] = Expander.split(template)
+
+        if len(blocks) == 0 or (len(blocks) == 1 and type(blocks[0]) == Expander.Lit):
+            return template
 
         trace_color = Utils.color(255, 192, 192)
 
-        if not isinstance(template, str):
-            return template
+        Tracer.log(self, trace_color, "┏", f" expand '{template}'")
 
-        blocks : list[str] = Expander.split(template)
+        with Tracer(trace_color):
+            for (i, block) in enumerate(blocks):
+                if isinstance(block, Expander.Lit):
+                    continue
+                try:
+                    value = self.eval(block)
+                    block = Utils.stringify_variant(value)
+                except RecursionError as e:
+                    raise e
+                except:
+                    block = "{" + block + "}"
+                blocks[i] = block
 
-        if len(blocks) == 0:
-            return template
+            result = "".join(blocks)
 
-        if len(blocks) == 1 and type(blocks[0]) == Expander.Lit:
-            return template
-
-        if self._trace:
-            Tracer.log(self, trace_color, "┏", f" expand '{template}'")
-
-        Tracer.push(trace_color)
-
-        for (i, block) in enumerate(blocks):
-            if isinstance(block, Expander.Lit):
-                continue
-            try:
-                block = Utils.stringify_variant(self.eval(block))
-            except RecursionError as e:
-                raise e
-            except:
-                block = "{" + block + "}"
-            blocks[i] = block
-
-        result = "".join(blocks)
-
-        Tracer.pop()
-
-        if self._trace:
-            Tracer.log(self, trace_color, "┗", f" '{result}'")
+        Tracer.log(self, trace_color, "┗", f" '{result}'")
 
         if result != template:
             result = self._expand(result)
@@ -834,21 +798,25 @@ class Tracer:
 
     trellis_stack : list[str]
 
+    def __init__(self, color):
+        self.color = color
+
+    def __enter__(self):
+        Tracer.trellis_stack.append(self.color + "┃ ")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        Tracer.trellis_stack.pop()
+
     @classmethod
     def reset(cls):
         cls.trellis_stack = []
 
     @classmethod
-    def push(cls, color):
-        Tracer.trellis_stack.append(color + "┃ ")
-
-    @classmethod
-    def pop(cls):
-        Tracer.trellis_stack.pop()
-
-    @classmethod
     def log(cls, source : Any, trellis_color : str, trellis_bar: str, text : str):
         """Prints a trace message to the log."""
+        if not source.trace:
+            return
+
         source_id = id(source)
 
         #if trellis_bar[0] == '┗':
@@ -867,13 +835,13 @@ class Tracer:
 
         buffer += text
 
-        Log.log(buffer)
+        Log(buffer)
 
         #if trellis_bar[0] == '┏':
         #    Tracer.push(trellis_color)
 
         if len(trellis_bar) and trellis_bar[0] == '┗' and Expander.depth == 0:
-            Log.log("")
+            Log("")
 
     @classmethod
     def log2(cls, source : Any, text : str):
@@ -889,7 +857,7 @@ class Tracer:
         buffer += Utils.color()
         buffer += text
 
-        Log.log(buffer)
+        Log(buffer)
 
 # endregion
 ####################################################################################################
@@ -1113,9 +1081,9 @@ class Loader:
         verbose = hancho.config.debug or hancho.config.verbose
 
         if verbose:
-            #Log.log("┃ " * len(Loader.stack), end="")
+            #Log("┃ " * len(Loader.stack), end="")
             script_type = "repo" if is_repo else "script"
-            Log.log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
+            Log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
 
         #----------------------------------------
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
@@ -1257,7 +1225,7 @@ class Task:
         self._task_dir   : str = os.path.abspath(e.get("task_dir",   str))
         self._build_root : str = os.path.abspath(e.get("build_root", str))
         self._build_dir  : str = os.path.abspath(e.get("build_dir",  str))
-        self._in_depfile : str = os.path.abspath(e.get("in_depfile", str))
+        #self._in_depfile : str = os.path.abspath(e.get("in_depfile", str))
 
         self._job_count   = e.get("job_count", int)
         self._keep_going  = e.get("keep_going", int)
@@ -1273,7 +1241,6 @@ class Task:
         self._quiet       = e.get("quiet", bool)
         self._rebuild     = e.get("rebuild", bool)
         self._shuffle     = e.get("shuffle", bool)
-        self._trace       = e.get("trace", bool)
         self._should_fail = e.get("should_fail", bool)
 
         # Command can't be expanded until inputs are ready
@@ -1455,16 +1422,16 @@ class Task:
     def task_init(self):
         self.to_state(TaskState.INIT)
 
-        check = Utils.check
-        c = self._config
-        e = Expander(c)
-
-
         # Fix up all in/out paths
         Utils.walk(self._config, self.move_stuff1)
 
-        # Do we need to fix this one too?
-        self._in_depfile = e.eval("in_depfile", str)
+        c = self._config
+        e = Expander(c)
+
+        #if self._in_depfile != c.in_depfile:
+        #    breakpoint()
+
+        self._in_depfile = c.in_depfile
 
         # And now we can expand the name, description, and command.
 
@@ -1564,9 +1531,7 @@ class Task:
             raise asyncio.CancelledError() from ex
 
         #--------------------------------------------------------------------------------
-        # Everything awaited, start expanding the task config. Note that we chdir to task_dir
-        # before initializing the task so that any path.abspath or whatever happen from the right
-        # place.
+        # Everything awaited, start expanding the task config.
 
         Stats.tasks_running += 1
         self._task_index = Stats.tasks_running
@@ -1580,15 +1545,16 @@ class Task:
             elif self._config.desc is not Loader.defaults.desc:
                 suffix += f" '{self._config.desc}'"
             suffix += f" starting"
-            Log()
-            Log.log(prefix + suffix)
+            Log(prefix + suffix)
 
         if self._debug:
-            Log.log(f"\nTask before expand: {self}")
+            Log(f"\nTask before expand: {self}")
 
         #----------------------------------------
 
         try:
+            # Note that we chdir to task_dir before initializing the task so that any path.abspath
+            # or whatever happen from the right place.
             with chdir(self._task_dir):
                 self.task_init()
 
@@ -1610,7 +1576,7 @@ class Task:
         #----------------------------------------
 
         if self._debug:
-            Log.log(f"\nTask after expand: {self}")
+            Log(f"\nTask after expand: {self}")
 
         #--------------------------------------------------------------------------------
         # Early-out if this is a no-op task
@@ -1629,7 +1595,7 @@ class Task:
             self.to_state(TaskState.SKIPPED)
             return
         if self._verbose or self._debug:
-            Log.log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
+            Log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
 
         #--------------------------------------------------------------------------------
         # Run the task!
@@ -1697,7 +1663,7 @@ class Task:
         # Check all dependencies in the C dependencies file, if present.
         if self._in_depfile and os.path.exists(self._in_depfile):
             if self._debug:
-                Log.log(f"Found C dependencies file {self._in_depfile}")
+                Log(f"Found C dependencies file {self._in_depfile}")
             with open(self._in_depfile, encoding="utf-8") as depfile:
                 deplines = None
                 if self._depformat == "msvc":
@@ -1737,7 +1703,7 @@ class Task:
             elif self._desc is not Loader.defaults.desc:
                 suffix += f" '{self._desc}'"
             suffix += f" running command '{command}'"
-            Log.log(prefix + suffix, sameline = not self._verbose)
+            Log(prefix + suffix, sameline = not self._verbose)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
@@ -1753,21 +1719,21 @@ class Task:
                     if self._debug or self._verbose:
                         prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
                         suffix = f"Command '{command}' done"
-                        Log.log(prefix + suffix, sameline = not self._verbose)
+                        Log(prefix + suffix, sameline = not self._verbose)
             except:
-                Log.log(f"{Utils.color(255,0,0)}Running command function {command} raised an exception{Utils.color()}")
+                Log(f"{Utils.color(255,0,0)}Running command function {command} raised an exception{Utils.color()}")
                 raise
             return
 
         # Create the subprocess via asyncio and then await the result.
-        if self._debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'")
+        if self._debug: Log(f"Task {hex(id(self))} subprocess start '{command}'")
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd    = self._task_dir,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
         )
-        if self._debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}'")
+        if self._debug: Log(f"Task {hex(id(self))} subprocess done '{command}'")
 
         (stdout_data, stderr_data) = await proc.communicate()
         self._stdout = stdout_data.decode()
@@ -1785,16 +1751,16 @@ class Task:
 
         elif self._debug or self._verbose:
             if self._stdout or self._stderr:
-                Log.log(f"========== Stdout ==========")
-                Log.log(self._stdout)
-                Log.log(f"========== Stderr ==========")
-                Log.log(self._stderr)
-                Log.log(f"============================")
+                Log(f"========== Stdout ==========")
+                Log(self._stdout)
+                Log(f"========== Stderr ==========")
+                Log(self._stderr)
+                Log(f"============================")
 
         if (self._debug or self._verbose) and not proc.returncode:
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = f"Command '{command}' done"
-            Log.log(prefix + suffix, sameline = not self._verbose)
+            Log(prefix + suffix, sameline = not self._verbose)
 
     def dump(self):
         result = f"{type(self).__name__} @ {hex(id(self))} : '{self._name}'"
@@ -1875,7 +1841,7 @@ class Runner:
         for task in cls.all_tasks:
             name = task._config.eval("name")
             if target_regex.search(name):
-                Log.log(f"Queueing task for '{name}'")
+                Log(f"Queueing task for '{name}'")
                 task.queue()
 
     #--------------------------------------------------------------------------------
@@ -1902,7 +1868,7 @@ class Runner:
 
         while cls.queued_tasks or cls.started_tasks:
             if hancho.config.shuffle:
-                Log.log(f"Shufflin' {len(cls.queued_tasks)} tasks")
+                Log(f"Shufflin' {len(cls.queued_tasks)} tasks")
                 random.shuffle(cls.queued_tasks)
 
             while cls.queued_tasks:
@@ -1924,7 +1890,7 @@ class Runner:
 
             fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
             if hancho.config.keep_going and fail_count >= hancho.config.keep_going:
-                Log.log("Too many failures, cancelling tasks and stopping build")
+                Log("Too many failures, cancelling tasks and stopping build")
                 cls.cancel_all_tasks()
                 break
 
@@ -1948,9 +1914,9 @@ class Runner:
                 build_root = os.path.realpath(task._config.eval("build_root", str))
                 build_root = os.path.relpath(build_root, os.getcwd())
                 if os.path.isdir(build_root):
-                    Log.log(f"Wiping build_root {build_root}")
+                    Log(f"Wiping build_root {build_root}")
                     shutil.rmtree(build_root, ignore_errors=True)
-            Log.log("Clean done")
+            Log("Clean done")
             return 0
         else:
             assert False, f"Don't know how to run tool {tool}"
@@ -1960,11 +1926,11 @@ class Runner:
 
     @classmethod
     def log_task_failure(cls, task):
-        Log.log("")
-        Log.log(f"{Utils.color(255, 128, 0)}Task failed: {task._name} {task._desc} {task._command} {Utils.color()}")
-        Log.log(f"{Utils.color(255, 128, 128)}{traceback.format_exc()}{Utils.color()}")
+        Log("")
+        Log(f"{Utils.color(255, 128, 0)}Task failed: {task._name} {task._desc} {task._command} {Utils.color()}")
+        Log(f"{Utils.color(255, 128, 128)}{traceback.format_exc()}{Utils.color()}")
         if hancho.config.debug or hancho.config.verbose:
-            Log.log(str(task))
+            Log(str(task))
 
 
 # endregion
@@ -2004,14 +1970,14 @@ async def main():
     script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
     if not os.path.exists(script_path):
         path = os.path.relpath(script_path, os.getcwd())
-        Log.log(f"Could not load build script {path}")
+        Log(f"Could not load build script {path}")
         sys.exit(-1)
     Loader.root_mod = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 
     #if hancho.config.debug or hancho.config.verbose:
     if True:
-        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
+        Log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
 
     #----------------------------------------
     # Run tools if needed
@@ -2032,7 +1998,7 @@ async def main():
     Stats.time_queue = time.perf_counter() - time_a
 
     if hancho.config.debug or hancho.config.verbose:
-        Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
+        Log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
 
     #----------------------------------------
     # Run all tasks
