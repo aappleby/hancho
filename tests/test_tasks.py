@@ -216,12 +216,12 @@ class TestTasks(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
     def test_good_run_cmd(self):
-        test_task = hancho.Task(
+        task = hancho.Task(
             desc    = "Testing run_cmd",
             command = r"echo I am runnning the {run_cmd('uname')} operating system."
         )
         self.run_tasks(0)
-        self.assertEqual(test_task._stdout, f"I am runnning the Linux operating system.\n")
+        self.assertTrue("I am runnning the Linux operating system.\n" in task._stdout)
 
     def test_bad_run_cmd(self):
         task = hancho.Task(

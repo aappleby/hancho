@@ -131,9 +131,7 @@ Task @ 0x727f0371d6a0 {
     _asyncio_task = None,
     _loaded_files = [
         "/home/aappleby/repos/hancho/tutorial/build.hancho",
-    ],
-    _stdout = "",
-    _stderr = "",
+    ]
 }
 ```
 At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho.Task()```, followed by the task-specific ```task_dir``` and ```build_dir```, and finally some private Hancho bookkeeping fields.

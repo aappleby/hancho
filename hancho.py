@@ -30,6 +30,7 @@ import glob
 import inspect
 import io
 import json
+from math import e
 import os
 import random
 import re
@@ -40,7 +41,7 @@ import time
 import traceback
 import types
 import contextvars
-from typing import Any, cast, TypeVar, Callable, ParamSpec, Protocol, Concatenate, overload, TypeAliasType
+from typing import Any, cast
 from collections import abc
 from enum import Enum
 from contextlib import chdir
@@ -54,6 +55,8 @@ if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
 type Tree[T] = T | list[Tree[T]]
+
+# FIXME go back to tiny module wrapper so we can intercept module-level __setattr__ and stick it on the context dict.
 
 cv_context = contextvars.ContextVar("context")
 def __getattr__(name):
@@ -771,6 +774,10 @@ class Expander(abc.Mapping[str, object]):
         assert isinstance(result, as_type)
         return result
 
+    # Expand-In-Place
+    def xip(self, variant, key):
+        pass
+
 # endregion
 ####################################################################################################
 # region Tracer
@@ -925,13 +932,6 @@ class Loader:
         cls.stack = []
         cls.loaded_files = []
 
-    @classmethod
-    def check_init(cls):
-        try:
-            cv_context.get()
-        except:
-            raise RuntimeError("You have to call hancho.init(debug = True, verbose = False...) or similar before using Hancho.")
-
     # FIXME I think this should go somewhere else
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
@@ -1046,14 +1046,13 @@ class Loader:
 
     @classmethod
     def load(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        cls.check_init()
+        debug   = hancho.config.eval("debug")
+        verbose = hancho.config.eval("verbose")
 
         script_path = cast(str, hancho.config.expand(script_path))
         script_path = os.path.abspath(script_path)
 
-        verbose = hancho.config.debug or hancho.config.verbose
-
-        if verbose:
+        if debug or verbose:
             #Log("┃ " * len(Loader.stack), end="")
             script_type = "repo" if is_repo else "script"
             Log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
@@ -1081,6 +1080,7 @@ class Loader:
             return dedupe
 
         #----------------------------------------
+        # We didn't get deduped, so create a new module and add it to the dedupe cache.
 
         assert os.path.isfile(script_path)
         new_module = types.ModuleType(os.path.basename(script_path))
@@ -1093,6 +1093,7 @@ class Loader:
         )
 
         #----------------------------------------
+        # Compile the module's code.
 
         with open(script_path, encoding="utf-8") as file:
             Loader.loaded_files.append(script_path)
@@ -1101,6 +1102,7 @@ class Loader:
             new_module.__dict__.update(__code__ = code)
 
         #----------------------------------------
+        # Create a new context and run the code.
 
         old_context = cv_context.get()
         new_context = Dict(
@@ -1164,10 +1166,10 @@ class Task:
     #--------------------------------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
-        Loader.check_init()
 
         # Save the context, we will use it when we create the asyncio.Task
         self._context     = contextvars.copy_context()
+
         self._parent_repo = hancho.this_repo
         self._parent_mod  = hancho.this_mod
         self._config      = Dict(hancho.config, *args, **kwargs)
@@ -1205,8 +1207,6 @@ class Task:
         self._target      = e.get("target", str)
         self._tool        = e.get("tool", str)
 
-        self._verbose     = e.get("verbose", bool)
-        self._debug       = e.get("debug", bool)
         self._dry_run     = e.get("dry_run", bool)
         self._quiet       = e.get("quiet", bool)
         self._rebuild     = e.get("rebuild", bool)
@@ -1474,6 +1474,9 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
+        debug   = self._config.eval("debug", bool)
+        verbose = self._config.eval("verbose", bool)
+
         #--------------------------------------------------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # were cancelled, we propagate the cancellation to downstream tasks.
@@ -1486,33 +1489,25 @@ class Task:
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
 
-        #--------------------------------------------------------------------------------
-        # Everything awaited, start expanding the task config.
-
+        # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
         Stats.tasks_running += 1
         self._task_index = Stats.tasks_running
 
-        if self._config.eval("verbose") or self._config.eval("debug"):
-            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-            suffix = "Task"
-            if self._dry_run: suffix += " (DRY RUN)"
-            if self._config.name is not Loader.config_defaults.name:
-                suffix += f" '{self._config.name}'"
-            elif self._config.desc is not Loader.config_defaults.desc:
-                suffix += f" '{self._config.desc}'"
-            suffix += f" starting"
-            Log(prefix + suffix)
-
-        if self._config.eval("debug"):
-            Log(f"\nTask before expand: {self}")
-
         #----------------------------------------
+        # Initialize the task, which means expanding everything else that needs expanding and
+        # fixing up paths to point to task_dir or build_dir.
+        # Note that we chdir to task_dir before initializing the task so that any path.abspath
+        # or whatever happen from the right place.
 
         try:
-            # Note that we chdir to task_dir before initializing the task so that any path.abspath
-            # or whatever happen from the right place.
+            if debug:
+                Log(f"\nTask before expand: {self}")
+
             with chdir(self._task_dir):
                 self.task_init()
+
+            if debug:
+                Log(f"\nTask after expand: {self}")
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
@@ -1528,11 +1523,6 @@ class Task:
             else:
                 Stats.tasks_broken += 1
             raise ex
-
-        #----------------------------------------
-
-        if self._debug:
-            Log(f"\nTask after expand: {self}")
 
         #--------------------------------------------------------------------------------
         # Early-out if this is a no-op task
@@ -1550,17 +1540,29 @@ class Task:
             Stats.tasks_skipped += 1
             self.to_state(TaskState.SKIPPED)
             return
-        if self._verbose or self._debug:
+        if verbose or debug:
             Log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
 
         #--------------------------------------------------------------------------------
         # Run the task!
 
+        # Print the first status line for this task
+
+        if verbose or debug:
+            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+            suffix = "Task"
+            if self._dry_run: suffix += " (DRY RUN)"
+            if self._config.name:
+                suffix += f" '{self._config.name}'"
+            elif self._config.desc:
+                suffix += f" '{self._config.desc}'"
+            suffix += f" starting"
+            Log(prefix + suffix)
+
         try:
-            # Wait for enough jobs to free up to run this task.
+            # Wait for enough jobs to free up to run this task and then run the commands.
             self.to_state(TaskState.GET_JOBS)
 
-            # Run the commands.
             async with Runner.Jobs(self._job_count):
                 self.to_state(TaskState.RUNNING)
                 for command in Utils.flatten(self._command):
@@ -1585,6 +1587,9 @@ class Task:
 
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
+
+        debug   = self._config.eval("debug", bool)
+        verbose = self._config.eval("verbose", bool)
 
         if rebuild:
             return f"Files {self._out_files} forced to rebuild"
@@ -1613,10 +1618,12 @@ class Task:
                 return f"Rebuilding because {filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if self._config.in_depfile and os.path.exists(self._config.in_depfile):
-            if self._debug:
-                Log(f"Found C dependencies file {self._config.in_depfile}")
-            with open(self._config.in_depfile, encoding="utf-8") as depfile:
+        depfile = self._config.in_depfile
+
+        if depfile and os.path.exists(depfile):
+            if debug:
+                Log(f"Found C dependencies file {depfile}")
+            with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
                 if self._depformat == "msvc":
                     # MSVC /sourceDependencies
@@ -1643,11 +1650,14 @@ class Task:
     async def run_command(self, command : str) -> None:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
+        debug   = self._config.eval("debug", bool)
+        verbose = self._config.eval("verbose", bool)
+
         # Non-string non-callable commands are not valid
         if not isinstance(command, str) and not callable(command):
             raise ValueError(f"Don't know what to do with {command}")
 
-        if self._verbose or self._debug:
+        if verbose or debug:
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = "Task"
             if self._name is not Loader.config_defaults.name:
@@ -1655,7 +1665,7 @@ class Task:
             elif self._desc is not Loader.config_defaults.desc:
                 suffix += f" '{self._desc}'"
             suffix += f" running command '{command}'"
-            Log(prefix + suffix, sameline = not self._verbose)
+            Log(prefix + suffix, sameline = not verbose)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
@@ -1668,51 +1678,43 @@ class Task:
                     result = command(self)
                     while inspect.isawaitable(result):
                         result = await result
-                    if self._debug or self._verbose:
+                    if verbose or debug:
                         prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
                         suffix = f"Command '{command}' done"
-                        Log(prefix + suffix, sameline = not self._verbose)
+                        Log(prefix + suffix, sameline = not verbose)
             except:
                 Log(f"{Utils.color(255,0,0)}Running command function {command} raised an exception{Utils.color()}")
                 raise
             return
 
         # Create the subprocess via asyncio and then await the result.
-        if self._debug: Log(f"Task {hex(id(self))} subprocess start '{command}'")
+        if debug: Log(f"Task {hex(id(self))} subprocess start '{command}'")
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd    = self._task_dir,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
         )
-        if self._debug: Log(f"Task {hex(id(self))} subprocess done '{command}'")
+        if debug: Log(f"Task {hex(id(self))} subprocess done '{command}'")
 
         (stdout_data, stderr_data) = await proc.communicate()
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        if proc.returncode:
-            message = f"CommandFailure: Command exited with return code {proc.returncode}\n"
-            if self._stdout or self._stderr:
-                message += f"========== Stdout ==========\n"
-                message += self._stdout
-                message += f"========== Stderr ==========\n"
-                message += self._stderr
-                message += f"============================\n"
-            raise ValueError(message)
+        if verbose or debug or proc.returncode:
+            stdouterr  = f"========== Stdout ==========\n"
+            stdouterr += self._stdout
+            stdouterr += f"========== Stderr ==========\n"
+            stdouterr += self._stderr
+            stdouterr += f"============================\n"
 
-        elif self._debug or self._verbose:
-            if self._stdout or self._stderr:
-                Log(f"========== Stdout ==========")
-                Log(self._stdout)
-                Log(f"========== Stderr ==========")
-                Log(self._stderr)
-                Log(f"============================")
-
-        if (self._debug or self._verbose) and not proc.returncode:
-            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-            suffix = f"Command '{command}' done"
-            Log(prefix + suffix, sameline = not self._verbose)
+            if proc.returncode:
+                raise ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
+            else:
+                prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+                suffix = f"Command '{command}' done"
+                #Log(prefix + suffix, sameline = not verbose)
+                Log(prefix + suffix, sameline = False)
 
     def dump(self):
         result = f"{type(self).__name__} @ {hex(id(self))} : '{self._name}'"
