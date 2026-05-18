@@ -37,8 +37,6 @@ need test case for:
 
 # FIXME need a test for task output collision that uses symlinks
 
-# FIXME we are not currently doing that.... (If no target was specified, we queue up all tasks that build stuff in the root repo)
-
 # FIXME need a test for dry run
 
 # FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit

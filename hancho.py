@@ -1125,6 +1125,8 @@ class Task:
         self._target      = e.get("target", str)
         self._tool        = e.get("tool", str)
 
+        self._verbose     = e.get("verbose", bool)
+        self._debug       = e.get("debug", bool)
         self._dry_run     = e.get("dry_run", bool)
         self._quiet       = e.get("quiet", bool)
         self._rebuild     = e.get("rebuild", bool)
@@ -1248,6 +1250,8 @@ class Task:
     def fixup_path2(self, k : str, v : str):
         assert isinstance(k, str)
         assert isinstance(v, str)
+
+        if len(v) == 0: return
 
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
@@ -1393,9 +1397,6 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        debug   = self._config.eval("debug", bool)
-        verbose = self._config.eval("verbose", bool)
-
         #--------------------------------------------------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # were cancelled, we propagate the cancellation to downstream tasks.
@@ -1417,12 +1418,12 @@ class Task:
         # fixing up paths to point to task_dir or build_dir.
 
         try:
-            if debug:
+            if self._debug:
                 Log(f"\nTask before expand: {self}")
 
             self.task_init()
 
-            if debug:
+            if self._debug:
                 Log(f"\nTask after expand: {self}")
 
         except asyncio.CancelledError as ex:
@@ -1456,7 +1457,7 @@ class Task:
             Stats.tasks_skipped += 1
             self.to_state(TaskState.SKIPPED)
             return
-        if verbose or debug:
+        if self._verbose or self._debug:
             Log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
 
         #--------------------------------------------------------------------------------
@@ -1464,7 +1465,7 @@ class Task:
 
         # Print the first status line for this task
 
-        if verbose or debug:
+        if self._verbose or self._debug:
             self.log_task_start()
 
         try:
@@ -1496,9 +1497,6 @@ class Task:
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
-        debug   = self._config.eval("debug", bool)
-        verbose = self._config.eval("verbose", bool)
-
         if rebuild:
             return f"Files {self._out_files} forced to rebuild"
         if not self._in_files:
@@ -1529,7 +1527,7 @@ class Task:
         depfile = self._config.in_depfile
 
         if depfile and os.path.exists(depfile):
-            if debug:
+            if self._debug:
                 Log(f"Found C dependencies file {depfile}")
             with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
@@ -1558,16 +1556,12 @@ class Task:
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        debug   = self._config.eval("debug", bool)
-        verbose = self._config.eval("verbose", bool)
-
         # Non-string non-callable commands are not valid
         if not isinstance(command, str) and not callable(command):
             raise ValueError(f"Don't know what to do with {command}")
 
 
-        if verbose or debug:
-            self.log_command_start(command)
+        self.log_command_start(command)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
@@ -1603,7 +1597,7 @@ class Task:
             e = ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
             self.log_command_failure(command, e)
             raise e
-        elif verbose or debug:
+        elif self._verbose or self._debug:
             self.log_command_done(command)
 
     #----------------------------------------
@@ -1615,27 +1609,32 @@ class Task:
     #----------------------------------------
 
     def log_prefix(self):
-        Log(f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} ", end="")
+        Log(f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} ",
+            sameline = not (self._debug or self._verbose),
+            end="")
 
     def log_stdout(self):
-        Log(f"========== Stdout ==========")
-        Log(self._stdout.strip())
-        Log(f"========== Stderr ==========")
-        Log(self._stderr.strip())
-        Log(f"============================")
+        if self._stdout:
+            Log(f"========== Stdout ==========")
+            Log(self._stdout.strip())
+        if self._stderr:
+            Log(f"========== Stderr ==========")
+            Log(self._stderr.strip())
+        if self._stdout or self._stderr:
+            Log(f"============================")
 
     def log_task_start(self):
-        self.log_prefix()
-        message = "Task"
-        if self._dry_run:       message += " (DRY RUN)"
-        if self._config.name:   message += f" '{self._config.name}'"
-        elif self._config.desc: message += f" '{self._config.desc}'"
-        message += f" starting"
-        Log(message)
+        #self.log_prefix()
+        #message = f"Running task '{self._config.name}'"
+        #if self._dry_run:       message += " (DRY RUN)"
+        ##if self._config.desc: message += f" '{self._config.desc}'"
+        #Log(message)
+        pass
 
     def log_task_done(self):
-        self.log_prefix()
-        Log(f"Task '{self._name}' done")
+        #self.log_prefix()
+        #Log(f"Task '{self._name}' done")
+        pass
 
     def log_task_failure(self):
         self.log_prefix()
@@ -1647,8 +1646,10 @@ class Task:
             Log(str(self))
 
     def log_command_start(self, command):
-        self.log_prefix()
-        Log(f"Command '{command}' starting")
+        message = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
+        dry_run = " (DRY RUN)" if self._dry_run else ""
+        message += f"Running task '{self._config.name}'{dry_run}, command '{command}'"
+        Log(message, sameline = not (self._debug or self._verbose))
 
     def log_command_failure(self, command, ex):
         self.log_prefix()
@@ -1664,10 +1665,11 @@ class Task:
         Log(Utils.color())
 
     def log_command_done(self, command):
-        self.log_prefix()
+        #self.log_prefix()
         #Log(f"Command '{command}' done")
-        Log(f"Command done")
-        self.log_stdout()
+        #Log(f"Command done")
+        #self.log_stdout()
+        pass
 
 # endregion
 ####################################################################################################
@@ -1875,9 +1877,9 @@ stem    = Path.stem
 
 defaults = Dict(
 
-    name       = "<name missing>",
-    desc       = "<description missing>",
-    command    = "<command missing>",
+    name       = "",
+    desc       = "",
+    command    = "",
 
     hancho_dir = os.path.dirname(__file__),
 

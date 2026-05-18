@@ -3,7 +3,7 @@ import hancho
 tools = hancho.load("tools_stage2.hancho")
 
 hello_greet = tools.cc_library(
-    name    = "hello-greet",
+    name    = "hello-greet2",
     in_srcs = ["hello-greet.cc"],
     in_hdrs = ["hello-greet.h"]
 )
