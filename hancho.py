@@ -210,7 +210,17 @@ class Path:
         result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
 
-    abspath  = recursify(os.path.abspath)
+    _abspath  = recursify(os.path.abspath)
+
+    @staticmethod
+    def abspath[T](path : T, expected_type = type(T)) -> T:
+        #assert isinstance(path, expected_type)
+        #if not isinstance(path, type(T)):
+        #    print(T)
+        #    print(type(path))
+        #    sys.exit(-1)
+        return cast(T, Path._abspath(path))
+
     basename = recursify(os.path.basename)
     normpath = recursify(os.path.normpath)
     realpath = recursify(os.path.realpath)
@@ -503,9 +513,7 @@ class Dict(dict):
     # Expander stuff
 
     def eval[T](self, expr : str, as_type: type[T] = object) -> T:
-        result = Expander(self).eval(expr)
-        assert isinstance(result, as_type)
-        return result
+        return Expander(self).eval(expr, as_type)
 
     def expand(self, template : str_tree) -> str_tree:
         return Expander(self).expand(template)
@@ -653,7 +661,7 @@ class Expander(abc.Mapping):
     # Returns a relative path from the task directory to the sub_path.
 
     def rel(self, sub_path):
-        task_dir = self.eval("_task_dir")
+        task_dir = self.eval("_task_dir", str)
         result = Path.rel_path(sub_path, task_dir)
         return result
 
@@ -754,6 +762,11 @@ class Expander(abc.Mapping):
 
         return result
 
+    def get[T](self, key : str, as_type : type[T] = object) -> T:
+        result = self._get(key)
+        assert isinstance(result, as_type)
+        return result
+
     ########################################
 
     @track_depth
@@ -798,11 +811,7 @@ class Expander(abc.Mapping):
 
     def eval[T](self, expr : str, as_type : type[T] = object) -> T:
         result = self._eval(expr)
-        if not isinstance(result, as_type):
-            print()
-            print(type(result))
-            print(as_type)
-        #assert isinstance(result, as_type)
+        assert isinstance(result, as_type)
         return result
 
     ########################################
@@ -1061,9 +1070,9 @@ class Loader:
         depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
         in_depfile  = "",
 
-        build_tag   = None,
-        target      = None,
-        tool        = None,
+        build_tag   = "",
+        target      = "",
+        tool        = "",
 
         keep_going  = False,
         verbose     = False,
@@ -1289,41 +1298,41 @@ class Task:
 
         check = Utils.check
 
-        self._root_dir   = Path.abspath(check(str, e.eval("root_dir")))
-        self._root_file  = Path.abspath(check(str, e.eval("root_file")))
+        self._root_dir   = Path.abspath(e.get("root_dir", str))
+        self._root_file  = Path.abspath(e.get("root_file", str))
 
-        self._repo_dir   = Path.abspath(check(str, e.eval("repo_dir")))
-        self._repo_file  = Path.abspath(check(str, e.eval("repo_file")))
+        self._repo_dir   = Path.abspath(e.get("repo_dir", str))
+        self._repo_file  = Path.abspath(e.get("repo_file", str))
 
-        self._this_dir   = check(str, Path.abspath(check(str, e.eval("this_dir"))))
-        self._this_file  = check(str, Path.abspath(check(str, e.eval("this_file"))))
+        self._this_dir   = Path.abspath(e.get("this_dir", str))
+        self._this_file  = Path.abspath(e.get("this_file", str))
 
-        self._task_dir   = check(str, Path.abspath(self._config.eval("task_dir")))
+        self._task_dir : str = Path.abspath(e.get("task_dir", str))
 
-        self._build_root = Path.abspath(e.eval("build_root"))
-        self._build_dir  = check(str, Path.abspath(check(str, e.eval("build_dir"))))
+        self._build_root = Path.abspath(e.get("build_root", str))
+        self._build_dir  = Path.abspath(e.get("build_dir", str))
 
-        self._in_depfile : str = e.eval("in_depfile", str)
+        self._in_depfile  = e.get("in_depfile", str)
 
-        self._job_count   = check(int, e.eval("job_count"))
-        self._keep_going  = check(int, e.eval("keep_going"))
+        self._job_count   = e.get("job_count", int)
+        self._keep_going  = e.get("keep_going", int)
 
-        self._depformat   = check(str | None, e.eval("depformat"))
-        self._build_tag   = check(str | None, e.eval("build_tag"))
-        self._target      = check(str | None, e.eval("target"))
-        self._tool        = check(str | None, e.eval("tool"))
+        self._depformat   = e.get("depformat", str)
+        self._build_tag   = e.get("build_tag", str)
+        self._target      = e.get("target", str)
+        self._tool        = e.get("tool", str)
 
-        self._verbose     = check(bool, e.eval("verbose"))
-        self._debug       = check(bool, e.eval("debug"))
-        self._dry_run     = check(bool, e.eval("dry_run"))
-        self._quiet       = check(bool, e.eval("quiet"))
-        self._rebuild     = check(bool, e.eval("rebuild"))
-        self._shuffle     = check(bool, e.eval("shuffle"))
-        self._trace       = check(bool, e.eval("trace"))
-        self._should_fail = check(bool, e.eval("should_fail"))
+        self._verbose     = e.get("verbose", bool)
+        self._debug       = e.get("debug", bool)
+        self._dry_run     = e.get("dry_run", bool)
+        self._quiet       = e.get("quiet", bool)
+        self._rebuild     = e.get("rebuild", bool)
+        self._shuffle     = e.get("shuffle", bool)
+        self._trace       = e.get("trace", bool)
+        self._should_fail = e.get("should_fail", bool)
 
         # Command can't be expanded until inputs are ready
-        self._command : str | list[str] | function = ""
+        self._command : str_tree | function = ""
 
         # Bookkeeping stuff
 
@@ -2002,7 +2011,7 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = os.path.realpath(task._config.eval("build_root"))
+                build_root = os.path.realpath(task._config.eval("build_root", str))
                 build_root = os.path.relpath(build_root, os.getcwd())
                 if os.path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}")
