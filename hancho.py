@@ -193,17 +193,17 @@ class Path:
     # path, which we can do with simple string manipulation.
 
     @classmethod
-    def rel_path(cls, path1, path2):
+    def rel(cls, path1, path2):
         if Utils.is_collection(path1):
-            result = [Path.rel_path(p, path2) for p in path1]
+            result = [Path.rel(p, path2) for p in path1]
         elif Utils.is_collection(path2):
-            result = [Path.rel_path(path1, p) for p in path2]
+            result = [Path.rel(path1, p) for p in path2]
         elif isinstance(path1, str) and isinstance(path2, str):
             path1 = os.path.normpath(path1)
             path2 = os.path.normpath(path2)
             result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
         else:
-            assert False, f"rel_path() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
+            assert False, f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
         return result
 
     @staticmethod
@@ -211,12 +211,12 @@ class Path:
         result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
 
-    abspath  = recursify(os.path.abspath)
-    basename = recursify(os.path.basename)
-    normpath = recursify(os.path.normpath)
-    realpath = recursify(os.path.realpath)
-    ext      = recursify(lambda name, ext: os.path.splitext(name)[0] + ext)
-    stem     = recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
+    abs  = recursify(os.path.abspath)
+    base = recursify(os.path.basename)
+    norm = recursify(os.path.normpath)
+    real = recursify(os.path.realpath)
+    ext  = recursify(lambda name, ext: os.path.splitext(name)[0] + ext)
+    stem = recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
 # endregion
 ####################################################################################################
@@ -604,7 +604,7 @@ class Expander(abc.Mapping[str, object]):
     # Returns a relative path from the task directory to the sub_path.
 
     def rel(self, sub_path):
-        result = Path.rel_path(sub_path, self._task_dir)
+        result = Path.rel(sub_path, self._task_dir)
         return result
 
     ########################################
@@ -955,7 +955,7 @@ class Loader:
 
         task_dir   = "{this_dir}",
         build_root = "{repo_dir}/build",
-        build_dir  = "{build_root}/{build_tag}/{rel_path(task_dir, repo_dir)}",
+        build_dir  = "{build_root}/{build_tag}/{rel(task_dir, repo_dir)}",
 
         job_count   = 1,
         job_max     = os.cpu_count(),
@@ -1289,7 +1289,7 @@ class Task:
     def start(self):
         self.to_state(TaskState.STARTED)
 
-        self._asyncio_task = asyncio.create_task(self.task_main(), context = self._context)
+        self._asyncio_task = asyncio.create_task(self.task_main2(), context = self._context)
         Stats.tasks_started += 1
 
     async def await_done(self):
@@ -1392,13 +1392,13 @@ class Task:
     def task_init(self):
         self.to_state(TaskState.INIT)
 
+        # ----------------------------------------
         # Fix up all in/out paths
+
         Utils.walk(self._config, self.move_stuff1)
 
-        # And now we can expand the name, description, and command.
-
-        self._name = self._config.eval("name", str)
-        self._desc = self._config.eval("desc", str)
+        # ----------------------------------------
+        # Expand the command.
 
         if (callable(self._config.command)):
             self._command = cast(Any, self._config.command)
@@ -1407,9 +1407,7 @@ class Task:
             self._command = cast(Tree[str], self._config.expand(self._config.command))
 
         # ----------------------------------------
-        # Check for missing input/output paths
-
-        assert isinstance(self._task_dir, str)
+        # Check for missing paths
 
         if not os.path.exists(self._task_dir):
             raise FileNotFoundError(self._task_dir)
@@ -1431,11 +1429,7 @@ class Task:
             Stats.filename_to_fingerprint[real_file] = real_file
 
         # ----------------------------------------
-        # Sanity checks
-
-        # Check for missing input files/paths
-        if not os.path.exists(self._task_dir):
-            raise FileNotFoundError(self._task_dir)
+        # Check for missing inputs
 
         if not self._dry_run:
             for file in self._in_files:
@@ -1444,7 +1438,9 @@ class Task:
                 if not os.path.exists(file):
                     raise FileNotFoundError(file)
 
+        # ----------------------------------------
         # Check that all build files would end up under build_dir
+
         for file in self._out_files:
             if file is None:
                 raise ValueError("_out_files contained a None")
@@ -1454,7 +1450,9 @@ class Task:
                     f"Path error, output file {file} is not under build_dir {self._build_dir}"
                 )
 
+        # ----------------------------------------
         # Check for duplicate task outputs
+
         if self._command:
             for file in self._out_files:
                 file = os.path.abspath(file)
@@ -1462,7 +1460,9 @@ class Task:
                     raise NameError(f"Multiple rules build {file}!")
                 Stats.all_out_files.add(file)
 
+        # ----------------------------------------
         # Make sure our output directories exist
+
         if not self._dry_run:
             for file in self._out_files:
                 os.makedirs(os.path.dirname(file), exist_ok=True)
@@ -1470,6 +1470,10 @@ class Task:
     #--------------------------------------------------------------------------------
     # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
     # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
+
+    async def task_main2(self):
+        with chdir(self._task_dir):
+            await self.task_main()
 
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
@@ -1503,8 +1507,7 @@ class Task:
             if debug:
                 Log(f"\nTask before expand: {self}")
 
-            with chdir(self._task_dir):
-                self.task_init()
+            self.task_init()
 
             if debug:
                 Log(f"\nTask after expand: {self}")
@@ -1549,15 +1552,7 @@ class Task:
         # Print the first status line for this task
 
         if verbose or debug:
-            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-            suffix = "Task"
-            if self._dry_run: suffix += " (DRY RUN)"
-            if self._config.name:
-                suffix += f" '{self._config.name}'"
-            elif self._config.desc:
-                suffix += f" '{self._config.desc}'"
-            suffix += f" starting"
-            Log(prefix + suffix)
+            self.log_task_start()
 
         try:
             # Wait for enough jobs to free up to run this task and then run the commands.
@@ -1647,7 +1642,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    async def run_command(self, command : str) -> None:
+    async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         debug   = self._config.eval("debug", bool)
@@ -1657,15 +1652,9 @@ class Task:
         if not isinstance(command, str) and not callable(command):
             raise ValueError(f"Don't know what to do with {command}")
 
+
         if verbose or debug:
-            prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-            suffix = "Task"
-            if self._name is not Loader.config_defaults.name:
-                suffix += f" '{self._name}'"
-            elif self._desc is not Loader.config_defaults.desc:
-                suffix += f" '{self._desc}'"
-            suffix += f" running command '{command}'"
-            Log(prefix + suffix, sameline = not verbose)
+            self.log_command_start(command)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
@@ -1674,51 +1663,93 @@ class Task:
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             try:
-                with chdir(self._task_dir):
-                    result = command(self)
-                    while inspect.isawaitable(result):
-                        result = await result
-                    if verbose or debug:
-                        prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-                        suffix = f"Command '{command}' done"
-                        Log(prefix + suffix, sameline = not verbose)
-            except:
-                Log(f"{Utils.color(255,0,0)}Running command function {command} raised an exception{Utils.color()}")
-                raise
+                result = command(self)
+                while inspect.isawaitable(result):
+                    result = await result
+                self._stdout = ""
+                self._stderr = ""
+            except BaseException as e:
+                self.log_command_failure(command, e)
+                raise e
             return
+        else:
+            # Create the subprocess via asyncio and then await the result.
+            #if debug: Log(f"Task {hex(id(self))} subprocess start '{command}'")
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd    = self._task_dir,
+                stdout = asyncio.subprocess.PIPE,
+                stderr = asyncio.subprocess.PIPE,
+            )
+            (stdout_data, stderr_data) = await proc.communicate()
+            self._stdout = stdout_data.decode()
+            self._stderr = stderr_data.decode()
+            #if debug: Log(f"Task {hex(id(self))} subprocess done '{command}'")
 
-        # Create the subprocess via asyncio and then await the result.
-        if debug: Log(f"Task {hex(id(self))} subprocess start '{command}'")
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd    = self._task_dir,
-            stdout = asyncio.subprocess.PIPE,
-            stderr = asyncio.subprocess.PIPE,
-        )
-        if debug: Log(f"Task {hex(id(self))} subprocess done '{command}'")
+        if proc.returncode:
+            e = ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
+            self.log_command_failure(command, e)
+            raise e
+        elif verbose or debug:
+            self.log_command_done(command)
 
-        (stdout_data, stderr_data) = await proc.communicate()
-        self._stdout = stdout_data.decode()
-        self._stderr = stderr_data.decode()
-
-        if verbose or debug or proc.returncode:
-            stdouterr  = f"========== Stdout ==========\n"
-            stdouterr += self._stdout
-            stdouterr += f"========== Stderr ==========\n"
-            stdouterr += self._stderr
-            stdouterr += f"============================\n"
-
-            if proc.returncode:
-                raise ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
-            else:
-                prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-                suffix = f"Command '{command}' done"
-                #Log(prefix + suffix, sameline = not verbose)
-                Log(prefix + suffix, sameline = False)
+    #----------------------------------------
 
     def dump(self):
         result = f"{type(self).__name__} @ {hex(id(self))} : '{self._name}'"
         print(result)
+
+    #----------------------------------------
+
+    def log_prefix(self):
+        Log(f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} ", end="")
+
+    def log_stdout(self):
+        stdouterr  = f"========== Stdout ==========\n"
+        stdouterr += self._stdout
+        stdouterr += f"========== Stderr ==========\n"
+        stdouterr += self._stderr
+        stdouterr += f"============================\n"
+
+    def log_task_start(self):
+        self.log_prefix()
+        message = "Task"
+        if self._dry_run:       message += " (DRY RUN)"
+        if self._config.name:   message += f" '{self._config.name}'"
+        elif self._config.desc: message += f" '{self._config.desc}'"
+        message += f" starting"
+        Log(message)
+
+    def log_task_done(self):
+        self.log_prefix()
+        Log(f"Task '{self._name}' done")
+
+    def log_task_failure(self):
+        self.log_prefix()
+        Log(Utils.color(255, 128, 0), end="")
+        Log(f"Task '{self._name}' failed")
+        Log(traceback.format_exc())
+        Log(Utils.color())
+        if hancho.config.debug or hancho.config.verbose:
+            Log(str(self))
+
+    def log_command_start(self, command):
+        self.log_prefix()
+        Log(f"Command '{command}' starting")
+
+    def log_command_failure(self, command, ex):
+        self.log_prefix()
+        Log(Utils.color(255,0,0))
+        Log(f"Command '{command}' failed with exception {ex}")
+        Log(Utils.color())
+        self.log_stdout()
+
+    def log_command_done(self, command):
+        self.log_prefix()
+        Log(f"Command '{command}' done")
+        self.log_stdout()
+
+
 
 
 # endregion
@@ -1843,12 +1874,19 @@ class Runner:
             task = cls.started_tasks.pop(0)
             asyncio_task = Utils.check(asyncio.Task, task._asyncio_task)
 
+            verbose = task._config.eval("verbose")
+            debug   = task._config.eval("verbose")
+
             try:
+                if verbose or debug:
+                    task.log_task_start()
                 await asyncio_task
                 cls.finished_tasks.append(task)
+                if verbose or debug:
+                    task.log_task_done()
             except BaseException:  # pylint: disable=broad-exception-caught
                 # Both broken and failed tasks should end up here.
-                cls.log_task_failure(task)
+                task.log_task_failure()
                 if task._should_fail:
                     cls.finished_tasks.append(task)
 
@@ -1888,18 +1926,12 @@ class Runner:
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    def log_task_failure(cls, task):
-        Log("")
-        Log(f"{Utils.color(255, 128, 0)}Task failed: {task._name} {task._desc} {task._command} {Utils.color()}")
-        Log(f"{Utils.color(255, 128, 128)}{traceback.format_exc()}{Utils.color()}")
-        if hancho.config.debug or hancho.config.verbose:
-            Log(str(task))
 
 
 # endregion
 ####################################################################################################
-# region Main
+# region Declarations that should only be seen by client scripts. This has to go before the
+# 'if __name__ == __main__' below.
 
 def init(*args, **kwargs):
     context = Dict(
@@ -1924,6 +1956,26 @@ def load(script_path, *args, **kwargs) -> types.ModuleType:
 
 def repo(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, True, *args, kwargs)
+
+path    = os.path # path.dirname and path.basename used by makefile-related rules
+re      = re # why is sub() not working?
+glob    = staticmethod(glob.glob)
+flatten = Utils.flatten
+run_cmd = Utils.run_cmd
+color   = Utils.color
+join    = Utils.join
+
+abs     = Path.abs
+base    = Path.base
+ext     = Path.ext
+norm    = Path.norm
+real    = Path.real
+rel     = Path.rel
+stem    = Path.stem
+
+# endregion
+####################################################################################################
+# region Main
 
 async def main():
 
@@ -1979,29 +2031,7 @@ async def main():
 
 # endregion
 ####################################################################################################
-# region Declarations that should only be seen by client scripts. This has to go before the
-# 'if __name__ == __main__' below.
-
-# Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
-# here are so that .hancho files don't trigger type checking errors.
-
-path    = os.path # path.dirname and path.basename used by makefile-related rules
-re      = re # why is sub() not working?
-glob    = staticmethod(glob.glob)
-ext     = staticmethod(Path.ext)
-rel     = Path.rel_path
-flatten = Utils.flatten
-run_cmd = Utils.run_cmd
-color   = Utils.color
-join    = Utils.join
-rel_path = Path.rel_path
-
-# endregion
-####################################################################################################
 # region __name__ == __main__
-
-#print(hancho.__dict__)
-#sys.exit(0)
 
 if __name__ == "__main__":
     init(Loader.parse_flags(sys.argv[1:]))
