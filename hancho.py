@@ -545,11 +545,6 @@ class Expander(abc.Mapping[str, object]):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    # The maximum number of recursion levels we will do to expand a macro.
-    # Tests currently require MAX_DEPTH >= 6
-    MAX_DEPTH : int = 20
-    depth : int = 0
-
     @classmethod
     def reset(cls):
         cls.depth = 0
@@ -663,27 +658,24 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
-    @staticmethod
-    def track_depth(func : types.FunctionType):
-        def track_depth(*args, **kwargs):
-            Expander.depth += 1
-            try:
-                if Expander.depth > Expander.MAX_DEPTH:
-                    raise RecursionError("Template expansion failed to terminate")
-                return func(*args, **kwargs)
-            finally:
-                Expander.depth -= 1
-        return track_depth
+#    @staticmethod
+#    def track_depth(func : types.FunctionType):
+#        def track_depth(*args, **kwargs):
+#            Expander.depth += 1
+#            try:
+#                if Expander.depth > Expander.MAX_DEPTH:
+#                    raise RecursionError("Template expansion failed to terminate")
+#                return func(*args, **kwargs)
+#            finally:
+#                Expander.depth -= 1
+#        return track_depth
 
     ########################################
 
-    @track_depth
+    #@track_depth
     def _get(self, key):
-        trace_color = Utils.color(192, 255, 192)
-
-        Tracer.log(self, trace_color, "┏", f" get '{key}'")
-
-        with Tracer(trace_color) as t:
+        with Tracer(self) as t:
+            t.log(f" get '{key}'")
             result = self._context[key]
 
             # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
@@ -694,8 +686,7 @@ class Expander(abc.Mapping[str, object]):
             if isinstance(result, str):
                 result = self.expand(result)
 
-        message = f" '{result}'" if isinstance(result, str) else f" {result}"
-        Tracer.log(self, trace_color, "┗", message)
+            t.log(f" '{result}'" if isinstance(result, str) else f" {result}")
 
         return result
 
@@ -706,29 +697,25 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
-    @track_depth
+    #@track_depth
     def _eval(self, expr):
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
 
-        trace_color = Utils.color(192, 192, 255)
-
-        Tracer.log(self, trace_color, "┏", f" eval '{expr}'")
-
-        with Tracer(trace_color):
+        with Tracer(self) as t:
+            t.log(f"eval '{expr}'")
             try:
                 expr = self.expand(expr, str)
                 result = eval(expr, hancho.__dict__, self)
             except RecursionError as err:
                 raise err
             except BaseException as err:
-                Tracer.log(self, Utils.color(255, 0, 0), "┗", f" {type(err).__name__}: {err}")
+                t.log(f" {type(err).__name__}: {err}")
                 raise err
-
-        message = f" '{result}'" if isinstance(result, str) else f" {result}"
-        Tracer.log(self, trace_color, "┗", message)
+            message = f" '{result}'" if isinstance(result, str) else f" {result}"
+            t.log(message)
 
         return result
 
@@ -739,7 +726,7 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
-    @track_depth
+    #@track_depth
     def _expand(self, template : str) -> str:
         """
         Expander.expand replaces all innermost {expressions} with the result of evaluating the
@@ -753,11 +740,8 @@ class Expander(abc.Mapping[str, object]):
         if len(blocks) == 0 or (len(blocks) == 1 and type(blocks[0]) == Expander.Lit):
             return template
 
-        trace_color = Utils.color(255, 192, 192)
-
-        Tracer.log(self, trace_color, "┏", f" expand '{template}'")
-
-        with Tracer(trace_color):
+        with Tracer(self) as t:
+            t.log(f" expand '{template}'")
             for (i, block) in enumerate(blocks):
                 if isinstance(block, Expander.Lit):
                     continue
@@ -769,10 +753,8 @@ class Expander(abc.Mapping[str, object]):
                 except:
                     block = "{" + block + "}"
                 blocks[i] = block
-
             result = "".join(blocks)
-
-        Tracer.log(self, trace_color, "┗", f" '{result}'")
+            t.log(f" '{result}'")
 
         if result != template:
             result = self._expand(result)
@@ -795,43 +777,49 @@ class Expander(abc.Mapping[str, object]):
 # Expansion tracing class used by Expander
 
 class Tracer:
+    # The maximum number of recursion levels we will do to expand a macro.
+    # Tests currently require MAX_DEPTH >= 6
+    MAX_DEPTH : int = 20
+    trellis_stack : list[str] = []
 
-    trellis_stack : list[str]
-
-    def __init__(self, color):
-        self.color = color
+    def __init__(self, expander : Expander):
+        self.trace = expander.trace
+        self.color = Utils.id_to_color(expander)
 
     def __enter__(self):
+        if len(Tracer.trellis_stack) >= Tracer.MAX_DEPTH:
+            raise RecursionError("Template expansion failed to terminate")
         Tracer.trellis_stack.append(self.color + "┃ ")
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         Tracer.trellis_stack.pop()
+        return False
 
     @classmethod
     def reset(cls):
-        cls.trellis_stack = []
+        cls.trellis_stack = [Utils.color(0)]
 
-    @classmethod
-    def log(cls, source : Any, trellis_color : str, trellis_bar: str, text : str):
+    def log(self, text : str):
         """Prints a trace message to the log."""
-        if not source.trace:
+        if not self.trace:
             return
 
-        source_id = id(source)
+        #source_id = id(source)
 
         #if trellis_bar[0] == '┗':
         #    Tracer.pop()
 
         buffer = ""
-        buffer += Utils.id_to_color(source_id)
-        buffer += hex(source_id)
-        buffer += Utils.color()
-        buffer += ": "
+        #buffer += Utils.id_to_color(source_id)
+        #buffer += hex(source_id)
+        #buffer += Utils.color()
+        #buffer += ": "
 
         buffer += "".join(Tracer.trellis_stack)
-        buffer += trellis_color
-        buffer += trellis_bar
-        buffer += Utils.color()
+        #buffer += self.color + "┃ "
+        #buffer += trellis_bar
+        #buffer += Utils.color()
 
         buffer += text
 
@@ -840,24 +828,8 @@ class Tracer:
         #if trellis_bar[0] == '┏':
         #    Tracer.push(trellis_color)
 
-        if len(trellis_bar) and trellis_bar[0] == '┗' and Expander.depth == 0:
-            Log("")
-
-    @classmethod
-    def log2(cls, source : Any, text : str):
-        """Prints a trace message to the log."""
-        source_id = id(source)
-
-        buffer = ""
-        buffer += Utils.id_to_color(source_id)
-        buffer += hex(source_id)
-        buffer += Utils.color()
-        buffer += ": "
-        buffer += "".join(Tracer.trellis_stack)
-        buffer += Utils.color()
-        buffer += text
-
-        Log(buffer)
+        #if len(Tracer.trellis_bar) and Tracer.trellis_bar[0] == '┗' and Expander.depth == 0:
+        #    Log("")
 
 # endregion
 ####################################################################################################
