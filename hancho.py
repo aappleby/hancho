@@ -40,7 +40,7 @@ import time
 import traceback
 import types
 import contextvars
-from typing import Any, cast, TypeVar, Callable, ParamSpec, Protocol, Concatenate, overload
+from typing import Any, cast, TypeVar, Callable, ParamSpec, Protocol, Concatenate, overload, TypeAliasType
 from collections import abc
 from enum import Enum
 from contextlib import chdir
@@ -207,18 +207,6 @@ class Path:
     def join(lhs, rhs):
         result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
-
-
-
-#    @staticmethod
-#    @overload
-#    def abspath(path: str) -> str: ...
-#    @overload
-#    @staticmethod
-#    def abspath(path: Tree[str]) -> Tree[str]: ...
-#    @staticmethod
-#    def abspath(path):
-#        return Path._abspath(path)
 
     abspath  = recursify(os.path.abspath)
     basename = recursify(os.path.basename)
@@ -513,10 +501,14 @@ class Dict(dict):
     # Expander stuff
 
     def eval[T](self, expr : str, as_type: type[T] = object) -> T:
-        return Expander(self).eval(expr, as_type)
+        result = Expander(self).eval(expr)
+        assert isinstance(result, as_type)
+        return result
 
-    def expand(self, template : Tree[str]) -> Tree[str]:
-        return Expander(self).expand(template)
+    def expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
+        result = Expander(self).expand(template)
+        assert isinstance(result, as_type)
+        return result
 
 ########################################
 
@@ -557,7 +549,7 @@ def track_depth(f):
             Expander.depth -= 1
     return track_depth
 
-class Expander(abc.Mapping):
+class Expander(abc.Mapping[str, object]):
     """
     This class is used to fetch and expand text templates from a dict during text expansion.
     It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
@@ -595,36 +587,12 @@ class Expander(abc.Mapping):
         def __hash__(self):
             return str.__hash__(self)
 
-    # FIXME It feels slightly odd to have expansion_globals, should we just use the hancho.py
-    # module itself?
-
-    expansion_globals = Dict(
-        os   = os,
-        sys  = sys,
-        path = os.path,
-        re   = re,
-        glob = glob,
-
-        ext     = Path.ext,
-        #rel     = Utils.rel_path,
-        #stem    = Utils.stem,
-        #name    = Utils.name
-        #log     = Log.log,
-        flatten = Utils.flatten,
-        run_cmd = Utils.run_cmd,
-        color   = Utils.color,
-        join    = Utils.join,
-        rel_path = Path.rel_path,
-    )
-
     ########################################
 
     def __init__(self, context : Dict):
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        trace = dict.get(context, "trace", False)
-
-        object.__setattr__(self, "_context", context)
-        object.__setattr__(self, "trace", trace)
+        self._context = context
+        self._trace = dict.get(context, "trace", False)
 
     def __contains__(self, key):
         return key in self._context
@@ -641,18 +609,6 @@ class Expander(abc.Mapping):
     def __len__(self):
         raise TypeError("Hancho.Expander cannot be len'd")
 
-    def __setattr__(self, name : str, value : Any):
-        raise TypeError("Hancho.Expander is immutable", name, value)
-
-    def __delattr__(self, name : str):
-        raise TypeError("Hancho.Expander is immutable", name)
-
-    def __setitem__(self, name : str, value : Any):
-        raise TypeError("Hancho.Expander is immutable", name, value)
-
-    def __delitem__(self, name : str):
-        raise TypeError("Hancho.Expander is immutable", name)
-
     def __repr__(self):
         result = f"{self.__class__.__name__} @ {hex(id(self))}"
         return result
@@ -661,8 +617,7 @@ class Expander(abc.Mapping):
     # Returns a relative path from the task directory to the sub_path.
 
     def rel(self, sub_path):
-        task_dir = self.eval("_task_dir", str)
-        result = Path.rel_path(sub_path, task_dir)
+        result = Path.rel_path(sub_path, self._task_dir)
         return result
 
     ########################################
@@ -721,26 +676,24 @@ class Expander(abc.Mapping):
 
     @track_depth
     def _get(self, key):
-        trace_color = Utils.color(0, 255, 0)
+        trace_color = Utils.color(192, 255, 192)
 
-        if self.trace:
+        if self._trace:
             Tracer.log(self, trace_color, "┏", f" get '{key}'")
 
         Tracer.push(trace_color)
 
         try:
-            result = "<_get failed>"
-            e = None
-
-            if key in self._context:
-                result = self._context[key]
-            elif key in Expander.expansion_globals:
-                result = Expander.expansion_globals[key]
-            else:
-                e = KeyError(key)
-                if self.trace:
-                    Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
-                raise e
+#            result = "<_get failed>"
+#            e = None
+#
+#            if key in self._context:
+#                result = self._context[key]
+#            else:
+#                if self.trace:
+#                    Tracer.log(self, trace_color, "┗", f" {Utils.color(255,0,0)}{type(e).__name__}: {e}{Utils.color()}")
+#                raise KeyError(key)
+            result = self._context[key]
 
             # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
             if isinstance(result, Dict):
@@ -752,7 +705,7 @@ class Expander(abc.Mapping):
         finally:
             Tracer.pop()
 
-        if self.trace:
+        if self._trace:
             message = ""
             if isinstance(result, str):
                 message += f" '{result}'"
@@ -770,47 +723,41 @@ class Expander(abc.Mapping):
     ########################################
 
     @track_depth
-    def _eval(self, expr : str) -> Any: # , trace : bool
+    def eval[T](self, expr : str, as_type : type[T] = object) -> T:
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
 
-        trace_color = Utils.color(0, 0, 255)
+        trace_color = Utils.color(192, 192, 255)
+
+        if self._trace:
+            Tracer.log(self, trace_color, "┏", f" eval '{expr}'")
+
         Tracer.push(trace_color)
 
-        if not isinstance(expr, str):
-            return expr
+        #if not isinstance(expr, str):
+        #    return expr
 
-        expr = cast(str, self.expand(expr))
-
-        orig_expr = expr
-        if self.trace:
-            Tracer.log(self, trace_color, "┏", f" eval '{orig_expr}'")
+        expr = self.expand(expr, str)
 
         try:
-            result = eval(expr, None, self)
+            result = eval(expr, hancho.__dict__, self)
         except RecursionError as err:
             raise err
         except BaseException as err:
-            # If the expression was not valid Python, return it verbatim.
-            result = expr
-            if self.trace:
-                Tracer.log(self, trace_color, "┗", f" {type(err).__name__}: {err}")
+            if self._trace:
+                Tracer.log(self, Utils.color(255, 0, 0), "┗", f" {type(err).__name__}: {err}")
             raise err
         finally:
             Tracer.pop()
 
-        if self.trace:
+        if self._trace:
             if isinstance(result, str):
                 Tracer.log(self, trace_color, "┗", f" '{result}'")
             else:
                 Tracer.log(self, trace_color, "┗", f" {result}")
 
-        return result
-
-    def eval[T](self, expr : str, as_type : type[T] = object) -> T:
-        result = self._eval(expr)
         assert isinstance(result, as_type)
         return result
 
@@ -827,7 +774,7 @@ class Expander(abc.Mapping):
 
         assert isinstance(template, str)
 
-        trace_color = Utils.color(255, 0, 0)
+        trace_color = Utils.color(255, 192, 192)
 
         if not isinstance(template, str):
             return template
@@ -840,7 +787,7 @@ class Expander(abc.Mapping):
         if len(blocks) == 1 and type(blocks[0]) == Expander.Lit:
             return template
 
-        if self.trace:
+        if self._trace:
             Tracer.log(self, trace_color, "┏", f" expand '{template}'")
 
         Tracer.push(trace_color)
@@ -860,7 +807,7 @@ class Expander(abc.Mapping):
 
         Tracer.pop()
 
-        if self.trace:
+        if self._trace:
             Tracer.log(self, trace_color, "┗", f" '{result}'")
 
         if result != template:
@@ -868,10 +815,15 @@ class Expander(abc.Mapping):
 
         return result
 
-    def expand(self, template):
+    def expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
         if Utils.is_collection(template):
-            return [self.expand(v) for v in template]
-        return self._expand(template)
+            result = [self.expand(v) for v in template]
+        elif isinstance(template, str):
+            result = self._expand(template)
+        else:
+            assert False, f"Don't know how to expand a {type(template)} = {template}"
+        assert isinstance(result, as_type)
+        return result
 
 # endregion
 ####################################################################################################
@@ -1438,41 +1390,29 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def fixup_path(self, k, v : str):
+    def fixup_path2(self, k : str, v : str):
+        assert isinstance(k, str)
+        assert isinstance(v, str)
+
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        assert isinstance(k, str)
-        assert k.startswith("in_") or k.startswith("out_")
-        assert v is not None
-
-        if not isinstance(v, str):
-            return v
-
         v = cast(str, self._config.expand(v))
-        assert isinstance(v, str)
-        v = Path.normpath(v) # type: ignore
-        assert isinstance(v, str)
+        v = os.path.normpath(v) # type: ignore
 
         # Make all in_ and out_ file paths absolute.
         if k == "in_depfile" or k.startswith("out_"):
             v = self.move_to_build_dir(v)
-            assert isinstance(v, str)
         elif k.startswith("in_"):
-            assert isinstance(self._task_dir, str)
             v = os.path.join(self._task_dir, v)
         else:
-            return v
+            assert False, f"How did we get here when our key is {k}?"
 
         # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
         # all paths so that the command line won't be huge after expansion.
 
-        abs_v = Path.abspath(v)
-        rel_v = Path.rel_path(v, self._task_dir)
-
-        # We can't actually do this everywhere, it breaks stuff
-        #v = Path.rel_path(v, self._task_dir)
+        abs_v = os.path.abspath(v)
 
         # Gather all absolute file paths to _in/_out_files.
         # These filenames must be absolute as they may be read from other repos.
@@ -1484,9 +1424,17 @@ class Task:
         elif k.startswith("in_"):
             self._in_files.extend(Utils.flatten(abs_v))
 
-        # For the same reason, we probably can't return rel_v here even though it makes
-        # the command lines shorter...
         return abs_v
+
+    #--------------------------------------------------------------------------------
+
+    def fixup_path1(self, k, v):
+        if isinstance(v, str):
+            return self.fixup_path2(k, v)
+        elif isinstance(v, abc.Collection):
+            return [self.fixup_path1(k, v2) for v2 in v]
+        else:
+            assert False, "fixup_path1 should only get Tree[str] as value"
 
     #--------------------------------------------------------------------------------
 
@@ -1496,11 +1444,9 @@ class Task:
         if v is None: return
 
         if Utils.is_collection(v):
-            for (i, v2) in enumerate(v):
-                if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                    v[i] = self.fixup_path(k, v2)
+            c[k] = self.fixup_path1(k, v)
         elif isinstance(v, str):
-            c[k] = self.fixup_path(k, v)
+            c[k] = self.fixup_path1(k, v)
         else:
             assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
 
@@ -1528,7 +1474,7 @@ class Task:
         if (callable(self._config.command)):
             self._command = cast(Any, self._config.command)
         else:
-            self._command = e.expand(self._config.command)
+            self._command = cast(Tree[str], e.expand(self._config.command))
 
         # ----------------------------------------
         # Check for missing input/output paths
@@ -1906,9 +1852,9 @@ class Runner:
         # FIXME really we need to build everything load()ed by the root repo
         cls.queue_all_tasks()
         ## If no target was specified, we queue up all tasks that build stuff in the root repo
-        #repo_path1 = Path.join(hancho.config.eval("repo_dir"), hancho.config.eval("repo_file"))
+        #repo_path1 = os.path.join(hancho.config.eval("repo_dir"), hancho.config.eval("repo_file"))
         #for task in cls.all_tasks:
-        #    repo_path2 = Path.join(task._config.eval("repo_dir"), task._config.eval("repo_file"))
+        #    repo_path2 = os.path.join(task._config.eval("repo_dir"), task._config.eval("repo_file"))
         #    if repo_path1 == repo_path2:
         #        task.queue()
 
@@ -2025,16 +1971,6 @@ class Runner:
 ####################################################################################################
 # region Main
 
-# Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
-# here are so that .hancho files don't trigger type checking errors.
-
-path    = os.path # path.dirname and path.basename used by makefile-related rules
-re      = re # why is sub() not working?
-glob    = staticmethod(glob.glob)
-ext     = staticmethod(Path.ext)
-rel     = Path.rel_path
-flatten = Utils.flatten
-
 def init(*args, **kwargs):
     context = Dict(
         config    = Dict(Loader.defaults, *args, kwargs),
@@ -2113,7 +2049,29 @@ async def main():
 
 # endregion
 ####################################################################################################
+# region Declarations that should only be seen by client scripts. This has to go before the
+# 'if __name__ == __main__' below.
+
+# Declarations of special functions/fields that clients can read from the Hancho proxy. The decls
+# here are so that .hancho files don't trigger type checking errors.
+
+path    = os.path # path.dirname and path.basename used by makefile-related rules
+re      = re # why is sub() not working?
+glob    = staticmethod(glob.glob)
+ext     = staticmethod(Path.ext)
+rel     = Path.rel_path
+flatten = Utils.flatten
+run_cmd = Utils.run_cmd
+color   = Utils.color
+join    = Utils.join
+rel_path = Path.rel_path
+
+# endregion
+####################################################################################################
 # region __name__ == __main__
+
+#print(hancho.__dict__)
+#sys.exit(0)
 
 if __name__ == "__main__":
     flags = Loader.parse_flags(sys.argv[1:])
