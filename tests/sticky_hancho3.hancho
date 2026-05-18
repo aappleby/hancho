@@ -1,3 +1,5 @@
 import hancho
 print("sticky3")
 assert hancho.foo == 100
+assert hancho.bar == 200
+hancho.baz = 300

@@ -15,11 +15,6 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # pylint: disable=unused-argument
 # pylint: disable=bad-indentation
 
-# FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit
-# FIXME All the context and singleton stuff can probably be moved to a ContextVar?
-# FIXME need to ensure that all the stuff accessible to the clients through hancho is clean. Right now it's messy.
-# FIXME test Promise thingy
-
 # endregion
 ####################################################################################################
 # region imports
@@ -55,8 +50,6 @@ if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
 type Tree[T] = T | list[Tree[T]]
-
-# FIXME go back to tiny module wrapper so we can intercept module-level __setattr__ and stick it on the context dict.
 
 cv_context = contextvars.ContextVar("context")
 def __getattr__(name):
@@ -183,6 +176,7 @@ class Log:
 # endregion
 ####################################################################################################
 # region Path
+# These are just equivalents of the os.path.* functions that work on string trees.
 
 class Path:
 
@@ -192,8 +186,8 @@ class Path:
     # should. What we really want is to just remove redundant cwd stuff off the beginning of the
     # path, which we can do with simple string manipulation.
 
-    @classmethod
-    def rel(cls, path1, path2):
+    @staticmethod
+    def rel(path1, path2):
         if Utils.is_collection(path1):
             result = [Path.rel(p, path2) for p in path1]
         elif Utils.is_collection(path2):
@@ -552,7 +546,6 @@ class Expander(abc.Mapping[str, object]):
     def reset(cls):
         cls.depth = 0
 
-    # FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
 
     class Lit(str):
         def __repr__(self):
@@ -601,15 +594,6 @@ class Expander(abc.Mapping[str, object]):
         return result
 
     ########################################
-    # Returns a relative path from the task directory to the sub_path.
-
-    def rel(self, sub_path):
-        result = Path.rel(sub_path, self._task_dir)
-        return result
-
-    ########################################
-    # FIXME we need full-loop test cases for escaped {}s.
-    # Somewhere in the process we need to unescape them and I'm not sure where it goes.
 
     @classmethod
     def split(cls, text) -> list[str]:
@@ -661,24 +645,9 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
-#    @staticmethod
-#    def track_depth(func : types.FunctionType):
-#        def track_depth(*args, **kwargs):
-#            Expander.depth += 1
-#            try:
-#                if Expander.depth > Expander.MAX_DEPTH:
-#                    raise RecursionError("Template expansion failed to terminate")
-#                return func(*args, **kwargs)
-#            finally:
-#                Expander.depth -= 1
-#        return track_depth
-
-    ########################################
-
-    #@track_depth
     def _get(self, key):
-        with Tracer(self) as t:
-            t.log(f" get '{key}'")
+        with Tracer(self) as trace:
+            trace.log(f" get '{key}'")
             result = self._context[key]
 
             # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
@@ -689,7 +658,7 @@ class Expander(abc.Mapping[str, object]):
             if isinstance(result, str):
                 result = self.expand(result)
 
-            t.log(f" '{result}'" if isinstance(result, str) else f" {result}")
+            trace.log(f" '{result}'" if isinstance(result, str) else f" {result}")
 
         return result
 
@@ -700,25 +669,23 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
-    #@track_depth
     def _eval(self, expr):
         """
         Expander.eval first expands the expression (to remove any templates) and then evaluates
         and returns the result.
         """
 
-        with Tracer(self) as t:
-            t.log(f"eval '{expr}'")
+        with Tracer(self) as trace:
+            trace.log(f"eval '{expr}'")
             try:
                 expr = self.expand(expr, str)
                 result = eval(expr, hancho.__dict__, self)
             except RecursionError as err:
                 raise err
             except BaseException as err:
-                t.log(f" {type(err).__name__}: {err}")
+                trace.log(f" {type(err).__name__}: {err}")
                 raise err
-            message = f" '{result}'" if isinstance(result, str) else f" {result}"
-            t.log(message)
+            trace.log(f" '{result}'" if isinstance(result, str) else f" {result}")
 
         return result
 
@@ -729,7 +696,6 @@ class Expander(abc.Mapping[str, object]):
 
     ########################################
 
-    #@track_depth
     def _expand(self, template : str) -> str:
         """
         Expander.expand replaces all innermost {expressions} with the result of evaluating the
@@ -743,8 +709,8 @@ class Expander(abc.Mapping[str, object]):
         if len(blocks) == 0 or (len(blocks) == 1 and type(blocks[0]) == Expander.Lit):
             return template
 
-        with Tracer(self) as t:
-            t.log(f" expand '{template}'")
+        with Tracer(self) as trace:
+            trace.log(f" expand '{template}'")
             for (i, block) in enumerate(blocks):
                 if isinstance(block, Expander.Lit):
                     continue
@@ -757,7 +723,7 @@ class Expander(abc.Mapping[str, object]):
                     block = "{" + block + "}"
                 blocks[i] = block
             result = "".join(blocks)
-            t.log(f" '{result}'")
+            trace.log(f" '{result}'")
 
         if result != template:
             result = self._expand(result)
@@ -921,7 +887,7 @@ class Dumper:
 
 class Loader:
 
-    root_mod : types.ModuleType
+    root_repo : types.ModuleType
     dedupe : dict[tuple[str, str], types.ModuleType]
     stack : list[types.ModuleType]
     loaded_files : list[str]
@@ -932,61 +898,13 @@ class Loader:
         cls.stack = []
         cls.loaded_files = []
 
-    # FIXME I think this should go somewhere else
-    # We spell all these defaults out explicitly so that when this config gets merged with flags and
-    # task configs the fields stay in the same order.
-
-    config_defaults = Dict(
-
-        name       = "<name missing>",
-        desc       = "<description missing>",
-        command    = "<command missing>",
-
-        hancho_dir = os.path.dirname(__file__),
-
-        root_dir   = os.getcwd(),
-        root_file  = "build.hancho",
-
-        repo_dir   = "{root_dir}",
-        repo_file  = "{root_file}",
-
-        this_dir   = "{root_dir}",
-        this_file  = "{root_file}",
-
-        task_dir   = "{this_dir}",
-        build_root = "{repo_dir}/build",
-        build_dir  = "{build_root}/{build_tag}/{rel(task_dir, repo_dir)}",
-
-        job_count   = 1,
-        job_max     = os.cpu_count(),
-
-        depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
-        in_depfile  = "",
-
-        build_tag   = "",
-        target      = "",
-        tool        = "",
-
-        keep_going  = False,
-        verbose     = False,
-        debug       = False,
-        dry_run     = False,
-        quiet       = False,
-        rebuild     = False,
-        shuffle     = False,
-        trace       = False,
-        use_color   = True,
-        should_fail = False
-    )
-
-
     #-----------------------------------------------------------------------------------------------
 
     @classmethod
     def parse_flags(cls, args : list[str]):
         assert Utils.is_collection(args)
 
-        d = cls.config_defaults
+        d = defaults
 
         # pylint: disable=line-too-long
         # fmt: off
@@ -1403,7 +1321,6 @@ class Task:
         if (callable(self._config.command)):
             self._command = cast(Any, self._config.command)
         else:
-            # FIXME it's annoying that self._config.eval("command") doesn't work here - why?
             self._command = cast(Tree[str], self._config.expand(self._config.command))
 
         # ----------------------------------------
@@ -1419,8 +1336,6 @@ class Task:
 
         # ----------------------------------------
         # Check for task collisions
-
-        # FIXME need a test for task output collision that uses symlinks
 
         for file in self._out_files:
             real_file = os.path.realpath(file)
@@ -1468,10 +1383,10 @@ class Task:
                 os.makedirs(os.path.dirname(file), exist_ok=True)
 
     #--------------------------------------------------------------------------------
-    # FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
-    # FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
 
     async def task_main2(self):
+        # Note that we chdir to task_dir before initializing the task so that any path.abspath
+        # or whatever happen from the right place.
         with chdir(self._task_dir):
             await self.task_main()
 
@@ -1500,8 +1415,6 @@ class Task:
         #----------------------------------------
         # Initialize the task, which means expanding everything else that needs expanding and
         # fixing up paths to point to task_dir or build_dir.
-        # Note that we chdir to task_dir before initializing the task so that any path.abspath
-        # or whatever happen from the right place.
 
         try:
             if debug:
@@ -1705,11 +1618,11 @@ class Task:
         Log(f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} ", end="")
 
     def log_stdout(self):
-        stdouterr  = f"========== Stdout ==========\n"
-        stdouterr += self._stdout
-        stdouterr += f"========== Stderr ==========\n"
-        stdouterr += self._stderr
-        stdouterr += f"============================\n"
+        Log(f"========== Stdout ==========")
+        Log(self._stdout.strip())
+        Log(f"========== Stderr ==========")
+        Log(self._stderr.strip())
+        Log(f"============================")
 
     def log_task_start(self):
         self.log_prefix()
@@ -1739,18 +1652,22 @@ class Task:
 
     def log_command_failure(self, command, ex):
         self.log_prefix()
-        Log(Utils.color(255,0,0))
-        Log(f"Command '{command}' failed with exception {ex}")
+        Log(Utils.color(255,0,0), end="")
+        Log(f"Task failed!")
+        Log(f"From {rel(self._this_file, self._root_dir)}:")
+        Log(f"  Task '{self._name}' : '{self._desc}'")
+        Log(f"    desc    = '{self._desc}'")
+        Log(f"    command = '{command}'")
+        Log(f"    error   = '{str(ex).strip()}'")
+        if not callable(command):
+            self.log_stdout()
         Log(Utils.color())
-        self.log_stdout()
 
     def log_command_done(self, command):
         self.log_prefix()
-        Log(f"Command '{command}' done")
+        #Log(f"Command '{command}' done")
+        Log(f"Command done")
         self.log_stdout()
-
-
-
 
 # endregion
 ####################################################################################################
@@ -1809,34 +1726,15 @@ class Runner:
 
     @classmethod
     def queue_root_tasks(cls):
-        # This doesn't work in practice, just queue everything...
-        # FIXME really we need to build everything load()ed by the root repo
-        cls.queue_all_tasks()
-        ## If no target was specified, we queue up all tasks that build stuff in the root repo
-        #repo_path1 = os.path.join(hancho.config.eval("repo_dir"), hancho.config.eval("repo_file"))
-        #for task in cls.all_tasks:
-        #    repo_path2 = os.path.join(task._config.eval("repo_dir"), task._config.eval("repo_file"))
-        #    if repo_path1 == repo_path2:
-        #        task.queue()
-
-#        #print(f"root_mod {hex(id(Loader.root_mod))}")
-#        print(f"root_mod {Loader.root_mod}")
-#
-#        for task in cls.all_tasks:
-#            print(task._parent_repo)
-#            #if task._repo == Loader.root_mod:
-#            #    print(f"task_mod {hex(id(task))}")
-#            #    #task.dump()
-#
-#        sys.exit(0)
-#        pass
+        for task in cls.all_tasks:
+            if task._parent_repo == Loader.root_repo:
+                task.queue()
 
     @classmethod
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
-            name = task._config.eval("name")
-            if target_regex.search(name):
-                Log(f"Queueing task for '{name}'")
+            if target_regex.search(task._name):
+                #Log(f"Queueing task for '{task._name}'")
                 task.queue()
 
     #--------------------------------------------------------------------------------
@@ -1924,10 +1822,6 @@ class Runner:
             assert False, f"Don't know how to run tool {tool}"
             return -1
 
-    #--------------------------------------------------------------------------------
-
-
-
 # endregion
 ####################################################################################################
 # region Declarations that should only be seen by client scripts. This has to go before the
@@ -1935,9 +1829,12 @@ class Runner:
 
 def init(*args, **kwargs):
     context = Dict(
-        config    = Dict(Loader.config_defaults, *args, kwargs),
-        this_repo   = hancho,
-        this_mod = hancho,
+        config    = Dict(defaults, *args, kwargs),
+
+        # These are here so that tasks have access to hancho.this_repo and hancho.this_mod, which
+        # they store in parent_repo/mod
+        this_repo = hancho,
+        this_mod  = hancho,
     )
     cv_context.set(context)
     reset()
@@ -1973,11 +1870,59 @@ real    = Path.real
 rel     = Path.rel
 stem    = Path.stem
 
+# We spell all these defaults out explicitly so that when this config gets merged with flags and
+# task configs the fields stay in the same order.
+
+defaults = Dict(
+
+    name       = "<name missing>",
+    desc       = "<description missing>",
+    command    = "<command missing>",
+
+    hancho_dir = os.path.dirname(__file__),
+
+    root_dir   = os.getcwd(),
+    root_file  = "build.hancho",
+
+    repo_dir   = "{root_dir}",
+    repo_file  = "{root_file}",
+
+    this_dir   = "{root_dir}",
+    this_file  = "{root_file}",
+
+    task_dir   = "{this_dir}",
+    build_root = "{repo_dir}/build",
+    build_dir  = "{build_root}/{build_tag}/{rel(task_dir, repo_dir)}",
+
+    job_count   = 1,
+    job_max     = os.cpu_count(),
+
+    depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
+    in_depfile  = "",
+
+    build_tag   = "",
+    target      = "",
+    tool        = "",
+
+    keep_going  = False,
+    verbose     = False,
+    debug       = False,
+    dry_run     = False,
+    quiet       = False,
+    rebuild     = False,
+    shuffle     = False,
+    trace       = False,
+    use_color   = True,
+    should_fail = False
+)
+
 # endregion
 ####################################################################################################
 # region Main
 
-async def main():
+def main():
+
+    init(Loader.parse_flags(sys.argv[1:]))
 
     #----------------------------------------
     # Load all build scripts
@@ -1988,7 +1933,7 @@ async def main():
         path = os.path.relpath(script_path, os.getcwd())
         Log(f"Could not load build script {path}")
         sys.exit(-1)
-    Loader.root_mod = Loader.load(script_path, True)
+    Loader.root_repo = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 
     #if hancho.config.debug or hancho.config.verbose:
@@ -2020,7 +1965,7 @@ async def main():
     # Run all tasks
 
     time_a = time.perf_counter()
-    result = await Runner.async_run_tasks()
+    result = Runner.sync_run_tasks()
     Stats.time_build = time.perf_counter() - time_a
 
     #----------------------------------------
@@ -2034,9 +1979,7 @@ async def main():
 # region __name__ == __main__
 
 if __name__ == "__main__":
-    init(Loader.parse_flags(sys.argv[1:]))
-    result = asyncio.run(main())
-    sys.exit(result)
+    sys.exit(main())
 else:
     init()
 
