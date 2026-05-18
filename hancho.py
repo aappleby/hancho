@@ -932,10 +932,11 @@ class Loader:
         except:
             raise RuntimeError("You have to call hancho.init(debug = True, verbose = False...) or similar before using Hancho.")
 
+    # FIXME I think this should go somewhere else
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
 
-    defaults = Dict(
+    config_defaults = Dict(
 
         name       = "<name missing>",
         desc       = "<description missing>",
@@ -985,7 +986,7 @@ class Loader:
     def parse_flags(cls, args : list[str]):
         assert Utils.is_collection(args)
 
-        d = cls.defaults
+        d = cls.config_defaults
 
         # pylint: disable=line-too-long
         # fmt: off
@@ -1161,9 +1162,7 @@ class TaskState(Enum):
 class Task:
 
     #--------------------------------------------------------------------------------
-    # Linter doesn't like us assigning all these to None
 
-    #@no_type_check
     def __init__(self, *args, **kwargs):
         Loader.check_init()
 
@@ -1197,7 +1196,6 @@ class Task:
         self._task_dir   : str = os.path.abspath(e.get("task_dir",   str))
         self._build_root : str = os.path.abspath(e.get("build_root", str))
         self._build_dir  : str = os.path.abspath(e.get("build_dir",  str))
-        #self._in_depfile : str = os.path.abspath(e.get("in_depfile", str))
 
         self._job_count   = e.get("job_count", int)
         self._keep_going  = e.get("keep_going", int)
@@ -1397,23 +1395,16 @@ class Task:
         # Fix up all in/out paths
         Utils.walk(self._config, self.move_stuff1)
 
-        c = self._config
-        e = Expander(c)
-
-        #if self._in_depfile != c.in_depfile:
-        #    breakpoint()
-
-        self._in_depfile = c.in_depfile
-
         # And now we can expand the name, description, and command.
 
-        self._name = e.eval("name", str)
-        self._desc = e.eval("desc", str)
+        self._name = self._config.eval("name", str)
+        self._desc = self._config.eval("desc", str)
 
         if (callable(self._config.command)):
             self._command = cast(Any, self._config.command)
         else:
-            self._command = cast(Tree[str], e.expand(self._config.command))
+            # FIXME it's annoying that self._config.eval("command") doesn't work here - why?
+            self._command = cast(Tree[str], self._config.expand(self._config.command))
 
         # ----------------------------------------
         # Check for missing input/output paths
@@ -1483,21 +1474,14 @@ class Task:
     async def task_main(self):
         """Entry point for async task stuff, handles exceptions generated during task execution."""
 
-        check = Utils.check
-        c = self._config
-        e = Expander(c)
-
         #--------------------------------------------------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # were cancelled, we propagate the cancellation to downstream tasks.
 
-        self.to_state(TaskState.WAITING)
-
         try:
+            self.to_state(TaskState.WAITING)
             self._config = cast(Dict, await Utils.await_variant(self._config))
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Exceptions during awaiting inputs means that this task cannot proceed, cancel it.
+        except BaseException as ex:
             self.to_state(TaskState.CANCELLED)
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
@@ -1512,14 +1496,14 @@ class Task:
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = "Task"
             if self._dry_run: suffix += " (DRY RUN)"
-            if self._config.name is not Loader.defaults.name:
+            if self._config.name is not Loader.config_defaults.name:
                 suffix += f" '{self._config.name}'"
-            elif self._config.desc is not Loader.defaults.desc:
+            elif self._config.desc is not Loader.config_defaults.desc:
                 suffix += f" '{self._config.desc}'"
             suffix += f" starting"
             Log(prefix + suffix)
 
-        if self._debug:
+        if self._config.eval("debug"):
             Log(f"\nTask before expand: {self}")
 
         #----------------------------------------
@@ -1575,12 +1559,16 @@ class Task:
         try:
             # Wait for enough jobs to free up to run this task.
             self.to_state(TaskState.GET_JOBS)
-            await Runner.acquire(self._job_count)
 
             # Run the commands.
-            self.to_state(TaskState.RUNNING)
-            for command in Utils.flatten(self._command):
-                await self.run_command(command)
+            async with Runner.Jobs(self._job_count):
+                self.to_state(TaskState.RUNNING)
+                for command in Utils.flatten(self._command):
+                    await self.run_command(command)
+
+            # Task finished successfully
+            self.to_state(TaskState.FINISHED)
+            Stats.tasks_finished += 1
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Failure during run_command, task failed
@@ -1592,14 +1580,6 @@ class Task:
             else:
                 Stats.tasks_failed += 1
                 raise ex
-        finally:
-            await Runner.release(self._job_count)
-
-        #--------------------------------------------------------------------------------
-        # Task finished successfully
-
-        self.to_state(TaskState.FINISHED)
-        Stats.tasks_finished += 1
 
     #--------------------------------------------------------------------------------
 
@@ -1633,10 +1613,10 @@ class Task:
                 return f"Rebuilding because {filename} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        if self._in_depfile and os.path.exists(self._in_depfile):
+        if self._config.in_depfile and os.path.exists(self._config.in_depfile):
             if self._debug:
-                Log(f"Found C dependencies file {self._in_depfile}")
-            with open(self._in_depfile, encoding="utf-8") as depfile:
+                Log(f"Found C dependencies file {self._config.in_depfile}")
+            with open(self._config.in_depfile, encoding="utf-8") as depfile:
                 deplines = None
                 if self._depformat == "msvc":
                     # MSVC /sourceDependencies
@@ -1670,9 +1650,9 @@ class Task:
         if self._verbose or self._debug:
             prefix = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
             suffix = "Task"
-            if self._name is not Loader.defaults.name:
+            if self._name is not Loader.config_defaults.name:
                 suffix += f" '{self._name}'"
-            elif self._desc is not Loader.defaults.desc:
+            elif self._desc is not Loader.config_defaults.desc:
                 suffix += f" '{self._desc}'"
             suffix += f" running command '{command}'"
             Log(prefix + suffix, sameline = not self._verbose)
@@ -1752,6 +1732,16 @@ class Runner:
     job_max  : int
     job_sem  : asyncio.Semaphore
     job_lock : asyncio.Lock
+
+    class Jobs:
+        def __init__(self, count):
+            self.count = count
+        async def __aenter__(self):
+            await Runner.acquire(self.count)
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            await Runner.release(self.count)
+            return False
 
     @classmethod
     def reset(cls, job_max):
@@ -1911,7 +1901,7 @@ class Runner:
 
 def init(*args, **kwargs):
     context = Dict(
-        config    = Dict(Loader.defaults, *args, kwargs),
+        config    = Dict(Loader.config_defaults, *args, kwargs),
         this_repo   = hancho,
         this_mod = hancho,
     )
@@ -2012,8 +2002,7 @@ rel_path = Path.rel_path
 #sys.exit(0)
 
 if __name__ == "__main__":
-    flags = Loader.parse_flags(sys.argv[1:])
-    init(Loader.defaults | flags)
+    init(Loader.parse_flags(sys.argv[1:]))
     result = asyncio.run(main())
     sys.exit(result)
 else:
