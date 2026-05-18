@@ -40,7 +40,7 @@ import time
 import traceback
 import types
 import contextvars
-from typing import Any, cast, TypeVar
+from typing import Any, cast, TypeVar, Callable, ParamSpec, Protocol, Concatenate, overload
 from collections import abc
 from enum import Enum
 from contextlib import chdir
@@ -53,7 +53,7 @@ hancho = sys.modules[__name__]
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
-type str_tree = str | abc.Iterable[str_tree]
+type Tree[T] = T | list[Tree[T]]
 
 cv_context = contextvars.ContextVar("context")
 def __getattr__(name):
@@ -66,8 +66,6 @@ def recursify(func):
         else:
             return func(val, *args, **kwargs)
     return result
-
-T = TypeVar('T')
 
 # endregion
 ####################################################################################################
@@ -210,17 +208,19 @@ class Path:
         result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
 
-    _abspath  = recursify(os.path.abspath)
 
-    @staticmethod
-    def abspath[T](path : T, expected_type = type(T)) -> T:
-        #assert isinstance(path, expected_type)
-        #if not isinstance(path, type(T)):
-        #    print(T)
-        #    print(type(path))
-        #    sys.exit(-1)
-        return cast(T, Path._abspath(path))
 
+#    @staticmethod
+#    @overload
+#    def abspath(path: str) -> str: ...
+#    @overload
+#    @staticmethod
+#    def abspath(path: Tree[str]) -> Tree[str]: ...
+#    @staticmethod
+#    def abspath(path):
+#        return Path._abspath(path)
+
+    abspath  = recursify(os.path.abspath)
     basename = recursify(os.path.basename)
     normpath = recursify(os.path.normpath)
     realpath = recursify(os.path.realpath)
@@ -515,7 +515,7 @@ class Dict(dict):
     def eval[T](self, expr : str, as_type: type[T] = object) -> T:
         return Expander(self).eval(expr, as_type)
 
-    def expand(self, template : str_tree) -> str_tree:
+    def expand(self, template : Tree[str]) -> Tree[str]:
         return Expander(self).expand(template)
 
 ########################################
@@ -1296,23 +1296,16 @@ class Task:
         self._name = e.name
         self._desc = e.desc
 
-        check = Utils.check
-
-        self._root_dir   = Path.abspath(e.get("root_dir", str))
-        self._root_file  = Path.abspath(e.get("root_file", str))
-
-        self._repo_dir   = Path.abspath(e.get("repo_dir", str))
-        self._repo_file  = Path.abspath(e.get("repo_file", str))
-
-        self._this_dir   = Path.abspath(e.get("this_dir", str))
-        self._this_file  = Path.abspath(e.get("this_file", str))
-
-        self._task_dir : str = Path.abspath(e.get("task_dir", str))
-
-        self._build_root = Path.abspath(e.get("build_root", str))
-        self._build_dir  = Path.abspath(e.get("build_dir", str))
-
-        self._in_depfile  = e.get("in_depfile", str)
+        self._root_dir   : str = os.path.abspath(e.get("root_dir",   str))
+        self._root_file  : str = os.path.abspath(e.get("root_file",  str))
+        self._repo_dir   : str = os.path.abspath(e.get("repo_dir",   str))
+        self._repo_file  : str = os.path.abspath(e.get("repo_file",  str))
+        self._this_dir   : str = os.path.abspath(e.get("this_dir",   str))
+        self._this_file  : str = os.path.abspath(e.get("this_file",  str))
+        self._task_dir   : str = os.path.abspath(e.get("task_dir",   str))
+        self._build_root : str = os.path.abspath(e.get("build_root", str))
+        self._build_dir  : str = os.path.abspath(e.get("build_dir",  str))
+        self._in_depfile : str = os.path.abspath(e.get("in_depfile", str))
 
         self._job_count   = e.get("job_count", int)
         self._keep_going  = e.get("keep_going", int)
@@ -1332,7 +1325,7 @@ class Task:
         self._should_fail = e.get("should_fail", bool)
 
         # Command can't be expanded until inputs are ready
-        self._command : str_tree | function = ""
+        self._command : Tree[str] | function = ""
 
         # Bookkeeping stuff
 
@@ -1424,7 +1417,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def move_to_build_dir(self, path):
+    def move_to_build_dir(self, path : str):
         # Note this conditional needs to be first, as build_dir can itself be under task_dir
         if path.startswith(self._build_dir):
             # Absolute path under build_dir, do nothing.
@@ -1445,7 +1438,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def fixup_path(self, k, v):
+    def fixup_path(self, k, v : str):
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
@@ -1454,14 +1447,21 @@ class Task:
         assert k.startswith("in_") or k.startswith("out_")
         assert v is not None
 
+        if not isinstance(v, str):
+            return v
+
         v = cast(str, self._config.expand(v))
+        assert isinstance(v, str)
         v = Path.normpath(v) # type: ignore
+        assert isinstance(v, str)
 
         # Make all in_ and out_ file paths absolute.
         if k == "in_depfile" or k.startswith("out_"):
             v = self.move_to_build_dir(v)
+            assert isinstance(v, str)
         elif k.startswith("in_"):
-            v = Path.join(self._task_dir,v)
+            assert isinstance(self._task_dir, str)
+            v = os.path.join(self._task_dir, v)
         else:
             return v
 
@@ -1490,22 +1490,10 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def move_stuff2(self, k, v):
-        if not isinstance(k, str):
-            return v
-        if not k.startswith("in_") and not k.startswith("out_"):
-            return v
-        if v is None:
-            return v
-        return self.fixup_path(k, v)
-
     def move_stuff1(self, c, k, v):
-        if not isinstance(k, str):
-            return
-        if not k.startswith("in_") and not k.startswith("out_"):
-            return
-        if v is None:
-            return
+        if not isinstance(k, str): return
+        if not k.startswith("in_") and not k.startswith("out_"): return
+        if v is None: return
 
         if Utils.is_collection(v):
             for (i, v2) in enumerate(v):

@@ -30,8 +30,8 @@ Dict @ 0x788c818610e0 {
 | Built-in       | Description |
 | --------       | ----------- |
 |```log```        | Logs messages to the console and to Hancho's internal log. Also plays nicer with console output from parallel tasks than ```print()```|
-|```abs_path```   | Converts a relative path to an absolute, physical path.|
-|```rel_path```   | Removes a common prefix from an absolute path to make a relative path. ```rel_path('/foo/bar/baz', '/foo')``` -> ```'bar/baz'```
+|```abspath```    | Converts a relative path to an absolute, physical path.|
+|```relpath```    | Removes a common prefix from an absolute path to make a relative path. ```relpath('/foo/bar/baz', '/foo')``` -> ```'bar/baz'```
 |```join```       | Joins arbitrary arrays of strings together, combinatorially. ```join(['a','b'],['c','d'])``` -> ```['ac', 'ad', 'bc', 'bd']```|
 |```join_path```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
 |```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
@@ -246,7 +246,7 @@ Any function attached to a ```Dict``` can be used in a template, along with a se
 ```py
 # FIXME this is out of date
 >>> dir(foo)
-[<snip...> 'abs_path', 'clear', 'color', 'copy', 'expand', 'ext', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'rel_path', 'run_cmd', 'setdefault', 'stem', 'update', 'values']
+[<snip...> 'abspath', 'clear', 'color', 'copy', 'expand', 'ext', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'relpath', 'run_cmd', 'setdefault', 'stem', 'update', 'values']
 ```
 
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:
