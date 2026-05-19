@@ -13,5 +13,5 @@ main_o = hancho.Task(
 main = hancho.Task(
     command = "g++ {in_obj} -o {out_bin}",
     in_obj = [main_o, myrepo.util_o],
-    out_bin = "main"
+    out_bin = "main",
 )

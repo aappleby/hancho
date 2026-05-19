@@ -32,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+from tabnanny import verbose
 import time
 import traceback
 import types
@@ -346,17 +347,6 @@ class Utils:
     def walk2(cls, c, func):
         return cls._walk2(None, None, c, func)
 
-    @classmethod
-    def walk(cls, d, func):
-        if Utils.is_mapping(d):
-            for key, val in d.items():
-                func(d, key, val)
-                Utils.walk(val, func)
-        elif Utils.is_collection(d):
-            for key, val in enumerate(d):
-                func(d, key, val)
-                Utils.walk(val, func)
-
     @staticmethod
     def _map(k, v, func):
         if Utils.is_scalar(v):
@@ -476,10 +466,11 @@ class Dict(dict):
     # Debugging stuff
 
     def __repr__(self):
-        if Expander.depth > 0:
-            return Dumper(0).dump(self)
-        else:
-            return Dumper(2).dump(self)
+        return Dumper(999).dump(self)
+        #if Expander.depth > 0:
+        #    return Dumper(0).dump(self)
+        #else:
+        #    return Dumper(3).dump(self)
 
     def dump(self, depth, print_id = True):
         return Dumper(depth, print_id = print_id).dump(self)
@@ -1037,21 +1028,31 @@ class Loader:
 # Promise selects subsets of _out_files
 
 class Promise:
-    def __init__(self, task : Task, *args):
+    def __init__(self, task : Task, field : str):
         self.task : Task = task
-        self.args = args
+        self.field = field
 
     async def get(self):
         await self.task.await_done()
-        if len(self.args) == 0:
-            result = self.task._out_files
-            return result
-        elif len(self.args) == 1:
-            field = self.args[0]
-            result = self.task._config[field]
-            return result
-        else:
-            return [self.task._config[field] for field in self.args]
+        result = self.task._config[self.field]
+        result = Path.join(self.task._task_dir, result)
+        return result
+
+#    def __init__(self, task : Task, *args):
+#        self.task : Task = task
+#        self.args = args
+#
+#    async def get(self):
+#        await self.task.await_done()
+#        if len(self.args) == 0:
+#            result = self.task._out_files
+#            return result
+#        elif len(self.args) == 1:
+#            field = self.args[0]
+#            result = self.task._config[field]
+#            return result
+#        else:
+#            return [self.task._config[field] for field in self.args]
 
 # endregion
 ####################################################################################################
@@ -1107,7 +1108,7 @@ class Task:
         self._repo_file  : str = os.path.abspath(e.get("repo_file",  str))
         self._this_dir   : str = os.path.abspath(e.get("this_dir",   str))
         self._this_file  : str = os.path.abspath(e.get("this_file",  str))
-        self._task_dir   : str = os.path.abspath(e.get("task_dir",   str))
+        self._task_dir   : str = os.path.abspath(e.get("task_cwd",   str))
         self._build_root : str = os.path.abspath(e.get("build_root", str))
         self._build_dir  : str = os.path.abspath(e.get("build_dir",  str))
 
@@ -1215,14 +1216,14 @@ class Task:
         await self._asyncio_task
         return self._out_files
 
-    def promise(self, *args):
-        return Promise(self, *args)
+    def promise(self, field : str):
+        return Promise(self, field)
 
     #--------------------------------------------------------------------------------
 
     async def task_main2(self):
         try:
-            # Note that we chdir to task_dir before initializing the task so that any path.abspath
+            # Note that we chdir to task_cwd before initializing the task so that any path.abspath
             # or whatever happen from the right place.
             with chdir(self._task_dir):
                 await self.task_main()
@@ -1264,7 +1265,7 @@ class Task:
 
         #----------------------------------------
         # Initialize the task, which means expanding everything else that needs expanding and
-        # fixing up paths to point to task_dir or build_dir.
+        # fixing up paths to point to task_cwd or build_dir.
 
         try:
 
@@ -1338,7 +1339,17 @@ class Task:
         if self._debug:
             Log.log(f"Task before expand: {self}\n")
 
-        Utils.walk(self._config, self.move_stuff1)
+        def walk(c, func):
+            if Utils.is_mapping(c):
+                for key, val in c.items():
+                    c[key] = func(key, val)
+                    walk(val, func)
+            elif Utils.is_collection(c):
+                for key, val in enumerate(c):
+                    c[key] = func(key, val)
+                    walk(val, func)
+
+        walk(self._config, self.fix_paths)
 
         if (callable(self._config.command)):
             self._command = cast(Any, self._config.command)
@@ -1409,32 +1420,18 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def move_to_build_dir(self, path : str):
-        # Note this conditional needs to be first, as build_dir can itself be under task_dir
-        if path.startswith(self._build_dir):
-            # Absolute path under build_dir, do nothing.
-            pass
-        elif path.startswith(self._task_dir):
-            # If an input source had an absolute path and we swap the extension on it to make the
-            # output filename, we'll have a '.o' file or similar inside task_dir. Move it so it
-            # lives under build_dir.
-            path = os.path.join(self._build_dir, os.path.relpath(path, self._task_dir))
-        elif os.path.isabs(path):
-            raise ValueError(f"Output file has absolute path that is not under task_dir or build_dir : {path}")
-        else:
-            # Relative path, add build_dir
-            path = os.path.join(self._build_dir, path)
+    def fix_paths(self, k, v):
+        if not isinstance(k, str): return v
+        if not k.startswith("in_") and not k.startswith("out_"): return v
+        if v is None: return v
 
-        path = os.path.abspath(path)
-        return path
+        if Utils.is_collection(v):
+            return [self.fix_paths(k, v2) for v2 in v]
 
-    #--------------------------------------------------------------------------------
+        if not isinstance(v, str):
+            assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
 
-    def fixup_path2(self, k : str, v : str):
-        assert isinstance(k, str)
-        assert isinstance(v, str)
-
-        if len(v) == 0: return
+        if len(v) == 0: return v
 
         # Expand all in_ and out_ filenames
         # We _must_ expand these first before joining paths or the paths will be incorrect:
@@ -1443,52 +1440,55 @@ class Task:
         v = cast(str, self._config.expand(v))
         v = os.path.normpath(v) # type: ignore
 
-        # Make all in_ and out_ file paths absolute.
+        # Make all in_ and out_ file paths absolute by joining build_dir to them
+
         if k == "in_depfile" or k.startswith("out_"):
-            v = self.move_to_build_dir(v)
+            # Note this conditional needs to be first, as build_dir can itself be under task_cwd
+            if v.startswith(self._build_dir):
+                # Absolute path under build_dir, do nothing.
+                pass
+            elif v.startswith(self._task_dir):
+                # If an input source had an absolute path and we swap the extension on it to make the
+                # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+                # lives under build_dir.
+                v = os.path.relpath(v, self._task_dir)
+                v = os.path.join(self._build_dir, v)
+            elif os.path.isabs(v):
+                raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
+            else:
+                # Relative path, add build_dir
+                v = os.path.join(self._build_dir, v)
+
+            v = os.path.abspath(v)
+
         elif k.startswith("in_"):
             v = os.path.join(self._task_dir, v)
-        else:
-            assert False, f"How did we get here when our key is {k}?"
-
-        # OK, we have all our in and out files collected as absolute paths. Remove task_dir from
-        # all paths so that the command line won't be huge after expansion.
-
-        abs_v = os.path.abspath(v)
 
         # Gather all absolute file paths to _in/_out_files.
-        # These filenames must be absolute as they may be read from other repos.
+        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
         if k == "in_depfile":
-            if isinstance(abs_v, str) and os.path.isfile(abs_v):
-                self._in_files.append(abs_v)
+            if isinstance(v, str) and os.path.isfile(v):
+                self._in_files.append(v)
         elif k.startswith("out_"):
-            self._out_files.extend(Utils.flatten(abs_v))
+            self._out_files.extend(Utils.flatten(v))
         elif k.startswith("in_"):
-            self._in_files.extend(Utils.flatten(abs_v))
+            self._in_files.extend(Utils.flatten(v))
 
-        return abs_v
+        #print("**************")
+        #print(v)
+        #print(self._task_dir)
+        #print(os.path.relpath(v, self._task_dir))
+        #print(Path.rel(v, self._task_dir))
+        #print(Path.rel(v, self._build_dir))
+        #print("**************")
 
-    #--------------------------------------------------------------------------------
+        # But the path _inside_ the task can be relative to the task dir? I think this works...
+        v = Path.rel(v, self._task_dir)
 
-    def fixup_path1(self, k, v):
-        if isinstance(v, str):
-            return self.fixup_path2(k, v)
-        elif isinstance(v, abc.Collection):
-            return [self.fixup_path1(k, v2) for v2 in v]
-        else:
-            assert False, "fixup_path1 should only get Tree[str] as value"
+        #print(f"************** {v}")
 
-    #--------------------------------------------------------------------------------
 
-    def move_stuff1(self, c, k, v):
-        if not isinstance(k, str): return
-        if not k.startswith("in_") and not k.startswith("out_"): return
-        if v is None: return
-
-        if not isinstance(v, str) and not Utils.is_collection(v):
-            assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
-
-        c[k] = self.fixup_path1(k, v)
+        return v
 
     #--------------------------------------------------------------------------------
 
@@ -1895,6 +1895,8 @@ defaults = Dict(
 
     hancho_dir = os.path.dirname(__file__),
 
+    task_cwd   = "{this_dir}",
+
     root_dir   = os.getcwd(),
     root_file  = "build.hancho",
 
@@ -1904,9 +1906,8 @@ defaults = Dict(
     this_dir   = "{root_dir}",
     this_file  = "{root_file}",
 
-    task_dir   = "{this_dir}",
     build_root = "{repo_dir}/build",
-    build_dir  = "{build_root}/{build_tag}/{rel(task_dir, repo_dir)}",
+    build_dir  = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
     job_count   = 1,
     job_max     = os.cpu_count(),

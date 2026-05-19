@@ -121,7 +121,7 @@ def make(hancho, *, in_makefile, **kwargs):
 run_test = hancho.Tool(
     desc="Running test {in_test}",
     command="{in_test} {args} && touch {out_pass}",
-    task_dir="{test_dir}",
+    task_cwd="{test_dir}",
     test_dir="{source_dir}",
     args="",
     out_pass="{in_test}.pass",

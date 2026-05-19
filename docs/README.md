@@ -42,7 +42,7 @@ Dict @ 0x788c818610e0 {
 |```re```         | Python's ```re``` regular expression module|
 |```path```       | Python's ```os.path``` module|
 |```run_cmd```    | Runs a CLI command and returns the command's ```stdout```.|
-|```rel```        | Only usable by ```Dict```s. Removes ```task_dir``` from a file path if present. Makes descriptions and commands a bit more readable.|
+|```rel```        | Only usable by ```Dict```s. Removes ```task_cwd``` from a file path if present. Makes descriptions and commands a bit more readable.|
 |```expand```     | Only usable by ```Dict```s. Expands a text template.|
 
 ## Splitting your build into multiple ```.hancho``` files

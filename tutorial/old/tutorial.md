@@ -121,8 +121,8 @@ Task @ 0x727f0371d6a0 {
         "src/util.cpp",
     ],
     out_bin = "app",
-    task_dir = "{mod_dir}",
-    build_dir = "{build_root}/{build_tag}/{relpath(task_dir, repo_dir)}",
+    task_cwd = "{mod_dir}",
+    build_dir = "{build_root}/{build_tag}/{relpath(task_cwd, repo_dir)}",
     _task_index = 0,
     _in_files = [],
     _out_files = [],
@@ -134,7 +134,7 @@ Task @ 0x727f0371d6a0 {
     ]
 }
 ```
-At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho.Task()```, followed by the task-specific ```task_dir``` and ```build_dir```, and finally some private Hancho bookkeeping fields.
+At the top you can see the global paths that Hancho uses internally, followed by the arguments we passed to ```hancho.Task()```, followed by the task-specific ```task_cwd``` and ```build_dir```, and finally some private Hancho bookkeeping fields.
 
 
 In this build file we define a ```Rule``` that contains a
