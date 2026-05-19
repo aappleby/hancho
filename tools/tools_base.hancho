@@ -32,6 +32,7 @@ check_cpp = hancho.Tool(
 # ----------------------------------------
 
 compile_cpp = hancho.Tool(
+    name="{out_obj}",
     desc="Compiling C++ {in_src} -> {out_obj} ({build_tag})",
     command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
     toolchain=default_toolchain,

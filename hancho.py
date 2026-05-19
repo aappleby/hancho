@@ -108,24 +108,24 @@ class Stats:
     def print_build_stats(cls):
         # Done, print status info if needed
 
-        Log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds")
+        Log.log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds\n")
 
         if hancho.config.debug or hancho.config.verbose:
-            Log(f"tasks started:    {cls.tasks_started}")
-            Log(f"tasks finished:   {cls.tasks_finished}")
-            Log(f"tasks failed:     {cls.tasks_failed}")
-            Log(f"tasks skipped:    {cls.tasks_skipped}")
-            Log(f"tasks cancelled:  {cls.tasks_cancelled}")
-            Log(f"tasks broken:     {cls.tasks_broken}")
-            Log(f"tasks shouldfail: {cls.tasks_shouldfail}")
-            Log(f"mtime calls:      {cls.mtime_calls}")
+            Log.log(f"tasks started:    {cls.tasks_started}\n")
+            Log.log(f"tasks finished:   {cls.tasks_finished}\n")
+            Log.log(f"tasks failed:     {cls.tasks_failed}\n")
+            Log.log(f"tasks skipped:    {cls.tasks_skipped}\n")
+            Log.log(f"tasks cancelled:  {cls.tasks_cancelled}\n")
+            Log.log(f"tasks broken:     {cls.tasks_broken}\n")
+            Log.log(f"tasks shouldfail: {cls.tasks_shouldfail}\n")
+            Log.log(f"mtime calls:      {cls.mtime_calls}\n")
 
         if cls.tasks_failed or cls.tasks_broken:
-            Log(f"hancho: {Utils.color(255, 128, 128)}BUILD FAILED{Utils.color()}")
+            Log.log(f"hancho: {Utils.color(255, 128, 128)}BUILD FAILED{Utils.color()}\n")
         elif cls.tasks_finished:
-            Log(f"hancho: {Utils.color(128, 255, 128)}BUILD PASSED{Utils.color()}")
+            Log.log(f"hancho: {Utils.color(128, 255, 128)}BUILD PASSED{Utils.color()}\n")
         else:
-            Log(f"hancho: {Utils.color(128, 128, 255)}BUILD CLEAN{Utils.color()}")
+            Log.log(f"hancho: {Utils.color(128, 128, 255)}BUILD CLEAN{Utils.color()}\n")
 
 # endregion
 ####################################################################################################
@@ -135,36 +135,26 @@ class Log:
     """Simple logger that can do same-line log messages like Ninja."""
 
     buffer : str
-    line_dirty : bool
+    verbose : bool
 
     @classmethod
-    def reset(cls):
+    def reset(cls, verbose):
         cls.buffer = ""
-        cls.line_dirty = False
+        cls.verbose = verbose
 
-    def __new__(cls, message : str, *, sameline : bool = False, **kwargs):
-        if not sys.stdout.isatty():
-            sameline = False
+    @classmethod
+    def log(cls, message : str):
+        #cls.verbose = True
 
-        if sameline:
-            kwargs.setdefault("end", "")
+        lines = message.split('\n')
 
-        output = io.StringIO()
-        print(message, file=output, **kwargs)
-        output = output.getvalue()
+        x = 2
 
-        if not output:
-            return
-
-        if sameline:
-            output = "\r" + output + "\x1B[K"
-            cls.log_line(output)
-        else:
-            if cls.line_dirty:
-                cls.log_line("\n")
-            cls.log_line(output)
-
-        cls.line_dirty = sameline
+        for i, line in enumerate(lines):
+            if ((i < len(lines) - 1) or cls.verbose) and line:
+                cls.log_line("\r" + line + "\n")
+            else:
+                cls.log_line("\r" + line + "\x1B[K")
 
     @classmethod
     def log_line(cls, message : str):
@@ -795,14 +785,15 @@ class Tracer:
         #buffer += Utils.color()
 
         buffer += text
+        buffer += '\n'
 
-        Log(buffer)
+        Log.log(buffer)
 
         #if trellis_bar[0] == '┏':
         #    Tracer.push(trellis_color)
 
         #if len(Tracer.trellis_bar) and Tracer.trellis_bar[0] == '┗' and Expander.depth == 0:
-        #    Log("")
+        #    Log.log("")
 
 # endregion
 ####################################################################################################
@@ -971,9 +962,12 @@ class Loader:
         script_path = os.path.abspath(script_path)
 
         if debug or verbose:
-            #Log("┃ " * len(Loader.stack), end="")
             script_type = "repo" if is_repo else "script"
-            Log(Utils.color(128, 128, 255) + f"Loading {script_type} {script_path}" + Utils.color(), sameline=not verbose)
+            message  = Utils.color(128, 128, 255)
+            message += f"Loading {script_type} {script_path}"
+            message += Utils.color()
+            message += "\n"
+            Log.log(message)
 
         #----------------------------------------
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
@@ -1226,6 +1220,195 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
+    async def task_main2(self):
+        try:
+            # Note that we chdir to task_dir before initializing the task so that any path.abspath
+            # or whatever happen from the right place.
+            with chdir(self._task_dir):
+                await self.task_main()
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Both broken and failed tasks should end up here.
+            self.log_task_failure(ex)
+            self.to_state(TaskState.FAILED)
+            if self._should_fail:
+                Stats.tasks_shouldfail += 1
+                return
+            else:
+                Stats.tasks_failed += 1
+                raise ex
+
+        #except BaseException as ex:  # pylint: disable=broad-exception-caught
+        #    # Failure during run_command, task failed
+        #    # If any command failed, we propagate the error to downstream tasks.
+
+    #-----------------------------------------------------------------------------------------------
+
+    async def task_main(self):
+
+        #----------------------------------------
+        # Await everything awaitable in this task's config. If any of this tasks's dependencies
+        # were cancelled, we propagate the cancellation to downstream tasks.
+
+        try:
+            self.to_state(TaskState.WAITING)
+            self._config = cast(Dict, await Utils.await_variant(self._config))
+        except BaseException as ex:
+            self.to_state(TaskState.CANCELLED)
+            Stats.tasks_cancelled += 1
+            raise asyncio.CancelledError() from ex
+
+        # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
+        Stats.tasks_running += 1
+        self._task_index = Stats.tasks_running
+
+        #----------------------------------------
+        # Initialize the task, which means expanding everything else that needs expanding and
+        # fixing up paths to point to task_dir or build_dir.
+
+        try:
+
+            self.task_init()
+
+        except asyncio.CancelledError as ex:
+            # We discovered during init that we don't need to run this task.
+            self.to_state(TaskState.CANCELLED)
+            Stats.tasks_cancelled += 1
+            raise asyncio.CancelledError() from ex
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Failure during task init because task is broken
+            self.to_state(TaskState.BROKEN)
+            if self._should_fail:
+                Stats.tasks_shouldfail += 1
+            else:
+                Stats.tasks_broken += 1
+            raise ex
+
+        #----------------------------------------
+        # Early-out if this is a no-op task
+
+        if not self._command:
+            Stats.tasks_finished += 1
+            self.to_state(TaskState.FINISHED)
+            return
+
+        #----------------------------------------
+        # Check if we need a rebuild
+
+        self._reason = self.needs_rerun(self._rebuild)
+        if not self._reason:
+            Stats.tasks_skipped += 1
+            self.to_state(TaskState.SKIPPED)
+            return
+
+        #----------------------------------------
+        # Run the task!
+
+        # Print the first status line for this task
+
+        if self._verbose or self._debug:
+            self.log_task_start()
+            self.log_task_reason()
+
+        # Wait for enough jobs to free up to run this task and then run the commands.
+        self.to_state(TaskState.GET_JOBS)
+
+        async with Runner.Jobs(self._job_count):
+            self.to_state(TaskState.RUNNING)
+            for command in Utils.flatten(self._command):
+                await self.run_command(command)
+
+        #----------------------------------------
+        # Task finished successfully
+
+        self.to_state(TaskState.FINISHED)
+        Stats.tasks_finished += 1
+
+
+    #--------------------------------------------------------------------------------
+
+    def task_init(self):
+
+        self.to_state(TaskState.INIT)
+
+        # ----------------------------------------
+        # Fix up all in/out paths and then expand the command.
+
+        if self._debug:
+            Log.log(f"Task before expand: {self}\n")
+
+        Utils.walk(self._config, self.move_stuff1)
+
+        if (callable(self._config.command)):
+            self._command = cast(Any, self._config.command)
+        else:
+            self._command = cast(Tree[str], self._config.expand(self._config.command))
+
+        if self._debug:
+            Log.log(f"Task after expand: {self}\n")
+
+        # ----------------------------------------
+        # Check for missing paths
+
+        if not os.path.exists(self._task_dir):
+            raise FileNotFoundError(self._task_dir)
+
+        if not self._build_dir.startswith(self._repo_dir):
+            raise ValueError(
+                f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
+            )
+
+        # ----------------------------------------
+        # Check for task collisions
+
+        for file in self._out_files:
+            real_file = os.path.realpath(file)
+            if real_file in Stats.filename_to_fingerprint:
+                raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+            Stats.filename_to_fingerprint[real_file] = real_file
+
+        # ----------------------------------------
+        # Check for missing inputs
+
+        if not self._dry_run:
+            for file in self._in_files:
+                if file is None:
+                    raise ValueError("_in_files contained a None")
+                if not os.path.exists(file):
+                    raise FileNotFoundError(file)
+
+        # ----------------------------------------
+        # Check that all build files would end up under build_dir
+
+        for file in self._out_files:
+            if file is None:
+                raise ValueError("_out_files contained a None")
+            file = os.path.abspath(file)
+            if not file.startswith(self._build_dir):
+                raise ValueError(
+                    f"Path error, output file {file} is not under build_dir {self._build_dir}"
+                )
+
+        # ----------------------------------------
+        # Check for duplicate task outputs
+
+        if self._command:
+            for file in self._out_files:
+                file = os.path.abspath(file)
+                if file in Stats.all_out_files:
+                    raise NameError(f"Multiple rules build {file}!")
+                Stats.all_out_files.add(file)
+
+        # ----------------------------------------
+        # Make sure our output directories exist
+
+        if not self._dry_run:
+            for file in self._out_files:
+                os.makedirs(os.path.dirname(file), exist_ok=True)
+
+    #--------------------------------------------------------------------------------
+
     def move_to_build_dir(self, path : str):
         # Note this conditional needs to be first, as build_dir can itself be under task_dir
         if path.startswith(self._build_dir):
@@ -1311,189 +1494,6 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    def task_init(self):
-        self.to_state(TaskState.INIT)
-
-        # ----------------------------------------
-        # Fix up all in/out paths
-
-        Utils.walk(self._config, self.move_stuff1)
-
-        # ----------------------------------------
-        # Expand the command.
-
-        if (callable(self._config.command)):
-            self._command = cast(Any, self._config.command)
-        else:
-            self._command = cast(Tree[str], self._config.expand(self._config.command))
-
-        # ----------------------------------------
-        # Check for missing paths
-
-        if not os.path.exists(self._task_dir):
-            raise FileNotFoundError(self._task_dir)
-
-        if not self._build_dir.startswith(self._repo_dir):
-            raise ValueError(
-                f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
-            )
-
-        # ----------------------------------------
-        # Check for task collisions
-
-        for file in self._out_files:
-            real_file = os.path.realpath(file)
-            if real_file in Stats.filename_to_fingerprint:
-                raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-            Stats.filename_to_fingerprint[real_file] = real_file
-
-        # ----------------------------------------
-        # Check for missing inputs
-
-        if not self._dry_run:
-            for file in self._in_files:
-                if file is None:
-                    raise ValueError("_in_files contained a None")
-                if not os.path.exists(file):
-                    raise FileNotFoundError(file)
-
-        # ----------------------------------------
-        # Check that all build files would end up under build_dir
-
-        for file in self._out_files:
-            if file is None:
-                raise ValueError("_out_files contained a None")
-            file = os.path.abspath(file)
-            if not file.startswith(self._build_dir):
-                raise ValueError(
-                    f"Path error, output file {file} is not under build_dir {self._build_dir}"
-                )
-
-        # ----------------------------------------
-        # Check for duplicate task outputs
-
-        if self._command:
-            for file in self._out_files:
-                file = os.path.abspath(file)
-                if file in Stats.all_out_files:
-                    raise NameError(f"Multiple rules build {file}!")
-                Stats.all_out_files.add(file)
-
-        # ----------------------------------------
-        # Make sure our output directories exist
-
-        if not self._dry_run:
-            for file in self._out_files:
-                os.makedirs(os.path.dirname(file), exist_ok=True)
-
-    #--------------------------------------------------------------------------------
-
-    async def task_main2(self):
-        # Note that we chdir to task_dir before initializing the task so that any path.abspath
-        # or whatever happen from the right place.
-        with chdir(self._task_dir):
-            await self.task_main()
-
-    async def task_main(self):
-        """Entry point for async task stuff, handles exceptions generated during task execution."""
-
-        #--------------------------------------------------------------------------------
-        # Await everything awaitable in this task's config. If any of this tasks's dependencies
-        # were cancelled, we propagate the cancellation to downstream tasks.
-
-        try:
-            self.to_state(TaskState.WAITING)
-            self._config = cast(Dict, await Utils.await_variant(self._config))
-        except BaseException as ex:
-            self.to_state(TaskState.CANCELLED)
-            Stats.tasks_cancelled += 1
-            raise asyncio.CancelledError() from ex
-
-        # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
-        Stats.tasks_running += 1
-        self._task_index = Stats.tasks_running
-
-        #----------------------------------------
-        # Initialize the task, which means expanding everything else that needs expanding and
-        # fixing up paths to point to task_dir or build_dir.
-
-        try:
-            if self._debug:
-                Log(f"\nTask before expand: {self}")
-
-            self.task_init()
-
-            if self._debug:
-                Log(f"\nTask after expand: {self}")
-
-        except asyncio.CancelledError as ex:
-            # We discovered during init that we don't need to run this task.
-            self.to_state(TaskState.CANCELLED)
-            Stats.tasks_cancelled += 1
-            raise asyncio.CancelledError() from ex
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Failure during task init because task is broken
-            self.to_state(TaskState.BROKEN)
-            if self._should_fail:
-                Stats.tasks_shouldfail += 1
-            else:
-                Stats.tasks_broken += 1
-            raise ex
-
-        #--------------------------------------------------------------------------------
-        # Early-out if this is a no-op task
-
-        if not self._command:
-            Stats.tasks_finished += 1
-            self.to_state(TaskState.FINISHED)
-            return
-
-        #--------------------------------------------------------------------------------
-        # Check if we need a rebuild
-
-        self._reason = self.needs_rerun(self._rebuild)
-        if not self._reason:
-            Stats.tasks_skipped += 1
-            self.to_state(TaskState.SKIPPED)
-            return
-        if self._verbose or self._debug:
-            Log(f"{Utils.color(128,128,128)}Reason: {self._reason}{Utils.color()}")
-
-        #--------------------------------------------------------------------------------
-        # Run the task!
-
-        # Print the first status line for this task
-
-        if self._verbose or self._debug:
-            self.log_task_start()
-
-        try:
-            # Wait for enough jobs to free up to run this task and then run the commands.
-            self.to_state(TaskState.GET_JOBS)
-
-            async with Runner.Jobs(self._job_count):
-                self.to_state(TaskState.RUNNING)
-                for command in Utils.flatten(self._command):
-                    await self.run_command(command)
-
-            # Task finished successfully
-            self.to_state(TaskState.FINISHED)
-            Stats.tasks_finished += 1
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Failure during run_command, task failed
-            # If any command failed, we propagate the error to downstream tasks.
-            self.to_state(TaskState.FAILED)
-            if self._should_fail:
-                Stats.tasks_shouldfail += 1
-                return
-            else:
-                Stats.tasks_failed += 1
-                raise ex
-
-    #--------------------------------------------------------------------------------
-
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
@@ -1528,7 +1528,7 @@ class Task:
 
         if depfile and os.path.exists(depfile):
             if self._debug:
-                Log(f"Found C dependencies file {depfile}")
+                Log.log(f"Found C dependencies file {depfile}\n")
             with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
                 if self._depformat == "msvc":
@@ -1560,8 +1560,8 @@ class Task:
         if not isinstance(command, str) and not callable(command):
             raise ValueError(f"Don't know what to do with {command}")
 
-
-        self.log_command_start(command)
+        if self._verbose or self._debug:
+            self.log_command_start(command)
 
         # Dry runs get early-out'ed before we do anything.
         if self._dry_run:
@@ -1581,7 +1581,7 @@ class Task:
             return
         else:
             # Create the subprocess via asyncio and then await the result.
-            #if debug: Log(f"Task {hex(id(self))} subprocess start '{command}'")
+            #if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
             proc = await asyncio.create_subprocess_shell(
                 command,
                 cwd    = self._task_dir,
@@ -1591,7 +1591,7 @@ class Task:
             (stdout_data, stderr_data) = await proc.communicate()
             self._stdout = stdout_data.decode()
             self._stderr = stderr_data.decode()
-            #if debug: Log(f"Task {hex(id(self))} subprocess done '{command}'")
+            #if debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}'\n")
 
         if proc.returncode:
             e = ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
@@ -1609,66 +1609,84 @@ class Task:
     #----------------------------------------
 
     def log_prefix(self):
-        Log(f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} ",
-            sameline = not (self._debug or self._verbose),
-            end="")
+        message  = Utils.color(128,255,196)
+        message += f"[{self._task_index}/{Stats.tasks_started}] "
+        message += Utils.color()
+        return message
 
-    def log_stdout(self):
+    def stdout_to_str(self):
+        message = ""
         if self._stdout:
-            Log(f"========== Stdout ==========")
-            Log(self._stdout.strip())
+            message += f"========== Stdout ==========\n"
+            message += self._stdout
         if self._stderr:
-            Log(f"========== Stderr ==========")
-            Log(self._stderr.strip())
+            message += f"========== Stderr ==========\n"
+            message += self._stderr
         if self._stdout or self._stderr:
-            Log(f"============================")
+            message += f"============================\n"
+        return message
 
     def log_task_start(self):
-        #self.log_prefix()
-        #message = f"Running task '{self._config.name}'"
-        #if self._dry_run:       message += " (DRY RUN)"
+        #if isinstance(self._command, list) and len(self._command) > 1:
+        #    pass
+        #else:
+        #    pass
+        message  = self.log_prefix()
+        message += f"Task started : '{self._name}'"
+        ##if self._dry_run:     message += " (DRY RUN)"
         ##if self._config.desc: message += f" '{self._config.desc}'"
-        #Log(message)
+        Log.log(message)
         pass
+
+    def log_task_reason(self):
+        message  = self.log_prefix()
+        message += Utils.color(128,128,128)
+        message += f"Reason: {self._reason}"
+        message += Utils.color()
+        message += "\n"
+        Log.log(message)
+
 
     def log_task_done(self):
-        #self.log_prefix()
-        #Log(f"Task '{self._name}' done")
+        #message  = self.log_prefix()
+        #message += f"Task '{self._name}' done"
+        #Log.log(message)
         pass
 
-    def log_task_failure(self):
-        self.log_prefix()
-        Log(Utils.color(255, 128, 0), end="")
-        Log(f"Task '{self._name}' failed")
-        Log(traceback.format_exc())
-        Log(Utils.color())
-        if hancho.config.debug or hancho.config.verbose:
-            Log(str(self))
+    def log_task_failure(self, ex):
+        message  = self.log_prefix()
+        message += Utils.color(255,0,0)
+        message += f"Task failed!\n"
+        message += f"From {rel(self._this_file, self._root_dir)}:\n"
+        message += f"    Task '{self._name}' : '{self._desc}'\n"
+        message += traceback.format_exc()
+        message += Utils.color()
+        Log.log(message)
 
     def log_command_start(self, command):
-        message = f"{Utils.color(128,255,196)}[{self._task_index}/{Stats.tasks_started}]{Utils.color()} "
-        dry_run = " (DRY RUN)" if self._dry_run else ""
-        message += f"Running task '{self._config.name}'{dry_run}, command '{command}'"
-        Log(message, sameline = not (self._debug or self._verbose))
+        message  = self.log_prefix()
+        message += f"Command started : '{command}'"
+        if self._dry_run: message += " (DRY RUN)"
+        Log.log(message)
 
     def log_command_failure(self, command, ex):
-        self.log_prefix()
-        Log(Utils.color(255,0,0), end="")
-        Log(f"Task failed!")
-        Log(f"From {rel(self._this_file, self._root_dir)}:")
-        Log(f"  Task '{self._name}' : '{self._desc}'")
-        Log(f"    desc    = '{self._desc}'")
-        Log(f"    command = '{command}'")
-        Log(f"    error   = '{str(ex).strip()}'")
+        message  = self.log_prefix()
+        message += Utils.color(255,0,0)
+        message += f"Task failed!\n"
+        message += f"From {rel(self._this_file, self._root_dir)}:\n"
+        message += f"    Task '{self._name}' : '{self._desc}'\n"
+        message += f"    command = '{command}'\n"
+        message += f"    error   = '{ex}'\n"
         if not callable(command):
-            self.log_stdout()
-        Log(Utils.color())
+            message += self.stdout_to_str()
+        message += Utils.color()
+        Log.log(message)
 
     def log_command_done(self, command):
-        #self.log_prefix()
-        #Log(f"Command '{command}' done")
-        #Log(f"Command done")
-        #self.log_stdout()
+        #message  = self.log_prefix()
+        #message += f"Command done : '{command}'"
+        #message += self.stdout_to_str()
+        #Log.log(message)
         pass
 
 # endregion
@@ -1736,7 +1754,7 @@ class Runner:
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._name):
-                #Log(f"Queueing task for '{task._name}'")
+                #Log.log(f"Queueing task for '{task._name}'")
                 task.queue()
 
     #--------------------------------------------------------------------------------
@@ -1763,7 +1781,7 @@ class Runner:
 
         while cls.queued_tasks or cls.started_tasks:
             if hancho.config.shuffle:
-                Log(f"Shufflin' {len(cls.queued_tasks)} tasks")
+                Log.log(f"Shufflin' {len(cls.queued_tasks)} tasks")
                 random.shuffle(cls.queued_tasks)
 
             while cls.queued_tasks:
@@ -1778,21 +1796,17 @@ class Runner:
             debug   = task._config.eval("verbose")
 
             try:
-                if verbose or debug:
-                    task.log_task_start()
                 await asyncio_task
                 cls.finished_tasks.append(task)
-                if verbose or debug:
-                    task.log_task_done()
-            except BaseException:  # pylint: disable=broad-exception-caught
+            except BaseException as ex:  # pylint: disable=broad-exception-caught
                 # Both broken and failed tasks should end up here.
-                task.log_task_failure()
+                #task.log_task_failure(ex)
                 if task._should_fail:
                     cls.finished_tasks.append(task)
 
             fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
             if hancho.config.keep_going and fail_count >= hancho.config.keep_going:
-                Log("Too many failures, cancelling tasks and stopping build")
+                Log.log("Too many failures, cancelling tasks and stopping build\n")
                 cls.cancel_all_tasks()
                 break
 
@@ -1816,9 +1830,9 @@ class Runner:
                 build_root = os.path.realpath(task._config.eval("build_root", str))
                 build_root = os.path.relpath(build_root, os.getcwd())
                 if os.path.isdir(build_root):
-                    Log(f"Wiping build_root {build_root}")
+                    Log.log(f"Wiping build_root {build_root}\n")
                     shutil.rmtree(build_root, ignore_errors=True)
-            Log("Clean done")
+            Log.log("Clean done\n")
             return 0
         else:
             assert False, f"Don't know how to run tool {tool}"
@@ -1844,7 +1858,7 @@ def init(*args, **kwargs):
 def reset():
     Loader.reset()
     Stats.reset()
-    Log.reset()
+    Log.reset(hancho.config.verbose)
     Utils.reset()
     Expander.reset()
     Tracer.reset()
@@ -1933,14 +1947,14 @@ def main():
     script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
     if not os.path.exists(script_path):
         path = os.path.relpath(script_path, os.getcwd())
-        Log(f"Could not load build script {path}")
+        Log.log(f"Could not load build script {path}\n")
         sys.exit(-1)
     Loader.root_repo = Loader.load(script_path, True)
     Stats.time_load = time.perf_counter() - time_a
 
     #if hancho.config.debug or hancho.config.verbose:
     if True:
-        Log(f"Loading .hancho files took {Stats.time_load:.3f} seconds")
+        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds\n")
 
     #----------------------------------------
     # Run tools if needed
@@ -1961,7 +1975,7 @@ def main():
     Stats.time_queue = time.perf_counter() - time_a
 
     if hancho.config.debug or hancho.config.verbose:
-        Log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds")
+        Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds\n")
 
     #----------------------------------------
     # Run all tasks
