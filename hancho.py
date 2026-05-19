@@ -1485,12 +1485,10 @@ class Task:
         if not k.startswith("in_") and not k.startswith("out_"): return
         if v is None: return
 
-        if Utils.is_collection(v):
-            c[k] = self.fixup_path1(k, v)
-        elif isinstance(v, str):
-            c[k] = self.fixup_path1(k, v)
-        else:
+        if not isinstance(v, str) and not Utils.is_collection(v):
             assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
+
+        c[k] = self.fixup_path1(k, v)
 
     #--------------------------------------------------------------------------------
 
