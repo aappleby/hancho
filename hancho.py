@@ -1367,16 +1367,19 @@ class Task:
                 else:
                     self._config[k] = result
 
-#        # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
-#        # We _must_ expand these first before joining paths or the paths will be incorrect:
-#        # prefix + swap(abs_path) != abs(prefix + swap(path))
-#        for k, v in self._config.items():
-#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-#                for k2, v2 in enumerate(v):
-#                    assert isinstance(v2, str)
-#                    v2 = cast(str, self._config.expand(v2))
-#                    v[k2] = v2
-#
+        # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
+        # We _must_ expand these first before joining paths or the paths will be incorrect:
+        # prefix + swap(abs_path) != abs(prefix + swap(path))
+        for k, v in self._config.items():
+            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+                if Utils.is_collection(v):
+                    for k2, v2 in enumerate(v):
+                        assert isinstance(v2, str)
+                        v2 = cast(str, self._config.expand(v2))
+                        v[k2] = v2
+                else:
+                    self._config[k] = cast(str, self._config.expand(v))
+
 #        # Make all paths absolute and move all output files so they're under build_dir.
 #
 #        for k, v in self._config.items():
@@ -1416,10 +1419,8 @@ class Task:
 #            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
 #                for k2, v2 in enumerate(v):
 #                    v[k2] = Path.rel(v2, self._task_cwd)
-#
-#        # And now that our paths are clean, we can expand the command.
-#        self._command = cast(Any, self._config.expand(self._config.command))
-#
+
+
         def walk(c, func):
             if Utils.is_mapping(c):
                 for key, val in c.items():
@@ -1432,6 +1433,7 @@ class Task:
 
         walk(self._config, self.fix_paths)
 
+        # And now that our paths are clean, we can expand fields that refer to paths.
         self._name = self._config.eval("name")
         self._desc = self._config.eval("desc")
 
