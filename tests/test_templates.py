@@ -8,8 +8,8 @@ import unittest
 import doctest
 
 #sys.path.append("..")
-(this_dir, this_file) = os.path.split(os.path.abspath(__file__))
-hancho_dir = os.path.normpath(f"{this_dir}/..")
+(script_dir, script_file) = os.path.split(os.path.abspath(__file__))
+hancho_dir = os.path.normpath(f"{script_dir}/..")
 sys.path.append(hancho_dir)
 import hancho
 
@@ -22,11 +22,11 @@ class TestTemplates(unittest.TestCase):
     def setUp(self):
         #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         hancho.init(
-            this_dir  = this_dir,
-            this_file = this_file,
-            debug     = False,
-            verbose   = False,
-            quiet     = True,
+            script_dir  = script_dir,
+            script_file = script_file,
+            debug   = False,
+            verbose = False,
+            quiet   = True,
         )
 
         sys.stdout.flush()

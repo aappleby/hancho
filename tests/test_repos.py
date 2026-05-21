@@ -21,7 +21,7 @@ import hancho
 
 def setUpModule():
     # Change to your desired directory
-    #os.chdir(this_dir)
+    #os.chdir(script_dir)
     pass
 
 def mtime_ns(filename):

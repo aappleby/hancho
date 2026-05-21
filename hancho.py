@@ -966,7 +966,7 @@ class Loader:
 
         (script_dir, script_file) = os.path.split(script_path)
 
-        tweaks = Dict(is_repo = False, this_dir = script_dir, this_file = script_file)
+        tweaks = Dict(is_repo = False, script_dir = script_dir, script_file = script_file)
         if is_repo:
             tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
 
@@ -1103,15 +1103,15 @@ class Task:
         self._name = e.name
         self._desc = e.desc
 
-        self._root_dir   : str = os.path.abspath(e.get("root_dir",   str))
-        self._root_file  : str = os.path.abspath(e.get("root_file",  str))
-        self._repo_dir   : str = os.path.abspath(e.get("repo_dir",   str))
-        self._repo_file  : str = os.path.abspath(e.get("repo_file",  str))
-        self._this_dir   : str = os.path.abspath(e.get("this_dir",   str))
-        self._this_file  : str = os.path.abspath(e.get("this_file",  str))
-        self._task_cwd   : str = os.path.abspath(e.get("task_cwd",   str))
-        self._build_root : str = os.path.abspath(e.get("build_root", str))
-        self._build_dir  : str = os.path.abspath(e.get("build_dir",  str))
+        self._root_dir    : str = os.path.abspath(e.get("root_dir",    str))
+        self._root_file   : str = os.path.abspath(e.get("root_file",   str))
+        self._repo_dir    : str = os.path.abspath(e.get("repo_dir",    str))
+        self._repo_file   : str = os.path.abspath(e.get("repo_file",   str))
+        self._script_dir  : str = os.path.abspath(e.get("script_dir",  str))
+        self._script_file : str = os.path.abspath(e.get("script_file", str))
+        self._task_cwd    : str = os.path.abspath(e.get("task_cwd",    str))
+        self._build_root  : str = os.path.abspath(e.get("build_root",  str))
+        self._build_dir   : str = os.path.abspath(e.get("build_dir",   str))
 
         self._job_count   = e.get("job_count", int)
         self._keep_going  = e.get("keep_going", int)
@@ -1653,10 +1653,11 @@ class Task:
         pass
 
     def log_task_failure(self, ex):
+        script_path = os.path.join(self._script_dir, self._script_file)
         message  = self.log_prefix()
         message += Utils.color(255,0,0)
         message += f"Task failed!\n"
-        message += f"From {rel(self._this_file, self._root_dir)}:\n"
+        message += f"From {rel(script_path, self._root_dir)}:\n"
         message += f"    Task '{self._name}' : '{self._desc}'\n"
         message += traceback.format_exc()
         message += Utils.color()
@@ -1669,10 +1670,11 @@ class Task:
         Log.log(message)
 
     def log_command_failure(self, command, ex):
+        script_path = os.path.join(self._script_dir, self._script_file)
         message  = self.log_prefix()
         message += Utils.color(255,0,0)
         message += f"Task failed!\n"
-        message += f"From {rel(self._this_file, self._root_dir)}:\n"
+        message += f"From {rel(script_path, self._root_dir)}:\n"
         message += f"    Task '{self._name}' : '{self._desc}'\n"
         message += f"    command = '{command}'\n"
         message += f"    error   = '{ex}'\n"
@@ -1895,17 +1897,13 @@ defaults = Dict(
     command    = "",
 
     hancho_dir = os.path.dirname(__file__),
-
-    task_cwd   = "{this_dir}",
-
+    task_cwd   = "{script_dir}",
     root_dir   = os.getcwd(),
     root_file  = "build.hancho",
-
     repo_dir   = "{root_dir}",
     repo_file  = "{root_file}",
-
-    this_dir   = "{root_dir}",
-    this_file  = "{root_file}",
+    script_dir  = "{root_dir}",
+    script_file = "{root_file}",
 
     build_root = "{repo_dir}/build",
     build_dir  = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",

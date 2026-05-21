@@ -20,7 +20,7 @@ import hancho
 
 def setUpModule():
     # Change to your desired directory
-    #os.chdir(this_dir)
+    #os.chdir(script_dir)
     pass
 
 def mtime_ns(filename):
@@ -262,7 +262,6 @@ class TestTasks(unittest.TestCase):
         # A rule with no inputs should always rebuild
 
         def run():
-            #hancho.init(quiet = True, this_dir = this_dir, this_file = this_file)
             hancho.init(quiet = True)
             t = hancho.Task(
                 command = "sleep 0.1 && touch {out_obj}",
@@ -286,7 +285,6 @@ class TestTasks(unittest.TestCase):
         dummy = "data/dummy.txt"
 
         def run():
-            #hancho.init(quiet = True, this_dir = this_dir, this_file = this_file)
             hancho.init(quiet = True)
             hancho.Task(
                 command = "sleep 0.1 && touch {out_obj}",
@@ -382,7 +380,6 @@ class TestTasks(unittest.TestCase):
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
-            #hancho.init(quiet = True, this_dir = this_dir, this_file = this_file)
             hancho.init(quiet = True)
             time.sleep(0.01)
             compile = hancho.Tool(

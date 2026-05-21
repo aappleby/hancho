@@ -12,7 +12,7 @@
       "console" : "integratedTerminal",
       "cwd"     : "${workspaceFolder}/scratch",
       "program" : "${workspaceFolder}/hancho.py",
-      "args"    : ["-v"],
+      "args"    : ["-v", "--rebuild"],
       //"args"    : ["-d", "-j1"],
       //"args"    : ["TestTasks.test_async_callback"],
     },
