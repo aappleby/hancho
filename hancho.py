@@ -1035,7 +1035,8 @@ class Promise:
     async def get(self):
         await self.task.await_done()
         result = self.task._config[self.field]
-        result = Path.join(self.task._task_dir, result)
+        # FIXME this is probably wrong? need a test.
+        result = Path.join(self.task._task_cwd, result)
         return result
 
 #    def __init__(self, task : Task, *args):
@@ -1108,7 +1109,7 @@ class Task:
         self._repo_file  : str = os.path.abspath(e.get("repo_file",  str))
         self._this_dir   : str = os.path.abspath(e.get("this_dir",   str))
         self._this_file  : str = os.path.abspath(e.get("this_file",  str))
-        self._task_dir   : str = os.path.abspath(e.get("task_cwd",   str))
+        self._task_cwd   : str = os.path.abspath(e.get("task_cwd",   str))
         self._build_root : str = os.path.abspath(e.get("build_root", str))
         self._build_dir  : str = os.path.abspath(e.get("build_dir",  str))
 
@@ -1225,7 +1226,7 @@ class Task:
         try:
             # Note that we chdir to task_cwd before initializing the task so that any path.abspath
             # or whatever happen from the right place.
-            with chdir(self._task_dir):
+            with chdir(self._task_cwd):
                 await self.task_main()
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
@@ -1362,8 +1363,8 @@ class Task:
         # ----------------------------------------
         # Check for missing paths
 
-        if not os.path.exists(self._task_dir):
-            raise FileNotFoundError(self._task_dir)
+        if not os.path.exists(self._task_cwd):
+            raise FileNotFoundError(self._task_cwd)
 
         if not self._build_dir.startswith(self._repo_dir):
             raise ValueError(
@@ -1447,11 +1448,11 @@ class Task:
             if v.startswith(self._build_dir):
                 # Absolute path under build_dir, do nothing.
                 pass
-            elif v.startswith(self._task_dir):
+            elif v.startswith(self._task_cwd):
                 # If an input source had an absolute path and we swap the extension on it to make the
                 # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
                 # lives under build_dir.
-                v = os.path.relpath(v, self._task_dir)
+                v = os.path.relpath(v, self._task_cwd)
                 v = os.path.join(self._build_dir, v)
             elif os.path.isabs(v):
                 raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
@@ -1462,7 +1463,7 @@ class Task:
             v = os.path.abspath(v)
 
         elif k.startswith("in_"):
-            v = os.path.join(self._task_dir, v)
+            v = os.path.join(self._task_cwd, v)
 
         # Gather all absolute file paths to _in/_out_files.
         # WARNING: These filenames _must_ be absolute as they may be read from other repos.
@@ -1476,14 +1477,14 @@ class Task:
 
         #print("**************")
         #print(v)
-        #print(self._task_dir)
-        #print(os.path.relpath(v, self._task_dir))
-        #print(Path.rel(v, self._task_dir))
+        #print(self._task_cwd)
+        #print(os.path.relpath(v, self._task_cwd))
+        #print(Path.rel(v, self._task_cwd))
         #print(Path.rel(v, self._build_dir))
         #print("**************")
 
         # But the path _inside_ the task can be relative to the task dir? I think this works...
-        v = Path.rel(v, self._task_dir)
+        v = Path.rel(v, self._task_cwd)
 
         #print(f"************** {v}")
 
@@ -1540,7 +1541,7 @@ class Task:
                     raise ValueError(f"Invalid dependency file format {self._depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [os.path.join(self._task_dir, d) for d in deplines]
+                deplines = [os.path.join(self._task_cwd, d) for d in deplines]
                 for abs_file in deplines:
                     if Utils.mtime(abs_file) >= min_out:
                         return f"Rebuilding because {abs_file} has changed"
@@ -1582,7 +1583,7 @@ class Task:
             #if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd    = self._task_dir,
+                cwd    = self._task_cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
             )
