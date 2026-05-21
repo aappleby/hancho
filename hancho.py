@@ -990,7 +990,7 @@ class Loader:
         # _identical_, which may bite users.
 
         script_path_real = os.path.realpath(script_path)
-        dedupe_key = (script_path_real, new_config.dump(2, print_id = False))
+        dedupe_key = (script_path_real, new_config.dump(999, print_id = False))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1237,10 +1237,7 @@ class Task:
 
     async def task_main2(self):
         try:
-            # Note that we chdir to task_cwd before initializing the task so that any path.abspath
-            # or whatever happen from the right place.
-            with chdir(self._task_cwd):
-                await self.task_main()
+            await self.task_main()
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Both broken and failed tasks should end up here.
@@ -1282,8 +1279,8 @@ class Task:
         # fixing up paths to point to task_cwd or build_dir.
 
         try:
-
-            self.task_init()
+            with chdir(self._script_dir):
+                self.task_init()
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
@@ -1582,7 +1579,8 @@ class Task:
         # Custom commands just get called and then early-out'ed.
         if callable(command):
             try:
-                result = command(self)
+                with chdir(self._task_cwd):
+                    result = command(self)
                 while inspect.isawaitable(result):
                     result = await result
                 self._stdout = ""
@@ -1616,7 +1614,7 @@ class Task:
 
     def dump(self):
         result = f"{type(self).__name__} @ {hex(id(self))} : '{self._name}'"
-        print(result)
+        return result
 
     #----------------------------------------
 
@@ -1686,7 +1684,7 @@ class Task:
         script_path = os.path.join(self._script_dir, self._script_file)
         message  = self.log_prefix()
         message += Utils.color(255,0,0)
-        message += f"Task failed!\n"
+        message += f"Command failed!\n"
         message += f"From {rel(script_path, self._root_dir)}:\n"
         message += f"    Task '{self._name}' : '{self._desc}'\n"
         message += f"    command = '{command}'\n"
@@ -1899,6 +1897,7 @@ norm    = Path.norm
 real    = Path.real
 rel     = Path.rel
 stem    = Path.stem
+os      = os
 
 # We spell all these defaults out explicitly so that when this config gets merged with flags and
 # task configs the fields stay in the same order.
