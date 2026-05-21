@@ -26,7 +26,7 @@ def generate_filelist(task):
 
 filelist_txt = hancho.Task(
     name     = "{out_list}",
-    desc     = "Write the names of 3 random files in src/ to {task_cwd}",
+    desc     = "Write the names of 3 random files in src/ to {out_list}",
     command  = generate_filelist,
     in_src   = src_files,
     out_list = "filelist.txt",

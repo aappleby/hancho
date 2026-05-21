@@ -1367,6 +1367,59 @@ class Task:
                 else:
                     self._config[k] = result
 
+#        # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
+#        # We _must_ expand these first before joining paths or the paths will be incorrect:
+#        # prefix + swap(abs_path) != abs(prefix + swap(path))
+#        for k, v in self._config.items():
+#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+#                for k2, v2 in enumerate(v):
+#                    assert isinstance(v2, str)
+#                    v2 = cast(str, self._config.expand(v2))
+#                    v[k2] = v2
+#
+#        # Make all paths absolute and move all output files so they're under build_dir.
+#
+#        for k, v in self._config.items():
+#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+#                for k2, v2 in enumerate(v):
+#                    v2 = os.path.abspath(v2)
+#                    if k == "in_depfile" or k.startswith("out_"):
+#                        # Note this conditional needs to be first, as build_dir can itself be under task_cwd
+#                        if v2.startswith(self._build_dir):
+#                            # Absolute path under build_dir, do nothing.
+#                            pass
+#                        elif v2.startswith(self._task_cwd):
+#                            # If an input source had an absolute path and we swap the extension on it to make the
+#                            # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+#                            # lives under build_dir.
+#                            v2 = v2.replace(self._task_cwd, self._build_dir)
+#                        else:
+#                            raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
+#                    v[k2] = v2
+#
+#        # Gather all absolute file paths to _in/_out_files.
+#        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
+#        for k, v in self._config.items():
+#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+#                for k2, v2 in enumerate(v):
+#                    if k == "in_depfile":
+#                        if isinstance(v2, str) and os.path.isfile(v2):
+#                            self._in_files.append(v2)
+#                    elif k.startswith("out_"):
+#                        self._out_files.extend(Utils.flatten(v2))
+#                    elif k.startswith("in_"):
+#                        self._in_files.extend(Utils.flatten(v2))
+#
+#        # Our _in_files and _out_files now contain absolute paths to all inputs and outputs.
+#        # Convert the original in_ and out_ paths to relative so our command lines aren't enormous.
+#        for k, v in self._config.items():
+#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+#                for k2, v2 in enumerate(v):
+#                    v[k2] = Path.rel(v2, self._task_cwd)
+#
+#        # And now that our paths are clean, we can expand the command.
+#        self._command = cast(Any, self._config.expand(self._config.command))
+#
         def walk(c, func):
             if Utils.is_mapping(c):
                 for key, val in c.items():
@@ -1684,8 +1737,11 @@ class Task:
 
     def log_command_start(self, command):
         message  = self.log_prefix()
-        message += f"Command started : '{command}'"
+        message  = Utils.color(128, 128, 255)
+        assert self._task_cwd == os.getcwd()
+        message += f"{self._task_cwd}$ '{command}'"
         if self._dry_run: message += " (DRY RUN)"
+        message += Utils.color()
         Log.log(message)
 
     def log_command_failure(self, command, ex):
