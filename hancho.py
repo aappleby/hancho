@@ -200,14 +200,7 @@ class Path:
     base = recursify(os.path.basename)
     norm = recursify(os.path.normpath)
     real = recursify(os.path.realpath)
-
-    @staticmethod
-    def _ext(name, ext):
-        result = os.path.splitext(name)[0] + ext
-        return result
-
-    ext  = recursify(_ext)
-
+    ext  = recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
     stem = recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
 # endregion
@@ -740,7 +733,9 @@ class Expander(abc.Mapping[str, object]):
         elif isinstance(template, str):
             result = self._expand(template)
         else:
-            assert False, f"Don't know how to expand a {type(template)} = {template}"
+            result = template
+            #assert False, f"Don't know how to expand a {type(template)} = {template}"
+
         assert isinstance(result, as_type)
         return result
 
@@ -777,33 +772,8 @@ class Tracer:
         """Prints a trace message to the log."""
         if not self.trace:
             return
-
-        #source_id = id(source)
-
-        #if trellis_bar[0] == '┗':
-        #    Tracer.pop()
-
-        buffer = ""
-        #buffer += Utils.id_to_color(source_id)
-        #buffer += hex(source_id)
-        #buffer += Utils.color()
-        #buffer += ": "
-
-        buffer += "".join(Tracer.trellis_stack)
-        #buffer += self.color + "┃ "
-        #buffer += trellis_bar
-        #buffer += Utils.color()
-
-        buffer += text
-        buffer += '\n'
-
+        buffer = "".join(Tracer.trellis_stack) + text + '\n'
         Log.log(buffer)
-
-        #if trellis_bar[0] == '┏':
-        #    Tracer.push(trellis_color)
-
-        #if len(Tracer.trellis_bar) and Tracer.trellis_bar[0] == '┗' and Expander.depth == 0:
-        #    Log.log("")
 
 # endregion
 ####################################################################################################
@@ -1058,22 +1028,6 @@ class Promise:
         result = Path.join(self.task._task_cwd, result)
         return result
 
-#    def __init__(self, task : Task, *args):
-#        self.task : Task = task
-#        self.args = args
-#
-#    async def get(self):
-#        await self.task.await_done()
-#        if len(self.args) == 0:
-#            result = self.task._out_files
-#            return result
-#        elif len(self.args) == 1:
-#            field = self.args[0]
-#            result = self.task._config[field]
-#            return result
-#        else:
-#            return [self.task._config[field] for field in self.args]
-
 # endregion
 ####################################################################################################
 # region Task
@@ -1187,10 +1141,14 @@ class Task:
 
     def to_state(self, new_state):
         if not self._state in Task.transitions:
-            raise RuntimeError(f"State {self._state} has no edges in the transition table")
+            message = f"State {self._state} has no edges in the transition table"
+            print(message)
+            raise RuntimeError(message)
         edges = Task.transitions[self._state]
         if not new_state in edges:
-            raise RuntimeError(f"Can't transition from {self._state} to {new_state}!")
+            message = f"Can't transition from {self._state} to {new_state}!"
+            print(message)
+            raise RuntimeError(message)
         self._state = new_state
 
     # ----------------------------------------
@@ -1224,7 +1182,7 @@ class Task:
     def start(self):
         self.to_state(TaskState.STARTED)
 
-        self._asyncio_task = asyncio.create_task(self.task_main2(), context = self._context)
+        self._asyncio_task = asyncio.create_task(self.task_main(), context = self._context)
         Stats.tasks_started += 1
 
     async def await_done(self):
@@ -1241,29 +1199,7 @@ class Task:
 
     #--------------------------------------------------------------------------------
 
-    async def task_main2(self):
-        try:
-            await self.task_main()
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Both broken and failed tasks should end up here.
-            self.log_task_failure(ex)
-            self.to_state(TaskState.FAILED)
-            if self._should_fail:
-                Stats.tasks_shouldfail += 1
-                return
-            else:
-                Stats.tasks_failed += 1
-                raise ex
-
-        #except BaseException as ex:  # pylint: disable=broad-exception-caught
-        #    # Failure during run_command, task failed
-        #    # If any command failed, we propagate the error to downstream tasks.
-
-    #-----------------------------------------------------------------------------------------------
-
     async def task_main(self):
-
         #----------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # were cancelled, we propagate the cancellation to downstream tasks.
@@ -1271,37 +1207,60 @@ class Task:
         try:
             self.to_state(TaskState.WAITING)
             self._config = cast(Dict, await Utils.await_variant(self._config))
-        except BaseException as ex:
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
             self.to_state(TaskState.CANCELLED)
             Stats.tasks_cancelled += 1
             raise asyncio.CancelledError() from ex
+
+        #----------------------------------------
+        # Initialize the task, which means expanding everything else that needs expanding and
+        # fixing up paths to point to task_cwd or build_dir.
 
         # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
         Stats.tasks_running += 1
         self._task_index = Stats.tasks_running
 
         #----------------------------------------
-        # Initialize the task, which means expanding everything else that needs expanding and
-        # fixing up paths to point to task_cwd or build_dir.
+        # And then run the task.
 
         try:
             with chdir(self._script_dir):
+                self.to_state(TaskState.INIT)
+                if self._debug:
+                    Log.log(f"Task before expand: {self}\n")
+
+                assert os.getcwd() == self._script_dir
                 self.task_init()
+                if self._debug:
+                    Log.log(f"Task after expand: {self}\n")
+
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
+            print()
+            print("Cancelled during init")
             self.to_state(TaskState.CANCELLED)
             Stats.tasks_cancelled += 1
-            raise asyncio.CancelledError() from ex
-
+            raise ex
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Failure during task init because task is broken
+            print()
+            print("Broken during init")
             self.to_state(TaskState.BROKEN)
+
+            if not self._should_fail:
+                Stats.tasks_broken += 1
+
+            # Both broken and failed tasks should end up here.
+            self.log_task_failure(ex)
+            self.to_state(TaskState.FAILED)
+
             if self._should_fail:
                 Stats.tasks_shouldfail += 1
+                return
             else:
-                Stats.tasks_broken += 1
-            raise ex
+                Stats.tasks_failed += 1
+                raise ex
 
         #----------------------------------------
         # Early-out if this is a no-op task
@@ -1320,45 +1279,55 @@ class Task:
             self.to_state(TaskState.SKIPPED)
             return
 
-        #----------------------------------------
-        # Run the task!
 
-        # Print the first status line for this task
+        try:
+            # Print the first status line for this task
 
-        if self._verbose or self._debug:
-            self.log_task_start()
-            self.log_task_reason()
+            if self._verbose or self._debug:
+                self.log_task_start()
+                self.log_task_reason()
 
-        # Wait for enough jobs to free up to run this task and then run the commands.
-        self.to_state(TaskState.GET_JOBS)
 
-        async with Runner.Jobs(self._job_count):
-            self.to_state(TaskState.RUNNING)
-            for command in Utils.flatten(self._command):
-                await self.run_command(command)
+            #----------------------------------------
+            # Run the task!
 
-        #----------------------------------------
-        # Task finished successfully
+            # Wait for enough jobs to free up to run this task and then run the commands.
+            self.to_state(TaskState.GET_JOBS)
 
-        self.to_state(TaskState.FINISHED)
-        Stats.tasks_finished += 1
+            async with Runner.Jobs(self._job_count):
+                self.to_state(TaskState.RUNNING)
+                for command in Utils.flatten(self._command):
+                    await self.run_command(command)
 
+
+            #----------------------------------------
+            # Task finished successfully
+
+            self.to_state(TaskState.FINISHED)
+            Stats.tasks_finished += 1
+
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Both broken and failed tasks should end up here.
+            print()
+            print("Failure during task_main")
+            self.log_task_failure(ex)
+            self.to_state(TaskState.FAILED)
+            if self._should_fail:
+                Stats.tasks_shouldfail += 1
+                return
+            else:
+                Stats.tasks_failed += 1
+                raise ex
 
     #--------------------------------------------------------------------------------
 
     def task_init(self):
-
-        self.to_state(TaskState.INIT)
-
-        # ----------------------------------------
         # Fix up all in/out paths and then expand the command.
 
-        if self._debug:
-            Log.log(f"Task before expand: {self}\n")
-
-        assert os.getcwd() == self._script_dir
-
+        # ----------------------------------------
         # First, flatten all inputs and outputs.
+
         for k, v in self._config.items():
             if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
                 result = flatten(v)
@@ -1367,83 +1336,65 @@ class Task:
                 else:
                     self._config[k] = result
 
+        # ----------------------------------------
         # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
+
         for k, v in self._config.items():
             if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                if Utils.is_collection(v):
-                    for k2, v2 in enumerate(v):
-                        assert isinstance(v2, str)
-                        v2 = cast(str, self._config.expand(v2))
-                        v[k2] = v2
+                v = self._config.expand(v)
+                v = Path.abs(v)
+                self._config[k] = v
+
+        #----------------------------------------
+        # Make all paths absolute and move all output files so they're under build_dir.
+
+        def fix(k, v):
+            if k == "in_depfile" or k.startswith("out_"):
+                # Note this conditional needs to be first, as build_dir can itself be under task_cwd
+                if v.startswith(self._build_dir):
+                    # Absolute path under build_dir, do nothing.
+                    pass
+                elif v.startswith(self._task_cwd):
+                    # If an input source had an absolute path and we swap the extension on it to make the
+                    # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+                    # lives under build_dir.
+                    v = v.replace(self._task_cwd, self._build_dir)
                 else:
-                    self._config[k] = cast(str, self._config.expand(v))
+                    raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
+            elif k.startswith("in_"):
+                v = Path.join(self._task_cwd, v)
+            return v
 
-#        # Make all paths absolute and move all output files so they're under build_dir.
-#
-#        for k, v in self._config.items():
-#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-#                for k2, v2 in enumerate(v):
-#                    v2 = os.path.abspath(v2)
-#                    if k == "in_depfile" or k.startswith("out_"):
-#                        # Note this conditional needs to be first, as build_dir can itself be under task_cwd
-#                        if v2.startswith(self._build_dir):
-#                            # Absolute path under build_dir, do nothing.
-#                            pass
-#                        elif v2.startswith(self._task_cwd):
-#                            # If an input source had an absolute path and we swap the extension on it to make the
-#                            # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-#                            # lives under build_dir.
-#                            v2 = v2.replace(self._task_cwd, self._build_dir)
-#                        else:
-#                            raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
-#                    v[k2] = v2
-#
-#        # Gather all absolute file paths to _in/_out_files.
-#        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
-#        for k, v in self._config.items():
-#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-#                for k2, v2 in enumerate(v):
-#                    if k == "in_depfile":
-#                        if isinstance(v2, str) and os.path.isfile(v2):
-#                            self._in_files.append(v2)
-#                    elif k.startswith("out_"):
-#                        self._out_files.extend(Utils.flatten(v2))
-#                    elif k.startswith("in_"):
-#                        self._in_files.extend(Utils.flatten(v2))
-#
-#        # Our _in_files and _out_files now contain absolute paths to all inputs and outputs.
-#        # Convert the original in_ and out_ paths to relative so our command lines aren't enormous.
-#        for k, v in self._config.items():
-#            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-#                for k2, v2 in enumerate(v):
-#                    v[k2] = Path.rel(v2, self._task_cwd)
+        for k, v in self._config.items():
+            if Utils.is_collection(v):
+                for i, v2 in enumerate(v):
+                    v[i] = fix(k, v2)
+            else:
+                self._config[k] = fix(k, v)
 
+        #----------------------------------------
+        # Gather all absolute file paths to _in_files/_out_files.
+        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
 
-        def walk(c, func):
-            if Utils.is_mapping(c):
-                for key, val in c.items():
-                    c[key] = func(key, val)
-                    walk(val, func)
-            elif Utils.is_collection(c):
-                for key, val in enumerate(c):
-                    c[key] = func(key, val)
-                    walk(val, func)
+        for k, v in self._config.items():
+            #if Utils.is_collection(v):
+            if k == "in_depfile":
+                if isinstance(v, str) and os.path.isfile(v):
+                    self._in_files.append(v)
+            elif k.startswith("out_"):
+                self._out_files.extend(Utils.flatten(v))
+            elif k.startswith("in_"):
+                self._in_files.extend(Utils.flatten(v))
 
-        walk(self._config, self.fix_paths)
-
+        #----------------------------------------
         # And now that our paths are clean, we can expand fields that refer to paths.
+
         self._name = self._config.eval("name")
         self._desc = self._config.eval("desc")
 
-        if (callable(self._config.command)):
-            self._command = cast(Any, self._config.command)
-        else:
-            self._command = cast(Tree[str], self._config.expand(self._config.command))
-
-        if self._debug:
-            Log.log(f"Task after expand: {self}\n")
+        self._command = cast(Tree[str], self._config.expand(self._config.command))
 
         # ----------------------------------------
         # Check for missing paths
@@ -1503,70 +1454,6 @@ class Task:
         if not self._dry_run:
             for file in self._out_files:
                 os.makedirs(os.path.dirname(file), exist_ok=True)
-
-    #--------------------------------------------------------------------------------
-
-    def fix_paths(self, k, v):
-        if not isinstance(k, str): return v
-        if not k.startswith("in_") and not k.startswith("out_"): return v
-        if v is None: return v
-
-        if Utils.is_collection(v):
-            return [self.fix_paths(k, v2) for v2 in v]
-
-        if not isinstance(v, str):
-            assert False, f"Value associated with key '{k}' is not a string or collection: '{v}'"
-
-        if len(v) == 0: return v
-
-        # Expand all in_ and out_ filenames
-        # We _must_ expand these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != abs(prefix + swap(path))
-
-        v = cast(str, self._config.expand(v))
-        v = os.path.abspath(v) # type: ignore
-
-        # Make all in_ and out_ file paths absolute by joining build_dir to them
-
-        if k == "in_depfile" or k.startswith("out_"):
-            # Note this conditional needs to be first, as build_dir can itself be under task_cwd
-            if v.startswith(self._build_dir):
-                # Absolute path under build_dir, do nothing.
-                pass
-            elif v.startswith(self._task_cwd):
-                # If an input source had an absolute path and we swap the extension on it to make the
-                # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-                # lives under build_dir.
-                v = os.path.relpath(v, self._task_cwd)
-                v = os.path.join(self._build_dir, v)
-            elif os.path.isabs(v):
-                raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
-            else:
-                # Relative path, add build_dir
-                v = os.path.join(self._build_dir, v)
-
-            v = os.path.abspath(v)
-
-        elif k.startswith("in_"):
-            v = os.path.join(self._task_cwd, v)
-
-        # Gather all absolute file paths to _in/_out_files.
-        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
-        if k == "in_depfile":
-            if isinstance(v, str) and os.path.isfile(v):
-                self._in_files.append(v)
-        elif k.startswith("out_"):
-            self._out_files.extend(Utils.flatten(v))
-        elif k.startswith("in_"):
-            self._in_files.extend(Utils.flatten(v))
-
-        # But the path _inside_ the task can be relative to the task dir? I think this works...
-        # Nope, this breaks dynamic_dependencies.generate_result - "in_files" are already relative to
-        # task_cwd, and they get another copy of task_cwd stuck to them if the path doesn't start with /
-
-        #v = Path.rel(v, self._task_cwd)
-
-        return v
 
     #--------------------------------------------------------------------------------
 
