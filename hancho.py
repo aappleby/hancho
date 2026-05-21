@@ -200,7 +200,14 @@ class Path:
     base = recursify(os.path.basename)
     norm = recursify(os.path.normpath)
     real = recursify(os.path.realpath)
-    ext  = recursify(lambda name, ext: os.path.splitext(name)[0] + ext)
+
+    @staticmethod
+    def _ext(name, ext):
+        result = os.path.splitext(name)[0] + ext
+        return result
+
+    ext  = recursify(_ext)
+
     stem = recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
 # endregion
@@ -559,10 +566,16 @@ class Expander(abc.Mapping[str, object]):
         return key in self._context
 
     def __getitem__(self, key):
-        return self._get(key)
+        try:
+            return self._get(key)
+        except AttributeError as ex:
+            raise KeyError from ex
 
     def __getattr__(self, key):
-        return self._get(key)
+        try:
+            return self._get(key)
+        except KeyError as ex:
+            raise AttributeError from ex
 
     def __iter__(self):
         raise TypeError("Hancho.Expander cannot be iter'd")
