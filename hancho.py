@@ -1350,6 +1350,13 @@ class Task:
         if self._debug:
             Log.log(f"Task before expand: {self}\n")
 
+        assert os.getcwd() == self._script_dir
+
+        # First, flatten all inputs and outputs.
+        #for k, v in self._config.items():
+        #    if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+        #        self._config[k] = flatten(v)
+
         def walk(c, func):
             if Utils.is_mapping(c):
                 for key, val in c.items():
