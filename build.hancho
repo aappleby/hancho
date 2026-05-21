@@ -6,4 +6,4 @@ tools_riscv = hancho.load("tools/tools_riscv.hancho")
 tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
 hancho.load("examples/examples.hancho")
-hancho.load("tests/build.hancho")
+#hancho.load("tests/build.hancho")

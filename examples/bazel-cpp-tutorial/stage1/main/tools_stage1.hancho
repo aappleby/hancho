@@ -4,31 +4,11 @@
 import hancho
 
 gcc_flags = [
-    "-U_FORTIFY_SOURCE",
-    "-fstack-protector",
-    "-Wall",
-    "-Wunused-but-set-parameter",
-    "-Wno-free-nonheap-object",
-    "-fno-omit-frame-pointer",
     "-std=c++14",
     "-MD -MF {in_depfile}",
-    "-frandom-seed={out_obj}",
-    "-fPIC",
-    "-iquote .",
-    "-fno-canonical-system-headers",
-    "-Wno-builtin-macro-redefined",
-    "-D__DATE__=\"redacted\"",
-    "-D__TIMESTAMP__=\"redacted\"",
-    "-D__TIME__=\"redacted\"",
 ]
 
 ld_flags = [
-    "-Wl,-S",
-    "-Wl,-no-as-needed",
-    "-Wl,-z,relro,-z,now",
-    "-fuse-ld=gold",
-    "-B/usr/bin",
-    "-pass-exit-codes",
 ]
 
 ld_libs = [
@@ -61,9 +41,7 @@ link_cpp_bin = hancho.Tool(
 )
 
 def cc_binary(*, name, in_srcs):
-    objs = [
-        hancho.Task(compile_cpp, in_src = src)
-        for src in hancho.Utils.flatten(in_srcs)
-    ]
-    bin = hancho.Task(link_cpp_bin, name = name, in_objs = objs)
-    return bin
+    hancho.Task(compile_cpp, in_src = in_srcs[0])
+    #bin = hancho.Task(link_cpp_bin, name = name, in_objs = objs)
+    #return bin
+    #return objs

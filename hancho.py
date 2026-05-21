@@ -641,18 +641,21 @@ class Expander(abc.Mapping[str, object]):
 
     def _get(self, key):
         with Tracer(self) as trace:
-            trace.log(f" get '{key}'")
+            trace.log(f"get '{key}'")
             result = self._context[key]
 
             # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
-            if isinstance(result, Dict):
+            if Utils.is_mapping(result):
                 result = Expander(result)
+
+            if Utils.is_collection(result):
+                result = [self.expand(v) for v in result]
 
             # If we fetched a string, expand it if needed
             if isinstance(result, str):
                 result = self.expand(result)
 
-            trace.log(f" '{result}'" if isinstance(result, str) else f" {result}")
+            trace.log(f"= '{result}'" if isinstance(result, str) else f"= {result}")
 
         return result
 
@@ -677,9 +680,9 @@ class Expander(abc.Mapping[str, object]):
             except RecursionError as err:
                 raise err
             except BaseException as err:
-                trace.log(f" {type(err).__name__}: {err}")
+                trace.log(f"{type(err).__name__}: {err}")
                 raise err
-            trace.log(f" '{result}'" if isinstance(result, str) else f" {result}")
+            trace.log(f"= '{result}'" if isinstance(result, str) else f"= {result}")
 
         return result
 
@@ -704,7 +707,7 @@ class Expander(abc.Mapping[str, object]):
             return template
 
         with Tracer(self) as trace:
-            trace.log(f" expand '{template}'")
+            trace.log(f"expand '{template}'")
             for (i, block) in enumerate(blocks):
                 if isinstance(block, Expander.Lit):
                     continue
@@ -717,7 +720,7 @@ class Expander(abc.Mapping[str, object]):
                     block = "{" + block + "}"
                 blocks[i] = block
             result = "".join(blocks)
-            trace.log(f" '{result}'")
+            trace.log(f"= '{result}'")
 
         if result != template:
             result = self._expand(result)
@@ -1353,9 +1356,9 @@ class Task:
         assert os.getcwd() == self._script_dir
 
         # First, flatten all inputs and outputs.
-        #for k, v in self._config.items():
-        #    if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-        #        self._config[k] = flatten(v)
+        for k, v in self._config.items():
+            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+                self._config[k] = flatten(v)
 
         def walk(c, func):
             if Utils.is_mapping(c):
@@ -1456,7 +1459,7 @@ class Task:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
         v = cast(str, self._config.expand(v))
-        v = os.path.normpath(v) # type: ignore
+        v = os.path.abspath(v) # type: ignore
 
         # Make all in_ and out_ file paths absolute by joining build_dir to them
 
@@ -1916,7 +1919,7 @@ defaults = Dict(
     command    = "",
 
     hancho_dir = os.path.dirname(__file__),
-    task_cwd   = "{script_dir}",
+    task_cwd   = "{repo_dir}",
     root_dir   = os.getcwd(),
     root_file  = "build.hancho",
     repo_dir   = "{root_dir}",
