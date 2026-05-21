@@ -14,7 +14,6 @@ import asyncio
 import glob
 import subprocess
 
-sys.path.append("..")
 import hancho
 
 ####################################################################################################
@@ -49,7 +48,10 @@ class TestRepos(unittest.TestCase):
 
     def test_sticky_hancho(self):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
-        result = subprocess.run("python3 ../hancho.py -f sticky_hancho1.hancho".split())
+        result = subprocess.run(
+            "python3 ../hancho.py -f sticky_hancho1.hancho".split(),
+            cwd = os.path.dirname(__file__),
+        )
         self.assertEqual(0, result.returncode)
 
 ####################################################################################################

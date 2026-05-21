@@ -13,14 +13,15 @@ import doctest
 import asyncio
 import glob
 
-sys.path.append("..")
 import hancho
 
 ####################################################################################################
 
 def setUpModule():
     # Change to your desired directory
-    #os.chdir(script_dir)
+    (script_dir, script_file) = os.path.split(os.path.abspath(__file__))
+    os.chdir(script_dir)
+    hancho.init()
     pass
 
 def mtime_ns(filename):
@@ -55,7 +56,7 @@ class TestTasks(unittest.TestCase):
 
     def tearDown(self):
         duration = time.time() - self.startTime
-        print(f"{duration:.3f}s ", end="", file = sys.stderr)
+        #print(f"{duration:.3f}s ", end="", file = sys.stderr)
         sys.stdout.flush()
 
     def run_tasks(self, expected):

@@ -2,5 +2,5 @@ import hancho
 
 # This just builds all three stages of the Bazel tutorial
 hancho.load("stage1/build.hancho")
-#hancho.load("stage2/build.hancho")
-#hancho.load("stage3/build.hancho")
+hancho.load("stage2/build.hancho")
+hancho.load("stage3/build.hancho")

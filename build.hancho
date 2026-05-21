@@ -6,4 +6,7 @@ tools_riscv = hancho.load("tools/tools_riscv.hancho")
 tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
 hancho.load("examples/examples.hancho")
-#hancho.load("tests/build.hancho")
+
+hancho.Task(
+    command = "python3 -m unittest discover -s tests"
+)

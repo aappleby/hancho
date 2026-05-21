@@ -8,6 +8,7 @@ import os
 src_files = glob("src/*")
 
 random_touch = hancho.Task(
+    name = "random touch",
     desc = "Touch 3 random files in src/ - {in_src}",
     command = [
         "touch {in_src[0]}",
@@ -24,7 +25,8 @@ def generate_filelist(task):
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
-    desc     = "Write the names of 3 random files in src/ to {rel(out_list, task_cwd)}",
+    name     = "{out_list}",
+    desc     = "Write the names of 3 random files in src/ to {task_cwd}",
     command  = generate_filelist,
     in_src   = src_files,
     out_list = "filelist.txt",
@@ -32,11 +34,12 @@ filelist_txt = hancho.Task(
 
 def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
-    file = open(task._config.in_filelist[0], "r", encoding="utf-8")
+    file = open(task._config.in_filelist, "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
     new_task = hancho.Task(
+        name      = "{out_files}",
         desc      = "Concatenate {base(in_files)} into {base(out_files)}",
-        command   = "cat {rel(in_files, task_cwd)} > {rel(out_files, task_cwd)}",
+        command   = "cat {in_files} > {out_files}",
         in_files  = from_filelist,
         in_deps   = [random_touch, filelist_txt],
         out_files = "result.txt",
@@ -45,7 +48,8 @@ def generate_result(task):
     new_task.queue()
 
     print_task = hancho.Task(
-        desc    = "Copy the contents of {rel(in_text, task_cwd)} to {rel(out_cat, task_cwd)}",
+        name    = "{out_cat}",
+        desc    = "Copy the contents of {in_text} to {out_cat}",
         command = "cat {in_text} >> {out_cat}",
         in_text = new_task,
         out_cat = "result2.txt"
@@ -53,7 +57,8 @@ def generate_result(task):
     print_task.queue()
 
 result_txt = hancho.Task(
-    desc        = "Read {rel(in_filelist, task_cwd)} and use its contents to generate another task",
+    name        = "generate_result",
+    desc        = "Read {in_filelist} and use its contents to generate another task",
     command     = generate_result,
     in_filelist = filelist_txt,
 )

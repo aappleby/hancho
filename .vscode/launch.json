@@ -18,28 +18,28 @@
     },
 
     {
-      "name"    : "Debug hancho.py",
+      "name"    : "hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
       "console" : "integratedTerminal",
       "program" : "${workspaceFolder}/hancho.py",
-      "args"    : ["-v", "--rebuild"],
+      //"args"    : ["-v", "--rebuild", "--debug"],
+      //"args"    : ["--rebuild"],
       "cwd"     : "${workspaceFolder}",
     },
 
     {
-      "name"    : "Debug tests/run_tests.py",
+      "name"    : "Tests",
       "type"    : "debugpy",
       "request" : "launch",
       "console" : "integratedTerminal",
-      "program" : "${workspaceFolder}/tests/run_tests.py",
-      "cwd"     : "${workspaceFolder}/tests",
-      //"justMyCode": false,
-      //"preLaunchTask": "Wipe build",
+      "module"  : "unittest",
+      "args"    : ["tests.test_tasks"],
+      "cwd"     : "${workspaceFolder}",
     },
 
     {
-      "name": "Debug Megabuild",
+      "name": "Megabuild",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",

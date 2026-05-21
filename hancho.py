@@ -672,6 +672,8 @@ class Expander(abc.Mapping[str, object]):
         and returns the result.
         """
 
+        assert isinstance(expr, str)
+
         with Tracer(self) as trace:
             trace.log(f"eval '{expr}'")
             try:
@@ -686,8 +688,9 @@ class Expander(abc.Mapping[str, object]):
 
         return result
 
-    def eval[T](self, key : str, as_type : type[T] = object) -> T:
-        result = self._eval(key)
+    def eval[T](self, expr : str, as_type : type[T] = object) -> T:
+        if expr is None: return None
+        result = self._eval(expr)
         assert isinstance(result, as_type)
         return result
 
@@ -700,6 +703,8 @@ class Expander(abc.Mapping[str, object]):
         recursion depth.
         Expand _always_ recurses until expansion does nothing.
         """
+
+        assert isinstance(template, str)
 
         blocks : list[str] = Expander.split(template)
 
@@ -728,6 +733,8 @@ class Expander(abc.Mapping[str, object]):
         return result
 
     def expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
+        if template is None: return None
+
         if Utils.is_collection(template):
             result = [self.expand(v) for v in template]
         elif isinstance(template, str):
@@ -736,10 +743,6 @@ class Expander(abc.Mapping[str, object]):
             assert False, f"Don't know how to expand a {type(template)} = {template}"
         assert isinstance(result, as_type)
         return result
-
-    # Expand-In-Place
-    def xip(self, variant, key):
-        pass
 
 # endregion
 ####################################################################################################
@@ -1116,8 +1119,8 @@ class Task:
         # Expanded config options
         e = Expander(self._config)
 
-        self._name = e.name
-        self._desc = e.desc
+        self._name = "<name not ready yet>"
+        self._desc = "<desc not ready yet>"
 
         self._root_dir    : str = os.path.abspath(e.get("root_dir",    str))
         self._root_file   : str = os.path.abspath(e.get("root_file",   str))
@@ -1200,7 +1203,7 @@ class Task:
         assert False, "Don't copy Tasks!"
 
     def __repr__(self):
-        return Dumper(2).dump(self)
+        return Dumper(999).dump(self)
 
     # ----------------------------------------
 
@@ -1358,7 +1361,11 @@ class Task:
         # First, flatten all inputs and outputs.
         for k, v in self._config.items():
             if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                self._config[k] = flatten(v)
+                result = flatten(v)
+                if len(result) == 1:
+                    self._config[k] = result[0]
+                else:
+                    self._config[k] = result
 
         def walk(c, func):
             if Utils.is_mapping(c):
@@ -1371,6 +1378,9 @@ class Task:
                     walk(val, func)
 
         walk(self._config, self.fix_paths)
+
+        self._name = self._config.eval("name")
+        self._desc = self._config.eval("desc")
 
         if (callable(self._config.command)):
             self._command = cast(Any, self._config.command)
@@ -1495,19 +1505,11 @@ class Task:
         elif k.startswith("in_"):
             self._in_files.extend(Utils.flatten(v))
 
-        #print("**************")
-        #print(v)
-        #print(self._task_cwd)
-        #print(os.path.relpath(v, self._task_cwd))
-        #print(Path.rel(v, self._task_cwd))
-        #print(Path.rel(v, self._build_dir))
-        #print("**************")
-
         # But the path _inside_ the task can be relative to the task dir? I think this works...
-        v = Path.rel(v, self._task_cwd)
+        # Nope, this breaks dynamic_dependencies.generate_result - "in_files" are already relative to
+        # task_cwd, and they get another copy of task_cwd stuck to them if the path doesn't start with /
 
-        #print(f"************** {v}")
-
+        #v = Path.rel(v, self._task_cwd)
 
         return v
 
@@ -1647,15 +1649,11 @@ class Task:
         return message
 
     def log_task_start(self):
-        #if isinstance(self._command, list) and len(self._command) > 1:
-        #    pass
-        #else:
-        #    pass
-        message  = self.log_prefix()
-        message += f"Task started : '{self._name}'"
+        #message  = self.log_prefix()
+        #message += f"Task started : '{self._name}'"
         ##if self._dry_run:     message += " (DRY RUN)"
         ##if self._config.desc: message += f" '{self._config.desc}'"
-        Log.log(message)
+        #Log.log(message)
         pass
 
     def log_task_reason(self):
@@ -1866,6 +1864,8 @@ class Runner:
 # 'if __name__ == __main__' below.
 
 def init(*args, **kwargs):
+    # FIXME this probably won't work if -C is set
+    defaults.root_dir = os.getcwd()
     context = Dict(
         config    = Dict(defaults, *args, kwargs),
 
