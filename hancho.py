@@ -56,14 +56,6 @@ cv_context = contextvars.ContextVar("context")
 def __getattr__(name):
     return getattr(cv_context.get(), name)
 
-def recursify(func):
-    def result(val, *args, **kwargs):
-        if Utils.is_iterable(val):
-            return [result(v, *args, **kwargs) for v in val]
-        else:
-            return func(val, *args, **kwargs)
-    return result
-
 # endregion
 ####################################################################################################
 # region Stats
@@ -166,45 +158,6 @@ class Log:
 
 # endregion
 ####################################################################################################
-# region Path
-# These are just equivalents of the os.path.* functions that work on string trees.
-
-class Path:
-
-    # Generating relative paths in the presence of symlinks doesn't work with either
-    # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
-    # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
-    # should. What we really want is to just remove redundant cwd stuff off the beginning of the
-    # path, which we can do with simple string manipulation.
-
-    @staticmethod
-    def rel(path1, path2):
-        if Utils.is_collection(path1):
-            result = [Path.rel(p, path2) for p in path1]
-        elif Utils.is_collection(path2):
-            result = [Path.rel(path1, p) for p in path2]
-        elif isinstance(path1, str) and isinstance(path2, str):
-            path1 = os.path.normpath(path1)
-            path2 = os.path.normpath(path2)
-            result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
-        else:
-            assert False, f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
-        return result
-
-    @staticmethod
-    def join(lhs, rhs):
-        result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
-        return result[0] if len(result) == 1 else result
-
-    abs  = recursify(os.path.abspath)
-    base = recursify(os.path.basename)
-    norm = recursify(os.path.normpath)
-    real = recursify(os.path.realpath)
-    ext  = recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
-    stem = recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
-
-# endregion
-####################################################################################################
 # region Utils
 
 class Utils:
@@ -221,21 +174,13 @@ class Utils:
         return t
 
     @classmethod
-    def tuplify(cls, obj):
-        if not Utils.is_collection(obj):
-            return obj
-        result = tuple(Utils.tuplify(x) for x in obj)
-        return result
-
-    @classmethod
     def listify(cls, obj):
         if not Utils.is_collection(obj):
             return obj
         result = [Utils.listify(x) for x in obj]
         return result
 
-    # Mappings and non-array iterables are not considered Collections in Hancho so that
-    # we don't turn "foo" into ('f', 'o', 'o').
+    #----------------------------------------
 
     @classmethod
     def is_collection(cls, variant : Any) -> bool:
@@ -284,7 +229,7 @@ class Utils:
         rhs2 = Utils.join(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
         return [l + r for l in lhs2 for r in rhs2]
 
-    ########################################
+    #----------------------------------------
 
     @classmethod
     def color(cls, red : int = 0, green : int = 0, blue : int = 0) -> str:
@@ -302,7 +247,7 @@ class Utils:
         rand.seed(id(obj))
         return Utils.color(rand.randint(64, 255), rand.randint(64, 255), rand.randint(64, 255))
 
-    ########################################
+    #----------------------------------------
 
     @classmethod
     def run_cmd(cls, cmd : str):
@@ -310,7 +255,7 @@ class Utils:
         result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
-    ########################################
+    #----------------------------------------
 
     @classmethod
     def mtime(cls, filename : str):
@@ -318,7 +263,7 @@ class Utils:
         Stats.mtime_calls += 1
         return os.stat(filename).st_mtime_ns
 
-    ########################################
+    #----------------------------------------
 
     @classmethod
     def flatten(cls, variant : Any) -> list[Any]:
@@ -326,37 +271,16 @@ class Utils:
             return [x for element in variant for x in Utils.flatten(element)]
         return [] if variant is None else [variant]
 
-    #--------------------------------------------------------------------------------
-
-    @classmethod
-    def is_scalar(cls, val):
-        return not Utils.is_mapping(val) and not Utils.is_collection(val)
-
-    @classmethod
-    def _walk2(cls, c, k, v, func):
-        if Utils.is_mapping(v):
-            for k2, v2 in v.items():
-                Utils._walk2(v, k2, v2, func)
-        elif Utils.is_collection(v):
-            for k2, v2 in enumerate(v):
-                Utils._walk2(v, k2, v2, func)
-        else:
-            return func(c, k, v)
-
-    @classmethod
-    def walk2(cls, c, func):
-        return cls._walk2(None, None, c, func)
+    #----------------------------------------
 
     @staticmethod
     def _map(k, v, func):
-        if Utils.is_scalar(v):
-            return func(k, v)
-        elif Utils.is_collection(v):
+        if Utils.is_collection(v):
             return [Utils._map(k2, v2, func) for k2, v2 in enumerate(v)]
         elif Utils.is_mapping(v):
             return Dict({k2 : Utils._map(k2, v2, func) for k2, v2 in v.items()})
         else:
-            assert False, f"Don't know what to do with a {type(v)}"
+            return func(k, v)
 
     @staticmethod
     def map(v, func):
@@ -375,7 +299,7 @@ class Utils:
         else:
             return str(variant)
 
-    #--------------------------------------------------------------------------------
+    #----------------------------------------
 
     @staticmethod
     async def await_scalar(v):
@@ -390,15 +314,66 @@ class Utils:
 
     @staticmethod
     async def await_variant(v):
-        if Utils.is_scalar(v):
-            return await Utils.await_scalar(v)
-        elif Utils.is_collection(v):
+        if Utils.is_collection(v):
             return [await Utils.await_variant(v2) for v2 in v]
         elif Utils.is_mapping(v):
             return Dict({k2 : await Utils.await_variant(v2) for k2, v2 in v.items()})
         else:
+            return await Utils.await_scalar(v)
             assert False, f"Don't know what to do with a {type(v)}"
 
+    #----------------------------------------
+
+    @staticmethod
+    def recursify(func):
+        """Turns a function that maps scalars into one that maps Tree[str]"""
+        def result(val, *args, **kwargs):
+            if Utils.is_iterable(val):
+                return [result(v, *args, **kwargs) for v in val]
+            else:
+                return func(val, *args, **kwargs)
+        return result
+
+
+# endregion
+####################################################################################################
+# region Path
+# These are just equivalents of the os.path.* functions that work on Tree[str].
+
+class Path:
+
+    # Generating relative paths in the presence of symlinks doesn't work with either
+    # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
+    # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
+    # should. What we really want is to just remove redundant cwd stuff off the beginning of the
+    # path, which we can do with simple string manipulation.
+
+    @staticmethod
+    def rel(path1, path2):
+        if Utils.is_collection(path1):
+            result = [Path.rel(p, path2) for p in path1]
+        elif Utils.is_collection(path2):
+            result = [Path.rel(path1, p) for p in path2]
+        elif isinstance(path1, str) and isinstance(path2, str):
+            path1 = os.path.normpath(path1)
+            path2 = os.path.normpath(path2)
+            result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
+        else:
+            assert False, f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
+        return result
+
+    @staticmethod
+    def join(lhs, rhs):
+        result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
+        return result[0] if len(result) == 1 else result
+
+    # We want these functions to work on Tree[str], so we run them through recursify.
+    abs  = Utils.recursify(os.path.abspath)
+    base = Utils.recursify(os.path.basename)
+    norm = Utils.recursify(os.path.normpath)
+    real = Utils.recursify(os.path.realpath)
+    ext  = Utils.recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
+    stem = Utils.recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
 # endregion
 ####################################################################################################
@@ -516,17 +491,16 @@ class Tool(Dict):
 # expandable by that dict. This allows nested dicts to contain templates that can only be expanded
 # an outer dict, and things will still Just Work.
 
+# FIXME Look into making Expander overwrite dict entries after expansion so we don't re-expand
+# things constantly. I don't know if this is a good idea. Configs should be const by the time
+# we start expanding them, so maybe it's OK?
+
 class Expander(abc.Mapping[str, object]):
     """
     This class is used to fetch and expand text templates from a dict during text expansion.
     It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
-
-    @classmethod
-    def reset(cls):
-        cls.depth = 0
-
 
     class Lit(str):
         def __repr__(self):
@@ -548,7 +522,7 @@ class Expander(abc.Mapping[str, object]):
         def __hash__(self):
             return str.__hash__(self)
 
-    ########################################
+    #----------------------------------------
 
     def __init__(self, context : Dict):
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
@@ -558,6 +532,7 @@ class Expander(abc.Mapping[str, object]):
     def __contains__(self, key):
         return key in self._context
 
+    # FIXME do I need the exception translation here? I think I do, because these happen inside eval()
     def __getitem__(self, key):
         try:
             return self._get(key)
@@ -580,7 +555,7 @@ class Expander(abc.Mapping[str, object]):
         result = f"{self.__class__.__name__} @ {hex(id(self))}"
         return result
 
-    ########################################
+    #----------------------------------------
 
     @classmethod
     def split(cls, text) -> list[str]:
@@ -630,7 +605,7 @@ class Expander(abc.Mapping[str, object]):
 
         return result
 
-    ########################################
+    #----------------------------------------
 
     def _get(self, key):
         with Tracer(self) as trace:
@@ -642,6 +617,7 @@ class Expander(abc.Mapping[str, object]):
                 result = Expander(result)
 
             if Utils.is_collection(result):
+                result = cast(list, result)
                 result = [self.expand(v) for v in result]
 
             # If we fetched a string, expand it if needed
@@ -657,7 +633,7 @@ class Expander(abc.Mapping[str, object]):
         assert isinstance(result, as_type)
         return result
 
-    ########################################
+    #----------------------------------------
 
     def _eval(self, expr):
         """
@@ -687,7 +663,7 @@ class Expander(abc.Mapping[str, object]):
         assert isinstance(result, as_type)
         return result
 
-    ########################################
+    #----------------------------------------
 
     def _expand(self, template : str) -> str:
         """
@@ -748,7 +724,11 @@ class Tracer:
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_DEPTH >= 6
     MAX_DEPTH : int = 20
-    trellis_stack : list[str] = []
+    trellis_stack : list[str]
+
+    @classmethod
+    def reset(cls):
+        cls.trellis_stack = [Utils.color(0)]
 
     def __init__(self, expander : Expander):
         self.trace = expander.trace
@@ -763,10 +743,6 @@ class Tracer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         Tracer.trellis_stack.pop()
         return False
-
-    @classmethod
-    def reset(cls):
-        cls.trellis_stack = [Utils.color(0)]
 
     def log(self, text : str):
         """Prints a trace message to the log."""
@@ -881,23 +857,21 @@ class Loader:
         # fmt: off
         parser = argparse.ArgumentParser()
 
-        # These flags are in Ninja order
         parser.add_argument("target",             default=d.target,     nargs="?", type=str.strip,  help="A regex that selects the targets to build. Defaults to all targets.")
-        parser.add_argument("-v", "--verbose",    default=d.verbose,    action="store_true",  help="Show verbose build info")
-        parser.add_argument("-q", "--quiet",      default=d.quiet,      action="store_true",  help="Mute all output")
 
         parser.add_argument("-C", "--root_dir",   default=d.root_dir,   type=str.strip,       help="Change directory before starting the build")
         parser.add_argument("-f", "--root_file",  default=d.root_file,  type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
+        parser.add_argument("-t", "--tool",       default=d.tool,       type=str.strip,       help="Run a subtool.")
+        parser.add_argument("--build_tag",        default=d.build_tag,  type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
 
         parser.add_argument("-j", "--job_max",    default=d.job_max,    type=int,             help="Run N jobs in parallel (default = cpu_count)")
         parser.add_argument("-k", "--keep_going", default=d.keep_going, type=int,             help="Keep going until N jobs fail (0 means infinity)")
+
+        parser.add_argument("-v", "--verbose",    default=d.verbose,    action="store_true",  help="Show verbose build info")
+        parser.add_argument("-q", "--quiet",      default=d.quiet,      action="store_true",  help="Mute all output")
         parser.add_argument("-n", "--dry_run",    default=d.dry_run,    action="store_true",  help="Do not run commands")
-
         parser.add_argument("-d", "--debug",      default=d.debug,      action="store_true",  help="Print debugging information")
-        parser.add_argument("-t", "--tool",       default=d.tool,       type=str.strip,       help="Run a subtool.")
-
-        # These are Hancho-specific
-        parser.add_argument("--build_tag",        default=d.build_tag,  type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument("-a", "--build_all",  default=d.build_all,  action="store_true",  help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument("--rebuild",          default=d.rebuild,    action="store_true",  help="Rebuild everything")
         parser.add_argument("--shuffle",          default=d.shuffle,    action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--trace",            default=d.trace,      action="store_true",  help="Trace all text expansion")
@@ -932,6 +906,14 @@ class Loader:
         return flags
 
     #-----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def load_code(cls, script_path):
+        with open(script_path, encoding="utf-8") as file:
+            Loader.loaded_files.append(script_path)
+            source = file.read()
+            code = compile(source, script_path, "exec", dont_inherit=True)
+        return code
 
     @classmethod
     def load(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
@@ -987,11 +969,8 @@ class Loader:
         #----------------------------------------
         # Compile the module's code.
 
-        with open(script_path, encoding="utf-8") as file:
-            Loader.loaded_files.append(script_path)
-            source = file.read()
-            code = compile(source, script_path, "exec", dont_inherit=True)
-            new_module.__dict__.update(__code__ = code)
+        code = cls.load_code(script_path)
+        new_module.__dict__.update(__code__ = code)
 
         #----------------------------------------
         # Create a new context and run the code.
@@ -1008,6 +987,73 @@ class Loader:
             exec(new_module.__code__, new_module.__dict__)
 
         #----------------------------------------
+        # Done!
+
+        return new_module
+
+    @classmethod
+    def log_load(cls, script_type, script_path):
+        debug   = hancho.config.eval("debug")
+        verbose = hancho.config.eval("verbose")
+        if debug or verbose:
+            message  = Utils.color(128, 128, 255)
+            message += f"Loading {script_type} {script_path}"
+            message += Utils.color()
+            message += "\n"
+            Log.log(message)
+
+    @classmethod
+    def load_str(cls, source : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
+        debug   = hancho.config.eval("debug")
+        verbose = hancho.config.eval("verbose")
+
+        script_path = "<string literal>"
+        script_type = "repo" if is_repo else "script"
+
+        cls.log_load(script_type, script_path)
+
+        #----------------------------------------
+        # Create the script-specific config that points the 'repo' and 'this' paths at the given
+        # script.
+
+        script_dir = os.getcwd()
+        script_file = "<string literal>"
+
+        tweaks = Dict(is_repo = False, script_dir = script_dir, script_file = script_file)
+        if is_repo:
+            tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
+
+        new_config = Dict(hancho.config, tweaks, *args, kwargs)
+        new_module = types.ModuleType(os.path.basename(script_path))
+
+        new_module.__dict__.update(
+            __file__ = script_path,
+            __code__ = None,
+            hancho   = hancho,
+        )
+
+        #----------------------------------------
+        # Compile the module's code.
+
+        code = compile(source, script_path, "exec", dont_inherit=True)
+        new_module.__dict__.update(__code__ = code)
+
+        #----------------------------------------
+        # Create a new context and run the code.
+
+        old_context = cv_context.get()
+        new_context = Dict(
+            old_context,
+            config    = new_config,
+            this_repo = new_module if is_repo else old_context.this_repo,
+            this_mod  = new_module,
+        )
+
+        with cv_context.set(new_context):
+            exec(new_module.__code__, new_module.__dict__)
+
+        #----------------------------------------
+        # Done!
 
         return new_module
 
@@ -1063,7 +1109,7 @@ class Task:
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
-        self._asyncio_task : asyncio.Task | None
+        self._asyncio_task : asyncio.Task
 
         # Tasks depend on all .hancho files that were loaaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -1073,8 +1119,14 @@ class Task:
         # Expanded config options
         e = Expander(self._config)
 
+        # These often contain filenames which could be from input files, like "copy {in} to {out}".
+        # We need to wait until after inputs are awaited before we can expand these.
+        # FIXME actually, is that true? Can we pass filenames down before we've awaited? Maybe?
         self._name = "<name not ready yet>"
         self._desc = "<desc not ready yet>"
+
+        # FIXME - How many of these do we _really_ need to expand in the constructor?
+        # It might be better to do all of them in task_init
 
         self._root_dir    : str = os.path.abspath(e.get("root_dir",    str))
         self._root_file   : str = os.path.abspath(e.get("root_file",   str))
@@ -1152,8 +1204,8 @@ class Task:
         self._state = new_state
 
     # ----------------------------------------
-
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
+
     def __copy__(self):
         assert False, "Don't copy Tasks!"
 
@@ -1168,7 +1220,7 @@ class Task:
     def queue(self):
         self.to_state(TaskState.QUEUED)
 
-        # Queue all tasks referenced by this task's config.F
+        # Queue all tasks referenced by this task's config.
         def apply2(k, v):
             if isinstance(v, Task) and v._state is TaskState.DECLARED:
                 v.queue()
@@ -1177,7 +1229,6 @@ class Task:
 
         # And now queue this task.
         Runner.queued_tasks.append(self)
-
 
     def start(self):
         self.to_state(TaskState.STARTED)
@@ -1198,6 +1249,7 @@ class Task:
         return Promise(self, field)
 
     #--------------------------------------------------------------------------------
+    # FIXME We're gonna merge task_init into this and then break it back out into smaller pieces
 
     async def task_main(self):
         #----------------------------------------
@@ -1368,18 +1420,18 @@ class Task:
             return v
 
         for k, v in self._config.items():
-            if Utils.is_collection(v):
-                for i, v2 in enumerate(v):
-                    v[i] = fix(k, v2)
-            else:
-                self._config[k] = fix(k, v)
+            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+                if Utils.is_collection(v):
+                    for i, v2 in enumerate(v):
+                        v[i] = fix(k, v2)
+                else:
+                    self._config[k] = fix(k, v)
 
         #----------------------------------------
         # Gather all absolute file paths to _in_files/_out_files.
         # WARNING: These filenames _must_ be absolute as they may be read from other repos.
 
         for k, v in self._config.items():
-            #if Utils.is_collection(v):
             if k == "in_depfile":
                 if isinstance(v, str) and os.path.isfile(v):
                     self._in_files.append(v)
@@ -1407,6 +1459,11 @@ class Task:
                 f"Path error, build_dir {self._build_dir} is not under repo dir {self._repo_dir}"
             )
 
+        # Make sure our output directories exist
+        if not self._dry_run:
+            for file in self._out_files:
+                os.makedirs(os.path.dirname(file), exist_ok=True)
+
         # ----------------------------------------
         # Check for task collisions
 
@@ -1416,30 +1473,10 @@ class Task:
                 raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
             Stats.filename_to_fingerprint[real_file] = real_file
 
-        # ----------------------------------------
-        # Check for missing inputs
-
-        if not self._dry_run:
-            for file in self._in_files:
-                if file is None:
-                    raise ValueError("_in_files contained a None")
-                if not os.path.exists(file):
-                    raise FileNotFoundError(file)
-
-        # ----------------------------------------
-        # Check that all build files would end up under build_dir
-
-        for file in self._out_files:
-            if file is None:
-                raise ValueError("_out_files contained a None")
-            file = os.path.abspath(file)
-            if not file.startswith(self._build_dir):
-                raise ValueError(
-                    f"Path error, output file {file} is not under build_dir {self._build_dir}"
-                )
-
-        # ----------------------------------------
         # Check for duplicate task outputs
+
+        # FIXME all_out_files and filename_to_fingerprint should probably be sets
+        # FIXME we don't need both of these
 
         if self._command:
             for file in self._out_files:
@@ -1448,12 +1485,31 @@ class Task:
                     raise NameError(f"Multiple rules build {file}!")
                 Stats.all_out_files.add(file)
 
+
         # ----------------------------------------
-        # Make sure our output directories exist
+        # Check for missing inputs
 
         if not self._dry_run:
-            for file in self._out_files:
-                os.makedirs(os.path.dirname(file), exist_ok=True)
+            for file in self._in_files:
+                if file is None:
+                    # FIXME I don't think we care about inputs having a none. We should test for that.
+                    raise ValueError("_in_files contained a None")
+                if not os.path.exists(file):
+                    raise FileNotFoundError(file)
+
+        # ----------------------------------------
+        # Check that all build files would end up under build_dir
+
+        for file in self._out_files:
+            # FIXME same here
+            if file is None:
+                raise ValueError("_out_files contained a None")
+            file = os.path.abspath(file)
+            if not file.startswith(self._build_dir):
+                raise ValueError(
+                    f"Path error, output file {file} is not under build_dir {self._build_dir}"
+                )
+
 
     #--------------------------------------------------------------------------------
 
@@ -1571,6 +1627,7 @@ class Task:
         return result
 
     #----------------------------------------
+    # FIXME Clean this up, yuck
 
     def log_prefix(self):
         message  = Utils.color(128,255,196)
@@ -1809,6 +1866,11 @@ class Runner:
 # 'if __name__ == __main__' below.
 
 def init(*args, **kwargs):
+    """
+    Re-initializes all of Hancho.
+    If you are importing Hancho directly, you should call this as
+    hancho.init(debug = true, quiet = false, ...)
+    """
     # FIXME this probably won't work if -C is set
     defaults.root_dir = os.getcwd()
     context = Dict(
@@ -1827,7 +1889,6 @@ def reset():
     Stats.reset()
     Log.reset(hancho.config.verbose)
     Utils.reset()
-    Expander.reset()
     Tracer.reset()
     Runner.reset(hancho.config.job_max)
 
@@ -1858,22 +1919,21 @@ os      = os
 # task configs the fields stay in the same order.
 
 defaults = Dict(
+    name        = "",
+    desc        = "",
+    command     = "",
 
-    name       = "",
-    desc       = "",
-    command    = "",
-
-    hancho_dir = os.path.dirname(__file__),
-    task_cwd   = "{repo_dir}",
-    root_dir   = os.getcwd(),
-    root_file  = "build.hancho",
-    repo_dir   = "{root_dir}",
-    repo_file  = "{root_file}",
+    hancho_dir  = os.path.dirname(__file__),
+    task_cwd    = "{repo_dir}",
+    root_dir    = os.getcwd(),
+    root_file   = "build.hancho",
+    repo_dir    = "{root_dir}",
+    repo_file   = "{root_file}",
     script_dir  = "{root_dir}",
     script_file = "{root_file}",
 
-    build_root = "{repo_dir}/build",
-    build_dir  = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
+    build_root  = "{repo_dir}/build",
+    build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
     job_count   = 1,
     job_max     = os.cpu_count(),
@@ -1894,7 +1954,8 @@ defaults = Dict(
     shuffle     = False,
     trace       = False,
     use_color   = True,
-    should_fail = False
+    should_fail = False,
+    build_all   = False,
 )
 
 # endregion

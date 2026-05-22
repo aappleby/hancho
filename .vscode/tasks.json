@@ -16,7 +16,7 @@
     {
       "label": "Wipe build",
       "type": "shell",
-      "command": "rm -rf build tutorial/build scratch/build tests/build examples/build",
+      "command": "find . -type d -name build -prune -exec rm -rf {} +",
       "options": {
         "cwd": "${workspaceFolder}"
       },

@@ -1,6 +1,6 @@
 import hancho
 
-hancho.Task(
+app = hancho.Task(
     name = "build/app",
     desc = "compile the thing",
     command = [

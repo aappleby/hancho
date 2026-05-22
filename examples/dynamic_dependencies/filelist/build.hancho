@@ -44,7 +44,6 @@ def generate_result(task):
         in_deps   = [random_touch, filelist_txt],
         out_files = "result.txt",
     )
-    # FIXME tasks should auto-queue if they're created dynamically?
     new_task.queue()
 
     print_task = hancho.Task(

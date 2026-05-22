@@ -54,4 +54,8 @@ need test case for:
 
 # FIXME ditch task_main2
 
-# FIXME queue_root_tasks - really we need to build everything load()ed by the root repo
+# FIXME tasks should auto-queue if they're created dynamically?
+
+# FIXME Clean up the pile of globals we pass to scripts, or see if we can do something different
+#       with the eval() global and local contexts, idk.
+
