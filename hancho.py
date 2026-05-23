@@ -190,7 +190,7 @@ class Utils:
         Mappings and non-array iterables are not considered Collections in Hancho so that
         we don't turn "foo" into ('f', 'o', 'o').
         """
-        if isinstance(variant, (str, bytes, bytearray, abc.Mapping)): return False
+        if isinstance(variant, (str, bytes, bytearray, range, abc.Mapping)): return False
         return isinstance(variant, abc.Collection)
 
     @classmethod
@@ -409,9 +409,8 @@ class Dict(dict):
                     rval = Dict(rval)
 
                 # Non-list/tuple collections get turned into lists.
-                #if Utils.is_collection(rval) and type(rval) not in (list, tuple):
-                if Utils.is_collection(rval) and type(rval) != list:
-                    rval = Utils.listify(rval)
+                #if Utils.is_collection(rval) and not isinstance(rval, abc.Sequence):
+                #    rval = Utils.listify(rval)
 
                 # Pairs of mappings get merged together as needed.
                 if Utils.is_mapping(lval) and Utils.is_mapping(rval):
@@ -811,21 +810,24 @@ class Dumper:
         chunk = self.dump_collection_multiline(indent = indent, ld = ld, items = items, rd = rd)
         return chunk
 
-    def variant_to_items(self, var) -> tuple[str, list, str]:
-        if Utils.is_collection(var):
-            ld, rd = ('(', ')') if isinstance(var, tuple) else ('[', ']')
-            items = [(i, None, val) for i, val in enumerate(cast(list, var))]
+    def variant_to_items(self, var) -> tuple[str, abc.Iterable, str]:
+        if isinstance(var, tuple):
+            return ('(', [(None, val) for val in var], ')')
         elif Utils.is_mapping(var):
-            ld, rd = ('{','}')
-            items = [(i, key, val) for i, (key, val) in enumerate(cast(dict, var).items())]
+            return ('{', var.items(), '}')
+        elif Utils.is_collection(var):
+            return ('[', [(None, val) for val in var], ']')
         else:
             assert False, f"Don't know what to do with {type(var)}"
-        return (ld, items, rd)
 
     def dump_prefix(self, *, key, val, print_id : bool) -> str:
         # I'm going to assume that all built-in types don't need a ": type" annotation.
-        is_builtin = getattr(builtins, type(val).__name__, None) == type(val)
-        is_builtin |= val is None
+        #is_builtin = getattr(builtins, type(val).__name__, None) == type(val)
+        #is_builtin |= val is None
+        #is_builtin |= type(val) == types.FunctionType
+        #is_builtin |= type(val) == types.BuiltinFunctionType
+        is_builtin = isinstance(val, (abc.Sequence, set, bool, int, float, str, bytes, bytearray,
+            type(None), types.FunctionType, types.BuiltinFunctionType))
 
         result = ""
         if is_builtin:
@@ -842,25 +844,22 @@ class Dumper:
 
     def dump_collection_oneline(self, *, ld, items, rd) -> str:
         result = ld
-        for i, k, v in items:
-            result += " "
+        first = True
+        for k, v in items:
+            result += ", " if not first else ""
+            first = False
             result += self.dump_prefix(key = k, val = v, print_id = self.print_id)
             result += self.dump_oneline(key = k, val = v)
-            result += ","
         result += rd
-        #print("----------------------------------------")
-        #print(result)
         return result
 
     def dump_collection_multiline(self, *, indent : int, ld, items, rd) -> str:
         result = ld + '\n'
-        for i, k, v in items:
+        for k, v in items:
             chunk = self.dump_to_str(indent = indent + 1, key = k, val = v)
             tail  = ",\n"
             result += chunk + tail
         result += self.tab * indent + rd
-        #print("----------------------------------------")
-        #print(result)
         return result
 
     #----------------------------------------

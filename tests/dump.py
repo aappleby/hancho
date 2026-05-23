@@ -30,6 +30,9 @@ test = hancho.Dict(
     r = [Merp(), Merp()],
     s = dict(foo = 1, bar = 2, baz = 3),
     t = dict(a = "123456789123456789", b = "123456789123456789", c = "123456789123456789", d = "123456789123456789"),
+    u = [print, len, Merp.__repr__, lambda x : x + 1, lambda x,y,z : x * y * z],
+    v = [True, False],
+    w = [b"1234", "Hello World".encode(), bytearray("Hello", 'utf-8'), range(10)],
 )
 
 
