@@ -13,6 +13,7 @@ import doctest
 import asyncio
 import glob
 
+sys.path.append("..")
 import hancho
 
 ####################################################################################################
@@ -21,7 +22,7 @@ def setUpModule():
     # Change to your desired directory
     (script_dir, script_file) = os.path.split(os.path.abspath(__file__))
     os.chdir(script_dir)
-    hancho.init()
+    hancho.init(quiet = True)
     pass
 
 def mtime_ns(filename):
@@ -51,7 +52,7 @@ class TestTasks(unittest.TestCase):
         self.startTime = time.time()
         # Always wipe the build dir before a test
         shutil.rmtree("build", ignore_errors=True)
-        hancho.init(debug = False, verbose = False, quiet = True)
+        hancho.init(quiet = True)
         sys.stdout.flush()
 
     def tearDown(self):

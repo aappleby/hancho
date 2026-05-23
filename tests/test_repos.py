@@ -14,6 +14,7 @@ import asyncio
 import glob
 import subprocess
 
+sys.path.append("..")
 import hancho
 
 ####################################################################################################

@@ -7,13 +7,8 @@ import sys
 import unittest
 import doctest
 
-#sys.path.append("..")
-(script_dir, script_file) = os.path.split(os.path.abspath(__file__))
-hancho_dir = os.path.normpath(f"{script_dir}/..")
-sys.path.append(hancho_dir)
+sys.path.append("..")
 import hancho
-
-
 from hancho import Dict, Expander
 
 ####################################################################################################
@@ -21,13 +16,7 @@ from hancho import Dict, Expander
 class TestTemplates(unittest.TestCase):
     def setUp(self):
         #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
-        hancho.init(
-            script_dir  = script_dir,
-            script_file = script_file,
-            debug   = False,
-            verbose = False,
-            quiet   = True,
-        )
+        hancho.init(quiet   = True)
 
         sys.stdout.flush()
 
@@ -127,7 +116,7 @@ class TestTemplates(unittest.TestCase):
         # Templates can call lambdas
         >>> d = Dict(a = 1, b = lambda x : x + 1)
         >>> d
-        Dict @ 0x... { a = 1, b = <function <lambda> at 0x...> }
+        : Dict = { a = 1, b : function = <function <lambda> at 0x...> }
         >>> d.expand("foo {b(a)} bar")
         'foo 2 bar'
         """

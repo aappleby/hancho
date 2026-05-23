@@ -402,7 +402,8 @@ class Dict(dict):
                 if Utils.is_mapping(rval) and type(rval) != Dict:
                     rval = Dict(rval)
 
-                # Collections get turned into lists.
+                # Non-list/tuple collections get turned into lists.
+                #if Utils.is_collection(rval) and type(rval) not in (list, tuple):
                 if Utils.is_collection(rval) and type(rval) != list:
                     rval = Utils.listify(rval)
 
@@ -437,18 +438,8 @@ class Dict(dict):
     def __or__(self, other):
         return Dict(self, other)
 
-    ########################################
-    # Debugging stuff
-
     def __repr__(self):
-        return Dumper(999).dump(self)
-        #if Expander.depth > 0:
-        #    return Dumper(0).dump(self)
-        #else:
-        #    return Dumper(3).dump(self)
-
-    def dump(self, depth, print_id = True):
-        return Dumper(depth, print_id = print_id).dump(self)
+        return Dumper().dump_to_str(None, self)
 
     ########################################
     # Expander stuff
@@ -757,76 +748,72 @@ class Tracer:
 # Pretty-printer for various types
 
 class Dumper:
-    def __init__(self, max_depth=2, print_id = True):
-        self.depth     = 0
-        self.max_depth = max_depth
-        self.print_id  = print_id
 
-    def indent(self):
-        return "  " * self.depth
+    def __init__(self, print_id : bool = False, max_depth = 5):
+        self.depth : int = 0
+        self.print_id : bool = print_id
+        self.max_width : int = 80
+        self.max_depth : int = max_depth
 
-    def dump(self, variant):
-        if self.print_id:
-            result = f"{type(variant).__name__} @ {hex(id(variant))} "
-        else:
-            result = f"{type(variant).__name__} "
-
-        if isinstance(variant, Task):
-            result += self.dump_dict(variant.__dict__)
-        elif isinstance(variant, Dict):
-            result += self.dump_dict(variant)
-        elif isinstance(variant, Expander):
-            result += self.dump_dict(variant.config)
-        elif isinstance(variant, tuple):
-            result += self.dump_list(variant, '(', ')')
-        elif Utils.is_collection(variant):
-            result += self.dump_list(variant, '[', ']')
-        elif Utils.is_mapping(variant):
-            result = ""
-            result += self.dump_dict(variant)
-        elif isinstance(variant, str):
-            result = ""
-            result += '"' + str(variant) + '"'
-        else:
-            result = ""
-            result += str(variant)
-        return result
-
-    def dump_list(self, val, ld, rd):
-        if len(val) == 0:
-            return f"{ld}{rd}"
-
-        if len(val) == 1:
-            return f"{ld}{self.dump(val[0])}{rd}"
-
-        if self.depth >= self.max_depth:
+    def dump_to_str(self, key, val) -> str:
+        if self.depth == self.max_depth:
             return "[...]"
 
-        result = f"{ld}\n"
-        self.depth += 1
-        for val in val:
-            result += self.indent() + self.dump(val) + ",\n"
-        self.depth -= 1
-        result += f"{self.indent()}{rd}"
+        result = self.dump_prefix(key, val)
+
+        if isinstance(val, Task):     val = val.__dict__
+        if isinstance(val, Expander): val = val.config
+
+        if Utils.is_collection(val):
+            ld, rd = ('(', ')') if isinstance(val, tuple) else ('[', ']')
+            items = [(i, i, val) for i, val in enumerate(cast(list, val))]
+        elif Utils.is_mapping(val):
+            ld, rd = ('{','}')
+            items = [(i, key, val) for i, (key, val) in enumerate(cast(dict, val).items())]
+        else:
+            result += f"\"{val}\"" if isinstance(val, str) else f"{val}"
+            return result
+
+        chunk = self.dump_oneline(items, ld, rd)
+
+        if  (len(result) + len(chunk)) > self.max_width:
+            chunk = self.dump_multiline(items, ld, rd)
+
+        result += chunk
         return result
 
-    def dump_dict(self, d):
-        if self.depth >= self.max_depth:
-            return "{...}"
-
-        result = "{\n"
-        self.depth += 1
-        last_index = len(d) - 1
-        for i, (key, val) in enumerate(d.items()):
-            result += self.indent()
-            result += f"{key} = "
-            result += self.dump(val)
-            if i != last_index:
-                result += ","
-            result += "\n"
-        self.depth -= 1
-        result += self.indent() + "}"
+    def dump_prefix(self, key, val) -> str:
+        base_types = (int, float, bool, str, tuple, list, dict, type(None))
+        result = ""
+        if type(val) not in base_types:
+            if isinstance(key, str):
+                result += key + " "
+            result += ": " + type(val).__name__ + " "
+            if self.print_id:
+                result += "@ " + hex(id(val)) + " "
+            result += "= "
+        elif isinstance(key, str):
+            result += key + " = "
         return result
+
+    def dump_multiline(self, items, ld, rd) -> str:
+        result = ld + '\n'
+        for i, k, v in items:
+            self.depth += 1
+            result += "  " * self.depth + self.dump_to_str(k, v)
+            self.depth -= 1
+            result += ", " if i != len(items) - 1 else ""
+            result += '\n'
+        return result + "  " * self.depth + rd
+
+    def dump_oneline(self, items, ld, rd) -> str:
+        if len(items) == 0:
+            return ld + rd
+        result = ld + " "
+        for i, k, v in items:
+            result += self.dump_to_str(k, v)
+            result += ", " if i < len(items) - 1 else ""
+        return result + " " + rd
 
 # endregion
 ####################################################################################################
@@ -835,7 +822,7 @@ class Dumper:
 class Loader:
 
     root_repo : types.ModuleType
-    dedupe : dict[tuple[str, str], types.ModuleType]
+    dedupe : dict[int, types.ModuleType]
     stack : list[types.ModuleType]
     loaded_files : list[str]
 
@@ -909,32 +896,36 @@ class Loader:
 
     @classmethod
     def load_code(cls, script_path):
+        assert os.path.isfile(script_path)
         with open(script_path, encoding="utf-8") as file:
             Loader.loaded_files.append(script_path)
             source = file.read()
             code = compile(source, script_path, "exec", dont_inherit=True)
         return code
 
+    #----------------------------------------
+
     @classmethod
-    def load(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
+    def log_load(cls, script_path, is_repo):
         debug   = hancho.config.eval("debug")
         verbose = hancho.config.eval("verbose")
-
-        script_path = cast(str, hancho.config.expand(script_path))
-        script_path = os.path.abspath(script_path)
+        script_type = "repo" if is_repo else "script"
 
         if debug or verbose:
-            script_type = "repo" if is_repo else "script"
             message  = Utils.color(128, 128, 255)
             message += f"Loading {script_type} {script_path}"
             message += Utils.color()
             message += "\n"
             Log.log(message)
 
-        #----------------------------------------
+    #----------------------------------------
+
+    @classmethod
+    def create_new_mod_config(cls, script_path, is_repo, *args, **kwargs):
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
         # script.
-
+        script_path = cast(str, hancho.config.expand(script_path))
+        script_path = os.path.abspath(script_path)
         (script_dir, script_file) = os.path.split(script_path)
 
         tweaks = Dict(is_repo = False, script_dir = script_dir, script_file = script_file)
@@ -942,13 +933,31 @@ class Loader:
             tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
 
         new_config = Dict(hancho.config, tweaks, *args, kwargs)
+        return new_config
+
+    #----------------------------------------
+
+    @classmethod
+    def load(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
+        script_path = cast(str, hancho.config.expand(script_path))
+        script_path = os.path.abspath(script_path)
+        script_type = "repo" if is_repo else "script"
+        (script_dir, script_file) = os.path.split(script_path)
+
+        cls.log_load(script_path, is_repo)
+
+        #----------------------------------------
+        # Create the script-specific config that points the 'repo' and 'this' paths at the given
+        # script.
+
+        new_config = cls.create_new_mod_config(script_path, is_repo, *args, **kwargs)
 
         #----------------------------------------
         # Dedupe the load if needed. Modules are only deduped if their configurations are
         # _identical_, which may bite users.
 
         script_path_real = os.path.realpath(script_path)
-        dedupe_key = (script_path_real, new_config.dump(999, print_id = False))
+        dedupe_key = hash((script_path_real, Dumper().dump_to_str("new_config", new_config)))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -956,106 +965,64 @@ class Loader:
         #----------------------------------------
         # We didn't get deduped, so create a new module and add it to the dedupe cache.
 
-        assert os.path.isfile(script_path)
         new_module = types.ModuleType(os.path.basename(script_path))
         cls.dedupe[dedupe_key] = new_module
 
+        code = cls.load_code(script_path)
+
+        # These are the top-level globals that are set before the script starts running.
         new_module.__dict__.update(
             __file__ = script_path,
-            __code__ = None,
+            __code__ = code,
             hancho   = hancho,
         )
 
-        #----------------------------------------
-        # Compile the module's code.
-
-        code = cls.load_code(script_path)
-        new_module.__dict__.update(__code__ = code)
-
-        #----------------------------------------
-        # Create a new context and run the code.
-
-        old_context = cv_context.get()
-        new_context = Dict(
-            old_context,
-            config    = new_config,
-            this_repo = new_module if is_repo else old_context.this_repo,
-            this_mod  = new_module,
-        )
-
-        with (chdir(script_dir), cv_context.set(new_context)):
-            exec(new_module.__code__, new_module.__dict__)
-
-        #----------------------------------------
-        # Done!
+        cls.run_module(new_module, new_config)
 
         return new_module
 
-    @classmethod
-    def log_load(cls, script_type, script_path):
-        debug   = hancho.config.eval("debug")
-        verbose = hancho.config.eval("verbose")
-        if debug or verbose:
-            message  = Utils.color(128, 128, 255)
-            message += f"Loading {script_type} {script_path}"
-            message += Utils.color()
-            message += "\n"
-            Log.log(message)
+    #----------------------------------------
 
     @classmethod
-    def load_str(cls, source : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        debug   = hancho.config.eval("debug")
-        verbose = hancho.config.eval("verbose")
+    def load_str(cls, script_path, is_repo : bool, source : str, *args, **kwargs) -> types.ModuleType:
 
-        script_path = "<string literal>"
-        script_type = "repo" if is_repo else "script"
+        cls.log_load(script_path, is_repo)
 
-        cls.log_load(script_type, script_path)
-
-        #----------------------------------------
-        # Create the script-specific config that points the 'repo' and 'this' paths at the given
-        # script.
-
-        script_dir = os.getcwd()
-        script_file = "<string literal>"
-
-        tweaks = Dict(is_repo = False, script_dir = script_dir, script_file = script_file)
-        if is_repo:
-            tweaks.update(is_repo = True, repo_dir = script_dir, repo_file = script_file)
-
-        new_config = Dict(hancho.config, tweaks, *args, kwargs)
+        new_config = cls.create_new_mod_config(script_path, is_repo, *args, **kwargs)
         new_module = types.ModuleType(os.path.basename(script_path))
 
+        code = compile(source, script_path, "exec", dont_inherit=True)
+
         new_module.__dict__.update(
             __file__ = script_path,
-            __code__ = None,
+            __code__ = code,
             hancho   = hancho,
         )
 
-        #----------------------------------------
-        # Compile the module's code.
+        cls.run_module(new_module, new_config)
 
-        code = compile(source, script_path, "exec", dont_inherit=True)
-        new_module.__dict__.update(__code__ = code)
+        return new_module
 
-        #----------------------------------------
+    #----------------------------------------
+
+    @classmethod
+    def run_module(cls, new_module, new_config):
         # Create a new context and run the code.
-
+        # These fields appear in the global hancho module from the script's POV, but they're
+        # actually per-module.
         old_context = cv_context.get()
         new_context = Dict(
             old_context,
             config    = new_config,
-            this_repo = new_module if is_repo else old_context.this_repo,
+            this_repo = new_module if new_config.is_repo else old_context.this_repo,
             this_mod  = new_module,
         )
 
-        with cv_context.set(new_context):
+        with (chdir(new_config.script_dir), cv_context.set(new_context)):
+            # FIXME we're not using locals? why not?
             exec(new_module.__code__, new_module.__dict__)
 
-        #----------------------------------------
-        # Done!
-
-        return new_module
+    #----------------------------------------
 
 # endregion
 ####################################################################################################
@@ -1193,7 +1160,7 @@ class Task:
 
     def to_state(self, new_state):
         if not self._state in Task.transitions:
-            message = f"State {self._state} has no edges in the transition table"
+            message = f"State {self._state} -> {new_state} has no edges in the transition table"
             print(message)
             raise RuntimeError(message)
         edges = Task.transitions[self._state]
@@ -1213,7 +1180,7 @@ class Task:
         assert False, "Don't copy Tasks!"
 
     def __repr__(self):
-        return Dumper(999).dump(self)
+        return Dumper().dump_to_str("Task", self)
 
     # ----------------------------------------
 
@@ -1273,7 +1240,6 @@ class Task:
         self._task_index = Stats.tasks_running
 
         #----------------------------------------
-        # And then run the task.
 
         try:
             with chdir(self._script_dir):
@@ -1286,7 +1252,6 @@ class Task:
                 if self._debug:
                     Log.log(f"Task after expand: {self}\n")
 
-
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
             print()
@@ -1296,22 +1261,13 @@ class Task:
             raise ex
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Failure during task init because task is broken
-            print()
-            print("Broken during init")
             self.to_state(TaskState.BROKEN)
-
-            if not self._should_fail:
-                Stats.tasks_broken += 1
-
-            # Both broken and failed tasks should end up here.
-            self.log_task_failure(ex)
-            self.to_state(TaskState.FAILED)
-
+            self.log_task_broken(ex)
             if self._should_fail:
                 Stats.tasks_shouldfail += 1
                 return
             else:
-                Stats.tasks_failed += 1
+                Stats.tasks_broken += 1
                 raise ex
 
         #----------------------------------------
@@ -1361,9 +1317,7 @@ class Task:
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             # Both broken and failed tasks should end up here.
-            print()
-            print("Failure during task_main")
-            self.log_task_failure(ex)
+            self.log_task_failed(ex)
             self.to_state(TaskState.FAILED)
             if self._should_fail:
                 Stats.tasks_shouldfail += 1
@@ -1670,11 +1624,22 @@ class Task:
         #Log.log(message)
         pass
 
-    def log_task_failure(self, ex):
+    def log_task_failed(self, ex):
         script_path = os.path.join(self._script_dir, self._script_file)
         message  = self.log_prefix()
         message += Utils.color(255,0,0)
         message += f"Task failed!\n"
+        message += f"From {rel(script_path, self._root_dir)}:\n"
+        message += f"    Task '{self._name}' : '{self._desc}'\n"
+        message += traceback.format_exc()
+        message += Utils.color()
+        Log.log(message)
+
+    def log_task_broken(self, ex):
+        script_path = os.path.join(self._script_dir, self._script_file)
+        message  = self.log_prefix()
+        message += Utils.color(255,0,0)
+        message += f"Task broken!\n"
         message += f"From {rel(script_path, self._root_dir)}:\n"
         message += f"    Task '{self._name}' : '{self._desc}'\n"
         message += traceback.format_exc()
