@@ -10,7 +10,7 @@ class Merp:
 
 print("--------------------------------------------------------------------------------")
 test = hancho.Dict(
-    a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3],
+    a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
     b = "two",
     c = r"three",
     d = [4, 5, 6],
@@ -27,12 +27,13 @@ test = hancho.Dict(
     o = ("slkdjfslkdjf",),
     p = ("tu","p","le"),
     q = ((),(()),),
-    r = [Merp(), Merp()],
+    r = {"merp1":Merp(), "merp2":Merp()},
     s = dict(foo = 1, bar = 2, baz = 3),
     t = dict(a = "123456789123456789", b = "123456789123456789", c = "123456789123456789", d = "123456789123456789"),
     u = [print, len, Merp.__repr__, lambda x : x + 1, lambda x,y,z : x * y * z],
     v = [True, False],
     w = [b"1234", "Hello World".encode(), bytearray("Hello", 'utf-8'), range(10)],
+    x = hancho.Task(command = "echo hello world"),
 )
 
 
@@ -61,7 +62,11 @@ print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = Wrapper(12345))
 
 print(hancho.Dumper(tab = "<->").dump_to_str(indent = 4, key = 17, val = Wrapper(12345)))
 
-print(hancho.Dumper(tab = "    ").dump_to_str(indent = 0, key = "test", val = test))
+print("--------------------------------------------------------------------------------")
+
+print(hancho.Dumper(tab = ". ").dump_to_str(indent = 0, key = "test", val = test))
+
+#print(hancho.Dumper(max_width = 4).dump_to_str(indent = 0, key = "test", val = test))
 
 #import pprint
 #pprint.pprint(dict(test))

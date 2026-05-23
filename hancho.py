@@ -764,53 +764,44 @@ class Dumper:
 
     def dump_to_str(self, *, indent : int, key, val):
         pad    = self.tab * indent
-        prefix = self.dump_prefix(key = key, val = val, print_id = self.print_id)
 
         # Unwrap 'val' if needed.
         if isinstance(val, Task):     val = val.__dict__
         if isinstance(val, Expander): val = val.config
+        if isinstance(val, contextvars.Context): val = list(val.keys())
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
+            prefix = self.dump_prefix(key = key, val = val)
             chunk = f"\"{val}\"" if isinstance(val, str) else f"{val}"
             return pad + prefix + chunk
 
-        # Convert the collection into (ldelim, list[(index, key, value)], rdelim)
-        # and emit it without newlines.
+        #prefix = self.dump_prefix(key = key, val = val)
         chunk = self.dump_oneline(key = key, val = val)
 
         # If the result doesn't fit on one line, emit the container across multiple lines.
-        if ('\n' in chunk) or (len(pad) + len(prefix) + len(chunk) > self.max_width):
-            chunk = self.dump_multiline(indent = indent, key = key, val = val)
-            return pad + prefix + chunk
+        if (len(pad) + len(chunk) > self.max_width):
+            chunk = self.dump_collection_multiline(indent = indent, key = key, val = val)
+            return pad + chunk
         else:
-            return pad + prefix + chunk
+            return pad + chunk
 
     def dump_oneline(self, *, key, val):
-        #prefix = self.dump_prefix(key = key, val = val, print_id = self.print_id)
-
         # Unwrap 'val' if needed.
         if isinstance(val, Task):     val = val.__dict__
         if isinstance(val, Expander): val = val.config
 
+        prefix = self.dump_prefix(key = key, val = val)
+
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
             chunk = f"\"{val}\"" if isinstance(val, str) else f"{val}"
-            return chunk
+            return prefix + chunk
         else:
-            (ld, items, rd) = self.variant_to_items(val)
-            chunk = self.dump_collection_oneline(ld = ld, items = items, rd = rd)
-            return chunk
+            chunk = self.dump_collection_oneline(key = key, val = val)
+            return prefix + chunk
 
-    def dump_multiline(self, *, indent, key, val):
-        assert (Utils.is_collection(val) or Utils.is_mapping(val))
-        assert not isinstance(val, (Task, Expander))
-
-        (ld, items, rd) = self.variant_to_items(val)
-        chunk = self.dump_collection_multiline(indent = indent, ld = ld, items = items, rd = rd)
-        return chunk
-
-    def variant_to_items(self, var) -> tuple[str, abc.Iterable, str]:
+    def container_to_keyvals(self, var) -> tuple[str, abc.Iterable, str]:
         if isinstance(var, tuple):
             return ('(', [(None, val) for val in var], ')')
         elif Utils.is_mapping(var):
@@ -820,46 +811,41 @@ class Dumper:
         else:
             assert False, f"Don't know what to do with {type(var)}"
 
-    def dump_prefix(self, *, key, val, print_id : bool) -> str:
-        # I'm going to assume that all built-in types don't need a ": type" annotation.
-        #is_builtin = getattr(builtins, type(val).__name__, None) == type(val)
-        #is_builtin |= val is None
-        #is_builtin |= type(val) == types.FunctionType
-        #is_builtin |= type(val) == types.BuiltinFunctionType
-        is_builtin = isinstance(val, (abc.Sequence, set, bool, int, float, str, bytes, bytearray,
-            type(None), types.FunctionType, types.BuiltinFunctionType))
+    def dump_prefix(self, *, key, val) -> str:
+        # In "foo : <type> = bar", don't print these types.
+        skip_type = isinstance(val, (abc.Collection, bool, numbers.Number,
+            type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
+        show_type = isinstance(val, (contextvars.Context, Dict))
+        # fmt: off
+        prefix = ""
+        if isinstance(key, str):       prefix += key
+        if show_type or not skip_type: prefix += ":" + type(val).__name__
+        if self.print_id:              prefix += ":" + hex(id(val))
+        if prefix:                     prefix += " = "
+        return prefix
 
-        result = ""
-        if is_builtin:
-            if isinstance(key, str):
-                result += key + " = "
-        else:
-            if isinstance(key, str):
-                result += key + " "
-            result += ": " + type(val).__name__ + " "
-            if print_id:
-                result += "@ " + hex(id(val)) + " "
-            result += "= "
-        return result
-
-    def dump_collection_oneline(self, *, ld, items, rd) -> str:
+    def dump_collection_oneline(self, *, key, val) -> str:
+        (ld, items, rd) = self.container_to_keyvals(val)
         result = ld
         first = True
         for k, v in items:
             result += ", " if not first else ""
             first = False
-            result += self.dump_prefix(key = k, val = v, print_id = self.print_id)
             result += self.dump_oneline(key = k, val = v)
         result += rd
         return result
 
-    def dump_collection_multiline(self, *, indent : int, ld, items, rd) -> str:
-        result = ld + '\n'
+    def dump_collection_multiline(self, *, indent, key, val) -> str:
+        (ld, items, rd) = self.container_to_keyvals(val)
+        prefix = self.dump_prefix(key = key, val = val)
+        result = prefix + ld + '\n'
+        first = True
         for k, v in items:
+            result += f",\n" if not first else ""
+            first = False
             chunk = self.dump_to_str(indent = indent + 1, key = k, val = v)
-            tail  = ",\n"
-            result += chunk + tail
-        result += self.tab * indent + rd
+            result += chunk
+        result += '\n' + self.tab * indent + rd
         return result
 
     #----------------------------------------
