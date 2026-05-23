@@ -41,6 +41,8 @@ from typing import Any, cast
 from collections import abc
 from enum import Enum
 from contextlib import chdir
+import numbers
+import builtins
 
 # endregion
 ####################################################################################################
@@ -199,6 +201,10 @@ class Utils:
     @classmethod
     def is_mapping(cls, variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
+
+    @classmethod
+    def is_scalar(cls, variant : Any) -> bool:
+        return isinstance(variant, (numbers.Number, str, bytes, bool, type(None)))
 
     @classmethod
     def is_template(cls, variant : Any) -> bool:
@@ -439,7 +445,8 @@ class Dict(dict):
         return Dict(self, other)
 
     def __repr__(self):
-        return Dumper().dump_to_str(None, self)
+        return Dumper().dump_to_str(indent = 0, key = None, val = self)
+        #return super().__repr__()
 
     ########################################
     # Expander stuff
@@ -749,71 +756,115 @@ class Tracer:
 
 class Dumper:
 
-    def __init__(self, print_id : bool = False, max_depth = 5):
-        self.depth : int = 0
+    def __init__(self, print_id : bool = False, max_width = 80, tab = "  "):
         self.print_id : bool = print_id
-        self.max_width : int = 80
-        self.max_depth : int = max_depth
+        self.max_width : int = max_width
+        self.tab = tab
 
-    def dump_to_str(self, key, val) -> str:
-        if self.depth == self.max_depth:
-            return "[...]"
+    #----------------------------------------
 
-        result = self.dump_prefix(key, val)
+    def dump_to_str(self, *, indent : int, key, val):
+        pad    = self.tab * indent
+        prefix = self.dump_prefix(key = key, val = val, print_id = self.print_id)
 
+        # Unwrap 'val' if needed.
         if isinstance(val, Task):     val = val.__dict__
         if isinstance(val, Expander): val = val.config
 
-        if Utils.is_collection(val):
-            ld, rd = ('(', ')') if isinstance(val, tuple) else ('[', ']')
-            items = [(i, i, val) for i, val in enumerate(cast(list, val))]
-        elif Utils.is_mapping(val):
-            ld, rd = ('{','}')
-            items = [(i, key, val) for i, (key, val) in enumerate(cast(dict, val).items())]
+        # Non-containers are always emitted on one line. If they overflow, they overflow.
+        if not (Utils.is_collection(val) or Utils.is_mapping(val)):
+            chunk = f"\"{val}\"" if isinstance(val, str) else f"{val}"
+            return pad + prefix + chunk
+
+        # Convert the collection into (ldelim, list[(index, key, value)], rdelim)
+        # and emit it without newlines.
+        chunk = self.dump_oneline(key = key, val = val)
+
+        # If the result doesn't fit on one line, emit the container across multiple lines.
+        if ('\n' in chunk) or (len(pad) + len(prefix) + len(chunk) > self.max_width):
+            chunk = self.dump_multiline(indent = indent, key = key, val = val)
+            return pad + prefix + chunk
         else:
-            result += f"\"{val}\"" if isinstance(val, str) else f"{val}"
-            return result
+            return pad + prefix + chunk
 
-        chunk = self.dump_oneline(items, ld, rd)
+    def dump_oneline(self, *, key, val):
+        #prefix = self.dump_prefix(key = key, val = val, print_id = self.print_id)
 
-        if  (len(result) + len(chunk)) > self.max_width:
-            chunk = self.dump_multiline(items, ld, rd)
+        # Unwrap 'val' if needed.
+        if isinstance(val, Task):     val = val.__dict__
+        if isinstance(val, Expander): val = val.config
 
-        result += chunk
-        return result
+        # Non-containers are always emitted on one line. If they overflow, they overflow.
+        if not (Utils.is_collection(val) or Utils.is_mapping(val)):
+            chunk = f"\"{val}\"" if isinstance(val, str) else f"{val}"
+            return chunk
+        else:
+            (ld, items, rd) = self.variant_to_items(val)
+            chunk = self.dump_collection_oneline(ld = ld, items = items, rd = rd)
+            return chunk
 
-    def dump_prefix(self, key, val) -> str:
-        base_types = (int, float, bool, str, tuple, list, dict, type(None))
+    def dump_multiline(self, *, indent, key, val):
+        assert (Utils.is_collection(val) or Utils.is_mapping(val))
+        assert not isinstance(val, (Task, Expander))
+
+        (ld, items, rd) = self.variant_to_items(val)
+        chunk = self.dump_collection_multiline(indent = indent, ld = ld, items = items, rd = rd)
+        return chunk
+
+    def variant_to_items(self, var) -> tuple[str, list, str]:
+        if Utils.is_collection(var):
+            ld, rd = ('(', ')') if isinstance(var, tuple) else ('[', ']')
+            items = [(i, None, val) for i, val in enumerate(cast(list, var))]
+        elif Utils.is_mapping(var):
+            ld, rd = ('{','}')
+            items = [(i, key, val) for i, (key, val) in enumerate(cast(dict, var).items())]
+        else:
+            assert False, f"Don't know what to do with {type(var)}"
+        return (ld, items, rd)
+
+    def dump_prefix(self, *, key, val, print_id : bool) -> str:
+        # I'm going to assume that all built-in types don't need a ": type" annotation.
+        is_builtin = getattr(builtins, type(val).__name__, None) == type(val)
+        is_builtin |= val is None
+
         result = ""
-        if type(val) not in base_types:
+        if is_builtin:
+            if isinstance(key, str):
+                result += key + " = "
+        else:
             if isinstance(key, str):
                 result += key + " "
             result += ": " + type(val).__name__ + " "
-            if self.print_id:
+            if print_id:
                 result += "@ " + hex(id(val)) + " "
             result += "= "
-        elif isinstance(key, str):
-            result += key + " = "
         return result
 
-    def dump_multiline(self, items, ld, rd) -> str:
+    def dump_collection_oneline(self, *, ld, items, rd) -> str:
+        result = ld
+        for i, k, v in items:
+            result += " "
+            result += self.dump_prefix(key = k, val = v, print_id = self.print_id)
+            result += self.dump_oneline(key = k, val = v)
+            result += ","
+        result += rd
+        #print("----------------------------------------")
+        #print(result)
+        return result
+
+    def dump_collection_multiline(self, *, indent : int, ld, items, rd) -> str:
         result = ld + '\n'
         for i, k, v in items:
-            self.depth += 1
-            result += "  " * self.depth + self.dump_to_str(k, v)
-            self.depth -= 1
-            result += ", " if i != len(items) - 1 else ""
-            result += '\n'
-        return result + "  " * self.depth + rd
+            chunk = self.dump_to_str(indent = indent + 1, key = k, val = v)
+            tail  = ",\n"
+            result += chunk + tail
+        result += self.tab * indent + rd
+        #print("----------------------------------------")
+        #print(result)
+        return result
 
-    def dump_oneline(self, items, ld, rd) -> str:
-        if len(items) == 0:
-            return ld + rd
-        result = ld + " "
-        for i, k, v in items:
-            result += self.dump_to_str(k, v)
-            result += ", " if i < len(items) - 1 else ""
-        return result + " " + rd
+    #----------------------------------------
+
 
 # endregion
 ####################################################################################################
@@ -957,7 +1008,7 @@ class Loader:
         # _identical_, which may bite users.
 
         script_path_real = os.path.realpath(script_path)
-        dedupe_key = hash((script_path_real, Dumper().dump_to_str("new_config", new_config)))
+        dedupe_key = hash((script_path_real, Dumper().dump_to_str(indent = 0, key = "new_config", val = new_config)))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1180,7 +1231,7 @@ class Task:
         assert False, "Don't copy Tasks!"
 
     def __repr__(self):
-        return Dumper().dump_to_str("Task", self)
+        return Dumper().dump_to_str(indent = 0, key = "Task", val = self)
 
     # ----------------------------------------
 

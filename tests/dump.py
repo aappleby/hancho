@@ -1,12 +1,16 @@
 #!/usr/bin/python3
+
+import sys
+sys.path.append("..")
 import hancho
 
 class Merp:
     def __repr__(self):
         return f"merp@{hex(id(self))}"
 
+print("--------------------------------------------------------------------------------")
 test = hancho.Dict(
-    a = 1,
+    a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3],
     b = "two",
     c = r"three",
     d = [4, 5, 6],
@@ -29,8 +33,32 @@ test = hancho.Dict(
 )
 
 
-result = hancho.Dumper(print_id = False).dump_to_str("test", test)
-print(result)
+#result = hancho.Dumper(print_id = False).dump_to_str("test", test)
+
+#chunk = hancho.Dumper().dump_oneline("test", test)
+#assert not '\n' in chunk
+#print(chunk)
+
+print("--------------------------------------------------------------------------------")
+
+print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = None))
+print(hancho.Dumper().dump_to_str(indent = 0, key = None, val = "foo"))
+print(hancho.Dumper().dump_to_str(indent = 0, key = None, val = None))
+
+print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = 12345))
+
+class Wrapper:
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return f"<{self.value}>"
+
+print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = Wrapper(12345)))
+
+print(hancho.Dumper(tab = "<->").dump_to_str(indent = 4, key = 17, val = Wrapper(12345)))
+
+print(hancho.Dumper(tab = "    ").dump_to_str(indent = 0, key = "test", val = test))
 
 #import pprint
 #pprint.pprint(dict(test))
