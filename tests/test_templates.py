@@ -116,7 +116,7 @@ class TestTemplates(unittest.TestCase):
         # Templates can call lambdas
         >>> d = Dict(a = 1, b = lambda x : x + 1)
         >>> d
-        :Dict = {a = 1, b = <function <lambda> at 0x...>}
+        : Dict = {a = 1, b = <function <lambda> at 0x...>}
         >>> d.expand("foo {b(a)} bar")
         'foo 2 bar'
         """

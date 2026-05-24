@@ -3,15 +3,15 @@
 import sys
 sys.path.append("..")
 import hancho
+import timeit
 
 class Merp:
     def __repr__(self):
         return f"merp@{hex(id(self))}"
 
-print("--------------------------------------------------------------------------------")
 test = hancho.Dict(
     a = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0]],
-    b = "two",
+    b = "two\ntwo\ntwo",
     c = r"three",
     d = [4, 5, 6],
     e = dict(f = 7, g = 8, h = 9),
@@ -36,20 +36,12 @@ test = hancho.Dict(
     x = hancho.Task(command = "echo hello world"),
 )
 
-
-#result = hancho.Dumper(print_id = False).dump_to_str("test", test)
-
-#chunk = hancho.Dumper().dump_oneline("test", test)
-#assert not '\n' in chunk
-#print(chunk)
-
 print("--------------------------------------------------------------------------------")
 
-print(hancho.Dumper().dump_to_str(pad = "", key = "foo", val = None))
-print(hancho.Dumper().dump_to_str(pad = "", key = None, val = "foo"))
-print(hancho.Dumper().dump_to_str(pad = "", key = None, val = None))
-
-print(hancho.Dumper().dump_to_str(pad = "", key = "foo", val = 12345))
+print(hancho.dump_to_str(key = "foo", val = None))
+print(hancho.dump_to_str(key = None,  val = "foo"))
+print(hancho.dump_to_str(key = None,  val = None))
+print(hancho.dump_to_str(key = "foo", val = 12345))
 
 class Wrapper:
     def __init__(self, value):
@@ -58,15 +50,19 @@ class Wrapper:
     def __repr__(self):
         return f"<{self.value}>"
 
-print(hancho.Dumper().dump_to_str(pad = "", key = "foo", val = Wrapper(12345)))
+print(hancho.dump_to_str(key = "foo", val = Wrapper(12345)))
 
-print(hancho.Dumper(tab = "<->").dump_to_str(pad = "        ", key = 17, val = Wrapper(12345)))
+print(hancho.dump_to_str(key = 17, val = Wrapper(12345), tab = "<->"))
 
 print("--------------------------------------------------------------------------------")
 
-print(hancho.Dumper(tab = ". ").dump_to_str(pad = "", key = "test", val = test))
+print(hancho.dump_to_str(key = "test", val = test, tab = ". "))
 
-#print(hancho.Dumper(max_width = 4).dump_to_str(indent = 0, key = "test", val = test))
+
+blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+print(timeit.timeit(blah, number = 1000))
+
+#print(hancho.dump_to_str(indent = 0, key = "test", val = test, max_width = 4))
 
 #import pprint
 #pprint.pprint(dict(test))

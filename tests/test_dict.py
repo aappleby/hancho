@@ -68,37 +68,37 @@ class TestDict(unittest.TestCase):
         # Basic merging should work
         r"""
         >>> Dict()
-        :Dict = {}
+        : Dict = {}
         >>> Dict(Dict(), dict(), dict())
-        :Dict = {}
+        : Dict = {}
         >>> Dict(dict(), dict(bar = None))
-        :Dict = {bar = None}
+        : Dict = {bar = None}
         >>> Dict(dict(), dict(bar = 3))
-        :Dict = {bar = 3}
+        : Dict = {bar = 3}
         >>> Dict(foo = 1, bar = 2)
-        :Dict = {foo = 1, bar = 2}
+        : Dict = {foo = 1, bar = 2}
         >>> Dict(dict(bar = None), dict())
-        :Dict = {bar = None}
+        : Dict = {bar = None}
         >>> Dict(dict(bar = None), dict(bar = None))
-        :Dict = {bar = None}
+        : Dict = {bar = None}
         """
 
     def doctest_none_doesnt_override(self):
         # Right side should _not_ override left side if its val is None
         r"""
         >>> Dict(dict(bar = 2), dict(bar = None))
-        :Dict = {bar = 2}
+        : Dict = {bar = 2}
         >>> Dict({'a': 1}, a = None)
-        :Dict = {a = 1}
+        : Dict = {a = 1}
         >>> Dict({'a': 1}, b = 2, c = 3)
-        :Dict = {a = 1, b = 2, c = 3}
+        : Dict = {a = 1, b = 2, c = 3}
         """
 
     def doctest_empty_dict_doesnt_override(self):
         # Empty right side should not clobber left side
         r"""
         >>> Dict(dict(bar = 2), dict())
-        :Dict = {bar = 2}
+        : Dict = {bar = 2}
         """
 
     def doctest_attribute_and_item(self):
@@ -130,9 +130,9 @@ class TestDict(unittest.TestCase):
         # Right side should always override left side if right val is not None
         r"""
         >>> Dict(dict(bar = None), dict(bar = 3))
-        :Dict = {bar = 3}
+        : Dict = {bar = 3}
         >>> Dict(dict(bar = 2), dict(bar = 3))
-        :Dict = {bar = 3}
+        : Dict = {bar = 3}
         """
 
 ####################################################################################################
