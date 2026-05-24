@@ -33,11 +33,11 @@ hancho = sys.modules[__name__]
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
-type Tree[T] = T | list[Tree[T]]
-
 cv_context = contextvars.ContextVar("context")
 def __getattr__(name):
     return getattr(cv_context.get(), name)
+
+type Tree[T] = T | list[Tree[T]]
 
 # endregion
 ####################################################################################################
@@ -84,8 +84,6 @@ class Stats:
     def print_build_stats(cls):
         # Done, print status info if needed
 
-        Log.log(f"Running {cls.tasks_finished} tasks took {cls.time_build:.3f} seconds\n")
-
         if hancho.config.debug or hancho.config.verbose:
             Log.log(f"tasks started:    {cls.tasks_started}\n")
             Log.log(f"tasks finished:   {cls.tasks_finished}\n")
@@ -120,12 +118,7 @@ class Log:
 
     @classmethod
     def log(cls, message : str):
-        #cls.verbose = True
-
         lines = message.split('\n')
-
-        x = 2
-
         for i, line in enumerate(lines):
             if ((i < len(lines) - 1) or cls.verbose) and line:
                 cls.log_line("\r" + line + "\n")
@@ -160,6 +153,16 @@ class Utils:
         if not Utils.is_collection(obj):
             return obj
         result = [Utils.listify(x) for x in obj]
+        return result
+
+    @staticmethod
+    def recursify(func):
+        """Turns a function that maps scalars into one that maps Tree[str]"""
+        def result(val, *args, **kwargs):
+            if Utils.is_iterable(val):
+                return [result(v, *args, **kwargs) for v in val]
+            else:
+                return func(val, *args, **kwargs)
         return result
 
     #----------------------------------------
@@ -209,6 +212,8 @@ class Utils:
             return False
         blocks = Expander.split(variant)
         return len(blocks) == 1 and type(blocks[0]) == Expander.Lit
+
+    #----------------------------------------
 
     @classmethod
     def join(cls, lhs, rhs, *args) -> list[str]:
@@ -274,7 +279,7 @@ class Utils:
     def map(v, func):
         return Utils._map(None, v, func)
 
-    #--------------------------------------------------------------------------------
+    #----------------------------------------
 
     @staticmethod
     def stringify_variant(variant) -> str:
@@ -310,19 +315,6 @@ class Utils:
         else:
             return await Utils.await_scalar(v)
             assert False, f"Don't know what to do with a {type(v)}"
-
-    #----------------------------------------
-
-    @staticmethod
-    def recursify(func):
-        """Turns a function that maps scalars into one that maps Tree[str]"""
-        def result(val, *args, **kwargs):
-            if Utils.is_iterable(val):
-                return [result(v, *args, **kwargs) for v in val]
-            else:
-                return func(val, *args, **kwargs)
-        return result
-
 
 # endregion
 ####################################################################################################
@@ -391,10 +383,6 @@ class Dict(dict):
                 if Utils.is_mapping(rval) and type(rval) != Dict:
                     rval = Dict(rval)
 
-                # Non-list/tuple collections get turned into lists.
-                #if Utils.is_collection(rval) and not isinstance(rval, abc.Sequence):
-                #    rval = Utils.listify(rval)
-
                 # Pairs of mappings get merged together as needed.
                 if Utils.is_mapping(lval) and Utils.is_mapping(rval):
                     rval = Dict(lval, rval)
@@ -402,7 +390,7 @@ class Dict(dict):
                 if lval is None or rval is not None:
                     dict.__setitem__(self, key, rval)
 
-    ########################################
+    #----------------------------------------
     # Object
 
     def __getattr__(self, key : str):
@@ -430,8 +418,8 @@ class Dict(dict):
         return dump_to_str(key = None, val = self, indent = 0)
         #return super().__repr__()
 
-    ########################################
-    # Expander stuff
+    #----------------------------------------
+    # Expander convenience helpers
 
     def eval[T](self, expr : str, as_type: type[T] = object) -> T:
         result = Expander(self).eval(expr)
@@ -442,11 +430,6 @@ class Dict(dict):
         result = Expander(self).expand(template)
         assert isinstance(result, as_type)
         return result
-
-########################################
-
-class Tool(Dict):
-    pass
 
 # endregion
 ####################################################################################################
@@ -872,32 +855,6 @@ class Loader:
     #-----------------------------------------------------------------------------------------------
 
     @classmethod
-    def load_code(cls, script_path):
-        assert os.path.isfile(script_path)
-        with open(script_path, encoding="utf-8") as file:
-            Loader.loaded_files.append(script_path)
-            source = file.read()
-            code = compile(source, script_path, "exec", dont_inherit=True)
-        return code
-
-    #----------------------------------------
-
-    @classmethod
-    def log_load(cls, script_path, is_repo):
-        debug   = hancho.config.eval("debug")
-        verbose = hancho.config.eval("verbose")
-        script_type = "repo" if is_repo else "script"
-
-        if debug or verbose:
-            message  = Utils.color(128, 128, 255)
-            message += f"Loading {script_type} {script_path}"
-            message += Utils.color()
-            message += "\n"
-            Log.log(message)
-
-    #----------------------------------------
-
-    @classmethod
     def create_new_mod_config(cls, script_path, is_repo, *args, **kwargs):
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
         # script.
@@ -961,6 +918,17 @@ class Loader:
     #----------------------------------------
 
     @classmethod
+    def load_code(cls, script_path):
+        assert os.path.isfile(script_path)
+        with open(script_path, encoding="utf-8") as file:
+            Loader.loaded_files.append(script_path)
+            source = file.read()
+            code = compile(source, script_path, "exec", dont_inherit=True)
+        return code
+
+    #----------------------------------------
+
+    @classmethod
     def load_str(cls, script_path, is_repo : bool, source : str, *args, **kwargs) -> types.ModuleType:
 
         cls.log_load(script_path, is_repo)
@@ -983,6 +951,21 @@ class Loader:
     #----------------------------------------
 
     @classmethod
+    def log_load(cls, script_path, is_repo):
+        debug   = hancho.config.eval("debug")
+        verbose = hancho.config.eval("verbose")
+        script_type = "repo" if is_repo else "script"
+
+        if debug or verbose:
+            message  = Utils.color(128, 128, 255)
+            message += f"Loading {script_type} {script_path}"
+            message += Utils.color()
+            message += "\n"
+            Log.log(message)
+
+    #----------------------------------------
+
+    @classmethod
     def run_module(cls, new_module, new_config):
         # Create a new context and run the code.
         # These fields appear in the global hancho module from the script's POV, but they're
@@ -998,8 +981,6 @@ class Loader:
         with (chdir(new_config.script_dir), cv_context.set(new_context)):
             # FIXME we're not using locals? why not?
             exec(new_module.__code__, new_module.__dict__)
-
-    #----------------------------------------
 
 # endregion
 ####################################################################################################
@@ -1441,7 +1422,6 @@ class Task:
                     f"Path error, output file {file} is not under build_dir {self._build_dir}"
                 )
 
-
     #--------------------------------------------------------------------------------
 
     def needs_rerun(self, rebuild=False):
@@ -1674,11 +1654,16 @@ class Runner:
     class Jobs:
         def __init__(self, count):
             self.count = count
+
         async def __aenter__(self):
-            await Runner.acquire(self.count)
+            async with Runner.job_lock:
+                for _ in range(self.count):
+                    await Runner.job_sem.acquire()
             return self
+
         async def __aexit__(self, exc_type, exc_val, exc_tb):
-            await Runner.release(self.count)
+            for _ in range(self.count):
+                Runner.job_sem.release()
             return False
 
     @classmethod
@@ -1690,20 +1675,6 @@ class Runner:
         cls.job_max  = job_max
         cls.job_sem  = asyncio.Semaphore(job_max)
         cls.job_lock = asyncio.Lock()
-
-    #--------------------------------------------------------------------------------
-    # Job pool
-
-    @classmethod
-    async def acquire(cls, count):
-        async with cls.job_lock:
-            for _ in range(count):
-                await cls.job_sem.acquire()
-
-    @classmethod
-    async def release(cls, count):
-        for _ in range(count):
-            cls.job_sem.release()
 
     #--------------------------------------------------------------------------------
 
@@ -1722,7 +1693,6 @@ class Runner:
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._name):
-                #Log.log(f"Queueing task for '{task._name}'")
                 task.queue()
 
     #--------------------------------------------------------------------------------
@@ -1806,7 +1776,6 @@ class Runner:
             return 0
         else:
             assert False, f"Don't know how to run tool {tool}"
-            return -1
 
 # endregion
 ####################################################################################################
@@ -1846,7 +1815,8 @@ def load(script_path, *args, **kwargs) -> types.ModuleType:
 def repo(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, True, *args, kwargs)
 
-path    = os.path # path.dirname and path.basename used by makefile-related rules
+Tool    = Dict           # Tool is just an alias for Dict to make build scripts more readable.
+path    = os.path        # path.dirname and path.basename used by makefile-related rules
 flatten = Utils.flatten
 run_cmd = Utils.run_cmd
 color   = Utils.color
@@ -1916,17 +1886,16 @@ def main():
     # Load all build scripts
 
     time_a = time.perf_counter()
+
     script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
     if not os.path.exists(script_path):
         path = os.path.relpath(script_path, os.getcwd())
         Log.log(f"Could not load build script {path}\n")
         sys.exit(-1)
     Loader.root_repo = Loader.load(script_path, True)
-    Stats.time_load = time.perf_counter() - time_a
 
-    #if hancho.config.debug or hancho.config.verbose:
-    if True:
-        Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds\n")
+    Stats.time_load = time.perf_counter() - time_a
+    Log.log(f"Loading .hancho files took {Stats.time_load:.3f} seconds\n")
 
     #----------------------------------------
     # Run tools if needed
@@ -1939,16 +1908,18 @@ def main():
     # Queue all tasks
 
     time_a = time.perf_counter()
+
     if hancho.config.target:
         import re
         target_regex = re.compile(hancho.config.target)
         Runner.queue_tasks_by_regex(target_regex)
+    elif hancho.config.build_all:
+        Runner.queue_all_tasks()
     else:
         Runner.queue_root_tasks()
-    Stats.time_queue = time.perf_counter() - time_a
 
-    if hancho.config.debug or hancho.config.verbose:
-        Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds\n")
+    Stats.time_queue = time.perf_counter() - time_a
+    Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds\n")
 
     #----------------------------------------
     # Run all tasks
@@ -1956,6 +1927,7 @@ def main():
     time_a = time.perf_counter()
     result = Runner.sync_run_tasks()
     Stats.time_build = time.perf_counter() - time_a
+    Log.log(f"Running {Stats.tasks_finished} tasks took {Stats.time_build:.3f} seconds\n")
 
     #----------------------------------------
     # Done
