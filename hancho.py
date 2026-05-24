@@ -760,48 +760,74 @@ class Dumper:
         self.max_width : int = max_width
         self.tab = tab
 
+    class LineTooLong(BaseException): pass
+
     #----------------------------------------
 
+    def unwrap(self, val):
+        if isinstance(val, Task):     return val.__dict__
+        if isinstance(val, Expander): return val.config
+        if isinstance(val, contextvars.Context): return list(val.keys())
+        return val
+
     def dump_to_str(self, *, indent : int, key, val):
-        pad    = self.tab * indent
-
-        # Unwrap 'val' if needed.
-        if isinstance(val, Task):     val = val.__dict__
-        if isinstance(val, Expander): val = val.config
-        if isinstance(val, contextvars.Context): val = list(val.keys())
+        prefix = self._prefix(indent = indent, key = key, val = val)
+        unwrapped = self.unwrap(val)
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
-        if not (Utils.is_collection(val) or Utils.is_mapping(val)):
-            prefix = self.dump_prefix(key = key, val = val)
-            chunk = f"\"{val}\"" if isinstance(val, str) else f"{val}"
-            return pad + prefix + chunk
+        if not (Utils.is_collection(unwrapped) or Utils.is_mapping(unwrapped)):
+            return self._dump_scalar2(indent = indent, key = key, unwrapped = unwrapped)
 
-        #prefix = self.dump_prefix(key = key, val = val)
-        chunk = self.dump_oneline(key = key, val = val)
+        try:
+            chunk = self._dump_oneline2(prefix = prefix, unwrapped = unwrapped)
+        except Dumper.LineTooLong as ex:
+            chunk = self._dump_multiline2(indent = indent, prefix = prefix, unwrapped = unwrapped)
+        return chunk
 
-        # If the result doesn't fit on one line, emit the container across multiple lines.
-        if (len(pad) + len(chunk) > self.max_width):
-            chunk = self.dump_collection_multiline(indent = indent, key = key, val = val)
-            return pad + chunk
-        else:
-            return pad + chunk
+    #----------------------------------------
 
-    def dump_oneline(self, *, key, val):
-        # Unwrap 'val' if needed.
-        if isinstance(val, Task):     val = val.__dict__
-        if isinstance(val, Expander): val = val.config
+    def _dump_scalar2(self, *, indent, key, unwrapped):
+        prefix = self._prefix(indent = indent, key = key, val = unwrapped)
+        chunk = prefix + (f"\"{unwrapped}\"" if isinstance(unwrapped, str) else f"{unwrapped}")
+        return chunk
 
-        prefix = self.dump_prefix(key = key, val = val)
+    def _dump_oneline2(self, *, prefix, unwrapped):
+        (ld, items, rd) = self._container_to_keyvals(unwrapped)
+        chunk = ld
+        first = True
+        for key2, val2 in items:
+            if not first: chunk += ", "
+            first = False
 
-        # Non-containers are always emitted on one line. If they overflow, they overflow.
-        if not (Utils.is_collection(val) or Utils.is_mapping(val)):
-            chunk = f"\"{val}\"" if isinstance(val, str) else f"{val}"
-            return prefix + chunk
-        else:
-            chunk = self.dump_collection_oneline(key = key, val = val)
-            return prefix + chunk
+            # Non-containers are always emitted on one line. If they overflow, they overflow.
+            if not (Utils.is_collection(val2) or Utils.is_mapping(val2)):
+                prefix2 = self._prefix(indent = 0, key = key2, val = val2)
+                unwrapped2 = self.unwrap(val2)
+                chunk += self._dump_scalar2(indent = 0, key = key2, unwrapped = unwrapped2)
+            else:
+                prefix2 = self._prefix(indent = 0, key = key2, val = val2)
+                chunk += self._dump_oneline2(prefix = prefix2, unwrapped = self.unwrap(val2))
 
-    def container_to_keyvals(self, var) -> tuple[str, abc.Iterable, str]:
+            if len(prefix) + len(chunk) > self.max_width:
+                raise Dumper.LineTooLong()
+        chunk += rd
+
+        return prefix + chunk
+
+    def _dump_multiline2(self, *, indent, prefix, unwrapped):
+        pad = self.tab * indent
+        (ld, items, rd) = self._container_to_keyvals(unwrapped)
+        result = prefix + ld + '\n'
+        first = True
+        for k, v in items:
+            if not first: result += f",\n"
+            first = False
+            chunk = self.dump_to_str(indent = indent + 1, key = k, val = v)
+            result += chunk
+        result += '\n' + pad + rd
+        return result
+
+    def _container_to_keyvals(self, var) -> tuple[str, abc.Iterable, str]:
         if isinstance(var, tuple):
             return ('(', [(None, val) for val in var], ')')
         elif Utils.is_mapping(var):
@@ -811,42 +837,19 @@ class Dumper:
         else:
             assert False, f"Don't know what to do with {type(var)}"
 
-    def dump_prefix(self, *, key, val) -> str:
+    def _prefix(self, *, indent, key, val) -> str:
         # In "foo : <type> = bar", don't print these types.
         skip_type = isinstance(val, (abc.Collection, bool, numbers.Number,
             type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
-        show_type = isinstance(val, (contextvars.Context, Dict))
+        show_type = isinstance(val, (contextvars.Context, Task, Dict))
+
         # fmt: off
-        prefix = ""
+        prefix = self.tab * indent
         if isinstance(key, str):       prefix += key
         if show_type or not skip_type: prefix += ":" + type(val).__name__
         if self.print_id:              prefix += ":" + hex(id(val))
         if prefix:                     prefix += " = "
         return prefix
-
-    def dump_collection_oneline(self, *, key, val) -> str:
-        (ld, items, rd) = self.container_to_keyvals(val)
-        result = ld
-        first = True
-        for k, v in items:
-            result += ", " if not first else ""
-            first = False
-            result += self.dump_oneline(key = k, val = v)
-        result += rd
-        return result
-
-    def dump_collection_multiline(self, *, indent, key, val) -> str:
-        (ld, items, rd) = self.container_to_keyvals(val)
-        prefix = self.dump_prefix(key = key, val = val)
-        result = prefix + ld + '\n'
-        first = True
-        for k, v in items:
-            result += f",\n" if not first else ""
-            first = False
-            chunk = self.dump_to_str(indent = indent + 1, key = k, val = v)
-            result += chunk
-        result += '\n' + self.tab * indent + rd
-        return result
 
     #----------------------------------------
 
