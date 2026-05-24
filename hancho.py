@@ -444,7 +444,7 @@ class Dict(dict):
         return Dict(self, other)
 
     def __repr__(self):
-        return Dumper().dump_to_str(indent = 0, key = None, val = self)
+        return Dumper().dump_to_str(pad = "", key = None, val = self)
         #return super().__repr__()
 
     ########################################
@@ -764,49 +764,49 @@ class Dumper:
 
     #----------------------------------------
 
-    def unwrap(self, val):
+    def unwrap(self, val) -> object:
         if isinstance(val, Task):     return val.__dict__
         if isinstance(val, Expander): return val.config
         if isinstance(val, contextvars.Context): return list(val.keys())
         return val
 
-    def dump_to_str(self, *, indent : int, key, val):
-        prefix = self._prefix(indent = indent, key = key, val = val)
-        unwrapped = self.unwrap(val)
-
+    def dump_to_str(self, *, pad, key, val):
         # Non-containers are always emitted on one line. If they overflow, they overflow.
-        if not (Utils.is_collection(unwrapped) or Utils.is_mapping(unwrapped)):
-            return self._dump_scalar2(indent = indent, key = key, unwrapped = unwrapped)
+        if self._is_scalar(val = val):
+            return self._dump_scalar2(pad = pad, key = key, val = val)
 
+        prefix = self._prefix(pad = pad, key = key, val = val)
         try:
-            chunk = self._dump_oneline2(prefix = prefix, unwrapped = unwrapped)
+            chunk = self._dump_oneline2(prefix = prefix, val = val)
         except Dumper.LineTooLong as ex:
-            chunk = self._dump_multiline2(indent = indent, prefix = prefix, unwrapped = unwrapped)
+            chunk = self._dump_multiline2(pad = pad, prefix = prefix, val = val)
         return chunk
 
     #----------------------------------------
 
-    def _dump_scalar2(self, *, indent, key, unwrapped):
-        prefix = self._prefix(indent = indent, key = key, val = unwrapped)
-        chunk = prefix + (f"\"{unwrapped}\"" if isinstance(unwrapped, str) else f"{unwrapped}")
+    def _is_scalar(self, *, val):
+        unwrapped = self.unwrap(val)
+        return not (Utils.is_collection(unwrapped) or Utils.is_mapping(unwrapped))
+
+    def _dump_scalar2(self, *, pad, key, val):
+        prefix = self._prefix(pad = pad, key = key, val = val)
+        chunk = prefix + (f"\"{val}\"" if isinstance(val, str) else f"{val}")
         return chunk
 
-    def _dump_oneline2(self, *, prefix, unwrapped):
-        (ld, items, rd) = self._container_to_keyvals(unwrapped)
+    def _dump_oneline2(self, *, prefix, val):
+        (ld, items, rd) = self._container_to_keyvals(val = val)
         chunk = ld
         first = True
         for key2, val2 in items:
             if not first: chunk += ", "
             first = False
+            prefix2 = self._prefix(pad = "", key = key2, val = val2)
 
             # Non-containers are always emitted on one line. If they overflow, they overflow.
-            if not (Utils.is_collection(val2) or Utils.is_mapping(val2)):
-                prefix2 = self._prefix(indent = 0, key = key2, val = val2)
-                unwrapped2 = self.unwrap(val2)
-                chunk += self._dump_scalar2(indent = 0, key = key2, unwrapped = unwrapped2)
+            if self._is_scalar(val = val2):
+                chunk += self._dump_scalar2(pad = "", key = key2, val = val2)
             else:
-                prefix2 = self._prefix(indent = 0, key = key2, val = val2)
-                chunk += self._dump_oneline2(prefix = prefix2, unwrapped = self.unwrap(val2))
+                chunk += self._dump_oneline2(prefix = prefix2, val = val2)
 
             if len(prefix) + len(chunk) > self.max_width:
                 raise Dumper.LineTooLong()
@@ -814,42 +814,42 @@ class Dumper:
 
         return prefix + chunk
 
-    def _dump_multiline2(self, *, indent, prefix, unwrapped):
-        pad = self.tab * indent
-        (ld, items, rd) = self._container_to_keyvals(unwrapped)
+    def _dump_multiline2(self, *, pad, prefix, val):
+        (ld, items, rd) = self._container_to_keyvals(val = val)
         result = prefix + ld + '\n'
         first = True
         for k, v in items:
             if not first: result += f",\n"
             first = False
-            chunk = self.dump_to_str(indent = indent + 1, key = k, val = v)
+            chunk = self.dump_to_str(pad = pad + self.tab, key = k, val = v)
             result += chunk
         result += '\n' + pad + rd
         return result
 
-    def _container_to_keyvals(self, var) -> tuple[str, abc.Iterable, str]:
-        if isinstance(var, tuple):
-            return ('(', [(None, val) for val in var], ')')
-        elif Utils.is_mapping(var):
-            return ('{', var.items(), '}')
-        elif Utils.is_collection(var):
-            return ('[', [(None, val) for val in var], ']')
+    def _container_to_keyvals(self, *, val) -> tuple[str, abc.Iterable, str]:
+        unwrapped = cast(Any, self.unwrap(val)) # Why is this borking the type checker?
+        if isinstance(unwrapped, tuple):
+            return ('(', [(None, val2) for val2 in unwrapped], ')')
+        elif Utils.is_mapping(unwrapped):
+            return ('{', unwrapped.items(), '}')
+        elif Utils.is_collection(unwrapped):
+            return ('[', [(None, val2) for val2 in unwrapped], ']')
         else:
-            assert False, f"Don't know what to do with {type(var)}"
+            assert False, f"Don't know what to do with {type(val)}"
 
-    def _prefix(self, *, indent, key, val) -> str:
+    def _prefix(self, *, pad, key, val) -> str:
         # In "foo : <type> = bar", don't print these types.
         skip_type = isinstance(val, (abc.Collection, bool, numbers.Number,
             type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
         show_type = isinstance(val, (contextvars.Context, Task, Dict))
 
         # fmt: off
-        prefix = self.tab * indent
+        prefix = ""
         if isinstance(key, str):       prefix += key
         if show_type or not skip_type: prefix += ":" + type(val).__name__
         if self.print_id:              prefix += ":" + hex(id(val))
         if prefix:                     prefix += " = "
-        return prefix
+        return pad + prefix
 
     #----------------------------------------
 
@@ -996,7 +996,7 @@ class Loader:
         # _identical_, which may bite users.
 
         script_path_real = os.path.realpath(script_path)
-        dedupe_key = hash((script_path_real, Dumper().dump_to_str(indent = 0, key = "new_config", val = new_config)))
+        dedupe_key = hash((script_path_real, Dumper().dump_to_str(pad = "", key = "new_config", val = new_config)))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1219,7 +1219,7 @@ class Task:
         assert False, "Don't copy Tasks!"
 
     def __repr__(self):
-        return Dumper().dump_to_str(indent = 0, key = "Task", val = self)
+        return Dumper().dump_to_str(pad = "", key = "Task", val = self)
 
     # ----------------------------------------
 

@@ -45,11 +45,11 @@ test = hancho.Dict(
 
 print("--------------------------------------------------------------------------------")
 
-print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = None))
-print(hancho.Dumper().dump_to_str(indent = 0, key = None, val = "foo"))
-print(hancho.Dumper().dump_to_str(indent = 0, key = None, val = None))
+print(hancho.Dumper().dump_to_str(pad = "", key = "foo", val = None))
+print(hancho.Dumper().dump_to_str(pad = "", key = None, val = "foo"))
+print(hancho.Dumper().dump_to_str(pad = "", key = None, val = None))
 
-print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = 12345))
+print(hancho.Dumper().dump_to_str(pad = "", key = "foo", val = 12345))
 
 class Wrapper:
     def __init__(self, value):
@@ -58,13 +58,13 @@ class Wrapper:
     def __repr__(self):
         return f"<{self.value}>"
 
-print(hancho.Dumper().dump_to_str(indent = 0, key = "foo", val = Wrapper(12345)))
+print(hancho.Dumper().dump_to_str(pad = "", key = "foo", val = Wrapper(12345)))
 
-print(hancho.Dumper(tab = "<->").dump_to_str(indent = 4, key = 17, val = Wrapper(12345)))
+print(hancho.Dumper(tab = "<->").dump_to_str(pad = "        ", key = 17, val = Wrapper(12345)))
 
 print("--------------------------------------------------------------------------------")
 
-print(hancho.Dumper(tab = ". ").dump_to_str(indent = 0, key = "test", val = test))
+print(hancho.Dumper(tab = ". ").dump_to_str(pad = "", key = "test", val = test))
 
 #print(hancho.Dumper(max_width = 4).dump_to_str(indent = 0, key = "test", val = test))
 
