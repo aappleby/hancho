@@ -754,110 +754,58 @@ class Tracer:
 # Pretty-printer for various types
 
 def dump_to_str(key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
-    pad = (tab * indent)
-
-    # In "foo : <type> = bar", don't print these types.
+    # In "key : type = ", don't print these types.
     skip_type = isinstance(val, (str, bool, int, float, list, tuple, set,
         type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
 
+    # Generate the "key : type = " prefix.
     prefix = ""
     if key is not None: prefix += str(key) + " "
     if not skip_type:   prefix += ": " + type(val).__name__ + " "
     if print_id:        prefix += ": " + hex(id(val)) + " "
     if prefix:          prefix += "= "
 
+    # Unwrap a few types that we want to view as containers
     if   isinstance(val, Task):                val = val.__dict__
     elif isinstance(val, Expander):            val = val.config
     elif isinstance(val, contextvars.Context): val = list(val.keys())
 
     # Non-containers are always emitted on one line. If they overflow, they overflow.
     if not (Utils.is_collection(val) or Utils.is_mapping(val)):
-        return pad + prefix + repr(val)
+        return (tab * indent) + prefix + repr(val)
 
+    # Extract key-value pairs and set delimiters for our container types.
     if isinstance(val, tuple):
-        (ld, items, rd) = ("(", [(None, val2) for val2 in val], ")")
-        if len(items) == 1:
-            rd = ",)"
-    elif Utils.is_mapping(val):
-        (ld, items, rd) = ("{", val.items(), "}") # type:ignore
-    elif Utils.is_collection(val):
-        (ld, items, rd) = ("[", [(None, val2) for val2 in val], "]") # type:ignore
-    else:
-        assert False, f"Don't know what to do with {type(val)}"
-
-    #chunkify = lambda indent, flat : [ for k, v in items]
-
-    overflow = False
-    result = pad + prefix + ld
-    for k, v in items:
-        chunk = dump_to_str(k, v, 0, print_id, max_width, tab, True)
-        result += chunk
-        result += ", "
-        if len(result) > max_width:
-            overflow = True
-            break
-
-    if not overflow:
-        if len(items):
-            result = result[:-2]
-        result += rd
-        return result
-
-    if flat:
-        return result
-
-    result  = pad + prefix + ld + "\n"
-    for k, v in items:
-        result += dump_to_str(k, v, indent + 1, print_id, max_width, tab, False)
-        result += ",\n"
-    if len(items):
-        result = result[:-2]
-    result += "\n" + pad + rd
-
-    return result
-
-# endregion
-####################################################################################################
-# region Dumper
-# Pretty-printer for various types
-
-def dump_to_linetree(key, val, print_id = False):
-
-    # In "foo : <type> = bar", don't print these types.
-    skip_type = isinstance(val, (str, bool, int, float, list, tuple, set,
-        type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
-
-    prefix = ""
-    if key is not None: prefix += str(key) + " "
-    if not skip_type:   prefix += ": " + type(val).__name__ + " "
-    if print_id:        prefix += ": " + hex(id(val)) + " "
-    if prefix:          prefix += "= "
-
-    if   isinstance(val, Task):                val = val.__dict__
-    elif isinstance(val, Expander):            val = val.config
-    elif isinstance(val, contextvars.Context): val = list(val.keys())
-
-    # Non-containers are always emitted on one line. If they overflow, they overflow.
-    if not (Utils.is_collection(val) or Utils.is_mapping(val)):
-        return prefix + repr(val)
-
-    if isinstance(val, tuple):
-        items = [(None, val2) for val2 in val],
+        items = [(None, val2) for val2 in val]
+        ld = "("; rd = ",)" if len(items) == 1 else ")"
     elif Utils.is_mapping(val):
         items = val.items() # type:ignore
+        ld = "{"; rd = "}"
     elif Utils.is_collection(val):
         items = [(None, val2) for val2 in val] # type:ignore
+        ld = "["; rd = "]"
     else:
         assert False, f"Don't know what to do with {type(val)}"
 
-    #chunkify = lambda indent, flat : [ for k, v in items]
+    # Iterate over our key-value pairs, converting them in to string chunks. If the resulting line
+    # would be too wide and we're not trying to generate a flat string, fall back to multi-line.
+    pad = (tab * indent)
+    separator = ", "
+    chunks = []
+    width = len(pad) + len(prefix) + len(ld) + (len(separator) * (len(items) - 1)) + len(rd) + len(",")
 
-    lines = []
     for k, v in items:
-        line = dump_to_linetree(k, v, print_id)
-        lines.append(line)
+        chunk = dump_to_str(k, v, 0, print_id, max_width, tab, True)
+        if chunk is None or width + len(chunk) > max_width:
+            if flat: return None
+            separator = ",\n"
+            chunks = (dump_to_str(k, v, indent + 1, print_id, max_width, tab, False) for k, v in items)
+            return pad + prefix + ld + "\n" + separator.join(chunks) + "\n" + pad + rd
+        width += len(chunk)
+        chunks.append(chunk)
 
-    return lines
+    # Done, we can fit this dump on one line.
+    return pad + prefix + ld + separator.join(chunks) + rd
 
 # endregion
 # ####################################################################################################

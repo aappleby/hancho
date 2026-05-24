@@ -10,6 +10,11 @@ class Merp:
         return f"merp@{hex(id(self))}"
 
 test = hancho.Dict(
+    s0 = ["123456789012345678901234567890123456789012345678901234567890123456"],
+    s1 = ["1234567890123456789012345678901234567890123456789012345678901234567"],
+    s2 = ["12345678901234567890123456789012345678901234567890123456789012345678"],
+    s3 = ["123456789012345678901234567890123456789012345678901234567890123456789"],
+    s4 = ["1234567890123456789012345678901234567890123456789012345678901234567890"],
     a = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0]],
     b = "two\ntwo\ntwo",
     c = r"three",
@@ -36,7 +41,7 @@ test = hancho.Dict(
     x = hancho.Task(command = "echo hello world"),
 )
 
-print("--------------------------------------------------------------------------------")
+print('-' * 80)
 
 print(hancho.dump_to_str(key = "foo", val = None))
 print(hancho.dump_to_str(key = None,  val = "foo"))
@@ -54,21 +59,26 @@ print(hancho.dump_to_str(key = "foo", val = Wrapper(12345)))
 
 print(hancho.dump_to_str(key = 17, val = Wrapper(12345), tab = "<->"))
 
-print("--------------------------------------------------------------------------------")
+print('-' * 80)
 
-print(hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80))
+result = hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+print(result)
 print()
-print(hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999))
-print()
+
+#print(hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999))
+#print()
 
 
-blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
-print(timeit.timeit(blah, number = 1000))
+if True:
+    blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+    print(timeit.timeit(blah, number = 10000) * 0.1)
 
-blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
-print(timeit.timeit(blah, number = 1000))
+    blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
+    print(timeit.timeit(blah, number = 10000) * 0.1)
 
 #print(hancho.dump_to_str(indent = 0, key = "test", val = test, max_width = 4))
 
 #import pprint
 #pprint.pprint(dict(test))
+
+s0 = ['123456789012345678901234567890123456789012345678901234567890123456789'],
