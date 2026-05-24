@@ -56,10 +56,16 @@ print(hancho.dump_to_str(key = 17, val = Wrapper(12345), tab = "<->"))
 
 print("--------------------------------------------------------------------------------")
 
-print(hancho.dump_to_str(key = "test", val = test, tab = ". "))
+print(hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80))
+print()
+print(hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999))
+print()
 
 
 blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+print(timeit.timeit(blah, number = 1000))
+
+blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
 print(timeit.timeit(blah, number = 1000))
 
 #print(hancho.dump_to_str(indent = 0, key = "test", val = test, max_width = 4))
