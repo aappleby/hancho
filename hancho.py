@@ -15,34 +15,15 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 # pylint: disable=unused-argument
 # pylint: disable=bad-indentation
 
-# endregion
-####################################################################################################
-# region imports
-
-import argparse
 import asyncio
-import glob
-import inspect
-import io
-import json
-from math import e
 import os
-import random
-import re
-import shutil
-import subprocess
 import sys
-from tabnanny import verbose
 import time
-import traceback
 import types
 import contextvars
 from typing import Any, cast
 from collections import abc
-from enum import Enum
 from contextlib import chdir
-import numbers
-import builtins
 
 # endregion
 ####################################################################################################
@@ -163,10 +144,9 @@ class Log:
 # region Utils
 
 class Utils:
-    rand : random.Random
-
     @classmethod
     def reset(cls):
+        import random
         cls.rand = random.Random()
 
     @classmethod
@@ -204,6 +184,7 @@ class Utils:
 
     @classmethod
     def is_scalar(cls, variant : Any) -> bool:
+        import numbers
         return isinstance(variant, (numbers.Number, str, bytes, bool, type(None)))
 
     @classmethod
@@ -258,6 +239,7 @@ class Utils:
     @classmethod
     def run_cmd(cls, cmd : str):
         """Runs a console command synchronously and returns its stdout with whitespace stripped."""
+        import subprocess
         result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
@@ -309,6 +291,7 @@ class Utils:
 
     @staticmethod
     async def await_scalar(v):
+        import inspect
         if isinstance(v, Promise):
             return await Utils.await_variant(await v.get())
         elif isinstance(v, Task):
@@ -755,7 +738,7 @@ class Tracer:
 
 def dump_to_str(key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
     # In "key : type = ", don't print these types.
-    skip_type = isinstance(val, (str, bool, int, float, list, tuple, set,
+    skip_type = isinstance(val, (str, bool, int, float, list, tuple, set, bytes, bytearray, range,
         type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
 
     # Generate the "key : type = " prefix.
@@ -834,6 +817,7 @@ class Loader:
 
         # pylint: disable=line-too-long
         # fmt: off
+        import argparse
         parser = argparse.ArgumentParser()
 
         parser.add_argument("target",             default=d.target,     nargs="?", type=str.strip,  help="A regex that selects the targets to build. Defaults to all targets.")
@@ -864,6 +848,7 @@ class Loader:
         # flag-like
         extra_flags = {}
         for span in unrecognized:
+            import re
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
@@ -1038,7 +1023,7 @@ class Promise:
 # region Task
 # Task object + bookkeeping
 
-class TaskState(Enum):
+class TaskState:
     DECLARED = "DECLARED"
     QUEUED   = "QUEUED"
     STARTED  = "STARTED"
@@ -1119,7 +1104,7 @@ class Task:
         # Bookkeeping stuff
 
         self._task_index : int = 0
-        self._state : TaskState = TaskState.DECLARED
+        self._state : str = TaskState.DECLARED
         self._reason : str = ""
         self._stdout : str = ""
         self._stderr : str = ""
@@ -1498,6 +1483,7 @@ class Task:
                 deplines = None
                 if self._depformat == "msvc":
                     # MSVC /sourceDependencies
+                    import json
                     deplines = json.load(depfile)["Data"]["Includes"]
                 elif self._depformat == "gcc":
                     # GCC -MMD
@@ -1534,6 +1520,7 @@ class Task:
 
         # Custom commands just get called and then early-out'ed.
         if callable(command):
+            import inspect
             try:
                 with chdir(self._task_cwd):
                     result = command(self)
@@ -1617,6 +1604,7 @@ class Task:
         pass
 
     def log_task_failed(self, ex):
+        import traceback
         script_path = os.path.join(self._script_dir, self._script_file)
         message  = self.log_prefix()
         message += Utils.color(255,0,0)
@@ -1628,6 +1616,7 @@ class Task:
         Log.log(message)
 
     def log_task_broken(self, ex):
+        import traceback
         script_path = os.path.join(self._script_dir, self._script_file)
         message  = self.log_prefix()
         message += Utils.color(255,0,0)
@@ -1761,6 +1750,7 @@ class Runner:
         while cls.queued_tasks or cls.started_tasks:
             if hancho.config.shuffle:
                 Log.log(f"Shufflin' {len(cls.queued_tasks)} tasks")
+                import random
                 random.shuffle(cls.queued_tasks)
 
             while cls.queued_tasks:
@@ -1810,6 +1800,7 @@ class Runner:
                 build_root = os.path.relpath(build_root, os.getcwd())
                 if os.path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}\n")
+                    import shutil
                     shutil.rmtree(build_root, ignore_errors=True)
             Log.log("Clean done\n")
             return 0
@@ -1856,8 +1847,6 @@ def repo(script_path, *args, **kwargs) -> types.ModuleType:
     return Loader.load(script_path, True, *args, kwargs)
 
 path    = os.path # path.dirname and path.basename used by makefile-related rules
-re      = re # why is sub() not working?
-glob    = staticmethod(glob.glob)
 flatten = Utils.flatten
 run_cmd = Utils.run_cmd
 color   = Utils.color
@@ -1951,6 +1940,7 @@ def main():
 
     time_a = time.perf_counter()
     if hancho.config.target:
+        import re
         target_regex = re.compile(hancho.config.target)
         Runner.queue_tasks_by_regex(target_regex)
     else:
