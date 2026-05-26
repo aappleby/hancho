@@ -289,28 +289,34 @@ class Utils:
         import numbers
         return isinstance(variant, (numbers.Number, str, bytes, bool, type(None)))
 
-    @classmethod
-    def is_template(cls, variant : Any) -> bool:
-        # This is kinda dumb as we split the string just to see how many blocks it has, and then
-        # throw away the result. But whatev, this isn't performance-critical at the moment.
-        if not isinstance(variant, str):
-            return False
-        blocks = Expander.split(variant)
-        return len(blocks) > 1
+    #----------------------------------------
+    # Checks if a string needs template expansion. Empty strings are considered literals.
 
-    @classmethod
-    def is_expr(cls, variant : Any) -> bool:
-        if not isinstance(variant, str):
-            return False
-        blocks = Expander.split(variant)
-        return len(blocks) == 1 and type(blocks[0]) == Expander.Expr
+    braced = re.compile(r"\{.*?\}")
 
-    @classmethod
-    def is_lit(cls, variant : Any) -> bool:
-        if not isinstance(variant, str):
-            return False
-        blocks = Expander.split(variant)
-        return len(blocks) == 1 and type(blocks[0]) == Expander.Lit
+    @staticmethod
+    def is_lit(variant : Any) -> bool:
+        if not isinstance(variant, str): return False
+        m = Utils.braced.search(variant)
+        return m is None
+
+    @staticmethod
+    def is_braced(variant : Any) -> bool:
+        if not isinstance(variant, str) or len(variant) == 0: return False
+        m = Utils.braced.search(variant)
+        return m is not None
+
+    @staticmethod
+    def is_expr(variant : Any) -> bool:
+        if not isinstance(variant, str) or len(variant) == 0: return False
+        m = Utils.braced.search(variant)
+        return m is not None and m.group() == variant
+
+    @staticmethod
+    def is_template(variant) -> bool:
+        if not isinstance(variant, str) or len(variant) == 0: return False
+        m = Utils.braced.search(variant)
+        return m is not None and m.group() != variant
 
     #----------------------------------------
 
@@ -532,6 +538,11 @@ class Dict(dict):
         assert isinstance(result, as_type)
         return result
 
+    def total_expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
+        result = Expander(self).total_expand(template)
+        assert isinstance(result, as_type)
+        return result
+
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict): pass
 
@@ -612,8 +623,6 @@ class Task:
         e.xip("rebuild", bool)
         e.xip("shuffle", bool)
         e.xip("should_fail", bool)
-
-        # FIXME add magic xip-as-you-go mode
 
         # Bookkeeping stuff
         self._task_index : int = 0
@@ -1401,19 +1410,21 @@ class Expander(abc.MutableMapping[str, object]):
     def _get(self, key):
         with Tracer(self) as trace:
             trace.log(f"get '{key}'")
+
             result = self._config[key]
 
-            # If we fetched a mapping, wrap it in an Expander so we expand its sub-fields.
-            if Utils.is_mapping(result):
-                result = Expander(result)
+            is_mapping    = Utils.is_mapping(result)
+            is_collection = Utils.is_collection(result)
+            is_expr       = Utils.is_expr(result)
+            is_template   = Utils.is_template(result)
 
-            if Utils.is_collection(result):
-                result = cast(list, result)
-                result = [self.expand(v) for v in result]
+            if   Utils.is_mapping(result):    result = Expander(result)
+            elif Utils.is_collection(result): result = [self.expand(v) for v in result]
+            elif Utils.is_expr(result):       result = self.eval(result)
+            elif Utils.is_template(result):   result = self.expand(result)
 
-            # If we fetched a string, expand it if needed
-            if isinstance(result, str):
-                result = self.expand(result, str)
+            # MAGIC EXPANDY THING IS HERE
+            #self._config[key] = result
 
             trace.log(f"= '{result}'" if isinstance(result, str) else f"= {result}")
 
@@ -1434,16 +1445,18 @@ class Expander(abc.MutableMapping[str, object]):
 
     def _eval(self, expr):
         """
-        Expander.eval first expands the expression (to remove any templates) and then evaluates
+        Expander.eval first expands the expression (to remove any inner templates) and then evaluates
         and returns the result.
         """
 
-        assert isinstance(expr, str)
+        assert Utils.is_expr(expr)
 
         with Tracer(self) as trace:
             trace.log(f"eval '{expr}'")
             try:
-                expr = self.expand(expr, str)
+
+                expr = self.total_expand(expr[1:-1])
+
                 # Lookup order:
                 # 1. The config we're expanding
                 # 2. The script-local hancho.config
@@ -1462,7 +1475,12 @@ class Expander(abc.MutableMapping[str, object]):
                 raise err
             trace.log(f"= '{result}'" if isinstance(result, str) else f"= {result}")
 
-        return result
+        if Utils.is_expr(result):
+            return self.eval(result)
+        elif Utils.is_template(result):
+            return self.expand(result)
+        else:
+            return result
 
     def eval[T](self, expr : str, as_type : type[T] = object) -> T:
         if expr is None: return None
@@ -1480,7 +1498,8 @@ class Expander(abc.MutableMapping[str, object]):
         Expand _always_ recurses until expansion does nothing.
         """
 
-        assert isinstance(template, str)
+        if not Utils.is_template(template):
+            assert Utils.is_template(template)
 
         blocks : list[str] = Expander.split(template)
 
@@ -1521,6 +1540,28 @@ class Expander(abc.MutableMapping[str, object]):
 
         assert isinstance(result, as_type)
         return result
+
+    def total_expand(self, variant):
+        while True:
+            if not isinstance(variant, str):
+                break
+
+            old_variant = variant
+            match = Utils.braced.search(variant)
+
+            if match is None:
+                return variant
+            elif match.group() == variant:
+                variant = self.eval(variant)
+            else:
+                variant = self.expand(variant)
+
+            if variant == old_variant:
+                break
+
+        return variant
+
+
 
 # endregion
 ####################################################################################################
@@ -1722,7 +1763,7 @@ class Loader:
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        script_path = hancho.config.expand(script_path, str)
+        script_path = hancho.config.total_expand(script_path, str)
         script_path = os.path.abspath(script_path)
 
         assert os.path.isfile(script_path)
