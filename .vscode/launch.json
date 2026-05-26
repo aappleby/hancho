@@ -9,33 +9,37 @@
       "name"    : "CUSTOM",
       "type"    : "debugpy",
       "request" : "launch",
-      "console" : "integratedTerminal",
-      "cwd"     : "${workspaceFolder}/tests",
-      "program" : "${workspaceFolder}/tests/dump.py",
-      //"args"    : ["-v", "--rebuild"],
-      //"args"    : ["-d", "-j1"],
-      //"args"    : ["TestTasks.test_async_callback"],
+      "cwd"     : "${workspaceFolder}/scratch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "args"    : [
+        "-v",
+        //"-d",
+        "--force"],
     },
 
     {
       "name"    : "hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
-      "console" : "integratedTerminal",
       "program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["-v", "--rebuild", "--debug"],
-      //"args"    : ["--rebuild"],
-      "cwd"     : "${workspaceFolder}",
     },
 
+    //{
+    //  "name"    : "Tests",
+    //  "type"    : "debugpy",
+    //  "request" : "launch",
+    //  "module"  : "unittest",
+    //  "args"    : ["tests.test_tasks"],
+    //},
+
     {
-      "name"    : "Tests",
-      "type"    : "debugpy",
-      "request" : "launch",
-      "console" : "integratedTerminal",
-      "module"  : "unittest",
-      "args"    : ["tests.test_tasks"],
-      "cwd"     : "${workspaceFolder}",
+        // python -m unittest discover -s tests
+        "name": "All tests in ${workspaceFolder}/tests",
+        "type": "debugpy",
+        "request": "launch",
+        "module": "unittest",
+        "args": ["discover", "-s", "tests"],
     },
 
     {
@@ -45,8 +49,6 @@
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}/..",
       //"args": ["--force", "-j1"],
-      "console": "integratedTerminal",
-      "justMyCode": false,
       //"preLaunchTask": "Wipe build",
     },
   ]

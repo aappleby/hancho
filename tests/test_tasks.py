@@ -76,7 +76,7 @@ class TestTasks(unittest.TestCase):
         # If any task fails, we should get -1 from run_tasks.
         bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
         self.run_tasks(-1)
-        self.assertEqual(bad_task._state, hancho.TaskState.FAILED)
+        self.assertEqual(bad_task._state, hancho.Task.FAILED)
 
     #--------------------------------------------------------------------------------
 
@@ -199,7 +199,7 @@ class TestTasks(unittest.TestCase):
         )
         self.assertFalse(Path("build/narp/foo.o").exists())
         self.run_tasks(0)
-        self.assertEqual(good_task._state, hancho.TaskState.FINISHED)
+        self.assertEqual(good_task._state, hancho.Task.FINISHED)
         self.assertTrue(Path("build/narp/foo.o").exists())
 
     def test_bad_build_path(self):
@@ -211,7 +211,7 @@ class TestTasks(unittest.TestCase):
             should_fail = True,
         )
         self.run_tasks(0)
-        self.assertEqual(bad_task._state, hancho.TaskState.BROKEN)
+        self.assertEqual(bad_task._state, hancho.Task.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
 
     #--------------------------------------------------------------------------------
@@ -232,7 +232,7 @@ class TestTasks(unittest.TestCase):
             should_fail = True,
         )
         self.run_tasks(0)
-        self.assertEqual(task._state, hancho.TaskState.FAILED)
+        self.assertEqual(task._state, hancho.Task.FAILED)
 
     def test_garbage_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
@@ -240,7 +240,7 @@ class TestTasks(unittest.TestCase):
             command = "aklsjdflksjdlfkjldfk",
         )
         self.run_tasks(-1)
-        self.assertEqual(garbage_task._state, hancho.TaskState.FAILED)
+        self.assertEqual(garbage_task._state, hancho.Task.FAILED)
         self.assertTrue("CommandFailure" in hancho.Log.buffer)
 
     def test_task_collision(self):
@@ -319,7 +319,7 @@ class TestTasks(unittest.TestCase):
             should_fail = True,
         )
         self.run_tasks(0)
-        self.assertEqual(task._state, hancho.TaskState.BROKEN)
+        self.assertEqual(task._state, hancho.Task.BROKEN)
         self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
         self.assertTrue("does_not_exist.txt" in hancho.Log.buffer)
 
@@ -334,7 +334,7 @@ class TestTasks(unittest.TestCase):
             should_fail  = True,
         )
         self.run_tasks(0)
-        self.assertEqual(task._state, hancho.TaskState.BROKEN)
+        self.assertEqual(task._state, hancho.Task.BROKEN)
         self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
         self.assertTrue("missing_dep.txt" in hancho.Log.buffer)
 
@@ -503,9 +503,9 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(1, hancho.Stats.tasks_finished)
         self.assertEqual(1, hancho.Stats.tasks_failed)
         self.assertEqual(1, hancho.Stats.tasks_cancelled)
-        self.assertEqual(task_that_fails._state, hancho.TaskState.FAILED)
-        self.assertEqual(task_that_passes._state, hancho.TaskState.FINISHED)
-        self.assertEqual(should_be_cancelled._state, hancho.TaskState.CANCELLED)
+        self.assertEqual(task_that_fails._state, hancho.Task.FAILED)
+        self.assertEqual(task_that_passes._state, hancho.Task.FINISHED)
+        self.assertEqual(should_be_cancelled._state, hancho.Task.CANCELLED)
         self.assertTrue(os.path.exists("build/pass_result.txt"))
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))

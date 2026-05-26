@@ -5,6 +5,8 @@ sys.path.append("..")
 import hancho
 import timeit
 
+from hancho import Log
+
 class Merp:
     def __repr__(self):
         return f"merp@{hex(id(self))}"
@@ -43,10 +45,10 @@ test = hancho.Dict(
 
 print('-' * 80)
 
-print(hancho.dump_to_str(key = "foo", val = None))
-print(hancho.dump_to_str(key = None,  val = "foo"))
-print(hancho.dump_to_str(key = None,  val = None))
-print(hancho.dump_to_str(key = "foo", val = 12345))
+print(Log.dump_to_str(key = "foo", val = None))
+print(Log.dump_to_str(key = None,  val = "foo"))
+print(Log.dump_to_str(key = None,  val = None))
+print(Log.dump_to_str(key = "foo", val = 12345))
 
 class Wrapper:
     def __init__(self, value):
@@ -55,30 +57,32 @@ class Wrapper:
     def __repr__(self):
         return f"<{self.value}>"
 
-print(hancho.dump_to_str(key = "foo", val = Wrapper(12345)))
+print(Log.dump_to_str(key = "foo", val = Wrapper(12345)))
 
-print(hancho.dump_to_str(key = 17, val = Wrapper(12345), tab = "<->"))
+print(Log.dump_to_str(key = 17, val = Wrapper(12345), tab = "<->"))
 
 print('-' * 80)
 
-result = hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+result = Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
 print(result)
 print()
 
-#print(hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999))
+#print(Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999))
 #print()
 
 
 if True:
-    blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
-    print(timeit.timeit(blah, number = 10000) * 0.1)
+    blah = lambda : Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+    print(f"max_width = 80 -> {timeit.timeit(blah, number = 1000)} msec")
 
-    blah = lambda : hancho.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
-    print(timeit.timeit(blah, number = 10000) * 0.1)
-
-#print(hancho.dump_to_str(indent = 0, key = "test", val = test, max_width = 4))
+    blah = lambda : Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
+    print(f"max_width = inf -> {timeit.timeit(blah, number = 1000)} msec")
 
 #import pprint
 #pprint.pprint(dict(test))
 
-s0 = ['123456789012345678901234567890123456789012345678901234567890123456789'],
+print(Log.dump_to_str("hancho", hancho.__dict__))
+
+print(dir(hancho))
+
+print(hancho.__dict__.keys())

@@ -5,7 +5,28 @@
 04 - rules.hancho
 05 -
 
-need test case for:
+# FIXME Questions
+  should we be using mappingproxy to make Dicts immutable?
+    probably not
+
+# FIXME Refactoring
+  work needs to be redistributed between task_main, task_init, etc - more smaller units.
+  _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
+  the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit
+  expanding command in task_init should use expand-in-place or something
+  tasks should auto-queue if they're created dynamically?
+  Clean up the pile of globals we pass to scripts
+    see if we can do something different with the eval() global and local contexts, idk.
+    need to ensure that all the stuff accessible to the clients through hancho is clean.
+    it's getting better.
+
+# FIXME Tests
+  dry run
+  task output collision that uses symlinks
+  Promise thingy
+  brace-delimited sections inside quote-delimited strings, etc
+  full-loop test cases for escaped {}s.
+    Somewhere in the process we need to unescape them and I'm not sure where it goes.
   task.promise
   command is None
   cancelled during init
@@ -21,41 +42,25 @@ need test case for:
 
 
 
-# FIXME should we be using mappingproxy to make Dicts immutable?
-  probably not
 
-# FIXME need to ensure that all the stuff accessible to the clients through hancho is clean. Right now it's messy.
-  it's getting better.
+hancho
+cv_context
+Tree
 
-# FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
+Utils
+Dict
+Log
+Path
 
-# FIXME we need full-loop test cases for escaped {}s.
+Task
+Stats
+Promise
 
-# FIXME work needs to be redistributed between task_main, task_init, etc - more smaller units.
+Expander
+Tracer
+Loader
+Runner
 
-# FIXME _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
-
-# FIXME need a test for task output collision that uses symlinks
-
-# FIXME need a test for dry run
-
-# FIXME the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit
-
-# FIXME test Promise thingy
-
-# FIXME need tests for brace-delimited sections inside quote-delimited strings, etc
-
-# FIXME we need full-loop test cases for escaped {}s.
-# Somewhere in the process we need to unescape them and I'm not sure where it goes.
-
-# FIXME write expand-in-place
-
-# FIXME expanding command in task_init should use expand-in-place or something
-
-# FIXME ditch task_main2
-
-# FIXME tasks should auto-queue if they're created dynamically?
-
-# FIXME Clean up the pile of globals we pass to scripts, or see if we can do something different
-#       with the eval() global and local contexts, idk.
-
+init
+reset
+main
