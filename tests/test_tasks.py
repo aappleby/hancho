@@ -424,6 +424,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
+    # FIXME this one is broken
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
         hancho.Task(
@@ -546,6 +547,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(1000, len(glob.glob("build/*")))
 
+    # FIXME this one is also broken
     def test_job_count(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
@@ -590,10 +592,8 @@ class TestTasks(unittest.TestCase):
         async def callback(task):
             await asyncio.sleep(0.1)
             force_touch(task._config.out_file)
-        t = hancho.Task(
-            command = callback,
-            out_file = "test_async_callback.txt"
-        )
+
+        t = hancho.Task(command = callback, out_file = "test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
@@ -609,4 +609,10 @@ def load_tests(loader, tests, ignore):
     return tests
 
 if __name__ == "__main__":
+    #hancho.init(debug = True, verbose = True)
+    #hancho.Task(command = ["echo foo", "echo bar"])
+    #hancho.Runner.queue_all_tasks()
+    #result = hancho.Runner.sync_run_tasks()
+    #assert result == 0
+    #print("done")
     unittest.main(verbosity=999)

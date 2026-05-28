@@ -1522,9 +1522,14 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     def xip[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
+        assert isinstance(context, (Dict, Expander))
         result = Expander.expand_all(context, "{" + key + "}")
         assert isinstance(result, as_type)
-        context._context[key] = result
+        if isinstance(context, Dict):
+            context[key] = result
+        else:
+            #assert False, "do we ever get here?"
+            context._context[key] = result
         return result
 
     @staticmethod
@@ -1536,19 +1541,33 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     @staticmethod
-    def expand_once[T](context : Dict | Expander, template : str, as_type : type[T] = object) -> T:
-        assert isinstance(template, str)
-        if Utils.is_macro(template):
-            result = Expander._expand_macro(context, template)
-        elif Utils.is_template(template):
-            result = Expander._expand_template(context, template)
+    def expand_once[T](context : Dict | Expander, variant : str, as_type : type[T] = object):
+        if Utils.is_collection(variant):
+            return [Expander.expand_once(context, v) for v in cast(list, variant)]
+
+        if Utils.is_mapping(variant):
+            return {k: Expander.expand_once(context, v) for k, v in cast(dict, variant)}
+
+        if not Utils.is_braced(variant):
+            return variant
+
+        if Utils.is_macro(variant):
+            result = Expander._expand_macro(context, variant)
+        elif Utils.is_template(variant):
+            result = Expander._expand_template(context, variant)
         else:
-            result = template
+            result = variant
         assert isinstance(result, as_type)
         return result
 
     @staticmethod
-    def expand_all[T](context : Dict | Expander, variant : Any, as_type : type[T] = object) -> T:
+    def expand_all[T](context : Dict | Expander, variant : Any, as_type : type[T] = object):
+        if Utils.is_collection(variant):
+            return [Expander.expand_all(context, v) for v in cast(list, variant)]
+
+        if Utils.is_mapping(variant):
+            return {k: Expander.expand_all(context, v) for k, v in cast(dict, variant)}
+
         if not Utils.is_braced(variant):
             return variant
 

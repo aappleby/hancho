@@ -13,7 +13,7 @@
       //"program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["-v","--force"],
       "cwd"     : "${workspaceFolder}/tests",
-      "program" : "${workspaceFolder}/tests/test_templates.py",
+      "program" : "${workspaceFolder}/tests/test_tasks.py",
     },
 
     {
