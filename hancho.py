@@ -292,7 +292,7 @@ class Utils:
     #----------------------------------------
     # Checks if a string needs template expansion. Empty strings are considered literals.
 
-    braced = re.compile(r"\{.*?\}")
+    braced = re.compile(r"\{(\\.|[^\\}])*\}")
 
     @staticmethod
     def is_literal(variant : Any) -> bool:
@@ -330,6 +330,12 @@ class Utils:
     #----------------------------------------
 
     @classmethod
+    def color_hsv(cls, h : float = 0, s : float = 0, v : float = 0) -> str:
+        import colorsys
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
+        return Utils.color(int(r * 255), int(g * 255), int(b * 255))
+
+    @classmethod
     def color(cls, red : int = 0, green : int = 0, blue : int = 0) -> str:
         """Converts RGB color to ANSI format string."""
         # Color strings don't work in Windows console, so don't emit them.
@@ -343,7 +349,8 @@ class Utils:
     def obj_to_color(cls, obj):
         rand = cls.rand
         rand.seed(id(obj))
-        return Utils.color(rand.randint(128, 255), rand.randint(128, 255), rand.randint(128, 255))
+        #return Utils.color(rand.randint(128, 255), rand.randint(128, 255), rand.randint(128, 255))
+        return Utils.color_hsv(rand.random(), 0.3, 1.0)
 
     #----------------------------------------
 
@@ -1307,7 +1314,9 @@ class Expander(abc.MutableMapping[str, object]):
 
     class Macro(str):
         def __init__(self, str):
-            assert Utils.is_macro(str)
+            if not Utils.is_macro(str):
+                print(f"?????????????? {str}")
+                assert Utils.is_macro(str)
         def __repr__(self):
             return "M" + str.__repr__(self)
         def __eq__(self, b):
@@ -1393,9 +1402,8 @@ class Expander(abc.MutableMapping[str, object]):
         elif Utils.is_macro(result):      result = Expander.expand_all(self, result)
 
         # MAGIC EXPANDY THING IS HERE
-        #self._config[key] = result
-
-        #trace.log_result(result)
+        # this breaks some tests...
+        #self._context[key] = result
 
         return result
 

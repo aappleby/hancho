@@ -17,7 +17,7 @@ class TestTemplates(unittest.TestCase):
     def setUp(self):
         #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         #hancho.init(quiet   = True)
-        hancho.init(quiet = False, trace = True)
+        hancho.init(quiet = False)
 
         sys.stdout.flush()
 
@@ -30,9 +30,13 @@ class TestTemplates(unittest.TestCase):
         >>> d.eval("b")
         2
         >>> d.eval("{a}{b}{a}{b}")
-        '1212'
+        Traceback (most recent call last):
+        ...
+        AssertionError
         >>> d.eval("{a}")
-        asdf
+        Traceback (most recent call last):
+        ...
+        AssertionError
         >>> d.eval("{b}")
         Traceback (most recent call last):
         ...
@@ -43,22 +47,50 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Expanding basic templates should work
         >>> d = Dict(a = 1, b = 2, c = 3)
+        >>> d.eval("a")
+        1
         >>> d.expand_once("a")
-        a
+        'a'
+        >>> d.expand_all("a")
+        'a'
+        >>> d.eval("{a}")
+        Traceback (most recent call last):
+        ...
+        AssertionError
         >>> d.expand_once("{a}")
-        '1'
+        1
+        >>> d.expand_all("{a}")
+        1
+        >>> d.eval("{a}{b}{c}")
+        Traceback (most recent call last):
+        ...
+        AssertionError
         >>> d.expand_once("{a}{b}{c}")
+        '123'
+        >>> d.expand_all("{a}{b}{c}")
         '123'
         """
 
     def doctest_nested_braces(self):
         r"""
         # Multiply-nested braces should work
-        >>> d = Dict(a = "b", b = 1)
+        >>> d = Dict(a = "b", b = 777)
         >>> d.eval("{{a}}")
-        1
+        Traceback (most recent call last):
+        ...
+        AssertionError
+        >>> d.expand_once("{{a}}")
+        '{b}'
+        >>> d.expand_all("{{a}}")
+        777
         >>> d.eval("{{{{{{a}}}}}}")
-        1
+        Traceback (most recent call last):
+        ...
+        AssertionError
+        >>> d.expand_once("{{{{{{a}}}}}}")
+        '{{{{{b}}}}}'
+        >>> d.expand_all("{{{{{{a}}}}}}")
+        777
         """
 
     def doctest_nested_templates(self):
@@ -68,11 +100,17 @@ class TestTemplates(unittest.TestCase):
         >>> d.eval("a.b")
         '{c}'
         >>> d.eval("{a.b}")
-        10
+        Traceback (most recent call last):
+        ...
+        AssertionError
         >>> d.expand_once("a.b")
         'a.b'
         >>> d.expand_once("{a.b}")
-        '10'
+        '{c}'
+        >>> d.expand_all("a.b")
+        'a.b'
+        >>> d.expand_all("{a.b}")
+        10
         """
 
     def doctest_extra_braces(self):
@@ -82,29 +120,45 @@ class TestTemplates(unittest.TestCase):
         >>> d.expand_once("{a}")
         '1 + 1'
         >>> d.expand_once("{{a}}")
-        '2'
+        '{1 + 1}'
+        >>> d.expand_all("{{a}}")
+        2
         """
 
     def doctest_read_nested_c_first(self):
         r"""
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
         # nested context.
-        >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20, trace = True)
+        >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
         >>> d.expand_all("{a.b}")
-        '10'
+        10
+        >>> d.expand_once("{a.b}")
+        '{c}'
+        >>> d.expand_all("{a.b}")
+        10
         """
-        #>>> d.expand_once("{a.b}")
-        #'{c}'
-        #>>> d.expand_all("{a.b}")
-        #'20'
 
     def doctest_expand_before_eval(self):
         r"""
         # Wrapping a field in {} makes us expand it before eval
         >>> d = Dict(a = 1, b = 2, c = 3, name_a = 'a', name_b = 'b', name_c = 'c')
-        >>> d.expand_once("name_a + name_b + name_c")
+        >>> d.eval("name_a + name_b + name_c")
         'abc'
+        >>> d.expand_once("name_a + name_b + name_c")
+        'name_a + name_b + name_c'
+        >>> d.expand_all("name_a + name_b + name_c")
+        'name_a + name_b + name_c'
+        >>> d.eval("{name_a} + {name_b} + {name_c}")
+        Traceback (most recent call last):
+        ...
+        AssertionError
         >>> d.expand_once("{name_a} + {name_b} + {name_c}")
+        'a + b + c'
+        >>> d.expand_all("{name_a} + {name_b} + {name_c}")
+        'a + b + c'
+        >>> d.expand_once("{{name_a} + {name_b} + {name_c}}")
+        '{a + b + c}'
+        >>> d.expand_all("{{name_a} + {name_b} + {name_c}}")
         6
         """
 
@@ -113,6 +167,8 @@ class TestTemplates(unittest.TestCase):
         # Expanding a template can assemble a new template from pieces, which then also gets expanded
         >>> d = Dict(part_a = '{f', part_b = 'o', part_c = 'o}', foo = 10)
         >>> d.expand_once("{part_a}{part_b}{part_c}")
+        '{foo}'
+        >>> d.expand_all("{part_a}{part_b}{part_c}")
         10
 
         # And that can go multiple levels deep
@@ -121,6 +177,8 @@ class TestTemplates(unittest.TestCase):
         ...   part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
         ...   bar = 12)
         >>> d.expand_once("{part_a1}{part_b1}{part_c1}")
+        '{foo}'
+        >>> d.expand_all("{part_a1}{part_b1}{part_c1}")
         12
         """
 
@@ -166,8 +224,8 @@ class TestTemplates(unittest.TestCase):
         'a'
         >>> d.expand_once("b")
         'b'
-        >>> d.expand_once("{a}")
-        ''
+        >>> d.expand_once("{a}") is None
+        True
         >>> d.expand_once("{b}")
         'x{a}y'
         >>> d.expand_all("{b}")
@@ -226,16 +284,23 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Lists should be flattened before joining with spaces
         >>> d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
-        >>> d.expand_once("{flags}")
-        'a b c d e f'
         >>> d.eval("flags")
         [[['a'], 'b'], 'c', 'd', ['e', 'f']]
+        >>> d.expand_once("flags")
+        'flags'
+        >>> d.expand_all("flags")
+        'flags'
         >>> d.eval("{flags}")
         Traceback (most recent call last):
         ...
-            a b c d e f
-              ^
-        SyntaxError: invalid syntax
+        AssertionError
+        >>> d.expand_once("{flags}")
+        [[['a'], 'b'], 'c', 'd', ['e', 'f']]
+        >>> d.expand_all("{flags}")
+        [[['a'], 'b'], 'c', 'd', ['e', 'f']]
+
+        >>> d.expand_once("flags = '{flags}'")
+        "flags = 'a b c d e f'"
         """
 
     def test_templates_with_escaped_char_proxies(self):
@@ -250,19 +315,19 @@ class TestTemplates(unittest.TestCase):
         # Single recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(flarp = "asdf {flarp}")
-            bad_dict.expand_once("{flarp}")
+            bad_dict.expand_all("{flarp}")
 
         # Double recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(foo = "asdf {bar}", bar = "qwer {foo}")
-            bad_dict.eval("foo")
+            bad_dict.expand_all("{foo}")
 
         # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
         # in 'bad_dict'
         with self.assertRaises(RecursionError):
             subthing = Dict(foo = "{subthing.foo} x")
             bad_dict = Dict(command = "{subthing.foo}", subthing = subthing)
-            bad_dict.eval("command")
+            bad_dict.expand_all("{command}")
 
 
 ####################################################################################################
@@ -275,13 +340,4 @@ def load_tests(loader, tests, ignore):
     return tests
 
 if __name__ == "__main__":
-    #d = Dict(a = Dict(b = "{c}", c = 10), c = 20, trace = True)
-    #print(d.expand_once("{a.b}"))
-    #e = d.expand_all("{a.b}")
-    #print(d.expand_all("{a.b}"))
-
-    d = Dict(a = "{{{{{{{{b.c}}}}}}}}", b = Dict(c = 888, d = 999), trace = True)
-    print(d.expand_all("{a}"))
-
-
-    #unittest.main(verbosity=1)
+    unittest.main(verbosity=1)
