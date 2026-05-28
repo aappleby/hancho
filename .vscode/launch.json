@@ -9,12 +9,11 @@
       "name"    : "CUSTOM",
       "type"    : "debugpy",
       "request" : "launch",
-      "cwd"     : "${workspaceFolder}/scratch",
-      "program" : "${workspaceFolder}/hancho.py",
-      "args"    : [
-        "-v",
-        //"-d",
-        "--force"],
+      //"cwd"     : "${workspaceFolder}/scratch",
+      //"program" : "${workspaceFolder}/hancho.py",
+      //"args"    : ["-v","--force"],
+      "cwd"     : "${workspaceFolder}/tests",
+      "program" : "${workspaceFolder}/tests/test_templates.py",
     },
 
     {

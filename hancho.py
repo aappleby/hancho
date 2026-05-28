@@ -295,19 +295,20 @@ class Utils:
     braced = re.compile(r"\{.*?\}")
 
     @staticmethod
-    def is_lit(variant : Any) -> bool:
+    def is_literal(variant : Any) -> bool:
         if not isinstance(variant, str): return False
         m = Utils.braced.search(variant)
         return m is None
 
     @staticmethod
     def is_braced(variant : Any) -> bool:
+        # this is just is_macro or is_template
         if not isinstance(variant, str) or len(variant) == 0: return False
         m = Utils.braced.search(variant)
         return m is not None
 
     @staticmethod
-    def is_expr(variant : Any) -> bool:
+    def is_macro(variant : Any) -> bool:
         if not isinstance(variant, str) or len(variant) == 0: return False
         m = Utils.braced.search(variant)
         return m is not None and m.group() == variant
@@ -339,10 +340,10 @@ class Utils:
         return f"\x1B[38;2;{red};{green};{blue}m"
 
     @classmethod
-    def id_to_color(cls, obj):
+    def obj_to_color(cls, obj):
         rand = cls.rand
         rand.seed(id(obj))
-        return Utils.color(rand.randint(64, 255), rand.randint(64, 255), rand.randint(64, 255))
+        return Utils.color(rand.randint(128, 255), rand.randint(128, 255), rand.randint(128, 255))
 
     #----------------------------------------
 
@@ -529,17 +530,17 @@ class Dict(dict):
     # Expander convenience helpers
 
     def eval[T](self, expr : str, as_type: type[T] = object) -> T:
-        result = Expander(self).eval(expr)
+        result = Expander.eval(self, expr)
         assert isinstance(result, as_type)
         return result
 
-    def expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
-        result = Expander(self).expand(template)
+    def expand_once[T](self, text : str, as_type : type[T] = object) -> T:
+        result = Expander.expand_once(self, text)
         assert isinstance(result, as_type)
         return result
 
-    def total_expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
-        result = Expander(self).total_expand(template)
+    def expand_all[T](self, text : Tree[str], as_type : type[T] = object) -> T:
+        result = Expander.expand_all(self, text)
         assert isinstance(result, as_type)
         return result
 
@@ -585,7 +586,7 @@ class Task:
 
         # Expanded config options
         c = self._config
-        e = Expander(c)
+        e = Expander.wrap(c, c.get("trace", False))
 
         # These often contain filenames which could be from input files, like "copy {in} to {out}".
         # We need to wait until after inputs are awaited before we can expand these.
@@ -597,32 +598,32 @@ class Task:
         # FIXME - How many of these do we _really_ need to expand in the constructor?
         # It might be better to do all of them in task_init
 
-        e.xip("root_dir", str)
-        e.xip("root_file", str)
-        e.xip("repo_dir", str)
-        e.xip("repo_file", str)
-        e.xip("script_dir", str)
-        e.xip("script_file", str)
-        e.xip("task_cwd", str)
-        e.xip("build_root", str)
-        e.xip("build_dir", str)
+        Expander.xip(c, "root_dir", str)
+        Expander.xip(c, "root_file", str)
+        Expander.xip(c, "repo_dir", str)
+        Expander.xip(c, "repo_file", str)
+        Expander.xip(c, "script_dir", str)
+        Expander.xip(c, "script_file", str)
+        Expander.xip(c, "task_cwd", str)
+        Expander.xip(c, "build_root", str)
+        Expander.xip(c, "build_dir", str)
 
         # FIXME how do we make it so we don't need this?
         c.build_dir = os.path.normpath(c.build_dir)
 
-        e.xip("core_count", int)
-        e.xip("keep_going", int) # FIXME we're not using this?
-        e.xip("depformat", str)
-        e.xip("build_tag", str)
-        e.xip("target", str)
-        e.xip("tool", str)
-        e.xip("verbose", bool)
-        e.xip("debug", bool)
-        e.xip("dry_run", bool)
-        e.xip("quiet", bool)
-        e.xip("rebuild", bool)
-        e.xip("shuffle", bool)
-        e.xip("should_fail", bool)
+        Expander.xip(c, "core_count", int)
+        Expander.xip(c, "keep_going", int) # FIXME we're not using this?
+        Expander.xip(c, "depformat", str)
+        Expander.xip(c, "build_tag", str)
+        Expander.xip(c, "target", str)
+        Expander.xip(c, "tool", str)
+        Expander.xip(c, "verbose", bool)
+        Expander.xip(c, "debug", bool)
+        Expander.xip(c, "dry_run", bool)
+        Expander.xip(c, "quiet", bool)
+        Expander.xip(c, "rebuild", bool)
+        Expander.xip(c, "shuffle", bool)
+        Expander.xip(c, "should_fail", bool)
 
         # Bookkeeping stuff
         self._task_index : int = 0
@@ -855,7 +856,7 @@ class Task:
             if not v:
                 continue
             if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                v = self._config.expand(v)
+                v = self._config.expand_all(v)
                 v = Path.abs(v)
                 self._config[k] = v
 
@@ -905,9 +906,9 @@ class Task:
         #----------------------------------------
         # And now that our paths are clean, we can expand fields that refer to paths.
 
-        self._name = self._config.eval("name", str)
-        self._desc = self._config.eval("desc", str)
-        self._command = cast(Tree[str], self._config.expand(self._config.command))
+        self._name = self._config.expand_all("{name}", str)
+        self._desc = self._config.expand_all("{desc}", str)
+        self._command = cast(Tree[str], self._config.expand_all(self._config.command))
 
         self._config.name    = self._name
         self._config.desc    = self._desc
@@ -1294,21 +1295,23 @@ class Expander(abc.MutableMapping[str, object]):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    class Lit(str):
+    class Literal(str):
         def __repr__(self):
             return "L" + str.__repr__(self)
         def __eq__(self, b):
-            if type(b) == Expander.Expr:
+            if type(b) == Expander.Macro:
                 return False
             return str.__eq__(self, b)
         def __hash__(self):
             return str.__hash__(self)
 
-    class Expr(str):
+    class Macro(str):
+        def __init__(self, str):
+            assert Utils.is_macro(str)
         def __repr__(self):
-            return "E" + str.__repr__(self)
+            return "M" + str.__repr__(self)
         def __eq__(self, b):
-            if type(b) == Expander.Lit:
+            if type(b) == Expander.Literal:
                 return False
             return str.__eq__(self, b)
         def __hash__(self):
@@ -1317,13 +1320,31 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
     # region
 
-    def __init__(self, context : Dict):
+    def __init__(self, context : Dict | Expander, trace : bool):
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self._config = context
-        self.trace = dict.get(context, "trace", False)
+        self._context = context
+        self.trace = trace
+
+    @classmethod
+    def wrap(cls, context : Dict | Expander, trace : bool):
+        if isinstance(context, Expander):
+            return context
+
+        result = Expander(context, trace)
+
+        tag_a = (str(type(context).__name__)[:2] + "_" + hex(id(context))[-4:]).upper()
+        tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
+        tag_a = Utils.obj_to_color(context) + tag_a + Utils.color()
+        tag_b = Utils.obj_to_color(result) + tag_b + Utils.color()
+
+        Tracer.log(trace, f"wrap {tag_a} -> {tag_b}")
+
+        return result
+
+
 
     def __contains__(self, key):
-        return key in self._config
+        return key in self._context
 
     # FIXME do I need the exception translation here? I think I do, because these happen inside eval()
     def __getitem__(self, key):
@@ -1355,10 +1376,33 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     #endregion
+
     #----------------------------------------
 
-    @classmethod
-    def split(cls, text) -> list[str]:
+    def _get(self, key):
+        assert Utils.is_literal(key)
+
+        with Tracer(self, f"_get('{key}')") as trace:
+            result = self._context[key]
+            trace.log_result(result)
+
+        if isinstance(result, Expander):  pass
+        elif Utils.is_mapping(result):    result = Expander.wrap(result, self.trace)
+        elif Utils.is_collection(result): result = [Expander.expand_all(self, v) for v in cast(list, result)]
+        elif Utils.is_template(result):   result = Expander.expand_all(self, result)
+        elif Utils.is_macro(result):      result = Expander.expand_all(self, result)
+
+        # MAGIC EXPANDY THING IS HERE
+        #self._config[key] = result
+
+        #trace.log_result(result)
+
+        return result
+
+    #----------------------------------------
+
+    @staticmethod
+    def split(text) -> list[str]:
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
         list of string literals and expressions. Escaped braces don't count as delimiters.
@@ -1394,172 +1438,125 @@ class Expander(abc.MutableMapping[str, object]):
             elif c == '}' and lbrace >= 0:
                 rbrace = i
                 if cursor < lbrace:
-                    result.append(cls.Lit(text[cursor:lbrace]))
-                result.append(cls.Expr(text[lbrace+1:rbrace]))
+                    result.append(Expander.Literal(text[cursor:lbrace]))
+                result.append(Expander.Macro(text[lbrace:rbrace+1]))
                 cursor = rbrace + 1
                 lbrace = -1
                 rbrace = -1
 
         if cursor < len(text):
-            result.append(cls.Lit(text[cursor:]))
+            result.append(Expander.Literal(text[cursor:]))
 
         return result
 
-    #----------------------------------------
+    #--------------------------------------------------------------------------------
+    # Template variable lookup order:
+    # 1. The config we're expanding
+    # 2. The script-local hancho.config
+    # 3. The set of convenience aliases
+    # 4. The Hancho module.
 
-    def _get(self, key):
-        with Tracer(self) as trace:
-            trace.log(f"get '{key}'")
-
-            result = self._config[key]
-
-            is_mapping    = Utils.is_mapping(result)
-            is_collection = Utils.is_collection(result)
-            is_expr       = Utils.is_expr(result)
-            is_template   = Utils.is_template(result)
-
-            if   Utils.is_mapping(result):    result = Expander(result)
-            elif Utils.is_collection(result): result = [self.expand(v) for v in result]
-            elif Utils.is_expr(result):       result = self.eval(result)
-            elif Utils.is_template(result):   result = self.expand(result)
-
-            # MAGIC EXPANDY THING IS HERE
-            #self._config[key] = result
-
-            trace.log(f"= '{result}'" if isinstance(result, str) else f"= {result}")
-
-        return result
-
-    def get[T](self, key : str, as_type : type[T] = object) -> T:
-        result = self._get(key)
-        assert isinstance(result, as_type)
-        return result
-
-    def xip[T](self, key : str, as_type : type[T] = object) -> T:
-        result = self._get(key)
-        assert isinstance(result, as_type)
-        self._config[key] = result
-        return result
-
-    #----------------------------------------
-
-    def _eval(self, expr):
-        """
-        Expander.eval first expands the expression (to remove any inner templates) and then evaluates
-        and returns the result.
-        """
-
-        assert Utils.is_expr(expr)
-
-        with Tracer(self) as trace:
-            trace.log(f"eval '{expr}'")
+    @staticmethod
+    def _eval(context : Dict | Expander, expr : str):
+        assert Utils.is_literal(expr)
+        with Tracer(context, f"_eval('{expr}')") as tracer:
             try:
-
-                expr = self.total_expand(expr[1:-1])
-
-                # Lookup order:
-                # 1. The config we're expanding
-                # 2. The script-local hancho.config
-                # 3. The set of convenience aliases
-                # 4. The Hancho module.
-
-                _locals = ChainMap(self, Loader.cv_config.get(), Loader.template_aliases)
+                _locals = ChainMap(context, Loader.cv_config.get(), Loader.template_aliases)
                 _globals = hancho.__dict__
-
                 result = eval(expr, _globals, _locals)
-
             except RecursionError as err:
                 raise err
             except BaseException as err:
-                trace.log(f"{type(err).__name__}: {err}")
+                Tracer.log(context.trace, f"{type(err).__name__}: {err}")
                 raise err
-            trace.log(f"= '{result}'" if isinstance(result, str) else f"= {result}")
+            tracer.log_result(result)
+        return result
 
-        if Utils.is_expr(result):
-            return self.eval(result)
-        elif Utils.is_template(result):
-            return self.expand(result)
-        else:
-            return result
+    @staticmethod
+    def _expand_macro(context : Dict | Expander, macro : str) -> Any:
+        assert Utils.is_macro(macro)
+        with Tracer(context, f"_expand_macro('{macro}')") as tracer:
+            try:
+                result = Expander.eval(context, macro[1:-1])
+            except RecursionError as e:
+                raise e
+            except:
+                result = macro
+            tracer.log_result(result)
+        return result
 
-    def eval[T](self, expr : str, as_type : type[T] = object) -> T:
-        if expr is None: return None
-        result = self._eval(expr)
-        assert isinstance(result, as_type)
+    @staticmethod
+    def _expand_template(context : Dict | Expander, template: str) -> str:
+        if not Utils.is_template(template):
+            pass
+        assert Utils.is_template(template)
+        with Tracer(context, f"_expand_template('{template}')") as tracer:
+            blocks : list[str] = Expander.split(template)
+            for (i, block) in enumerate(blocks):
+                try:
+                    if isinstance(block, Expander.Macro):
+                        value = Expander._expand_macro(context, block)
+                        block = Utils.stringify_variant(value)
+                except RecursionError as e:
+                    raise e
+                blocks[i] = block
+            result = "".join(blocks)
+            tracer.log_result(result)
         return result
 
     #----------------------------------------
 
-    def _expand(self, template : str) -> str:
-        """
-        Expander.expand replaces all innermost {expressions} with the result of evaluating the
-        expression and then recurses until either the expansion stops changing or we hit max
-        recursion depth.
-        Expand _always_ recurses until expansion does nothing.
-        """
-
-        if not Utils.is_template(template):
-            assert Utils.is_template(template)
-
-        blocks : list[str] = Expander.split(template)
-
-        if len(blocks) == 0 or (len(blocks) == 1 and type(blocks[0]) == Expander.Lit):
-            return template
-
-        with Tracer(self) as trace:
-            trace.log(f"expand '{template}'")
-            for (i, block) in enumerate(blocks):
-                if isinstance(block, Expander.Lit):
-                    continue
-                try:
-                    value = self.eval(block)
-                    block = Utils.stringify_variant(value)
-                except RecursionError as e:
-                    raise e
-                except:
-                    block = "{" + block + "}"
-                blocks[i] = block
-            result = "".join(blocks)
-            trace.log(f"= '{result}'")
-
-        if result != template:
-            result = self._expand(result)
-
-        return result
-
-    def expand[T](self, template : Tree[str], as_type : type[T] = object) -> T:
-        if template is None: return None
-
-        if Utils.is_collection(template):
-            result = [self.expand(v) for v in template]
-        elif isinstance(template, str):
-            result = self._expand(template)
-        else:
-            result = template
-            #assert False, f"Don't know how to expand a {type(template)} = {template}"
-
+    @staticmethod
+    def get[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
+        result = context._get(key)
         assert isinstance(result, as_type)
         return result
 
-    def total_expand(self, variant):
-        while True:
-            if not isinstance(variant, str):
-                break
+    @staticmethod
+    def xip[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
+        result = Expander.expand_all(context, "{" + key + "}")
+        assert isinstance(result, as_type)
+        context._context[key] = result
+        return result
 
-            old_variant = variant
-            match = Utils.braced.search(variant)
+    @staticmethod
+    def eval[T](context : Dict | Expander, expr : str, as_type : type[T] = object) -> T:
+        assert Utils.is_literal(expr)
+        if expr is None: return None
+        result = Expander._eval(context, expr)
+        assert isinstance(result, as_type)
+        return result
 
-            if match is None:
-                return variant
-            elif match.group() == variant:
-                variant = self.eval(variant)
-            else:
-                variant = self.expand(variant)
+    @staticmethod
+    def expand_once[T](context : Dict | Expander, template : str, as_type : type[T] = object) -> T:
+        assert isinstance(template, str)
+        if Utils.is_macro(template):
+            result = Expander._expand_macro(context, template)
+        elif Utils.is_template(template):
+            result = Expander._expand_template(context, template)
+        else:
+            result = template
+        assert isinstance(result, as_type)
+        return result
 
-            if variant == old_variant:
-                break
+    @staticmethod
+    def expand_all[T](context : Dict | Expander, variant : Any, as_type : type[T] = object) -> T:
+        if not Utils.is_braced(variant):
+            return variant
 
-        return variant
+        econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
+
+        # Keep expanding the template until it's no longer a template or it's no
+        # longer changing.
+        for _ in range(Tracer.MAX_DEPTH):
+            with Tracer(econtext, f"expand_all('{variant}')") as tracer:
+                result = Expander.expand_once(econtext, variant)
+                tracer.log_result(result)
+            if not Utils.is_braced(result) or result == variant:
+                assert isinstance(result, as_type)
+                return result
+            variant = result
+        raise RecursionError("expand_all() - Template expansion failed to terminate")
 
 
 
@@ -1572,33 +1569,60 @@ class Tracer:
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_DEPTH >= 6
     MAX_DEPTH : int = 20
+
     trellis_stack : list[str]
 
     @classmethod
     def reset(cls):
-        cls.trellis_stack = [Utils.color(0)]
+        #cls.trellis_stack = [Utils.color(0)]
+        cls.trellis_stack = []
 
-    def __init__(self, expander : Expander):
-        self.trace = expander.trace
-        self.color = Utils.id_to_color(expander)
+    def __init__(self, context : Dict | Expander, enter_message):
+        self.trace = getattr(context, "trace", False)
+        self.context = context
+        self.result = None
+
+        color = Utils.obj_to_color(self.context)
+        context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
+        context_tag = context_tag.upper()
+
+        Tracer.log(self.trace, color + f"┏ {context_tag}." + enter_message)
+        Tracer.trellis_stack.append(color + "┃ ")
 
     def __enter__(self):
         if len(Tracer.trellis_stack) >= Tracer.MAX_DEPTH:
-            raise RecursionError("Template expansion failed to terminate")
-        Tracer.trellis_stack.append(self.color + "┃ ")
+            raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
         return self
 
+    def log_result(self, result : Any):
+        self.result = result
+        return result
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        Log.log_raw(Utils.color())
         Tracer.trellis_stack.pop()
+        if isinstance(self.result, Expander):
+            text = f"{self.result}"
+            result_color = Utils.obj_to_color(self.result)
+            Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{text}{Utils.color()}")
+        elif isinstance(self.result, Dict):
+            tag = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
+            result_color = Utils.obj_to_color(self.result)
+            Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{tag}{Utils.color()}")
+        else:
+            text = f"{self.result}"
+            result_color = Utils.color()
+            Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{text}{Utils.color()}")
         return False
 
-    def log(self, text : str):
+    @staticmethod
+    def log(trace : bool, text : str):
         """Prints a trace message to the log."""
-        if not self.trace:
+        if not trace:
             return
-        buffer = self.color + "".join(Tracer.trellis_stack) + text + "\x1B[0m" + '\n'
+        buffer = "".join(Tracer.trellis_stack) + text + "\x1B[0m" + '\n'
         Log.log(buffer)
+
+
 
 # endregion
 ####################################################################################################
@@ -1851,7 +1875,6 @@ class Loader:
             message += Utils.color()
             message += "\n"
             Log.log(message)
-
 
 # endregion
 ####################################################################################################
