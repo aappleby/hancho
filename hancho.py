@@ -569,8 +569,14 @@ class Tool(Dict): pass
 # region Task
 # Task object + bookkeeping
 
-class TaskCollision(BaseException):
-    pass
+class TaskCollision(BaseException): pass
+class TaskFailed(BaseException): pass
+class TaskCancelled(BaseException): pass
+class TaskMissingDir(BaseException): pass
+class TaskMissingPath(BaseException): pass
+class TaskBadPath(BaseException): pass
+class TaskBadCommand(BaseException): pass
+class CommandFailed(BaseException): pass
 
 class Task:
 
@@ -700,20 +706,28 @@ class Task:
     async def task_main2(self):
         try:
             return await self.task_main()
-        except subprocess.CalledProcessError as ex:
-            raise asyncio.CancelledError() from ex
-        except asyncio.CancelledError as ex:
-            raise asyncio.CancelledError() from ex
-        except (TaskCollision, FileNotFoundError) as ex:
+        except TaskCancelled as err:
+            self.to_state(Task.CANCELLED)
+            self.log_task_cancelled(err)
+            raise err
+        except TaskFailed as err:
+            script_path = os.path.join(self._config.script_dir, self._config.script_file)
+            self.log_command_failure(script_path, self._config.command, err)
+            raise err
+        except (TaskBadPath, TaskMissingDir, TaskCollision, FileNotFoundError, TaskBadCommand) as err:
             self.to_state(Task.BROKEN)
-            self.log_task_broken(ex)
-            raise ex
+            self.log_task_broken(err)
+            raise TaskFailed from err
+        except CommandFailed as err:
+            self.log_task_failed(err)
+            self.to_state(Task.FAILED)
+            raise TaskFailed from err
         except BaseException as err:
             raise err
 
-    async def task_main(self):
-        #----------------------------------------
+    #----------------------------------------
 
+    async def task_main(self):
         c = self._config
         e = Expander.wrap(c, c.trace)
 
@@ -729,15 +743,13 @@ class Task:
 
         #----------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
-        # were cancelled, we propagate the cancellation to downstream tasks.
+        # failed, we propagate a cancellation to downstream tasks.
 
         try:
             self.to_state(Task.WAITING)
             await Utils.await_variant_xip(self._config)
-        except (asyncio.CancelledError, subprocess.CalledProcessError)  as ex:  # pylint: disable=broad-exception-caught
-            self.to_state(Task.CANCELLED)
-            self.log_task_cancelled(ex)
-            raise ex
+        except BaseException as err:
+            raise TaskCancelled from err
 
         #----------------------------------------
         # Task init
@@ -792,10 +804,7 @@ class Task:
                 # lives under build_dir.
                 return v.replace(self._config.task_cwd, self._config.build_dir)
             else:
-                ex = ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
-                self.to_state(Task.BROKEN)
-                self.log_task_broken(ex)
-                raise ex
+                raise TaskBadPath(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
 
         def fix(k, v):
             if isinstance(k, str):
@@ -848,25 +857,19 @@ class Task:
         # ----------------------------------------
         # Check that all build files would end up under build_dir
 
-        try:
-            for file in self._out_files:
-                file = os.path.abspath(file)
-                if not file.startswith(self._config.build_dir):
-                    raise ValueError(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
-
-        except ValueError as err:
-            self.to_state(Task.BROKEN)
-            self.log_task_broken(err)
-            raise err
+        for file in self._out_files:
+            file = os.path.abspath(file)
+            if not file.startswith(self._config.build_dir):
+                raise TaskBadPath(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
 
         # ----------------------------------------
         # Check for missing paths
 
         if not os.path.exists(self._config.task_cwd):
-            raise FileNotFoundError(self._config.task_cwd)
+            raise TaskMissingDir(self._config.task_cwd)
 
         if not self._config.build_dir.startswith(self._config.repo_dir):
-            raise ValueError(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
+            raise TaskBadPath(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
 
         # ----------------------------------------
         # Check for missing inputs
@@ -897,7 +900,7 @@ class Task:
 
         self._reason = self.needs_rerun(self._config.rebuild)
         if not self._reason:
-            self.log_task_uptodate()
+            self.log_task_skipped()
             self.to_state(Task.SKIPPED)
             return
 
@@ -910,20 +913,11 @@ class Task:
         # Wait for enough jobs to free up to run this task and then run the commands.
 
         self.to_state(Task.GET_CORES)
-        try:
-            async with Runner.Cores(self._config.core_count):
-
-                # Run the task's commands!
-                self.to_state(Task.RUNNING)
-                for command in Utils.flatten(self._config.command):
-                    await self.run_command(command)
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Both broken and failed tasks should end up here.
-            self.log_task_failed(ex)
-            self.to_state(Task.FAILED)
-            raise ex
-
+        async with Runner.Cores(self._config.core_count):
+            # Run the task's commands!
+            self.to_state(Task.RUNNING)
+            for command in Utils.flatten(self._config.command):
+                await self.run_command(command)
 
         #----------------------------------------
         # Task finished successfully
@@ -1004,7 +998,7 @@ class Task:
 
         # Non-string non-callable commands are not valid
         if not isinstance(command, str) and not callable(command):
-            raise ValueError(f"Don't know what to do with {command}")
+            raise TaskBadCommand(f"Don't know what to do with {command}")
 
         if self._config.verbose or self._config.debug:
             self.log_command_start(command)
@@ -1014,17 +1008,12 @@ class Task:
 
         if callable(command):
             import inspect
-            try:
-                with chdir(self._config.task_cwd):
-                    result = command(self)
-                    while inspect.isawaitable(result):
-                        result = await result
-                self._stdout = ""
-                self._stderr = ""
-            except BaseException as e:
-                script_path = os.path.join(self._config.script_dir, self._config.script_file)
-                self.log_command_failure(script_path, command, e)
-                raise e
+            with chdir(self._config.task_cwd):
+                result = command(self)
+                while inspect.isawaitable(result):
+                    result = await result
+            self._stdout = ""
+            self._stderr = ""
             return
 
         #----------------------------------------
@@ -1043,15 +1032,7 @@ class Task:
         #if debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}', return code {proc.returncode}\n")
 
         if proc.returncode:
-            ex = subprocess.CalledProcessError(
-                        returncode = Utils.check(int, proc.returncode),
-                        cmd        = command,
-                        output     = stdout_data,
-                        stderr     = stderr_data
-                    )
-            script_path = os.path.join(self._config.script_dir, self._config.script_file)
-            self.log_command_failure(script_path, command, ex)
-            raise ex
+            raise CommandFailed()
 
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
@@ -1144,7 +1125,7 @@ class Task:
             message += Utils.color()
             Log.log(message)
 
-    def log_task_uptodate(self):
+    def log_task_skipped(self):
         Stats.tasks_skipped += 1
 
         if self._config.verbose or self._config.debug:
@@ -1207,7 +1188,6 @@ class Stats:
     tasks_skipped : int
     tasks_cancelled : int
     tasks_broken : int
-    tasks_shouldfail : int
 
     @classmethod
     def reset(cls):
@@ -1222,7 +1202,6 @@ class Stats:
         cls.tasks_skipped = 0
         cls.tasks_cancelled = 0
         cls.tasks_broken = 0
-        cls.tasks_shouldfail = 0
 
     @classmethod
     def print_build_stats(cls):
@@ -1235,7 +1214,6 @@ class Stats:
             Log.log(f"tasks skipped:    {cls.tasks_skipped}\n")
             Log.log(f"tasks cancelled:  {cls.tasks_cancelled}\n")
             Log.log(f"tasks broken:     {cls.tasks_broken}\n")
-            Log.log(f"tasks shouldfail: {cls.tasks_shouldfail}\n")
             Log.log(f"mtime calls:      {cls.mtime_calls}\n")
 
         if cls.tasks_failed or cls.tasks_broken:
