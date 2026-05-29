@@ -569,6 +569,9 @@ class Tool(Dict): pass
 # region Task
 # Task object + bookkeeping
 
+class TaskCollision(BaseException):
+    pass
+
 class Task:
 
     DECLARED  = "DECLARED"
@@ -675,7 +678,7 @@ class Task:
     def start(self):
         self.to_state(Task.STARTED)
 
-        self._asyncio_task = asyncio.create_task(self.task_main(), context = self._context)
+        self._asyncio_task = asyncio.create_task(self.task_main2(), context = self._context)
         # FIXME should this be in log_task_start? Needs cleanup.
         Stats.tasks_started += 1
 
@@ -694,6 +697,20 @@ class Task:
     #--------------------------------------------------------------------------------
     # FIXME We're gonna merge task_init into this and then break it back out into smaller pieces
 
+    async def task_main2(self):
+        try:
+            return await self.task_main()
+        except subprocess.CalledProcessError as ex:
+            raise asyncio.CancelledError() from ex
+        except asyncio.CancelledError as ex:
+            raise asyncio.CancelledError() from ex
+        except (TaskCollision, FileNotFoundError) as ex:
+            self.to_state(Task.BROKEN)
+            self.log_task_broken(ex)
+            raise ex
+        except BaseException as err:
+            raise err
+
     async def task_main(self):
         #----------------------------------------
 
@@ -705,7 +722,7 @@ class Task:
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
                         "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild", "shuffle",
-                        "trace", "use_color", "should_fail", "build_all"]
+                        "trace", "use_color", "build_all"]
 
         for f in path_fields:   c[f] = os.path.normpath(e[f]) #type:ignore
         for f in flag_fields:   c[f] = e[f]
@@ -720,7 +737,7 @@ class Task:
         except (asyncio.CancelledError, subprocess.CalledProcessError)  as ex:  # pylint: disable=broad-exception-caught
             self.to_state(Task.CANCELLED)
             self.log_task_cancelled(ex)
-            raise asyncio.CancelledError() from ex
+            raise ex
 
         #----------------------------------------
         # Task init
@@ -761,10 +778,10 @@ class Task:
         #----------------------------------------
         # Make all paths absolute and move all output files so they're under build_dir.
 
-        def fix_in_path(v):
+        def fix_in_path(v : str):
             return Path.join(self._config.task_cwd, v)
 
-        def fix_out_path(v):
+        def fix_out_path(v : str):
             # Note this conditional needs to be first, as build_dir can itself be under task_cwd
             if v.startswith(self._config.build_dir):
                 # Absolute path under build_dir, do nothing.
@@ -775,14 +792,17 @@ class Task:
                 # lives under build_dir.
                 return v.replace(self._config.task_cwd, self._config.build_dir)
             else:
-                raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
+                ex = ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
+                self.to_state(Task.BROKEN)
+                self.log_task_broken(ex)
+                raise ex
 
         def fix(k, v):
             if isinstance(k, str):
                 if k == "in_depfile" or k.startswith("out_"):
-                    return fix_out_path(v)
+                    v = fix_out_path(v)
                 elif k.startswith("in_"):
-                    return fix_in_path(v)
+                    v = fix_in_path(v)
             return v
 
         Utils.apply(self._config, fix)
@@ -797,6 +817,12 @@ class Task:
         if self._config.debug:
             Log.log(f"Task config after expand: {self._config}\n")
 
+        # Early-out if this is a no-op task
+        if not self._config.command:
+            self.log_task_done()
+            self.to_state(Task.FINISHED)
+            return
+
         #----------------------------------------
         # Gather all absolute file paths to _in_files/_out_files.
         # WARNING: These filenames _must_ be absolute as they may be read from other repos.
@@ -806,9 +832,32 @@ class Task:
                 if isinstance(v1, str) and os.path.isfile(v1):
                     self._in_files.append(v1)
             elif k1.startswith("out_"):
-                self._out_files.extend(Utils.flatten(v1))
+                self._out_files.append(v1)
             elif k1.startswith("in_"):
-                self._in_files.extend(Utils.flatten(v1))
+                self._in_files.append(v1)
+
+        self._in_files  = Utils.flatten(self._in_files)
+        self._out_files = Utils.flatten(self._out_files)
+
+        # After this step, all our inputs and outputs are resolved. If this is a dry run, we don't
+        # need to do anything else.
+
+        if self._config.dry_run:
+            return
+
+        # ----------------------------------------
+        # Check that all build files would end up under build_dir
+
+        try:
+            for file in self._out_files:
+                file = os.path.abspath(file)
+                if not file.startswith(self._config.build_dir):
+                    raise ValueError(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
+
+        except ValueError as err:
+            self.to_state(Task.BROKEN)
+            self.log_task_broken(err)
+            raise err
 
         # ----------------------------------------
         # Check for missing paths
@@ -817,102 +866,31 @@ class Task:
             raise FileNotFoundError(self._config.task_cwd)
 
         if not self._config.build_dir.startswith(self._config.repo_dir):
-            raise ValueError(
-                f"Path error, build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}"
-            )
-
-        # ----------------------------------------
-        # Make sure our output directories exist
-
-        if not self._config.dry_run:
-            for file in self._out_files:
-                os.makedirs(os.path.dirname(file), exist_ok=True)
-
-        # ----------------------------------------
-        # Check for task collisions
-
-        try:
-            for file in self._out_files:
-                real_file = os.path.realpath(file)
-                if real_file in Loader.filename_to_fingerprint:
-                    err = ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-                    self.to_state(Task.BROKEN)
-                    raise err
-                Loader.filename_to_fingerprint[real_file] = real_file
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Failure during task init because task is broken
-            if self._config.should_fail:
-                Stats.tasks_shouldfail += 1
-            else:
-                Stats.tasks_broken += 1
-
-            import traceback
-            Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
-            Log.log(traceback.format_exception(ex))
-
-            if self._config.should_fail:
-                return
-            else:
-                raise ex
-
-        # ----------------------------------------
-        # Check for duplicate task outputs
-        # FIXME all_out_files and filename_to_fingerprint should probably be sets
-
-        if self._config.command:
-            for file in self._out_files:
-                file = os.path.abspath(file)
-                if file in Loader.all_out_files:
-                    raise NameError(f"Multiple rules build {file}!")
-                Loader.all_out_files.add(file)
-
+            raise ValueError(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
 
         # ----------------------------------------
         # Check for missing inputs
 
-        try:
-            if not self._config.dry_run:
-                for file in self._in_files:
-                    if file is None:
-                        # FIXME I don't think we care about inputs having a none. We should test for that.
-                        self.to_state(Task.BROKEN)
-                        raise ValueError("_in_files contained a None")
-                    if not os.path.exists(file):
-                        self.to_state(Task.BROKEN)
-                        raise FileNotFoundError(file)
-        except BaseException as ex:
-            # Failure during task init because task is broken
-            self.log_task_broken(ex)
-            if self._config.should_fail:
-                return
-            else:
-                raise ex
-            pass
+        # FIXME add test for input file = None
+
+        for file in self._in_files:
+            if not os.path.exists(file):
+                raise FileNotFoundError(file)
 
         # ----------------------------------------
-        # Check that all build files would end up under build_dir
+        # Make sure our output directories exist
 
         for file in self._out_files:
-            ex = None
-            if file is None:
-                ex = ValueError("_out_files contained a None")
-            file = os.path.abspath(file)
-            if not file.startswith(self._config.build_dir):
-                ex = ValueError(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
+            os.makedirs(os.path.dirname(file), exist_ok=True)
 
-            if ex:
-                self.to_state(Task.BROKEN)
-                self.log_task_broken(ex)
-                if not self._config.should_fail:
-                    raise ex
+        # ----------------------------------------
+        # Check for task collisions
 
-        #----------------------------------------
-        # Early-out if this is a no-op task
-
-        if not self._config.command:
-            self.log_task_done()
-            self.to_state(Task.FINISHED)
-            return
+        for file in self._out_files:
+            real_file = os.path.realpath(file)
+            if real_file in Loader.filename_to_fingerprint:
+                raise TaskCollision(f"TaskCollision: Multiple tasks build {real_file}")
+            Loader.filename_to_fingerprint[real_file] = real_file
 
         #----------------------------------------
         # Check if we need a rebuild
@@ -944,10 +922,7 @@ class Task:
             # Both broken and failed tasks should end up here.
             self.log_task_failed(ex)
             self.to_state(Task.FAILED)
-            if self._config.should_fail:
-                return
-            else:
-                raise ex
+            raise ex
 
 
         #----------------------------------------
@@ -1034,10 +1009,6 @@ class Task:
         if self._config.verbose or self._config.debug:
             self.log_command_start(command)
 
-        # Dry runs get early-out'ed before we do anything.
-        if self._config.dry_run:
-            return
-
         #----------------------------------------
         # Custom commands just get called and then early-out'ed.
 
@@ -1119,7 +1090,6 @@ class Task:
         if self._config.verbose or self._config.debug:
             message  = self.log_prefix()
             message += f"Task started"
-            if self._config.dry_run: message += " (DRY RUN)"
             message += f" : '{self._config.name}' - '{self._config.desc}'"
             Log.log(message)
             self.log_task_reason(self._reason)
@@ -1138,34 +1108,27 @@ class Task:
         if self._config.verbose or self._config.debug:
             message  = self.log_prefix()
             message += f"Task done"
-            if self._config.dry_run: message += " (DRY RUN)"
             message += f" : '{self._config.name}' - '{self._config.desc}'"
             Log.log(message)
 
     def log_task_failed(self, ex):
-        if self._config.should_fail:
-            Stats.tasks_shouldfail += 1
-        else:
-            Stats.tasks_failed += 1
+        Stats.tasks_failed += 1
 
         if True:
             script_path = os.path.join(self._config.script_dir, self._config.script_file)
-            import traceback
+            #import traceback
             message  = self.log_prefix()
             message += Utils.color(255,0,0)
             message += f"Task failed!\n"
             message += f"From {script_path}:\n"
             message += f"    Task '{self._config.name}' : '{self._config.desc}'\n"
-            message += traceback.format_exc()
+            #message += traceback.format_exc()
             message += Utils.color()
             Log.log(message)
 
 
     def log_task_broken(self, ex):
-        if self._config.should_fail:
-            Stats.tasks_shouldfail += 1
-        else:
-            Stats.tasks_broken += 1
+        Stats.tasks_broken += 1
 
         import traceback
         Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
@@ -1198,7 +1161,6 @@ class Task:
             message  = self.log_prefix()
             message += Utils.color(128, 128, 255)
             message += f"{Path.rel(self._config.task_cwd, self._config.repo_dir)}$ '{command}'"
-            message += " (DRY RUN)" if self._config.dry_run else ""
             message += Utils.color()
             Log.log(message)
 
@@ -1758,7 +1720,6 @@ class Loader:
             shuffle     = False,
             trace       = False,
             use_color   = True,
-            should_fail = False,
             build_all   = False,
         )
         return result
@@ -2019,8 +1980,7 @@ class Runner:
             except BaseException as ex:  # pylint: disable=broad-exception-caught
                 # Both broken and failed tasks should end up here.
                 #task.log_task_failure(ex)
-                if task._config.should_fail:
-                    cls.finished_tasks.append(task)
+                pass
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
             if hancho.config.keep_going and fail_count >= hancho.config.keep_going:

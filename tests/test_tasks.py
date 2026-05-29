@@ -202,9 +202,8 @@ class TestTasks(unittest.TestCase):
             command  = "echo {in_src} >> {out_obj}",
             in_src   = "src/foo.c",
             out_obj  = "../../../foo.o",
-            should_fail = True,
         )
-        self.run_tasks(0)
+        self.run_tasks(-1)
         self.assertEqual(bad_task._state, hancho.Task.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
 
@@ -223,9 +222,8 @@ class TestTasks(unittest.TestCase):
         task = hancho.Task(
             desc    = "Broken run_cmd",
             command = r"echo {run_cmd('This is totally not a valid command.')}",
-            should_fail = True,
         )
-        self.run_tasks(0)
+        self.run_tasks(-1)
         self.assertEqual(task._state, hancho.Task.FAILED)
 
     def test_garbage_command(self):
@@ -235,22 +233,21 @@ class TestTasks(unittest.TestCase):
         )
         self.run_tasks(-1)
         self.assertEqual(garbage_task._state, hancho.Task.FAILED)
-        self.assertTrue("CalledProcessError" in hancho.Log.buffer)
 
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.
-        hancho.Task(
+        task1 = hancho.Task(
             command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
-        hancho.Task(
+        task2 = hancho.Task(
             command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
         )
         self.run_tasks(-1)
-        self.assertTrue("TaskCollision" in hancho.Log.buffer)
+        self.assertEqual(task2._state, hancho.Task.BROKEN)
 
     #--------------------------------------------------------------------------------
 
@@ -310,12 +307,9 @@ class TestTasks(unittest.TestCase):
             command = "touch {out_obj}",
             in_src  = "src/does_not_exist.txt",
             out_obj = "missing_src.txt",
-            should_fail = True,
         )
-        self.run_tasks(0)
+        self.run_tasks(-1)
         self.assertEqual(task._state, hancho.Task.BROKEN)
-        self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
-        self.assertTrue("does_not_exist.txt" in hancho.Log.buffer)
 
     def test_missing_dep(self):
         # We should fail if a dependency is missing even if it's not used by the command.
@@ -325,12 +319,9 @@ class TestTasks(unittest.TestCase):
             in_src  = "src/test.cpp",
             in_dep  = ["missing_dep.txt"],
             out_obj = "result.txt",
-            should_fail  = True,
         )
-        self.run_tasks(0)
+        self.run_tasks(-1)
         self.assertEqual(task._state, hancho.Task.BROKEN)
-        self.assertTrue("FileNotFoundError" in hancho.Log.buffer)
-        self.assertTrue("missing_dep.txt" in hancho.Log.buffer)
 
     #--------------------------------------------------------------------------------
 

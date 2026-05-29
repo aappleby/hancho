@@ -9,11 +9,10 @@ util_o = hancho.Task(
     out_obj = "{ext(in_src, '.o')}"
 )
 
-broken_o = hancho.Task(
-    name    = "broken.o",
-    desc    = "Compile {in_src}",
-    command = "g++ -c {rel(in_src, repo_dir)} -o {rel(out_obj, repo_dir)}",
-    in_src  = "broken.cpp",
-    out_obj = "{ext(in_src, '.o')}",
-    should_fail = True
-)
+#broken_o = hancho.Task(
+#    name    = "broken.o",
+#    desc    = "Compile {in_src}",
+#    command = "g++ -c {rel(in_src, repo_dir)} -o {rel(out_obj, repo_dir)}",
+#    in_src  = "broken.cpp",
+#    out_obj = "{ext(in_src, '.o')}",
+#)
