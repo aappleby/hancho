@@ -581,6 +581,7 @@ class Tool(Dict): pass
 
 class TaskCollision  (BaseException): pass
 class TaskMissingDir (BaseException): pass
+class TaskMissingFile(BaseException): pass
 class TaskMissingPath(BaseException): pass
 class TaskBadPath    (BaseException): pass
 class TaskBadCommand (BaseException): pass
@@ -720,13 +721,18 @@ class Task:
 
     async def task_main2(self):
         try: # Task-level error handling
-            return await self.task_main()
+            result = await self.task_main()
+            self.log_task_done()
+            if self._state != Task.SKIPPED:
+                self.to_state(Task.FINISHED)
+            Stats.tasks_finished += 1
+            return result
 
         except TaskCancelled as err:
             self.to_state(Task.CANCELLED)
             self.log_task_cancelled(err)
             raise err # raising TaskCancelled
-        except (TaskBadPath, TaskMissingDir, TaskCollision, FileNotFoundError, TaskBadCommand) as err:
+        except (TaskBadPath, TaskMissingDir, TaskCollision, TaskMissingFile, TaskBadCommand) as err:
             self.to_state(Task.BROKEN)
             self.log_task_broken(err)
             raise TaskFailed from err # detailed errors -> taskfailed
@@ -735,12 +741,7 @@ class Task:
             script_path = Path.join(self._config.script_dir, self._config.script_file)
             self.log_command_failure(script_path, self._config.command, err)
             self.log_task_failed(err)
-            raise TaskFailed from err  # taskfailed / taskcancelled -> taskfailed
-        except BaseException as err:
-            #import traceback
-            #traceback.print_exc() we are getting IsADirectoryError here due to trying to open
-            # in_depfile when in_depfile points at a directory :P
-            raise TaskCancelled from err  # everything else -> taskcancelled (why?)
+            raise TaskFailed from err
 
     #----------------------------------------
 
@@ -850,8 +851,6 @@ class Task:
 
         # Early-out if this is a no-op task
         if not self._config.command:
-            self.log_task_done()
-            self.to_state(Task.FINISHED)
             return
 
         #----------------------------------------
@@ -900,7 +899,7 @@ class Task:
 
         for file in self._in_files:
             if not Path.exists(file):
-                raise FileNotFoundError(file)
+                raise TaskMissingFile(file)
 
         # ----------------------------------------
         # Make sure our output directories exist
@@ -951,9 +950,6 @@ class Task:
 
         if self._config.verbose or self._config.debug:
             self.log_task_done()
-
-        self.to_state(Task.FINISHED)
-        Stats.tasks_finished += 1
 
     #--------------------------------------------------------------------------------
 
@@ -1104,7 +1100,6 @@ class Task:
             Log.log(message)
 
     def log_task_done(self):
-        Stats.tasks_finished += 1
         if self._config.verbose or self._config.debug:
             message  = self.log_prefix()
             message += f"Task done"
