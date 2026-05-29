@@ -713,149 +713,146 @@ class Task:
         #----------------------------------------
         # Task init
 
+        self.to_state(Task.INIT)
+        if self._config.debug:
+            Log.log(f"Task config before expand: {self._config}\n")
+
+        # ----------------------------------------
+        # First, flatten all inputs and outputs.
+
+        for k, v in self._config.items():
+            if not v:
+                continue
+            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+                result = Utils.flatten(v)
+                if len(result) == 1:
+                    self._config[k] = result[0]
+                else:
+                    self._config[k] = result
+
+        # ----------------------------------------
+        # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
+        # We _must_ expand these first before joining paths or the paths will be incorrect:
+        # prefix + swap(abs_path) != abs(prefix + swap(path))
+
+        for k, v in self._config.items():
+            if k.startswith("in_") or k.startswith("out_"):
+                v = self._config.expand_all(v)
+                v = Path.join(self._config.script_dir, v)
+                self._config[k] = v
+
+        #----------------------------------------
+        # Make all paths absolute and move all output files so they're under build_dir.
+
+        def fix(k, v):
+            if k == "in_depfile" or k.startswith("out_"):
+                # Note this conditional needs to be first, as build_dir can itself be under task_cwd
+                if v.startswith(self._config.build_dir):
+                    # Absolute path under build_dir, do nothing.
+                    pass
+                elif v.startswith(self._config.task_cwd):
+                    # If an input source had an absolute path and we swap the extension on it to make the
+                    # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+                    # lives under build_dir.
+                    v = v.replace(self._config.task_cwd, self._config.build_dir)
+                else:
+                    raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
+            elif k.startswith("in_"):
+                v = Path.join(self._config.task_cwd, v)
+            return v
+
+        for k, v in self._config.items():
+            if not v:
+                continue
+            if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
+                if Utils.is_collection(v):
+                    for i, v2 in enumerate(v):
+                        v[i] = fix(k, v2)
+                else:
+                    self._config[k] = fix(k, v)
+
+        #----------------------------------------
+        # Paths are cleaned up, we can expand name/desc/command
+
+        self._config.name    = self._config.expand_all("{name}")
+        self._config.desc    = self._config.expand_all("{desc}")
+        self._config.command = self._config.expand_all("{command}")
+
+        #----------------------------------------
+        # Gather all absolute file paths to _in_files/_out_files.
+        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
+
+        for k, v in self._config.items():
+            if k == "in_depfile":
+                if isinstance(v, str) and os.path.isfile(v):
+                    self._in_files.append(v)
+            elif k.startswith("out_"):
+                self._out_files.extend(Utils.flatten(v))
+            elif k.startswith("in_"):
+                self._in_files.extend(Utils.flatten(v))
+
         try:
-            self.to_state(Task.INIT)
-            if self._config.debug:
-                Log.log(f"Task config before expand: {self._config}\n")
+            # ----------------------------------------
+            # Check for missing paths
 
-            # Initialize the task, which means expanding everything else that needs expanding
-            # and fixing up paths to point to task_cwd or build_dir.
-            with chdir(self._config.script_dir):
-                # ----------------------------------------
-                # First, flatten all inputs and outputs.
+            if not os.path.exists(self._config.task_cwd):
+                raise FileNotFoundError(self._config.task_cwd)
 
-                for k, v in self._config.items():
-                    if not v:
-                        continue
-                    if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                        result = Utils.flatten(v)
-                        if len(result) == 1:
-                            self._config[k] = result[0]
-                        else:
-                            self._config[k] = result
+            if not self._config.build_dir.startswith(self._config.repo_dir):
+                raise ValueError(
+                    f"Path error, build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}"
+                )
 
-                # ----------------------------------------
-                # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
-                # We _must_ expand these first before joining paths or the paths will be incorrect:
-                # prefix + swap(abs_path) != abs(prefix + swap(path))
+            # ----------------------------------------
+            # Make sure our output directories exist
 
-                for k, v in self._config.items():
-                    if not v:
-                        continue
-                    if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                        v = self._config.expand_all(v)
-                        v = Path.abs(v)
-                        self._config[k] = v
-
-                #----------------------------------------
-                # Make all paths absolute and move all output files so they're under build_dir.
-
-                def fix(k, v):
-                    if k == "in_depfile" or k.startswith("out_"):
-                        # Note this conditional needs to be first, as build_dir can itself be under task_cwd
-                        if v.startswith(self._config.build_dir):
-                            # Absolute path under build_dir, do nothing.
-                            pass
-                        elif v.startswith(self._config.task_cwd):
-                            # If an input source had an absolute path and we swap the extension on it to make the
-                            # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-                            # lives under build_dir.
-                            v = v.replace(self._config.task_cwd, self._config.build_dir)
-                        else:
-                            raise ValueError(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
-                    elif k.startswith("in_"):
-                        v = Path.join(self._config.task_cwd, v)
-                    return v
-
-                for k, v in self._config.items():
-                    if not v:
-                        continue
-                    if isinstance(k, str) and (k.startswith("in_") or k.startswith("out_")):
-                        if Utils.is_collection(v):
-                            for i, v2 in enumerate(v):
-                                v[i] = fix(k, v2)
-                        else:
-                            self._config[k] = fix(k, v)
-
-                #----------------------------------------
-                # Paths are cleaned up, we can expand name/desc/command
-
-                self._config.name    = self._config.expand_all("{name}")
-                self._config.desc    = self._config.expand_all("{desc}")
-                self._config.command = self._config.expand_all("{command}")
-
-                #----------------------------------------
-                # Gather all absolute file paths to _in_files/_out_files.
-                # WARNING: These filenames _must_ be absolute as they may be read from other repos.
-
-                for k, v in self._config.items():
-                    if k == "in_depfile":
-                        if isinstance(v, str) and os.path.isfile(v):
-                            self._in_files.append(v)
-                    elif k.startswith("out_"):
-                        self._out_files.extend(Utils.flatten(v))
-                    elif k.startswith("in_"):
-                        self._in_files.extend(Utils.flatten(v))
-
-                # ----------------------------------------
-                # Check for missing paths
-
-                if not os.path.exists(self._config.task_cwd):
-                    raise FileNotFoundError(self._config.task_cwd)
-
-                if not self._config.build_dir.startswith(self._config.repo_dir):
-                    raise ValueError(
-                        f"Path error, build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}"
-                    )
-
-                # Make sure our output directories exist
-                if not self._config.dry_run:
-                    for file in self._out_files:
-                        os.makedirs(os.path.dirname(file), exist_ok=True)
-
-                # ----------------------------------------
-                # Check for task collisions
-
+            if not self._config.dry_run:
                 for file in self._out_files:
-                    real_file = os.path.realpath(file)
-                    if real_file in Loader.filename_to_fingerprint:
-                        raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
-                    Loader.filename_to_fingerprint[real_file] = real_file
+                    os.makedirs(os.path.dirname(file), exist_ok=True)
 
-                # Check for duplicate task outputs
+            # ----------------------------------------
+            # Check for task collisions
 
-                # FIXME all_out_files and filename_to_fingerprint should probably be sets
+            for file in self._out_files:
+                real_file = os.path.realpath(file)
+                if real_file in Loader.filename_to_fingerprint:
+                    raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+                Loader.filename_to_fingerprint[real_file] = real_file
 
-                if self._config.command:
-                    for file in self._out_files:
-                        file = os.path.abspath(file)
-                        if file in Loader.all_out_files:
-                            raise NameError(f"Multiple rules build {file}!")
-                        Loader.all_out_files.add(file)
+            # ----------------------------------------
+            # Check for duplicate task outputs
+            # FIXME all_out_files and filename_to_fingerprint should probably be sets
 
-                # ----------------------------------------
-                # Check for missing inputs
-
-                if not self._config.dry_run:
-                    for file in self._in_files:
-                        if file is None:
-                            # FIXME I don't think we care about inputs having a none. We should test for that.
-                            raise ValueError("_in_files contained a None")
-                        if not os.path.exists(file):
-                            raise FileNotFoundError(file)
-
-                # ----------------------------------------
-                # Check that all build files would end up under build_dir
-
+            if self._config.command:
                 for file in self._out_files:
-                    # FIXME same here
-                    if file is None:
-                        raise ValueError("_out_files contained a None")
                     file = os.path.abspath(file)
-                    if not file.startswith(self._config.build_dir):
-                        raise ValueError(
-                            f"Path error, output file {file} is not under build_dir {self._config.build_dir}"
-                        )
+                    if file in Loader.all_out_files:
+                        raise NameError(f"Multiple rules build {file}!")
+                    Loader.all_out_files.add(file)
+
+            # ----------------------------------------
+            # Check for missing inputs
+
+            if not self._config.dry_run:
+                for file in self._in_files:
+                    if file is None:
+                        # FIXME I don't think we care about inputs having a none. We should test for that.
+                        raise ValueError("_in_files contained a None")
+                    if not os.path.exists(file):
+                        raise FileNotFoundError(file)
+
+            # ----------------------------------------
+            # Check that all build files would end up under build_dir
+
+            for file in self._out_files:
+                # FIXME same here
+                if file is None:
+                    raise ValueError("_out_files contained a None")
+                file = os.path.abspath(file)
+                if not file.startswith(self._config.build_dir):
+                    raise ValueError(
+                        f"Path error, output file {file} is not under build_dir {self._config.build_dir}"
+                    )
 
             if self._config.debug:
                 Log.log(f"Task config after expand: {self._config}\n")
