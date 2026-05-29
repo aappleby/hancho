@@ -147,6 +147,11 @@ class Log:
 
     @classmethod
     def log(cls, message : str):
+        if isinstance(message, list):
+            for m in message:
+                Log.log(m)
+            return
+
         lines = message.split('\n')
         for i, line in enumerate(lines):
             if ((i < len(lines) - 1) or cls.verbose) and line:
@@ -791,33 +796,52 @@ class Task:
             elif k.startswith("in_"):
                 self._in_files.extend(Utils.flatten(v))
 
+        # ----------------------------------------
+        # Check for missing paths
+
+        if not os.path.exists(self._config.task_cwd):
+            raise FileNotFoundError(self._config.task_cwd)
+
+        if not self._config.build_dir.startswith(self._config.repo_dir):
+            raise ValueError(
+                f"Path error, build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}"
+            )
+
+        # ----------------------------------------
+        # Make sure our output directories exist
+
+        if not self._config.dry_run:
+            for file in self._out_files:
+                os.makedirs(os.path.dirname(file), exist_ok=True)
+
+        # ----------------------------------------
+        # Check for task collisions
+
         try:
-            # ----------------------------------------
-            # Check for missing paths
-
-            if not os.path.exists(self._config.task_cwd):
-                raise FileNotFoundError(self._config.task_cwd)
-
-            if not self._config.build_dir.startswith(self._config.repo_dir):
-                raise ValueError(
-                    f"Path error, build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}"
-                )
-
-            # ----------------------------------------
-            # Make sure our output directories exist
-
-            if not self._config.dry_run:
-                for file in self._out_files:
-                    os.makedirs(os.path.dirname(file), exist_ok=True)
-
-            # ----------------------------------------
-            # Check for task collisions
-
             for file in self._out_files:
                 real_file = os.path.realpath(file)
                 if real_file in Loader.filename_to_fingerprint:
-                    raise ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+                    err = ValueError(f"TaskCollision: Multiple tasks build {real_file}")
+                    self.to_state(Task.BROKEN)
+                    raise err
                 Loader.filename_to_fingerprint[real_file] = real_file
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Failure during task init because task is broken
+            if self._config.should_fail:
+                Stats.tasks_shouldfail += 1
+            else:
+                Stats.tasks_broken += 1
+
+            import traceback
+            Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
+            Log.log(traceback.format_exception(ex))
+
+            if self._config.should_fail:
+                return
+            else:
+                raise ex
+
+        try:
 
             # ----------------------------------------
             # Check for duplicate task outputs
@@ -1120,17 +1144,9 @@ class Task:
         else:
             Stats.tasks_broken += 1
 
-        if True:
-            script_path = os.path.join(self._config.script_dir, self._config.script_file)
-            import traceback
-            message  = self.log_prefix()
-            message += Utils.color(255,0,0)
-            message += f"Task broken!\n"
-            message += f"From {script_path}:\n"
-            message += f"    Task '{self._config.name}' : '{self._config.desc}'\n"
-            message += traceback.format_exc()
-            message += Utils.color()
-            Log.log(message)
+        import traceback
+        Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
+        Log.log(traceback.format_exc())
 
     def log_task_cancelled(self, ex):
         Stats.tasks_cancelled += 1
