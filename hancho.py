@@ -783,6 +783,10 @@ class Task:
         self._config.desc    = self._config.expand_all("{desc}")
         self._config.command = self._config.expand_all("{command}")
 
+        if self._config.debug:
+            Log.log(f"Task config after expand: {self._config}\n")
+
+
         #----------------------------------------
         # Gather all absolute file paths to _in_files/_out_files.
         # WARNING: These filenames _must_ be absolute as they may be read from other repos.
@@ -841,22 +845,22 @@ class Task:
             else:
                 raise ex
 
+        # ----------------------------------------
+        # Check for duplicate task outputs
+        # FIXME all_out_files and filename_to_fingerprint should probably be sets
+
+        if self._config.command:
+            for file in self._out_files:
+                file = os.path.abspath(file)
+                if file in Loader.all_out_files:
+                    raise NameError(f"Multiple rules build {file}!")
+                Loader.all_out_files.add(file)
+
+
+        # ----------------------------------------
+        # Check for missing inputs
+
         try:
-
-            # ----------------------------------------
-            # Check for duplicate task outputs
-            # FIXME all_out_files and filename_to_fingerprint should probably be sets
-
-            if self._config.command:
-                for file in self._out_files:
-                    file = os.path.abspath(file)
-                    if file in Loader.all_out_files:
-                        raise NameError(f"Multiple rules build {file}!")
-                    Loader.all_out_files.add(file)
-
-            # ----------------------------------------
-            # Check for missing inputs
-
             if not self._config.dry_run:
                 for file in self._in_files:
                     if file is None:
@@ -864,30 +868,7 @@ class Task:
                         raise ValueError("_in_files contained a None")
                     if not os.path.exists(file):
                         raise FileNotFoundError(file)
-
-            # ----------------------------------------
-            # Check that all build files would end up under build_dir
-
-            for file in self._out_files:
-                # FIXME same here
-                if file is None:
-                    raise ValueError("_out_files contained a None")
-                file = os.path.abspath(file)
-                if not file.startswith(self._config.build_dir):
-                    raise ValueError(
-                        f"Path error, output file {file} is not under build_dir {self._config.build_dir}"
-                    )
-
-            if self._config.debug:
-                Log.log(f"Task config after expand: {self._config}\n")
-
-        except asyncio.CancelledError as ex:
-            # We discovered during init that we don't need to run this task.
-            self.to_state(Task.CANCELLED)
-            self.log_task_cancelled(ex)
-            raise ex
-
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
+        except BaseException as ex:
             # Failure during task init because task is broken
             self.to_state(Task.BROKEN)
             self.log_task_broken(ex)
@@ -895,6 +876,24 @@ class Task:
                 return
             else:
                 raise ex
+            pass
+
+        # ----------------------------------------
+        # Check that all build files would end up under build_dir
+
+        for file in self._out_files:
+            ex = None
+            if file is None:
+                ex = ValueError("_out_files contained a None")
+            file = os.path.abspath(file)
+            if not file.startswith(self._config.build_dir):
+                ex = ValueError(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
+
+            if ex:
+                self.to_state(Task.BROKEN)
+                self.log_task_broken(ex)
+                if not self._config.should_fail:
+                    raise ex
 
         #----------------------------------------
         # Early-out if this is a no-op task
