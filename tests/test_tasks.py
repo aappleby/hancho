@@ -235,7 +235,7 @@ class TestTasks(unittest.TestCase):
         )
         self.run_tasks(-1)
         self.assertEqual(garbage_task._state, hancho.Task.FAILED)
-        self.assertTrue("CommandFailure" in hancho.Log.buffer)
+        self.assertTrue("CalledProcessError" in hancho.Log.buffer)
 
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.

@@ -25,6 +25,7 @@ import types
 from collections import abc, ChainMap
 from contextlib import chdir
 from typing import Any, cast
+import subprocess
 
 hancho = sys.modules[__name__]
 
@@ -146,7 +147,7 @@ class Log:
         cls.verbose = verbose
 
     @classmethod
-    def log(cls, message : str):
+    def log(cls, message : str | list[str]):
         if isinstance(message, list):
             for m in message:
                 Log.log(m)
@@ -357,7 +358,6 @@ class Utils:
     @classmethod
     def run_cmd(cls, cmd : str):
         """Runs a console command synchronously and returns its stdout with whitespace stripped."""
-        import subprocess
         result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
@@ -427,7 +427,6 @@ class Utils:
             return Dict({k2 : await Utils.await_variant(v2) for k2, v2 in v.items()})
         else:
             return await Utils.await_scalar(v)
-            assert False, f"Don't know what to do with a {type(v)}"
 
 # endregion
 ####################################################################################################
@@ -706,7 +705,7 @@ class Task:
         try:
             self.to_state(Task.WAITING)
             self._config = cast(Dict, await Utils.await_variant(self._config))
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
+        except (asyncio.CancelledError, subprocess.CalledProcessError)  as ex:  # pylint: disable=broad-exception-caught
             self.to_state(Task.CANCELLED)
             self.log_task_cancelled(ex)
             raise asyncio.CancelledError() from ex
@@ -865,12 +864,13 @@ class Task:
                 for file in self._in_files:
                     if file is None:
                         # FIXME I don't think we care about inputs having a none. We should test for that.
+                        self.to_state(Task.BROKEN)
                         raise ValueError("_in_files contained a None")
                     if not os.path.exists(file):
+                        self.to_state(Task.BROKEN)
                         raise FileNotFoundError(file)
         except BaseException as ex:
             # Failure during task init because task is broken
-            self.to_state(Task.BROKEN)
             self.log_task_broken(ex)
             if self._config.should_fail:
                 return
@@ -921,20 +921,22 @@ class Task:
         # Wait for enough jobs to free up to run this task and then run the commands.
 
         self.to_state(Task.GET_CORES)
-        async with Runner.Cores(self._config.core_count):
-            # Run the task's commands!
-            self.to_state(Task.RUNNING)
-            for command in Utils.flatten(self._config.command):
-                try:
+        try:
+            async with Runner.Cores(self._config.core_count):
+
+                # Run the task's commands!
+                self.to_state(Task.RUNNING)
+                for command in Utils.flatten(self._config.command):
                     await self.run_command(command)
-                except BaseException as ex:  # pylint: disable=broad-exception-caught
-                    # Both broken and failed tasks should end up here.
-                    self.log_task_failed(ex)
-                    self.to_state(Task.FAILED)
-                    if self._config.should_fail:
-                        return
-                    else:
-                        raise ex
+
+        except BaseException as ex:  # pylint: disable=broad-exception-caught
+            # Both broken and failed tasks should end up here.
+            self.log_task_failed(ex)
+            self.to_state(Task.FAILED)
+            if self._config.should_fail:
+                return
+            else:
+                raise ex
 
 
         #----------------------------------------
@@ -1040,26 +1042,36 @@ class Task:
                 self.log_command_failure(script_path, command, e)
                 raise e
             return
-        else:
-            # Create the subprocess via asyncio and then await the result.
-            #if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd    = self._config.task_cwd,
-                stdout = asyncio.subprocess.PIPE,
-                stderr = asyncio.subprocess.PIPE,
-            )
-            (stdout_data, stderr_data) = await proc.communicate()
-            self._stdout = stdout_data.decode()
-            self._stderr = stderr_data.decode()
-            #if debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}'\n")
+
+        #----------------------------------------
+        # Create the subprocess via asyncio and then await the result.
+
+        #if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
+
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd    = self._config.task_cwd,
+            stdout = asyncio.subprocess.PIPE,
+            stderr = asyncio.subprocess.PIPE,
+        )
+        (stdout_data, stderr_data) = await proc.communicate()
+
+        #if debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}', return code {proc.returncode}\n")
 
         if proc.returncode:
-            e = ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
+            ex = subprocess.CalledProcessError(
+                        returncode = Utils.check(int, proc.returncode),
+                        cmd        = command,
+                        output     = stdout_data,
+                        stderr     = stderr_data
+                    )
             script_path = os.path.join(self._config.script_dir, self._config.script_file)
-            self.log_command_failure(script_path, command, e)
-            raise e
-        elif self._config.verbose or self._config.debug:
+            self.log_command_failure(script_path, command, ex)
+            raise ex
+
+        self._stdout = stdout_data.decode()
+        self._stderr = stderr_data.decode()
+        if self._config.verbose or self._config.debug:
             self.log_command_done(command)
 
     #----------------------------------------
@@ -1653,8 +1665,6 @@ class Tracer:
         buffer = "".join(Tracer.trellis_stack) + text + "\x1B[0m" + '\n'
         Log.log(buffer)
 
-
-
 # endregion
 ####################################################################################################
 # region Loader
@@ -1669,6 +1679,7 @@ class Loader:
     loaded_files : list[str]
     cv_config : contextvars.ContextVar
     cv_token : contextvars.Token
+    match_pointer = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
 
     @classmethod
     def reset(cls, *args, **kwargs):
@@ -1804,8 +1815,6 @@ class Loader:
         return flags
 
     #-----------------------------------------------------------------------------------------------
-
-    match_pointer = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
@@ -2000,7 +2009,7 @@ class Runner:
                 if task._config.should_fail:
                     cls.finished_tasks.append(task)
 
-            fail_count = Stats.tasks_failed + Stats.tasks_cancelled + Stats.tasks_broken
+            fail_count = Stats.tasks_failed + Stats.tasks_broken
             if hancho.config.keep_going and fail_count >= hancho.config.keep_going:
                 Log.log("Too many failures, cancelling tasks and stopping build\n")
                 cls.cancel_all_tasks()
@@ -2035,7 +2044,9 @@ class Runner:
             assert False, f"Don't know how to run tool {tool}"
 
 # endregion
-#---------------------------------------------------------------------------------------------------
+####################################################################################################
+#region aliases and if __name__ == "__main__"
+
 # These are aliases to stuff in Hancho that have been pulled out so they can be used by
 # template expansion so you can do {flatten(x)} instead of {Utils.flatten(x)} in macros, and
 # use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
@@ -2069,3 +2080,5 @@ if __name__ == "__main__":
     sys.exit(main())
 else:
     init()
+
+#endregion
