@@ -184,7 +184,7 @@ class Log:
 
         # Unwrap a few types that we want to view as containers
         if   isinstance(val, Task):                val = val.__dict__
-        elif isinstance(val, Expander):            val = val.config
+        elif isinstance(val, Expander):            val = val._context
         elif isinstance(val, contextvars.Context): val = list(val.keys())
 
         #
@@ -577,6 +577,9 @@ class Task:
         # Save the context, we will use it when we create the asyncio.Task
         self._context     = contextvars.copy_context()
         self._config      = Dict(hancho.config, *args, **kwargs)
+
+        # This doesn't work and I'm not going to figure out why right now.
+        #self._config = Expander.wrap(self._config, self._config.get("trace", False))
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1390,12 +1393,11 @@ class Expander(abc.MutableMapping[str, object]):
         return key in self._context
 
     def __iter__(self):
-        assert False
-        raise TypeError("Hancho.Expander cannot be iter'd")
+        for key in self._context:
+            yield key
 
     def __len__(self):
-        assert False
-        raise TypeError("Hancho.Expander cannot be len'd")
+        return self._context.__len__()
 
     def __repr__(self):
         result = f"{self.__class__.__name__} @ {hex(id(self))}"
@@ -1446,7 +1448,9 @@ class Expander(abc.MutableMapping[str, object]):
             trace.log_result(result)
 
         # MAGIC EXPANDY THING IS HERE
-        # this breaks some tests...
+        # this breaks some doctest_read_nested_c_first, doctest_template_nones because they don't
+        # expect expansion to change a Dict.
+        # So, this is probably a bad idea...
         #self._context[key] = result
 
         return result
