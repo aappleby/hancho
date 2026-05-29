@@ -917,36 +917,35 @@ class Task:
 
         self.log_task_start()
 
-        try:
+        #----------------------------------------
+        # Wait for enough jobs to free up to run this task and then run the commands.
 
-            #----------------------------------------
-            # Wait for enough jobs to free up to run this task and then run the commands.
-
-            self.to_state(Task.GET_CORES)
-            async with Runner.Cores(self._config.core_count):
-
-                # Run the task's commands!
-                self.to_state(Task.RUNNING)
-                for command in Utils.flatten(self._config.command):
+        self.to_state(Task.GET_CORES)
+        async with Runner.Cores(self._config.core_count):
+            # Run the task's commands!
+            self.to_state(Task.RUNNING)
+            for command in Utils.flatten(self._config.command):
+                try:
                     await self.run_command(command)
+                except BaseException as ex:  # pylint: disable=broad-exception-caught
+                    # Both broken and failed tasks should end up here.
+                    self.log_task_failed(ex)
+                    self.to_state(Task.FAILED)
+                    if self._config.should_fail:
+                        return
+                    else:
+                        raise ex
 
-            #----------------------------------------
-            # Task finished successfully
 
-            if self._config.verbose or self._config.debug:
-                self.log_task_done()
+        #----------------------------------------
+        # Task finished successfully
 
-            self.to_state(Task.FINISHED)
-            Stats.tasks_finished += 1
+        if self._config.verbose or self._config.debug:
+            self.log_task_done()
 
-        except BaseException as ex:  # pylint: disable=broad-exception-caught
-            # Both broken and failed tasks should end up here.
-            self.log_task_failed(ex)
-            self.to_state(Task.FAILED)
-            if self._config.should_fail:
-                return
-            else:
-                raise ex
+        self.to_state(Task.FINISHED)
+        Stats.tasks_finished += 1
+
 
     #--------------------------------------------------------------------------------
 
