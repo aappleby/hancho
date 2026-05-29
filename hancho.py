@@ -82,9 +82,9 @@ def main():
 
     time_a = time.perf_counter()
 
-    script_path = os.path.join(hancho.config.root_dir, hancho.config.root_file)
-    if not os.path.exists(script_path):
-        path = os.path.relpath(script_path, os.getcwd())
+    script_path = cast(str, Path.join(hancho.config.root_dir, hancho.config.root_file))
+    if not Path.exists(script_path):
+        path = Path.rel(script_path, os.getcwd())
         Log.log(f"Could not load build script {path}\n")
         sys.exit(-1)
     Loader.root_repo = Loader.load_file(script_path, True)
@@ -459,8 +459,8 @@ class Path:
         elif Utils.is_collection(path2):
             result = [Path.rel(path1, p) for p in path2]
         elif isinstance(path1, str) and isinstance(path2, str):
-            path1 = os.path.normpath(path1)
-            path2 = os.path.normpath(path2)
+            path1 = cast(str, Path.norm(path1))
+            path2 = cast(str, Path.norm(path2))
             result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
         else:
             assert False, f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
@@ -481,6 +481,13 @@ class Path:
     real = Utils.recursify(os.path.realpath)
     ext  = Utils.recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
     stem = Utils.recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
+
+    isfile   = lambda path : os.path.isfile(path)
+    isdir    = lambda path : os.path.isfile(path)
+    exists   = lambda path : os.path.exists(path)
+    dirname  = lambda path : os.path.dirname(path)
+    split    = lambda path : os.path.split(path)
+    splitext = lambda path : os.path.splitext(path)
 
 # endregion
 ####################################################################################################
@@ -519,23 +526,26 @@ class Dict(dict):
     #----------------------------------------
     # Object
 
+    def on_keyerror(self, key):
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
+
     def __getattr__(self, key : str):
-        try:
+        try: # Dict.__getattr__ KeyError -> AttributeError
             return dict.__getitem__(self, key)
         except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
+            self.on_keyerror(key)
 
     def __setattr__(self, key : str, val : Any):
-        try:
+        try: # Dict.__setattr__ KeyError -> AttributeError
             return dict.__setitem__(self, key, val)
         except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
+            self.on_keyerror(key)
 
     def __delattr__(self, key : str):
-        try:
+        try: # Dict.__delattr__ KeyError -> AttributeError
             return dict.__delattr__(self, key)
         except KeyError as e:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'") from e
+            self.on_keyerror(key)
 
     def __or__(self, other):
         return Dict(self, other)
@@ -569,14 +579,19 @@ class Tool(Dict): pass
 # region Task
 # Task object + bookkeeping
 
-class TaskCollision(BaseException): pass
-class TaskFailed(BaseException): pass
-class TaskCancelled(BaseException): pass
-class TaskMissingDir(BaseException): pass
+class TaskCollision  (BaseException): pass
+class TaskMissingDir (BaseException): pass
 class TaskMissingPath(BaseException): pass
-class TaskBadPath(BaseException): pass
-class TaskBadCommand(BaseException): pass
-class CommandFailed(BaseException): pass
+class TaskBadPath    (BaseException): pass
+class TaskBadCommand (BaseException): pass
+class TaskBadState   (BaseException): pass
+
+class CommandFailed  (BaseException): pass
+
+class TaskFailed   (BaseException): pass
+class TaskBroken   (BaseException): pass
+class TaskCancelled(BaseException): pass
+class TaskSkipped  (BaseException): pass
 
 class Task:
 
@@ -646,11 +661,11 @@ class Task:
 
         if not self._state in transitions:
             message = f"State {self._state} -> {new_state} has no edges in the transition table"
-            raise RuntimeError(message)
+            raise TaskBadState(message)
         edges = transitions[self._state]
         if not new_state in edges:
             message = f"Can't transition from {self._state} to {new_state}!"
-            raise RuntimeError(message)
+            raise TaskBadState(message)
         self._state = new_state
 
     # ----------------------------------------
@@ -704,26 +719,28 @@ class Task:
     # FIXME We're gonna merge task_init into this and then break it back out into smaller pieces
 
     async def task_main2(self):
-        try:
+        try: # Task-level error handling
             return await self.task_main()
+
         except TaskCancelled as err:
             self.to_state(Task.CANCELLED)
             self.log_task_cancelled(err)
-            raise err
-        except TaskFailed as err:
-            script_path = os.path.join(self._config.script_dir, self._config.script_file)
-            self.log_command_failure(script_path, self._config.command, err)
-            raise err
+            raise err # raising TaskCancelled
         except (TaskBadPath, TaskMissingDir, TaskCollision, FileNotFoundError, TaskBadCommand) as err:
             self.to_state(Task.BROKEN)
             self.log_task_broken(err)
-            raise TaskFailed from err
-        except CommandFailed as err:
-            self.log_task_failed(err)
+            raise TaskFailed from err # detailed errors -> taskfailed
+        except (TaskFailed, CommandFailed) as err:
             self.to_state(Task.FAILED)
-            raise TaskFailed from err
+            script_path = Path.join(self._config.script_dir, self._config.script_file)
+            self.log_command_failure(script_path, self._config.command, err)
+            self.log_task_failed(err)
+            raise TaskFailed from err  # taskfailed / taskcancelled -> taskfailed
         except BaseException as err:
-            raise err
+            #raise err
+            import traceback
+            traceback.print_exc()
+            raise TaskCancelled from err  # everything else -> taskcancelled (why?)
 
     #----------------------------------------
 
@@ -738,17 +755,17 @@ class Task:
                         "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild", "shuffle",
                         "trace", "use_color", "build_all"]
 
-        for f in path_fields:   c[f] = os.path.normpath(e[f]) #type:ignore
+        for f in path_fields:   c[f] = Path.norm(e[f]) #type:ignore
         for f in flag_fields:   c[f] = e[f]
 
         #----------------------------------------
         # Await everything awaitable in this task's config. If any of this tasks's dependencies
         # failed, we propagate a cancellation to downstream tasks.
 
-        try:
+        try: # Dependent task errors cancel this task.
             self.to_state(Task.WAITING)
             await Utils.await_variant_xip(self._config)
-        except BaseException as err:
+        except TaskFailed as err:
             raise TaskCancelled from err
 
         #----------------------------------------
@@ -838,7 +855,7 @@ class Task:
 
         for k1, v1 in self._config.items():
             if k1 == "in_depfile":
-                if isinstance(v1, str) and os.path.isfile(v1):
+                if isinstance(v1, str) and Path.isfile(v1):
                     self._in_files.append(v1)
             elif k1.startswith("out_"):
                 self._out_files.append(v1)
@@ -858,14 +875,14 @@ class Task:
         # Check that all build files would end up under build_dir
 
         for file in self._out_files:
-            file = os.path.abspath(file)
+            file = cast(str, Path.abs(file))
             if not file.startswith(self._config.build_dir):
                 raise TaskBadPath(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
 
         # ----------------------------------------
         # Check for missing paths
 
-        if not os.path.exists(self._config.task_cwd):
+        if not Path.exists(self._config.task_cwd):
             raise TaskMissingDir(self._config.task_cwd)
 
         if not self._config.build_dir.startswith(self._config.repo_dir):
@@ -877,20 +894,20 @@ class Task:
         # FIXME add test for input file = None
 
         for file in self._in_files:
-            if not os.path.exists(file):
+            if not Path.exists(file):
                 raise FileNotFoundError(file)
 
         # ----------------------------------------
         # Make sure our output directories exist
 
         for file in self._out_files:
-            os.makedirs(os.path.dirname(file), exist_ok=True)
+            os.makedirs(Path.dirname(file), exist_ok=True)
 
         # ----------------------------------------
         # Check for task collisions
 
         for file in self._out_files:
-            real_file = os.path.realpath(file)
+            real_file = cast(str, Path.real(file))
             if real_file in Loader.filename_to_fingerprint:
                 raise TaskCollision(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.filename_to_fingerprint[real_file] = real_file
@@ -917,7 +934,12 @@ class Task:
             # Run the task's commands!
             self.to_state(Task.RUNNING)
             for command in Utils.flatten(self._config.command):
-                await self.run_command(command)
+                if not isinstance(command, str) and not callable(command):
+                    raise TaskBadCommand(f"Don't know what to do with command '{command}'")
+                else:
+                    if self._config.verbose or self._config.debug:
+                        self.log_command_start(command)
+                    await self.run_command(command)
 
         #----------------------------------------
         # Task finished successfully
@@ -927,7 +949,6 @@ class Task:
 
         self.to_state(Task.FINISHED)
         Stats.tasks_finished += 1
-
 
     #--------------------------------------------------------------------------------
 
@@ -945,7 +966,7 @@ class Task:
 
         # Check if any of our output files are missing.
         for file in self._out_files:
-            if not os.path.exists(file):
+            if not Path.exists(file):
                 return f"Rebuilding because {Path.rel(file, cwd)} is missing"
 
         # Check if any of our input files are newer than the output files.
@@ -965,7 +986,7 @@ class Task:
         # Check all dependencies in the C dependencies file, if present.
         depfile = self._config.in_depfile
 
-        if depfile and os.path.exists(depfile):
+        if depfile and Path.exists(depfile):
             if self._config.debug:
                 Log.log(f"Found C dependencies file {depfile}\n")
             with open(depfile, encoding="utf-8") as depfile:
@@ -982,7 +1003,7 @@ class Task:
                     raise ValueError(f"Invalid dependency file format {self._config.depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [os.path.join(self._config.task_cwd, d) for d in deplines]
+                deplines = [cast(str, Path.join(self._config.task_cwd, d)) for d in deplines]
                 for abs_file in deplines:
                     if Utils.mtime(abs_file) >= min_out:
                         return f"Rebuilding because {Path.rel(abs_file, cwd)} has changed"
@@ -995,13 +1016,6 @@ class Task:
 
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
-
-        # Non-string non-callable commands are not valid
-        if not isinstance(command, str) and not callable(command):
-            raise TaskBadCommand(f"Don't know what to do with {command}")
-
-        if self._config.verbose or self._config.debug:
-            self.log_command_start(command)
 
         #----------------------------------------
         # Custom commands just get called and then early-out'ed.
@@ -1029,14 +1043,14 @@ class Task:
         )
         (stdout_data, stderr_data) = await proc.communicate()
 
-        #if debug: Log.log(f"Task {hex(id(self))} subprocess done '{command}', return code {proc.returncode}\n")
+        self._stdout = stdout_data.decode()
+        self._stderr = stderr_data.decode()
+
+        #if debug: Log.log(f"Task {hex(id(self))} subprocess done ({proc.returncode}) '{command}'\n")
 
         if proc.returncode:
             raise CommandFailed()
-
-        self._stdout = stdout_data.decode()
-        self._stderr = stderr_data.decode()
-        if self._config.verbose or self._config.debug:
+        elif self._config.verbose or self._config.debug:
             self.log_command_done(command)
 
     #----------------------------------------
@@ -1096,7 +1110,7 @@ class Task:
         Stats.tasks_failed += 1
 
         if True:
-            script_path = os.path.join(self._config.script_dir, self._config.script_file)
+            script_path = Path.join(self._config.script_dir, self._config.script_file)
             #import traceback
             message  = self.log_prefix()
             message += Utils.color(255,0,0)
@@ -1341,7 +1355,7 @@ class Expander(abc.MutableMapping[str, object]):
 
     # FIXME do I need the exception translation here? I think I do, because these happen inside eval()
     def __getitem__(self, key):
-        try:
+        try: # Expander.__getitem__
             return self._get(key)
         except AttributeError as ex:
             raise KeyError from ex
@@ -1355,7 +1369,7 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     def __getattr__(self, key):
-        try:
+        try: # Expander.__getattr__
             return self._get(key)
         except KeyError as ex:
             raise AttributeError from ex
@@ -1450,18 +1464,9 @@ class Expander(abc.MutableMapping[str, object]):
     def _eval(context : Dict | Expander, expr : str):
         assert Utils.is_literal(expr)
         with Tracer(context, f"_eval('{expr}')") as tracer:
-            try:
-                # FIXME This should've broken something, but it didn't - why not? Add test?
-                #_locals = ChainMap(context)
-                # Because the context was built on top of the cv_config if it came from a Task.
-                _locals = ChainMap(context, Loader.cv_config.get(), aliases)
-                _globals = hancho.__dict__
-                result = eval(expr, _globals, _locals)
-            except RecursionError as err:
-                raise err
-            except BaseException as err:
-                Tracer.log(cast(bool, context.trace), f"{type(err).__name__}: {err}")
-                raise err
+            _locals = ChainMap(context, Loader.cv_config.get(), aliases)
+            _globals = hancho.__dict__
+            result = eval(expr, _globals, _locals)
             tracer.log_result(result)
         return result
 
@@ -1469,7 +1474,7 @@ class Expander(abc.MutableMapping[str, object]):
     def _expand_macro(context : Dict | Expander, macro : str) -> Any:
         assert Utils.is_macro(macro)
         with Tracer(context, f"_expand_macro('{macro}')") as tracer:
-            try:
+            try: # catch non-recursion errors and return original macro
                 result = Expander.eval(context, macro[1:-1])
             except RecursionError as e:
                 raise e
@@ -1484,12 +1489,9 @@ class Expander(abc.MutableMapping[str, object]):
         with Tracer(context, f"_expand_template('{template}')") as tracer:
             blocks = Expander.split(template)
             for (i, block) in enumerate(blocks):
-                try:
-                    if isinstance(block, Expander.Macro):
-                        value = Expander._expand_macro(context, block)
-                        block = Utils.stringify_variant(value)
-                except RecursionError as e:
-                    raise e
+                if isinstance(block, Expander.Macro):
+                    value = Expander._expand_macro(context, block)
+                    block = Utils.stringify_variant(value)
                 blocks[i] = block
             result = "".join(blocks)
             tracer.log_result(result)
@@ -1663,7 +1665,7 @@ class Loader:
             desc        = "",
             command     = "",
 
-            hancho_dir  = os.path.dirname(__file__),
+            hancho_dir  = Path.dirname(__file__),
             task_cwd    = "{repo_dir}",
             root_dir    = os.getcwd(),
             root_file   = "build.hancho",
@@ -1756,7 +1758,7 @@ class Loader:
                     val = False
                 else:
                     for converter in (float, int, str):
-                        try:
+                        try: # extra flag converter
                             val = converter(val)
                             break
                         except ValueError:
@@ -1771,9 +1773,9 @@ class Loader:
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
         script_path = hancho.config.expand_all(script_path, str)
-        script_path = os.path.abspath(script_path)
+        script_path = cast(str, Path.abs(script_path))
 
-        assert os.path.isfile(script_path)
+        assert Path.isfile(script_path)
         with open(script_path, encoding="utf-8") as file:
             Loader.loaded_files.append(script_path)
             source = file.read()
@@ -1786,8 +1788,8 @@ class Loader:
 
         code = compile(source, script_path, "exec", dont_inherit=True)
 
-        (script_dir, script_file) = os.path.split(script_path)
-        (script_name, script_ext) = os.path.splitext(script_file)
+        (script_dir, script_file) = Path.split(script_path)
+        (script_name, script_ext) = Path.splitext(script_file)
 
         cls.log_load(script_path, is_repo)
 
@@ -1825,7 +1827,7 @@ class Loader:
         config_dump = Log.dump_to_str(key = None, val = new_config)
         config_dump = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
-        script_path_real = os.path.realpath(script_path)
+        script_path_real = Path.real(script_path)
         dedupe_key = hash((script_path_real, config_dump))
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
@@ -1952,12 +1954,14 @@ class Runner:
             task = cls.started_tasks.pop(0)
             asyncio_task = Utils.check(asyncio.Task, task._asyncio_task)
 
-            try:
+            try: # top-level task exception handler
                 await asyncio_task
                 cls.finished_tasks.append(task)
-            except BaseException as ex:  # pylint: disable=broad-exception-caught
-                # Both broken and failed tasks should end up here.
-                #task.log_task_failure(ex)
+            except TaskBroken as ex:
+                pass
+            except TaskFailed as ex:
+                pass
+            except TaskCancelled as ex:
                 pass
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
@@ -1983,9 +1987,9 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = os.path.realpath(task._config.eval("build_root", str))
-                build_root = os.path.relpath(build_root, os.getcwd())
-                if os.path.isdir(build_root):
+                build_root = Path.real(task._config.eval("build_root", str))
+                build_root = Path.rel(build_root, os.getcwd())
+                if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}\n")
                     import shutil
                     shutil.rmtree(build_root, ignore_errors=True)
