@@ -280,6 +280,7 @@ class TestTasks(unittest.TestCase):
         def run():
             hancho.init(quiet = True)
             hancho.Task(
+                name    = "test_dep_changed {in_src}",
                 command = "sleep 0.1 && touch {out_obj}",
                 in_temp = [dummy],
                 in_src  = "src/test.cpp",
@@ -373,6 +374,7 @@ class TestTasks(unittest.TestCase):
             hancho.init(quiet = True)
             time.sleep(0.01)
             compile = hancho.Tool(
+                name       = "test_header_changed {in_src}",
                 command    = "gcc -MMD -c {in_src} -o {out_obj}",
                 in_depfile = "{ext(out_obj, '.d')}",
                 out_obj    = "{ext(in_src, '.o')}",
@@ -395,6 +397,7 @@ class TestTasks(unittest.TestCase):
             hancho.init(quiet = True)
             time.sleep(0.01)
             compile = hancho.Dict(
+                name       = "test_input_changed {in_src}",
                 command    = "gcc -MMD -c {in_src} -o {out_obj}",
                 in_src     = None,
                 in_depfile = "{ext(out_obj, '.d')}",

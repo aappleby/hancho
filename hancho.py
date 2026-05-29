@@ -737,9 +737,9 @@ class Task:
             self.log_task_failed(err)
             raise TaskFailed from err  # taskfailed / taskcancelled -> taskfailed
         except BaseException as err:
-            #raise err
-            import traceback
-            traceback.print_exc()
+            #import traceback
+            #traceback.print_exc() we are getting IsADirectoryError here due to trying to open
+            # in_depfile when in_depfile points at a directory :P
             raise TaskCancelled from err  # everything else -> taskcancelled (why?)
 
     #----------------------------------------
@@ -797,6 +797,8 @@ class Task:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
         def expand(k1, v1):
+            if k1 == "in_depfile" and v1 == "":
+                return v1
             if k1.startswith("in_") or k1.startswith("out_"):
                 v1 = self._config.expand_all(v1)
                 v1 = Path.join(self._config.script_dir, v1)
@@ -811,6 +813,8 @@ class Task:
             return Path.join(self._config.task_cwd, v)
 
         def fix_out_path(v : str):
+            if not v: return v
+
             # Note this conditional needs to be first, as build_dir can itself be under task_cwd
             if v.startswith(self._config.build_dir):
                 # Absolute path under build_dir, do nothing.
@@ -1125,9 +1129,9 @@ class Task:
     def log_task_broken(self, ex):
         Stats.tasks_broken += 1
 
-        import traceback
+        #import traceback
         Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
-        Log.log(traceback.format_exc())
+        #Log.log(traceback.format_exc())
 
     def log_task_cancelled(self, ex):
         Stats.tasks_cancelled += 1
