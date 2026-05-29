@@ -40,6 +40,8 @@ def __getattr__(name):
 
     if name == "config":
         return Loader.cv_config.get()
+    elif hasattr(Loader.aliases, name):
+        return Loader.aliases[name]
     else:
         raise AttributeError(name)
 
@@ -55,11 +57,6 @@ def init(*args, **kwargs):
     If you are importing Hancho directly, you should call this as
     hancho.init(debug = true, quiet = false, ...)
     """
-
-    # FIXME not sure if this should go here, but these need to be accessible by the client but not in globals() here
-    # if possible.
-    hancho.__dict__["load"] = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, kwargs)
-    hancho.__dict__["repo"] = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, kwargs)
 
     reset(*args, **kwargs)
 
@@ -349,7 +346,6 @@ class Utils:
     def obj_to_color(cls, obj):
         rand = cls.rand
         rand.seed(id(obj))
-        #return Utils.color(rand.randint(128, 255), rand.randint(128, 255), rand.randint(128, 255))
         return Utils.color_hsv(rand.random(), 0.3, 1.0)
 
     #----------------------------------------
@@ -586,7 +582,7 @@ class Task:
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task
 
-        # Tasks depend on all .hancho files that were loaaded when the task was created.
+        # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
         # really possible.
         self._loaded_files : list[str] = list(Loader.loaded_files)
@@ -605,32 +601,32 @@ class Task:
         # FIXME - How many of these do we _really_ need to expand in the constructor?
         # It might be better to do all of them in task_init
 
-        Expander.xip(c, "root_dir", str)
-        Expander.xip(c, "root_file", str)
-        Expander.xip(c, "repo_dir", str)
-        Expander.xip(c, "repo_file", str)
-        Expander.xip(c, "script_dir", str)
-        Expander.xip(c, "script_file", str)
-        Expander.xip(c, "task_cwd", str)
-        Expander.xip(c, "build_root", str)
-        Expander.xip(c, "build_dir", str)
+        Expander.xip(e, "root_dir", str)
+        Expander.xip(e, "root_file", str)
+        Expander.xip(e, "repo_dir", str)
+        Expander.xip(e, "repo_file", str)
+        Expander.xip(e, "script_dir", str)
+        Expander.xip(e, "script_file", str)
+        Expander.xip(e, "task_cwd", str)
+        Expander.xip(e, "build_root", str)
+        Expander.xip(e, "build_dir", str)
 
         # FIXME how do we make it so we don't need this?
         c.build_dir = os.path.normpath(c.build_dir)
 
-        Expander.xip(c, "core_count", int)
-        Expander.xip(c, "keep_going", int) # FIXME we're not using this?
-        Expander.xip(c, "depformat", str)
-        Expander.xip(c, "build_tag", str)
-        Expander.xip(c, "target", str)
-        Expander.xip(c, "tool", str)
-        Expander.xip(c, "verbose", bool)
-        Expander.xip(c, "debug", bool)
-        Expander.xip(c, "dry_run", bool)
-        Expander.xip(c, "quiet", bool)
-        Expander.xip(c, "rebuild", bool)
-        Expander.xip(c, "shuffle", bool)
-        Expander.xip(c, "should_fail", bool)
+        Expander.xip(e, "core_count", int)
+        Expander.xip(e, "keep_going", int)
+        Expander.xip(e, "depformat", str)
+        Expander.xip(e, "build_tag", str)
+        Expander.xip(e, "target", str)
+        Expander.xip(e, "tool", str)
+        Expander.xip(e, "verbose", bool)
+        Expander.xip(e, "debug", bool)
+        Expander.xip(e, "dry_run", bool)
+        Expander.xip(e, "quiet", bool)
+        Expander.xip(e, "rebuild", bool)
+        Expander.xip(e, "shuffle", bool)
+        Expander.xip(e, "should_fail", bool)
 
         # Bookkeeping stuff
         self._task_index : int = 0
@@ -706,6 +702,7 @@ class Task:
         self.to_state(Task.STARTED)
 
         self._asyncio_task = asyncio.create_task(self.task_main(), context = self._context)
+        # FIXME should this be in log_task_start? Needs cleanup.
         Stats.tasks_started += 1
 
     async def await_done(self):
@@ -746,7 +743,7 @@ class Task:
             with chdir(self._config.script_dir):
                 self.to_state(Task.INIT)
                 if self._config.debug:
-                    Log.log(f"Task before expand: {self}\n")
+                    Log.log(f"Task config before expand: {self._config}\n")
 
                 assert os.getcwd() == self._config.script_dir
 
@@ -755,7 +752,7 @@ class Task:
                 self.task_init()
 
                 if self._config.debug:
-                    Log.log(f"Task after expand: {self}\n")
+                    Log.log(f"Task config after expand: {self._config}\n")
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
@@ -1508,15 +1505,17 @@ class Expander(abc.MutableMapping[str, object]):
     # Template variable lookup order:
     # 1. The config we're expanding
     # 2. The script-local hancho.config
-    # 3. The set of convenience aliases
-    # 4. The Hancho module.
+    # 3. The Hancho module (including convenience aliases)
 
     @staticmethod
     def _eval(context : Dict | Expander, expr : str):
         assert Utils.is_literal(expr)
         with Tracer(context, f"_eval('{expr}')") as tracer:
             try:
-                _locals = ChainMap(context, Loader.cv_config.get(), Loader.template_aliases)
+                # FIXME This should've broken something, but it didn't - why not? Add test?
+                #_locals = ChainMap(context)
+                # Because the context was built on top of the cv_config if it came from a Task.
+                _locals = ChainMap(context, Loader.cv_config.get(), Loader.aliases)
                 _globals = hancho.__dict__
                 result = eval(expr, _globals, _locals)
             except RecursionError as err:
@@ -1563,8 +1562,7 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     def get[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
-        if not hasattr(context, "_get"):
-            pass
+        context = Expander.wrap(context, cast(bool, context.trace))
         result = context._get(key)
         assert isinstance(result, as_type)
         return result
@@ -1579,7 +1577,6 @@ class Expander(abc.MutableMapping[str, object]):
     @staticmethod
     def eval[T](context : Dict | Expander, expr : str, as_type : type[T] = object) -> T:
         assert Utils.is_literal(expr)
-        if expr is None: return None
         result = Expander._eval(context, expr)
         assert isinstance(result, as_type)
         return result
@@ -1629,8 +1626,6 @@ class Expander(abc.MutableMapping[str, object]):
             variant = result
         raise RecursionError("expand_all() - Template expansion failed to terminate")
 
-
-
 # endregion
 ####################################################################################################
 # region Tracer
@@ -1640,12 +1635,10 @@ class Tracer:
     # The maximum number of recursion levels we will do to expand a macro.
     # Tests currently require MAX_DEPTH >= 6
     MAX_DEPTH : int = 20
-
     trellis_stack : list[str]
 
     @classmethod
     def reset(cls):
-        #cls.trellis_stack = [Utils.color(0)]
         cls.trellis_stack = []
 
     def __init__(self, context : Dict | Expander, enter_message):
@@ -1669,22 +1662,22 @@ class Tracer:
         self.result = result
         return result
 
+    def print_result(self, text):
+        result_color = Utils.color()
+        if not isinstance(self.result, (Expander, Dict)):
+            result_color = Utils.obj_to_color(self.result)
+        Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{text}{Utils.color()}")
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         Tracer.trellis_stack.pop()
-        if isinstance(self.result, Expander):
-            text = f"{self.result}"
-            result_color = Utils.obj_to_color(self.result)
-            Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{text}{Utils.color()}")
-        elif isinstance(self.result, Dict):
-            tag = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
-            result_color = Utils.obj_to_color(self.result)
-            Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{tag}{Utils.color()}")
+        if isinstance(self.result, (Expander, Dict)):
+            text = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
+            self.print_result(text)
         else:
             text = f"{self.result}"
             if self.result is None: text = "<None>"
             if self.result == "":   text = "<Empty>"
-            result_color = Utils.color()
-            Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{text}{Utils.color()}")
+            self.print_result(text)
         return False
 
     @staticmethod
@@ -1783,24 +1776,26 @@ class Loader:
 
     #-----------------------------------------------------------------------------------------------
     # These are aliases to stuff in Hancho that have been pulled out so they can be used by template
-    # expansion so you can do {flatten(x)} instead of {hancho.flatten(x)}
+    # expansion so you can do {flatten(x)} instead of {hancho.flatten(x)} in macros=, and use
+    # "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
 
-    template_aliases = Dict(
-
+    aliases = Dict(
         # path.dirname and path.basename used by makefile-related rules
-        path      = os.path,
-        abs       = Path.abs,
-        base      = Path.base,
-        ext       = Path.ext,
-        norm      = Path.norm,
-        real      = Path.real,
-        rel       = Path.rel,
-        stem      = Path.stem,
+        path = os.path,
+        abs  = Path.abs,
+        base = Path.base,
+        ext  = Path.ext,
+        norm = Path.norm,
+        real = Path.real,
+        rel  = Path.rel,
+        stem = Path.stem,
+        load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, kwargs),
+        repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, kwargs),
 
-        flatten   = Utils.flatten,
-        run_cmd   = Utils.run_cmd,
-        color     = Utils.color,
-        join      = Utils.join,
+        flatten = Utils.flatten,
+        run_cmd = Utils.run_cmd,
+        color   = Utils.color,
+        join    = Utils.join,
     )
 
     #-----------------------------------------------------------------------------------------------
