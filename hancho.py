@@ -40,14 +40,14 @@ def __getattr__(name):
 
     if name == "config":
         return Loader.cv_config.get()
-    elif hasattr(Loader.aliases, name):
-        return Loader.aliases[name]
+    elif hasattr(aliases, name):
+        return aliases[name]
     else:
         raise AttributeError(name)
 
 def __dir__():
     # Not sure yet if we need to tweak the public dir of hancho.
-    return [*hancho.__dict__.keys(), "config"]
+    return [*hancho.__dict__.keys(), *aliases.keys(), "config"]
 
 #----------------------------------------
 
@@ -57,7 +57,6 @@ def init(*args, **kwargs):
     If you are importing Hancho directly, you should call this as
     hancho.init(debug = true, quiet = false, ...)
     """
-
     reset(*args, **kwargs)
 
 #----------------------------------------
@@ -591,45 +590,13 @@ class Task:
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
         # Expanded config options
-        c = self._config
-        e = Expander.wrap(c, c.get("trace", False))
 
         # These often contain filenames which could be from input files, like "copy {in} to {out}".
         # We need to wait until after inputs are awaited before we can expand these.
         # FIXME actually, is that true? Can we pass filenames down before we've awaited? Maybe?
-        self._name : str = "<name not ready yet>"
-        self._desc : str = "<desc not ready yet>"
-        self._command : Tree[str] | function = "<command not ready yet>"
-
-        # FIXME - How many of these do we _really_ need to expand in the constructor?
-        # It might be better to do all of them in task_init
-
-        Expander.xip(e, "root_dir", str)
-        Expander.xip(e, "root_file", str)
-        Expander.xip(e, "repo_dir", str)
-        Expander.xip(e, "repo_file", str)
-        Expander.xip(e, "script_dir", str)
-        Expander.xip(e, "script_file", str)
-        Expander.xip(e, "task_cwd", str)
-        Expander.xip(e, "build_root", str)
-        Expander.xip(e, "build_dir", str)
-
-        # FIXME how do we make it so we don't need this?
-        c.build_dir = os.path.normpath(c.build_dir)
-
-        Expander.xip(e, "core_count", int)
-        Expander.xip(e, "keep_going", int)
-        Expander.xip(e, "depformat", str)
-        Expander.xip(e, "build_tag", str)
-        Expander.xip(e, "target", str)
-        Expander.xip(e, "tool", str)
-        Expander.xip(e, "verbose", bool)
-        Expander.xip(e, "debug", bool)
-        Expander.xip(e, "dry_run", bool)
-        Expander.xip(e, "quiet", bool)
-        Expander.xip(e, "rebuild", bool)
-        Expander.xip(e, "shuffle", bool)
-        Expander.xip(e, "should_fail", bool)
+        #self._name : str = "<name not ready yet>"
+        #self._desc : str = "<desc not ready yet>"
+        #self._command : Tree[str] | function = "<command not ready yet>"
 
         # Bookkeeping stuff
         self._task_index : int = 0
@@ -742,20 +709,27 @@ class Task:
 
         #----------------------------------------
 
+        # FIXME - How many of these do we _really_ need to expand in the constructor?
+        # It might be better to do all of them in task_init
+
+        c = self._config
+        e = Expander.wrap(c, c.get("trace", False))
+
+        Expander.xip(e, "debug", bool)
+        Expander.xip(e, "script_dir", str)
+
         try:
+            self.to_state(Task.INIT)
+            if self._config.debug:
+                Log.log(f"Task config before expand: {self._config}\n")
+
+            # Initialize the task, which means expanding everything else that needs expanding
+            # and fixing up paths to point to task_cwd or build_dir.
             with chdir(self._config.script_dir):
-                self.to_state(Task.INIT)
-                if self._config.debug:
-                    Log.log(f"Task config before expand: {self._config}\n")
-
-                assert os.getcwd() == self._config.script_dir
-
-                # Initialize the task, which means expanding everything else that needs expanding
-                # and fixing up paths to point to task_cwd or build_dir.
                 self.task_init()
 
-                if self._config.debug:
-                    Log.log(f"Task config after expand: {self._config}\n")
+            if self._config.debug:
+                Log.log(f"Task config after expand: {self._config}\n")
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
@@ -775,7 +749,7 @@ class Task:
         #----------------------------------------
         # Early-out if this is a no-op task
 
-        if not self._command:
+        if not self._config.command:
             self.log_task_done()
             self.to_state(Task.FINISHED)
             return
@@ -804,7 +778,7 @@ class Task:
 
                 # Run the task's commands!
                 self.to_state(Task.RUNNING)
-                for command in Utils.flatten(self._command):
+                for command in Utils.flatten(self._config.command):
                     await self.run_command(command)
 
             #----------------------------------------
@@ -859,6 +833,15 @@ class Task:
         #----------------------------------------
         # Make all paths absolute and move all output files so they're under build_dir.
 
+        c = self._config
+        e = Expander.wrap(c, c.get("trace", False))
+
+        Expander.xip(e, "task_cwd", str)
+        Expander.xip(e, "build_dir", str)
+
+        # FIXME how do we make it so we don't need this?
+        c.build_dir = os.path.normpath(c.build_dir)
+
         def fix(k, v):
             if k == "in_depfile" or k.startswith("out_"):
                 # Note this conditional needs to be first, as build_dir can itself be under task_cwd
@@ -902,13 +885,32 @@ class Task:
         #----------------------------------------
         # And now that our paths are clean, we can expand fields that refer to paths.
 
-        self._name = self._config.expand_all("{name}", str)
-        self._desc = self._config.expand_all("{desc}", str)
-        self._command = cast(Tree[str], self._config.expand_all(self._config.command))
+        c = self._config
+        e = Expander.wrap(c, c.get("trace", False))
 
-        self._config.name    = self._name
-        self._config.desc    = self._desc
-        self._config.command = self._command
+        Expander.xip(e, "build_root", str)
+        Expander.xip(e, "root_dir", str)
+        Expander.xip(e, "root_file", str)
+        Expander.xip(e, "repo_dir", str)
+        Expander.xip(e, "repo_file", str)
+        Expander.xip(e, "script_file", str)
+        Expander.xip(e, "core_count", int)
+        Expander.xip(e, "keep_going", int)
+
+        Expander.xip(e, "depformat", str)
+        Expander.xip(e, "build_tag", str)
+        Expander.xip(e, "target", str)
+        Expander.xip(e, "tool", str)
+        Expander.xip(e, "verbose", bool)
+        Expander.xip(e, "dry_run", bool)
+        Expander.xip(e, "quiet", bool)
+        Expander.xip(e, "rebuild", bool)
+        Expander.xip(e, "shuffle", bool)
+        Expander.xip(e, "should_fail", bool)
+
+        self._config.name = self._config.expand_all("{name}", str)
+        self._config.desc = self._config.expand_all("{desc}", str)
+        self._config.command = cast(Tree[str], self._config.expand_all(self._config.command))
 
         # ----------------------------------------
         # Check for missing paths
@@ -939,7 +941,7 @@ class Task:
 
         # FIXME all_out_files and filename_to_fingerprint should probably be sets
 
-        if self._command:
+        if self._config.command:
             for file in self._out_files:
                 file = os.path.abspath(file)
                 if file in Loader.all_out_files:
@@ -1088,7 +1090,7 @@ class Task:
     #----------------------------------------
 
     def dump(self):
-        result = f"{type(self).__name__} @ {hex(id(self))} : '{self._name}'"
+        result = f"{type(self).__name__} @ {hex(id(self))} : '{self._config.name}'"
         return result
 
     #----------------------------------------
@@ -1118,7 +1120,7 @@ class Task:
             message  = self.log_prefix()
             message += f"Task started"
             if self._config.dry_run: message += " (DRY RUN)"
-            message += f" : '{self._name}' - '{self._desc}'"
+            message += f" : '{self._config.name}' - '{self._config.desc}'"
             Log.log(message)
             self.log_task_reason(self._reason)
 
@@ -1137,7 +1139,7 @@ class Task:
             message  = self.log_prefix()
             message += f"Task done"
             if self._config.dry_run: message += " (DRY RUN)"
-            message += f" : '{self._name}' - '{self._desc}'"
+            message += f" : '{self._config.name}' - '{self._config.desc}'"
             Log.log(message)
 
     def log_task_failed(self, ex):
@@ -1153,7 +1155,7 @@ class Task:
             message += Utils.color(255,0,0)
             message += f"Task failed!\n"
             message += f"From {script_path}:\n"
-            message += f"    Task '{self._name}' : '{self._desc}'\n"
+            message += f"    Task '{self._config.name}' : '{self._config.desc}'\n"
             message += traceback.format_exc()
             message += Utils.color()
             Log.log(message)
@@ -1172,7 +1174,7 @@ class Task:
             message += Utils.color(255,0,0)
             message += f"Task broken!\n"
             message += f"From {script_path}:\n"
-            message += f"    Task '{self._name}' : '{self._desc}'\n"
+            message += f"    Task '{self._config.name}' : '{self._config.desc}'\n"
             message += traceback.format_exc()
             message += Utils.color()
             Log.log(message)
@@ -1183,7 +1185,7 @@ class Task:
         if self._config.verbose or self._config.debug:
             message  = self.log_prefix()
             message += Utils.color(64,64,64)
-            message += f"Task is cancelled: '{self._name}' : '{self._desc}'\n"
+            message += f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n"
             message += Utils.color()
             Log.log(message)
 
@@ -1193,7 +1195,7 @@ class Task:
         if self._config.verbose or self._config.debug:
             message  = self.log_prefix()
             message += Utils.color(64,64,64)
-            message += f"Task is up-to-date: '{self._name}' : '{self._desc}'\n"
+            message += f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n"
             message += Utils.color()
             Log.log(message)
 
@@ -1215,7 +1217,7 @@ class Task:
             message += Utils.color(255,0,0)
             message += f"Command failed!\n"
             message += f"From {script_path}:\n"
-            message += f"    Task '{self._name}' : '{self._desc}'\n"
+            message += f"    Task '{self._config.name}' : '{self._config.desc}'\n"
             message += f"    task_cwd = '{self._config.task_cwd}'\n"
             message += f"    getcwd   = '{os.getcwd()}'\n"
             message += f"    command  = '{command}'\n"
@@ -1509,7 +1511,8 @@ class Expander(abc.MutableMapping[str, object]):
     # Template variable lookup order:
     # 1. The config we're expanding
     # 2. The script-local hancho.config
-    # 3. The Hancho module (including convenience aliases)
+    # 3. Convenience aliases
+    # 4. The global hancho module
 
     @staticmethod
     def _eval(context : Dict | Expander, expr : str):
@@ -1519,7 +1522,7 @@ class Expander(abc.MutableMapping[str, object]):
                 # FIXME This should've broken something, but it didn't - why not? Add test?
                 #_locals = ChainMap(context)
                 # Because the context was built on top of the cv_config if it came from a Task.
-                _locals = ChainMap(context, Loader.cv_config.get(), Loader.aliases)
+                _locals = ChainMap(context, Loader.cv_config.get(), aliases)
                 _globals = hancho.__dict__
                 result = eval(expr, _globals, _locals)
             except RecursionError as err:
@@ -1545,11 +1548,9 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     def _expand_template(context : Dict | Expander, template: str) -> str:
-        if not Utils.is_template(template):
-            pass
         assert Utils.is_template(template)
         with Tracer(context, f"_expand_template('{template}')") as tracer:
-            blocks : list[str] = Expander.split(template)
+            blocks = Expander.split(template)
             for (i, block) in enumerate(blocks):
                 try:
                     if isinstance(block, Expander.Macro):
@@ -1779,30 +1780,6 @@ class Loader:
         return result
 
     #-----------------------------------------------------------------------------------------------
-    # These are aliases to stuff in Hancho that have been pulled out so they can be used by template
-    # expansion so you can do {flatten(x)} instead of {hancho.flatten(x)} in macros=, and use
-    # "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
-
-    aliases = Dict(
-        # path.dirname and path.basename used by makefile-related rules
-        path = os.path,
-        abs  = Path.abs,
-        base = Path.base,
-        ext  = Path.ext,
-        norm = Path.norm,
-        real = Path.real,
-        rel  = Path.rel,
-        stem = Path.stem,
-        load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, kwargs),
-        repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, kwargs),
-
-        flatten = Utils.flatten,
-        run_cmd = Utils.run_cmd,
-        color   = Utils.color,
-        join    = Utils.join,
-    )
-
-    #-----------------------------------------------------------------------------------------------
 
     @classmethod
     def parse_flags(cls, args : list[str]):
@@ -1845,17 +1822,22 @@ class Loader:
                 key = match.group(1)
                 val = match.group(2)
 
+                # FIXME add a test for this converter thinger
+
                 if val is None:
+                    # this is so that --foo turns into {foo:True}
                     val = True
+                elif val in ["True", "true", "1"]:
+                    val = True
+                elif val in ["False", "false", "0"]:
+                    val = False
                 else:
-                    for converter in (float, int, bool, str):
+                    for converter in (float, int, str):
                         try:
                             val = converter(val)
                             break
                         except ValueError:
                             pass
-
-                #val = maybe_as_number(val) if val is not None else True
                 extra_flags[key] = val
 
         flags = Dict(vars(flags), extra_flags)
@@ -1864,7 +1846,6 @@ class Loader:
     #-----------------------------------------------------------------------------------------------
 
     match_pointer = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
-    match_hex     = re.compile(r"0x[0-9a-fA-F]+")
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
@@ -1922,9 +1903,6 @@ class Loader:
 
         config_dump = Log.dump_to_str(key = None, val = new_config)
         config_dump = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
-
-        # FIXME remove this, it's just for debugging
-        assert not Loader.match_hex.search(config_dump)
 
         script_path_real = os.path.realpath(script_path)
         dedupe_key = hash((script_path_real, config_dump))
@@ -2014,7 +1992,7 @@ class Runner:
     @classmethod
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
-            if target_regex.search(task._name):
+            if target_regex.search(task._config.name):
                 task.queue()
 
     #--------------------------------------------------------------------------------
@@ -2097,7 +2075,31 @@ class Runner:
             assert False, f"Don't know how to run tool {tool}"
 
 # endregion
-####################################################################################################
+#---------------------------------------------------------------------------------------------------
+# These are aliases to stuff in Hancho that have been pulled out so they can be used by
+# template expansion so you can do {flatten(x)} instead of {Utils.flatten(x)} in macros, and
+# use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
+
+aliases = Dict(
+    # path.dirname and path.basename used by makefile-related rules
+    path = os.path,
+    abs  = Path.abs,
+    base = Path.base,
+    ext  = Path.ext,
+    norm = Path.norm,
+    real = Path.real,
+    rel  = Path.rel,
+    stem = Path.stem,
+    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, kwargs),
+    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, kwargs),
+
+    flatten = Utils.flatten,
+    run_cmd = Utils.run_cmd,
+    color   = Utils.color,
+    join    = Utils.join,
+)
+
+#---------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
