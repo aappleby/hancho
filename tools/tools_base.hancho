@@ -13,8 +13,8 @@ default_toolchain = hancho.Dict(
 # ----------------------------------------
 
 check_cpp = hancho.Tool(
-    desc = "Checking C++ syntax of {in_src}",
-    command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} && touch {out_ok}",
+    desc = "Checking C++ syntax of {rel(in_src, task_cwd)}",
+    command = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src, task_cwd)} && touch {rel(out_ok, task_cwd)}",
 
     toolchain = default_toolchain,
     flags = ["-fsyntax-only", "-std={cpp_std}"],
@@ -32,9 +32,9 @@ check_cpp = hancho.Tool(
 # ----------------------------------------
 
 compile_cpp = hancho.Tool(
-    name="{out_obj}",
-    desc="Compiling C++ {in_src} -> {out_obj} ({build_tag})",
-    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
+    name="{rel(out_obj, task_cwd)}",
+    desc="Compiling C++ {rel(in_src, task_cwd)} -> {rel(out_obj, task_cwd)} ({build_tag})",
+    command="{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {rel(in_src, task_cwd)} -o {rel(out_obj, task_cwd)}",
     toolchain=default_toolchain,
     flags=[
         "-g",
@@ -64,15 +64,15 @@ if os.name == "nt":
 
 
 link_cpp_lib = hancho.Tool(
-    desc="Bundling C++ lib {out_lib}",
-    command="ar rcs {out_lib} {in_objs}",
+    desc="Bundling C++ lib {rel(out_lib, task_cwd)}",
+    command="ar rcs {rel(out_lib, task_cwd)} {rel(in_objs, task_cwd)}",
 )
 
 
 link_cpp_bin = hancho.Tool(
-    desc      = "Linking C++ bin {out_bin}",
+    desc      = "Linking C++ bin {rel(out_bin, task_cwd)}",
     toolchain = default_toolchain,
-    command   = "{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}",
+    command   = "{toolchain.linker} {flags} -Wl,--start-group {rel(in_objs, task_cwd)} {in_libs} {sys_libs} -Wl,--end-group -o {rel(out_bin, task_cwd)}",
     in_objs   = None,
     in_libs   = None,
     flags     = None,

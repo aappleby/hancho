@@ -10,6 +10,8 @@
     probably not
 
 # FIXME Refactoring
+  hancho scripts should not need hancho.Utils.flatten instead of hancho.flatten, etc - why is that
+    not working and how was it working before?
   work needs to be redistributed between task_main, task_init, etc - more smaller units.
   _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
   the exception-throwing path and stats regarding failed/cancelled/should-fail tasks needs a revisit

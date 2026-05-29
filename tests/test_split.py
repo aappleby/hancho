@@ -1,15 +1,36 @@
 #!/usr/bin/env python3
+from hancho import Expander
+import doctest
+import hancho
+import os
 import sys
 import unittest
-import doctest
 
-sys.path.append("..")
-from hancho import Dict, Expander
+####################################################################################################
+
+def setUpModule():
+    os.chdir(os.path.dirname(__file__))
+
+def load_tests(loader, tests, ignore):
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None # type: ignore
+    tests.addTests(doctests)
+    return tests
 
 M = Expander.Macro
 L = Expander.Literal
 
+####################################################################################################
+
 class TestSplitTemplate(unittest.TestCase):
+
+    def setUp(self):
+        hancho.init(quiet = True)
+        sys.stdout.flush()
+
+    def tearDown(self):
+        sys.stdout.flush()
 
     def doctest_basic(self):
         r"""
@@ -162,15 +183,7 @@ class TestSplitTemplate(unittest.TestCase):
         self.assertEqual(Expander.split(r"a \\{a\\} a"),   [L(r"a \\"), M(r"{a\\}"), L(r" a")])
         self.assertEqual(Expander.split(r"a \\\{a\\\} a"), [L(r"a \\\{a\\\} a")])
 
-
 ####################################################################################################
 
-def load_tests(loader, tests, ignore):
-    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    for t in doctests:
-        t.shortDescription = lambda: None # type: ignore
-    tests.addTests(doctests)
-    return tests
-
 if __name__ == "__main__":
-    unittest.main(verbosity=1)
+    unittest.main(verbosity=999)

@@ -6,21 +6,18 @@
   "configurations": [
 
     {
-      "name"    : "CUSTOM",
+      "name"    : "Debug test module",
       "type"    : "debugpy",
       "request" : "launch",
-      //"cwd"     : "${workspaceFolder}/scratch",
-      //"program" : "${workspaceFolder}/hancho.py",
-      //"args"    : ["-v","--force"],
-      "cwd"     : "${workspaceFolder}/tests",
-      "program" : "${workspaceFolder}/tests/test_tasks.py",
+      "module"  : "tests.test_tasks",
     },
 
     {
-      "name"    : "hancho.py",
+      "name"    : "Debug Hancho module",
       "type"    : "debugpy",
       "request" : "launch",
-      "program" : "${workspaceFolder}/hancho.py",
+      "module"  : "hancho",
+      //"program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["-v", "--rebuild", "--debug"],
     },
 
@@ -38,7 +35,9 @@
         "type": "debugpy",
         "request": "launch",
         "module": "unittest",
-        "args": ["discover", "-s", "tests"],
+        "args": ["discover"],
+        "cwd": "${workspaceFolder}/tests",
+        "env": { "PYTHONPATH": "${workspaceFolder}" },
     },
 
     {

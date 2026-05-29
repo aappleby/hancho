@@ -38,8 +38,8 @@ ld_libs = [
 
 compile_cpp = hancho.Tool(
     name       = "compile_cpp",
-    desc       = "Compiling C++ {in_src} -> {out_obj}",
-    command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
+    desc       = "Compiling C++ {rel(in_src, task_cwd)} -> {rel(out_obj, task_cwd)}",
+    command    = "g++ {gcc_flags} -c {rel(in_src, task_cwd)} -o {rel(out_obj, task_cwd)}",
     #----------
     gcc_flags  = gcc_flags,
     #----------
@@ -51,7 +51,7 @@ compile_cpp = hancho.Tool(
 link_cpp_bin = hancho.Tool(
     name     = "link_cpp_bin",
     desc     = "Linking {name}",
-    command  = "gcc {ld_flags} {in_objs} -o {out_bin} {ld_libs}",
+    command  = "gcc {ld_flags} {rel(in_objs, task_cwd)} -o {rel(out_bin, task_cwd)} {ld_libs}",
     #----------
     ld_flags = ld_flags,
     ld_libs  = ld_libs,

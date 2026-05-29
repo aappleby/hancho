@@ -1,7 +1,5 @@
 #!/usr/bin/python3
 
-import sys
-sys.path.append("..")
 import hancho
 import timeit
 

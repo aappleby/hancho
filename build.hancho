@@ -8,5 +8,8 @@ tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 hancho.load("examples/examples.hancho")
 
 hancho.Task(
-    command = "python3 -m unittest discover -s tests"
+    name = "unittest",
+    desc = "run unit tests",
+    # FIXME can we do this with a callback instead of starting another process?
+    command = "python3 -m unittest"
 )

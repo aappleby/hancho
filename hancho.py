@@ -733,12 +733,8 @@ class Task:
             self._config = cast(Dict, await Utils.await_variant(self._config))
         except BaseException as ex:  # pylint: disable=broad-exception-caught
             self.to_state(Task.CANCELLED)
-            Stats.tasks_cancelled += 1
+            self.log_task_cancelled(ex)
             raise asyncio.CancelledError() from ex
-
-        #----------------------------------------
-        # Initialize the task, which means expanding everything else that needs expanding and
-        # fixing up paths to point to task_cwd or build_dir.
 
         # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
         Stats.tasks_running += 1
@@ -753,15 +749,18 @@ class Task:
                     Log.log(f"Task before expand: {self}\n")
 
                 assert os.getcwd() == self._config.script_dir
+
+                # Initialize the task, which means expanding everything else that needs expanding
+                # and fixing up paths to point to task_cwd or build_dir.
                 self.task_init()
+
                 if self._config.debug:
                     Log.log(f"Task after expand: {self}\n")
 
         except asyncio.CancelledError as ex:
             # We discovered during init that we don't need to run this task.
             self.to_state(Task.CANCELLED)
-            Log.log("Cancelled during init")
-            Stats.tasks_cancelled += 1
+            self.log_task_cancelled(ex)
             raise ex
 
         except BaseException as ex:  # pylint: disable=broad-exception-caught
@@ -769,24 +768,15 @@ class Task:
             self.to_state(Task.BROKEN)
             self.log_task_broken(ex)
             if self._config.should_fail:
-                Stats.tasks_shouldfail += 1
                 return
             else:
-                Stats.tasks_broken += 1
                 raise ex
-
-        #----------------------------------------
-        # TASK START
-
-        if self._config.verbose or self._config.debug:
-            self.log_task_start()
 
         #----------------------------------------
         # Early-out if this is a no-op task
 
         if not self._command:
-            Stats.tasks_finished += 1
-            self.log_task_reason("This task is a no-op")
+            self.log_task_done()
             self.to_state(Task.FINISHED)
             return
 
@@ -795,13 +785,14 @@ class Task:
 
         self._reason = self.needs_rerun(self._config.rebuild)
         if not self._reason:
-            Stats.tasks_skipped += 1
-            self.log_task_reason("Task skipped")
+            self.log_task_uptodate()
             self.to_state(Task.SKIPPED)
             return
 
-        if self._config.verbose or self._config.debug:
-            self.log_task_reason(self._reason)
+        #----------------------------------------
+        # TASK START
+
+        self.log_task_start()
 
         try:
 
@@ -830,10 +821,8 @@ class Task:
             self.log_task_failed(ex)
             self.to_state(Task.FAILED)
             if self._config.should_fail:
-                Stats.tasks_shouldfail += 1
                 return
             else:
-                Stats.tasks_failed += 1
                 raise ex
 
     #--------------------------------------------------------------------------------
@@ -986,8 +975,10 @@ class Task:
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
 
+        cwd = os.getcwd()
+
         if rebuild:
-            return f"Files {self._out_files} forced to rebuild"
+            return f"Files {Path.rel(self._out_files, cwd)} forced to rebuild"
         if not self._in_files:
             return "Always rebuild a target with no inputs"
         if not self._out_files:
@@ -996,7 +987,7 @@ class Task:
         # Check if any of our output files are missing.
         for file in self._out_files:
             if not os.path.exists(file):
-                return f"Rebuilding because {file} is missing"
+                return f"Rebuilding because {Path.rel(file, cwd)} is missing"
 
         # Check if any of our input files are newer than the output files.
         min_out = min(Utils.mtime(f) for f in self._out_files)
@@ -1006,11 +997,11 @@ class Task:
 
         for file in self._in_files:
             if Utils.mtime(file) >= min_out:
-                return f"Rebuilding because {file} has changed"
+                return f"Rebuilding because {Path.rel(file, cwd)} has changed"
 
-        for filename in self._loaded_files:
-            if Utils.mtime(filename) >= min_out:
-                return f"Rebuilding because {filename} has changed"
+        for file in self._loaded_files:
+            if Utils.mtime(file) >= min_out:
+                return f"Rebuilding because {Path.rel(file, cwd)} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
         depfile = self._config.in_depfile
@@ -1035,7 +1026,7 @@ class Task:
                 deplines = [os.path.join(self._config.task_cwd, d) for d in deplines]
                 for abs_file in deplines:
                     if Utils.mtime(abs_file) >= min_out:
-                        return f"Rebuilding because {abs_file} has changed"
+                        return f"Rebuilding because {Path.rel(abs_file, cwd)} has changed"
 
         # All checks passed; we don't need to rebuild this output.
         # Empty string = no reason to rebuild
@@ -1063,12 +1054,13 @@ class Task:
             try:
                 with chdir(self._config.task_cwd):
                     result = command(self)
-                while inspect.isawaitable(result):
-                    result = await result
+                    while inspect.isawaitable(result):
+                        result = await result
                 self._stdout = ""
                 self._stderr = ""
             except BaseException as e:
-                self.log_command_failure(self._config.script_file, command, e)
+                script_path = os.path.join(self._config.script_dir, self._config.script_file)
+                self.log_command_failure(script_path, command, e)
                 raise e
             return
         else:
@@ -1087,7 +1079,8 @@ class Task:
 
         if proc.returncode:
             e = ValueError(f"CommandFailure: Command exited with return code {proc.returncode}\n")
-            self.log_command_failure(self._config.script_file, command, e)
+            script_path = os.path.join(self._config.script_dir, self._config.script_file)
+            self.log_command_failure(script_path, command, e)
             raise e
         elif self._config.verbose or self._config.debug:
             self.log_command_done(command)
@@ -1121,78 +1114,124 @@ class Task:
         return message
 
     def log_task_start(self):
-        message  = self.log_prefix()
-        message += f"Task started : {self._name}"
-        if self._config.dry_run: message += " (DRY RUN)"
-        if self._desc:    message += f" = '{self._desc}'"
-        Log.log(message)
+        if self._config.verbose or self._config.debug:
+            message  = self.log_prefix()
+            message += f"Task started"
+            if self._config.dry_run: message += " (DRY RUN)"
+            message += f" : '{self._name}' - '{self._desc}'"
+            Log.log(message)
+            self.log_task_reason(self._reason)
 
     def log_task_reason(self, reason):
-        message  = self.log_prefix()
-        message += Utils.color(128,128,128)
-        message += f"Reason: {reason}"
-        message += Utils.color()
-        message += "\n"
-        Log.log(message)
+        if self._config.verbose or self._config.debug:
+            message  = self.log_prefix()
+            message += Utils.color(128,128,128)
+            message += f"Reason: {reason}"
+            message += Utils.color()
+            message += "\n"
+            Log.log(message)
 
     def log_task_done(self):
-        message  = self.log_prefix()
-        message += f"Task done : '{self._name}'"
-        if self._config.dry_run:     message += " (DRY RUN)"
-        if self._config.desc: message += f" '{self._config.desc}'"
-        Log.log(message)
+        Stats.tasks_finished += 1
+        if self._config.verbose or self._config.debug:
+            message  = self.log_prefix()
+            message += f"Task done"
+            if self._config.dry_run: message += " (DRY RUN)"
+            message += f" : '{self._name}' - '{self._desc}'"
+            Log.log(message)
 
-    def log_task_failed(self, script_name):
-        import traceback
-        message  = self.log_prefix()
-        message += Utils.color(255,0,0)
-        message += f"Task failed!\n"
-        message += f"From {script_name}:\n"
-        message += f"    Task '{self._name}' : '{self._desc}'\n"
-        message += traceback.format_exc()
-        message += Utils.color()
-        Log.log(message)
+    def log_task_failed(self, ex):
+        if self._config.should_fail:
+            Stats.tasks_shouldfail += 1
+        else:
+            Stats.tasks_failed += 1
 
-    def log_task_broken(self, script_name):
-        import traceback
-        message  = self.log_prefix()
-        message += Utils.color(255,0,0)
-        message += f"Task broken!\n"
-        message += f"From {script_name}:\n"
-        message += f"    Task '{self._name}' : '{self._desc}'\n"
-        message += traceback.format_exc()
-        message += Utils.color()
-        Log.log(message)
+        if True:
+            script_path = os.path.join(self._config.script_dir, self._config.script_file)
+            import traceback
+            message  = self.log_prefix()
+            message += Utils.color(255,0,0)
+            message += f"Task failed!\n"
+            message += f"From {script_path}:\n"
+            message += f"    Task '{self._name}' : '{self._desc}'\n"
+            message += traceback.format_exc()
+            message += Utils.color()
+            Log.log(message)
+
+
+    def log_task_broken(self, ex):
+        if self._config.should_fail:
+            Stats.tasks_shouldfail += 1
+        else:
+            Stats.tasks_broken += 1
+
+        if True:
+            script_path = os.path.join(self._config.script_dir, self._config.script_file)
+            import traceback
+            message  = self.log_prefix()
+            message += Utils.color(255,0,0)
+            message += f"Task broken!\n"
+            message += f"From {script_path}:\n"
+            message += f"    Task '{self._name}' : '{self._desc}'\n"
+            message += traceback.format_exc()
+            message += Utils.color()
+            Log.log(message)
+
+    def log_task_cancelled(self, ex):
+        Stats.tasks_cancelled += 1
+
+        if self._config.verbose or self._config.debug:
+            message  = self.log_prefix()
+            message += Utils.color(64,64,64)
+            message += f"Task is cancelled: '{self._name}' : '{self._desc}'\n"
+            message += Utils.color()
+            Log.log(message)
+
+    def log_task_uptodate(self):
+        Stats.tasks_skipped += 1
+
+        if self._config.verbose or self._config.debug:
+            message  = self.log_prefix()
+            message += Utils.color(64,64,64)
+            message += f"Task is up-to-date: '{self._name}' : '{self._desc}'\n"
+            message += Utils.color()
+            Log.log(message)
+
 
     def log_command_start(self, command):
-        assert self._config.task_cwd == os.getcwd()
+        if self._config.verbose or self._config.debug:
+            assert self._config.task_cwd == os.getcwd()
+            message  = self.log_prefix()
+            message += Utils.color(128, 128, 255)
+            message += f"{Path.rel(self._config.task_cwd, self._config.repo_dir)}$ '{command}'"
+            message += " (DRY RUN)" if self._config.dry_run else ""
+            message += Utils.color()
+            Log.log(message)
 
-        message  = self.log_prefix()
-        message += Utils.color(128, 128, 255)
-        message += f"{Path.rel(self._config.task_cwd, self._config.repo_dir)}$ '{command}'"
-        message += " (DRY RUN)" if self._config.dry_run else ""
-        message += Utils.color()
-        Log.log(message)
-
-    def log_command_failure(self, script_name, command, ex):
-        message  = self.log_prefix()
-        message += Utils.color(255,0,0)
-        message += f"Command failed!\n"
-        message += f"From {script_name}:\n"
-        message += f"    Task '{self._name}' : '{self._desc}'\n"
-        message += f"    command = '{command}'\n"
-        message += f"    error   = '{ex}'\n"
-        if not callable(command):
-            message += self.stdout_to_str()
-        message += Utils.color()
-        Log.log(message)
+    def log_command_failure(self, script_path, command, ex):
+        #if self._config.verbose or self._config.debug:
+        if True:
+            message  = self.log_prefix()
+            message += Utils.color(255,0,0)
+            message += f"Command failed!\n"
+            message += f"From {script_path}:\n"
+            message += f"    Task '{self._name}' : '{self._desc}'\n"
+            message += f"    task_cwd = '{self._config.task_cwd}'\n"
+            message += f"    getcwd   = '{os.getcwd()}'\n"
+            message += f"    command  = '{command}'\n"
+            message += f"    error    = '{ex}'\n"
+            if not callable(command):
+                message += self.stdout_to_str()
+            message += Utils.color()
+            Log.log(message)
 
     def log_command_done(self, command):
-        #message  = self.log_prefix()
-        #message += f"Command done : '{command}'"
-        #message += self.stdout_to_str()
-        #Log.log(message)
-        pass
+        if self._config.verbose or self._config.debug:
+            message  = self.log_prefix()
+            message += f"Command done : '{command}'"
+            if not callable(command):
+                message += self.stdout_to_str()
+            Log.log(message)
 
 # endregion
 ####################################################################################################
@@ -1315,7 +1354,6 @@ class Expander(abc.MutableMapping[str, object]):
     class Macro(str):
         def __init__(self, str):
             if not Utils.is_macro(str):
-                print(f"?????????????? {str}")
                 assert Utils.is_macro(str)
         def __repr__(self):
             return "M" + str.__repr__(self)
@@ -1331,8 +1369,8 @@ class Expander(abc.MutableMapping[str, object]):
 
     def __init__(self, context : Dict | Expander, trace : bool):
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
-        self._context = context
-        self.trace = trace
+        super().__setattr__("_context", context)
+        super().__setattr__("trace", trace)
 
     @classmethod
     def wrap(cls, context : Dict | Expander, trace : bool):
@@ -1347,13 +1385,26 @@ class Expander(abc.MutableMapping[str, object]):
         tag_b = Utils.obj_to_color(result) + tag_b + Utils.color()
 
         Tracer.log(trace, f"wrap {tag_a} -> {tag_b}")
-
         return result
 
-
+    #----------------------------------------
 
     def __contains__(self, key):
         return key in self._context
+
+    def __iter__(self):
+        assert False
+        raise TypeError("Hancho.Expander cannot be iter'd")
+
+    def __len__(self):
+        assert False
+        raise TypeError("Hancho.Expander cannot be len'd")
+
+    def __repr__(self):
+        result = f"{self.__class__.__name__} @ {hex(id(self))}"
+        return result
+
+    #----------------------------------------
 
     # FIXME do I need the exception translation here? I think I do, because these happen inside eval()
     def __getitem__(self, key):
@@ -1363,10 +1414,12 @@ class Expander(abc.MutableMapping[str, object]):
             raise KeyError from ex
 
     def __setitem__(self, key, val):
-        pass
+        self._context.__setitem__(key, val)
 
     def __delitem__(self, key):
-        pass
+        self._context.__delitem__(key)
+
+    #----------------------------------------
 
     def __getattr__(self, key):
         try:
@@ -1374,18 +1427,13 @@ class Expander(abc.MutableMapping[str, object]):
         except KeyError as ex:
             raise AttributeError from ex
 
-    def __iter__(self):
-        raise TypeError("Hancho.Expander cannot be iter'd")
+    def __setattr__(self, key, val):
+        self._context.__setattr__(key, val)
 
-    def __len__(self):
-        raise TypeError("Hancho.Expander cannot be len'd")
-
-    def __repr__(self):
-        result = f"{self.__class__.__name__} @ {hex(id(self))}"
-        return result
+    def __delattr__(self, key):
+        self._context.__delattr__(key)
 
     #endregion
-
     #----------------------------------------
 
     def _get(self, key):
@@ -1393,13 +1441,12 @@ class Expander(abc.MutableMapping[str, object]):
 
         with Tracer(self, f"_get('{key}')") as trace:
             result = self._context[key]
+            if isinstance(result, Expander):  pass
+            elif Utils.is_mapping(result):    result = Expander.wrap(result, self.trace)
+            elif Utils.is_collection(result): result = [Expander.expand_all(self, v) for v in cast(list, result)]
+            elif Utils.is_template(result):   result = Expander.expand_all(self, result)
+            elif Utils.is_macro(result):      result = Expander.expand_all(self, result)
             trace.log_result(result)
-
-        if isinstance(result, Expander):  pass
-        elif Utils.is_mapping(result):    result = Expander.wrap(result, self.trace)
-        elif Utils.is_collection(result): result = [Expander.expand_all(self, v) for v in cast(list, result)]
-        elif Utils.is_template(result):   result = Expander.expand_all(self, result)
-        elif Utils.is_macro(result):      result = Expander.expand_all(self, result)
 
         # MAGIC EXPANDY THING IS HERE
         # this breaks some tests...
@@ -1475,7 +1522,7 @@ class Expander(abc.MutableMapping[str, object]):
             except RecursionError as err:
                 raise err
             except BaseException as err:
-                Tracer.log(context.trace, f"{type(err).__name__}: {err}")
+                Tracer.log(cast(bool, context.trace), f"{type(err).__name__}: {err}")
                 raise err
             tracer.log_result(result)
         return result
@@ -1516,20 +1563,17 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     def get[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
+        if not hasattr(context, "_get"):
+            pass
         result = context._get(key)
         assert isinstance(result, as_type)
         return result
 
     @staticmethod
     def xip[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
-        assert isinstance(context, (Dict, Expander))
-        result = Expander.expand_all(context, "{" + key + "}")
-        assert isinstance(result, as_type)
-        if isinstance(context, Dict):
-            context[key] = result
-        else:
-            #assert False, "do we ever get here?"
-            context._context[key] = result
+        context = Expander.wrap(context, cast(bool, context.trace))
+        result = Expander.get(context, key, as_type)
+        context[key] = result
         return result
 
     @staticmethod
@@ -1637,6 +1681,8 @@ class Tracer:
             Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{tag}{Utils.color()}")
         else:
             text = f"{self.result}"
+            if self.result is None: text = "<None>"
+            if self.result == "":   text = "<Empty>"
             result_color = Utils.color()
             Tracer.log(self.trace, f"{Utils.obj_to_color(self.context)}┗ {result_color}{text}{Utils.color()}")
         return False
@@ -1664,7 +1710,7 @@ class Loader:
     stack : list[types.ModuleType]
     loaded_files : list[str]
     cv_config : contextvars.ContextVar
-
+    cv_token : contextvars.Token
 
     @classmethod
     def reset(cls, *args, **kwargs):
@@ -1674,57 +1720,66 @@ class Loader:
         cls.stack = []
         cls.loaded_files = []
 
-        root_config = Dict(Loader.default_config, *args, **kwargs)
-        cls.cv_config  = contextvars.ContextVar("config")
-        cls.cv_config.set(root_config)
+        root_config = Dict(Loader.default_config(), *args, **kwargs)
+
+        if not hasattr(cls, "cv_config"):
+            cls.cv_config  = contextvars.ContextVar("config")
+        if hasattr(cls, "cv_token"):
+            cls.cv_config.reset(cls.cv_token)
+        cls.cv_token = cls.cv_config.set(root_config)
 
     #-----------------------------------------------------------------------------------------------
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
+    # This is a function so that when we re-initialize Hancho during tests, we pick up a fresh
+    # copy of os.getcwd() if it changed.
 
-    default_config = Dict(
-        name        = "",
-        desc        = "",
-        command     = "",
+    @staticmethod
+    def default_config():
+        result = Dict(
+            name        = "",
+            desc        = "",
+            command     = "",
 
-        hancho_dir  = os.path.dirname(__file__),
-        task_cwd    = "{repo_dir}",
-        root_dir    = os.getcwd(),
-        root_file   = "build.hancho",
-        repo_dir    = "{root_dir}",
-        repo_file   = "{root_file}",
-        script_dir  = "{root_dir}",
-        script_file = "{root_file}",
+            hancho_dir  = os.path.dirname(__file__),
+            task_cwd    = "{repo_dir}",
+            root_dir    = os.getcwd(),
+            root_file   = "build.hancho",
+            repo_dir    = "{root_dir}",
+            repo_file   = "{root_file}",
+            script_dir  = "{root_dir}",
+            script_file = "{root_file}",
 
-        is_repo     = True,
-        this_repo   = hancho,
-        this_module = hancho,
+            is_repo     = True,
+            this_repo   = hancho,
+            this_module = hancho,
 
-        build_root  = "{repo_dir}/build",
-        build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
+            build_root  = "{repo_dir}/build",
+            build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
-        core_count  = 1,
-        core_max    = os.cpu_count(),
+            core_count  = 1,
+            core_max    = os.cpu_count(),
 
-        depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
-        in_depfile  = "",
+            depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
+            in_depfile  = "",
 
-        build_tag   = "",
-        target      = "",
-        tool        = "",
+            build_tag   = "",
+            target      = "",
+            tool        = "",
 
-        keep_going  = False,
-        verbose     = False,
-        debug       = False,
-        dry_run     = False,
-        quiet       = False,
-        rebuild     = False,
-        shuffle     = False,
-        trace       = False,
-        use_color   = True,
-        should_fail = False,
-        build_all   = False,
-    )
+            keep_going  = False,
+            verbose     = False,
+            debug       = False,
+            dry_run     = False,
+            quiet       = False,
+            rebuild     = False,
+            shuffle     = False,
+            trace       = False,
+            use_color   = True,
+            should_fail = False,
+            build_all   = False,
+        )
+        return result
 
     #-----------------------------------------------------------------------------------------------
     # These are aliases to stuff in Hancho that have been pulled out so they can be used by template
@@ -1814,7 +1869,7 @@ class Loader:
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        script_path = hancho.config.total_expand(script_path, str)
+        script_path = hancho.config.expand_all(script_path, str)
         script_path = os.path.abspath(script_path)
 
         assert os.path.isfile(script_path)
@@ -2049,6 +2104,7 @@ if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
 if __name__ == "__main__":
+    #print(sys.argv)
     sys.exit(main())
 else:
     init()

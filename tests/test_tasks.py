@@ -1,29 +1,30 @@
 #!/usr/bin/python3
 """Test cases for Hancho's Dict class"""
 
-import sys
-import unittest
-import os
-import shutil
 from pathlib import Path
-import time
-import random
 from typing import cast
-import doctest
 import asyncio
+import doctest
 import glob
-
-sys.path.append("..")
 import hancho
+import os
+import random
+import shutil
+import sys
+import time
+import unittest
 
 ####################################################################################################
 
 def setUpModule():
-    # Change to your desired directory
-    (script_dir, script_file) = os.path.split(os.path.abspath(__file__))
-    os.chdir(script_dir)
-    hancho.init(quiet = True)
-    pass
+    os.chdir(os.path.dirname(__file__))
+
+def load_tests(loader, tests, ignore):
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None # type: ignore
+    tests.addTests(doctests)
+    return tests
 
 def mtime_ns(filename):
     return os.stat(filename).st_mtime_ns
@@ -35,23 +36,16 @@ def force_touch(filename):
     while old_mtime == mtime_ns(filename):
         os.utime(filename, None)
 
-def color(red=None, green=None, blue=None):
-    """Converts RGB color to ANSI format string."""
-    # Color strings don't work in Windows console, so don't emit them.
-    if os.name == "nt":
-        return ""
-    if red is None:
-        return "\x1B[0m"
-    return f"\x1B[38;2;{red};{green};{blue}m"
-
 ####################################################################################################
 
 class TestTasks(unittest.TestCase):
 
     def setUp(self):
         self.startTime = time.time()
-        # Always wipe the build dir before a test
-        shutil.rmtree("build", ignore_errors=True)
+        # Always wipe the build dir before a test, but make sure we're in the right dir.
+        assert os.getcwd().endswith("/tests")
+        shutil.rmtree("build", ignore_errors = True)
+        # OK, now we should be good to start up Hancho.
         hancho.init(quiet = True)
         sys.stdout.flush()
 
@@ -371,13 +365,16 @@ class TestTasks(unittest.TestCase):
     def test_doesnt_create_output(self):
         # Having a file mentioned in out_obj should not magically create it
         hancho.Task(
-            command = "echo",
+            command = "echo Hello World >> {out_txt}",
             in_src  = [],
+            out_txt = "blarp.txt",
             out_obj = "result.txt"
         )
-        self.assertFalse(os.path.exists("../build/tetts/result.txt"))
+        self.assertFalse(os.path.exists("build/result.txt"))
+        self.assertFalse(os.path.exists("build/blarp.txt"))
         self.run_tasks(0)
-        self.assertFalse(os.path.exists("../build/tetts/result.txt"))
+        self.assertFalse(os.path.exists("build/result.txt"))
+        self.assertTrue(os.path.exists("build/blarp.txt"))
 
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
@@ -424,7 +421,6 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-    # FIXME this one is broken
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
         hancho.Task(
@@ -601,18 +597,5 @@ class TestTasks(unittest.TestCase):
 
 ####################################################################################################
 
-def load_tests(loader, tests, ignore):
-    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    for t in doctests:
-        t.shortDescription = lambda: None # type: ignore
-    tests.addTests(doctests)
-    return tests
-
 if __name__ == "__main__":
-    #hancho.init(debug = True, verbose = True)
-    #hancho.Task(command = ["echo foo", "echo bar"])
-    #hancho.Runner.queue_all_tasks()
-    #result = hancho.Runner.sync_run_tasks()
-    #assert result == 0
-    #print("done")
     unittest.main(verbosity=999)

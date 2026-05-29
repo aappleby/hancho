@@ -1,24 +1,30 @@
 #!/usr/bin/python3
 """Test cases for Hancho's text templating system"""
 
+from hancho import Dict
+import doctest
+import hancho
 import os
-from reprlib import recursive_repr
 import sys
 import unittest
-import doctest
 
-sys.path.append("..")
-import hancho
-from hancho import Dict, Expander
+####################################################################################################
+
+def setUpModule():
+    os.chdir(os.path.dirname(__file__))
+
+def load_tests(loader, tests, ignore):
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None # type: ignore
+    tests.addTests(doctests)
+    return tests
 
 ####################################################################################################
 
 class TestTemplates(unittest.TestCase):
     def setUp(self):
-        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
-        #hancho.init(quiet   = True)
-        hancho.init(quiet = False)
-
+        hancho.init(quiet = True)
         sys.stdout.flush()
 
     def doctest_basic_eval(self):
@@ -332,12 +338,5 @@ class TestTemplates(unittest.TestCase):
 
 ####################################################################################################
 
-def load_tests(loader, tests, ignore):
-    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    for t in doctests:
-        t.shortDescription = lambda: None # type: ignore
-    tests.addTests(doctests)
-    return tests
-
 if __name__ == "__main__":
-    unittest.main(verbosity=1)
+    unittest.main(verbosity=999)

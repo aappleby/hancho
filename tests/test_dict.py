@@ -1,21 +1,29 @@
 #!/usr/bin/python3
 """Test cases for Hancho's Dict class"""
 
-import io
-import contextlib
+from hancho import Dict
+import doctest
+import hancho
+import os
 import sys
 import unittest
-import doctest
 
-sys.path.append("..")
-import hancho
-from hancho import Dict
+####################################################################################################
+
+def setUpModule():
+    os.chdir(os.path.dirname(__file__))
+
+def load_tests(loader, tests, ignore):
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    for t in doctests:
+        t.shortDescription = lambda: None # type: ignore
+    tests.addTests(doctests)
+    return tests
 
 ####################################################################################################
 
 class TestDict(unittest.TestCase):
     def setUp(self):
-        #print(f"Running {self.__class__.__name__}::{self._testMethodName}")
         hancho.init(quiet = True)
         sys.stdout.flush()
 
@@ -137,15 +145,5 @@ class TestDict(unittest.TestCase):
 
 ####################################################################################################
 
-def load_tests(loader, tests, ignore):
-    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    for t in doctests:
-        t.shortDescription = lambda: None # type: ignore
-    tests.addTests(doctests)
-    return tests
-
-def run():
-    unittest.main(verbosity=1)
-
 if __name__ == "__main__":
-    run()
+    unittest.main(verbosity=999)
