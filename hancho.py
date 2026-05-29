@@ -817,6 +817,7 @@ class Task:
 
             # Note this conditional needs to be first, as build_dir can itself be under task_cwd
             if v.startswith(self._config.build_dir):
+                # Note this conditional needs to be first, as build_dir can itself be under task_cwd
                 # Absolute path under build_dir, do nothing.
                 return v
             elif v.startswith(self._config.task_cwd):
@@ -828,7 +829,7 @@ class Task:
                 raise TaskBadPath(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
 
         def fix(k, v):
-            if isinstance(k, str):
+            if isinstance(k, str) and v:
                 if k == "in_depfile" or k.startswith("out_"):
                     v = fix_out_path(v)
                 elif k.startswith("in_"):
