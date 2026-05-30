@@ -637,8 +637,7 @@ class Task:
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
         # State machine
-        self._state2 : abc.Callable[[Task], types.CoroutineType] = Task.DECLARED
-        self._state = Task.DECLARED
+        self._state : abc.Callable[[Task], types.CoroutineType] = Task.DECLARED
 
         # Bookkeeping stuff
         self._task_id : int = 0
@@ -660,47 +659,6 @@ class Task:
             pass
 
     # ----------------------------------------
-
-    def to_state(self, new_state):
-        # Init -> Finished is the "dry run" transition
-
-#        transitions = {
-#            Task.DECLARED  : [Task.QUEUED],
-#            Task.QUEUED    : [Task.STARTED],
-#
-#            Task.STARTED   : [Task.WAITING],
-#            Task.WAITING   : [Task.SETUP, Task.CANCELLED],
-#            Task.SETUP     : [Task.GET_CORES, Task.BROKEN, Task.SKIPPED, Task.FINISHED],
-#            Task.GET_CORES : [Task.RUNNING],
-#            Task.RUNNING   : [Task.FINISHED, Task.FAILED],
-#        }
-#
-#        if not self._state in transitions:
-#            message = f"State {self._state} -> {new_state} has no edges in the transition table"
-#            raise Except.BadState(message)
-#        edges = transitions[self._state]
-#        if not new_state in edges:
-#            message = f"Can't transition from {self._state} to {new_state}!"
-#            raise Except.BadState(message)
-
-        if self._state != new_state:
-            match new_state:
-                case Task.DECLARED:  Stats.tasks_declared += 1
-                case Task.QUEUED:    Stats.tasks_queued += 1
-
-                case Task.WAITING:   Stats.tasks_waiting += 1
-                case Task.SETUP:     Stats.tasks_setup += 1
-                case Task.GET_CORES: Stats.tasks_getcores += 1
-                case Task.RUNNING:   Stats.tasks_running += 1
-
-                case Task.CANCELLED: Stats.tasks_cancelled += 1
-                case Task.FAILED:    Stats.tasks_failed += 1
-                case Task.SKIPPED:   Stats.tasks_skipped += 1
-                case Task.BROKEN:    Stats.tasks_broken += 1
-
-        self._state = new_state
-
-    # ----------------------------------------
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
 
     def __copy__(self):
@@ -718,7 +676,7 @@ class Task:
         if self._state is not Task.DECLARED:
             assert False, f"Can't queue a task if it isn't declared. {self._state}"
         # Queue all tasks referenced by this task's config first, and _then_ queue the task.
-        self.to_state(Task.QUEUED)
+        self._state = Task.QUEUED
 
         def queue(k, v):
             if isinstance(v, Task) and v._state is Task.DECLARED:
@@ -729,7 +687,8 @@ class Task:
     def start(self):
         if self._state is not Task.QUEUED:
             assert False, "Can't start a task if it isn't queued."
-        self.to_state(Task.STARTED)
+        #self.to_state(Task.STARTED)
+        self._state = Task.STARTED
         self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
 
     async def await_done(self):
@@ -746,12 +705,34 @@ class Task:
 
     # --------------------------------------------------------------------------------
 
+    async def task_top(self):
+        try:  # Task-level error handling
+            next_state = self._state
+            while next_state:
+                self._state = next_state
+                next_state = await self._state(self)
+
+        except Except.Skipped:
+            pass
+
+        except Except.Failed as err:
+            raise err
+
+        finally:
+            if self._has_cores:
+                Runner.release(self._config.core_count)
+                self._has_cores = False
+
+    # --------------------------------------------------------------------------------
+
     async def DECLARED(self):
+        Stats.tasks_declared += 1
         return Task.QUEUED
 
     # --------------------------------------------------------------------------------
 
     async def QUEUED(self):
+        Stats.tasks_queued += 1
         return Task.STARTED
 
     # --------------------------------------------------------------------------------
@@ -770,7 +751,6 @@ class Task:
         for f in path_fields:   c[f] = Path.norm(e[f]) #type:ignore
         for f in flag_fields:   c[f] = e[f]
 
-        self.to_state(Task.WAITING)
         return Task.WAITING
 
     # --------------------------------------------------------------------------------
@@ -779,17 +759,19 @@ class Task:
         """Await everything awaitable in this task's config. If any of this tasks's dependencies
         failed, we propagate a cancellation to downstream tasks."""
 
+        Stats.tasks_waiting += 1
+
         try: # Dependent task errors cancel this task.
             await Utils.await_xip(self._config)
         except Except.Failed as err:
             return Task.CANCELLED
 
-        self.to_state(Task.SETUP)
         return Task.SETUP
 
     # --------------------------------------------------------------------------------
 
     async def SETUP(self):
+        Stats.tasks_setup += 1
         c = self._config
         e = self._expand
 
@@ -808,7 +790,6 @@ class Task:
         c.command = Utils.flatten(c.command)
         for c2 in c.command:
             if not type(c2) == type(c.command[0]):
-                self.to_state(Task.BROKEN)
                 self.log_task_broken(f"Don't know what to do with command '{c.command}'")
                 return Task.BROKEN
 
@@ -819,7 +800,6 @@ class Task:
                 c[k] = v[0] if len(v) == 1 else v
 
         if c.dry_run:
-            self.to_state(Task.FINISHED)
             return Task.FINISHED
 
         # ----------------------------------------
@@ -852,7 +832,6 @@ class Task:
         if self._reason:
             return Task.GET_CORES
         else:
-            self.to_state(Task.SKIPPED)
             self.log_task_skipped()
             return Task.SKIPPED
 
@@ -860,16 +839,23 @@ class Task:
 
     async def GET_CORES(self):
         """Wait for enough jobs to free up to run this task and then run the commands."""
-        self.to_state(Task.GET_CORES)
+        Stats.tasks_getcores += 1
         await Runner.acquire(self._config.core_count)
         self._has_cores = True
         return Task.RUNNING
 
     # --------------------------------------------------------------------------------
 
+#                case Task.RUNNING:
+#                case Task.CANCELLED:
+#                case Task.FAILED:
+#                case Task.SKIPPED:
+#                case Task.BROKEN:
+
+
     async def RUNNING(self):
+        Stats.tasks_running += 1
         self.log_task_running()
-        self.to_state(Task.RUNNING)
         for command in self._config.command:
             if self._config.verbose or self._config.debug:
                 self.log_command_start(command)
@@ -882,7 +868,6 @@ class Task:
             else:
                 await self.run_callback(command)
 
-        self.to_state(Task.FINISHED)
         return Task.FINISHED
 
     # --------------------------------------------------------------------------------
@@ -893,53 +878,25 @@ class Task:
         return None
 
     async def CANCELLED(self):
-        self.to_state(Task.CANCELLED)
+        Stats.tasks_cancelled += 1
         self.log_task_cancelled()
         raise Except.Cancelled
 
     async def FAILED(self):
-        self.to_state(Task.FAILED)
+        Stats.tasks_failed += 1
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
         self.log_command_failure(script_path, self._config.command)
         self.log_task_failed()
         raise Except.Failed
 
     async def SKIPPED(self):
+        Stats.tasks_skipped += 1
         raise Except.Skipped
 
     async def BROKEN(self):
-        self.to_state(Task.BROKEN)
+        Stats.tasks_broken += 1
         self.log_task_broken("Caught an exception")
         raise Except.Broken
-
-    # --------------------------------------------------------------------------------
-
-    async def task_top(self):
-        try:  # Task-level error handling
-            next_state = self._state2
-            while next_state:
-                self._state2 = next_state
-                next_state = await self._state2(self)
-
-        except Except.Skipped:
-            pass
-
-        except (
-            Except.BadCommand,
-            Except.BadPath,
-            Except.Collision,
-            Except.MissingDir,
-            Except.MissingFile,
-        ) as err:
-            await self.BROKEN()
-
-        except Except.Failed as err:
-            await self.FAILED()
-
-        finally:
-            if self._has_cores:
-                Runner.release(self._config.core_count)
-                self._has_cores = False
 
     # -----------------------------------------------------------------------------------------------
     # Make all paths absolute and move all output files so they're under build_dir.
