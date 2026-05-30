@@ -599,21 +599,6 @@ class Except:
 
 class Task:
 
-#    DECLARED  = "DECLARED"
-#    QUEUED    = "QUEUED"
-#
-#    STARTED   = "STARTED"
-#    WAITING   = "WAITING"
-#    SETUP     = "SETUP"
-#    GET_CORES = "GET_CORES"
-#    RUNNING   = "RUNNING"
-#
-#    FINISHED  = "FINISHED"
-#    CANCELLED = "CANCELLED"
-#    FAILED    = "FAILED"
-#    SKIPPED   = "SKIPPED"
-#    BROKEN    = "BROKEN"
-
     @staticmethod
     def is_depfile(k : str) -> bool:
         return k == "in_depfile"
@@ -661,6 +646,8 @@ class Task:
         self._stdout : str = ""
         self._stderr : str = ""
 
+        self._has_cores = False
+
         self._in_files  = []
         self._out_files = []
 
@@ -705,9 +692,6 @@ class Task:
                 case Task.SETUP:     Stats.tasks_setup += 1
                 case Task.GET_CORES: Stats.tasks_getcores += 1
                 case Task.RUNNING:   Stats.tasks_running += 1
-
-                case Task.FINISHED:
-                    Stats.tasks_finished += 1
 
                 case Task.CANCELLED: Stats.tasks_cancelled += 1
                 case Task.FAILED:    Stats.tasks_failed += 1
@@ -765,41 +749,161 @@ class Task:
     async def DECLARED(self):
         return Task.QUEUED
 
+    # --------------------------------------------------------------------------------
+
     async def QUEUED(self):
         return Task.STARTED
 
+    # --------------------------------------------------------------------------------
+
     async def STARTED(self):
-        assert self._state2 == Task.STARTED
-        return await self.task_main()
+        c = self._config
+        e = self._expand
+
+        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
+                        "script_cwd", "script_file", "build_root", "build_dir"]
+
+        flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
+                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild", "shuffle",
+                        "trace", "use_color", "build_all"]
+
+        for f in path_fields:   c[f] = Path.norm(e[f]) #type:ignore
+        for f in flag_fields:   c[f] = e[f]
+
+        self.to_state(Task.WAITING)
+        return Task.WAITING
+
+    # --------------------------------------------------------------------------------
 
     async def WAITING(self):
-        return None
+        """Await everything awaitable in this task's config. If any of this tasks's dependencies
+        failed, we propagate a cancellation to downstream tasks."""
+
+        try: # Dependent task errors cancel this task.
+            await Utils.await_xip(self._config)
+        except Except.Failed as err:
+            raise Except.Cancelled from err
+
+        self.to_state(Task.SETUP)
+        return Task.SETUP
+
+    # --------------------------------------------------------------------------------
 
     async def SETUP(self):
-        return None
+        c = self._config
+        e = self._expand
+
+        # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
+        Stats.id_counter += 1
+        self._task_id = Stats.id_counter
+
+        if c.debug:
+            Log.log(f"{self.log_prefix()}Task config before expand: {c}\n")
+
+        # ----------------------------------------
+        # FIX PATHS
+
+        # Flatten command before fixing paths, so fix_path can look at command[0]
+        # to know if this is a cli command or a callback
+        c.command = Utils.flatten(c.command)
+        for c2 in c.command:
+            if not type(c2) == type(c.command[0]):
+                raise Except.BadCommand(f"Don't know what to do with command '{c.command}'")
+
+        for k, v in c.items():
+            v = self.fix_path(k, v)
+            if v is not None:
+                c[k] = v[0] if len(v) == 1 else v
+
+        if c.dry_run:
+            self.to_state(Task.FINISHED)
+            return Task.FINISHED
+
+        # ----------------------------------------
+        # Paths are cleaned up, we can expand name/desc/command
+
+        c.name    = Expander.expand_all(e, "{name}")
+        c.desc    = Expander.expand_all(e, "{desc}")
+        c.command = Expander.expand_all(e, "{command}")
+
+        self.task_sanity_check()
+
+        if c.debug:
+            Log.log(f"Task config after expand: {c}\n")
+
+        # Early-out if this is a no-op task
+        if not c.command:
+            return Task.FINISHED
+
+        # ----------------------------------------
+        # Check if we need a rebuild
+
+        self._reason = self.needs_rerun(c.rebuild)
+        if not self._reason:
+            self.to_state(Task.SKIPPED)
+            self.log_task_skipped()
+            return
+
+        return Task.RUNNING
+
+    # --------------------------------------------------------------------------------
 
     async def GET_CORES(self):
         return None
 
+    # --------------------------------------------------------------------------------
+
     async def RUNNING(self):
-        return None
+        self.log_task_running()
+
+        """Wait for enough jobs to free up to run this task and then run the commands."""
+        self.to_state(Task.GET_CORES)
+        await Runner.acquire(self._config.core_count)
+        self._has_cores = True
+
+        self.to_state(Task.RUNNING)
+        for command in self._config.command:
+            if self._config.verbose or self._config.debug:
+                self.log_command_start(command)
+            if isinstance(command, str):
+                await self.run_command(command)
+            else:
+                await self.run_callback(command)
+        #finally:
+        #    Runner.release(self._config.core_count)
+
+        #async with Runner.Cores(self._config.core_count):
+        #    # Run the task's commands!
+        #    self.to_state(Task.RUNNING)
+        #    for command in self._config.command:
+        #        if self._config.verbose or self._config.debug:
+        #            self.log_command_start(command)
+        #        if isinstance(command, str):
+        #            await self.run_command(command)
+        #        else:
+        #            await self.run_callback(command)
+
+        self.to_state(Task.FINISHED)
+        return Task.FINISHED
+
+    # --------------------------------------------------------------------------------
 
     async def FINISHED(self):
-        #self.to_state(Task.FINISHED)
+        Stats.tasks_finished += 1
         self.log_task_done()
         return None
 
     async def CANCELLED(self):
-        return None
+        raise Except.Cancelled
 
     async def FAILED(self):
-        return None
+        raise Except.Failed
 
     async def SKIPPED(self):
-        return None
+        raise Except.Skipped
 
     async def BROKEN(self):
-        return None
+        raise Except.Broken
 
     # --------------------------------------------------------------------------------
 
@@ -809,7 +913,6 @@ class Task:
             while next_state:
                 self._state2 = next_state
                 next_state = await self._state2(self)
-
 
         except Except.Cancelled as err:
             self.to_state(Task.CANCELLED)
@@ -834,106 +937,9 @@ class Task:
             self.log_task_failed(err)
             raise Except.Failed from err
 
-    # --------------------------------------------------------------------------------
-
-    async def task_main(self):
-        c = self._config
-        e = self._expand
-
-
-        self.expand_config()
-
-        self.to_state(Task.WAITING)
-        await self.await_inputs()
-
-        # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
-
-        self.to_state(Task.SETUP)
-
-        Stats.id_counter += 1
-        self._task_id = Stats.id_counter
-
-        if c.debug:
-            Log.log(f"{self.log_prefix()}Task config before expand: {c}\n")
-
-        # ----------------------------------------
-        # FIX PATHS
-
-        # Flatten command before fixing paths, so fix_path can look at command[0]
-        # to know if this is a cli command or a callback
-        c.command = Utils.flatten(c.command)
-        for c2 in c.command:
-            if not type(c2) == type(c.command[0]):
-                raise Except.BadCommand(f"Don't know what to do with command '{c.command}'")
-
-        for k, v in c.items():
-            v = self.fix_path(k, v)
-            if v is not None:
-                c[k] = v[0] if len(v) == 1 else v
-
-        if c.dry_run:
-            self.to_state(Task.FINISHED)
-            return
-
-        # ----------------------------------------
-        # Paths are cleaned up, we can expand name/desc/command
-
-        c.name    = Expander.expand_all(e, "{name}")
-        c.desc    = Expander.expand_all(e, "{desc}")
-        c.command = Expander.expand_all(e, "{command}")
-
-        self.task_sanity_check()
-
-        if c.debug:
-            Log.log(f"Task config after expand: {c}\n")
-
-        # Early-out if this is a no-op task
-        if not c.command:
-            return
-
-        # ----------------------------------------
-        # Check if we need a rebuild
-
-        self._reason = self.needs_rerun(c.rebuild)
-        if not self._reason:
-            self.to_state(Task.SKIPPED)
-            self.log_task_skipped()
-            return
-
-        # ----------------------------------------
-        # TASK START
-
-        self.log_task_running()
-        await self.run_commands()
-        self.to_state(Task.FINISHED)
-        return Task.FINISHED
-
-    # -----------------------------------------------------------------------------------------------
-
-    def expand_config(self):
-        c = self._config
-        e = self._expand
-
-        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
-                        "script_cwd", "script_file", "build_root", "build_dir"]
-
-        flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
-                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild", "shuffle",
-                        "trace", "use_color", "build_all"]
-
-        for f in path_fields:   c[f] = Path.norm(e[f]) #type:ignore
-        for f in flag_fields:   c[f] = e[f]
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def await_inputs(self):
-        """Await everything awaitable in this task's config. If any of this tasks's dependencies
-        failed, we propagate a cancellation to downstream tasks."""
-
-        try: # Dependent task errors cancel this task.
-            await Utils.await_xip(self._config)
-        except Except.Failed as err:
-            raise Except.Cancelled from err
+        finally:
+            if self._has_cores:
+                Runner.release(self._config.core_count)
 
     # -----------------------------------------------------------------------------------------------
     # Make all paths absolute and move all output files so they're under build_dir.
@@ -1093,22 +1099,6 @@ class Task:
         # All checks passed; we don't need to rebuild this output.
         # Empty string = no reason to rebuild
         return ""
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def run_commands(self):
-        """Wait for enough jobs to free up to run this task and then run the commands."""
-        self.to_state(Task.GET_CORES)
-        async with Runner.Cores(self._config.core_count):
-            # Run the task's commands!
-            self.to_state(Task.RUNNING)
-            for command in self._config.command:
-                if self._config.verbose or self._config.debug:
-                    self.log_command_start(command)
-                if isinstance(command, str):
-                    await self.run_command(command)
-                else:
-                    await self.run_callback(command)
 
     # ----------------------------------------
 
@@ -1953,19 +1943,29 @@ class Runner:
 
     #--------------------------------------------------------------------------------
 
+    @classmethod
+    async def acquire(cls, count):
+        #print(f"acquire {count}")
+        async with Runner.core_lock:
+            for _ in range(count):
+                await Runner.core_sem.acquire()
+
+    @classmethod
+    def release(cls, count):
+        #print(f"release {count}")
+        for _ in range(count):
+            Runner.core_sem.release()
+
     class Cores:
         def __init__(self, count):
             self.count = count
 
         async def __aenter__(self):
-            async with Runner.core_lock:
-                for _ in range(self.count):
-                    await Runner.core_sem.acquire()
+            await Runner.acquire(self.count)
             return self
 
         async def __aexit__(self, exc_type, exc_val, exc_tb):
-            for _ in range(self.count):
-                Runner.core_sem.release()
+            Runner.release(self.count)
             return False
 
     #--------------------------------------------------------------------------------
