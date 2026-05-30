@@ -633,7 +633,7 @@ class Task:
             Task.DECLARED  : [Task.QUEUED],
             Task.QUEUED    : [Task.WAITING],
             Task.WAITING   : [Task.INIT, Task.CANCELLED],
-            Task.INIT      : [Task.GET_CORES, Task.BROKEN],
+            Task.INIT      : [Task.BROKEN, Task.SKIPPED, Task.GET_CORES],
             Task.GET_CORES : [Task.RUNNING],
             Task.RUNNING   : [Task.FAILED, Task.FINISHED],
         }
@@ -676,7 +676,7 @@ class Task:
         Runner.queued_tasks.append(self)
 
     def start(self):
-        self._asyncio_task = asyncio.create_task(self.task_main2(), context = self._context)
+        self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
 
     async def await_done(self):
         if self._state is Task.DECLARED:
@@ -691,72 +691,10 @@ class Task:
         return Promise(self, field)
 
     #--------------------------------------------------------------------------------
-    # FIXME We're gonna merge task_init into this and then break it back out into smaller pieces
 
-    async def task_main2(self):
+    async def task_top(self):
         try: # Task-level error handling
-            Stats.tasks_started += 1
-
-            self.task_expand_config()
-
-            self.to_state(Task.WAITING)
-            await self.task_await_inputs()
-
-            # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
-            Stats.tasks_running += 1
-            self._task_index = Stats.tasks_running
-
-            if self._config.debug:
-                Log.log(f"Task config before expand: {self._config}\n")
-
-            self.to_state(Task.INIT)
-
-            for k, v in self._config.items():
-                self.task_fix_path(k, v)
-
-            if self._config.dry_run:
-                return
-
-            #----------------------------------------
-            # Paths are cleaned up, we can expand name/desc/command
-
-            self._config.name    = self._config.expand_all("{name}")
-            self._config.desc    = self._config.expand_all("{desc}")
-            self._config.command = Utils.flatten(self._config.expand_all("{command}"))
-
-            self.task_sanity_check()
-
-            if self._config.debug:
-                Log.log(f"Task config after expand: {self._config}\n")
-
-            # Early-out if this is a no-op task
-            if not self._config.command:
-                return
-
-            #----------------------------------------
-            # Check if we need a rebuild
-
-            self._reason = self.needs_rerun(self._config.rebuild)
-            if not self._reason:
-                return
-
-            #----------------------------------------
-            # TASK START
-
-            self.log_task_running()
-            await self.run_commands()
-
-            #----------------------------------------
-            # Task finished!
-
-            if not self._reason:
-                Stats.tasks_skipped += 1
-                self.to_state(Task.SKIPPED)
-                self.log_task_skipped()
-            else:
-                Stats.tasks_finished += 1
-                self.to_state(Task.FINISHED)
-                self.log_task_done()
+            await self.task_main()
 
         except TaskCancelled as err:
             self.to_state(Task.CANCELLED)
@@ -778,9 +716,73 @@ class Task:
             self.log_task_failed(err)
             raise TaskFailed from err
 
+    #--------------------------------------------------------------------------------
+
+    async def task_main(self):
+        c = self._config
+        Stats.tasks_started += 1
+
+        self.expand_config()
+
+        self.to_state(Task.WAITING)
+        await self.await_inputs()
+
+        # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
+        Stats.tasks_running += 1
+        self._task_index = Stats.tasks_running
+
+        if c.debug:
+            Log.log(f"Task config before expand: {c}\n")
+
+        self.to_state(Task.INIT)
+
+        for k, v in c.items():
+            v = self.fix_path(k, v)
+            if v is not None:
+                c[k] = v[0] if len(v) == 1 else v
+
+        if c.dry_run:
+            return
+
+        #----------------------------------------
+        # Paths are cleaned up, we can expand name/desc/command
+
+        c.name    = c.expand_all("{name}")
+        c.desc    = c.expand_all("{desc}")
+        c.command = Utils.flatten(c.expand_all("{command}"))
+
+        self.task_sanity_check()
+
+        if c.debug:
+            Log.log(f"Task config after expand: {c}\n")
+
+        # Early-out if this is a no-op task
+        if not c.command:
+            return
+
+        #----------------------------------------
+        # Check if we need a rebuild
+
+        self._reason = self.needs_rerun(c.rebuild)
+        if not self._reason:
+            Stats.tasks_skipped += 1
+            self.to_state(Task.SKIPPED)
+            self.log_task_skipped()
+            return
+
+        #----------------------------------------
+        # TASK START
+
+        self.log_task_running()
+        await self.run_commands()
+
+        Stats.tasks_finished += 1
+        self.to_state(Task.FINISHED)
+        self.log_task_done()
+
     #-----------------------------------------------------------------------------------------------
 
-    def task_expand_config(self):
+    def expand_config(self):
         c = self._config
         e = Expander.wrap(c, c.trace)
 
@@ -796,30 +798,30 @@ class Task:
 
     #-----------------------------------------------------------------------------------------------
 
-    async def task_await_inputs(self):
+    async def await_inputs(self):
         """Await everything awaitable in this task's config. If any of this tasks's dependencies
         failed, we propagate a cancellation to downstream tasks."""
 
-        async def await_variant_xip(var):
+        async def await_xip(var):
             import inspect
 
             if isinstance(var, Promise):
-                return await await_variant_xip(var.get())
+                return await await_xip(var.get())
             elif isinstance(var, Task):
-                return await await_variant_xip(var.await_done())
+                return await await_xip(var.await_done())
             elif inspect.isawaitable(var):
-                return await await_variant_xip(await var)
+                return await await_xip(await var)
             elif Utils.is_collection(var):
                 for i,v in enumerate(var):
-                    var[i] = await await_variant_xip(v)
+                    var[i] = await await_xip(v)
             elif Utils.is_mapping(var):
                 for k, v in var.items():
-                    var[k] = await await_variant_xip(v)
+                    var[k] = await await_xip(v)
 
             return var
 
         try: # Dependent task errors cancel this task.
-            await await_variant_xip(self._config)
+            await await_xip(self._config)
         except TaskFailed as err:
             raise TaskCancelled from err
 
@@ -830,8 +832,8 @@ class Task:
     # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
     # lives under build_dir.
 
-
-    def task_fix_path(self, k, v):
+    def fix_path(self, k, v):
+        c = self._config
         if not v or not is_iofile(k):
             return
 
@@ -842,16 +844,16 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        v = self._config.expand_all(v)
-        v = Path.join2(self._config.script_dir, v)
+        v = c.expand_all(v)
+        v = Path.join2(c.script_dir, v)
         v = Path.abs(v)
         v = cast(list, v)
 
         for i, v2 in enumerate(v):
             v2 = cast(str, v2)
 
-            if is_output(k) and not v2.startswith(self._config.build_dir):
-                v2 = v2.replace(self._config.task_cwd, self._config.build_dir)
+            if is_output(k) and not v2.startswith(c.build_dir):
+                v2 = v2.replace(c.task_cwd, c.build_dir)
 
             if is_output(k):
                 os.makedirs(Path.dirname(v2), exist_ok=True)
@@ -868,11 +870,12 @@ class Task:
 
             v[i] = v2
 
-        self._config[k] = v[0] if len(v) == 1 else v
+        return v
 
     #-----------------------------------------------------------------------------------------------
 
     def task_sanity_check(self):
+        c = self._config
 
         # Check for missing inputs
         # FIXME add test for input file = None
@@ -884,15 +887,15 @@ class Task:
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
-            if not file.startswith(self._config.build_dir):
-                raise TaskBadPath(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
+            if not file.startswith(c.build_dir):
+                raise TaskBadPath(f"Path error, output file {file} is not under build_dir {c.build_dir}")
 
         # Check for missing paths
-        if not Path.exists(self._config.task_cwd):
-            raise TaskMissingDir(self._config.task_cwd)
+        if not Path.exists(c.task_cwd):
+            raise TaskMissingDir(c.task_cwd)
 
-        if not self._config.build_dir.startswith(self._config.repo_dir):
-            raise TaskBadPath(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
+        if not c.build_dir.startswith(c.repo_dir):
+            raise TaskBadPath(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
 
         # Check for task collisions
         for file in self._out_files:
@@ -902,7 +905,7 @@ class Task:
             Loader.filename_to_fingerprint[real_file] = real_file
 
         # Check that all commands are valid
-        for command in self._config.command:
+        for command in c.command:
             if not isinstance(command, str) and not callable(command):
                 raise TaskBadCommand(f"Don't know what to do with command '{command}'")
 
@@ -910,7 +913,7 @@ class Task:
 
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
-
+        c = self._config
         cwd = os.getcwd()
 
         if rebuild:
@@ -940,26 +943,26 @@ class Task:
                 return f"Rebuilding because {Path.rel(file, cwd)} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-        depfile = self._config.in_depfile
+        depfile = c.in_depfile
 
         if depfile and Path.exists(depfile):
-            if self._config.debug:
+            if c.debug:
                 Log.log(f"Found C dependencies file {depfile}\n")
             with open(depfile, encoding="utf-8") as depfile:
                 deplines = None
-                if self._config.depformat == "msvc":
+                if c.depformat == "msvc":
                     # MSVC /sourceDependencies
                     import json
                     deplines = json.load(depfile)["Data"]["Includes"]
-                elif self._config.depformat == "gcc":
+                elif c.depformat == "gcc":
                     # GCC -MMD
                     deplines = depfile.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise ValueError(f"Invalid dependency file format {self._config.depformat}")
+                    raise ValueError(f"Invalid dependency file format {c.depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [cast(str, Path.join(self._config.task_cwd, d)) for d in deplines]
+                deplines = [cast(str, Path.join(c.task_cwd, d)) for d in deplines]
                 for abs_file in deplines:
                     if Utils.mtime(abs_file) >= min_out:
                         return f"Rebuilding because {Path.rel(abs_file, cwd)} has changed"
