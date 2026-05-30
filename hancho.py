@@ -604,6 +604,7 @@ class Task:
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
         self._config  = Dict(hancho.config, *args, **kwargs)
+        self._expand  = Expander.wrap(self._config, self._config.trace)
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -743,6 +744,7 @@ class Task:
 
     async def task_main(self):
         c = self._config
+        e = self._expand
 
 
         self.expand_config()
@@ -772,9 +774,9 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
-        c.name    = c.expand_all("{name}")
-        c.desc    = c.expand_all("{desc}")
-        c.command = Utils.flatten(c.expand_all("{command}"))
+        c.name    = Expander.expand_all(e, "{name}")
+        c.desc    = Expander.expand_all(e, "{desc}")
+        c.command = Utils.flatten(Expander.expand_all(e, "{command}"))
 
         self.task_sanity_check()
 
@@ -807,7 +809,7 @@ class Task:
 
     def expand_config(self):
         c = self._config
-        e = Expander.wrap(c, c.trace)
+        e = self._expand
 
         path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
                         "script_dir", "script_file", "build_root", "build_dir"]
@@ -857,6 +859,7 @@ class Task:
 
     def fix_path(self, k, v):
         c = self._config
+        e = self._expand
         if not v or not Task.is_iofile(k):
             return
 
@@ -867,7 +870,7 @@ class Task:
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        v = c.expand_all(v)
+        v = Expander.expand_all(e, v)
         v = Path.join2(c.script_dir, v)
         v = Path.abs(v)
         v = cast(list, v)
@@ -1400,12 +1403,6 @@ class Expander(abc.MutableMapping[str, object]):
             elif Utils.is_macro(result):      result = Expander.expand_all(self, result)
             trace.log_result(result)
 
-        # MAGIC EXPANDY THING IS HERE
-        # this breaks some doctest_read_nested_c_first, doctest_template_nones because they don't
-        # expect expansion to change a Dict.
-        # So, this is probably a bad idea...
-        #self._context[key] = result
-
         return result
 
     #----------------------------------------
@@ -1505,13 +1502,6 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     @staticmethod
-    def get[T](context : Dict | Expander, key : str, as_type : type[T] = object) -> T:
-        context = Expander.wrap(context, cast(bool, context.trace))
-        result = context._get(key)
-        assert isinstance(result, as_type)
-        return result
-
-    @staticmethod
     def eval[T](context : Dict | Expander, expr : str, as_type : type[T] = object) -> T:
         assert Utils.is_literal(expr)
         result = Expander._eval(context, expr)
@@ -1522,14 +1512,9 @@ class Expander(abc.MutableMapping[str, object]):
     def expand_once[T](context : Dict | Expander, variant : str, as_type : type[T] = object):
         if Utils.is_collection(variant):
             return [Expander.expand_once(context, v) for v in cast(list, variant)]
-
-        if Utils.is_mapping(variant):
+        elif Utils.is_mapping(variant):
             return {k: Expander.expand_once(context, v) for k, v in cast(dict, variant)}
-
-        if not Utils.is_braced(variant):
-            return variant
-
-        if Utils.is_macro(variant):
+        elif Utils.is_macro(variant):
             result = Expander._expand_macro(context, variant)
         elif Utils.is_template(variant):
             result = Expander._expand_template(context, variant)
@@ -1542,11 +1527,9 @@ class Expander(abc.MutableMapping[str, object]):
     def expand_all[T](context : Dict | Expander, variant : Any, as_type : type[T] = object):
         if Utils.is_collection(variant):
             return [Expander.expand_all(context, v) for v in cast(list, variant)]
-
-        if Utils.is_mapping(variant):
+        elif Utils.is_mapping(variant):
             return {k: Expander.expand_all(context, v) for k, v in cast(dict, variant)}
-
-        if not Utils.is_braced(variant):
+        elif not Utils.is_braced(variant):
             return variant
 
         econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
@@ -1777,7 +1760,7 @@ class Loader:
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        script_path = hancho.config.expand_all(script_path, str)
+        script_path = Expander.expand_all(hancho.config, script_path, str)
         script_path = cast(str, Path.abs(script_path))
 
         assert Path.isfile(script_path)
@@ -1852,8 +1835,8 @@ class Loader:
 
     @classmethod
     def log_load(cls, script_path, is_repo):
-        debug   = hancho.config.eval("debug", bool)
-        verbose = hancho.config.eval("verbose", bool)
+        debug   = Expander.eval(hancho.config, "debug", bool)
+        verbose = Expander.eval(hancho.config, "verbose", bool)
         script_type = "repo" if is_repo else "script"
 
         if debug or verbose:
@@ -1992,7 +1975,7 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = Path.real(task._config.eval("build_root", str))
+                build_root = Path.real(Expander.eval(task._expand, "build_root", str))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}\n")
