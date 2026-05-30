@@ -11,7 +11,6 @@
 
 # FIXME Refactoring
   _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
-  tasks should auto-queue if they're created dynamically?
 
 # FIXME Tests
   dry run

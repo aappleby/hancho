@@ -606,6 +606,8 @@ class Task:
         self._config  = Dict(hancho.config, *args, **kwargs)
         self._expand  = Expander.wrap(self._config, self._config.trace)
 
+        self._config.origin = os.getcwd()
+
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task
@@ -760,13 +762,13 @@ class Task:
 
         # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
 
-        if c.debug:
-            Log.log(f"Task config before expand: {c}\n")
-
         self.to_state(Task.SETUP)
 
         Stats.id_counter += 1
         self._task_id = Stats.id_counter
+
+        if c.debug:
+            Log.log(f"{self.log_prefix()}Task config before expand: {c}\n")
 
         for k, v in c.items():
             v = self.fix_path(k, v)
@@ -817,7 +819,7 @@ class Task:
         c = self._config
         e = self._expand
 
-        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
+        path_fields  = ["origin", "hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
                         "script_dir", "script_file", "build_root", "build_dir"]
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
@@ -1026,7 +1028,8 @@ class Task:
 
         if callable(command):
             import inspect
-            with chdir(self._config.task_cwd):
+            #with chdir(self._config.task_cwd):
+            with chdir(self._config.origin):
                 result = command(self)
                 while inspect.isawaitable(result):
                     result = await result
@@ -1069,7 +1072,7 @@ class Task:
     def log_prefix(self):
         """Prints the [1/N] prefix before a log"""
         message  = Utils.color(128,255,196)
-        message += f"[{self._task_id}/{Stats.id_counter}] "
+        message += f"[{self._task_id}/{Stats.tasks_queued}] "
         message += Utils.color()
         return message
 
@@ -1123,9 +1126,9 @@ class Task:
             Log.log(message)
 
     def log_task_broken(self, ex):
-        # import traceback
+        import traceback
         Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
-        # Log.log(traceback.format_exc())
+        Log.log(traceback.format_exc())
 
     def log_task_cancelled(self, ex):
         if self._config.verbose or self._config.debug:
@@ -1145,11 +1148,6 @@ class Task:
 
     def log_command_start(self, command):
         if self._config.verbose or self._config.debug:
-            #if self._config.task_cwd != os.getcwd():
-            #    print("!!!!!!!!!!!!!!!!!!!!!!!!!")
-            #    print(f"{self._config.task_cwd} != {os.getcwd()}")
-            #    print("!!!!!!!!!!!!!!!!!!!!!!!!!")
-            #    assert self._config.task_cwd == os.getcwd()
             message  = self.log_prefix()
             message += Utils.color(128, 128, 255)
             message += f"{Path.rel(self._config.task_cwd, self._config.repo_dir)}$ '{command}'"
@@ -1658,6 +1656,7 @@ class Loader:
             name        = "",
             desc        = "",
             command     = "",
+            origin      = "{script_dir}",
 
             hancho_dir  = Path.dirname(__file__),
             task_cwd    = "{repo_dir}",

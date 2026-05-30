@@ -509,7 +509,7 @@ class TestTasks(unittest.TestCase):
                 in_src  = [],
                 out_obj = "dummy.txt"
             )
-           return []
+            return []
 
         hancho.Task(
             command = callback,

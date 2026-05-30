@@ -17,6 +17,8 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "hancho",
+      "args"    : ["-C", "examples/dynamic_dependencies", "-d", "-v", "-j1"],
+      //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       //"program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["-v", "--rebuild", "--debug"],
     },
