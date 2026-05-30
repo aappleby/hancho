@@ -419,11 +419,13 @@ class Utils:
         elif Utils.is_collection(var):
             for i,v in enumerate(var):
                 var[i] = await Utils.await_xip(v)
+            return var
         elif Utils.is_mapping(var):
             for k, v in var.items():
                 var[k] = await Utils.await_xip(v)
-
-        return var
+            return var
+        else:
+            return var
 
 
 # endregion
@@ -697,7 +699,7 @@ class Task:
         if self._state is Task.QUEUED:
             self.start()
         assert self._asyncio_task is not None
-        await self._asyncio_task
+        result = await self._asyncio_task
         return self._out_files
 
     def promise(self, field : str):
@@ -712,16 +714,14 @@ class Task:
                 self._state = next_state
                 next_state = await self._state(self)
 
-        except Except.Skipped:
-            pass
-
-        except Except.Failed as err:
-            raise err
-
+            if self._state == Task.FAILED:
+                raise Except.Failed
         finally:
             if self._has_cores:
                 Runner.release(self._config.core_count)
                 self._has_cores = False
+
+        return self._state
 
     # --------------------------------------------------------------------------------
 
@@ -880,23 +880,23 @@ class Task:
     async def CANCELLED(self):
         Stats.tasks_cancelled += 1
         self.log_task_cancelled()
-        raise Except.Cancelled
+        return None
 
     async def FAILED(self):
         Stats.tasks_failed += 1
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
         self.log_command_failure(script_path, self._config.command)
         self.log_task_failed()
-        raise Except.Failed
+        return None
 
     async def SKIPPED(self):
         Stats.tasks_skipped += 1
-        raise Except.Skipped
+        return None
 
     async def BROKEN(self):
         Stats.tasks_broken += 1
         self.log_task_broken("Caught an exception")
-        raise Except.Broken
+        return None
 
     # -----------------------------------------------------------------------------------------------
     # Make all paths absolute and move all output files so they're under build_dir.
@@ -1978,11 +1978,7 @@ class Runner:
             try: # top-level task exception handler
                 await asyncio_task
                 cls.finished_tasks.append(task)
-            except Except.Broken as ex:
-                pass
             except Except.Failed as ex:
-                pass
-            except Except.Cancelled as ex:
                 pass
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
