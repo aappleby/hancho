@@ -569,6 +569,7 @@ class Task:
 
     DECLARED  = "DECLARED"
     QUEUED    = "QUEUED"
+    STARTED   = "STARTED"
     WAITING   = "WAITING"
     INIT      = "INIT"
     GET_CORES = "GET_CORES"
@@ -630,7 +631,8 @@ class Task:
 
         transitions = {
             Task.DECLARED  : [Task.QUEUED],
-            Task.QUEUED    : [Task.WAITING],
+            Task.QUEUED    : [Task.STARTED],
+            Task.STARTED   : [Task.WAITING],
             Task.WAITING   : [Task.INIT, Task.CANCELLED],
             Task.INIT      : [Task.BROKEN, Task.SKIPPED, Task.GET_CORES, Task.FINISHED],
             Task.GET_CORES : [Task.RUNNING],
@@ -674,17 +676,21 @@ class Task:
     # ----------------------------------------
 
     def queue(self):
-        if not self._state is Task.DECLARED:
-            return
+        if self._state is not Task.DECLARED:
+            raise Except.BadState(f"Can't queue a task if it isn't declared. {self._state}")
+        # Queue all tasks referenced by this task's config first, and _then_ queue the task.
         self.to_state(Task.QUEUED)
 
-        # Queue all tasks referenced by this task's config first.
-        Utils.visit(self._config, lambda _, v: isinstance(v, Task) and v.queue())
-
-        # And _then_ queue this task.
+        def queue(k, v):
+            if isinstance(v, Task) and v._state is Task.DECLARED:
+                v.queue()
+        Utils.visit(self._config, queue)
         Runner.queued_tasks.append(self)
 
     def start(self):
+        if self._state is not Task.QUEUED:
+            raise Except.BadState("Can't start a task if it isn't queued.")
+        self.to_state(Task.STARTED)
         self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
 
     async def await_done(self):
@@ -1880,19 +1886,19 @@ class Runner:
     @classmethod
     def queue_all_tasks(cls):
         for task in cls.all_tasks:
-            task.queue()
+            if task._state is Task.DECLARED: task.queue()
 
     @classmethod
     def queue_root_tasks(cls):
         for task in cls.all_tasks:
             if task._config.this_repo == Loader.root_repo:
-                task.queue()
+                if task._state is Task.DECLARED: task.queue()
 
     @classmethod
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._config.name):
-                task.queue()
+                if task._state is Task.DECLARED: task.queue()
 
     #--------------------------------------------------------------------------------
 
