@@ -9,10 +9,11 @@ util_o = hancho.Task(
     out_obj = "{ext(in_src, '.o')}"
 )
 
-#broken_o = hancho.Task(
-#    name    = "broken.o",
-#    desc    = "Compile {in_src}",
-#    command = "g++ -c {rel(in_src, repo_dir)} -o {rel(out_obj, repo_dir)}",
-#    in_src  = "broken.cpp",
-#    out_obj = "{ext(in_src, '.o')}",
-#)
+# This should not be built, as it's not in the root repo and it's not depended on by anything.
+broken_o = hancho.Task(
+    name    = "broken.o",
+    desc    = "SHOULD NOT BE BUILT! Compile {in_src}",
+    command = "g++ -c {in_src} -o {out_obj}",
+    in_src  = "broken.cpp",
+    out_obj = "{ext(in_src, '.o')}",
+)

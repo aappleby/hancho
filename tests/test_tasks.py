@@ -465,6 +465,18 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
+    def test_lambda_command(self):
+        hancho.Task(
+            desc = "The 'command' field of rules should be OK handling a lambda",
+            command = lambda task: force_touch(task._config.out_obj),
+            in_src  = [],
+            out_obj = "{name}",
+            name = "result.txt",
+        )
+        self.assertFalse(os.path.exists("build/result.txt"))
+        self.run_tasks(0)
+        self.assertTrue(os.path.exists("build/result.txt"))
+
     def test_cancellation(self):
         # A task that receives a cancellation exception should not run.
 
@@ -500,6 +512,16 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/pass_result.txt"))
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
+
+
+    def test_no_mixed_commands(self):
+        hancho.Task(
+            command = [
+                "echo Hello World",
+                lambda task: print(f"Hello World {type(task)}"),
+            ]
+        )
+        self.run_tasks(-1)
 
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.

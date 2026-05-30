@@ -406,6 +406,26 @@ class Utils:
         else:
             return str(variant)
 
+    @staticmethod
+    async def await_xip(var):
+        import inspect
+
+        if isinstance(var, Promise):
+            return await Utils.await_xip(var.get())
+        elif isinstance(var, Task):
+            return await Utils.await_xip(var.await_done())
+        elif inspect.isawaitable(var):
+            return await Utils.await_xip(await var)
+        elif Utils.is_collection(var):
+            for i,v in enumerate(var):
+                var[i] = await Utils.await_xip(v)
+        elif Utils.is_mapping(var):
+            for k, v in var.items():
+                var[k] = await Utils.await_xip(v)
+
+        return var
+
+
 # endregion
 ####################################################################################################
 # region Path
@@ -787,6 +807,13 @@ class Task:
         # ----------------------------------------
         # FIX PATHS
 
+        # Flatten command before fixing paths, so fix_path can look at command[0]
+        # to know if this is a cli command or a callback
+        c.command = Utils.flatten(c.command)
+        for c2 in c.command:
+            if not type(c2) == type(c.command[0]):
+                raise Except.BadCommand(f"Don't know what to do with command '{c.command}'")
+
         for k, v in c.items():
             v = self.fix_path(k, v)
             if v is not None:
@@ -801,7 +828,7 @@ class Task:
 
         c.name    = Expander.expand_all(e, "{name}")
         c.desc    = Expander.expand_all(e, "{desc}")
-        c.command = Utils.flatten(Expander.expand_all(e, "{command}"))
+        c.command = Expander.expand_all(e, "{command}")
 
         self.task_sanity_check()
 
@@ -852,26 +879,8 @@ class Task:
         """Await everything awaitable in this task's config. If any of this tasks's dependencies
         failed, we propagate a cancellation to downstream tasks."""
 
-        async def await_xip(var):
-            import inspect
-
-            if isinstance(var, Promise):
-                return await await_xip(var.get())
-            elif isinstance(var, Task):
-                return await await_xip(var.await_done())
-            elif inspect.isawaitable(var):
-                return await await_xip(await var)
-            elif Utils.is_collection(var):
-                for i,v in enumerate(var):
-                    var[i] = await await_xip(v)
-            elif Utils.is_mapping(var):
-                for k, v in var.items():
-                    var[k] = await await_xip(v)
-
-            return var
-
         try: # Dependent task errors cancel this task.
-            await await_xip(self._config)
+            await Utils.await_xip(self._config)
         except Except.Failed as err:
             raise Except.Cancelled from err
 
@@ -922,6 +931,11 @@ class Task:
                 self._out_files.append(v2)
             elif Task.is_input(k):
                 self._in_files.append(v2)
+
+            if isinstance(c.command[0], str):
+                v2 = Path.rel(v2, c.task_cwd)
+            else:
+                v2 = Path.rel(v2, c.script_cwd)
 
             v[i] = v2
 
@@ -1041,31 +1055,17 @@ class Task:
             for command in self._config.command:
                 if self._config.verbose or self._config.debug:
                     self.log_command_start(command)
-                await self.run_command(command)
+                if isinstance(command, str):
+                    await self.run_command(command)
+                else:
+                    await self.run_callback(command)
 
     # ----------------------------------------
 
     async def run_command(self, command):
-        """Runs a single command, either by calling it or running it in a subprocess."""
-
-        # ----------------------------------------
-        # Callbacks get called and then early-out'ed. They run in script_cwd.
-
-        if callable(command):
-            import inspect
-            with chdir(self._config.script_cwd):
-                result = command(self)
-                while inspect.isawaitable(result):
-                    result = await result
-            self._stdout = ""
-            self._stderr = ""
-            return
-
-        # ----------------------------------------
-        # Create the subprocess via asyncio and then await the result.
-
         # if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
 
+        # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd    = self._config.task_cwd,
@@ -1083,6 +1083,17 @@ class Task:
             raise Except.Failed()
         elif self._config.verbose or self._config.debug:
             self.log_command_done(command)
+
+    # ----------------------------------------
+
+    async def run_callback(self, callback):
+        import inspect
+        with chdir(self._config.script_cwd):
+            result = callback(self)
+            while inspect.isawaitable(result):
+                result = await result
+        self._stdout = ""
+        self._stderr = ""
 
     # -----------------------------------------------------------------------------------------------
 

@@ -9,9 +9,6 @@
   should we be using mappingproxy to make Dicts immutable?
     probably not
 
-# FIXME Refactoring
-  _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
-
 # FIXME Tests
   dry run
   task output collision that uses symlinks
