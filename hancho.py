@@ -599,20 +599,20 @@ class Except:
 
 class Task:
 
-    DECLARED  = "DECLARED"
-    QUEUED    = "QUEUED"
-
-    STARTED   = "STARTED"
-    WAITING   = "WAITING"
-    SETUP     = "SETUP"
-    GET_CORES = "GET_CORES"
-    RUNNING   = "RUNNING"
-
-    FINISHED  = "FINISHED"
-    CANCELLED = "CANCELLED"
-    FAILED    = "FAILED"
-    SKIPPED   = "SKIPPED"
-    BROKEN    = "BROKEN"
+#    DECLARED  = "DECLARED"
+#    QUEUED    = "QUEUED"
+#
+#    STARTED   = "STARTED"
+#    WAITING   = "WAITING"
+#    SETUP     = "SETUP"
+#    GET_CORES = "GET_CORES"
+#    RUNNING   = "RUNNING"
+#
+#    FINISHED  = "FINISHED"
+#    CANCELLED = "CANCELLED"
+#    FAILED    = "FAILED"
+#    SKIPPED   = "SKIPPED"
+#    BROKEN    = "BROKEN"
 
     @staticmethod
     def is_depfile(k : str) -> bool:
@@ -651,9 +651,12 @@ class Task:
         # really possible.
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
+        # State machine
+        self._state2 : abc.Callable[[Task], types.CoroutineType] = Task.DECLARED
+        self._state = Task.DECLARED
+
         # Bookkeeping stuff
         self._task_id : int = 0
-        self._state : str = Task.DECLARED
         self._reason : str = ""
         self._stdout : str = ""
         self._stderr : str = ""
@@ -674,40 +677,44 @@ class Task:
     def to_state(self, new_state):
         # Init -> Finished is the "dry run" transition
 
-        transitions = {
-            Task.DECLARED  : [Task.QUEUED],
-            Task.QUEUED    : [Task.STARTED],
+#        transitions = {
+#            Task.DECLARED  : [Task.QUEUED],
+#            Task.QUEUED    : [Task.STARTED],
+#
+#            Task.STARTED   : [Task.WAITING],
+#            Task.WAITING   : [Task.SETUP, Task.CANCELLED],
+#            Task.SETUP     : [Task.GET_CORES, Task.BROKEN, Task.SKIPPED, Task.FINISHED],
+#            Task.GET_CORES : [Task.RUNNING],
+#            Task.RUNNING   : [Task.FINISHED, Task.FAILED],
+#        }
+#
+#        if not self._state in transitions:
+#            message = f"State {self._state} -> {new_state} has no edges in the transition table"
+#            raise Except.BadState(message)
+#        edges = transitions[self._state]
+#        if not new_state in edges:
+#            message = f"Can't transition from {self._state} to {new_state}!"
+#            raise Except.BadState(message)
 
-            Task.STARTED   : [Task.WAITING],
-            Task.WAITING   : [Task.SETUP, Task.CANCELLED],
-            Task.SETUP     : [Task.GET_CORES, Task.BROKEN, Task.SKIPPED, Task.FINISHED],
-            Task.GET_CORES : [Task.RUNNING],
-            Task.RUNNING   : [Task.FINISHED, Task.FAILED],
-        }
+        if self._state != new_state:
+            match new_state:
+                case Task.DECLARED:  Stats.tasks_declared += 1
+                case Task.QUEUED:    Stats.tasks_queued += 1
 
-        if not self._state in transitions:
-            message = f"State {self._state} -> {new_state} has no edges in the transition table"
-            raise Except.BadState(message)
-        edges = transitions[self._state]
-        if not new_state in edges:
-            message = f"Can't transition from {self._state} to {new_state}!"
-            raise Except.BadState(message)
+                case Task.WAITING:   Stats.tasks_waiting += 1
+                case Task.SETUP:     Stats.tasks_setup += 1
+                case Task.GET_CORES: Stats.tasks_getcores += 1
+                case Task.RUNNING:   Stats.tasks_running += 1
+
+                case Task.FINISHED:
+                    Stats.tasks_finished += 1
+
+                case Task.CANCELLED: Stats.tasks_cancelled += 1
+                case Task.FAILED:    Stats.tasks_failed += 1
+                case Task.SKIPPED:   Stats.tasks_skipped += 1
+                case Task.BROKEN:    Stats.tasks_broken += 1
+
         self._state = new_state
-
-        match new_state:
-            case Task.DECLARED:  Stats.tasks_declared += 1
-            case Task.QUEUED:    Stats.tasks_queued += 1
-
-            case Task.WAITING:   Stats.tasks_waiting += 1
-            case Task.SETUP:     Stats.tasks_setup += 1
-            case Task.GET_CORES: Stats.tasks_getcores += 1
-            case Task.RUNNING:   Stats.tasks_running += 1
-
-            case Task.FINISHED:  Stats.tasks_finished += 1
-            case Task.CANCELLED: Stats.tasks_cancelled += 1
-            case Task.FAILED:    Stats.tasks_failed += 1
-            case Task.SKIPPED:   Stats.tasks_skipped += 1
-            case Task.BROKEN:    Stats.tasks_broken += 1
 
     # ----------------------------------------
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -755,9 +762,54 @@ class Task:
 
     # --------------------------------------------------------------------------------
 
+    async def DECLARED(self):
+        return Task.QUEUED
+
+    async def QUEUED(self):
+        return Task.STARTED
+
+    async def STARTED(self):
+        assert self._state2 == Task.STARTED
+        return await self.task_main()
+
+    async def WAITING(self):
+        return None
+
+    async def SETUP(self):
+        return None
+
+    async def GET_CORES(self):
+        return None
+
+    async def RUNNING(self):
+        return None
+
+    async def FINISHED(self):
+        #self.to_state(Task.FINISHED)
+        self.log_task_done()
+        return None
+
+    async def CANCELLED(self):
+        return None
+
+    async def FAILED(self):
+        return None
+
+    async def SKIPPED(self):
+        return None
+
+    async def BROKEN(self):
+        return None
+
+    # --------------------------------------------------------------------------------
+
     async def task_top(self):
         try:  # Task-level error handling
-            await self.task_main()
+            next_state = self._state2
+            while next_state:
+                self._state2 = next_state
+                next_state = await self._state2(self)
+
 
         except Except.Cancelled as err:
             self.to_state(Task.CANCELLED)
@@ -853,9 +905,8 @@ class Task:
 
         self.log_task_running()
         await self.run_commands()
-
         self.to_state(Task.FINISHED)
-        self.log_task_done()
+        return Task.FINISHED
 
     # -----------------------------------------------------------------------------------------------
 
