@@ -716,7 +716,7 @@ class Task:
 
     def queue(self):
         if self._state is not Task.DECLARED:
-            raise Except.BadState(f"Can't queue a task if it isn't declared. {self._state}")
+            assert False, f"Can't queue a task if it isn't declared. {self._state}"
         # Queue all tasks referenced by this task's config first, and _then_ queue the task.
         self.to_state(Task.QUEUED)
 
@@ -728,7 +728,7 @@ class Task:
 
     def start(self):
         if self._state is not Task.QUEUED:
-            raise Except.BadState("Can't start a task if it isn't queued.")
+            assert False, "Can't start a task if it isn't queued."
         self.to_state(Task.STARTED)
         self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
 
@@ -782,7 +782,6 @@ class Task:
         try: # Dependent task errors cancel this task.
             await Utils.await_xip(self._config)
         except Except.Failed as err:
-            self.to_state(Task.CANCELLED)
             return Task.CANCELLED
 
         self.to_state(Task.SETUP)
@@ -838,13 +837,17 @@ class Task:
     # --------------------------------------------------------------------------------
 
     async def SANITY_CHECK(self):
-        return self.task_sanity_check()
+        return await self.task_sanity_check()
 
     # --------------------------------------------------------------------------------
 
     async def CHECK_DEPS(self):
-        # Check if we need a rebuild
 
+        # Early-out if this is a no-op task
+        if not self._config.command:
+            return Task.FINISHED
+
+        # Check if we need a rebuild
         self._reason = self.needs_rerun(self._config.rebuild)
         if self._reason:
             return Task.GET_CORES
@@ -920,12 +923,6 @@ class Task:
 
         except Except.Skipped:
             pass
-
-        except Except.Cancelled as err:
-            raise err # raising Except.Cancelled
-
-        except Except.Broken as err:
-            raise err # raising Except.Broken
 
         except (
             Except.BadCommand,
@@ -1003,49 +1000,42 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    def task_sanity_check(self):
-        c = self._config
-
+    async def task_sanity_check(self):
         # Check for missing inputs
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
-                raise Except.MissingFile(file)
+                return Task.BROKEN #(file)
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
-            if not file.startswith(c.build_dir):
-                raise Except.BadPath(f"Path error, output file {file} is not under build_dir {c.build_dir}")
+            if not file.startswith(self._config.build_dir):
+                return Task.BROKEN # f"Path error, output file {file} is not under build_dir {c.build_dir}"
 
         # Check for missing paths
-        if not Path.exists(c.task_cwd):
-            raise Except.MissingDir(c.task_cwd)
+        if not Path.exists(self._config.task_cwd):
+            return Task.BROKEN # (c.task_cwd)
 
         #if not Path.exists(c.build_dir):
-        #    print(f"can't find build dir {c.build_dir}")
-        #    #raise Except.MissingDir(c.build_dir)
+        #    return Task.BROKEN #(c.build_dir)
 
-        if not c.build_dir.startswith(c.repo_dir):
-            raise Except.BadPath(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
+        if not self._config.build_dir.startswith(self._config.repo_dir):
+            return Task.BROKEN # f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}"
 
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.filename_to_fingerprint:
-                raise Except.Collision(f"TaskCollision: Multiple tasks build {real_file}")
+                return Task.BROKEN # f"TaskCollision: Multiple tasks build {real_file}"
             Loader.filename_to_fingerprint[real_file] = real_file
 
         # Check that all commands are valid
-        for command in c.command:
+        for command in self._config.command:
             if not isinstance(command, str) and not callable(command):
-                raise Except.BadCommand(f"Don't know what to do with command '{command}'")
+                return Task.BROKEN # f"Don't know what to do with command '{command}'"
 
-        if self._config.command:
-            return Task.CHECK_DEPS
-        else:
-            # Early-out if this is a no-op task
-            return Task.FINISHED
+        return Task.CHECK_DEPS
 
     # --------------------------------------------------------------------------------
 
