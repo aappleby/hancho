@@ -50,7 +50,7 @@ def __dir__():
     # Not sure yet if we need to tweak the public dir of hancho.
     return [*hancho.__dict__.keys(), *aliases.keys(), "config"]
 
-#----------------------------------------
+# ----------------------------------------
 
 def init(*args, **kwargs):
     """
@@ -60,7 +60,7 @@ def init(*args, **kwargs):
     """
     reset(*args, **kwargs)
 
-#----------------------------------------
+# ----------------------------------------
 
 def reset(*args, **kwargs):
     Loader.reset(*args, **kwargs)
@@ -70,7 +70,7 @@ def reset(*args, **kwargs):
     Tracer.reset()
     Runner.reset(hancho.config.core_max)
 
-#----------------------------------------
+# ----------------------------------------
 
 def main():
 
@@ -380,21 +380,18 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def _apply(k1, v1, func):
+    def _visit(k1, v1, func):
+        func(k1, v1)
         if Utils.is_collection(v1):
             for k2, v2 in enumerate(v1):
-                v1[k2] = Utils._apply(k1, v2, func)
-            return v1
+                Utils._visit(k1, v2, func)
         elif Utils.is_mapping(v1):
             for k2, v2 in v1.items():
-                v1[k2] = Utils._apply(k2, v2, func)
-            return v1
-        else:
-            return func(k1, v1)
+                Utils._visit(k2, v2, func)
 
     @staticmethod
-    def apply(v, func):
-        return Utils._apply(None, v, func)
+    def visit(v, func):
+        return Utils._visit(None, v, func)
 
     #----------------------------------------
 
@@ -555,33 +552,18 @@ class Tool(Dict): pass
 # region Task
 # Task object + bookkeeping
 
-class TaskCollision  (BaseException): pass
-class TaskMissingDir (BaseException): pass
-class TaskMissingFile(BaseException): pass
-class TaskMissingPath(BaseException): pass
-class TaskBadPath    (BaseException): pass
-class TaskBadCommand (BaseException): pass
-class TaskBadState   (BaseException): pass
+class Except:
+    class Collision  (BaseException): pass
+    class MissingDir (BaseException): pass
+    class MissingFile(BaseException): pass
+    class BadPath    (BaseException): pass
+    class BadCommand (BaseException): pass
+    class BadState   (BaseException): pass
 
-class CommandFailed  (BaseException): pass
-
-class TaskFailed   (BaseException): pass
-class TaskBroken   (BaseException): pass
-class TaskCancelled(BaseException): pass
-class TaskSkipped  (BaseException): pass
-
-def is_depfile(k):
-    return k == "in_depfile"
-
-def is_output(k):
-    return k and (is_depfile(k) or k.startswith("out_"))
-
-def is_input(k):
-    return k and k.startswith("in_")
-
-def is_iofile(k):
-    return is_input(k) or is_output(k) or is_depfile(k)
-
+    class Failed     (BaseException): pass
+    class Broken     (BaseException): pass
+    class Cancelled  (BaseException): pass
+    class Skipped    (BaseException): pass
 
 class Task:
 
@@ -597,10 +579,25 @@ class Task:
     SKIPPED   = "SKIPPED"
     BROKEN    = "BROKEN"
 
-    #--------------------------------------------------------------------------------
+    @staticmethod
+    def is_depfile(k : str) -> bool:
+        return k == "in_depfile"
+
+    @staticmethod
+    def is_output(k : str):
+        return k and (Task.is_depfile(k) or k.startswith("out_"))
+
+    @staticmethod
+    def is_input(k : str):
+        return k and k.startswith("in_")
+
+    @staticmethod
+    def is_iofile(k : str):
+        return Task.is_input(k) or Task.is_output(k) or Task.is_depfile(k)
+
+    # --------------------------------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
-
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
         self._config  = Dict(hancho.config, *args, **kwargs)
@@ -629,23 +626,38 @@ class Task:
     # ----------------------------------------
 
     def to_state(self, new_state):
+        # Init -> Finished is the "dry run" transition
+
         transitions = {
             Task.DECLARED  : [Task.QUEUED],
             Task.QUEUED    : [Task.WAITING],
             Task.WAITING   : [Task.INIT, Task.CANCELLED],
-            Task.INIT      : [Task.BROKEN, Task.SKIPPED, Task.GET_CORES],
+            Task.INIT      : [Task.BROKEN, Task.SKIPPED, Task.GET_CORES, Task.FINISHED],
             Task.GET_CORES : [Task.RUNNING],
             Task.RUNNING   : [Task.FAILED, Task.FINISHED],
         }
 
         if not self._state in transitions:
             message = f"State {self._state} -> {new_state} has no edges in the transition table"
-            raise TaskBadState(message)
+            raise Except.BadState(message)
         edges = transitions[self._state]
         if not new_state in edges:
             message = f"Can't transition from {self._state} to {new_state}!"
-            raise TaskBadState(message)
+            raise Except.BadState(message)
         self._state = new_state
+
+        match new_state:
+            case Task.DECLARED:  pass
+            case Task.QUEUED:    pass
+            case Task.WAITING:   Stats.tasks_waiting += 1
+            case Task.INIT:      Stats.tasks_running += 1
+            case Task.GET_CORES: pass
+            case Task.RUNNING:   pass
+            case Task.FINISHED:  Stats.tasks_finished += 1
+            case Task.CANCELLED: Stats.tasks_cancelled += 1
+            case Task.FAILED:    Stats.tasks_failed += 1
+            case Task.SKIPPED:   Stats.tasks_skipped += 1
+            case Task.BROKEN:    Stats.tasks_broken += 1
 
     # ----------------------------------------
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -662,15 +674,12 @@ class Task:
     # ----------------------------------------
 
     def queue(self):
-        if not self._state is Task.DECLARED: return
+        if not self._state is Task.DECLARED:
+            return
         self.to_state(Task.QUEUED)
 
         # Queue all tasks referenced by this task's config first.
-        def apply2(k, v):
-            if isinstance(v, Task):
-                v.queue()
-            return v
-        Utils.apply(self._config, apply2)
+        Utils.visit(self._config, lambda _, v: isinstance(v, Task) and v.queue())
 
         # And _then_ queue this task.
         Runner.queued_tasks.append(self)
@@ -690,37 +699,40 @@ class Task:
     def promise(self, field : str):
         return Promise(self, field)
 
-    #--------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------------
 
     async def task_top(self):
-        try: # Task-level error handling
+        try:  # Task-level error handling
             await self.task_main()
 
-        except TaskCancelled as err:
+        except Except.Cancelled as err:
             self.to_state(Task.CANCELLED)
             self.log_task_cancelled(err)
-            Stats.tasks_cancelled += 1
-            raise err # raising TaskCancelled
+            raise err  # raising TaskCancelled
 
-        except (TaskBadPath, TaskMissingDir, TaskCollision, TaskMissingFile, TaskBadCommand) as err:
+        except (
+            Except.BadCommand,
+            Except.BadPath,
+            Except.Collision,
+            Except.MissingDir,
+            Except.MissingFile,
+        ) as err:
             self.to_state(Task.BROKEN)
             self.log_task_broken(err)
-            Stats.tasks_broken += 1
-            raise TaskFailed from err
+            raise Except.Failed from err
 
-        except (TaskFailed, CommandFailed) as err:
+        except Except.Failed as err:
             self.to_state(Task.FAILED)
             script_path = Path.join(self._config.script_dir, self._config.script_file)
             self.log_command_failure(script_path, self._config.command, err)
-            Stats.tasks_failed += 1
             self.log_task_failed(err)
-            raise TaskFailed from err
+            raise Except.Failed from err
 
-    #--------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------------
 
     async def task_main(self):
         c = self._config
-        Stats.tasks_started += 1
+
 
         self.expand_config()
 
@@ -728,13 +740,14 @@ class Task:
         await self.await_inputs()
 
         # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
-        Stats.tasks_running += 1
-        self._task_index = Stats.tasks_running
 
         if c.debug:
             Log.log(f"Task config before expand: {c}\n")
 
         self.to_state(Task.INIT)
+
+        self._task_index = Stats.tasks_count
+        Stats.tasks_count += 1
 
         for k, v in c.items():
             v = self.fix_path(k, v)
@@ -742,9 +755,10 @@ class Task:
                 c[k] = v[0] if len(v) == 1 else v
 
         if c.dry_run:
+            self.to_state(Task.FINISHED)
             return
 
-        #----------------------------------------
+        # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
         c.name    = c.expand_all("{name}")
@@ -760,27 +774,25 @@ class Task:
         if not c.command:
             return
 
-        #----------------------------------------
+        # ----------------------------------------
         # Check if we need a rebuild
 
         self._reason = self.needs_rerun(c.rebuild)
         if not self._reason:
-            Stats.tasks_skipped += 1
             self.to_state(Task.SKIPPED)
             self.log_task_skipped()
             return
 
-        #----------------------------------------
+        # ----------------------------------------
         # TASK START
 
         self.log_task_running()
         await self.run_commands()
 
-        Stats.tasks_finished += 1
         self.to_state(Task.FINISHED)
         self.log_task_done()
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     def expand_config(self):
         c = self._config
@@ -796,7 +808,7 @@ class Task:
         for f in path_fields:   c[f] = Path.norm(e[f]) #type:ignore
         for f in flag_fields:   c[f] = e[f]
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     async def await_inputs(self):
         """Await everything awaitable in this task's config. If any of this tasks's dependencies
@@ -822,10 +834,10 @@ class Task:
 
         try: # Dependent task errors cancel this task.
             await await_xip(self._config)
-        except TaskFailed as err:
-            raise TaskCancelled from err
+        except Except.Failed as err:
+            raise Except.Cancelled from err
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
     # Make all paths absolute and move all output files so they're under build_dir.
 
     # If an input source had an absolute path and we swap the extension on it to make the
@@ -834,7 +846,7 @@ class Task:
 
     def fix_path(self, k, v):
         c = self._config
-        if not v or not is_iofile(k):
+        if not v or not Task.is_iofile(k):
             return
 
         # First, flatten all inputs and outputs.
@@ -852,27 +864,27 @@ class Task:
         for i, v2 in enumerate(v):
             v2 = cast(str, v2)
 
-            if is_output(k) and not v2.startswith(c.build_dir):
+            if Task.is_output(k) and not v2.startswith(c.build_dir):
                 v2 = v2.replace(c.task_cwd, c.build_dir)
 
-            if is_output(k):
+            if Task.is_output(k):
                 os.makedirs(Path.dirname(v2), exist_ok=True)
 
             # Gather all absolute file paths to _in_files/_out_files.
             # WARNING: These filenames _must_ be absolute as they may be read from other repos.
-            if is_depfile(k):
+            if Task.is_depfile(k):
                 if isinstance(v2, str) and Path.isfile(v2):
                     self._in_files.append(v2)
-            elif is_output(k):
+            elif Task.is_output(k):
                 self._out_files.append(v2)
-            elif is_input(k):
+            elif Task.is_input(k):
                 self._in_files.append(v2)
 
             v[i] = v2
 
         return v
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     def task_sanity_check(self):
         c = self._config
@@ -882,34 +894,34 @@ class Task:
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
-                raise TaskMissingFile(file)
+                raise Except.MissingFile(file)
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
             if not file.startswith(c.build_dir):
-                raise TaskBadPath(f"Path error, output file {file} is not under build_dir {c.build_dir}")
+                raise Except.BadPath(f"Path error, output file {file} is not under build_dir {c.build_dir}")
 
         # Check for missing paths
         if not Path.exists(c.task_cwd):
-            raise TaskMissingDir(c.task_cwd)
+            raise Except.MissingDir(c.task_cwd)
 
         if not c.build_dir.startswith(c.repo_dir):
-            raise TaskBadPath(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
+            raise Except.BadPath(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
 
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.filename_to_fingerprint:
-                raise TaskCollision(f"TaskCollision: Multiple tasks build {real_file}")
+                raise Except.Collision(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.filename_to_fingerprint[real_file] = real_file
 
         # Check that all commands are valid
         for command in c.command:
             if not isinstance(command, str) and not callable(command):
-                raise TaskBadCommand(f"Don't know what to do with command '{command}'")
+                raise Except.BadCommand(f"Don't know what to do with command '{command}'")
 
-    #--------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------------
 
     def needs_rerun(self, rebuild=False):
         """Checks if a task needs to be re-run, and returns a non-empty reason if so."""
@@ -971,7 +983,7 @@ class Task:
         # Empty string = no reason to rebuild
         return ""
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     async def run_commands(self):
         """Wait for enough jobs to free up to run this task and then run the commands."""
@@ -984,12 +996,12 @@ class Task:
                     self.log_command_start(command)
                 await self.run_command(command)
 
-    #----------------------------------------
+    # ----------------------------------------
 
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
 
-        #----------------------------------------
+        # ----------------------------------------
         # Custom commands just get called and then early-out'ed.
 
         if callable(command):
@@ -1002,10 +1014,10 @@ class Task:
             self._stderr = ""
             return
 
-        #----------------------------------------
+        # ----------------------------------------
         # Create the subprocess via asyncio and then await the result.
 
-        #if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
+        # if debug: Log.log(f"Task {hex(id(self))} subprocess start '{command}'\n")
 
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -1018,26 +1030,26 @@ class Task:
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        #if debug: Log.log(f"Task {hex(id(self))} subprocess done ({proc.returncode}) '{command}'\n")
+        # if debug: Log.log(f"Task {hex(id(self))} subprocess done ({proc.returncode}) '{command}'\n")
 
         if proc.returncode:
-            raise CommandFailed()
+            raise Except.Failed()
         elif self._config.verbose or self._config.debug:
             self.log_command_done(command)
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     def dump(self):
         result = f"{type(self).__name__} @ {hex(id(self))} : '{self._config.name}'"
         return result
 
-    #----------------------------------------
+    # ----------------------------------------
     # FIXME Clean this up, yuck
 
     def log_prefix(self):
         """Prints the [1/N] prefix before a log"""
         message  = Utils.color(128,255,196)
-        message += f"[{self._task_index}/{Stats.tasks_started}] "
+        message += f"[{self._task_index}/{Stats.tasks_waiting}] "
         message += Utils.color()
         return message
 
@@ -1080,21 +1092,20 @@ class Task:
     def log_task_failed(self, ex):
         if True:
             script_path = Path.join(self._config.script_dir, self._config.script_file)
-            #import traceback
+            # import traceback
             message  = self.log_prefix()
             message += Utils.color(255,0,0)
             message += f"Task failed!\n"
             message += f"From {script_path}:\n"
             message += f"    Task '{self._config.name}' : '{self._config.desc}'\n"
-            #message += traceback.format_exc()
+            # message += traceback.format_exc()
             message += Utils.color()
             Log.log(message)
 
-
     def log_task_broken(self, ex):
-        #import traceback
+        # import traceback
         Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
-        #Log.log(traceback.format_exc())
+        # Log.log(traceback.format_exc())
 
     def log_task_cancelled(self, ex):
         if self._config.verbose or self._config.debug:
@@ -1112,7 +1123,6 @@ class Task:
             message += Utils.color()
             Log.log(message)
 
-
     def log_command_start(self, command):
         if self._config.verbose or self._config.debug:
             assert self._config.task_cwd == os.getcwd()
@@ -1123,7 +1133,7 @@ class Task:
             Log.log(message)
 
     def log_command_failure(self, script_path, command, ex):
-        #if self._config.verbose or self._config.debug:
+        # if self._config.verbose or self._config.debug:
         if True:
             message  = self.log_prefix()
             message += Utils.color(255,0,0)
@@ -1158,7 +1168,8 @@ class Stats:
     time_queue : float
     time_build : float
 
-    tasks_started : int
+    tasks_count : int
+    tasks_waiting : int
     tasks_running : int
     tasks_finished : int
     tasks_failed : int
@@ -1172,7 +1183,9 @@ class Stats:
         cls.time_load  = 0
         cls.time_queue = 0
         cls.time_build = 0
-        cls.tasks_started = 0
+
+        cls.tasks_count = 0
+        cls.tasks_waiting = 0
         cls.tasks_running = 0
         cls.tasks_finished = 0
         cls.tasks_failed = 0
@@ -1185,7 +1198,7 @@ class Stats:
         # Done, print status info if needed
 
         if hancho.config.debug or hancho.config.verbose:
-            Log.log(f"tasks started:    {cls.tasks_started}\n")
+            Log.log(f"tasks started:    {cls.tasks_waiting}\n")
             Log.log(f"tasks finished:   {cls.tasks_finished}\n")
             Log.log(f"tasks failed:     {cls.tasks_failed}\n")
             Log.log(f"tasks skipped:    {cls.tasks_skipped}\n")
@@ -1615,7 +1628,7 @@ class Loader:
             cls.cv_config.reset(cls.cv_token)
         cls.cv_token = cls.cv_config.set(root_config)
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
     # This is a function so that when we re-initialize Hancho during tests, we pick up a fresh
@@ -1667,7 +1680,7 @@ class Loader:
         )
         return result
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     @classmethod
     def parse_flags(cls, args : list[str]):
@@ -1731,7 +1744,7 @@ class Loader:
         flags = Dict(vars(flags), extra_flags)
         return flags
 
-    #-----------------------------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------------------------
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
@@ -1764,7 +1777,7 @@ class Loader:
             hancho   = hancho,
         )
 
-        #----------------------------------------
+        # ----------------------------------------
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
         # script.
 
@@ -1783,7 +1796,7 @@ class Loader:
             **kwargs
         )
 
-        #----------------------------------------
+        # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical module configs are
         # deduped.
 
@@ -1798,7 +1811,7 @@ class Loader:
 
         cls.dedupe[dedupe_key] = new_module
 
-        #----------------------------------------
+        # ----------------------------------------
         # Run the module.
 
         with (chdir(new_config.script_dir), Loader.cv_config.set(new_config)):
@@ -1806,7 +1819,7 @@ class Loader:
 
         return new_module
 
-    #----------------------------------------
+    # ----------------------------------------
 
     @classmethod
     def log_load(cls, script_path, is_repo):
@@ -1920,11 +1933,11 @@ class Runner:
             try: # top-level task exception handler
                 await asyncio_task
                 cls.finished_tasks.append(task)
-            except TaskBroken as ex:
+            except Except.Broken as ex:
                 pass
-            except TaskFailed as ex:
+            except Except.Failed as ex:
                 pass
-            except TaskCancelled as ex:
+            except Except.Cancelled as ex:
                 pass
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
@@ -1963,7 +1976,7 @@ class Runner:
 
 # endregion
 ####################################################################################################
-#region aliases and if __name__ == "__main__"
+# region aliases and if __name__ == "__main__"
 
 # These are aliases to stuff in Hancho that have been pulled out so they can be used by
 # template expansion so you can do {flatten(x)} instead of {Utils.flatten(x)} in macros, and
@@ -1988,7 +2001,7 @@ aliases = Dict(
     join    = Utils.join,
 )
 
-#---------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
@@ -1999,4 +2012,4 @@ if __name__ == "__main__":
 else:
     init()
 
-#endregion
+# endregion

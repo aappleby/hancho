@@ -10,15 +10,8 @@
     probably not
 
 # FIXME Refactoring
-  work needs to be redistributed between task_main, task_init, etc - more smaller units.
   _all_ paths should be rel'd before running command. If you want abs, you can abs() it.
-  the exception-throwing path and stats regarding failed/cancelled tasks needs a revisit
-  expanding command in task_init should use expand-in-place or something
   tasks should auto-queue if they're created dynamically?
-  Clean up the pile of globals we pass to scripts
-    see if we can do something different with the eval() global and local contexts, idk.
-    need to ensure that all the stuff accessible to the clients through hancho is clean.
-    it's getting better.
 
 # FIXME Tests
   dry run
