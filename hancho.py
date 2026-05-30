@@ -782,7 +782,8 @@ class Task:
         try: # Dependent task errors cancel this task.
             await Utils.await_xip(self._config)
         except Except.Failed as err:
-            raise Except.Cancelled from err
+            self.to_state(Task.CANCELLED)
+            return Task.CANCELLED
 
         self.to_state(Task.SETUP)
         return Task.SETUP
@@ -808,7 +809,10 @@ class Task:
         c.command = Utils.flatten(c.command)
         for c2 in c.command:
             if not type(c2) == type(c.command[0]):
-                raise Except.BadCommand(f"Don't know what to do with command '{c.command}'")
+                self.to_state(Task.BROKEN)
+                self.log_task_broken(f"Don't know what to do with command '{c.command}'")
+                return Task.BROKEN
+
 
         for k, v in c.items():
             v = self.fix_path(k, v)
@@ -826,62 +830,54 @@ class Task:
         c.desc    = Expander.expand_all(e, "{desc}")
         c.command = Expander.expand_all(e, "{command}")
 
-        self.task_sanity_check()
+        if self._config.debug:
+            Log.log(f"Task config after expand: {self._config}\n")
 
-        if c.debug:
-            Log.log(f"Task config after expand: {c}\n")
+        return Task.SANITY_CHECK
 
-        # Early-out if this is a no-op task
-        if not c.command:
-            return Task.FINISHED
+    # --------------------------------------------------------------------------------
 
-        # ----------------------------------------
+    async def SANITY_CHECK(self):
+        return self.task_sanity_check()
+
+    # --------------------------------------------------------------------------------
+
+    async def CHECK_DEPS(self):
         # Check if we need a rebuild
 
-        self._reason = self.needs_rerun(c.rebuild)
-        if not self._reason:
+        self._reason = self.needs_rerun(self._config.rebuild)
+        if self._reason:
+            return Task.GET_CORES
+        else:
             self.to_state(Task.SKIPPED)
             self.log_task_skipped()
-            return
-
-        return Task.RUNNING
+            return Task.SKIPPED
 
     # --------------------------------------------------------------------------------
 
     async def GET_CORES(self):
-        return None
+        """Wait for enough jobs to free up to run this task and then run the commands."""
+        self.to_state(Task.GET_CORES)
+        await Runner.acquire(self._config.core_count)
+        self._has_cores = True
+        return Task.RUNNING
 
     # --------------------------------------------------------------------------------
 
     async def RUNNING(self):
         self.log_task_running()
-
-        """Wait for enough jobs to free up to run this task and then run the commands."""
-        self.to_state(Task.GET_CORES)
-        await Runner.acquire(self._config.core_count)
-        self._has_cores = True
-
         self.to_state(Task.RUNNING)
         for command in self._config.command:
             if self._config.verbose or self._config.debug:
                 self.log_command_start(command)
             if isinstance(command, str):
-                await self.run_command(command)
+                proc = await self.run_command(command)
+                if proc.returncode:
+                    return Task.FAILED
+                elif self._config.verbose or self._config.debug:
+                    self.log_command_done(command)
             else:
                 await self.run_callback(command)
-        #finally:
-        #    Runner.release(self._config.core_count)
-
-        #async with Runner.Cores(self._config.core_count):
-        #    # Run the task's commands!
-        #    self.to_state(Task.RUNNING)
-        #    for command in self._config.command:
-        #        if self._config.verbose or self._config.debug:
-        #            self.log_command_start(command)
-        #        if isinstance(command, str):
-        #            await self.run_command(command)
-        #        else:
-        #            await self.run_callback(command)
 
         self.to_state(Task.FINISHED)
         return Task.FINISHED
@@ -894,15 +890,23 @@ class Task:
         return None
 
     async def CANCELLED(self):
+        self.to_state(Task.CANCELLED)
+        self.log_task_cancelled()
         raise Except.Cancelled
 
     async def FAILED(self):
+        self.to_state(Task.FAILED)
+        script_path = Path.join(self._config.script_cwd, self._config.script_file)
+        self.log_command_failure(script_path, self._config.command)
+        self.log_task_failed()
         raise Except.Failed
 
     async def SKIPPED(self):
         raise Except.Skipped
 
     async def BROKEN(self):
+        self.to_state(Task.BROKEN)
+        self.log_task_broken("Caught an exception")
         raise Except.Broken
 
     # --------------------------------------------------------------------------------
@@ -914,10 +918,14 @@ class Task:
                 self._state2 = next_state
                 next_state = await self._state2(self)
 
+        except Except.Skipped:
+            pass
+
         except Except.Cancelled as err:
-            self.to_state(Task.CANCELLED)
-            self.log_task_cancelled(err)
-            raise err  # raising TaskCancelled
+            raise err # raising Except.Cancelled
+
+        except Except.Broken as err:
+            raise err # raising Except.Broken
 
         except (
             Except.BadCommand,
@@ -926,20 +934,15 @@ class Task:
             Except.MissingDir,
             Except.MissingFile,
         ) as err:
-            self.to_state(Task.BROKEN)
-            self.log_task_broken(err)
-            raise Except.Failed from err
+            await self.BROKEN()
 
         except Except.Failed as err:
-            self.to_state(Task.FAILED)
-            script_path = Path.join(self._config.script_cwd, self._config.script_file)
-            self.log_command_failure(script_path, self._config.command, err)
-            self.log_task_failed(err)
-            raise Except.Failed from err
+            await self.FAILED()
 
         finally:
             if self._has_cores:
                 Runner.release(self._config.core_count)
+                self._has_cores = False
 
     # -----------------------------------------------------------------------------------------------
     # Make all paths absolute and move all output files so they're under build_dir.
@@ -1038,6 +1041,12 @@ class Task:
             if not isinstance(command, str) and not callable(command):
                 raise Except.BadCommand(f"Don't know what to do with command '{command}'")
 
+        if self._config.command:
+            return Task.CHECK_DEPS
+        else:
+            # Early-out if this is a no-op task
+            return Task.FINISHED
+
     # --------------------------------------------------------------------------------
 
     def needs_rerun(self, rebuild=False):
@@ -1118,11 +1127,7 @@ class Task:
         self._stderr = stderr_data.decode()
 
         # if debug: Log.log(f"Task {hex(id(self))} subprocess done ({proc.returncode}) '{command}'\n")
-
-        if proc.returncode:
-            raise Except.Failed()
-        elif self._config.verbose or self._config.debug:
-            self.log_command_done(command)
+        return proc
 
     # ----------------------------------------
 
@@ -1186,7 +1191,7 @@ class Task:
             message += f" : '{self._config.name}' - '{self._config.desc}'"
             Log.log(message)
 
-    def log_task_failed(self, ex):
+    def log_task_failed(self):
         if True:
             script_path = Path.join(self._config.script_cwd, self._config.script_file)
             # import traceback
@@ -1199,12 +1204,12 @@ class Task:
             message += Utils.color()
             Log.log(message)
 
-    def log_task_broken(self, ex):
+    def log_task_broken(self, msg):
         import traceback
         Log.log(self.log_prefix() + Utils.color(255,0,0) + "Task broken!" + Utils.color() + "\n")
         Log.log(traceback.format_exc())
 
-    def log_task_cancelled(self, ex):
+    def log_task_cancelled(self):
         if self._config.verbose or self._config.debug:
             message  = self.log_prefix()
             message += Utils.color(64,64,64)
@@ -1228,7 +1233,7 @@ class Task:
             message += Utils.color()
             Log.log(message)
 
-    def log_command_failure(self, script_path, command, ex):
+    def log_command_failure(self, script_path, command):
         # if self._config.verbose or self._config.debug:
         if True:
             message  = self.log_prefix()
@@ -1239,7 +1244,7 @@ class Task:
             message += f"    task_cwd = '{self._config.task_cwd}'\n"
             message += f"    getcwd   = '{os.getcwd()}'\n"
             message += f"    command  = '{command}'\n"
-            message += f"    error    = '{ex}'\n"
+            #message += f"    error    = '{ex}'\n"
             if not callable(command):
                 message += self.stdout_to_str()
             message += Utils.color()
@@ -1956,17 +1961,17 @@ class Runner:
         for _ in range(count):
             Runner.core_sem.release()
 
-    class Cores:
-        def __init__(self, count):
-            self.count = count
-
-        async def __aenter__(self):
-            await Runner.acquire(self.count)
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            Runner.release(self.count)
-            return False
+#    class Cores:
+#        def __init__(self, count):
+#            self.count = count
+#
+#        async def __aenter__(self):
+#            await Runner.acquire(self.count)
+#            return self
+#
+#        async def __aexit__(self, exc_type, exc_val, exc_tb):
+#            Runner.release(self.count)
+#            return False
 
     #--------------------------------------------------------------------------------
 
