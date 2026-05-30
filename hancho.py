@@ -595,6 +595,13 @@ class TaskBroken   (BaseException): pass
 class TaskCancelled(BaseException): pass
 class TaskSkipped  (BaseException): pass
 
+def is_output(k):
+    return k and (k == "in_depfile" or k.startswith("out_"))
+
+def is_input(k):
+    return k and k.startswith("in_")
+
+
 class Task:
 
     DECLARED  = "DECLARED"
@@ -818,91 +825,54 @@ class Task:
     #-----------------------------------------------------------------------------------------------
 
     def task_fix_paths(self):
+        # Make all paths absolute and move all output files so they're under build_dir.
 
         # First, flatten all inputs and outputs.
-
-        def flatten_paths(k1, v1):
-            if isinstance(k1, str) and (k1.startswith("in_") or k1.startswith("out_")):
-                v1 = Utils.flatten(v1)
-                v1 = v1[0] if len(v1) == 1 else v1
-            return v1
-
-        for k1, v1 in self._config.items():
-            self._config[k1] = flatten_paths(k1, v1)
+        for k, v in self._config.items():
+            if is_input(k) or is_output(k):
+                v = Utils.flatten(v)
+                v = v[0] if len(v) == 1 else v
+            self._config[k] = v
 
         # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        # FIXME why are we joining script_dir to out_file?
+        for k, v in self._config.items():
+            if is_input(k) or is_output(k):
+                self._config[k] = self._config.expand_all(v)
 
-        def expand(k1, v1):
-            if not v1:
-                return v1
-            if k1 == "in_depfile" and v1:
-                v1 = self._config.expand_all(v1)
-                v1 = Path.join(self._config.script_dir, v1)
-            elif k1.startswith("in_") and v1:
-                v1 = self._config.expand_all(v1)
-                v1 = Path.join(self._config.script_dir, v1)
-            elif k1.startswith("out_") and v1:
-                v1 = self._config.expand_all(v1)
-                v1 = Path.join(self._config.script_dir, v1)
-            return v1
+        # If an input source had an absolute path and we swap the extension on it to make the
+        # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+        # lives under build_dir.
 
-        Utils.apply(self._config, expand)
-
-        # Make all paths absolute and move all output files so they're under build_dir.
-
-        def fix_in_path(v : str):
-            return Path.join(self._config.task_cwd, v)
-
-        def fix_out_path(v : str):
-            if not v: return v
-
-            # Note this conditional needs to be first, as build_dir can itself be under task_cwd
-            if v.startswith(self._config.build_dir):
-                # Note this conditional needs to be first, as build_dir can itself be under task_cwd
-                # Absolute path under build_dir, do nothing.
-                return v
-            elif v.startswith(self._config.task_cwd):
-                # If an input source had an absolute path and we swap the extension on it to make the
-                # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-                # lives under build_dir.
-                return v.replace(self._config.task_cwd, self._config.build_dir)
-            else:
-                raise TaskBadPath(f"Output file has absolute path that is not under task_cwd or build_dir : {v}")
-
-        def fix(k, v):
-            if isinstance(k, str) and v:
-                if k == "in_depfile" or k.startswith("out_"):
-                    v = fix_out_path(v)
-                elif k.startswith("in_"):
-                    v = fix_in_path(v)
-            return v
-
-        Utils.apply(self._config, fix)
+        for k, v in self._config.items():
+            if not v: continue
+            if is_input(k) or is_output(k):
+                v = cast(str, Path.join(self._config.script_dir, v))
+            if is_output(k) and not v.startswith(self._config.build_dir):
+                v = v.replace(self._config.task_cwd, self._config.build_dir)
+            self._config[k] = v
 
         # Gather all absolute file paths to _in_files/_out_files.
         # WARNING: These filenames _must_ be absolute as they may be read from other repos.
 
-        for k1, v1 in self._config.items():
-            if k1 == "in_depfile":
-                if isinstance(v1, str) and Path.isfile(v1):
-                    self._in_files.append(v1)
-            elif k1.startswith("out_"):
-                self._out_files.append(v1)
-            elif k1.startswith("in_"):
-                self._in_files.append(v1)
+        for k, v in self._config.items():
+            if k == "in_depfile":
+                if isinstance(v, str) and Path.isfile(v):
+                    self._in_files.append(v)
+            elif k.startswith("out_"):
+                self._out_files.append(v)
+            elif k.startswith("in_"):
+                self._in_files.append(v)
 
+        # Flatten and abs our _in_files
         self._in_files  = Utils.flatten(self._in_files)
-        self._out_files = Utils.flatten(self._out_files)
-
-        # Make sure our output directories exist
-
         for i, file in enumerate(self._in_files):
             self._in_files[i] = Path.abs(file)
 
+        # Make sure our output directories exist
+        self._out_files = Utils.flatten(self._out_files)
         for i, file in enumerate(self._out_files):
             os.makedirs(Path.dirname(file), exist_ok=True)
             self._out_files[i] = Path.abs(file)
