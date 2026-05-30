@@ -6,14 +6,24 @@
   "configurations": [
 
     {
-      "name"    : "Debug test module",
+      "name"    : "Debug one test",
       "type"    : "debugpy",
       "request" : "launch",
-      "module"  : "tests.test_tasks",
+      //"module"  : "tests.test_tasks",
+      "module"  : "unittest",
+      "args"    : ["tests.test_tasks.TestTasks.test_bad_build_path"],
       "preLaunchTask": "Wipe build",
     },
 
-        {
+    {
+      "name"    : "Debug all tests",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "module"  : "unittest",
+      "preLaunchTask": "Wipe build",
+    },
+
+    {
       "name"    : "Debug hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
@@ -36,14 +46,6 @@
       //"args"    : ["-v", "--rebuild", "--debug"],
       "preLaunchTask": "Wipe build",
     },
-
-    //{
-    //  "name"    : "Tests",
-    //  "type"    : "debugpy",
-    //  "request" : "launch",
-    //  "module"  : "unittest",
-    //  "args"    : ["tests.test_tasks"],
-    //},
 
     {
       // python -m unittest discover -s tests

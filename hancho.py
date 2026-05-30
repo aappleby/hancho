@@ -454,13 +454,25 @@ class Path:
     ext  = Utils.recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
     stem = Utils.recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
-    isabs    = lambda path : os.path.isabs(path)
+    #isabs    = lambda path : os.path.isabs(path)
     isfile   = lambda path : os.path.isfile(path)
     isdir    = lambda path : os.path.isfile(path)
     exists   = lambda path : os.path.exists(path)
     dirname  = lambda path : os.path.dirname(path)
     split    = lambda path : os.path.split(path)
     splitext = lambda path : os.path.splitext(path)
+
+    @staticmethod
+    def isabs(v):
+        if Utils.is_collection(v):
+            result = True
+            for file in v:
+                result = result and Path.isabs(file)
+            return result
+        elif isinstance(v, str):
+            return os.path.isabs(v)
+        else:
+            return False
 
 # endregion
 ####################################################################################################
@@ -606,9 +618,9 @@ class Task:
         self._config  = Dict(hancho.config, *args, **kwargs)
         self._expand  = Expander.wrap(self._config, self._config.trace)
 
-        # sanity check - script_dir is always os.getcwd()
-        #script_dir = Expander.get(self._expand, "script_dir")
-        #assert script_dir == os.getcwd()
+        # sanity check - script_cwd is always os.getcwd()
+        # script_cwd = Expander.get(self._expand, "script_cwd")
+        #assert script_cwd == os.getcwd()
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -745,7 +757,7 @@ class Task:
 
         except Except.Failed as err:
             self.to_state(Task.FAILED)
-            script_path = Path.join(self._config.script_dir, self._config.script_file)
+            script_path = Path.join(self._config.script_cwd, self._config.script_file)
             self.log_command_failure(script_path, self._config.command, err)
             self.log_task_failed(err)
             raise Except.Failed from err
@@ -825,7 +837,7 @@ class Task:
         e = self._expand
 
         path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
-                        "script_dir", "script_file", "build_root", "build_dir"]
+                        "script_cwd", "script_file", "build_root", "build_dir"]
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
                         "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild", "shuffle",
@@ -882,11 +894,15 @@ class Task:
         # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
+        # Relative paths are relative to script_cwd, so we tack that on to produce absolute paths.
+
+        # Path _must_ be normed after expansion and joining, otherwise it might look like it's
+        # under script_cwd but it's not because the path could have "../../../../.." in it.
 
         v = Expander.expand_all(e, v)
-        v = Path.join2(c.script_dir, v)
-        v = Path.abs(v)
-        v = cast(list, v)
+        v = Path.join2(c.script_cwd, v)
+        v = Path.norm(v)
+        assert Path.isabs(v)
 
         for i, v2 in enumerate(v):
             v2 = cast(str, v2)
@@ -1033,11 +1049,11 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # ----------------------------------------
-        # Callbacks get called and then early-out'ed. They run in script_dir.
+        # Callbacks get called and then early-out'ed. They run in script_cwd.
 
         if callable(command):
             import inspect
-            with chdir(self._config.script_dir):
+            with chdir(self._config.script_cwd):
                 result = command(self)
                 while inspect.isawaitable(result):
                     result = await result
@@ -1122,7 +1138,7 @@ class Task:
 
     def log_task_failed(self, ex):
         if True:
-            script_path = Path.join(self._config.script_dir, self._config.script_file)
+            script_path = Path.join(self._config.script_cwd, self._config.script_file)
             # import traceback
             message  = self.log_prefix()
             message += Utils.color(255,0,0)
@@ -1670,11 +1686,10 @@ class Loader:
             root_file   = "build.hancho",
             repo_dir    = "{root_dir}",
             repo_file   = "{root_file}",
-            script_dir  = "{root_dir}",
             script_file = "{root_file}",
 
             task_cwd    = "{repo_dir}",
-            func_cwd    = "{repo_dir}",
+            script_cwd  = "{repo_dir}",
 
             is_repo     = True,
             this_repo   = hancho,
@@ -1790,7 +1805,7 @@ class Loader:
 
         code = compile(source, script_path, "exec", dont_inherit=True)
 
-        (script_dir, script_file) = Path.split(script_path)
+        (script_cwd, script_file) = Path.split(script_path)
         (script_name, script_ext) = Path.splitext(script_file)
 
         cls.log_load(script_path, is_repo)
@@ -1812,9 +1827,9 @@ class Loader:
         new_config = Dict(
             old_config,
             is_repo     = is_repo,
-            script_dir  = script_dir,
+            script_cwd  = script_cwd,
             script_file = script_file,
-            repo_dir    = script_dir  if is_repo else old_config.repo_dir,
+            repo_dir    = script_cwd  if is_repo else old_config.repo_dir,
             repo_file   = script_file if is_repo else old_config.repo_file,
             this_repo   = new_module  if is_repo else old_config.this_repo,
             this_module = new_module,
@@ -1840,7 +1855,7 @@ class Loader:
         # ----------------------------------------
         # Run the module.
 
-        with (chdir(new_config.script_dir), Loader.cv_config.set(new_config)):
+        with (chdir(new_config.script_cwd), Loader.cv_config.set(new_config)):
             exec(code, new_module.__dict__)
 
         return new_module
