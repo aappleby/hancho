@@ -409,28 +409,6 @@ class Utils:
         else:
             return str(variant)
 
-    #----------------------------------------
-
-    @staticmethod
-    async def await_variant_xip(var):
-        import inspect
-
-        if isinstance(var, Promise):
-            return await Utils.await_variant_xip(var.get())
-        elif isinstance(var, Task):
-            return await Utils.await_variant_xip(var.await_done())
-        elif inspect.isawaitable(var):
-            return await Utils.await_variant_xip(await var)
-        elif Utils.is_collection(var):
-            for i,v in enumerate(var):
-                var[i] = await Utils.await_variant_xip(v)
-        elif Utils.is_mapping(var):
-            for k, v in var.items():
-                var[k] = await Utils.await_variant_xip(v)
-
-        return var
-
-
 # endregion
 ####################################################################################################
 # region Path
@@ -822,8 +800,26 @@ class Task:
         """Await everything awaitable in this task's config. If any of this tasks's dependencies
         failed, we propagate a cancellation to downstream tasks."""
 
+        async def await_variant_xip(var):
+            import inspect
+
+            if isinstance(var, Promise):
+                return await await_variant_xip(var.get())
+            elif isinstance(var, Task):
+                return await await_variant_xip(var.await_done())
+            elif inspect.isawaitable(var):
+                return await await_variant_xip(await var)
+            elif Utils.is_collection(var):
+                for i,v in enumerate(var):
+                    var[i] = await await_variant_xip(v)
+            elif Utils.is_mapping(var):
+                for k, v in var.items():
+                    var[k] = await await_variant_xip(v)
+
+            return var
+
         try: # Dependent task errors cancel this task.
-            await Utils.await_variant_xip(self._config)
+            await await_variant_xip(self._config)
         except TaskFailed as err:
             raise TaskCancelled from err
 
