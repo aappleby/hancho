@@ -569,11 +569,13 @@ class Task:
 
     DECLARED  = "DECLARED"
     QUEUED    = "QUEUED"
+
     STARTED   = "STARTED"
     WAITING   = "WAITING"
-    INIT      = "INIT"
+    SETUP     = "SETUP"
     GET_CORES = "GET_CORES"
     RUNNING   = "RUNNING"
+
     FINISHED  = "FINISHED"
     CANCELLED = "CANCELLED"
     FAILED    = "FAILED"
@@ -613,7 +615,7 @@ class Task:
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
         # Bookkeeping stuff
-        self._task_index : int = 0
+        self._task_id : int = 0
         self._state : str = Task.DECLARED
         self._reason : str = ""
         self._stdout : str = ""
@@ -632,11 +634,12 @@ class Task:
         transitions = {
             Task.DECLARED  : [Task.QUEUED],
             Task.QUEUED    : [Task.STARTED],
+
             Task.STARTED   : [Task.WAITING],
-            Task.WAITING   : [Task.INIT, Task.CANCELLED],
-            Task.INIT      : [Task.BROKEN, Task.SKIPPED, Task.GET_CORES, Task.FINISHED],
+            Task.WAITING   : [Task.SETUP, Task.CANCELLED],
+            Task.SETUP     : [Task.GET_CORES, Task.BROKEN, Task.SKIPPED, Task.FINISHED],
             Task.GET_CORES : [Task.RUNNING],
-            Task.RUNNING   : [Task.FAILED, Task.FINISHED],
+            Task.RUNNING   : [Task.FINISHED, Task.FAILED],
         }
 
         if not self._state in transitions:
@@ -649,12 +652,14 @@ class Task:
         self._state = new_state
 
         match new_state:
-            case Task.DECLARED:  pass
-            case Task.QUEUED:    pass
+            case Task.DECLARED:  Stats.tasks_declared += 1
+            case Task.QUEUED:    Stats.tasks_queued += 1
+
             case Task.WAITING:   Stats.tasks_waiting += 1
-            case Task.INIT:      Stats.tasks_running += 1
-            case Task.GET_CORES: pass
-            case Task.RUNNING:   pass
+            case Task.SETUP:     Stats.tasks_setup += 1
+            case Task.GET_CORES: Stats.tasks_getcores += 1
+            case Task.RUNNING:   Stats.tasks_running += 1
+
             case Task.FINISHED:  Stats.tasks_finished += 1
             case Task.CANCELLED: Stats.tasks_cancelled += 1
             case Task.FAILED:    Stats.tasks_failed += 1
@@ -745,15 +750,15 @@ class Task:
         self.to_state(Task.WAITING)
         await self.await_inputs()
 
-        # Now that all our inputs are ready, grab a _task_index that we'll use in our logging.
+        # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
 
         if c.debug:
             Log.log(f"Task config before expand: {c}\n")
 
-        self.to_state(Task.INIT)
+        self.to_state(Task.SETUP)
 
-        self._task_index = Stats.tasks_count
-        Stats.tasks_count += 1
+        Stats.id_counter += 1
+        self._task_id = Stats.id_counter
 
         for k, v in c.items():
             v = self.fix_path(k, v)
@@ -1055,7 +1060,7 @@ class Task:
     def log_prefix(self):
         """Prints the [1/N] prefix before a log"""
         message  = Utils.color(128,255,196)
-        message += f"[{self._task_index}/{Stats.tasks_waiting}] "
+        message += f"[{self._task_id}/{Stats.id_counter}] "
         message += Utils.color()
         return message
 
@@ -1131,7 +1136,11 @@ class Task:
 
     def log_command_start(self, command):
         if self._config.verbose or self._config.debug:
-            assert self._config.task_cwd == os.getcwd()
+            #if self._config.task_cwd != os.getcwd():
+            #    print("!!!!!!!!!!!!!!!!!!!!!!!!!")
+            #    print(f"{self._config.task_cwd} != {os.getcwd()}")
+            #    print("!!!!!!!!!!!!!!!!!!!!!!!!!")
+            #    assert self._config.task_cwd == os.getcwd()
             message  = self.log_prefix()
             message += Utils.color(128, 128, 255)
             message += f"{Path.rel(self._config.task_cwd, self._config.repo_dir)}$ '{command}'"
@@ -1174,14 +1183,21 @@ class Stats:
     time_queue : float
     time_build : float
 
-    tasks_count : int
-    tasks_waiting : int
-    tasks_running : int
+    id_counter    : int
+
+    tasks_declared  : int
+    tasks_queued   : int
+
+    tasks_waiting  : int
+    tasks_setup    : int
+    tasks_getcores : int
+    tasks_running  : int
     tasks_finished : int
-    tasks_failed : int
-    tasks_skipped : int
+
+    tasks_failed    : int
+    tasks_skipped   : int
     tasks_cancelled : int
-    tasks_broken : int
+    tasks_broken    : int
 
     @classmethod
     def reset(cls):
@@ -1190,10 +1206,17 @@ class Stats:
         cls.time_queue = 0
         cls.time_build = 0
 
-        cls.tasks_count = 0
+        cls.id_counter = 0
+
+        cls.tasks_declared = 0
+        cls.tasks_queued = 0
+
         cls.tasks_waiting = 0
+        cls.tasks_setup = 0
+        cls.tasks_getcores = 0
         cls.tasks_running = 0
         cls.tasks_finished = 0
+
         cls.tasks_failed = 0
         cls.tasks_skipped = 0
         cls.tasks_cancelled = 0
