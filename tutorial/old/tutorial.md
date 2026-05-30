@@ -85,7 +85,7 @@ hancho.Task(
 ```
 
 
-Strings in Hancho tasks use Python-style f-string syntax, minus the 'f' prefix. The ```{}``` blocks can contain arbitrary Python expressions, with the limitation that the expressions can only refer to other fields inside the task or to Hancho's built-in functions (see documentation at ***FIXME***).
+Strings in Hancho tasks use Python-style f-string syntax, minus the 'f' prefix. The ```{}``` blocks can contain arbitrary Python expressions, with the limitation that the expressions can only refer to other fields inside the task or to Hancho's built-in functions (see documentation at ***xxxxx***).
 
 Let's see what's inside our task:
 

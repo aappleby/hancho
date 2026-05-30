@@ -160,7 +160,6 @@ fast_task = hancho.Task(
 )
 
 # Asynchronous functions can also be used in place of command strings.
-# FIXME does this still work?
 
 async def async_callback(task):
     for abs_file in task.out_txts:
@@ -176,7 +175,6 @@ slow_task = hancho.Task(
 )
 
 # Promises that resolve to filenames can be used in place of actual filenames in tools.
-# FIXME does this still work?
 
 async def slow_filename_promise():
     await asyncio.sleep(0.1)

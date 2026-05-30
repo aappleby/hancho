@@ -1,5 +1,3 @@
-# FIXME these could stand to be cleaned up a bit.
-
 import hancho
 
 tools_base = hancho.load("{hancho_dir}/tools/tools_base.hancho")
@@ -128,8 +126,6 @@ iceprog = hancho.Tool(
     desc    = "Run iceprog on {in_bin}",
     command = "iceprog -S {in_bin}",
 )
-
-# FIXME Remove this and replace with "def synth(*, ...):"
 
 synth = hancho.Tool(
     desc    = "Synth {in_sv}",

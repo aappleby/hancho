@@ -947,7 +947,6 @@ class Task:
         c = self._config
 
         # Check for missing inputs
-        # FIXME add test for input file = None
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
@@ -1102,7 +1101,6 @@ class Task:
         return result
 
     # ----------------------------------------
-    # FIXME Clean this up, yuck
 
     def log_prefix(self):
         """Prints the [1/N] prefix before a log"""
@@ -1297,7 +1295,6 @@ class Promise:
     async def get(self):
         await self.task.await_done()
         result = self.task._config[self.field]
-        # FIXME this is probably wrong? need a test.
         result = Path.join(self.task._config.task_cwd, result)
         return result
 
@@ -1323,10 +1320,6 @@ class Promise:
 # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
 # expandable by that dict. This allows nested dicts to contain templates that can only be expanded
 # an outer dict, and things will still Just Work.
-
-# FIXME Look into making Expander overwrite dict entries after expansion so we don't re-expand
-# things constantly. I don't know if this is a good idea. Configs should be const by the time
-# we start expanding them, so maybe it's OK?
 
 # this has to be a MutableMapping if we want to put it in the ChainMap for locals()
 class Expander(abc.MutableMapping[str, object]):
@@ -1400,7 +1393,6 @@ class Expander(abc.MutableMapping[str, object]):
 
     #----------------------------------------
 
-    # FIXME do I need the exception translation here? I think I do, because these happen inside eval()
     def __getitem__(self, key):
         try: # Expander.__getitem__
             return self._get(key)
@@ -1774,8 +1766,6 @@ class Loader:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
-
-                # FIXME add a test for this converter thinger
 
                 if val is None:
                     # this is so that --foo turns into {foo:True}

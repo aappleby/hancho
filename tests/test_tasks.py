@@ -273,7 +273,6 @@ class TestTasks(unittest.TestCase):
     def test_dep_changed(self):
         # Changing a file in in_files[] should trigger a rebuild
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
-        # FIXME ok dealing with repo-relative and tests/-relative paths here is annoying.
 
         dummy = "data/dummy.txt"
 
@@ -282,14 +281,13 @@ class TestTasks(unittest.TestCase):
             hancho.Task(
                 name    = "test_dep_changed {in_src}",
                 command = "sleep 0.1 && touch {out_obj}",
-                in_temp = [dummy],
+                in_temp = dummy,
                 in_src  = "src/test.cpp",
                 out_obj = "result.txt",
             )
             self.run_tasks(0)
             return mtime_ns("build/result.txt")
 
-        #os.makedirs("build", exist_ok=True)
         force_touch(dummy)
         mtime1 = run()
         mtime2 = run()
@@ -557,7 +555,6 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(1000, len(glob.glob("build/*")))
 
-    # FIXME this one is also broken
     def test_job_count(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then

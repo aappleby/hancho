@@ -1,5 +1,3 @@
-# FIXME could merge these with base_rules.hancho
-
 import hancho
 
 rv_toolchain = hancho.Dict(
@@ -8,7 +6,7 @@ rv_toolchain = hancho.Dict(
     linker   = "{arch}-unknown-elf-g++",
 )
 
-gcc_config = hancho.Dict(
+rv_gcc_config = hancho.Dict(
     opt_mode = "-O0",
     warnings = None,
     defines  = None,
@@ -36,7 +34,7 @@ flags_ld = flags_c + [
 ]
 
 rv_compile = hancho.Tool(
-    gcc_config,
+    rv_gcc_config,
     #----------
     toolchain  = rv_toolchain,
     command    = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
@@ -48,11 +46,11 @@ rv_compile = hancho.Tool(
 )
 
 rv_link = hancho.Tool(
-    gcc_config,
+    rv_gcc_config,
     #----------
+    toolchain    = rv_toolchain,
     command      = "{toolchain.linker} {flags} {in_objs} -o {out_bin} -lgcc",
     flags        = flags_ld,
-    toolchain    = rv_toolchain,
     linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
     #----------
     in_objs      = None,

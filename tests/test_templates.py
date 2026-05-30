@@ -244,26 +244,6 @@ class TestTemplates(unittest.TestCase):
 
     def doctest_order_of_expansion(self):
         r"""
-        # Expand produces strings, but the below does _not_ try to add (string) "10" and (int) 0
-        # because expanding {a} -> {b} -> "10" then joins the "10" with " + 0" to produce "10 + 0"
-        # before the final eval.
-        # FIXME this test isn't valid anymore
-
-        ┏ expand '{a} + 0'
-        ┃ ┏ eval 'a'
-        ┃ ┃ ┏ get 'a'
-        ┃ ┃ ┗ '{b}'
-        ┃ ┃ ┏ expand '{b}'
-        ┃ ┃ ┃ ┏ eval 'b'
-        ┃ ┃ ┃ ┃ ┏ get 'b'
-        ┃ ┃ ┃ ┃ ┗ 10
-        ┃ ┃ ┃ ┗ 10
-        ┃ ┃ ┗ '10'
-        ┃ ┗ '10'
-        ┗ '10 + 0'
-        ┏ eval '10 + 0'
-        ┗ 10
-
         >>> d = Dict(a = "{b}", b = 10)
         >>> d.expand_once("{a} + 0")
         '{b} + 0'

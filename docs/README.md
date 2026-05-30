@@ -244,7 +244,6 @@ Expanding templates based on configs inside configs also works:
 Any function attached to a ```Dict``` can be used in a template, along with a set of built-in utility methods.
 
 ```py
-# FIXME this is out of date
 >>> dir(foo)
 [<snip...> 'abspath', 'clear', 'color', 'copy', 'expand', 'ext', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'relpath', 'run_cmd', 'setdefault', 'stem', 'update', 'values']
 ```
