@@ -412,29 +412,21 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    async def await_scalar(var):
-        import inspect
-        while True:
-            if isinstance(var, Promise):
-                var = var.get()
-            elif isinstance(var, Task):
-                var = var.await_done()
-            elif inspect.isawaitable(var):
-                var = await var
-            else:
-                break
-        return var
-
-    @staticmethod
     async def await_variant_xip(var):
-        if Utils.is_collection(var):
+        import inspect
+
+        if isinstance(var, Promise):
+            return await Utils.await_variant_xip(var.get())
+        elif isinstance(var, Task):
+            return await Utils.await_variant_xip(var.await_done())
+        elif inspect.isawaitable(var):
+            return await Utils.await_variant_xip(await var)
+        elif Utils.is_collection(var):
             for i,v in enumerate(var):
                 var[i] = await Utils.await_variant_xip(v)
         elif Utils.is_mapping(var):
             for k, v in var.items():
                 var[k] = await Utils.await_variant_xip(v)
-        else:
-            var = await Utils.await_scalar(var)
 
         return var
 
@@ -470,6 +462,11 @@ class Path:
     def join(lhs, rhs):
         result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
+
+    @staticmethod
+    def join2(lhs, rhs):
+        result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
+        return result
 
     # We want these functions to work on Tree[str], so we run them through recursify.
     _abs  = Utils.recursify(os.path.abspath)
@@ -595,11 +592,17 @@ class TaskBroken   (BaseException): pass
 class TaskCancelled(BaseException): pass
 class TaskSkipped  (BaseException): pass
 
+def is_depfile(k):
+    return k == "in_depfile"
+
 def is_output(k):
-    return k and (k == "in_depfile" or k.startswith("out_"))
+    return k and (is_depfile(k) or k.startswith("out_"))
 
 def is_input(k):
     return k and k.startswith("in_")
+
+def is_iofile(k):
+    return is_input(k) or is_output(k) or is_depfile(k)
 
 
 class Task:
@@ -729,7 +732,9 @@ class Task:
                 Log.log(f"Task config before expand: {self._config}\n")
 
             self.to_state(Task.INIT)
-            self.task_fix_paths()
+
+            for k, v in self._config.items():
+                self.task_fix_path(k, v)
 
             if self._config.dry_run:
                 return
@@ -761,10 +766,10 @@ class Task:
             # TASK START
 
             self.log_task_running()
-            await self.task_main()
+            await self.run_commands()
 
             #----------------------------------------
-            # Task finished successfully
+            # Task finished!
 
             if not self._reason:
                 Stats.tasks_skipped += 1
@@ -823,60 +828,51 @@ class Task:
             raise TaskCancelled from err
 
     #-----------------------------------------------------------------------------------------------
+    # Make all paths absolute and move all output files so they're under build_dir.
 
-    def task_fix_paths(self):
-        # Make all paths absolute and move all output files so they're under build_dir.
+    # If an input source had an absolute path and we swap the extension on it to make the
+    # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+    # lives under build_dir.
+
+
+    def task_fix_path(self, k, v):
+        if not v or not is_iofile(k):
+            return
 
         # First, flatten all inputs and outputs.
-        for k, v in self._config.items():
-            if is_input(k) or is_output(k):
-                v = Utils.flatten(v)
-                v = v[0] if len(v) == 1 else v
-            self._config[k] = v
+        v = Utils.flatten(v)
 
         # All our inputs and outputs are now flat arrays. Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
 
-        for k, v in self._config.items():
-            if is_input(k) or is_output(k):
-                self._config[k] = self._config.expand_all(v)
+        v = self._config.expand_all(v)
+        v = Path.join2(self._config.script_dir, v)
+        v = Path.abs(v)
+        v = cast(list, v)
 
-        # If an input source had an absolute path and we swap the extension on it to make the
-        # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-        # lives under build_dir.
+        for i, v2 in enumerate(v):
+            v2 = cast(str, v2)
 
-        for k, v in self._config.items():
-            if not v: continue
-            if is_input(k) or is_output(k):
-                v = cast(str, Path.join(self._config.script_dir, v))
-            if is_output(k) and not v.startswith(self._config.build_dir):
-                v = v.replace(self._config.task_cwd, self._config.build_dir)
-            self._config[k] = v
+            if is_output(k) and not v2.startswith(self._config.build_dir):
+                v2 = v2.replace(self._config.task_cwd, self._config.build_dir)
 
-        # Gather all absolute file paths to _in_files/_out_files.
-        # WARNING: These filenames _must_ be absolute as they may be read from other repos.
+            if is_output(k):
+                os.makedirs(Path.dirname(v2), exist_ok=True)
 
-        for k, v in self._config.items():
-            if k == "in_depfile":
-                if isinstance(v, str) and Path.isfile(v):
-                    self._in_files.append(v)
-            elif k.startswith("out_"):
-                self._out_files.append(v)
-            elif k.startswith("in_"):
-                self._in_files.append(v)
+            # Gather all absolute file paths to _in_files/_out_files.
+            # WARNING: These filenames _must_ be absolute as they may be read from other repos.
+            if is_depfile(k):
+                if isinstance(v2, str) and Path.isfile(v2):
+                    self._in_files.append(v2)
+            elif is_output(k):
+                self._out_files.append(v2)
+            elif is_input(k):
+                self._in_files.append(v2)
 
-        # Flatten and abs our _in_files
-        self._in_files  = Utils.flatten(self._in_files)
-        for i, file in enumerate(self._in_files):
-            self._in_files[i] = Path.abs(file)
+            v[i] = v2
 
-        # Make sure our output directories exist
-        self._out_files = Utils.flatten(self._out_files)
-        for i, file in enumerate(self._out_files):
-            os.makedirs(Path.dirname(file), exist_ok=True)
-            self._out_files[i] = Path.abs(file)
-
+        self._config[k] = v[0] if len(v) == 1 else v
 
     #-----------------------------------------------------------------------------------------------
 
@@ -913,19 +909,6 @@ class Task:
         for command in self._config.command:
             if not isinstance(command, str) and not callable(command):
                 raise TaskBadCommand(f"Don't know what to do with command '{command}'")
-
-    #-----------------------------------------------------------------------------------------------
-
-    async def task_main(self):
-        """Wait for enough jobs to free up to run this task and then run the commands."""
-        self.to_state(Task.GET_CORES)
-        async with Runner.Cores(self._config.core_count):
-            # Run the task's commands!
-            self.to_state(Task.RUNNING)
-            for command in self._config.command:
-                if self._config.verbose or self._config.debug:
-                    self.log_command_start(command)
-                await self.run_command(command)
 
     #--------------------------------------------------------------------------------
 
@@ -989,7 +972,20 @@ class Task:
         # Empty string = no reason to rebuild
         return ""
 
-    #--------------------------------------------------------------------------------
+    #-----------------------------------------------------------------------------------------------
+
+    async def run_commands(self):
+        """Wait for enough jobs to free up to run this task and then run the commands."""
+        self.to_state(Task.GET_CORES)
+        async with Runner.Cores(self._config.core_count):
+            # Run the task's commands!
+            self.to_state(Task.RUNNING)
+            for command in self._config.command:
+                if self._config.verbose or self._config.debug:
+                    self.log_command_start(command)
+                await self.run_command(command)
+
+    #----------------------------------------
 
     async def run_command(self, command):
         """Runs a single command, either by calling it or running it in a subprocess."""
@@ -1030,7 +1026,7 @@ class Task:
         elif self._config.verbose or self._config.debug:
             self.log_command_done(command)
 
-    #----------------------------------------
+    #-----------------------------------------------------------------------------------------------
 
     def dump(self):
         result = f"{type(self).__name__} @ {hex(id(self))} : '{self._config.name}'"
