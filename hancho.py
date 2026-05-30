@@ -639,7 +639,8 @@ class Task:
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
         # State machine
-        self._state : abc.Callable[[Task], types.CoroutineType] = Task.DECLARED
+        self._state : abc.Callable[[Task], types.CoroutineType] | None = None
+        Stats.tasks_declared += 1
 
         # Bookkeeping stuff
         self._task_id : int = 0
@@ -657,9 +658,7 @@ class Task:
         # this is not a no-op, if ther is no running loop we do _not_ auto-queue the task
         try:
             asyncio.get_running_loop()
-            self._state = Task.QUEUED
-            Runner.queued_tasks.append(self)
-
+            self.queue2()
         except:
             pass
 
@@ -679,9 +678,8 @@ class Task:
 
     def queue_deps(self):
         def queue(k, v):
-            if isinstance(v, Task) and v._state is Task.DECLARED:
-                v._state = Task.QUEUED
-                Runner.queued_tasks.append(v)
+            if isinstance(v, Task) and v._state is None:
+                v.queue2()
         Utils.visit(self._config, queue)
 
     def queue2(self):
@@ -689,25 +687,15 @@ class Task:
         self.queue_deps()
         Runner.queued_tasks.append(self)
 
+    def start2(self):
+        self._state = Task.STARTED
+        self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
+
     async def await_done(self):
-        if self._state is Task.DECLARED:
-            self._state = Task.QUEUED
-            Runner.queued_tasks.append(self)
-            def queue(k, v):
-                if isinstance(v, Task) and v._state is Task.DECLARED:
-                    v._state = Task.QUEUED
-                    Runner.queued_tasks.append(v)
-            Utils.visit(self._config, queue)
+        if not self._asyncio_task:
+            self.start2()
 
-        if self._state is Task.QUEUED:
-            if self._state is not Task.QUEUED:
-                assert False, "Can't start a task if it isn't queued."
-            #self.to_state(Task.STARTED)
-            self._state = Task.STARTED
-            self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
-
-        assert self._asyncio_task is not None
-        result = await self._asyncio_task
+        await self._asyncio_task
         return self._out_files
 
     def promise(self, field : str):
@@ -731,12 +719,6 @@ class Task:
                 self._has_cores = False
 
         return self._state
-
-    # --------------------------------------------------------------------------------
-
-    async def DECLARED(self):
-        Stats.tasks_declared += 1
-        return Task.QUEUED
 
     # --------------------------------------------------------------------------------
 
@@ -1919,41 +1901,19 @@ class Runner:
     @classmethod
     def queue_all_tasks(cls):
         for task in cls.all_tasks:
-            if task._state is Task.DECLARED:
-                task._state = Task.QUEUED
-                Runner.queued_tasks.append(task)
-                def queue(k, v):
-                    if isinstance(v, Task) and v._state is Task.DECLARED:
-                        v._state = Task.QUEUED
-                        Runner.queued_tasks.append(v)
-                Utils.visit(task._config, queue)
-
+            task.queue2()
 
     @classmethod
     def queue_root_tasks(cls):
         for task in cls.all_tasks:
             if task._config.this_repo == Loader.root_repo:
-                if task._state is Task.DECLARED:
-                    task._state = Task.QUEUED
-                    Runner.queued_tasks.append(task)
-                    def queue(k, v):
-                        if isinstance(v, Task) and v._state is Task.DECLARED:
-                            v._state = Task.QUEUED
-                            Runner.queued_tasks.append(v)
-                    Utils.visit(task._config, queue)
+                task.queue2()
 
     @classmethod
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._config.name):
-                if task._state is Task.DECLARED:
-                    task._state = Task.QUEUED
-                    Runner.queued_tasks.append(task)
-                    def queue(k, v):
-                        if isinstance(v, Task) and v._state is Task.DECLARED:
-                            v._state = Task.QUEUED
-                            Runner.queued_tasks.append(v)
-                    Utils.visit(task._config, queue)
+                task.queue2()
 
     #--------------------------------------------------------------------------------
 
@@ -1985,8 +1945,7 @@ class Runner:
 
             while cls.queued_tasks:
                 task = cls.queued_tasks.pop(0)
-                task._state = Task.STARTED
-                task._asyncio_task = asyncio.create_task(task.task_top(), context = task._context)
+                task.start2()
                 cls.started_tasks.append(task)
 
             task = cls.started_tasks.pop(0)
