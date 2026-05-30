@@ -654,9 +654,12 @@ class Task:
 
         Runner.all_tasks.append(self)
 
+        # this is not a no-op, if ther is no running loop we do _not_ auto-queue the task
         try:
             asyncio.get_running_loop()
-            self.queue()
+            self._state = Task.QUEUED
+            Runner.queued_tasks.append(self)
+
         except:
             pass
 
@@ -674,30 +677,35 @@ class Task:
 
     # ----------------------------------------
 
-    def queue(self):
-        if self._state is not Task.DECLARED:
-            assert False, f"Can't queue a task if it isn't declared. {self._state}"
-        # Queue all tasks referenced by this task's config first, and _then_ queue the task.
-        self._state = Task.QUEUED
-
+    def queue_deps(self):
         def queue(k, v):
             if isinstance(v, Task) and v._state is Task.DECLARED:
-                v.queue()
+                v._state = Task.QUEUED
+                Runner.queued_tasks.append(v)
         Utils.visit(self._config, queue)
-        Runner.queued_tasks.append(self)
 
-    def start(self):
-        if self._state is not Task.QUEUED:
-            assert False, "Can't start a task if it isn't queued."
-        #self.to_state(Task.STARTED)
-        self._state = Task.STARTED
-        self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
+    def queue2(self):
+        self._state = Task.QUEUED
+        self.queue_deps()
+        Runner.queued_tasks.append(self)
 
     async def await_done(self):
         if self._state is Task.DECLARED:
-            self.queue()
+            self._state = Task.QUEUED
+            Runner.queued_tasks.append(self)
+            def queue(k, v):
+                if isinstance(v, Task) and v._state is Task.DECLARED:
+                    v._state = Task.QUEUED
+                    Runner.queued_tasks.append(v)
+            Utils.visit(self._config, queue)
+
         if self._state is Task.QUEUED:
-            self.start()
+            if self._state is not Task.QUEUED:
+                assert False, "Can't start a task if it isn't queued."
+            #self.to_state(Task.STARTED)
+            self._state = Task.STARTED
+            self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
+
         assert self._asyncio_task is not None
         result = await self._asyncio_task
         return self._out_files
@@ -712,7 +720,8 @@ class Task:
             next_state = self._state
             while next_state:
                 self._state = next_state
-                next_state = await self._state(self)
+                next_state_co = self._state(self)
+                next_state = await next_state_co
 
             if self._state == Task.FAILED:
                 raise Except.Failed
@@ -732,8 +741,7 @@ class Task:
     # --------------------------------------------------------------------------------
 
     async def QUEUED(self):
-        Stats.tasks_queued += 1
-        return Task.STARTED
+        assert False
 
     # --------------------------------------------------------------------------------
 
@@ -1897,47 +1905,55 @@ class Runner:
 
     @classmethod
     async def acquire(cls, count):
-        #print(f"acquire {count}")
         async with Runner.core_lock:
             for _ in range(count):
                 await Runner.core_sem.acquire()
 
     @classmethod
     def release(cls, count):
-        #print(f"release {count}")
         for _ in range(count):
             Runner.core_sem.release()
-
-#    class Cores:
-#        def __init__(self, count):
-#            self.count = count
-#
-#        async def __aenter__(self):
-#            await Runner.acquire(self.count)
-#            return self
-#
-#        async def __aexit__(self, exc_type, exc_val, exc_tb):
-#            Runner.release(self.count)
-#            return False
 
     #--------------------------------------------------------------------------------
 
     @classmethod
     def queue_all_tasks(cls):
         for task in cls.all_tasks:
-            if task._state is Task.DECLARED: task.queue()
+            if task._state is Task.DECLARED:
+                task._state = Task.QUEUED
+                Runner.queued_tasks.append(task)
+                def queue(k, v):
+                    if isinstance(v, Task) and v._state is Task.DECLARED:
+                        v._state = Task.QUEUED
+                        Runner.queued_tasks.append(v)
+                Utils.visit(task._config, queue)
+
 
     @classmethod
     def queue_root_tasks(cls):
         for task in cls.all_tasks:
             if task._config.this_repo == Loader.root_repo:
-                if task._state is Task.DECLARED: task.queue()
+                if task._state is Task.DECLARED:
+                    task._state = Task.QUEUED
+                    Runner.queued_tasks.append(task)
+                    def queue(k, v):
+                        if isinstance(v, Task) and v._state is Task.DECLARED:
+                            v._state = Task.QUEUED
+                            Runner.queued_tasks.append(v)
+                    Utils.visit(task._config, queue)
 
     @classmethod
     def queue_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._config.name):
-                if task._state is Task.DECLARED: task.queue()
+                if task._state is Task.DECLARED:
+                    task._state = Task.QUEUED
+                    Runner.queued_tasks.append(task)
+                    def queue(k, v):
+                        if isinstance(v, Task) and v._state is Task.DECLARED:
+                            v._state = Task.QUEUED
+                            Runner.queued_tasks.append(v)
+                    Utils.visit(task._config, queue)
 
     #--------------------------------------------------------------------------------
 
@@ -1969,7 +1985,8 @@ class Runner:
 
             while cls.queued_tasks:
                 task = cls.queued_tasks.pop(0)
-                task.start()
+                task._state = Task.STARTED
+                task._asyncio_task = asyncio.create_task(task.task_top(), context = task._context)
                 cls.started_tasks.append(task)
 
             task = cls.started_tasks.pop(0)

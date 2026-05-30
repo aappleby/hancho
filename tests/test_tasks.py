@@ -91,7 +91,7 @@ class TestTasks(unittest.TestCase):
             command  = "touch {out_file}",
             out_file = "test_manual_queue.txt",
         )
-        t.queue()
+        t.queue2()
         self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
         result = hancho.Runner.sync_run_tasks()
         self.assertEqual(result, 0)
@@ -118,7 +118,7 @@ class TestTasks(unittest.TestCase):
             in_file  = t0,
             out_file = "test_manual_queue3c.txt",
         )
-        t2.queue()
+        t2.queue2()
 
         self.assertFalse(os.path.exists("build/test_manual_queue3a.txt"))
         self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
