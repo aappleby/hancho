@@ -28,7 +28,7 @@ def generate_filelist(task):
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
-    name     = "{out_list}",
+    name     = "generate_filelist {out_list}",
     desc     = "Write the names of 3 random files in src/ to {out_list}",
     command  = generate_filelist,
     in_src   = src_files,
@@ -41,7 +41,7 @@ def generate_result(task):
     file = open(task._config.in_filelist, "r", encoding="utf-8")
     from_filelist = [f.strip() for f in file.readlines()]
     new_task = hancho.Task(
-        name      = "{out_files}",
+        name      = "concatenate {out_files}",
         desc      = "Concatenate {base(in_files)} into {base(out_files)}",
         command   = "cat {in_files} > {out_files}",
         in_files  = from_filelist,
@@ -50,7 +50,7 @@ def generate_result(task):
     )
 
     print_task = hancho.Task(
-        name    = "{out_cat}",
+        name    = "copy {in_text} -> {out_cat}",
         desc    = "Copy the contents of {in_text} to {out_cat}",
         command = "cat {in_text} >> {out_cat}",
         in_text = new_task,

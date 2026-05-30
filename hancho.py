@@ -606,7 +606,9 @@ class Task:
         self._config  = Dict(hancho.config, *args, **kwargs)
         self._expand  = Expander.wrap(self._config, self._config.trace)
 
-        self._config.origin = os.getcwd()
+        # sanity check - script_dir is always os.getcwd()
+        #script_dir = Expander.get(self._expand, "script_dir")
+        #assert script_dir == os.getcwd()
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -770,6 +772,9 @@ class Task:
         if c.debug:
             Log.log(f"{self.log_prefix()}Task config before expand: {c}\n")
 
+        # ----------------------------------------
+        # FIX PATHS
+
         for k, v in c.items():
             v = self.fix_path(k, v)
             if v is not None:
@@ -819,7 +824,7 @@ class Task:
         c = self._config
         e = self._expand
 
-        path_fields  = ["origin", "hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
+        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
                         "script_dir", "script_file", "build_root", "build_dir"]
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
@@ -928,6 +933,10 @@ class Task:
         if not Path.exists(c.task_cwd):
             raise Except.MissingDir(c.task_cwd)
 
+        #if not Path.exists(c.build_dir):
+        #    print(f"can't find build dir {c.build_dir}")
+        #    #raise Except.MissingDir(c.build_dir)
+
         if not c.build_dir.startswith(c.repo_dir):
             raise Except.BadPath(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
 
@@ -1024,12 +1033,11 @@ class Task:
         """Runs a single command, either by calling it or running it in a subprocess."""
 
         # ----------------------------------------
-        # Custom commands just get called and then early-out'ed.
+        # Callbacks get called and then early-out'ed. They run in script_dir.
 
         if callable(command):
             import inspect
-            #with chdir(self._config.task_cwd):
-            with chdir(self._config.origin):
+            with chdir(self._config.script_dir):
                 result = command(self)
                 while inspect.isawaitable(result):
                     result = await result
@@ -1656,16 +1664,17 @@ class Loader:
             name        = "",
             desc        = "",
             command     = "",
-            origin      = "{script_dir}",
 
             hancho_dir  = Path.dirname(__file__),
-            task_cwd    = "{repo_dir}",
             root_dir    = os.getcwd(),
             root_file   = "build.hancho",
             repo_dir    = "{root_dir}",
             repo_file   = "{root_file}",
             script_dir  = "{root_dir}",
             script_file = "{root_file}",
+
+            task_cwd    = "{repo_dir}",
+            func_cwd    = "{repo_dir}",
 
             is_repo     = True,
             this_repo   = hancho,

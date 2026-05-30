@@ -10,10 +10,23 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "tests.test_tasks",
+      "preLaunchTask": "Wipe build",
+    },
+
+        {
+      "name"    : "Debug hancho.py",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "module"  : "hancho",
+      "args"    : ["-d", "-v", "-j1"],
+      //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
+      //"program" : "${workspaceFolder}/hancho.py",
+      //"args"    : ["-v", "--rebuild", "--debug"],
+      "preLaunchTask": "Wipe build",
     },
 
     {
-      "name"    : "Debug Hancho module",
+      "name"    : "Debug example",
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "hancho",
@@ -21,6 +34,7 @@
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       //"program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["-v", "--rebuild", "--debug"],
+      "preLaunchTask": "Wipe build",
     },
 
     //{
@@ -32,14 +46,15 @@
     //},
 
     {
-        // python -m unittest discover -s tests
-        "name": "All tests in ${workspaceFolder}/tests",
-        "type": "debugpy",
-        "request": "launch",
-        "module": "unittest",
-        "args": ["discover"],
-        "cwd": "${workspaceFolder}/tests",
-        "env": { "PYTHONPATH": "${workspaceFolder}" },
+      // python -m unittest discover -s tests
+      "name": "All tests in ${workspaceFolder}/tests",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["discover"],
+      "cwd": "${workspaceFolder}/tests",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "preLaunchTask": "Wipe build",
     },
 
     {
@@ -49,7 +64,7 @@
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}/..",
       //"args": ["--force", "-j1"],
-      //"preLaunchTask": "Wipe build",
+      "preLaunchTask": "Wipe build",
     },
   ]
 }
