@@ -56,6 +56,7 @@ class TestTasks(unittest.TestCase):
 
     def run_tasks(self, expected):
         hancho.config.build_all = True
+        hancho.Runner.enable_all_tasks()
         result = hancho.Runner.sync_run_tasks()
         self.assertEqual(result, expected)
 

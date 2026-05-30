@@ -100,6 +100,18 @@ def main():
         return result
 
     #----------------------------------------
+    # Start all tasks
+
+
+    if hancho.config.target:
+        target_regex = re.compile(hancho.config.target)
+        Runner.enable_tasks_by_regex(target_regex)
+    elif hancho.config.build_all:
+        Runner.enable_all_tasks()
+    else:
+        Runner.enable_root_tasks()
+
+    #----------------------------------------
     # Run all tasks
 
     time_a = time.perf_counter()
@@ -665,6 +677,9 @@ class Task:
             if isinstance(v, Task) and v._state is None:
                 v.start2()
         Utils.visit(self._config, visit)
+
+    def enable(self):
+        self._config.enabled = True
 
     def start2(self):
         self.start_deps()
@@ -1668,6 +1683,7 @@ class Loader:
             target      = "",
             tool        = "",
 
+            enabled     = False,
             keep_going  = False,
             verbose     = False,
             debug       = False,
@@ -1871,21 +1887,23 @@ class Runner:
     #--------------------------------------------------------------------------------
 
     @classmethod
-    def start_all_tasks(cls):
+    def enable_all_tasks(cls):
         for task in cls.all_tasks:
-            task.start2()
+            task._config.enabled = True
 
     @classmethod
-    def start_root_tasks(cls):
+    def enable_root_tasks(cls):
         for task in cls.all_tasks:
             if task._config.this_repo == Loader.root_repo:
-                task.start2()
+                #task.start2()
+                task._config.enabled = True
 
     @classmethod
-    def start_tasks_by_regex(cls, target_regex):
+    def enable_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._config.name):
-                task.start2()
+                #task.start2()
+                task._config.enabled = True
 
     #--------------------------------------------------------------------------------
 
@@ -1904,23 +1922,12 @@ class Runner:
     async def async_run_tasks(cls):
         """Run all tasks until we run out."""
 
-        #----------------------------------------
-        # Start all tasks
-
         time_a = time.perf_counter()
-
-        if hancho.config.target:
-            target_regex = re.compile(hancho.config.target)
-            Runner.start_tasks_by_regex(target_regex)
-        elif hancho.config.build_all:
-            Runner.start_all_tasks()
-        else:
-            Runner.start_root_tasks()
-
         Stats.time_start = time.perf_counter() - time_a
+        for task in cls.all_tasks:
+            if task._config.enabled:
+                task.start2()
         Log.log(f"Starting {len(Runner.started_tasks)} tasks took {Stats.time_start:.3f} seconds\n")
-
-
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
         # tasks to complete before starting more. Instead, we just keep queuing up any pending

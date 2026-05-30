@@ -11,7 +11,7 @@
       "request" : "launch",
       //"module"  : "tests.test_tasks",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_run_tasks_zero"],
+      "args"    : ["tests.test_tasks.TestTasks.test_always_rebuild_if_no_inputs"],
       "preLaunchTask": "Wipe build",
     },
 
