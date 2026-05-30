@@ -100,22 +100,6 @@ def main():
         return result
 
     #----------------------------------------
-    # Queue all tasks
-
-    time_a = time.perf_counter()
-
-    if hancho.config.target:
-        target_regex = re.compile(hancho.config.target)
-        Runner.queue_tasks_by_regex(target_regex)
-    elif hancho.config.build_all:
-        Runner.queue_all_tasks()
-    else:
-        Runner.queue_root_tasks()
-
-    Stats.time_queue = time.perf_counter() - time_a
-    Log.log(f"Queueing {len(Runner.queued_tasks)} tasks took {Stats.time_queue:.3f} seconds\n")
-
-    #----------------------------------------
     # Run all tasks
 
     time_a = time.perf_counter()
@@ -631,7 +615,7 @@ class Task:
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
-        self._asyncio_task : asyncio.Task
+        self._asyncio_task : asyncio.Task | None = None
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -640,7 +624,7 @@ class Task:
 
         # State machine
         self._state : abc.Callable[[Task], types.CoroutineType] | None = None
-        Stats.tasks_declared += 1
+        #Stats.tasks_declared += 1
 
         # Bookkeeping stuff
         self._task_id : int = 0
@@ -655,10 +639,10 @@ class Task:
 
         Runner.all_tasks.append(self)
 
-        # this is not a no-op, if ther is no running loop we do _not_ auto-queue the task
+        # This is not a no-op, if there is no running loop we do _not_ auto-start the task
         try:
             asyncio.get_running_loop()
-            self.queue2()
+            self.start2()
         except:
             pass
 
@@ -676,25 +660,24 @@ class Task:
 
     # ----------------------------------------
 
-    def queue_deps(self):
-        def queue(k, v):
+    def start_deps(self):
+        def visit(k, v):
             if isinstance(v, Task) and v._state is None:
-                v.queue2()
-        Utils.visit(self._config, queue)
-
-    def queue2(self):
-        self._state = Task.QUEUED
-        self.queue_deps()
-        Runner.queued_tasks.append(self)
+                v.start2()
+        Utils.visit(self._config, visit)
 
     def start2(self):
-        self._state = Task.STARTED
-        self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
+        self.start_deps()
+        if self._asyncio_task is None:
+            Runner.started_tasks.append(self)
+            self._state = Task.STARTED
+            self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
 
     async def await_done(self):
         if not self._asyncio_task:
             self.start2()
 
+        assert self._asyncio_task is not None
         await self._asyncio_task
         return self._out_files
 
@@ -719,11 +702,6 @@ class Task:
                 self._has_cores = False
 
         return self._state
-
-    # --------------------------------------------------------------------------------
-
-    async def QUEUED(self):
-        assert False
 
     # --------------------------------------------------------------------------------
 
@@ -1088,7 +1066,7 @@ class Task:
     def log_prefix(self):
         """Prints the [1/N] prefix before a log"""
         message  = Utils.color(128,255,196)
-        message += f"[{self._task_id}/{Stats.tasks_queued}] "
+        message += f"[{self._task_id}/{Stats.tasks_started}] "
         message += Utils.color()
         return message
 
@@ -1203,14 +1181,12 @@ class Stats:
     mtime_calls : int
 
     time_load  : float
-    time_queue : float
+    time_start : float
     time_build : float
 
     id_counter    : int
 
-    tasks_declared  : int
-    tasks_queued   : int
-
+    tasks_started  : int
     tasks_waiting  : int
     tasks_setup    : int
     tasks_getcores : int
@@ -1226,14 +1202,12 @@ class Stats:
     def reset(cls):
         cls.mtime_calls = 0
         cls.time_load  = 0
-        cls.time_queue = 0
+        cls.time_start = 0
         cls.time_build = 0
 
         cls.id_counter = 0
 
-        cls.tasks_declared = 0
-        cls.tasks_queued = 0
-
+        cls.tasks_started = 0
         cls.tasks_waiting = 0
         cls.tasks_setup = 0
         cls.tasks_getcores = 0
@@ -1866,7 +1840,6 @@ class Loader:
 class Runner:
 
     all_tasks : list[Task]
-    queued_tasks : list[Task]
     started_tasks : list[Task]
     finished_tasks : list[Task]
     core_max  : int
@@ -1876,7 +1849,6 @@ class Runner:
     @classmethod
     def reset(cls, core_max):
         cls.all_tasks = []
-        cls.queued_tasks = []
         cls.started_tasks = []
         cls.finished_tasks = []
         cls.core_max  = core_max
@@ -1899,27 +1871,27 @@ class Runner:
     #--------------------------------------------------------------------------------
 
     @classmethod
-    def queue_all_tasks(cls):
+    def start_all_tasks(cls):
         for task in cls.all_tasks:
-            task.queue2()
+            task.start2()
 
     @classmethod
-    def queue_root_tasks(cls):
+    def start_root_tasks(cls):
         for task in cls.all_tasks:
             if task._config.this_repo == Loader.root_repo:
-                task.queue2()
+                task.start2()
 
     @classmethod
-    def queue_tasks_by_regex(cls, target_regex):
+    def start_tasks_by_regex(cls, target_regex):
         for task in cls.all_tasks:
             if target_regex.search(task._config.name):
-                task.queue2()
+                task.start2()
 
     #--------------------------------------------------------------------------------
 
     @classmethod
     def sync_run_tasks(cls):
-        """Synchronously run all queued tasks until we're done with all of them."""
+        """Synchronously run all tasks until we're done with all of them."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         result = asyncio.run(cls.async_run_tasks())
@@ -1930,29 +1902,41 @@ class Runner:
 
     @classmethod
     async def async_run_tasks(cls):
-        """Run all tasks in the queue until we run out."""
+        """Run all tasks until we run out."""
+
+        #----------------------------------------
+        # Start all tasks
+
+        time_a = time.perf_counter()
+
+        if hancho.config.target:
+            target_regex = re.compile(hancho.config.target)
+            Runner.start_tasks_by_regex(target_regex)
+        elif hancho.config.build_all:
+            Runner.start_all_tasks()
+        else:
+            Runner.start_root_tasks()
+
+        Stats.time_start = time.perf_counter() - time_a
+        Log.log(f"Starting {len(Runner.started_tasks)} tasks took {Stats.time_start:.3f} seconds\n")
+
+
 
         # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
-        # tasks to complete before queueing up more. Instead, we just keep queuing up any pending
+        # tasks to complete before starting more. Instead, we just keep queuing up any pending
         # tasks after awaiting each one. Because we're awaiting tasks in the order they were
         # created, this will effectively walk through all tasks in dependency order.
 
-        while cls.queued_tasks or cls.started_tasks:
+        while cls.started_tasks:
             if hancho.config.shuffle:
-                Log.log(f"Shufflin' {len(cls.queued_tasks)} tasks")
+                Log.log(f"Shufflin' {len(cls.started_tasks)} tasks")
                 import random
-                random.shuffle(cls.queued_tasks)
-
-            while cls.queued_tasks:
-                task = cls.queued_tasks.pop(0)
-                task.start2()
-                cls.started_tasks.append(task)
-
-            task = cls.started_tasks.pop(0)
-            asyncio_task = Utils.check(asyncio.Task, task._asyncio_task)
+                random.shuffle(cls.started_tasks)
 
             try: # top-level task exception handler
-                await asyncio_task
+                task = cls.started_tasks.pop(0)
+                assert task._asyncio_task is not None
+                await task._asyncio_task
                 cls.finished_tasks.append(task)
             except Except.Failed as ex:
                 pass
@@ -1972,6 +1956,7 @@ class Runner:
         for task in cls.started_tasks:
             if task._asyncio_task is not None:
                 task._asyncio_task.cancel()
+                task._asyncio_task = None
                 tasks_cancelled += 1
 
     #--------------------------------------------------------------------------------
