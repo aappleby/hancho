@@ -44,7 +44,6 @@ def generate_result(task):
         in_deps   = [random_touch, filelist_txt],
         out_files = "result.txt",
     )
-    new_task.queue()
 
     print_task = hancho.Task(
         name    = "{rel(out_cat, task_cwd)}",
@@ -53,7 +52,6 @@ def generate_result(task):
         in_text = new_task,
         out_cat = "result2.txt"
     )
-    print_task.queue()
 
 result_txt = hancho.Task(
     name        = "generate_result",

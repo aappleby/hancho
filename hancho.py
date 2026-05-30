@@ -627,6 +627,12 @@ class Task:
 
         Runner.all_tasks.append(self)
 
+        try:
+            asyncio.get_running_loop()
+            self.queue()
+        except:
+            pass
+
     # ----------------------------------------
 
     def to_state(self, new_state):
