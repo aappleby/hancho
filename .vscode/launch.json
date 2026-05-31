@@ -11,7 +11,7 @@
       "request" : "launch",
       //"module"  : "tests.test_tasks",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_always_rebuild_if_no_inputs"],
+      "args"    : ["tests.test_tasks.TestTasks.test_bad_build_path"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -20,6 +20,17 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
+      "preLaunchTask": "Wipe build",
+    },
+
+    {
+      "name"    : "Debug scratch",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "cwd"     : "${workspaceFolder}/scratch",
+      //"module"  : "hancho",
+      "program" : "${workspaceFolder}/hancho.py",
+      "args"    : ["-d", "-v", "-j1"],
       "preLaunchTask": "Wipe build",
     },
 

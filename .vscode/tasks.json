@@ -20,6 +20,10 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
+      "presentation": {
+        "reveal": "never",
+        //"panel": "shared"
+      }
     }
   ]
 }
