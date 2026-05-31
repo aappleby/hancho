@@ -39,10 +39,9 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "hancho",
-      "args"    : ["-d", "-v", "-j1"],
+      "args"    : ["-d", "-v", "-j1", "--rebuild"],
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       //"program" : "${workspaceFolder}/hancho.py",
-      //"args"    : ["-v", "--rebuild", "--debug"],
       "preLaunchTask": "Wipe build",
     },
 
