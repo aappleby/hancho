@@ -1,0 +1,14 @@
+# Python tooling reads its config from this file.
+# This is tool config only — no [build-system] or [project] table — which
+# is the right fit for a single-file, drop-in tool with no install step.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"   # the file uses PEP 695 syntax (type X[T] / def f[T]), which is 3.12+
+extend-include = ["*.hancho"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = ["E501"]
+
+

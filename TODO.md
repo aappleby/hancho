@@ -13,6 +13,7 @@
   riscv_rules.hancho could merge with base_rules.hancho, or at least share stuff?
   Does "promises that resolve to filenames can be used in place of actual filenames in tools." still work?
   tools_fpga could stand to be cleaned up a bit.
+  We can probably use more map/reduce to clean up some verbosity
 
 # FIXME Tests
   dry run

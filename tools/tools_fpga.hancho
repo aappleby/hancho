@@ -13,9 +13,9 @@ def gen_ivparams(params):
 
 iverilog = hancho.Tool(
     desc = "Run iverilog on {in_sv}",
-    command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {joined_includes} {in_sv} -o {out_iv}",
+    command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {cc_includes} {in_sv} -o {out_iv}",
     gen_ivparams = gen_ivparams,
-    joined_includes = "{weave('-I', includes)}"
+    cc_includes = "{weave('-I', includes)}"
 )
 
 verilated_o = hancho.Task(
@@ -42,10 +42,10 @@ def gen_vlparams(c):
 
 verilator_cmd = hancho.Tool(
     desc = "Run Verilator on {in_top}",
-    command = "verilator -Wno-width --public {gen_vlparams(params)} {joined_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
+    command = "verilator -Wno-width --public {gen_vlparams(params)} {cc_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
     out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
     out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_top)}",
-    joined_includes = "{weave('-I', includes)}",
+    cc_includes = "{weave('-I', includes)}",
     gen_vlparams = gen_vlparams,
     params = {},
 )
@@ -93,19 +93,19 @@ def gen_chparams(c):
 
 yosys = hancho.Tool(
     desc = "Run yosys on {in_sv}",
-    command = "yosys -q -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {out_json};'",
+    command = "yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {out_json};'",
     out_json = "{ext(in_sv, '.json')}",
     params = {},
     gen_chparams = gen_chparams,
     top = "{os.path.splitext(in_sv)[0]}",
-    joined_includes = "{weave('-I', includes)}",
+    cc_includes = "{weave('-I', includes)}",
 )
 
 
 sv2v = hancho.Tool(
     desc = "Run sv2v on {in_sv}",
-    command = "sv2v {joined_includes} {in_sv} -w {out_v}",
-    joined_includes = "{weave('-I', includes)}",
+    command = "sv2v {cc_includes} {in_sv} -w {out_v}",
+    cc_includes = "{weave('-I', includes)}",
     out_v = "{ext(in_sv, '.v')}",
 )
 
@@ -130,8 +130,8 @@ iceprog = hancho.Tool(
 synth = hancho.Tool(
     desc    = "Synth {in_sv}",
     command = [
-        "yosys -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
-        #"yosys -q -p 'read_verilog -defer {joined_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
+        "yosys -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
+        #"yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
         "nextpnr-ice40 {flags} -q --json {out_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
         "icepack {out_asc} {out_bin}",
     ],
@@ -141,7 +141,7 @@ synth = hancho.Tool(
     params   = {},
     chparams = gen_chparams,
     includes = None,
-    joined_includes = "{weave('-I', includes)}",
+    cc_includes = "{weave('-I', includes)}",
     flags    = None,
 )
 

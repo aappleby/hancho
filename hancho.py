@@ -32,7 +32,7 @@ hancho = sys.modules[__name__]
 ####################################################################################################
 # region Main
 
-type Tree[T] = T | list[Tree[T]]
+type Tree[T] = T | list[Tree[T]] | dict[Any, Tree[T]]
 
 def __getattr__(name):
     # Any attribute read that's not global in this module gets redirected to the per-script context
@@ -276,32 +276,58 @@ class Log:
 ####################################################################################################
 # region Utils
 
+
+
 class Utils:
     @classmethod
     def reset(cls):
         import random
         cls.rand = random.Random()
 
-    # ----------------------------------------
-
-    @staticmethod
-    def in_event_loop() -> bool:
-        try:
-            asyncio.get_running_loop()
-            return True
-        except RuntimeError:
-            return False
-
     #----------------------------------------
 
     @staticmethod
-    def recursify(func):
-        """Turns a function that maps scalars into one that maps Tree[str]"""
+    def recursify_any(func: abc.Callable[..., bool]):
+        """Turns a function that maps scalars to bools into one that evaluates any([func(x) for x in v])."""
+
+        def result(v, *args, **kwargs):
+            if Utils.is_collection(v):
+                return any(result(v2, *args, **kwargs) for v2 in v)
+            elif Utils.is_mapping(v):
+                return any(result(v2, *args, **kwargs) for _, v2 in v.items())
+            else:
+                return func(v, *args, **kwargs)
+
+        return result
+
+    @staticmethod
+    def recursify_map(func : abc.Callable[..., Any]):
+        """Turns a function that maps scalars into one that maps Tree[scalar]"""
+
         def result(val, *args, **kwargs):
-            if Utils.is_iterable(val):
+            if Utils.is_collection(val):
                 return [result(v, *args, **kwargs) for v in val]
+            elif Utils.is_mapping(val):
+                return {k: result(v, *args, **kwargs) for k, v in val.items()}
             else:
                 return func(val, *args, **kwargs)
+
+        return result
+
+    @staticmethod
+    def recursify_visit_kv(func: abc.Callable[...]):
+        """Turns a function that visits (key, val) pairs into one that visits Tree[dict]"""
+
+        def result(k, v, *args, **kwargs):
+            if Utils.is_collection(v):
+                for (k2, v2) in enumerate(v):
+                    result(k2, v2, *args, **kwargs)
+            elif Utils.is_mapping(v):
+                for (k2, v2) in v.items():
+                    result(k2, v2, *args, **kwargs)
+            else:
+                func(k, v, *args, **kwargs)
+
         return result
 
     @staticmethod
@@ -314,6 +340,16 @@ class Utils:
             return " ".join(variant)
         else:
             return str(variant)
+
+    # ----------------------------------------
+
+    @staticmethod
+    def in_event_loop() -> bool:
+        try:
+            asyncio.get_running_loop()
+            return True
+        except RuntimeError:
+            return False
 
     #----------------------------------------
 
@@ -342,34 +378,31 @@ class Utils:
 
     braced = re.compile(r"\{(\\.|[^\\}])*\}")
 
-    @staticmethod
-    def is_literal(variant : Any) -> bool:
-        if not isinstance(variant, str):
-            return False
-        m = Utils.braced.search(variant)
-        return m is None
+    @recursify_any
+    def is_literal(v: Any) -> bool:
+        return isinstance(v, str) and len(v) != 0 and Utils.braced.search(v) is None
 
-    @staticmethod
-    def is_braced(variant : Any) -> bool:
-        # this is just is_macro or is_template
-        if not isinstance(variant, str) or len(variant) == 0:
-            return False
-        m = Utils.braced.search(variant)
-        return m is not None
+    @recursify_any
+    def is_braced(v: Any) -> bool:
+        return isinstance(v, str) and len(v) != 0 and Utils.braced.search(v) is not None
 
-    @staticmethod
-    def is_macro(variant : Any) -> bool:
-        if not isinstance(variant, str) or len(variant) == 0:
-            return False
-        m = Utils.braced.search(variant)
-        return m is not None and m.group() == variant
+    @recursify_any
+    def is_macro(v: Any) -> bool:
+        return (
+            isinstance(v, str)
+            and (len(v) != 0)
+            and (m := Utils.braced.search(v)) is not None
+            and (m.group() == v)
+        )
 
-    @staticmethod
-    def is_template(variant) -> bool:
-        if not isinstance(variant, str) or len(variant) == 0:
-            return False
-        m = Utils.braced.search(variant)
-        return m is not None and m.group() != variant
+    @recursify_any
+    def is_template(v: Any) -> bool:
+        return (
+            isinstance(v, str)
+            and (len(v) != 0)
+            and (m := Utils.braced.search(v)) is not None
+            and (m.group() != v)
+        )
 
     #----------------------------------------
 
@@ -457,13 +490,14 @@ class Utils:
 
     @staticmethod
     def _visit(k1, v1, func):
-        func(k1, v1)
         if Utils.is_collection(v1):
             for k2, v2 in enumerate(v1):
                 Utils._visit(k2, v2, func)
         elif Utils.is_mapping(v1):
             for k2, v2 in v1.items():
                 Utils._visit(k2, v2, func)
+        else:
+            func(k1, v1)
 
     @staticmethod
     def visit(v, func):
@@ -498,62 +532,70 @@ class Path:
 
     @staticmethod
     def join(lhs, rhs):
+        # This version returns a str if lhs is str and rhs is str.
         result = [os.path.join(lh, rh) for lh in Utils.flatten(lhs) for rh in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
 
     @staticmethod
     def join2(lhs, rhs):
+        # This version returns [str] if lhs is str and rhs is str.
         result = [os.path.join(lh, rh) for lh in Utils.flatten(lhs) for rh in Utils.flatten(rhs)]
         return result
 
     # We want these functions to work on Tree[str], so we run them through recursify.
-    _abs  = Utils.recursify(os.path.abspath)
 
     @staticmethod
-    def abs(path):
-        return Path._abs(path) if path else ""
-
-    base = Utils.recursify(os.path.basename)
-    norm = Utils.recursify(os.path.normpath)
-    real = Utils.recursify(os.path.realpath)
-    ext  = Utils.recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
-    stem = Utils.recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
+    @Utils.recursify_map
+    def abs(p): return os.path.abspath(p) if p else ""
 
     @staticmethod
-    def isfile(path):
-        return os.path.isfile(path)
+    @Utils.recursify_map
+    def base(p): return os.path.basename(p)
 
     @staticmethod
-    def isdir(path):
-        return os.path.isdir(path)
+    @Utils.recursify_map
+    def norm(p): return os.path.normpath(p)
 
     @staticmethod
-    def exists(path):
-        return os.path.exists(path)
+    @Utils.recursify_map
+    def real(p): return os.path.realpath(p)
 
     @staticmethod
-    def dirname(path):
-        return os.path.dirname(path)
+    @Utils.recursify_map
+    def ext(p, new_ext): return os.path.splitext(p)[0] + new_ext
+
+    stem = Utils.recursify_map(lambda path: os.path.splitext(os.path.basename(path))[0])
 
     @staticmethod
-    def split(path):
-        return os.path.split(path)
+    @Utils.recursify_any
+    def isabs(v): return isinstance(v, str) and len(v) > 0 and os.path.isabs(v)
 
     @staticmethod
-    def splitext(path):
-        return os.path.splitext(path)
+    @Utils.recursify_any
+    def isfile(path): return isinstance(path, str) and os.path.isfile(path)
 
     @staticmethod
-    def isabs(v):
-        if Utils.is_collection(v):
-            result = True
-            for file in v:
-                result = result and Path.isabs(file)
-            return result
-        elif isinstance(v, str):
-            return os.path.isabs(v)
-        else:
-            return False
+    @Utils.recursify_any
+    def isdir(path): return isinstance(path, str) and os.path.isdir(path)
+
+    @staticmethod
+    @Utils.recursify_any
+    def exists(path): return isinstance(path, str) and os.path.exists(path)
+
+    #----------------------------------------
+
+    @staticmethod
+    @Utils.recursify_map
+    def dirname(path): return os.path.dirname(path)
+
+    @staticmethod
+    @Utils.recursify_map
+    def split(path): return os.path.split(path)
+
+    @staticmethod
+    @Utils.recursify_map
+    def splitext(path): return os.path.splitext(path)
+
 
 # endregion
 ####################################################################################################
@@ -628,7 +670,7 @@ class Dict(dict):
         return result
 
     def expand_once[T](self, text : str, as_type : type[T] = object) -> T:
-        result = Expander.expand_once(self, text)
+        result = Expander.expand_once(text, self)
         assert isinstance(result, as_type)
         return result
 
@@ -699,10 +741,14 @@ class Task:
 
         for k, v in self._config.items():
             if Task.is_io_field(k) or k == "command":
-                self._config[k] = Utils.flatten(v)
+                v = Utils.flatten(v)
+                self._config[k] = v
+            if Task.is_depfile_field(k) and len(v) > 1:
+                raise AssertionError("Tasks can't have more than one dependency file!")
 
         if not self._config.command:
             raise ValueError(f"Task {self._config.name} has no command! >{self._config.command}<")
+
 
         # ----------------------------------------
         # Check that all commands are valid
@@ -798,14 +844,17 @@ class Task:
     def create_asyncio_task(self):
         assert Utils.in_event_loop()
 
-        if self._asyncio_task is None:
-            def visit(k, v):
-                if isinstance(v, Task) and v._state is None:
-                    v.create_asyncio_task()
-            Utils.visit(self._config, visit)
-
+        if self._state is None:
             self._state = self.WAITING()
-            self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
+            self._asyncio_task = asyncio.create_task(self.task_top(), context=self._context)
+
+        # Recurse through all tasks referenced by _config so we don't deadlock while waiting for
+        # them.
+        def visit(k, v):
+            if isinstance(v, Task):
+                v.create_asyncio_task()
+
+        Utils.visit(self._config, visit)
 
     # Promises temporarily disabled
     #def promise(self, field : str):
@@ -933,7 +982,6 @@ class Task:
 
             # The check for is_depfile_field must come first, as it's a special case of a file that
             # is technically an _output_ file, but also counts as an input file.
-            # that
             if Task.is_depfile_field(name):
                 if Path.isfile(files[i]):
                     self._in_files.append(files[i])
@@ -989,6 +1037,9 @@ class Task:
         c.name    = Expander.expand_all(e, "{name}")
         c.desc    = Expander.expand_all(e, "{desc}")
         c.command = Expander.expand_all(e, "{command}")
+
+        if Utils.is_braced(c.command):
+            pass
 
         self.log_d(0xFFFFFF, "Task config after expand:")
         for line in str(c).strip().split("\n"):
@@ -1524,18 +1575,33 @@ class Expander(abc.MutableMapping[str, object]):
         assert isinstance(result, as_type)
         return result
 
+#    @staticmethod
+#    def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
+#        if Utils.is_collection(val):
+#            return [Expander.expand_once(v, context) for v in val]
+#        elif Utils.is_mapping(val):
+#            return {k: Expander.expand_once(v, context) for k, v in cast(dict, val).items()}
+#
+#        if Utils.is_macro(val):
+#            result = Expander._expand_macro(context, val)
+#        elif Utils.is_template(val):
+#            result = Expander._expand_template(context, val)
+#        else:
+#            result = val
+#
+#        assert isinstance(result, as_type)
+#        return result
+
     @staticmethod
-    def expand_once[T](context : Dict | Expander, variant : str, as_type : type[T] = object):
-        if Utils.is_collection(variant):
-            return [Expander.expand_once(context, v) for v in cast(list, variant)]
-        elif Utils.is_mapping(variant):
-            return {k: Expander.expand_once(context, v) for k, v in cast(dict, variant).items()}
-        elif Utils.is_macro(variant):
-            result = Expander._expand_macro(context, variant)
-        elif Utils.is_template(variant):
-            result = Expander._expand_template(context, variant)
+    @Utils.recursify_map
+    def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
+        if Utils.is_macro(val):
+            result = Expander._expand_macro(context, val)
+        elif Utils.is_template(val):
+            result = Expander._expand_template(context, val)
         else:
-            result = variant
+            result = val
+
         assert isinstance(result, as_type)
         return result
 
@@ -1554,7 +1620,7 @@ class Expander(abc.MutableMapping[str, object]):
         # longer changing.
         for _ in range(Tracer.MAX_DEPTH):
             with Tracer(econtext, f"expand_all('{variant}')") as tracer:
-                result = Expander.expand_once(econtext, variant)
+                result = Expander.expand_once(variant, econtext)
                 tracer.log_result(result)
             if not Utils.is_braced(result) or result == variant:
                 assert isinstance(result, as_type)
@@ -1712,6 +1778,7 @@ class Loader:
             use_color   = True,
             build_all   = False,
             wrap        = False,
+            strict      = True,
         )
         return result
 
@@ -1744,6 +1811,7 @@ class Loader:
         parser.add_argument("--trace",            default = None, action="store_true",  help="Trace all text expansion")
         #parser.add_argument("--use_color",        default = None, action="store_true",  help="Use color in the console output")
         parser.add_argument("--wrap",             default = None, action="store_true",  help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("--strict",           default = None, action="store_true",  help="Checks for common footguns like typo'd templates")
 
         # fmt: on
 

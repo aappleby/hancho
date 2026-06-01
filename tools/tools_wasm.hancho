@@ -2,7 +2,7 @@ import hancho
 
 emcc = hancho.Tool(
     desc="Compile Emscripten'd {in_src}",
-    command="emcc {flags} {joined_includes} -c {in_src} -o {out_obj}",
+    command="emcc {flags} {cc_includes} -c {in_src} -o {out_obj}",
     flags=[
         "-std=c++20",
         "-O0",
@@ -14,7 +14,7 @@ emcc = hancho.Tool(
     ],
     includes=None,
     out_obj="{ext(in_src, '.o')}",
-    joined_includes="{join('-I', includes)}",
+    cc_includes="{join('-I', includes)}",
 )
 
 emld = hancho.Tool(

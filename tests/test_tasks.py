@@ -423,6 +423,14 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
+    def test_multiple_depfiles(self):
+        # Creating a task with multiple depfile inputs should assert.
+        with self.assertRaises(AssertionError):
+            hancho.Task(
+                command = "echo Hello World",
+                in_depfile = ["foo.txt", "bar.txt"]
+            )
+
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
         hancho.Task(

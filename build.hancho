@@ -7,8 +7,8 @@ tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
 hancho.load("examples/examples.hancho")
 
-hancho.Task(
-    name = "unittest",
-    desc = "run unit tests",
-    command = "python3 -m unittest"
-)
+#hancho.Task(
+#    name = "unittest",
+#    desc = "run unit tests",
+#    command = "python3 -m unittest"
+#)

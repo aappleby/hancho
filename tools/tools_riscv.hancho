@@ -12,9 +12,9 @@ rv_gcc_config = hancho.Dict(
     defines  = None,
     includes = None,
 
-    joined_warnings = "{weave('-W', warnings)}",
-    joined_defines  = "{weave('-D', defines)}",
-    joined_includes = "{weave('-I', includes)}",
+    cc_warnings = "{weave('-W', warnings)}",
+    cc_defines  = "{weave('-D', defines)}",
+    cc_includes = "{weave('-I', includes)}",
 )
 
 flags_c = [
@@ -38,7 +38,7 @@ rv_compile = hancho.Tool(
     rv_gcc_config,
     #----------
     toolchain  = rv_toolchain,
-    command    = "{toolchain.compiler} {flags} {joined_warnings} {joined_defines} {joined_includes} -c {in_src} -o {out_obj}",
+    command    = "{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} -o {out_obj}",
     flags      = flags_c,
     #----------
     in_src     = None,
