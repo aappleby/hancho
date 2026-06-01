@@ -27,6 +27,7 @@ from collections import abc, ChainMap
 from contextlib import chdir
 from inspect import isawaitable
 from typing import Any, cast
+import shutil
 
 hancho = sys.modules[__name__]
 
@@ -132,13 +133,38 @@ class Log:
     """Simple logger that can do same-line log messages like Ninja."""
 
     buffer : str
+    con_w : int
+    reset_color = "\x1B[0m"
 
     @classmethod
     def reset(cls, verbose):
         cls.buffer = ""
+        cls.con_w = shutil.get_terminal_size().columns
+
+    match_escapes = re.compile(r"\x1B.*?m")
+
+    @staticmethod
+    def clip_printable(text, width):
+        result = ""
+        accum = 0
+
+        while text:
+            match = Log.match_escapes.search(text)
+            if not match:
+                result += text[:width - accum]
+                break
+            chunk = text[:match.start()][:width - accum]
+            result += chunk
+            accum += len(chunk)
+            if accum == width: return result
+            result += match.group()
+            text = text[match.end():]
+
+        return result
+
 
     @classmethod
-    def log(cls, color : int, message : str | list[str], end = "\n"):
+    def log(cls, color : int, message : str | list[str]):
 
         if isinstance(message, list):
             for m in message:
@@ -147,16 +173,18 @@ class Log:
 
         lines = message.split('\n')
         for i, line in enumerate(lines):
-            if color:
-                line = Utils.hex_to_color(color) + line + "\x1B[0m"
-            if ((i < len(lines) - 1) or hancho.config.debug or hancho.config.verbose) and line:
-                #message = "\r" + line + "\n"
-                line = line + end
-            else:
-                line = "\r" + line + "\x1B[K"
-            cls.buffer += line
+            if not hancho.config.wrap:
+                line = Log.clip_printable(line, Log.con_w)
+            cls.buffer += line + "\n"
+
+            use_newline = (i < len(lines) - 1) or hancho.config.debug or hancho.config.verbose
+
             if not hancho.config.quiet:
+                sys.stdout.write("" if use_newline else "\r")
+                sys.stdout.write(Utils.hex_to_ansi(color))
                 sys.stdout.write(line)
+                sys.stdout.write(Log.reset_color)
+                sys.stdout.write("\n" if use_newline else "\x1B[K")
                 sys.stdout.flush()
 
     @classmethod
@@ -328,14 +356,17 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def hex_to_color(hex =  0):
+    def hex_to_ansi(hex : int = 0):
+        if hex == 0:
+            return Log.reset_color
+
         r = (hex >> 16) & 0xFF
         g = (hex >>  8) & 0xFF
         b = (hex >>  0) & 0xFF
         return Utils.rgb_to_ansi(r, g, b)
 
     @staticmethod
-    def color_hsv(h : float = 0, s : float = 0, v : float = 0) -> str:
+    def hsv_to_ansi(h : float = 0, s : float = 0, v : float = 0) -> str:
         import colorsys
         r, g, b = colorsys.hsv_to_rgb(h, s, v)
         return Utils.rgb_to_ansi(int(r * 255), int(g * 255), int(b * 255))
@@ -354,21 +385,29 @@ class Utils:
     def hsv_to_hex(h, s, v):
         return Utils.rgb_to_hex(*Utils.hsv_to_rgb(h, s, v))
 
+    @classmethod
+    def obj_to_hex(cls, obj) -> int:
+        import colorsys
+        rand = cls.rand
+        rand.seed(id(obj))
+        r, g, b = colorsys.hsv_to_rgb(rand.random(), 0.3, 1.0)
+        return Utils.rgb_to_hex(r, g, b)
+
     @staticmethod
     def rgb_to_ansi(red : int = 0, green : int = 0, blue : int = 0) -> str:
         """Converts RGB color to ANSI format string."""
         # Color strings don't work in Windows console, so don't emit them.
-        if not hancho.config.use_color or os.name == "nt":
-            return ""
+        #if not hancho.config.use_color or os.name == "nt":
+        #    return ""
         if red == 0 and green == 0 and blue == 0:
             return "\x1B[0m"
         return f"\x1B[38;2;{red};{green};{blue}m"
 
     @classmethod
-    def obj_to_color(cls, obj):
+    def obj_to_ansi(cls, obj):
         rand = cls.rand
         rand.seed(id(obj))
-        return Utils.color_hsv(rand.random(), 0.3, 1.0)
+        return Utils.hsv_to_ansi(rand.random(), 0.3, 1.0)
 
     #----------------------------------------
 
@@ -690,8 +729,13 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     def log(self, color, message):
-        Log.log(0x80FF80, f"[{self._task_id}/{Stats.tasks_started}] ", end="")
-        Log.log(color, message)
+        prefix  = ""
+        prefix += Utils.hex_to_ansi(0x80FF80)
+        prefix += f"[{self._task_id}/{Stats.tasks_started}] "
+        prefix += Utils.hex_to_ansi(color)
+        prefix += message
+        prefix += Log.reset_color
+        Log.log(0, prefix)
 
     def log_d(self, color, message):
         if self._config.debug:
@@ -1153,6 +1197,8 @@ class Stats:
         Log.log_v(f"tasks broken:     {cls.tasks_broken}")
         Log.log_v(f"mtime calls:      {cls.mtime_calls}")
 
+        sys.stdout.write("\n")
+
         if cls.tasks_failed or cls.tasks_broken:
             Log.log(0xFF8080, "hancho: BUILD FAILED")
         elif cls.tasks_finished:
@@ -1244,10 +1290,20 @@ class Expander(abc.MutableMapping[str, object]):
 
         tag_a = (str(type(context).__name__)[:2] + "_" + hex(id(context))[-4:]).upper()
         tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-        tag_a = Utils.obj_to_color(context) + tag_a + Utils.rgb_to_ansi()
-        tag_b = Utils.obj_to_color(result) + tag_b + Utils.rgb_to_ansi()
+        tag_a = Utils.obj_to_ansi(context) + tag_a + Log.reset_color
+        tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
 
-        Tracer.log(trace, f"wrap {tag_a} -> {tag_b}")
+        Tracer.log2(trace, 0, f"wrap {tag_a} -> {tag_b}")
+
+#        color_a = Utils.obj_to_hex(context)
+#        color_b = Utils.obj_to_hex(result)
+#
+#        if trace:
+#            Tracer.log2(trace, 0xFFFFFF, "", end = "")
+#            Log.log(color_a,  tag_a,   end = "")
+#            Log.log(0xFFFFFF, " -> ",  end = "")
+#            Log.log(color_b,  tag_b,   end = "\n")
+
         return result
 
     #----------------------------------------
@@ -1468,19 +1524,19 @@ class Tracer:
         cls.trellis_stack = []
 
     def __init__(self, context : Dict | Expander, enter_message):
-        self.trace = getattr(context, "trace", False)
+        self.trace : bool = cast(bool, getattr(context, "trace", False))
         self.context = context
         self.enter_message = enter_message
         self.result = None
 
     def __enter__(self):
-        color = Utils.obj_to_color(self.context)
+        color = Utils.obj_to_hex(self.context)
         context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
         context_tag = context_tag.upper()
         if len(Tracer.trellis_stack) >= Tracer.MAX_DEPTH:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
-        Tracer.log(self.trace, color + f"┏ {context_tag}." + self.enter_message)
-        Tracer.trellis_stack.append(color + "┃ ")
+        Tracer.log2(self.trace, color, f"┏ {context_tag}." + self.enter_message)
+        Tracer.trellis_stack.append(Utils.hex_to_ansi(color) + "┃ ")
         return self
 
     def log_result(self, result : Any):
@@ -1488,16 +1544,10 @@ class Tracer:
         return result
 
     def print_result(self, text):
-        result_color = Utils.rgb_to_ansi()
-        if not isinstance(self.result, (Expander, Dict)):
-            result_color = Utils.obj_to_color(self.result)
-        Tracer.log(
+        Tracer.log2(
             self.trace,
-            Utils.obj_to_color(self.context)
-            + "┗ "
-            + result_color
-            + text
-            + Utils.rgb_to_ansi(),
+            Utils.obj_to_hex(self.context),
+            "┗ " + Utils.obj_to_ansi(self.result) + text
         )
 
     def __exit__(self, *_):
@@ -1506,17 +1556,26 @@ class Tracer:
             text = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
             self.print_result(text)
         else:
-            text = f"{self.result}"
+            text = str(self.result)
+            if isinstance(self.result, str):
+                text = "'" + text + "'"
+
             if self.result is None: text = "<None>"
             if self.result == "":   text = "<Empty>"
             self.print_result(text)
         return False
 
+    def log(self, color : int, text : str):
+        """Prints a trace message to the log."""
+        if self.trace:
+            buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
+            Log.log(color, buffer)
+
     @staticmethod
-    def log(trace : bool, text : str, color : int = 0):
+    def log2(trace : bool, color : int, text : str):
         """Prints a trace message to the log."""
         if trace:
-            buffer = "".join(Tracer.trellis_stack) + text + "\x1B[0m" + '\n'
+            buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
             Log.log(color, buffer)
 
 # endregion
@@ -1598,6 +1657,7 @@ class Loader:
             trace       = False,
             use_color   = True,
             build_all   = False,
+            wrap        = False,
         )
         return result
 
@@ -1629,6 +1689,7 @@ class Loader:
         parser.add_argument("--shuffle",          default = None, action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--trace",            default = None, action="store_true",  help="Trace all text expansion")
         parser.add_argument("--use_color",        default = None, action="store_true",  help="Use color in the console output")
+        parser.add_argument("--wrap",             default = None, action="store_true",  help="Wrap lines around the console instead of clipping them")
 
         # fmt: on
 
