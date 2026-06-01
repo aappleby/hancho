@@ -272,6 +272,16 @@ class Utils:
         import random
         cls.rand = random.Random()
 
+    # ----------------------------------------
+
+    @staticmethod
+    def in_event_loop() -> bool:
+        try:
+            asyncio.get_running_loop()
+            return True
+        except RuntimeError:
+            return False
+
     #----------------------------------------
 
     @staticmethod
@@ -354,60 +364,46 @@ class Utils:
         return [l + r for l in lhs2 for r in rhs2]
 
     #----------------------------------------
+    # Color strings don't work in Windows console, so don't emit them.
+    #if not hancho.config.use_color or os.name == "nt":
+    #    return ""
+
+    @classmethod
+    def hex_to_rgb(cls, h : int) -> tuple[int, int, int]:
+        return ((h >> 16) & 0xFF, (h >>  8) & 0xFF, (h >>  0) & 0xFF)
+
+    @classmethod
+    def rgb_to_hex(cls, r : int, g : int, b : int) -> int:
+        return (r << 16) | (g << 8) | (b << 0)
+
+    #----------------------------------------
+
+    @classmethod
+    def rgb_to_ansi(cls, r : int, g : int, b : int) -> str:
+        if r == 0 and g == 0 and b == 0: return "\x1B[0m"
+        return f"\x1B[38;2;{r};{g};{b}m"
 
     @staticmethod
     def hex_to_ansi(hex : int = 0):
-        if hex == 0:
-            return Log.reset_color
+        return Utils.rgb_to_ansi(*Utils.hex_to_rgb(hex))
 
-        r = (hex >> 16) & 0xFF
-        g = (hex >>  8) & 0xFF
-        b = (hex >>  0) & 0xFF
-        return Utils.rgb_to_ansi(r, g, b)
+    @classmethod
+    def obj_to_ansi(cls, obj):
+        return Utils.rgb_to_ansi(*Utils.obj_to_rgb(obj))
 
-    @staticmethod
-    def hsv_to_ansi(h : float = 0, s : float = 0, v : float = 0) -> str:
-        import colorsys
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        return Utils.rgb_to_ansi(int(r * 255), int(g * 255), int(b * 255))
-
-    @staticmethod
-    def hsv_to_rgb(h : float = 0, s : float = 0, v : float = 0) -> tuple[float, float, float]:
-        import colorsys
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        return (int(r * 255), int(g * 255), int(b * 255))
-
-    @staticmethod
-    def rgb_to_hex(r, g, b):
-        return ((int(r) & 0xFF) << 16) | ((int(g) & 0xFF) << 8) | ((int(b) & 0xFF) << 0)
-
-    @staticmethod
-    def hsv_to_hex(h, s, v):
-        return Utils.rgb_to_hex(*Utils.hsv_to_rgb(h, s, v))
+    #----------------------------------------
 
     @classmethod
     def obj_to_hex(cls, obj) -> int:
+        return Utils.rgb_to_hex(*Utils.obj_to_rgb(obj))
+
+    @classmethod
+    def obj_to_rgb(cls, obj) -> tuple[int, int, int]:
         import colorsys
         rand = cls.rand
         rand.seed(id(obj))
         r, g, b = colorsys.hsv_to_rgb(rand.random(), 0.3, 1.0)
-        return Utils.rgb_to_hex(r, g, b)
-
-    @staticmethod
-    def rgb_to_ansi(red : int = 0, green : int = 0, blue : int = 0) -> str:
-        """Converts RGB color to ANSI format string."""
-        # Color strings don't work in Windows console, so don't emit them.
-        #if not hancho.config.use_color or os.name == "nt":
-        #    return ""
-        if red == 0 and green == 0 and blue == 0:
-            return "\x1B[0m"
-        return f"\x1B[38;2;{red};{green};{blue}m"
-
-    @classmethod
-    def obj_to_ansi(cls, obj):
-        rand = cls.rand
-        rand.seed(id(obj))
-        return Utils.hsv_to_ansi(rand.random(), 0.3, 1.0)
+        return (int(r * 255), int(g * 255), int(b * 255))
 
     #----------------------------------------
 
@@ -689,12 +685,8 @@ class Task:
 
         Runner.all_tasks.append(self)
 
-        # This is not a no-op, if there is no running loop we do _not_ auto-start the task
-        try:
-            asyncio.get_running_loop()
+        if Utils.in_event_loop():
             self.enable()
-        except:
-            pass
 
     # -----------------------------------------------------------------------------------------------
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -754,11 +746,8 @@ class Task:
         if not self._config.enabled:
             self._config.enabled = True
             Stats.tasks_started += 1
-            try:
-                asyncio.get_running_loop()
+            if Utils.in_event_loop():
                 self.create_asyncio_task()
-            except:
-                pass
 
     def create_asyncio_task(self):
         if self._asyncio_task is None:
@@ -1294,15 +1283,6 @@ class Expander(abc.MutableMapping[str, object]):
         tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
 
         Tracer.log2(trace, 0, f"wrap {tag_a} -> {tag_b}")
-
-#        color_a = Utils.obj_to_hex(context)
-#        color_b = Utils.obj_to_hex(result)
-#
-#        if trace:
-#            Tracer.log2(trace, 0xFFFFFF, "", end = "")
-#            Log.log(color_a,  tag_a,   end = "")
-#            Log.log(0xFFFFFF, " -> ",  end = "")
-#            Log.log(color_b,  tag_b,   end = "\n")
 
         return result
 
@@ -1956,8 +1936,8 @@ if __name__ == "__main__" and "hancho" not in sys.modules:
     sys.modules["hancho"] = hancho
 
 if __name__ == "__main__":
-    #print(sys.argv)
-    sys.exit(main())
+    result = main()
+    sys.exit(result)
 else:
     init()
 

@@ -5,10 +5,6 @@
 04 - rules.hancho
 05 -
 
-# FIXME Questions
-  should we be using mappingproxy to make Dicts immutable?
-    probably not
-
 # FIXME Refactoring
   can we run "python3 -m unittest" with a callback instead of starting another process?
   README.md is out of date
@@ -16,7 +12,7 @@
   tools_fpga.synth is messy, replace with "def synth(*, ...):
   riscv_rules.hancho could merge with base_rules.hancho, or at least share stuff?
   Does "promises that resolve to filenames can be used in place of actual filenames in tools." still work?
-  Does "Asynchronous functions can also be used in place of command strings." still work?
+  tools_fpga could stand to be cleaned up a bit.
 
 # FIXME Tests
   dry run
@@ -38,34 +34,8 @@
   trace mode
   task dir not found
   input file = None
-  clean up log_blah_blah mess
   boolean cli flags can be true/True/1 false/False/0
-  tools_fpga could stand to be cleaned up a bit.
   merging multiple nested configs into one task - like merging toolchain.blah and config.blee
 
 
 
-
-
-
-hancho
-cv_context
-Tree
-
-Utils
-Dict
-Log
-Path
-
-Task
-Stats
-Promise
-
-Expander
-Tracer
-Loader
-Runner
-
-init
-reset
-main
