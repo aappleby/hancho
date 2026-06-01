@@ -675,7 +675,7 @@ class Dict(dict):
         return result
 
     def expand_all[T](self, text : Tree[str], as_type : type[T] = object) -> T:
-        result = Expander.expand_all(self, text)
+        result = Expander.expand_all(text, self)
         assert isinstance(result, as_type)
         return result
 
@@ -952,7 +952,7 @@ class Task:
         # Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-        files = Expander.expand_all(e, files)
+        files = Expander.expand_all(files, e)
 
         # Relative paths are relative to script_cwd, so we tack that on to produce absolute paths.
         files = Path.join2(c.script_cwd, files)
@@ -1034,9 +1034,12 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
-        c.name    = Expander.expand_all(e, "{name}")
-        c.desc    = Expander.expand_all(e, "{desc}")
-        c.command = Expander.expand_all(e, "{command}")
+        c.name    = Expander.expand_all("{name}", e)
+        c.desc    = Expander.expand_all("{desc}", e)
+        c.command = Expander.expand_all("{command}", e)
+
+        if Utils.is_braced(c.command):
+            pass
 
         if Utils.is_braced(c.command):
             pass
@@ -1464,9 +1467,9 @@ class Expander(abc.MutableMapping[str, object]):
             elif Utils.is_mapping(result):
                 result = Expander.wrap(result, self.trace)
             elif Utils.is_collection(result):
-                result = [Expander.expand_all(self, v) for v in cast(list, result)]
+                result = [Expander.expand_all(v, self) for v in cast(list, result)]
             elif Utils.is_template(result) or Utils.is_macro(result):
-                result = Expander.expand_all(self, result)
+                result = Expander.expand_all(result, self)
 
             trace.log_result(result)
 
@@ -1606,11 +1609,11 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     @staticmethod
-    def expand_all[T](context : Dict | Expander, variant : Any, as_type : type[T] = object):
+    def expand_all[T](variant : Any, context : Dict | Expander, as_type : type[T] = object):
         if Utils.is_collection(variant):
-            return [Expander.expand_all(context, v) for v in cast(list, variant)]
+            return [Expander.expand_all(v, context) for v in cast(list, variant)]
         elif Utils.is_mapping(variant):
-            return {k: Expander.expand_all(context, v) for k, v in cast(dict, variant).items()}
+            return {k: Expander.expand_all(v, context) for k, v in cast(dict, variant).items()}
         elif not Utils.is_braced(variant):
             return variant
 
@@ -1849,7 +1852,7 @@ class Loader:
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        script_path = Expander.expand_all(hancho.config, script_path, str)
+        script_path = Expander.expand_all(script_path, hancho.config, str)
         script_path = cast(str, Path.abs(script_path))
 
         assert Path.isfile(script_path)
