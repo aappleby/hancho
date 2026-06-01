@@ -46,12 +46,12 @@ class TestTasks(unittest.TestCase):
         assert os.getcwd().endswith("/tests")
         shutil.rmtree("build", ignore_errors = True)
         # OK, now we should be good to start up Hancho.
-        #hancho.init(quiet = True)
-        hancho.init(verbose = True)
+        hancho.init(quiet = True)
+        #hancho.init(verbose = True)
         sys.stdout.flush()
 
     def tearDown(self):
-        duration = time.time() - self.startTime
+        #duration = time.time() - self.startTime
         #print(f"{duration:.3f}s ", end="", file = sys.stderr)
         sys.stdout.flush()
 
@@ -237,9 +237,14 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(-1)
         self.assertEqual(garbage_task.state(), "FAILED")
 
+    def test_missing_command(self):
+        # Non-existent command line commands should cause Hancho to fail the build.
+        with self.assertRaises(ValueError):
+            hancho.Task(not_a_command = "echo Hello World")
+
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.
-        task1 = hancho.Task(
+        hancho.Task(
             command = "touch {out_obj}",
             in_src  = __file__,
             out_obj = "colliding_output.txt",
@@ -260,7 +265,7 @@ class TestTasks(unittest.TestCase):
 
         def run():
             hancho.init(quiet = True)
-            t = hancho.Task(
+            hancho.Task(
                 command = "sleep 0.1 && touch {out_obj}",
                 in_src  = [],
                 out_obj = "result.txt",
@@ -332,7 +337,7 @@ class TestTasks(unittest.TestCase):
         # If input filenames are absolute paths, we should still end up with build files under
         # build_root.
 
-        t = hancho.Task(
+        hancho.Task(
             desc    = "In_src is absolute path",
             command = "cp {in_src} {out_obj}",
             in_src  = os.path.abspath("src/foo.c"),
@@ -484,7 +489,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.1)
             force_touch(task._config.out_file)
 
-        t = hancho.Task(command = callback, out_file = "test_async_callback.txt")
+        hancho.Task(command = callback, out_file = "test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
@@ -494,7 +499,7 @@ class TestTasks(unittest.TestCase):
             await asyncio.sleep(0.1)
             force_touch(task._config.out_file)
 
-        t = hancho.Task(command = callback, out_file = "test_async_callback.txt")
+        hancho.Task(command = callback, out_file = "test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
@@ -548,7 +553,7 @@ class TestTasks(unittest.TestCase):
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
-            new_task = hancho.Task(
+            hancho.Task(
                 command = "touch {out_obj}",
                 in_src  = [],
                 out_obj = "dummy.txt"

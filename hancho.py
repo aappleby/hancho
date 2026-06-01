@@ -10,11 +10,7 @@ is no 'install' step.
 Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo.
 """
 
-# pylint: disable=too-many-lines
-# pylint: disable=protected-access
-# pylint: disable=unused-argument
-# pylint: disable=bad-indentation
-
+from __future__ import annotations
 import asyncio
 import contextvars
 import os
@@ -43,7 +39,7 @@ def __getattr__(name):
 
     if name == "config":
         return Loader.cv_config.get()
-    elif hasattr(aliases, name):
+    elif name in aliases:
         return aliases[name]
     else:
         raise AttributeError(name)
@@ -67,7 +63,7 @@ def init(*args, **kwargs):
 def reset(*args, **kwargs):
     Loader.reset(*args, **kwargs)
     Stats.reset()
-    Log.reset(hancho.config.verbose)
+    Log.reset()
     Utils.reset()
     Tracer.reset()
     Runner.reset(hancho.config.core_max)
@@ -137,7 +133,7 @@ class Log:
     reset_color = "\x1B[0m"
 
     @classmethod
-    def reset(cls, verbose):
+    def reset(cls):
         cls.buffer = ""
         cls.con_w = shutil.get_terminal_size().columns
 
@@ -156,7 +152,8 @@ class Log:
             chunk = text[:match.start()][:width - accum]
             result += chunk
             accum += len(chunk)
-            if accum == width: return result
+            if accum == width:
+                return result
             result += match.group()
             text = text[match.end():]
 
@@ -211,17 +208,24 @@ class Log:
 
         # Generate the "key : type = " prefix.
         prefix = ""
-        if key is not None: prefix += str(key) + " "
-        if not skip_type:   prefix += ": " + type(val).__name__ + " "
-        if print_id:        prefix += ": " + hex(id(val)) + " "
-        if prefix:          prefix += "= "
+        if key is not None:
+            prefix += str(key) + " "
+        if not skip_type:
+            prefix += ": " + type(val).__name__ + " "
+        if print_id:
+            prefix += ": " + hex(id(val)) + " "
+        if prefix:
+            prefix += "= "
 
         # Unwrap a few types that we want to view as containers
-        if   isinstance(val, Task):                val = val.__dict__
-        elif isinstance(val, Expander):            val = val._context
-        elif isinstance(val, contextvars.Context): val = list(val.keys())
+        if   isinstance(val, Task):
+            val = val.__dict__
+        elif isinstance(val, Expander):
+            val = val._context
+        elif isinstance(val, contextvars.Context):
+            val = list(val.keys())
 
-        #
+        # Don't expand builtins, it's huge
         if key == "__builtins__":
             return (tab * indent) + prefix + object.__repr__(val)
 
@@ -232,13 +236,16 @@ class Log:
         # Extract key-value pairs and set delimiters for our container types.
         if isinstance(val, tuple):
             items = [(None, val2) for val2 in val]
-            ld = "("; rd = ",)" if len(items) == 1 else ")"
+            ld = "("
+            rd = ",)" if len(items) == 1 else ")"
         elif Utils.is_mapping(val):
             items = val.items() # type:ignore
-            ld = "{"; rd = "}"
+            ld = "{"
+            rd = "}"
         elif Utils.is_collection(val):
             items = [(None, val2) for val2 in val] # type:ignore
-            ld = "["; rd = "]"
+            ld = "["
+            rd = "]"
         else:
             assert False, f"Don't know what to do with {type(val)}"
 
@@ -252,7 +259,8 @@ class Log:
         for k, v in items:
             chunk = Log.dump_to_str(k, v, 0, print_id, max_width, tab, True)
             if chunk is None or width + len(chunk) > max_width:
-                if flat: return None
+                if flat:
+                    return None
                 separator = ",\n"
                 chunks = (Log.dump_to_str(k, v, indent + 1, print_id, max_width, tab, False) for k, v in items)
                 return pad + prefix + ld + "\n" + separator.join(chunks) + "\n" + pad + rd
@@ -313,12 +321,14 @@ class Utils:
         Mappings and non-array iterables are not considered Collections in Hancho so that
         we don't turn "foo" into ('f', 'o', 'o').
         """
-        if isinstance(variant, (str, bytes, bytearray, range, abc.Mapping)): return False
+        if isinstance(variant, (str, bytes, bytearray, range, abc.Mapping)):
+            return False
         return isinstance(variant, abc.Collection)
 
     @classmethod
     def is_iterable(cls, variant : Any) -> bool:
-        if isinstance(variant, (str, bytes, bytearray, abc.Mapping)): return False
+        if isinstance(variant, (str, bytes, bytearray, abc.Mapping)):
+            return False
         return isinstance(variant, abc.Iterable)
 
     @classmethod
@@ -332,26 +342,30 @@ class Utils:
 
     @staticmethod
     def is_literal(variant : Any) -> bool:
-        if not isinstance(variant, str): return False
+        if not isinstance(variant, str):
+            return False
         m = Utils.braced.search(variant)
         return m is None
 
     @staticmethod
     def is_braced(variant : Any) -> bool:
         # this is just is_macro or is_template
-        if not isinstance(variant, str) or len(variant) == 0: return False
+        if not isinstance(variant, str) or len(variant) == 0:
+            return False
         m = Utils.braced.search(variant)
         return m is not None
 
     @staticmethod
     def is_macro(variant : Any) -> bool:
-        if not isinstance(variant, str) or len(variant) == 0: return False
+        if not isinstance(variant, str) or len(variant) == 0:
+            return False
         m = Utils.braced.search(variant)
         return m is not None and m.group() == variant
 
     @staticmethod
     def is_template(variant) -> bool:
-        if not isinstance(variant, str) or len(variant) == 0: return False
+        if not isinstance(variant, str) or len(variant) == 0:
+            return False
         m = Utils.braced.search(variant)
         return m is not None and m.group() != variant
 
@@ -361,7 +375,7 @@ class Utils:
     def join(cls, lhs, rhs, *args) -> list[str]:
         lhs2 = Utils.flatten(lhs)
         rhs2 = Utils.join(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
-        return [l + r for l in lhs2 for r in rhs2]
+        return [lh + rh for lh in lhs2 for rh in rhs2]
 
     #----------------------------------------
     # Color strings don't work in Windows console, so don't emit them.
@@ -380,7 +394,8 @@ class Utils:
 
     @classmethod
     def rgb_to_ansi(cls, r : int, g : int, b : int) -> str:
-        if r == 0 and g == 0 and b == 0: return "\x1B[0m"
+        if r == 0 and g == 0 and b == 0:
+            return "\x1B[0m"
         return f"\x1B[38;2;{r};{g};{b}m"
 
     @staticmethod
@@ -436,7 +451,7 @@ class Utils:
         func(k1, v1)
         if Utils.is_collection(v1):
             for k2, v2 in enumerate(v1):
-                Utils._visit(k1, v2, func)
+                Utils._visit(k2, v2, func)
         elif Utils.is_mapping(v1):
             for k2, v2 in v1.items():
                 Utils._visit(k2, v2, func)
@@ -474,18 +489,20 @@ class Path:
 
     @staticmethod
     def join(lhs, rhs):
-        result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
+        result = [os.path.join(lh, rh) for lh in Utils.flatten(lhs) for rh in Utils.flatten(rhs)]
         return result[0] if len(result) == 1 else result
 
     @staticmethod
     def join2(lhs, rhs):
-        result = [os.path.join(l, r) for l in Utils.flatten(lhs) for r in Utils.flatten(rhs)]
+        result = [os.path.join(lh, rh) for lh in Utils.flatten(lhs) for rh in Utils.flatten(rhs)]
         return result
 
     # We want these functions to work on Tree[str], so we run them through recursify.
     _abs  = Utils.recursify(os.path.abspath)
 
-    abs = lambda path : Path._abs(path) if path else ""
+    @staticmethod
+    def abs(path):
+        return Path._abs(path) if path else ""
 
     base = Utils.recursify(os.path.basename)
     norm = Utils.recursify(os.path.normpath)
@@ -493,13 +510,29 @@ class Path:
     ext  = Utils.recursify(lambda name, new_ext: os.path.splitext(name)[0] + new_ext)
     stem = Utils.recursify(lambda path: os.path.splitext(os.path.basename(path))[0])
 
-    #isabs    = lambda path : os.path.isabs(path)
-    isfile   = lambda path : os.path.isfile(path)
-    isdir    = lambda path : os.path.isfile(path)
-    exists   = lambda path : os.path.exists(path)
-    dirname  = lambda path : os.path.dirname(path)
-    split    = lambda path : os.path.split(path)
-    splitext = lambda path : os.path.splitext(path)
+    @staticmethod
+    def isfile(path):
+        return os.path.isfile(path)
+
+    @staticmethod
+    def isdir(path):
+        return os.path.isdir(path)
+
+    @staticmethod
+    def exists(path):
+        return os.path.exists(path)
+
+    @staticmethod
+    def dirname(path):
+        return os.path.dirname(path)
+
+    @staticmethod
+    def split(path):
+        return os.path.split(path)
+
+    @staticmethod
+    def splitext(path):
+        return os.path.splitext(path)
 
     @staticmethod
     def isabs(v):
@@ -537,7 +570,7 @@ class Dict(dict):
                 lval = dict.get(self, key, None)
 
                 # Mappings get turned into Dicts.
-                if Utils.is_mapping(rval) and type(rval) != Dict:
+                if Utils.is_mapping(rval) and type(rval) is not Dict:
                     rval = Dict(rval)
 
                 # Pairs of mappings get merged together as needed.
@@ -556,19 +589,19 @@ class Dict(dict):
     def __getattr__(self, key : str):
         try: # Dict.__getattr__ KeyError -> AttributeError
             return dict.__getitem__(self, key)
-        except KeyError as e:
+        except KeyError:
             self.on_keyerror(key)
 
     def __setattr__(self, key : str, val : Any):
         try: # Dict.__setattr__ KeyError -> AttributeError
             return dict.__setitem__(self, key, val)
-        except KeyError as e:
+        except KeyError:
             self.on_keyerror(key)
 
     def __delattr__(self, key : str):
         try: # Dict.__delattr__ KeyError -> AttributeError
             return dict.__delattr__(self, key)
-        except KeyError as e:
+        except KeyError:
             self.on_keyerror(key)
 
     def __or__(self, other):
@@ -596,7 +629,8 @@ class Dict(dict):
         return result
 
 # Tool is just an alias for Dict to make build scripts more readable.
-class Tool(Dict): pass
+class Tool(Dict):
+    pass
 
 # endregion
 ####################################################################################################
@@ -658,11 +692,14 @@ class Task:
             if Task.is_io_field(k) or k == "command":
                 self._config[k] = Utils.flatten(v)
 
+        if not self._config.command:
+            raise ValueError(f"Task {self._config.name} has no command! >{self._config.command}<")
+
         # ----------------------------------------
         # Check that all commands are valid
 
         for command in self._config.command:
-            if type(command) != type(self._config.command[0]):
+            if type(command) is not type(self._config.command[0]):
                 self.log(0xFF0000, f"Commands aren't the same type: {self._config.command}")
                 raise ValueError(f"Commands aren't the same type: {self._config.command}")
 
@@ -673,10 +710,10 @@ class Task:
         # Check for missing paths
 
         if not Path.exists(self._config.task_cwd):
-            raise ValueError("Task working directory '{self._config.task_cwd}' does not exist")
+            raise ValueError(f"Task working directory '{self._config.task_cwd}' does not exist")
 
         # if not Path.exists(self._config.build_dir):
-        #    raise ValueError("Task working directory '{self._config.build_dir}' does not exist")
+        #    raise ValueError(f"Task working directory '{self._config.build_dir}' does not exist")
 
         if not self._config.build_dir.startswith(self._config.repo_dir):
             raise ValueError(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
@@ -716,7 +753,7 @@ class Task:
 
     @staticmethod
     def is_io_field(name : str):
-        return Task.is_input_field(name) or Task.is_output_field(name) or Task.is_depfile_field(name)
+        return Task.is_input_field(name) or Task.is_output_field(name)
 
     # -----------------------------------------------------------------------------------------------
 
@@ -750,6 +787,8 @@ class Task:
                 self.create_asyncio_task()
 
     def create_asyncio_task(self):
+        assert Utils.in_event_loop()
+
         if self._asyncio_task is None:
             def visit(k, v):
                 if isinstance(v, Task) and v._state is None:
@@ -759,8 +798,9 @@ class Task:
             self._state = self.WAITING()
             self._asyncio_task = asyncio.create_task(self.task_top(), context = self._context)
 
-#    def promise(self, field : str):
-#        return Promise(self, field)
+    # Promises temporarily disabled
+    #def promise(self, field : str):
+    #    return Promise(self, field)
 
     # -----------------------------------------------------------------------------------------------
 
@@ -768,7 +808,7 @@ class Task:
         try:
             while self._state:
                 if not isawaitable(self._state):
-                    assert False, f"Task._state is not awaitable, it should be"
+                    assert False, "Task._state is not awaitable, it should be"
                 next_state = await self._state
                 if next_state is None:
                     break
@@ -797,13 +837,16 @@ class Task:
             if not Task.is_io_field(name):
                 continue
             for i, file in enumerate(files):
-#                if isinstance(file, Promise):
-#                    promise = cast(Promise, file)
-#                    result = await promise.task._asyncio_task
-#                    if result.__name__ == "FAILED":  #type:ignore
-#                        return self.CANCELLED()
-#                    files[i] = promise.task[promise.field]
-#                elif isinstance(file, Task):
+
+                # Promises temporarily disabled
+                #if isinstance(file, Promise):
+                #    promise = cast(Promise, file)
+                #    result = await promise.task._asyncio_task
+                #    if result.__name__ == "FAILED":  #type:ignore
+                #        return self.CANCELLED()
+                #    files[i] = promise.task[promise.field]
+                #elif isinstance(file, Task):
+
                 if isinstance(file, Task):
                     task = cast(Task, file)
                     result = await task._asyncio_task             #type:ignore
@@ -824,9 +867,6 @@ class Task:
     def fix_paths(self, name, files):
         c = self._config
         e = self._expand
-
-        if name == "in_depfile":
-            pass
 
         if not files or not Task.is_io_field(name):
             return files
@@ -860,12 +900,18 @@ class Task:
                 if not files[i].startswith(c.build_dir):
                     files[i] = files[i].replace(c.task_cwd, c.build_dir)
                 if files[i].startswith(c.build_dir):
-                    os.makedirs(Path.dirname(files[i]), exist_ok=True)
+                    dirname = Path.dirname(files[i])
+                    if dirname is not None:
+                        os.makedirs(dirname, exist_ok=True)
 
             # Gather all file paths to _in_files/_out_files.
             # WARNING: These filenames _must_ be absolute as they may be read from other repos.
 
             assert Path.isabs(files[i])
+
+            # The check for is_depfile_field must come first, as it's a special case of a file that
+            # is technically an _output_ file, but also counts as an input file.
+            # that
             if Task.is_depfile_field(name):
                 if Path.isfile(files[i]):
                     self._in_files.append(files[i])
@@ -888,7 +934,7 @@ class Task:
         c = self._config
         e = self._expand
 
-        self.log_d(0xFFFFFF, f"Task config before expand:")
+        self.log_d(0xFFFFFF, "Task config before expand:")
         for line in str(c).strip().split("\n"):
             self.log_d(0xFFFFFF, line)
 
@@ -922,7 +968,7 @@ class Task:
         c.desc    = Expander.expand_all(e, "{desc}")
         c.command = Expander.expand_all(e, "{command}")
 
-        self.log_d(0xFFFFFF, f"Task config after expand:")
+        self.log_d(0xFFFFFF, "Task config after expand:")
         for line in str(c).strip().split("\n"):
             self.log_d(0xFFFFFF, line)
 
@@ -949,19 +995,15 @@ class Task:
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
-            if real_file in Loader.filename_to_fingerprint:
+            if real_file in Loader.real_filenames:
                 return self.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            Loader.filename_to_fingerprint[real_file] = real_file
+            Loader.real_filenames.add(real_file)
 
         return self.CHECK_DEPS()
 
     # -----------------------------------------------------------------------------------------------
 
     async def CHECK_DEPS(self):
-        # Early-out if this is a no-op task
-        if not self._config.command:
-            return self.FINISHED()
-
         # Check if we need a rebuild
 
         c = self._config
@@ -1018,7 +1060,7 @@ class Task:
 
 
         # All checks passed; we don't need to rebuild this output.
-        return self.SKIPPED("Build is clean")
+        return self.SKIPPED()
 
     # -----------------------------------------------------------------------------------------------
 
@@ -1095,25 +1137,20 @@ class Task:
         Stats.tasks_failed += 1
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
-        import traceback
-
-        self.log(0xFF0000, f"Command failed!")
+        self.log(0xFF0000, "Command failed!")
         self.log(0xFF0000, f"From {script_path}:")
         self.log(0xFF0000, f"    Task     = '{self._config.name}' : '{self._config.desc}'")
         self.log(0xFF0000, f"    task_cwd = '{self._config.task_cwd}'")
         self.log(0xFF0000, f"    getcwd   = '{os.getcwd()}'")
         self.log(0xFF0000, f"    command  = '{self._config.command}'")
-
-        self.stdout_to_str()
-
-        #self.log(0xFF0000, self.stdout_to_str())
-        #self.log(0xFF0000, traceback.format_exc())
+        self.log(0xFF0000, f"    reason   = '{reason}'")
+        self.log_stdout()
 
         return None
 
     # -----------------------------------------------------------------------------------------------
 
-    async def SKIPPED(self, reason):
+    async def SKIPPED(self):
         Stats.tasks_skipped += 1
         self.log_v(0x404040, f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n")
         return None
@@ -1122,22 +1159,28 @@ class Task:
 
     async def BROKEN(self, reason):
         Stats.tasks_broken += 1
-        self.log(0xFF0000, f"Task broken! - {reason}")
-        #self.log(0x808080, "foo\nfoo\nfoo\n".split("\n"))
-        self.log(0x808080, "laksjdlkfsj")
+        script_path = Path.join(self._config.script_cwd, self._config.script_file)
+
+        self.log(0xFF0000, "Task broken!")
+        self.log(0xFF0000, f"From {script_path}:")
+        self.log(0xFF0000, f"    Task     = '{self._config.name}' : '{self._config.desc}'")
+        self.log(0xFF0000, f"    task_cwd = '{self._config.task_cwd}'")
+        self.log(0xFF0000, f"    getcwd   = '{os.getcwd()}'")
+        self.log(0xFF0000, f"    command  = '{self._config.command}'")
+        self.log(0xFF0000, f"    reason   = '{reason}'")
+
         return None
 
     # -----------------------------------------------------------------------------------------------
 
-    def stdout_to_str(self):
-        #message = ""
+    def log_stdout(self):
         self.log(0x80A080, "========== Stdout ==========")
         for line in self._stdout.strip().split("\n"):
             self.log(0x80A080, line)
-        self.log(0xA08080, f"========== Stderr ==========")
+        self.log(0xA08080, "========== Stderr ==========")
         for line in self._stderr.strip().split("\n"):
             self.log(0xA08080, line)
-        self.log(0x808080, f"============================")
+        self.log(0x808080, "============================")
 
     # -----------------------------------------------------------------------------------------------
 
@@ -1203,6 +1246,7 @@ class Stats:
 # region Promise
 # Promise selects subsets of _out_files
 
+# Promises are temporarily disabled
 #class Promise:
 #    def __init__(self, task : Task, field : str):
 #        self.task : Task = task
@@ -1243,7 +1287,7 @@ class Expander(abc.MutableMapping[str, object]):
         def __repr__(self):
             return "L" + str.__repr__(self)
         def __eq__(self, b):
-            if type(b) == Expander.Macro:
+            if type(b) is Expander.Macro:
                 return False
             return str.__eq__(self, b)
         def __hash__(self):
@@ -1251,12 +1295,11 @@ class Expander(abc.MutableMapping[str, object]):
 
     class Macro(str):
         def __init__(self, str):
-            if not Utils.is_macro(str):
-                assert Utils.is_macro(str)
+            assert Utils.is_macro(str)
         def __repr__(self):
             return "M" + str.__repr__(self)
         def __eq__(self, b):
-            if type(b) == Expander.Literal:
+            if type(b) is Expander.Literal:
                 return False
             return str.__eq__(self, b)
         def __hash__(self):
@@ -1277,12 +1320,12 @@ class Expander(abc.MutableMapping[str, object]):
 
         result = Expander(context, trace)
 
-        tag_a = (str(type(context).__name__)[:2] + "_" + hex(id(context))[-4:]).upper()
-        tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-        tag_a = Utils.obj_to_ansi(context) + tag_a + Log.reset_color
-        tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
-
-        Tracer.log2(trace, 0, f"wrap {tag_a} -> {tag_b}")
+        if trace:
+            tag_a = (str(type(context).__name__)[:2] + "_" + hex(id(context))[-4:]).upper()
+            tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
+            tag_a = Utils.obj_to_ansi(context) + tag_a + Log.reset_color
+            tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
+            Tracer.log2(0x000000, f"wrap {tag_a} -> {tag_b}")
 
         return result
 
@@ -1338,11 +1381,18 @@ class Expander(abc.MutableMapping[str, object]):
 
         with Tracer(self, f"_get('{key}')") as trace:
             result = self._context[key] #type:ignore
-            if isinstance(result, Expander):  pass
-            elif Utils.is_mapping(result):    result = Expander.wrap(result, self.trace)
-            elif Utils.is_collection(result): result = [Expander.expand_all(self, v) for v in cast(list, result)]
-            elif Utils.is_template(result):   result = Expander.expand_all(self, result)
-            elif Utils.is_macro(result):      result = Expander.expand_all(self, result)
+
+            if isinstance(result, Expander):
+                pass
+            elif Utils.is_mapping(result):
+                result = Expander.wrap(result, self.trace)
+            elif Utils.is_collection(result):
+                result = [Expander.expand_all(self, v) for v in cast(list, result)]
+            elif Utils.is_template(result):
+                result = Expander.expand_all(self, result)
+            elif Utils.is_macro(result):
+                result = Expander.expand_all(self, result)
+
             trace.log_result(result)
 
         return result
@@ -1422,7 +1472,7 @@ class Expander(abc.MutableMapping[str, object]):
                 result = Expander.eval(context, macro[1:-1])
             except RecursionError as err:
                 raise err
-            except:
+            except BaseException:
                 result = macro
             tracer.log_result(result)
         return result
@@ -1455,7 +1505,7 @@ class Expander(abc.MutableMapping[str, object]):
         if Utils.is_collection(variant):
             return [Expander.expand_once(context, v) for v in cast(list, variant)]
         elif Utils.is_mapping(variant):
-            return {k: Expander.expand_once(context, v) for k, v in cast(dict, variant)}
+            return {k: Expander.expand_once(context, v) for k, v in cast(dict, variant).items()}
         elif Utils.is_macro(variant):
             result = Expander._expand_macro(context, variant)
         elif Utils.is_template(variant):
@@ -1470,7 +1520,7 @@ class Expander(abc.MutableMapping[str, object]):
         if Utils.is_collection(variant):
             return [Expander.expand_all(context, v) for v in cast(list, variant)]
         elif Utils.is_mapping(variant):
-            return {k: Expander.expand_all(context, v) for k, v in cast(dict, variant)}
+            return {k: Expander.expand_all(context, v) for k, v in cast(dict, variant).items()}
         elif not Utils.is_braced(variant):
             return variant
 
@@ -1515,7 +1565,8 @@ class Tracer:
         context_tag = context_tag.upper()
         if len(Tracer.trellis_stack) >= Tracer.MAX_DEPTH:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
-        Tracer.log2(self.trace, color, f"┏ {context_tag}." + self.enter_message)
+        if self.trace:
+            Tracer.log2(color, f"┏ {context_tag}." + self.enter_message)
         Tracer.trellis_stack.append(Utils.hex_to_ansi(color) + "┃ ")
         return self
 
@@ -1524,11 +1575,8 @@ class Tracer:
         return result
 
     def print_result(self, text):
-        Tracer.log2(
-            self.trace,
-            Utils.obj_to_hex(self.context),
-            "┗ " + Utils.obj_to_ansi(self.result) + text
-        )
+        if self.trace:
+            Tracer.log2(Utils.obj_to_hex(self.context), "┗ " + Utils.obj_to_ansi(self.result) + text)
 
     def __exit__(self, *_):
         Tracer.trellis_stack.pop()
@@ -1540,8 +1588,11 @@ class Tracer:
             if isinstance(self.result, str):
                 text = "'" + text + "'"
 
-            if self.result is None: text = "<None>"
-            if self.result == "":   text = "<Empty>"
+            if self.result is None:
+                text = "<None>"
+            if self.result == "":
+                text = "<Empty>"
+
             self.print_result(text)
         return False
 
@@ -1552,11 +1603,10 @@ class Tracer:
             Log.log(color, buffer)
 
     @staticmethod
-    def log2(trace : bool, color : int, text : str):
+    def log2(color : int, text : str):
         """Prints a trace message to the log."""
-        if trace:
-            buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
-            Log.log(color, buffer)
+        buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
+        Log.log(color, buffer)
 
 # endregion
 ####################################################################################################
@@ -1564,7 +1614,7 @@ class Tracer:
 
 class Loader:
 
-    filename_to_fingerprint : dict[str, str]
+    real_filenames : set[str]
     root_repo : types.ModuleType
     dedupe : dict[int, types.ModuleType]
     loaded_files : list[str]
@@ -1574,7 +1624,7 @@ class Loader:
 
     @classmethod
     def reset(cls, *args, **kwargs):
-        cls.filename_to_fingerprint = dict()
+        cls.real_filenames = set()
         cls.dedupe = {}
         cls.loaded_files = []
 
@@ -1597,7 +1647,7 @@ class Loader:
         result = Dict(
             name        = "_",
             desc        = "_",
-            command     = "",
+            command     = None,
 
             hancho_dir  = Path.dirname(__file__),
             root_dir    = os.getcwd(),
@@ -1666,9 +1716,9 @@ class Loader:
         parser.add_argument("-d", "--debug",      default = None, action="store_true",  help="Print debugging information")
         parser.add_argument("-a", "--build_all",  default = None, action="store_true",  help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument("--rebuild",          default = None, action="store_true",  help="Rebuild everything")
-        parser.add_argument("--shuffle",          default = None, action="store_true",  help="Shuffle task order to shake out dependency issues")
+        #parser.add_argument("--shuffle",          default = None, action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--trace",            default = None, action="store_true",  help="Trace all text expansion")
-        parser.add_argument("--use_color",        default = None, action="store_true",  help="Use color in the console output")
+        #parser.add_argument("--use_color",        default = None, action="store_true",  help="Use color in the console output")
         parser.add_argument("--wrap",             default = None, action="store_true",  help="Wrap lines around the console instead of clipping them")
 
         # fmt: on
@@ -1680,7 +1730,6 @@ class Loader:
         # flag-like
         extra_flags = {}
         for span in unrecognized:
-            import re
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
@@ -1729,7 +1778,6 @@ class Loader:
 
         Log.log_v(f"Loading {"repo" if is_repo else "script"} {script_path}")
 
-        code = compile(source, script_path, "exec", dont_inherit=True)
         new_module = types.ModuleType(script_name)
         new_module.__dict__.update(
             __file__ = script_path,
@@ -1833,11 +1881,7 @@ class Runner:
     @classmethod
     def sync_run_tasks(cls):
         """Synchronously run all tasks until we're done with all of them."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        result = asyncio.run(cls.async_run_tasks())
-        loop.close()
-        return result
+        return asyncio.run(cls.async_run_tasks())
 
     #--------------------------------------------------------------------------------
 
@@ -1869,20 +1913,23 @@ class Runner:
                 assert current in all_tasks
                 break
 
+            # Task shuffling temporarily disabled.
             #if hancho.config.shuffle:
             #    Log.log(0x000000, f"Shufflin' {len(all_tasks) - 1} tasks")
             #    import random
             #    random.shuffle(all_tasks)
 
             for task in all_tasks:
-                if task == current: continue
+                if task == current:
+                    continue
                 await task
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
             if hancho.config.keep_going and fail_count >= hancho.config.keep_going:
                 Log.log(0xFF0000, "Too many failures, cancelling tasks and stopping build")
                 for task in all_tasks:
-                    if task != current: task.cancel()
+                    if task != current:
+                        task.cancel()
                 break
 
         return -1 if Stats.tasks_failed or Stats.tasks_broken else 0
@@ -1897,7 +1944,6 @@ class Runner:
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(0x8080FF, f"Wiping build_root {build_root}")
-                    import shutil
                     shutil.rmtree(build_root, ignore_errors=True)
             Log.log(0x8080FF, "Clean done")
             return 0
@@ -1922,8 +1968,8 @@ aliases = Dict(
     real = Path.real,
     rel  = Path.rel,
     stem = Path.stem,
-    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, kwargs),
-    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, kwargs),
+    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs),
+    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs),
 
     flatten = Utils.flatten,
     run_cmd = Utils.run_cmd,
