@@ -1,12 +1,13 @@
 #!/usr/bin/python3
 """Test cases for Hancho's Dict class"""
 
-from hancho import Dict
 import doctest
-import hancho
 import os
 import sys
 import unittest
+
+import hancho
+from hancho import Dict
 
 ####################################################################################################
 

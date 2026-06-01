@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-from hancho import Expander
 import doctest
-import hancho
 import os
 import sys
 import unittest
+
+import hancho
+from hancho import Expander
 
 ####################################################################################################
 

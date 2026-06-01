@@ -1,5 +1,4 @@
 import hancho
-import os
 
 hancho.config.includes = "-I" + hancho.config.script_cwd
 

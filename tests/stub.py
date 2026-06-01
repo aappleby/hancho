@@ -1,13 +1,12 @@
 #!/usr/bin/python3
 """Template file for creating new test cases"""
 
-from pathlib import Path
-from typing import cast
 import doctest
-import hancho
 import os
 import sys
 import unittest
+
+import hancho
 
 ####################################################################################################
 

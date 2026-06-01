@@ -1,17 +1,15 @@
-import hancho
+import asyncio
 from glob import glob
 
-####################################################################################################
-
 import hancho
+
+####################################################################################################
 
 main_bin = hancho.Task(
     command = "g++ src/main.cpp src/util.cpp -o build/app",
 )
 
 ####################################################################################################
-
-import hancho
 
 main_bin = hancho.Task(
     command = "g++ {in_src} -o {out_bin}",
@@ -20,8 +18,6 @@ main_bin = hancho.Task(
 )
 
 ####################################################################################################
-
-import hancho
 
 main_o = hancho.Task(
     command = "g++ -c {in_src} -o {out_obj}",
@@ -42,8 +38,6 @@ main_bin = hancho.Task(
 )
 
 ####################################################################################################
-
-import hancho
 
 main_o = hancho.Task(
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
@@ -67,8 +61,6 @@ main_bin = hancho.Task(
 
 ####################################################################################################
 
-import hancho
-
 compile_cpp = hancho.Tool(
     desc       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
@@ -88,7 +80,6 @@ app    = hancho.Task(link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 ####################################################################################################
 
 # build.hancho
-import hancho
 
 tools  = hancho.load("tools.hancho")
 main_o = hancho.Task(tools.compile_cpp, in_src = "src/main.cpp")
@@ -96,7 +87,6 @@ util_o = hancho.Task(tools.compile_cpp, in_src = "src/util.cpp")
 app    = hancho.Task(tools.link_cpp, in_objs = [main_o, util_o], out_bin = "app")
 
 # tools.hancho
-import hancho
 
 compile_cpp = hancho.Tool(
     desc       = "Compile {in_src} -> {out_obj}",
@@ -113,14 +103,12 @@ link_cpp = hancho.Tool(
 ####################################################################################################
 
 # build.hancho
-import hancho
 
 tools = hancho.load("tools.hancho")
 app   = hancho.Task(tools.c_binary, in_src = glob("src/*.cpp"), out_bin = "app")
 
 #----------------------------------------
 # tools.hancho
-import hancho
 
 compile_cpp = hancho.Tool(
     desc       = "Compile {in_src} -> {out_obj}",
@@ -142,8 +130,6 @@ def c_binary(*, in_srcs, out_bin, **kwargs):
 # Async/await and custom commands
 
 # build.hancho
-import hancho
-import asyncio
 
 # Synchronous functions can be used in place of command strings.
 

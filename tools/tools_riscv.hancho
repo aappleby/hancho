@@ -12,9 +12,9 @@ rv_gcc_config = hancho.Dict(
     defines  = None,
     includes = None,
 
-    joined_warnings = "{join('-W', warnings)}",
-    joined_defines  = "{join('-D', defines)}",
-    joined_includes = "{join('-I', includes)}",
+    joined_warnings = "{weave('-W', warnings)}",
+    joined_defines  = "{weave('-D', defines)}",
+    joined_includes = "{weave('-I', includes)}",
 )
 
 flags_c = [
@@ -27,10 +27,11 @@ flags_c = [
     "-MMD"
 ]
 
-flags_ld = flags_c + [
+flags_ld = [
+    *flags_c,
     "-nostdlib",
     "-nostartfiles",
-    "-Wl,-T {linkerscript}",
+    "-Wl,-T {linkerscript}"
 ]
 
 rv_compile = hancho.Tool(

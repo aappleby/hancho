@@ -11,19 +11,20 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 """
 
 from __future__ import annotations
+
 import asyncio
 import contextvars
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 import types
-from collections import abc, ChainMap
+from collections import ChainMap, abc
 from contextlib import chdir
 from inspect import isawaitable
 from typing import Any, cast
-import shutil
 
 hancho = sys.modules[__name__]
 
@@ -239,15 +240,16 @@ class Log:
             ld = "("
             rd = ",)" if len(items) == 1 else ")"
         elif Utils.is_mapping(val):
-            items = val.items() # type:ignore
+            val = cast(abc.Mapping, val)
+            items = val.items()
             ld = "{"
             rd = "}"
         elif Utils.is_collection(val):
-            items = [(None, val2) for val2 in val] # type:ignore
+            items = [(None, val2) for val2 in val]
             ld = "["
             rd = "]"
         else:
-            assert False, f"Don't know what to do with {type(val)}"
+            raise AssertionError(f"Don't know what to do with {type(val)}")
 
         # Iterate over our key-value pairs, converting them in to string chunks. If the resulting line
         # would be too wide and we're not trying to generate a flat string, fall back to multi-line.
@@ -372,9 +374,16 @@ class Utils:
     #----------------------------------------
 
     @classmethod
-    def join(cls, lhs, rhs, *args) -> list[str]:
+    def weave(cls, lhs, rhs, *args) -> list[str]:
+        """
+        This function does a 'cross join' in the database sense, every line in lhs will be joined
+        to every line in rhs (and this will be repeated with *args if present). This is useful for
+        adding prefixes / suffixes to a bunch of strings, or generating all possible combinations
+        of two sets of options, etecetera.
+        """
+
         lhs2 = Utils.flatten(lhs)
-        rhs2 = Utils.join(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
+        rhs2 = Utils.weave(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
         return [lh + rh for lh in lhs2 for rh in rhs2]
 
     #----------------------------------------
@@ -484,7 +493,7 @@ class Path:
             path2 = cast(str, Path.norm(path2))
             result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
         else:
-            assert False, f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}"
+            raise AssertionError(f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}")
         return result
 
     @staticmethod
@@ -557,7 +566,7 @@ class Dict(dict):
     2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
     3. When merging Dicts, the rightmost not-None value of an attribute will be kept.
     4. If two attributes with the same name are both Dicts, we will recursively merge them.
-    5. Dict behaves like a value type, merging will make copies of all its inputs.
+    5. Copying dicts deep-copies all nested mappings, other containers (list, tuple) are shallow-copied.
     """
 
     def __init__(self, *args, **kwargs):
@@ -680,7 +689,7 @@ class Task:
 
         for f in path_fields:
             if f in self._config:
-                self._config[f] = Path.norm(self._expand[f]) #type:ignore
+                self._config[f] = Path.norm(self._expand[f])
         for f in flag_fields:
             if f in self._config:
                 self._config[f] = self._expand[f]
@@ -729,10 +738,10 @@ class Task:
     # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
 
     def __copy__(self):
-        assert False, "Don't copy Tasks!"
+        raise AssertionError("Don't copy Tasks!")
 
     def __deepcopy__(self, _):
-        assert False, "Don't copy Tasks!"
+        raise AssertionError("Don't copy Tasks!")
 
     def __repr__(self):
         return Log.dump_to_str(key = "Task", val = self)
@@ -777,7 +786,7 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     def state(self):
-        return self._state.__name__ #type:ignore
+        return cast(types.CoroutineType, self._state).__name__
 
     def enable(self):
         if not self._config.enabled:
@@ -806,13 +815,26 @@ class Task:
 
     async def task_top(self):
         try:
+            # Hancho is using async member functions as both the names of states in a state machine
+            # and as the implementation of the states themselves. This is slightly weird, but it
+            # allows for a really nice system where states can run asynchronously and can pass
+            # parameters to each other.
+
+            # To dispatch each state function, we await the coroutine in self._state - this will
+            # return either the next coroutine to run, or None if the task is complete. The
+            # self._state field will stay at the last awaited coroutine (FINISHED, FAILED, etc)
+            # so that other tasks can check on this one's status. Both the coroutine and the
+            # corresponding async function have '__name__' fields that we can use for comparing
+            # and pretty-printing states.
+
             while self._state:
                 if not isawaitable(self._state):
-                    assert False, "Task._state is not awaitable, it should be"
+                    raise AssertionError("Task._state is not awaitable, it should be")
                 next_state = await self._state
                 if next_state is None:
                     break
                 self._state = next_state
+
         finally:
             if self._core_count:
                 Runner.release(self._core_count)
@@ -842,15 +864,15 @@ class Task:
                 #if isinstance(file, Promise):
                 #    promise = cast(Promise, file)
                 #    result = await promise.task._asyncio_task
-                #    if result.__name__ == "FAILED":  #type:ignore
+                #    if result.__name__ == "FAILED":
                 #        return self.CANCELLED()
                 #    files[i] = promise.task[promise.field]
                 #elif isinstance(file, Task):
 
                 if isinstance(file, Task):
                     task = cast(Task, file)
-                    result = await task._asyncio_task             #type:ignore
-                    if result.__name__ == "FAILED":   #type:ignore
+                    result = await cast(asyncio.Task, task._asyncio_task)
+                    if result.__name__ == "FAILED":
                         return self.CANCELLED()
                     files[i] = task._out_files
             self._config[name] = Utils.flatten(files)
@@ -949,7 +971,7 @@ class Task:
         # relative so our command lines aren't enormous.
         for k, v in c.items():
             if Task.is_io_field(k):
-                for i, file in enumerate(v):
+                for i in range(len(v)):
                     if isinstance(c.command[0], str):
                         v[i] = Path.rel(v[i], c.task_cwd)
                     else:
@@ -1102,12 +1124,14 @@ class Task:
         elif callable(command):
             self.log_v(0x8080FF, f"{Path.rel(c.script_cwd, c.repo_dir)}$ {command}")
 
-            with chdir(c.script_cwd):
-                result = command(self)
-                while isawaitable(result):
-                    result = await result
-            self._stdout = ""
-            self._stderr = ""
+            try:
+                with chdir(c.script_cwd):
+                    result = command(self)
+                    while isawaitable(result):
+                        result = await result
+            except Exception as ex:
+                return self.FAILED("Callback threw an exception", ex)
+
         else:
             return self.BROKEN("Command is not a string or a callable?")
 
@@ -1133,7 +1157,7 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    async def FAILED(self, reason):
+    async def FAILED(self, reason, ex = None):
         Stats.tasks_failed += 1
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
@@ -1144,6 +1168,7 @@ class Task:
         self.log(0xFF0000, f"    getcwd   = '{os.getcwd()}'")
         self.log(0xFF0000, f"    command  = '{self._config.command}'")
         self.log(0xFF0000, f"    reason   = '{reason}'")
+        self.log(0xFF0000, f"    except   = '{ex}'")
         self.log_stdout()
 
         return None
@@ -1257,9 +1282,11 @@ class Stats:
 # region Expander
 # Hancho's text expansion system.
 #
-# Works similarly to Python's F-strings, but with quite a bit more power.
+# WARNING - Hancho is NOT A SANDBOX, Expander can evaluate arbitrary Python code which could format
+# your hard drive and email spam to your grandparents. Use responsibly.
 #
-# The code here requires some explanation.
+# Expander works similarly to Python's F-strings, but with quite a bit more power. The code here
+# requires some explanation.
 #
 # We do not necessarily know in advance how the users will nest strings, macros, callbacks,
 # etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we always
@@ -1335,11 +1362,10 @@ class Expander(abc.MutableMapping[str, object]):
         return key in self._context
 
     def __iter__(self):
-        for key in self._context: #type:ignore
-            yield key
+        yield from self._context
 
     def __len__(self):
-        return self._context.__len__() #type:ignore
+        return self._context.__len__()
 
     def __repr__(self):
         result = f"{self.__class__.__name__} @ {hex(id(self))}"
@@ -1354,10 +1380,10 @@ class Expander(abc.MutableMapping[str, object]):
             raise KeyError from ex
 
     def __setitem__(self, key, val):
-        self._context.__setitem__(key, val) #type:ignore
+        self._context.__setitem__(key, val)
 
     def __delitem__(self, key):
-        self._context.__delitem__(key) #type:ignore
+        self._context.__delitem__(key)
 
     #----------------------------------------
 
@@ -1380,7 +1406,7 @@ class Expander(abc.MutableMapping[str, object]):
         assert Utils.is_literal(key)
 
         with Tracer(self, f"_get('{key}')") as trace:
-            result = self._context[key] #type:ignore
+            result = self._context[key]
 
             if isinstance(result, Expander):
                 pass
@@ -1388,9 +1414,7 @@ class Expander(abc.MutableMapping[str, object]):
                 result = Expander.wrap(result, self.trace)
             elif Utils.is_collection(result):
                 result = [Expander.expand_all(self, v) for v in cast(list, result)]
-            elif Utils.is_template(result):
-                result = Expander.expand_all(self, result)
-            elif Utils.is_macro(result):
+            elif Utils.is_template(result) or Utils.is_macro(result):
                 result = Expander.expand_all(self, result)
 
             trace.log_result(result)
@@ -1472,7 +1496,7 @@ class Expander(abc.MutableMapping[str, object]):
                 result = Expander.eval(context, macro[1:-1])
             except RecursionError as err:
                 raise err
-            except BaseException:
+            except Exception:
                 result = macro
             tracer.log_result(result)
         return result
@@ -1667,7 +1691,7 @@ class Loader:
             build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
             core_count  = 1,
-            core_max    = os.cpu_count(),
+            core_max    = os.cpu_count() or 1,
 
             depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
             in_depfile  = [],
@@ -1793,20 +1817,23 @@ class Loader:
 
         new_config = Dict(
             old_config,
-            is_repo     = is_repo,
-            script_cwd  = script_cwd,
-            script_file = script_file,
-            repo_dir    = script_cwd  if is_repo else old_config.repo_dir,
-            repo_file   = script_file if is_repo else old_config.repo_file,
-            this_repo   = new_module  if is_repo else old_config.this_repo,
-            this_module = new_module,
+            Dict(
+                is_repo     = is_repo,
+                script_cwd  = script_cwd,
+                script_file = script_file,
+                repo_dir    = script_cwd  if is_repo else old_config.repo_dir,
+                repo_file   = script_file if is_repo else old_config.repo_file,
+                this_repo   = new_module  if is_repo else old_config.this_repo,
+                this_module = new_module,
+            ),
             *args,
             **kwargs
         )
 
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical module configs are
-        # deduped.
+        # deduped. This relies on __repr__ and the fields relied on by dump_to_str being stable
+        # during a build, which they should be in practice.
 
         config_dump = Log.dump_to_str(key = "Config", val = new_config)
         config_dump = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
@@ -1848,6 +1875,8 @@ class Runner:
 
     @classmethod
     async def acquire(cls, count):
+        if count > Runner.core_max:
+            raise ValueError("Tried to acquire {count} cores, which exceeds the max {Runner.core_max}")
         async with Runner.core_lock:
             for _ in range(count):
                 await Runner.core_sem.acquire()
@@ -1948,7 +1977,7 @@ class Runner:
             Log.log(0x8080FF, "Clean done")
             return 0
         else:
-            assert False, f"Don't know how to run tool {tool}"
+            raise AssertionError(f"Don't know how to run tool {tool}")
 
 # endregion
 ####################################################################################################
@@ -1973,7 +2002,7 @@ aliases = Dict(
 
     flatten = Utils.flatten,
     run_cmd = Utils.run_cmd,
-    join    = Utils.join,
+    weave   = Utils.weave,
 )
 
 # ---------------------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
 import hancho
-#print("sticky2")
+
 assert hancho.foo == 100
 hancho.bar = 200

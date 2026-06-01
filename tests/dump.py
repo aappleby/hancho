@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 
-import hancho
 import timeit
 
+import hancho
 from hancho import Log
+
 
 class Merp:
     def __repr__(self):
@@ -19,12 +20,12 @@ test = hancho.Dict(
     b = "two\ntwo\ntwo",
     c = r"three",
     d = [4, 5, 6],
-    e = dict(f = 7, g = 8, h = 9),
+    e = {"f": 7, "g": 8, "h": 9},
     f = ["foo"],
-    g = dict(bar = 1),
+    g = {"bar": 1},
     h = None,
-    i = dict(foo = None),
-    j = dict(foo = None, bar = None),
+    i = {"foo": None},
+    j = {"foo": None, "bar": None},
     k = [1, 2, 3, 4, 5, 6, 7, 8, 9],
     l = ["hello", [Merp(), Merp(), Merp(), Merp(), Merp()], "merp", "merp"],
     m = [],
@@ -33,11 +34,11 @@ test = hancho.Dict(
     p = ("tu","p","le"),
     q = ((),(()),),
     r = {"merp1":Merp(), "merp2":Merp()},
-    s = dict(foo = 1, bar = 2, baz = 3),
-    t = dict(a = "123456789123456789", b = "123456789123456789", c = "123456789123456789", d = "123456789123456789"),
+    s = {"foo": 1, "bar": 2, "baz": 3},
+    t = {"a": "123456789123456789", "b": "123456789123456789", "c": "123456789123456789", "d": "123456789123456789"},
     u = [print, len, Merp.__repr__, lambda x : x + 1, lambda x,y,z : x * y * z],
     v = [True, False],
-    w = [b"1234", "Hello World".encode(), bytearray("Hello", 'utf-8'), range(10)],
+    w = [b"1234", b"Hello World", bytearray("Hello", 'utf-8'), range(10)],
     x = hancho.Task(command = "echo hello world"),
 )
 
@@ -70,11 +71,13 @@ print()
 
 
 if True:
-    blah = lambda : Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
-    print(f"max_width = 80 -> {timeit.timeit(blah, number = 1000)} msec")
+    def blah1():
+        return Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 80)
+    print(f"max_width = 80 -> {timeit.timeit(blah1, number = 1000)} msec")
 
-    blah = lambda : Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
-    print(f"max_width = inf -> {timeit.timeit(blah, number = 1000)} msec")
+    def blah2():
+        return Log.dump_to_str(key = "test", val = test, tab = ". ", max_width = 9999999)
+    print(f"max_width = inf -> {timeit.timeit(blah2, number = 1000)} msec")
 
 #import pprint
 #pprint.pprint(dict(test))

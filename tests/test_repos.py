@@ -1,14 +1,13 @@
 #!/usr/bin/python3
 """Template file for creating new test cases"""
 
-from pathlib import Path
-from typing import cast
 import doctest
-import hancho
 import os
 import subprocess
-import unittest
 import sys
+import unittest
+
+import hancho
 
 ####################################################################################################
 
@@ -36,7 +35,7 @@ class TestRepos(unittest.TestCase):
     def test_sticky_hancho(self):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
         result = subprocess.run(
-            "python3 ../hancho.py -q -f sticky_hancho1.hancho".split(),
+            ["python3", "../hancho.py", "-q", "-f", "sticky_hancho1.hancho"],
             cwd = os.path.dirname(__file__),
         )
         self.assertEqual(0, result.returncode)

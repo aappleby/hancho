@@ -1,5 +1,6 @@
-import hancho
 import os
+
+import hancho
 
 ####################################################################################################
 # C++
@@ -24,9 +25,9 @@ check_cpp = hancho.Tool(
     out_ok="{in_src}.ok",
 
     cpp_std = "gnu++2a",
-    joined_warnings = "{join('-W', warnings)}",
-    joined_defines  = "{join('-D', defines)}",
-    joined_includes = "{join('-I', includes)}",
+    joined_warnings = "{weave('-W', warnings)}",
+    joined_defines  = "{weave('-D', defines)}",
+    joined_includes = "{weave('-I', includes)}",
 )
 
 # ----------------------------------------
@@ -53,9 +54,9 @@ compile_cpp = hancho.Tool(
     # Note - this swaps out_obj and not in_src in case the user redirects out_obj
     in_depfile = "{ext(out_obj, '.d')}",
 
-    joined_warnings="{join('-W', warnings)}",
-    joined_defines ="{join('-D', defines)}",
-    joined_includes="{join('-I', includes)}",
+    joined_warnings="{weave('-W', warnings)}",
+    joined_defines ="{weave('-D', defines)}",
+    joined_includes="{weave('-I', includes)}",
 )
 
 if os.name == "nt":

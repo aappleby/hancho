@@ -15,7 +15,7 @@ iverilog = hancho.Tool(
     desc = "Run iverilog on {in_sv}",
     command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {joined_includes} {in_sv} -o {out_iv}",
     gen_ivparams = gen_ivparams,
-    joined_includes = "{join('-I', includes)}"
+    joined_includes = "{weave('-I', includes)}"
 )
 
 verilated_o = hancho.Task(
@@ -45,7 +45,7 @@ verilator_cmd = hancho.Tool(
     command = "verilator -Wno-width --public {gen_vlparams(params)} {joined_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
     out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
     out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_top)}",
-    joined_includes = "{join('-I', includes)}",
+    joined_includes = "{weave('-I', includes)}",
     gen_vlparams = gen_vlparams,
     params = {},
 )
@@ -98,14 +98,14 @@ yosys = hancho.Tool(
     params = {},
     gen_chparams = gen_chparams,
     top = "{os.path.splitext(in_sv)[0]}",
-    joined_includes = "{join('-I', includes)}",
+    joined_includes = "{weave('-I', includes)}",
 )
 
 
 sv2v = hancho.Tool(
     desc = "Run sv2v on {in_sv}",
     command = "sv2v {joined_includes} {in_sv} -w {out_v}",
-    joined_includes = "{join('-I', includes)}",
+    joined_includes = "{weave('-I', includes)}",
     out_v = "{ext(in_sv, '.v')}",
 )
 
@@ -141,7 +141,7 @@ synth = hancho.Tool(
     params   = {},
     chparams = gen_chparams,
     includes = None,
-    joined_includes = "{join('-I', includes)}",
+    joined_includes = "{weave('-I', includes)}",
     flags    = None,
 )
 

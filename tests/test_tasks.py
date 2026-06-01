@@ -1,18 +1,19 @@
 #!/usr/bin/python3
 """Test cases for Hancho's Dict class"""
 
-from pathlib import Path
-from typing import cast
 import asyncio
 import doctest
 import glob
-import hancho
 import os
 import random
 import shutil
 import sys
 import time
 import unittest
+from pathlib import Path
+from typing import cast
+
+import hancho
 
 ####################################################################################################
 
