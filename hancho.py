@@ -423,7 +423,7 @@ class Utils:
         return not Utils.is_collection(v) and not Utils.is_mapping(v)
 
     @staticmethod
-    def is_flat[T](c : Any, as_type : type[T]):
+    def is_flat_list_of[T](c : Any, as_type : type[T]):
         if Utils.is_collection(c):
             return all(isinstance(v, as_type) for v in c)
         elif Utils.is_mapping(c):
@@ -951,11 +951,6 @@ class Task:
         """Await everything awaitable in this task's config. If any of this tasks's dependencies
         failed, we propagate a cancellation to downstream tasks."""
 
-        # First, flatten all inputs and outputs.
-        for name, files in self._config.items():
-            if Task.is_io_field(name):
-                self._config[name] = Utils.flatten(files)
-
         # Await our dependencies. If any of our dependencies failed, we are cancelled.
         for name, files in self._config.items():
             if Task.is_input_field(name):
@@ -963,13 +958,79 @@ class Task:
                     if isinstance(file, Task):
                         task = cast(Task, file)
                         task_status = await cast(asyncio.Task, task._asyncio_task)
-
                         if task_status == Task.Status.FAILED:
                             return self.CANCELLED()
                         files[i] = task._out_files
                 self._config[name] = Utils.flatten(files)
 
         return self.SETUP()
+
+    # -----------------------------------------------------------------------------------------------
+
+    def remap_io_field_paths(self, name, files) -> list[str]:
+        """
+        Input and output file paths in .hancho scripts are declared relative to the directory the
+        script is in (stored in the config under 'script_cwd').
+        In general we want to run commands from the root of the repo and store output files in
+        repo/build. Additionally, our file paths may be text templates that we need to expand first.
+        This function takes care of all of that and a few other things, and tries to do so in a
+        robust way. Whether this actually turns out to be robust or not is yet to be determined.
+        """
+
+        c = self._config
+        e = self._expand
+
+        # Expand all in_ and out_ filenames.
+        # We _must_ expand these first before joining paths or the paths will be incorrect:
+        # prefix + swap(abs_path) != abs(prefix + swap(path))
+        files = Expander.expand_all(files, e)
+
+        # Initially, all our file paths are relative to the script_cwd that created this task.
+        # Join script_cwd with the filenames to produce absolute paths.
+        files = Path.join(c.script_cwd, files)
+
+        # Expanding may have made our files array non-flat, but its contents should be all
+        # absolute paths now.
+        files = Utils.flatten(files)
+        assert Path.isabs(files)
+
+        # Path _must_ be normed after expansion and joining, otherwise it might look like it's
+        # under script_cwd but it's not because the path could have "../../../../.." in it.
+        files = cast(list[str], Path.norm(files))
+
+        # Move all outputs under build_dir and ensure their directories exist.
+        if Task.is_output_field(name):
+            for i in range(len(files)):
+                # Note these conditionals are _NOT_ an if/elif pair!
+                if not files[i].startswith(c.build_dir):
+                    files[i] = files[i].replace(c.task_cwd, c.build_dir)
+
+                if files[i].startswith(c.build_dir):
+                    dirname = Path.dirname(files[i])
+                    if dirname is not None:
+                        os.makedirs(dirname, exist_ok=True)
+
+        # Gather all absolute file paths to _in_files/_out_files.
+        for i in range(len(files)):
+            # The check for is_depfile_field must come first, as it's a special case of a file that
+            # is technically an _output_ file, but also counts as an input file.
+            if Task.is_depfile_field(name):
+                if Path.isfile(files[i]):
+                    self._in_files.append(files[i])
+            elif Task.is_output_field(name):
+                self._out_files.append(files[i])
+            elif Task.is_input_field(name):
+                self._in_files.append(files[i])
+
+        # Convert the fixed paths back to relative so our command lines aren't enormous.
+        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+        # relative to script_cwd if we're calling a callback.
+        rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
+
+        for i in range(len(files)):
+            files[i] = Path.rel(files[i], rel_dir)
+
+        return files
 
     # -----------------------------------------------------------------------------------------------
 
@@ -990,69 +1051,28 @@ class Task:
 
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_cwd if we're calling a callback.
-        rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
+        #rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
 
         for name, files in c.items():
             if not Task.is_io_field(name):
                 continue
 
-            # If an input source had an absolute path and we swap the extension on it to make the
-            # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-            # lives under build_dir.
+            # First, flatten our list of files so we don't have to deal with weird nested
+            # structures.
+            files = Utils.flatten(files)
 
             # All our input and output fields should contain flat arrays of strings now.
-            if not Utils.is_flat(files, str):
-                raise AssertionError("SETUP got a task without flattened input/output fields")
+            if not Utils.is_flat_list_of(files, str):
+                raise AssertionError(
+                    "SETUP got a task without flattened input/output fields, or some of the " +
+                    "fields were non-strings"
+                )
 
-            # Expand all in_ and out_ filenames.
-            # We _must_ expand these first before joining paths or the paths will be incorrect:
-            # prefix + swap(abs_path) != abs(prefix + swap(path))
-            files = Expander.expand_all(files, e)
+            # Do all the file path remapping so our commands will work
+            files = self.remap_io_field_paths(name, files)
 
-            # Initially, all our file paths are relative to the script_cwd that created this task.
-            # Join script_cwd with the filenames to produce absolute paths.
-            files = Path.join(c.script_cwd, files)
-
-            # Expanding may have made our files array non-flat, but its contents should be all
-            # absolute paths now.
-            files = Utils.flatten(files)
-            assert Path.isabs(files)
-
-            # Path _must_ be normed after expansion and joining, otherwise it might look like it's
-            # under script_cwd but it's not because the path could have "../../../../.." in it.
-            files = cast(list[str], Path.norm(files))
-
-            # Move all outputs under build_dir and ensure their directories exist.
-            if Task.is_output_field(name):
-                for i in range(len(files)):
-
-                    # Note these conditionals are _NOT_ an if/elif pair!
-                    if not files[i].startswith(c.build_dir):
-                        files[i] = files[i].replace(c.task_cwd, c.build_dir)
-
-                    if files[i].startswith(c.build_dir):
-                        dirname = Path.dirname(files[i])
-                        if dirname is not None:
-                            os.makedirs(dirname, exist_ok=True)
-
-
-            # Gather all absolute file paths to _in_files/_out_files.
-            for i in range(len(files)):
-                # The check for is_depfile_field must come first, as it's a special case of a file that
-                # is technically an _output_ file, but also counts as an input file.
-                if Task.is_depfile_field(name):
-                    if Path.isfile(files[i]):
-                        self._in_files.append(files[i])
-                elif Task.is_output_field(name):
-                    self._out_files.append(files[i])
-                elif Task.is_input_field(name):
-                    self._in_files.append(files[i])
-
-            # Convert the fixed paths back to relative so our command lines aren't enormous.
-            for i in range(len(files)):
-                files[i] = Path.rel(files[i], rel_dir)
-
-            # And unwrap filenames if they're an array of one element.
+            # and unwrap filenames if they're an array of one element so that scripts expecting
+            # join(str, str) to return a str will be happy.
             c[name] = files[0] if len(files) == 1 else files
 
         # ----------------------------------------
@@ -1315,48 +1335,24 @@ class Expander(abc.MutableMapping[str, object]):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
+    # Trivial string wrappers that let us differentiate "literal" strings and "{macro}" strings.
     class Literal(str):
-        def __init__(self, text):
-            if not Utils.is_literal(text):
-                print(f"This is not a literal - {text}")
-                raise AssertionError(f"This is not a literal - {text}")
-
         def __repr__(self):
             return "L" + str.__repr__(self)
 
-        def __eq__(self, b):
-            if type(b) is Expander.Macro:
-                return False
-            return str.__eq__(self, b)
-
-        def __hash__(self):
-            return str.__hash__(self)
-
     class Macro(str):
-        def __init__(self, text):
-            if not Utils.is_macro(text):
-                print(f"This is not a macro - {text}")
-                raise AssertionError(f"This is not a macro - {text}")
-
         def __repr__(self):
             return "M" + str.__repr__(self)
 
-        def __eq__(self, b):
-            if type(b) is Expander.Literal:
-                return False
-            return str.__eq__(self, b)
-
-        def __hash__(self):
-            return str.__hash__(self)
-
     #----------------------------------------
-    # region
 
     def __init__(self, context : Dict, trace : bool):
+        # These are just type annotations, because writing to fields while we're in the constructor
+        # of a class that overrides __setattr__ does strange things.
         self._context : Dict
         self.trace : bool
 
-        # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
+        # The actual seet is here.
         super().__setattr__("_context", context)
         super().__setattr__("trace", trace)
 
@@ -1377,21 +1373,7 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     #----------------------------------------
-
-    def __contains__(self, key):
-        return key in self._context
-
-    def __iter__(self):
-        yield from cast(Dict, self._context)
-
-    def __len__(self):
-        return cast(Dict, self._context).__len__()
-
-    def __repr__(self):
-        result = f"{self.__class__.__name__} @ {hex(id(self))}"
-        return result
-
-    #----------------------------------------
+    # MutableMapping interface
 
     def __getitem__(self, key):
         try: # Expander.__getitem__
@@ -1405,7 +1387,18 @@ class Expander(abc.MutableMapping[str, object]):
     def __delitem__(self, key):
         cast(Dict, self._context).__delitem__(key)
 
+    def __iter__(self):
+        yield from cast(Dict, self._context)
+
+    def __len__(self):
+        return cast(Dict, self._context).__len__()
+
     #----------------------------------------
+    # object interface
+
+    def __repr__(self):
+        result = f"{self.__class__.__name__} @ {hex(id(self))}"
+        return result
 
     def __getattr__(self, key):
         try:
@@ -1419,10 +1412,13 @@ class Expander(abc.MutableMapping[str, object]):
     def __delattr__(self, key):
         self._context.__delattr__(key)
 
-    #endregion
     #----------------------------------------
 
     def _get(self, key):
+        """
+        Reads and expands a field stored in our context. Mappings will be wrapped in an Expander so
+        that expansions in nested dicts works correctly.
+        """
         assert Utils.is_literal(key)
 
         with Tracer(self, f"_get('{key}')") as trace:
@@ -1477,14 +1473,16 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     #--------------------------------------------------------------------------------
-    # Template variable lookup order:
-    # 1. The config we're expanding
-    # 2. The script-local hancho.config
-    # 3. Convenience aliases
-    # 4. The global hancho module
 
     @staticmethod
     def _eval(expr : str, context : Dict | Expander):
+        """
+        Evaluates (and optionally traces) an expression using four sources of symbol lookup:
+        1. The config we're expanding
+        2. The script-local hancho.config
+        3. Convenience aliases
+        4. The global hancho module
+        """
         assert Utils.is_literal(expr)
         with Tracer(context, f"_eval('{expr}')") as tracer:
             _locals = ChainMap(context, Loader.cv_config.get(), aliases)
@@ -1495,19 +1493,31 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     def _expand_macro(macro : str, context : Dict | Expander) -> Any:
+        """
+        Expands a macro like "{len(options)}" into 20 or whatever.
+        If a 'normal' exception is raised during eval, we return the macro unchanged (see TEFINAE
+        in the docs). If it's RecursionError or one of the "special" exceptions that don't inherit
+        from an exception, propagate that back out so we don't break ctrl-c and such.
+        """
         assert Utils.is_macro(macro)
         with Tracer(context, f"_expand_macro('{macro}')") as tracer:
-            try: # catch non-recursion errors and return original macro
+            try:
                 result = Expander.eval(macro[1:-1], context)
             except RecursionError:
                 raise
             except Exception:
                 result = macro
+            except BaseException:
+                raise
             tracer.log_result(result)
         return result
 
     @staticmethod
     def _expand_template(template: str, context : Dict | Expander) -> str:
+        """
+        Expands a template by splitting it into Literal and Macro chunks, replacing each macro with
+        their eval'd-and-stringized contents, and then gluing evrything back together again.
+        """
         assert Utils.is_template(template)
         with Tracer(context, f"_expand_template('{template}')") as tracer:
             blocks = Expander.split(template)
@@ -1525,6 +1535,10 @@ class Expander(abc.MutableMapping[str, object]):
     @staticmethod
     @Utils.recursify_apply_mip
     def eval[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
+        """
+        Eval plus recursive application and type checking.
+        Eval every string in a big mess of nested dicts and lists.
+        """
         assert Utils.is_literal(expr)
         result = Expander._eval(expr, context)
         assert isinstance(result, as_type)
