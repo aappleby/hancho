@@ -749,24 +749,17 @@ class Tool(Dict):
 # region Task
 # Task object + bookkeeping
 
-class TaskException(Exception):
-    def __init__(self, msg, err):
-        super().__init__(msg)
-        self.err = err
-
-class TaskBroken(TaskException):
-    pass
-
-class TaskFailed(TaskException):
-    pass
-
-class TaskCancelled(TaskException):
-    pass
-
-class TaskSkipped(TaskException):
-    pass
-
 class Task:
+
+    class TaskException(Exception):
+        def __init__(self, msg, err):
+            super().__init__(msg)
+            self.err = err
+    class Broken(TaskException):    pass # noqa: E701
+    class Failed(TaskException):    pass # noqa: E701
+    class Cancelled(TaskException): pass # noqa: E701
+    class Skipped(TaskException):   pass # noqa: E701
+
 
     id_counter : int = 0
     tasks_enabled : int = 0
@@ -949,16 +942,16 @@ class Task:
         try:
             await self.task_main()
             self._status = Task.Status.FINISHED
-        except TaskBroken as ex:
+        except Task.Broken as ex:
             self.log_error("Task broken!", str(ex), ex.err)
             self._status = Task.Status.BROKEN
-        except TaskFailed as ex:
+        except Task.Failed as ex:
             self.log_error("Task failed!", str(ex), ex.err)
             self._status = Task.Status.FAILED
-        except TaskCancelled:
+        except Task.Cancelled:
             self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
             self._status = Task.Status.CANCELLED
-        except TaskSkipped:
+        except Task.Skipped:
             self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
             self._status = Task.Status.SKIPPED
         except Exception as ex:
@@ -985,7 +978,7 @@ class Task:
                         task = cast(Task, file)
                         task_status = await cast(asyncio.Task, task._asyncio_task)
                         if task_status == Task.Status.FAILED:
-                            raise TaskCancelled(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", None)
+                            raise Task.Cancelled(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", None)
                         files[i] = task._out_files
                 self._config[name] = Utils.flatten(files)
 
@@ -1010,7 +1003,7 @@ class Task:
 
             # All our input and output fields should contain flat arrays of strings now.
             if not Utils.is_flat_list_of(files, str):
-                raise TaskBroken(
+                raise Task.Broken(
                     "SETUP got a task without flattened input/output fields, or some of the " +
                     "fields were non-strings", None
                 )
@@ -1029,7 +1022,7 @@ class Task:
         c.command = Expander.expand_all("{command}", e)
 
         if c.strict and Utils.is_braced(c.command):
-            raise TaskBroken("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
+            raise Task.Broken("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         self.log_d("Task config after expand:", 0xFFFFFF)
         for line in str(c).split("\n"):
@@ -1044,25 +1037,25 @@ class Task:
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
-                raise TaskBroken(f"Input file missing - {file}", None)
+                raise Task.Broken(f"Input file missing - {file}", None)
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
             if not file.startswith(self._config.build_dir):
-                raise TaskBroken(f"Path error, output file {file} is not under build_dir {self._config.build_dir}", None)
+                raise Task.Broken(f"Path error, output file {file} is not under build_dir {self._config.build_dir}", None)
 
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.real_filenames:
-                raise TaskBroken(f"TaskCollision: Multiple tasks build {real_file}", None)
+                raise Task.Broken(f"TaskCollision: Multiple tasks build {real_file}", None)
             Loader.real_filenames.add(real_file)
 
         # Check if we need a rebuild
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
-            raise TaskSkipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", None)
+            raise Task.Skipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", None)
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # Wait for enough jobs to free up to run this task.
@@ -1076,13 +1069,13 @@ class Task:
             if isinstance(command, str):
                 returncode = await self.run_command(command)
                 if returncode:
-                    raise TaskFailed(f"Command return code was non-zero : {returncode}", None)
+                    raise Task.Failed(f"Command return code was non-zero : {returncode}", None)
 
             elif callable(command):
                 await self.call_callback(command)
 
             else:
-                raise TaskFailed(f"Command {command} is not a string or a callable?", None)
+                raise Task.Failed(f"Command {command} is not a string or a callable?", None)
 
         # Done!
         self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
@@ -1199,7 +1192,7 @@ class Task:
                     deplines = depcontents.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise TaskBroken(f"Invalid depfile format {c.depformat}", None)
+                    raise Task.Broken(f"Invalid depfile format {c.depformat}", None)
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [cast(str, Path.join(c.task_cwd, d)) for d in deplines]
