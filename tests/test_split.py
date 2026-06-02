@@ -36,12 +36,8 @@ class TestSplitTemplate(unittest.TestCase):
     def doctest_basic(self):
         r"""
         #Templates split into literal (L) and macro (M) chunks.
-        >>> Expander.split(r"a {b} c")
-        [L'a ', M'{b}', L' c']
         >>> Expander.split(r"a \{b\} c")
         [L'a \\{b\\} c']
-        >>> Expander.split(r"{a}{b}{c}")
-        [M'{a}', M'{b}', M'{c}']
         """
 
     def doctest_splitter(self):

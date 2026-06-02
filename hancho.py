@@ -12,8 +12,11 @@ Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import colorsys
 import contextvars
+import json
 import os
 import random
 import re
@@ -47,7 +50,6 @@ def __getattr__(name):
         raise AttributeError(name)
 
 def __dir__():
-    # Not sure yet if we need to tweak the public dir of hancho.
     return [*hancho.__dict__.keys(), *aliases.keys(), "config"]
 
 # ----------------------------------------
@@ -56,7 +58,7 @@ def init(*args, **kwargs):
     """
     Re-initializes all of Hancho.
     If you are importing Hancho directly, you should call this as
-    hancho.init(debug = true, quiet = false, ...)
+    hancho.init(debug = True, quiet = False, myoption=1234)
     """
     reset(*args, **kwargs)
 
@@ -161,11 +163,11 @@ class Log:
         return result
 
     @staticmethod
-    def log(color : int, message : str | list[str]):
+    def log(message : str | list[str], color : int = 0):
 
         if isinstance(message, list):
             for m in message:
-                Log.log(color, m)
+                Log.log(m, color)
             return
 
         lines = message.split('\n')
@@ -186,18 +188,18 @@ class Log:
 
     @staticmethod
     def log_fatal(message):
-        Log.log(0xFF0000, message)
+        Log.log(message, 0xFF0000)
         sys.exit(-1)
 
     @staticmethod
     def log_d(message):
         if hancho.config.debug:
-            Log.log(0x606060, message)
+            Log.log(message, 0x606060)
 
     @staticmethod
-    def log_v(message, color = 0x606060):
+    def log_v(message : str, color : int = 0x606060):
         if hancho.config.debug or hancho.config.verbose:
-            Log.log(color, message)
+            Log.log(message, color)
 
     @staticmethod
     def dump_to_str(key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
@@ -447,7 +449,8 @@ class Utils:
     #----------------------------------------
     # Checks if a string needs template expansion. Empty strings are considered literals.
 
-    braced = re.compile(r"\{(\\.|[^\\}])*\}")
+    #braced = re.compile(r"\{(\\.|[^\\}])*\}")
+    braced = re.compile(r"(?<!\\)\{(\\.|[^\\}])*\}")
 
     @recursify_all
     def is_literal(v: Any) -> bool:
@@ -493,8 +496,8 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def hex_to_rgb(h : int) -> tuple[int, int, int]:
-        return ((h >> 16) & 0xFF, (h >>  8) & 0xFF, (h >>  0) & 0xFF)
+    def hex_to_rgb(hexcode : int) -> tuple[int, int, int]:
+        return ((hexcode >> 16) & 0xFF, (hexcode >>  8) & 0xFF, (hexcode >>  0) & 0xFF)
 
     @staticmethod
     def rgb_to_hex(r : int, g : int, b : int) -> int:
@@ -509,8 +512,8 @@ class Utils:
         return f"\x1B[38;2;{r};{g};{b}m"
 
     @staticmethod
-    def hex_to_ansi(hex : int = 0):
-        return Utils.rgb_to_ansi(*Utils.hex_to_rgb(hex))
+    def hex_to_ansi(hexcode : int = 0):
+        return Utils.rgb_to_ansi(*Utils.hex_to_rgb(hexcode))
 
     @staticmethod
     def obj_to_ansi(obj):
@@ -524,7 +527,6 @@ class Utils:
 
     @staticmethod
     def obj_to_rgb(obj) -> tuple[int, int, int]:
-        import colorsys
         Utils.rand.seed(id(obj))
         r, g, b = colorsys.hsv_to_rgb(Utils.rand.random(), 0.3, 1.0)
         return (int(r * 255), int(g * 255), int(b * 255))
@@ -764,8 +766,8 @@ class Task:
                         "script_cwd", "script_file", "build_root", "build_dir"]
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
-                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild", "shuffle",
-                        "trace", "use_color", "build_all"]
+                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild",
+                        "trace", "build_all"]
 
         for f in path_fields:
             if f in self._config:
@@ -792,7 +794,7 @@ class Task:
 
         for command in self._config.command:
             if type(command) is not type(self._config.command[0]):
-                self.log(0xFF0000, f"Commands aren't the same type: {self._config.command}")
+                self.log(f"Commands aren't the same type: {self._config.command}", 0xFF0000)
                 raise ValueError(f"Commands aren't the same type: {self._config.command}")
 
             if not isinstance(command, str) and not callable(command):
@@ -846,22 +848,22 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    def log(self, color, message):
+    def log(self, message : str, color : int = 0):
         prefix  = ""
         prefix += Utils.hex_to_ansi(0x80FF80)
         prefix += f"[{self._task_id}/{Stats.tasks_started}] "
         prefix += Utils.hex_to_ansi(color)
         prefix += message
         prefix += Log.reset_color
-        Log.log(0, prefix)
+        Log.log(prefix)
 
-    def log_d(self, color, message):
+    def log_d(self, message : str, color : int = 0):
         if self._config.debug:
-            self.log(color, message)
+            self.log(message, color)
 
-    def log_v(self, color, message):
+    def log_v(self, message : str, color : int = 0):
         if self._config.verbose or self._config.debug:
-            self.log(color, message)
+            self.log(message, color)
 
     # -----------------------------------------------------------------------------------------------
 
@@ -944,8 +946,14 @@ class Task:
                     if isinstance(file, Task):
                         task = cast(Task, file)
                         result = await cast(asyncio.Task, task._asyncio_task)
-                        if result.__name__ == "FAILED":
-                            return self.CANCELLED()
+
+                        # Yes, comparing these by __name__ is fragile, but there's no way to get a
+                        # reference to the actual function object out of a coroutine. This works in
+                        # practice.
+                        # I'm not sure why the linter doesn't like me referring to the state
+                        # functions here...
+                        if result.__name__ == Task.FAILED.__name__: #type:ignore
+                            return self.CANCELLED() #type:ignore
                         files[i] = task._out_files
                 self._config[name] = Utils.flatten(files)
 
@@ -961,9 +969,9 @@ class Task:
         c = self._config
         e = self._expand
 
-        self.log_d(0xFFFFFF, "Task config before expand:")
+        self.log_d("Task config before expand:", 0xFFFFFF)
         for line in str(c).strip().split("\n"):
-            self.log_d(0xFFFFFF, line)
+            self.log_d(line, 0xFFFFFF)
 
         # ----------------------------------------
         # Path cleanup
@@ -981,7 +989,8 @@ class Task:
             # lives under build_dir.
 
             # All our input and output fields should contain flat arrays of strings now.
-            assert Utils.is_flat(files, str)
+            if not Utils.is_flat(files, str):
+                raise AssertionError("SETUP got a task without flattened input/output fields")
 
             # Expand all in_ and out_ filenames.
             # We _must_ expand these first before joining paths or the paths will be incorrect:
@@ -1003,7 +1012,7 @@ class Task:
 
             # Move all outputs under build_dir and ensure their directories exist.
             if Task.is_output_field(name):
-                for i, _ in enumerate(files):
+                for i in range(len(files)):
 
                     # Note these conditionals are _NOT_ an if/elif pair!
                     if not files[i].startswith(c.build_dir):
@@ -1016,7 +1025,7 @@ class Task:
 
 
             # Gather all absolute file paths to _in_files/_out_files.
-            for i, _ in enumerate(files):
+            for i in range(len(files)):
                 # The check for is_depfile_field must come first, as it's a special case of a file that
                 # is technically an _output_ file, but also counts as an input file.
                 if Task.is_depfile_field(name):
@@ -1044,9 +1053,9 @@ class Task:
         if c.strict and Utils.is_braced(c.command):
             return self.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
-        self.log_d(0xFFFFFF, "Task config after expand:")
+        self.log_d("Task config after expand:", 0xFFFFFF)
         for line in str(c).strip().split("\n"):
-            self.log_d(0xFFFFFF, line)
+            self.log_d(line, 0xFFFFFF)
 
         if c.dry_run:
             return self.FINISHED()
@@ -1113,12 +1122,11 @@ class Task:
         # Check all dependencies in the C dependencies file, if present.
 
         if c.in_depfile and Path.exists(c.in_depfile):
-            self.log_d(0x000000, f"Found C dependencies file {c.in_depfile}")
+            self.log_d(f"Found C dependencies file {c.in_depfile}")
             with open(c.in_depfile) as depcontents:
                 deplines = None
                 if c.depformat == "msvc":
                     # MSVC /sourceDependencies
-                    import json
                     deplines = json.load(depcontents)["Data"]["Includes"]
                 elif c.depformat == "gcc":
                     # GCC -MMD
@@ -1145,8 +1153,8 @@ class Task:
         await Runner.acquire(self._config.core_count)
         self._core_count = self._config.core_count
 
-        self.log(0x000000, f"Task started : '{self._config.name}' - '{self._config.desc}'")
-        self.log_v(0x808080, f"Task rebuilding because: {reason}")
+        self.log(f"Task started : '{self._config.name}' - '{self._config.desc}'")
+        self.log_v(f"Task rebuilding because: {reason}")
 
         return self.RUN_COMMAND(0)
 
@@ -1157,7 +1165,7 @@ class Task:
         command = c.command[index]
 
         if isinstance(command, str):
-            self.log_v(0x8080FF, f"{Path.rel(c.task_cwd, c.repo_dir)}$ {command}")
+            self.log_v(f"{Path.rel(c.task_cwd, c.repo_dir)}$ {command}", 0x8080FF)
 
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
@@ -1175,7 +1183,7 @@ class Task:
                 return self.FAILED("Command return code was non-zero")
 
         elif callable(command):
-            self.log_v(0x8080FF, f"{Path.rel(c.script_cwd, c.repo_dir)}$ {command}")
+            self.log_v(f"{Path.rel(c.script_cwd, c.repo_dir)}$ {command}", 0x8080FF)
 
             try:
                 with chdir(c.script_cwd):
@@ -1198,14 +1206,14 @@ class Task:
 
     async def FINISHED(self):
         Stats.tasks_finished += 1
-        self.log_v(0x000000, f"Task done : '{self._config.name}' - '{self._config.desc}'")
+        self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
         return None
 
     # -----------------------------------------------------------------------------------------------
 
     async def CANCELLED(self):
         Stats.tasks_cancelled += 1
-        self.log_v(0x404040, f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n")
+        self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
         return None
 
     # -----------------------------------------------------------------------------------------------
@@ -1214,14 +1222,14 @@ class Task:
         Stats.tasks_failed += 1
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
-        self.log(0xFF0000, "Command failed!")
-        self.log(0xFF0000, f"From {script_path}:")
-        self.log(0xFF0000, f"    Task     = '{self._config.name}' : '{self._config.desc}'")
-        self.log(0xFF0000, f"    task_cwd = '{self._config.task_cwd}'")
-        self.log(0xFF0000, f"    getcwd   = '{os.getcwd()}'")
-        self.log(0xFF0000, f"    command  = '{self._config.command}'")
-        self.log(0xFF0000, f"    reason   = '{reason}'")
-        self.log(0xFF0000, f"    except   = '{ex}'")
+        self.log("Command failed!", 0xFF0000)
+        self.log(f"From {script_path}:", 0xFF0000)
+        self.log(f"    Task     = '{self._config.name}' : '{self._config.desc}'", 0xFF0000)
+        self.log(f"    task_cwd = '{self._config.task_cwd}'", 0xFF0000)
+        self.log(f"    getcwd   = '{os.getcwd()}'", 0xFF0000)
+        self.log(f"    command  = '{self._config.command}'", 0xFF0000)
+        self.log(f"    reason   = '{reason}'", 0xFF0000)
+        self.log(f"    except   = '{ex}'", 0xFF0000)
         self.log_stdout()
 
         return None
@@ -1230,7 +1238,7 @@ class Task:
 
     async def SKIPPED(self):
         Stats.tasks_skipped += 1
-        self.log_v(0x404040, f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n")
+        self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
         return None
 
     # -----------------------------------------------------------------------------------------------
@@ -1239,26 +1247,26 @@ class Task:
         Stats.tasks_broken += 1
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
-        self.log(0xFF0000, "Task broken!")
-        self.log(0xFF0000, f"From {script_path}:")
-        self.log(0xFF0000, f"    Task     = '{self._config.name}' : '{self._config.desc}'")
-        self.log(0xFF0000, f"    task_cwd = '{self._config.task_cwd}'")
-        self.log(0xFF0000, f"    getcwd   = '{os.getcwd()}'")
-        self.log(0xFF0000, f"    command  = '{self._config.command}'")
-        self.log(0xFF0000, f"    reason   = '{reason}'")
+        self.log("Task broken!", 0xFF0000)
+        self.log(f"From {script_path}:", 0xFF0000)
+        self.log(f"    Task     = '{self._config.name}' : '{self._config.desc}'", 0xFF0000)
+        self.log(f"    task_cwd = '{self._config.task_cwd}'", 0xFF0000)
+        self.log(f"    getcwd   = '{os.getcwd()}'", 0xFF0000)
+        self.log(f"    command  = '{self._config.command}'", 0xFF0000)
+        self.log(f"    reason   = '{reason}'", 0xFF0000)
 
         return None
 
     # -----------------------------------------------------------------------------------------------
 
     def log_stdout(self):
-        self.log(0x80A080, "========== Stdout ==========")
+        self.log("========== Stdout ==========")
         for line in self._stdout.strip().split("\n"):
-            self.log(0x80A080, line)
-        self.log(0xA08080, "========== Stderr ==========")
+            self.log(line)
+        self.log("========== Stderr ==========")
         for line in self._stderr.strip().split("\n"):
-            self.log(0xA08080, line)
-        self.log(0x808080, "============================")
+            self.log(line)
+        self.log("============================")
 
     # -----------------------------------------------------------------------------------------------
 
@@ -1310,11 +1318,11 @@ class Stats:
         sys.stdout.write("\n")
 
         if Stats.tasks_failed or Stats.tasks_broken:
-            Log.log(0xFF8080, "hancho: BUILD FAILED")
+            Log.log("hancho: BUILD FAILED", 0xFF8080)
         elif Stats.tasks_finished:
-            Log.log(0x80FF80, "hancho: BUILD PASSED")
+            Log.log("hancho: BUILD PASSED", 0x80FF80)
         else:
-            Log.log(0x8080FF, "hancho: BUILD CLEAN ")
+            Log.log("hancho: BUILD CLEAN ", 0x8080FF)
 
         if not hancho.config.debug and not hancho.config.verbose:
             sys.stdout.write("\n")
@@ -1337,8 +1345,8 @@ class Stats:
 # The result of this is that the functions here are mutually recursive in a way that can lead to
 # confusing callstacks, but that should handle every possible case of stuff inside other stuff.
 #
-# The depth checks are to prevent recursive runaway - the MAX_DEPTH limit is arbitrary but should
-# suffice.
+# The depth checks are to prevent recursive runaway - the MAX_RECURSION limit is arbitrary but
+# should suffice.
 #
 # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
 # expandable by that dict. This allows nested dicts to contain templates that can only be expanded
@@ -1353,24 +1361,36 @@ class Expander(abc.MutableMapping[str, object]):
     """
 
     class Literal(str):
+        def __init__(self, text):
+            if not Utils.is_literal(text):
+                print(f"This is not a literal - {text}")
+                raise AssertionError(f"This is not a literal - {text}")
+
         def __repr__(self):
             return "L" + str.__repr__(self)
+
         def __eq__(self, b):
             if type(b) is Expander.Macro:
                 return False
             return str.__eq__(self, b)
+
         def __hash__(self):
             return str.__hash__(self)
 
     class Macro(str):
-        def __init__(self, str):
-            assert Utils.is_macro(str)
+        def __init__(self, text):
+            if not Utils.is_macro(text):
+                print(f"This is not a macro - {text}")
+                raise AssertionError(f"This is not a macro - {text}")
+
         def __repr__(self):
             return "M" + str.__repr__(self)
+
         def __eq__(self, b):
             if type(b) is Expander.Literal:
                 return False
             return str.__eq__(self, b)
+
         def __hash__(self):
             return str.__hash__(self)
 
@@ -1397,7 +1417,7 @@ class Expander(abc.MutableMapping[str, object]):
             tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
             tag_a = Utils.obj_to_ansi(context) + tag_a + Log.reset_color
             tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
-            Tracer.log2(0x000000, f"wrap {tag_a} -> {tag_b}")
+            Tracer.log2(f"wrap {tag_a} -> {tag_b}")
 
         return result
 
@@ -1594,7 +1614,7 @@ class Expander(abc.MutableMapping[str, object]):
 
 class Tracer:
     # The maximum number of recursion levels we will do to expand a macro. This is also used to
-    # limit the number of template-expansion passes we do. Tests currently require MAX_DEPTH >= 6.
+    # limit the number of template-expansion passes we do. Tests currently require MAX_RECURSION >= 6.
     MAX_RECURSION : int = 20
     trellis_stack : list[str]
 
@@ -1615,7 +1635,7 @@ class Tracer:
         if len(Tracer.trellis_stack) >= Tracer.MAX_RECURSION:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
         if self.trace:
-            Tracer.log2(color, f"┏ {context_tag}." + self.enter_message)
+            Tracer.log2(f"┏ {context_tag}." + self.enter_message, color)
         Tracer.trellis_stack.append(Utils.hex_to_ansi(color) + "┃ ")
         return self
 
@@ -1625,7 +1645,7 @@ class Tracer:
 
     def print_result(self, text):
         if self.trace:
-            Tracer.log2(Utils.obj_to_hex(self.context), "┗ " + Utils.obj_to_ansi(self.result) + text)
+            Tracer.log2("┗ " + Utils.obj_to_ansi(self.result) + text, Utils.obj_to_hex(self.context))
 
     def __exit__(self, *_):
         Tracer.trellis_stack.pop()
@@ -1645,17 +1665,17 @@ class Tracer:
             self.print_result(text)
         return False
 
-    def log(self, color : int, text : str):
+    def log(self, text : str, color : int = 0):
         """Prints a trace message to the log."""
         if self.trace:
             buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
-            Log.log(color, buffer)
+            Log.log(buffer, color)
 
     @staticmethod
-    def log2(color : int, text : str):
+    def log2(text : str, color : int = 0):
         """Prints a trace message to the log."""
         buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
-        Log.log(color, buffer)
+        Log.log(buffer, color)
 
 # endregion
 ####################################################################################################
@@ -1665,7 +1685,7 @@ class Loader:
 
     real_filenames : set[str]
     root_repo : types.ModuleType
-    dedupe : dict[int, types.ModuleType]
+    dedupe : dict[tuple[str, str], types.ModuleType]
     loaded_files : list[str]
     cv_config : contextvars.ContextVar
     cv_token : contextvars.Token
@@ -1732,9 +1752,7 @@ class Loader:
             dry_run     = False,
             quiet       = False,
             rebuild     = False,
-            shuffle     = False,
             trace       = False,
-            use_color   = True,
             build_all   = False,
             wrap        = False,
             strict      = True,
@@ -1747,7 +1765,6 @@ class Loader:
     def parse_flags(args : list[str]):
         assert Utils.is_collection(args)
 
-        import argparse
         parser = argparse.ArgumentParser()
 
         # pylint: disable=line-too-long
@@ -1765,9 +1782,7 @@ class Loader:
         parser.add_argument("-d", "--debug",      default = None, action="store_true",  help="Print debugging information")
         parser.add_argument("-a", "--build_all",  default = None, action="store_true",  help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument("--rebuild",          default = None, action="store_true",  help="Rebuild everything")
-        #parser.add_argument("--shuffle",          default = None, action="store_true",  help="Shuffle task order to shake out dependency issues")
         parser.add_argument("--trace",            default = None, action="store_true",  help="Trace all text expansion")
-        #parser.add_argument("--use_color",        default = None, action="store_true",  help="Use color in the console output")
         parser.add_argument("--wrap",             default = None, action="store_true",  help="Wrap lines around the console instead of clipping them")
         parser.add_argument("--strict",           default = None, action="store_true",  help="Checks for common footguns like typo'd templates")
         # fmt: on
@@ -1808,7 +1823,9 @@ class Loader:
         script_path = Expander.expand_all(script_path, hancho.config, str)
         script_path = cast(str, Path.abs(script_path))
 
-        assert Path.isfile(script_path)
+        if not Path.isfile(script_path):
+            raise AssertionError(f"Could not find script {script_path}!")
+
         with open(script_path, encoding="utf-8") as file:
             Loader.loaded_files.append(script_path)
             source = file.read()
@@ -1817,7 +1834,7 @@ class Loader:
 
     @staticmethod
     def load_str(script_path, is_repo : bool, source : str, *args, **kwargs) -> types.ModuleType:
-        """This is split out from load_script for testing purposes."""
+        """This is split out from load_file for testing purposes."""
 
         code = compile(source, script_path, "exec", dont_inherit=True)
 
@@ -1862,7 +1879,7 @@ class Loader:
         config_dump = Log.dump_to_str(key = "Config", val = new_config)
         config_dump = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
-        dedupe_key = hash((Path.real(script_path), config_dump))
+        dedupe_key = (Path.real(script_path), config_dump)
         dedupe = Loader.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
@@ -1963,11 +1980,6 @@ class Runner:
                 assert current in all_tasks
                 break
 
-            # Task shuffling temporarily disabled.
-            #if hancho.config.shuffle:
-            #    Log.log(0x000000, f"Shufflin' {len(all_tasks) - 1} tasks")
-            #    random.shuffle(all_tasks)
-
             for task in all_tasks:
                 if task == current:
                     continue
@@ -1975,7 +1987,7 @@ class Runner:
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
             if (hancho.config.keep_going != 0) and (fail_count >= hancho.config.keep_going):
-                Log.log(0xFF0000, "Too many failures, cancelling tasks and stopping build")
+                Log.log("Too many failures, cancelling tasks and stopping build", 0xFF0000)
                 for task in all_tasks:
                     if task != current:
                         task.cancel()
@@ -1992,9 +2004,9 @@ class Runner:
                 build_root = Path.real(Expander.eval("build_root", task._expand, str))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
-                    Log.log(0x8080FF, f"Wiping build_root {build_root}")
+                    Log.log(f"Wiping build_root {build_root}", 0x8080FF)
                     shutil.rmtree(build_root, ignore_errors=True)
-            Log.log(0x8080FF, "Clean done")
+            Log.log("Clean done", 0x8080FF)
             return 0
         else:
             raise AssertionError(f"Don't know how to run tool {tool}")
