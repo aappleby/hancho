@@ -732,16 +732,21 @@ class Tool(Dict):
 # region Task
 # Task object + bookkeeping
 
-class TaskBroken(Exception):
+class TaskException(Exception):
     def __init__(self, msg, err):
         super().__init__(msg)
         self.err = err
 
-class TaskFailed(Exception):
+class TaskBroken(TaskException):
     pass
-class TaskCancelled(Exception):
+
+class TaskFailed(TaskException):
     pass
-class TaskSkipped(Exception):
+
+class TaskCancelled(TaskException):
+    pass
+
+class TaskSkipped(TaskException):
     pass
 
 class Task:
@@ -928,7 +933,16 @@ class Task:
             await self.task_main()
         except TaskBroken as ex:
             self._status = Task.Status.BROKEN
-            self.log_error("Task broken!", str(ex), None)
+            self.log_error("Task broken!", str(ex), ex.err)
+        except TaskFailed as ex:
+            self._status = Task.Status.FAILED
+            self.log_error("Task failed!", str(ex), ex.err)
+        except TaskCancelled:
+            self._status = Task.Status.CANCELLED
+            self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+        except TaskSkipped:
+            self._status = Task.Status.SKIPPED
+            self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
         except Exception as ex:
             self._status = Task.Status.FAILED
             self.log_error("Task failed!", "Task threw an exception", ex)
@@ -942,7 +956,6 @@ class Task:
 
     async def task_main(self):
 
-        is_cancelled = False
         for name, files in self._config.items():
             if Task.is_input_field(name):
                 for i, file in enumerate(files):
@@ -950,17 +963,9 @@ class Task:
                         task = cast(Task, file)
                         task_status = await cast(asyncio.Task, task._asyncio_task)
                         if task_status == Task.Status.FAILED:
-                            is_cancelled = True
-                            break
+                            raise TaskCancelled(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", None)
                         files[i] = task._out_files
-                if is_cancelled:
-                    break
                 self._config[name] = Utils.flatten(files)
-
-        if is_cancelled:
-            self._status = Task.Status.CANCELLED
-            self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-            return
 
         ####################################################################################
 
@@ -1028,25 +1033,19 @@ class Task:
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
-                self._status = Task.Status.BROKEN
-                self.log_error("Task broken!", f"Input file missing - {file}", None)
-                return
+                raise TaskBroken(f"Input file missing - {file}", None)
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
             if not file.startswith(self._config.build_dir):
-                self._status = Task.Status.BROKEN
-                self.log_error("Task broken!", f"Path error, output file {file} is not under build_dir {self._config.build_dir}", None)
-                return
+                raise TaskBroken(f"Path error, output file {file} is not under build_dir {self._config.build_dir}", None)
 
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.real_filenames:
-                self._status = Task.Status.BROKEN
-                self.log_error(f"TaskCollision: Multiple tasks build {real_file}", None)
-                return
+                raise TaskBroken(f"TaskCollision: Multiple tasks build {real_file}", None)
             Loader.real_filenames.add(real_file)
 
         ####################################################################################
@@ -1055,9 +1054,7 @@ class Task:
         rebuild_reason = self.rebuild_reason()
 
         if not rebuild_reason:
-            self._status = Task.Status.SKIPPED
-            self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-            return
+            raise TaskSkipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", None)
 
         ####################################################################################
 
@@ -1241,10 +1238,10 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def call_callback(self, command):
-        c = self._config
-        self.log_v(f"{Path.rel(c.script_cwd, c.repo_dir)}$ {command}", 0x8080FF)
+        callback_dir = Path.rel(self._config.script_cwd, self._config.repo_dir)
+        self.log_v(f"{callback_dir}$ {command}", 0x8080FF)
 
-        with chdir(c.script_cwd):
+        with chdir(self._config.script_cwd):
             result = command(self)
             while isawaitable(result):
                 result = await result
