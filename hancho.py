@@ -16,7 +16,6 @@ import argparse
 import asyncio
 import colorsys
 import contextvars
-import enum
 import json
 import os
 import random
@@ -752,13 +751,6 @@ class Tool(Dict):
 
 class Task:
 
-    class TaskException(Exception): pass # noqa: E701
-    class Broken(TaskException):    pass # noqa: E701
-    class Failed(TaskException):    pass # noqa: E701
-    class Cancelled(TaskException): pass # noqa: E701
-    class Skipped(TaskException):   pass # noqa: E701
-
-
     id_counter : int = 0
     tasks_enabled : int = 0
 
@@ -767,13 +759,12 @@ class Task:
         Task.id_counter = 0
         Task.tasks_enabled = 0
 
-    class Status(enum.Enum):
-        PENDING   = enum.auto()
-        FINISHED  = enum.auto()
-        FAILED    = enum.auto()
-        CANCELLED = enum.auto()
-        SKIPPED   = enum.auto()
-        BROKEN    = enum.auto()
+    class PENDING(Exception):   pass  # noqa: E701
+    class FINISHED(Exception):  pass  # noqa: E701
+    class FAILED(Exception):    pass  # noqa: E701
+    class CANCELLED(Exception): pass  # noqa: E701
+    class SKIPPED(Exception):   pass  # noqa: E701
+    class BROKEN(Exception):    pass  # noqa: E701
 
     def __init__(self, *args, **kwargs):
         # Save the context, we will use it when we create the asyncio.Task
@@ -784,7 +775,7 @@ class Task:
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task | None = None
-        self._status : Task.Status =  Task.Status.PENDING
+        self._status = Task.PENDING
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -886,22 +877,23 @@ class Task:
     async def task_top(self):
         try:
             await self.task_main()
-            self._status = Task.Status.FINISHED
-        except Task.Broken as ex:
+            self._status = Task.FINISHED("Everything OK!")
+        except Task.BROKEN as ex:
             self.log_error("Task broken!", str(ex))
-            self._status = Task.Status.BROKEN
-        except Task.Failed as ex:
+            self._status = ex
+        except Task.FAILED as ex:
             self.log_error("Task failed!", str(ex))
-            self._status = Task.Status.FAILED
-        except Task.Cancelled:
-            self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-            self._status = Task.Status.CANCELLED
-        except Task.Skipped:
+            self._status = ex
+        except Task.CANCELLED as ex:
+            #self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+            self.log_v(str(ex), 0x404040)
+            self._status = ex
+        except Task.SKIPPED as ex:
             self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-            self._status = Task.Status.SKIPPED
+            self._status = ex
         except Exception as ex:
             self.log_error("Task failed!", "Task threw an exception", ex)
-            self._status = Task.Status.FAILED
+            self._status = ex
         finally:
             if self._core_count:
                 Runner.release(self._core_count)
@@ -944,20 +936,20 @@ class Task:
         c.command = Utils.flatten(c.command)
 
         if not c.command:
-            raise Task.Broken(f"Task {c.name} has no command!")
+            raise Task.BROKEN(f"Task {c.name} has no command!")
 
         for command in c.command:
             if type(command) is not type(c.command[0]):
-                raise Task.Broken(f"Commands aren't the same type: {c.command}")
+                raise Task.BROKEN(f"Commands aren't the same type: {c.command}")
 
         # ----------------------------------------
         # Check for missing paths
 
         if not Path.exists(c.task_cwd):
-            raise Task.Broken(f"Task working directory '{c.task_cwd}' does not exist")
+            raise Task.BROKEN(f"Task working directory '{c.task_cwd}' does not exist")
 
         if not c.build_dir.startswith(c.repo_dir):
-            raise Task.Broken(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
+            raise Task.BROKEN(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -966,14 +958,14 @@ class Task:
             files = Utils.flatten(files)
 
             if key == "in_depfile" and len(files) > 1:
-                raise Task.Broken("Tasks can't have more than one dependency file!")
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
             for i, file in enumerate(files):
                 if isinstance(file, Task):
                     task = cast(Task, file)
                     task_status = await cast(asyncio.Task, task._asyncio_task)
-                    if task_status == Task.Status.FAILED:
-                        raise Task.Cancelled(f"Task is cancelled: '{c.name}' : '{c.desc}'\n")
+                    if isinstance(task_status, Task.FAILED):
+                        raise Task.CANCELLED(f"Task is cancelled: '{c.name}' : '{c.desc}'\n")
                     files[i] = task._out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
@@ -993,7 +985,7 @@ class Task:
 
             # All our input and output fields should contain flat arrays of strings now.
             if not Utils.is_flat_list_of(files, str):
-                raise Task.Broken(
+                raise Task.BROKEN(
                     "SETUP got a task without flattened input/output fields, or some of the " +
                     "fields were non-strings")
 
@@ -1011,7 +1003,7 @@ class Task:
         c.command = Expander.expand_all("{command}", e)
 
         if c.strict and Utils.is_braced(c.command):
-            raise Task.Broken("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
+            raise Task.BROKEN("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         self.log_d("Task config after expand:", 0xFFFFFF)
         for line in str(c).split("\n"):
@@ -1026,25 +1018,25 @@ class Task:
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
-                raise Task.Broken(f"Input file missing - {file}")
+                raise Task.BROKEN(f"Input file missing - {file}")
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
             if not file.startswith(c.build_dir):
-                raise Task.Broken(f"Path error, output file {file} is not under build_dir {c.build_dir}")
+                raise Task.BROKEN(f"Path error, output file {file} is not under build_dir {c.build_dir}")
 
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.real_filenames:
-                raise Task.Broken(f"TaskCollision: Multiple tasks build {real_file}")
+                raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.real_filenames.add(real_file)
 
         # Check if we need a rebuild
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
-            raise Task.Skipped(f"Task is up-to-date: '{c.name}' : '{c.desc}'\n")
+            raise Task.SKIPPED(f"Task is up-to-date: '{c.name}' : '{c.desc}'\n")
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # Wait for enough jobs to free up to run this task.
@@ -1058,11 +1050,11 @@ class Task:
             if isinstance(command, str):
                 returncode = await self.run_command(command)
                 if returncode:
-                    raise Task.Failed(f"Command return code was non-zero : {returncode}")
+                    raise Task.FAILED(f"Command return code was non-zero : {returncode}")
             elif callable(command):
                 await self.call_callback(command)
             else:
-                raise Task.Failed(f"Command {command} is not a string or a callable?")
+                raise Task.FAILED(f"Command {command} is not a string or a callable?")
 
         # Done!
         self.log_v(f"Task done : '{c.name}' - '{c.desc}'")
@@ -1179,7 +1171,7 @@ class Task:
                     deplines = depcontents.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise Task.Broken(f"Invalid depfile format {c.depformat}")
+                    raise Task.BROKEN(f"Invalid depfile format {c.depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [cast(str, Path.join(c.task_cwd, d)) for d in deplines]
@@ -1915,18 +1907,18 @@ class Runner:
                 if task == current:
                     continue
                 status = await task
-                match status:
-                    case Task.Status.PENDING:
+                match status.__class__:
+                    case Task.PENDING:
                         tasks_pending += 1
-                    case Task.Status.FINISHED:
+                    case Task.FINISHED:
                         tasks_finished += 1
-                    case Task.Status.BROKEN:
+                    case Task.BROKEN:
                         tasks_broken += 1
-                    case Task.Status.FAILED:
+                    case Task.FAILED:
                         tasks_failed += 1
-                    case Task.Status.CANCELLED:
+                    case Task.CANCELLED:
                         tasks_cancelled += 1
-                    case Task.Status.SKIPPED:
+                    case Task.SKIPPED:
                         tasks_skipped += 1
 
 
