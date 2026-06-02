@@ -199,9 +199,14 @@ class Log:
         if hancho.config.debug or hancho.config.verbose:
             Log.log(color, message)
 
-    # Pretty-printer for various types
     @staticmethod
     def dump_to_str(key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
+        """
+        Hancho's pretty-printer for various types. Note that this is also used for script deduping:
+        if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
+        were identical, you should get one copy of the "stuff" module instead of two.
+        """
+
         # In "key : type = ", don't print these types.
         skip_type = isinstance(val, (str, bool, int, float, list, tuple, set, bytes, bytearray, range,
             type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
@@ -316,8 +321,9 @@ class Utils:
         return outer
 
     @staticmethod
-    def recursify_xip(func):
+    def recursify_apply_mip(func):
         """
+        MIP = Modify In-Place
         Creates a static function that recursively applies 'func' to a Tree[T], modifying the tree in-place.
         """
 
@@ -335,8 +341,9 @@ class Utils:
         return outer
 
     @staticmethod
-    def recursify_xip2(func):
+    def recursify_apply_mip_member(func):
         """
+        MIP = Modify In-Place
         Creates a member function that recursively applies 'self.func' to a Tree[T], modifying the tree in-place.
         """
 
@@ -354,7 +361,7 @@ class Utils:
         return outer
 
     @staticmethod
-    def recursify_pairwise(func):
+    def recursify_pairwise_map(func):
         """
         Creates a function with two args that effectively
         1. Flattens both arguments.
@@ -484,9 +491,6 @@ class Utils:
         return [lh + rh for lh in lhs2 for rh in rhs2]
 
     #----------------------------------------
-    # Color strings don't work in Windows console, so don't emit them.
-    #if not hancho.config.use_color or os.name == "nt":
-    #    return ""
 
     @staticmethod
     def hex_to_rgb(h : int) -> tuple[int, int, int]:
@@ -563,12 +567,12 @@ class Path:
     # path, which we can do with simple string manipulation.
 
     @staticmethod
-    @Utils.recursify_pairwise
+    @Utils.recursify_pairwise_map
     def rel(path1, path2):
         return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
     @staticmethod
-    @Utils.recursify_pairwise
+    @Utils.recursify_pairwise_map
     def join(lhs, rhs):
         return os.path.join(lhs, rhs)
 
@@ -672,20 +676,20 @@ class Dict(dict):
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
 
     def __getattr__(self, key : str):
-        try: # Dict.__getattr__ KeyError -> AttributeError
+        try:
             return dict.__getitem__(self, key)
         except KeyError:
             self.on_keyerror(key)
 
     def __setattr__(self, key : str, val : Any):
-        try: # Dict.__setattr__ KeyError -> AttributeError
+        try:
             return dict.__setitem__(self, key, val)
         except KeyError:
             self.on_keyerror(key)
 
     def __delattr__(self, key : str):
-        try: # Dict.__delattr__ KeyError -> AttributeError
-            return dict.__delattr__(self, key)
+        try:
+            return dict.__delitem__(self, key)
         except KeyError:
             self.on_keyerror(key)
 
@@ -800,9 +804,6 @@ class Task:
         if not Path.exists(self._config.task_cwd):
             raise ValueError(f"Task working directory '{self._config.task_cwd}' does not exist")
 
-        # if not Path.exists(self._config.build_dir):
-        #    raise ValueError(f"Task working directory '{self._config.build_dir}' does not exist")
-
         if not self._config.build_dir.startswith(self._config.repo_dir):
             raise ValueError(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
 
@@ -865,6 +866,7 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     def state(self):
+        # Convenience function used by tests
         return cast(types.CoroutineType, self._state).__name__
 
     def enable(self):
@@ -874,7 +876,7 @@ class Task:
             if Utils.in_event_loop():
                 self.create_asyncio_task()
 
-    @Utils.recursify_xip2
+    @Utils.recursify_apply_mip_member
     def create_parent_tasks(self, v):
         if isinstance(v, Task):
             v.create_asyncio_task()
@@ -891,10 +893,6 @@ class Task:
         # them.
 
         self.create_parent_tasks(self._config)
-
-    # Promises temporarily disabled
-    #def promise(self, field : str):
-    #    return Promise(self, field)
 
     # -----------------------------------------------------------------------------------------------
 
@@ -943,16 +941,6 @@ class Task:
         for name, files in self._config.items():
             if Task.is_input_field(name):
                 for i, file in enumerate(files):
-
-                    # Promises temporarily disabled
-                    #if isinstance(file, Promise):
-                    #    promise = cast(Promise, file)
-                    #    result = await promise.task._asyncio_task
-                    #    if result.__name__ == "FAILED":
-                    #        return self.CANCELLED()
-                    #    files[i] = promise.task[promise.field]
-                    #elif isinstance(file, Task):
-
                     if isinstance(file, Task):
                         task = cast(Task, file)
                         result = await cast(asyncio.Task, task._asyncio_task)
@@ -995,8 +983,6 @@ class Task:
             # All our input and output fields should contain flat arrays of strings now.
             assert Utils.is_flat(files, str)
 
-            # Fix the paths in our in/out fields to point to the right directories.
-            #files = self.fix_paths(name, files)
             # Expand all in_ and out_ filenames.
             # We _must_ expand these first before joining paths or the paths will be incorrect:
             # prefix + swap(abs_path) != abs(prefix + swap(path))
@@ -1005,17 +991,15 @@ class Task:
             # Initially, all our file paths are relative to the script_cwd that created this task.
             # Join script_cwd with the filenames to produce absolute paths.
             files = Path.join(c.script_cwd, files)
-            files = Utils.flatten(files)
 
+            # Expanding may have made our files array non-flat, but its contents should be all
+            # absolute paths now.
+            files = Utils.flatten(files)
             assert Path.isabs(files)
-            assert Utils.is_flat(files, str)
-            #files = Path.abs(files)
 
             # Path _must_ be normed after expansion and joining, otherwise it might look like it's
             # under script_cwd but it's not because the path could have "../../../../.." in it.
             files = cast(list[str], Path.norm(files))
-
-            files = cast(list[str], files)
 
             # Move all outputs under build_dir and ensure their directories exist.
             if Task.is_output_field(name):
@@ -1057,11 +1041,8 @@ class Task:
         c.desc    = Expander.expand_all("{desc}", e)
         c.command = Expander.expand_all("{command}", e)
 
-        if Utils.is_braced(c.command):
-            pass
-
-        if Utils.is_braced(c.command):
-            pass
+        if c.strict and Utils.is_braced(c.command):
+            return self.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         self.log_d(0xFFFFFF, "Task config after expand:")
         for line in str(c).strip().split("\n"):
@@ -1130,19 +1111,18 @@ class Task:
                 return self.RUNNING(f"{Path.rel(file, cwd)} has changed")
 
         # Check all dependencies in the C dependencies file, if present.
-        depfile = c.in_depfile
 
-        if depfile and Path.exists(depfile):
-            self.log_d(0x000000, f"Found C dependencies file {depfile}")
-            with open(depfile, encoding="utf-8") as depfile:
+        if c.in_depfile and Path.exists(c.in_depfile):
+            self.log_d(0x000000, f"Found C dependencies file {c.in_depfile}")
+            with open(c.in_depfile) as depcontents:
                 deplines = None
                 if c.depformat == "msvc":
                     # MSVC /sourceDependencies
                     import json
-                    deplines = json.load(depfile)["Data"]["Includes"]
+                    deplines = json.load(depcontents)["Data"]["Includes"]
                 elif c.depformat == "gcc":
                     # GCC -MMD
-                    deplines = depfile.read().split()
+                    deplines = depcontents.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
                     return self.BROKEN(f"Invalid dependency file format {c.depformat}")
@@ -1341,17 +1321,6 @@ class Stats:
 
 # endregion
 ####################################################################################################
-# region Promise
-# Promise selects subsets of _out_files
-
-# Promises are temporarily disabled
-#class Promise:
-#    def __init__(self, task : Task, field : str):
-#        self.task : Task = task
-#        self.field = field
-
-# endregion
-####################################################################################################
 # region Expander
 # Hancho's text expansion system.
 #
@@ -1464,7 +1433,7 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     def __getattr__(self, key):
-        try: # Expander.__getattr__
+        try:
             return self._get(key)
         except KeyError as ex:
             raise AttributeError from ex
@@ -1510,27 +1479,12 @@ class Expander(abc.MutableMapping[str, object]):
         lbrace = -1
         rbrace = -1
         escaped = False
-        #squoted = False
-        #dquoted = False
-
-        # Turning off quote detection, because we want templates like "Run test suite '{test_mod}'"
-        # to turn into "Run test suite 'my_tests'" - we _do_ want to expand inside quotes there.
 
         for i, c in enumerate(text):
             if escaped:
                 escaped = False
-            #elif squoted:
-            #    if c == '\'':
-            #        squoted = False
-            #elif dquoted:
-            #    if c == '"':
-            #        dquoted = False
             elif c == '\\':
                 escaped = True
-            #elif c == '\'':
-            #    squoted = True
-            #elif c == '"':
-            #    dquoted = True
             elif c == '{':
                 lbrace = i
             elif c == '}' and lbrace >= 0:
@@ -1594,32 +1548,15 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_apply_mip
     def eval[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
         assert Utils.is_literal(expr)
         result = Expander._eval(expr, context)
         assert isinstance(result, as_type)
         return result
 
-#    @staticmethod
-#    def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
-#        if Utils.is_collection(val):
-#            return [Expander.expand_once(v, context) for v in val]
-#        elif Utils.is_mapping(val):
-#            return {k: Expander.expand_once(v, context) for k, v in cast(dict, val).items()}
-#
-#        if Utils.is_macro(val):
-#            result = Expander._expand_macro(context, val)
-#        elif Utils.is_template(val):
-#            result = Expander._expand_template(context, val)
-#        else:
-#            result = val
-#
-#        assert isinstance(result, as_type)
-#        return result
-
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_apply_mip
     def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
         if Utils.is_macro(val):
             result = Expander._expand_macro(val, context)
@@ -1632,7 +1569,7 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_apply_mip
     def expand_all[T](variant : Any, context : Dict | Expander, as_type : type[T] = object):
         if not Utils.is_braced(variant):
             return variant
@@ -1640,7 +1577,7 @@ class Expander(abc.MutableMapping[str, object]):
 
         # Keep expanding the template until it's no longer a template or it's no
         # longer changing.
-        for _ in range(Tracer.MAX_DEPTH):
+        for _ in range(Tracer.MAX_RECURSION):
             with Tracer(econtext, f"expand_all('{variant}')") as tracer:
                 result = Expander.expand_once(variant, econtext)
                 tracer.log_result(result)
@@ -1656,9 +1593,9 @@ class Expander(abc.MutableMapping[str, object]):
 # Expansion tracing class used by Expander
 
 class Tracer:
-    # The maximum number of recursion levels we will do to expand a macro.
-    # Tests currently require MAX_DEPTH >= 6
-    MAX_DEPTH : int = 20
+    # The maximum number of recursion levels we will do to expand a macro. This is also used to
+    # limit the number of template-expansion passes we do. Tests currently require MAX_DEPTH >= 6.
+    MAX_RECURSION : int = 20
     trellis_stack : list[str]
 
     @staticmethod
@@ -1675,7 +1612,7 @@ class Tracer:
         color = Utils.obj_to_hex(self.context)
         context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
         context_tag = context_tag.upper()
-        if len(Tracer.trellis_stack) >= Tracer.MAX_DEPTH:
+        if len(Tracer.trellis_stack) >= Tracer.MAX_RECURSION:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
         if self.trace:
             Tracer.log2(color, f"┏ {context_tag}." + self.enter_message)
@@ -1789,7 +1726,7 @@ class Loader:
             tool        = "",
 
             enabled     = False,
-            keep_going  = False,
+            keep_going  = 1,     # this matches Ninja
             verbose     = False,
             debug       = False,
             dry_run     = False,
@@ -1963,7 +1900,7 @@ class Runner:
     @staticmethod
     async def acquire(count):
         if count > Runner.core_max:
-            raise ValueError("Tried to acquire {count} cores, which exceeds the max {Runner.core_max}")
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {Runner.core_max}")
         async with Runner.core_lock:
             for _ in range(count):
                 await Runner.core_sem.acquire()
@@ -2029,7 +1966,6 @@ class Runner:
             # Task shuffling temporarily disabled.
             #if hancho.config.shuffle:
             #    Log.log(0x000000, f"Shufflin' {len(all_tasks) - 1} tasks")
-            #    import random
             #    random.shuffle(all_tasks)
 
             for task in all_tasks:
@@ -2038,7 +1974,7 @@ class Runner:
                 await task
 
             fail_count = Stats.tasks_failed + Stats.tasks_broken
-            if hancho.config.keep_going and fail_count >= hancho.config.keep_going:
+            if (hancho.config.keep_going != 0) and (fail_count >= hancho.config.keep_going):
                 Log.log(0xFF0000, "Too many failures, cancelling tasks and stopping build")
                 for task in all_tasks:
                     if task != current:

@@ -228,7 +228,15 @@ class TestTasks(unittest.TestCase):
             command = r"echo {run_cmd('This is totally not a valid command.')}",
         )
         self.run_tasks(-1)
-        self.assertEqual(task.state(), "FAILED")
+        self.assertEqual(task.state(), "BROKEN")
+
+    def test_unexpandable_command(self):
+        task = hancho.Task(
+            desc    = "Unexpandable command",
+            command = r"echo Hello {missing} world!",
+        )
+        self.run_tasks(-1)
+        self.assertEqual(task.state(), "BROKEN")
 
     def test_garbage_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
