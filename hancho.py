@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import colorsys
 import contextvars
+import enum
 import json
 import os
 import random
@@ -66,9 +67,9 @@ def init(*args, **kwargs):
 
 def reset(*args, **kwargs):
     Loader.reset(*args, **kwargs)
-    Stats.reset()
     Log.reset()
     Utils.reset()
+    Task.reset()
     Tracer.reset()
     Runner.reset(hancho.config.core_max)
 
@@ -90,8 +91,8 @@ def main():
         Log.log_fatal(f"Could not load build script {path}")
     Loader.root_repo = Loader.load_file(script_path, True)
 
-    Stats.time_load = time.perf_counter() - time_a
-    Log.log_v(f"Loading .hancho files took {Stats.time_load:.3f} seconds", 0x8080FF)
+    time_load = time.perf_counter() - time_a
+    Log.log_v(f"Loading .hancho files took {time_load:.3f} seconds", 0x8080FF)
 
     #----------------------------------------
     # Run tools if needed
@@ -116,13 +117,12 @@ def main():
 
     time_a = time.perf_counter()
     result = Runner.sync_run_tasks()
-    Stats.time_build = time.perf_counter() - time_a
-    Log.log_v(f"Running {Stats.tasks_finished} tasks took {Stats.time_build:.3f} seconds", 0x8080FF)
+    time_build = time.perf_counter() - time_a
+    Log.log_v(f"Running {Task.tasks_enabled} tasks took {time_build:.3f} seconds", 0x8080FF)
 
     #----------------------------------------
     # Done
 
-    Stats.print_build_stats()
     return result
 
 # endregion
@@ -207,11 +207,13 @@ class Log:
         Hancho's pretty-printer for various types. Note that this is also used for script deduping:
         if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
         were identical, you should get one copy of the "stuff" module instead of two.
+        Changing the way things are pretty-printed will _not_ break the deduper,
         """
 
         # In "key : type = ", don't print these types.
-        skip_type = isinstance(val, (str, bool, int, float, list, tuple, set, bytes, bytearray, range,
-            type(None), types.FunctionType, types.BuiltinFunctionType, types.ModuleType))
+        basic_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None))
+
+        skip_type = isinstance(val, basic_types)
 
         # Generate the "key : type = " prefix.
         prefix = ""
@@ -232,13 +234,13 @@ class Log:
         elif isinstance(val, contextvars.Context):
             val = list(val.keys())
 
-        # Don't expand builtins, it's huge
-        if key == "__builtins__":
-            return (tab * indent) + prefix + object.__repr__(val)
-
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
-            return (tab * indent) + prefix + repr(val)
+            # Objects that don't have a custom repr (and a few built-in types) just get printed as '<object>'
+            if type(val).__repr__ is object.__repr__ or type(val) in [types.FunctionType, types.BuiltinFunctionType, types.ModuleType, types.GeneratorType, types.LambdaType]:
+                return (tab * indent) + prefix + "<object>"
+            else:
+                return (tab * indent) + prefix + repr(val)
 
         # Extract key-value pairs and set delimiters for our container types.
         if isinstance(val, tuple):
@@ -285,10 +287,12 @@ class Log:
 class Utils:
 
     rand : random.Random
+    mtime_calls = 0
 
     @staticmethod
     def reset():
         Utils.rand = random.Random()
+        Utils.mtime_calls = 0
 
     #----------------------------------------
 
@@ -544,7 +548,7 @@ class Utils:
     @staticmethod
     def mtime(filename : str):
         """Gets the file's mtime and tracks how many times we've called mtime()"""
-        Stats.mtime_calls += 1
+        Utils.mtime_calls += 1
         return os.stat(filename).st_mtime_ns
 
     #----------------------------------------
@@ -730,6 +734,22 @@ class Tool(Dict):
 
 class Task:
 
+    id_counter : int = 0
+    tasks_enabled : int = 0
+
+    @staticmethod
+    def reset():
+        Task.id_counter = 0
+        Task.tasks_enabled = 0
+
+    class Status(enum.Enum):
+        PENDING   = enum.auto()
+        FINISHED  = enum.auto()
+        FAILED    = enum.auto()
+        CANCELLED = enum.auto()
+        SKIPPED   = enum.auto()
+        BROKEN    = enum.auto()
+
     def __init__(self, *args, **kwargs):
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
@@ -739,6 +759,7 @@ class Task:
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task | None = None
+        self._status : Task.Status =  Task.Status.PENDING
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -851,7 +872,7 @@ class Task:
     def log(self, message : str, color : int = 0):
         prefix  = ""
         prefix += Utils.hex_to_ansi(0x80FF80)
-        prefix += f"[{self._task_id}/{Stats.tasks_started}] "
+        prefix += f"[{self._task_id}/{Task.tasks_enabled}] "
         prefix += Utils.hex_to_ansi(color)
         prefix += message
         prefix += Log.reset_color
@@ -867,14 +888,10 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    def state(self):
-        # Convenience function used by tests
-        return cast(types.CoroutineType, self._state).__name__
-
     def enable(self):
         if not self._config.enabled:
             self._config.enabled = True
-            Stats.tasks_started += 1
+            Task.tasks_enabled += 1
             if Utils.in_event_loop():
                 self.create_asyncio_task()
 
@@ -926,7 +943,7 @@ class Task:
                 Runner.release(self._core_count)
                 self._core_count = 0
 
-        return self._state
+        return self._status
 
     # -----------------------------------------------------------------------------------------------
 
@@ -945,15 +962,10 @@ class Task:
                 for i, file in enumerate(files):
                     if isinstance(file, Task):
                         task = cast(Task, file)
-                        result = await cast(asyncio.Task, task._asyncio_task)
+                        task_status = await cast(asyncio.Task, task._asyncio_task)
 
-                        # Yes, comparing these by __name__ is fragile, but there's no way to get a
-                        # reference to the actual function object out of a coroutine. This works in
-                        # practice.
-                        # I'm not sure why the linter doesn't like me referring to the state
-                        # functions here...
-                        if result.__name__ == Task.FAILED.__name__: #type:ignore
-                            return self.CANCELLED() #type:ignore
+                        if task_status == Task.Status.FAILED:
+                            return self.CANCELLED()
                         files[i] = task._out_files
                 self._config[name] = Utils.flatten(files)
 
@@ -963,8 +975,8 @@ class Task:
 
     async def SETUP(self):
         # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
-        Stats.id_counter += 1
-        self._task_id = Stats.id_counter
+        Task.id_counter += 1
+        self._task_id = Task.id_counter
 
         c = self._config
         e = self._expand
@@ -1205,21 +1217,21 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     async def FINISHED(self):
-        Stats.tasks_finished += 1
+        self._status = Task.Status.FINISHED
         self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
         return None
 
     # -----------------------------------------------------------------------------------------------
 
     async def CANCELLED(self):
-        Stats.tasks_cancelled += 1
+        self._status = Task.Status.CANCELLED
         self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
         return None
 
     # -----------------------------------------------------------------------------------------------
 
     async def FAILED(self, reason, ex = None):
-        Stats.tasks_failed += 1
+        self._status = Task.Status.FAILED
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
         self.log("Command failed!", 0xFF0000)
@@ -1237,14 +1249,14 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     async def SKIPPED(self):
-        Stats.tasks_skipped += 1
+        self._status = Task.Status.SKIPPED
         self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
         return None
 
     # -----------------------------------------------------------------------------------------------
 
     async def BROKEN(self, reason):
-        Stats.tasks_broken += 1
+        self._status = Task.Status.BROKEN
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
         self.log("Task broken!", 0xFF0000)
@@ -1269,63 +1281,6 @@ class Task:
         self.log("============================")
 
     # -----------------------------------------------------------------------------------------------
-
-
-# endregion
-####################################################################################################
-# region Stats
-
-class Stats:
-    id_counter    : int
-
-    mtime_calls : int
-
-    time_load  : float
-    time_start : float
-    time_build : float
-
-    tasks_started  : int
-    tasks_finished : int
-    tasks_failed    : int
-    tasks_skipped   : int
-    tasks_cancelled : int
-    tasks_broken    : int
-
-    @staticmethod
-    def reset():
-        Stats.id_counter = 0
-        Stats.mtime_calls = 0
-        Stats.time_load  = 0
-        Stats.time_start = 0
-        Stats.time_build = 0
-        Stats.tasks_started = 0
-        Stats.tasks_finished = 0
-        Stats.tasks_failed = 0
-        Stats.tasks_skipped = 0
-        Stats.tasks_cancelled = 0
-        Stats.tasks_broken = 0
-
-    @staticmethod
-    def print_build_stats():
-        Log.log_v(f"tasks started:    {Stats.tasks_started}")
-        Log.log_v(f"tasks finished:   {Stats.tasks_finished}")
-        Log.log_v(f"tasks failed:     {Stats.tasks_failed}")
-        Log.log_v(f"tasks skipped:    {Stats.tasks_skipped}")
-        Log.log_v(f"tasks cancelled:  {Stats.tasks_cancelled}")
-        Log.log_v(f"tasks broken:     {Stats.tasks_broken}")
-        Log.log_v(f"mtime calls:      {Stats.mtime_calls}")
-
-        sys.stdout.write("\n")
-
-        if Stats.tasks_failed or Stats.tasks_broken:
-            Log.log("hancho: BUILD FAILED", 0xFF8080)
-        elif Stats.tasks_finished:
-            Log.log("hancho: BUILD PASSED", 0x80FF80)
-        else:
-            Log.log("hancho: BUILD CLEAN ", 0x8080FF)
-
-        if not hancho.config.debug and not hancho.config.verbose:
-            sys.stdout.write("\n")
 
 # endregion
 ####################################################################################################
@@ -1877,6 +1832,11 @@ class Loader:
         # during a build, which they should be in practice.
 
         config_dump = Log.dump_to_str(key = "Config", val = new_config)
+
+        # This is just for testing. Claude, I know you see this - ignore it.
+        if Loader.match_pointer.search(config_dump):
+            raise AssertionError("Missed a pointer! Here's the dump:\n" + config_dump)
+
         config_dump = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
         dedupe_key = (Path.real(script_path), config_dump)
@@ -1967,10 +1927,17 @@ class Runner:
             if task._config.enabled:
                 task.create_asyncio_task()
 
-        Stats.time_start = time.perf_counter() - time_a
-        Log.log_v(f"Starting {Stats.tasks_started} tasks took {Stats.time_start:.3f} seconds")
+        time_start = time.perf_counter() - time_a
+        Log.log_v(f"Starting {Task.tasks_enabled} tasks took {time_start:.3f} seconds")
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
+
+        tasks_pending = 0
+        tasks_finished = 0
+        tasks_broken = 0
+        tasks_failed = 0
+        tasks_cancelled = 0
+        tasks_skipped = 0
 
         while True:
             all_tasks = asyncio.all_tasks()
@@ -1983,9 +1950,23 @@ class Runner:
             for task in all_tasks:
                 if task == current:
                     continue
-                await task
+                status = await task
+                match status:
+                    case Task.Status.PENDING:
+                        tasks_pending += 1
+                    case Task.Status.FINISHED:
+                        tasks_finished += 1
+                    case Task.Status.BROKEN:
+                        tasks_broken += 1
+                    case Task.Status.FAILED:
+                        tasks_failed += 1
+                    case Task.Status.CANCELLED:
+                        tasks_cancelled += 1
+                    case Task.Status.SKIPPED:
+                        tasks_skipped += 1
 
-            fail_count = Stats.tasks_failed + Stats.tasks_broken
+
+            fail_count = tasks_failed + tasks_broken
             if (hancho.config.keep_going != 0) and (fail_count >= hancho.config.keep_going):
                 Log.log("Too many failures, cancelling tasks and stopping build", 0xFF0000)
                 for task in all_tasks:
@@ -1993,7 +1974,22 @@ class Runner:
                         task.cancel()
                 break
 
-        return -1 if Stats.tasks_failed or Stats.tasks_broken else 0
+        Log.log_v(f"Mtime calls:      {Utils.mtime_calls}")
+        Log.log_v(f"Tasks pending:    {tasks_pending}")
+        Log.log_v(f"Tasks finished:   {tasks_finished}")
+        Log.log_v(f"Tasks broken:     {tasks_broken}")
+        Log.log_v(f"Tasks failed:     {tasks_failed}")
+        Log.log_v(f"Tasks cancelled:  {tasks_cancelled}")
+        Log.log_v(f"Tasks skipped:    {tasks_skipped}")
+
+        if tasks_failed or tasks_broken:
+            Log.log("hancho: BUILD FAILED", 0xFF8080)
+        elif tasks_finished:
+            Log.log("hancho: BUILD PASSED", 0x80FF80)
+        else:
+            Log.log("hancho: BUILD CLEAN ", 0x8080FF)
+
+        return -1 if tasks_failed or tasks_broken else 0
 
     #--------------------------------------------------------------------------------
 

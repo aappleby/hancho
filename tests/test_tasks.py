@@ -68,13 +68,13 @@ class TestTasks(unittest.TestCase):
         # If all tasks are OK, we should get 0 from run_tasks.
         good_task = hancho.Task(command = "echo Hello World", debug = True)
         self.run_tasks(0)
-        self.assertEqual(good_task.state(), "FINISHED") #type:ignore
+        self.assertEqual(good_task._status, hancho.Task.Status.FINISHED) #type:ignore
 
     def test_run_tasks_nonzero(self):
         # If any task fails, we should get -1 from run_tasks.
         bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
         self.run_tasks(-1)
-        self.assertEqual(bad_task.state(), "FAILED") #type:ignore
+        self.assertEqual(bad_task._status, hancho.Task.Status.FAILED) #type:ignore
 
     #--------------------------------------------------------------------------------
 
@@ -197,7 +197,7 @@ class TestTasks(unittest.TestCase):
         )
         self.assertFalse(Path("build/narp/foo.o").exists())
         self.run_tasks(0)
-        self.assertEqual(good_task.state(), "FINISHED") #type:ignore
+        self.assertEqual(good_task._status, hancho.Task.Status.FINISHED) #type:ignore
         self.assertTrue(Path("build/narp/foo.o").exists())
 
     def test_bad_build_path(self):
@@ -208,7 +208,7 @@ class TestTasks(unittest.TestCase):
             out_obj  = "../../../foo.o",
         )
         self.run_tasks(-1)
-        self.assertEqual(bad_task.state(), "BROKEN")
+        self.assertEqual(bad_task._status, hancho.Task.Status.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
 
     #--------------------------------------------------------------------------------
@@ -228,7 +228,7 @@ class TestTasks(unittest.TestCase):
             command = r"echo {run_cmd('This is totally not a valid command.')}",
         )
         self.run_tasks(-1)
-        self.assertEqual(task.state(), "BROKEN")
+        self.assertEqual(task._status, hancho.Task.Status.BROKEN)
 
     def test_unexpandable_command(self):
         task = hancho.Task(
@@ -236,7 +236,7 @@ class TestTasks(unittest.TestCase):
             command = r"echo Hello {missing} world!",
         )
         self.run_tasks(-1)
-        self.assertEqual(task.state(), "BROKEN")
+        self.assertEqual(task._status, hancho.Task.Status.BROKEN)
 
     def test_garbage_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
@@ -244,7 +244,7 @@ class TestTasks(unittest.TestCase):
             command = "aklsjdflksjdlfkjldfk",
         )
         self.run_tasks(-1)
-        self.assertEqual(garbage_task.state(), "FAILED")
+        self.assertEqual(garbage_task._status, hancho.Task.Status.FAILED)
 
     def test_missing_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
@@ -264,7 +264,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "colliding_output.txt",
         )
         self.run_tasks(-1)
-        self.assertEqual(task2.state(), "BROKEN")
+        self.assertEqual(task2._status, hancho.Task.Status.BROKEN)
 
     #--------------------------------------------------------------------------------
 
@@ -326,7 +326,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "missing_src.txt",
         )
         self.run_tasks(-1)
-        self.assertEqual(task.state(), "BROKEN")
+        self.assertEqual(task._status, hancho.Task.Status.BROKEN)
 
     def test_missing_dep(self):
         # We should fail if a dependency is missing even if it's not used by the command.
@@ -338,7 +338,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "result.txt",
         )
         self.run_tasks(-1)
-        self.assertEqual(task.state(), "BROKEN")
+        self.assertEqual(task._status, hancho.Task.Status.BROKEN)
 
     #--------------------------------------------------------------------------------
 
@@ -547,12 +547,9 @@ class TestTasks(unittest.TestCase):
         )
         self.assertFalse(os.path.exists("build/pass_result.txt"))
         self.run_tasks(-1)
-        self.assertEqual(1, hancho.Stats.tasks_finished)
-        self.assertEqual(1, hancho.Stats.tasks_failed)
-        self.assertEqual(1, hancho.Stats.tasks_cancelled)
-        self.assertEqual(task_that_fails.state(), "FAILED")
-        self.assertEqual(task_that_passes.state(), "FINISHED")
-        self.assertEqual(should_be_cancelled.state(), "CANCELLED")
+        self.assertEqual(task_that_fails._status, hancho.Task.Status.FAILED)
+        self.assertEqual(task_that_passes._status, hancho.Task.Status.FINISHED)
+        self.assertEqual(should_be_cancelled._status, hancho.Task.Status.CANCELLED)
         self.assertTrue(os.path.exists("build/pass_result.txt"))
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
