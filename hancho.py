@@ -897,12 +897,12 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
-        c = self._config
-        e = self._expand
+        config = self._config
+        expand = self._expand
 
-        if e.debug:
+        if expand.debug:
             self.log("Task config before expand:", 0xFFFFFF)
-            for line in str(c).split("\n"):
+            for line in str(config).split("\n"):
                 self.log(line, 0xFFFFFF)
 
         # ----------------------------------------
@@ -917,37 +917,36 @@ class Task:
                         "trace", "build_all"]
 
         for f in path_fields:
-            if f in c:
-                c[f] = Path.norm(self._expand[f])
+            if f in config:
+                config[f] = Path.norm(self._expand[f])
         for f in flag_fields:
-            if f in c:
-                c[f] = self._expand[f]
+            if f in config:
+                config[f] = self._expand[f]
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
 
-        c.command = Utils.flatten(c.command)
+        if not config.command:
+            raise Task.BROKEN(f"Task {config.name} has no command!")
 
-        if not c.command:
-            raise Task.BROKEN(f"Task {c.name} has no command!")
-
-        for command in c.command:
-            if type(command) is not type(c.command[0]):
-                raise Task.BROKEN(f"Commands aren't the same type: {c.command}")
+        config.command = Utils.flatten(config.command)
+        for command in config.command:
+            if type(command) is not type(config.command[0]):
+                raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
 
         # ----------------------------------------
         # Check for missing paths
 
-        if not Path.exists(c.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{c.task_cwd}' does not exist")
+        if not Path.exists(config.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
 
-        if not c.build_dir.startswith(c.repo_dir):
-            raise Task.BROKEN(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
+        if not config.build_dir.startswith(config.repo_dir):
+            raise Task.BROKEN(f"Build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
 
-        for key, files in [i for i in c.items() if Task.is_input_field(*i)]:
+        for key, files in [i for i in config.items() if Task.is_input_field(*i)]:
             files = Utils.flatten(files)
 
             if key == "in_depfile" and len(files) > 1:
@@ -958,11 +957,11 @@ class Task:
                     task = cast(Task, file)
                     task_status = await cast(asyncio.Task, task._asyncio_task)
                     if isinstance(task_status, Task.FAILED):
-                        raise Task.CANCELLED(f"Task is cancelled: '{c.name}' : '{c.desc}'")
+                        raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'")
                     files[i] = task._out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
-            c[key] = Utils.flatten(files)
+            config[key] = Utils.flatten(files)
 
         # ----------------------------------------
         # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
@@ -974,7 +973,7 @@ class Task:
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_cwd if we're calling a callback.
 
-        for key, files in [i for i in c.items() if Task.is_io_field(*i)]:
+        for key, files in [i for i in config.items() if Task.is_io_field(*i)]:
 
             # All our input and output fields should contain flat arrays of strings now.
             if not Utils.is_flat_list_of(files, str):
@@ -987,24 +986,24 @@ class Task:
 
             # and unwrap filenames if they're an array of one element so that scripts expecting
             # join(str, str) to return a str will be happy.
-            c[key] = files[0] if len(files) == 1 else files
+            config[key] = files[0] if len(files) == 1 else files
 
         # Paths are cleaned up, we can expand name/desc/command
 
-        c.name    = Expander.expand_all("{name}", e)
-        c.desc    = Expander.expand_all("{desc}", e)
-        c.command = Expander.expand_all("{command}", e)
+        config.name    = Expander.expand_all("{name}", expand)
+        config.desc    = Expander.expand_all("{desc}", expand)
+        config.command = Expander.expand_all("{command}", expand)
 
-        if c.strict and Utils.is_braced(c.command):
+        if config.strict and Utils.is_braced(config.command):
             raise Task.BROKEN("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         self.log_d("Task config after expand:", 0xFFFFFF)
-        for line in str(c).split("\n"):
+        for line in str(config).split("\n"):
             self.log_d(line, 0xFFFFFF)
 
         # Dry runs early out after config expansion
-        if c.dry_run:
-            self.log_v(f"Task done : '{c.name}' - '{c.desc}'")
+        if config.dry_run:
+            self.log_v(f"Task done : '{config.name}' - '{config.desc}'")
             return
 
         # Check for missing inputs
@@ -1016,8 +1015,8 @@ class Task:
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
-            if not file.startswith(c.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build_dir {c.build_dir}")
+            if not file.startswith(config.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build_dir {config.build_dir}")
 
         # Check for task collisions
         for file in self._out_files:
@@ -1029,17 +1028,17 @@ class Task:
         # Check if we need a rebuild
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{c.name}' : '{c.desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # Wait for enough jobs to free up to run this task.
-        await Runner.acquire(c.core_count)
-        self._core_count = c.core_count
+        await Runner.acquire(config.core_count)
+        self._core_count = config.core_count
 
         # Run all the task's commands
-        self.log(f"Task started : '{c.name}' - '{c.desc}'")
+        self.log(f"Task started : '{config.name}' - '{config.desc}'")
 
-        for command in cast(list, c.command):
+        for command in cast(list, config.command):
             if isinstance(command, str):
                 returncode = await self.run_command(command)
                 if returncode:
@@ -1050,7 +1049,7 @@ class Task:
                 raise Task.FAILED(f"Command {command} is not a string or a callable?")
 
         # Done!
-        self.log_v(f"Task done : '{c.name}' - '{c.desc}'")
+        self.log_v(f"Task done : '{config.name}' - '{config.desc}'")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1064,17 +1063,17 @@ class Task:
         robust way. Whether this actually turns out to be robust or not is yet to be determined.
         """
 
-        c = self._config
-        e = self._expand
+        config = self._config
+        expand = self._expand
 
         # Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-        files = Expander.expand_all(files, e)
+        files = Expander.expand_all(files, expand)
 
         # Initially, all our file paths are relative to the script_cwd that created this task.
         # Join script_cwd with the filenames to produce absolute paths.
-        files = Path.join(c.script_cwd, files)
+        files = Path.join(config.script_cwd, files)
 
         # Expanding may have made our files array non-flat, but its contents should be all
         # absolute paths now.
@@ -1089,10 +1088,10 @@ class Task:
         if Task.is_output_field(name):
             for i in range(len(files)):
                 # Note these conditionals are _NOT_ an if/elif pair!
-                if not files[i].startswith(c.build_dir):
-                    files[i] = files[i].replace(c.task_cwd, c.build_dir)
+                if not files[i].startswith(config.build_dir):
+                    files[i] = files[i].replace(config.task_cwd, config.build_dir)
 
-                if files[i].startswith(c.build_dir):
+                if files[i].startswith(config.build_dir):
                     dirname = Path.dirname(files[i])
                     if dirname is not None:
                         os.makedirs(dirname, exist_ok=True)
@@ -1112,7 +1111,7 @@ class Task:
         # Convert the fixed paths back to relative so our command lines aren't enormous.
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_cwd if we're calling a callback.
-        rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
+        rel_dir = config.task_cwd if isinstance(config.command[0], str) else config.script_cwd
 
         for i in range(len(files)):
             files[i] = Path.rel(files[i], rel_dir)
@@ -1122,10 +1121,10 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def rebuild_reason(self) -> str:
-        c = self._config
+        config = self._config
         cwd = os.getcwd()
 
-        if self._config.rebuild:
+        if config.rebuild:
             return "Target forced to rebuild"
         if not self._in_files:
             return "Always rebuild a target with no inputs"
@@ -1152,22 +1151,22 @@ class Task:
 
         # Check all dependencies in the C dependencies file, if present.
 
-        if c.in_depfile and Path.exists(c.in_depfile):
-            self.log_d(f"Found C dependencies file {c.in_depfile}")
-            with open(c.in_depfile) as depcontents:
+        if config.in_depfile and Path.exists(config.in_depfile):
+            self.log_d(f"Found C dependencies file {config.in_depfile}")
+            with open(config.in_depfile) as depcontents:
                 deplines = None
-                if c.depformat == "msvc":
+                if config.depformat == "msvc":
                     # MSVC /sourceDependencies
                     deplines = json.load(depcontents)["Data"]["Includes"]
-                elif c.depformat == "gcc":
+                elif config.depformat == "gcc":
                     # GCC -MMD
                     deplines = depcontents.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise Task.BROKEN(f"Invalid depfile format {c.depformat}")
+                    raise Task.BROKEN(f"Invalid depfile format {config.depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [cast(str, Path.join(c.task_cwd, d)) for d in deplines]
+                deplines = [cast(str, Path.join(config.task_cwd, d)) for d in deplines]
                 for abs_file in deplines:
                     if Utils.mtime(abs_file) >= min_out:
                         return f"Rebuilding because {Path.rel(abs_file, cwd)} has changed"
@@ -1178,13 +1177,13 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def run_command(self, command):
-        c = self._config
-        self.log_v(f"{Path.rel(c.task_cwd, c.repo_dir)}$ {command}", 0x8080FF)
+        config = self._config
+        self.log_v(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}", 0x8080FF)
 
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd    = c.task_cwd,
+            cwd    = config.task_cwd,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
         )
