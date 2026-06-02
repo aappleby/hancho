@@ -252,8 +252,15 @@ class Log:
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
-            # Objects that don't have a custom repr (and a few built-in types) just get printed as '<object>'
-            if type(val).__repr__ is object.__repr__ or type(val) in [types.FunctionType, types.BuiltinFunctionType, types.ModuleType, types.GeneratorType, types.LambdaType]:
+            # Objects that don't have a custom repr (and a few built-in types) just get printed as
+            # '<object>'
+            if type(val).__repr__ is object.__repr__ or type(val) in [
+                types.FunctionType,
+                types.BuiltinFunctionType,
+                types.ModuleType,
+                types.GeneratorType,
+                types.LambdaType,
+            ]:
                 return (tab * indent) + prefix + "<object>"
             else:
                 return (tab * indent) + prefix + repr(val)
@@ -435,10 +442,6 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def is_scalar(v):
-        return not Utils.is_collection(v) and not Utils.is_mapping(v)
-
-    @staticmethod
     def is_flat_list_of[T](c : Any, as_type : type[T]):
         if Utils.is_collection(c):
             return all(isinstance(v, as_type) for v in c)
@@ -455,12 +458,6 @@ class Utils:
         if isinstance(variant, (str, bytes, bytearray, range, abc.Mapping)):
             return False
         return isinstance(variant, abc.Collection)
-
-    @staticmethod
-    def is_iterable(variant : Any) -> bool:
-        if isinstance(variant, (str, bytes, bytearray, abc.Mapping)):
-            return False
-        return isinstance(variant, abc.Iterable)
 
     @staticmethod
     def is_mapping(variant : Any) -> bool:
@@ -570,10 +567,14 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def flatten(variant : Any) -> list[Any]:
-        if Utils.is_iterable(variant):
+    def flatten(variant: Tree[Any]) -> list[Any]:
+        noflat_types = (str, bytes, bytearray, abc.Mapping)
+
+        if isinstance(variant, noflat_types) or not isinstance(variant, abc.Iterable):
+            return [] if variant is None else [variant]
+        else:
             return [x for element in variant for x in Utils.flatten(element)]
-        return [] if variant is None else [variant]
+
 
 # endregion
 ####################################################################################################

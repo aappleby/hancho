@@ -11,18 +11,15 @@
   tutorial is hella out of date
   tools_fpga.synth is messy, replace with "def synth(*, ...):
   riscv_rules.hancho could merge with base_rules.hancho, or at least share stuff?
-  Does "promises that resolve to filenames can be used in place of actual filenames in tools." still work?
   tools_fpga could stand to be cleaned up a bit.
   We can probably use more map/reduce to clean up some verbosity
 
 # FIXME Tests
   dry run
   task output collision that uses symlinks
-  Promise thingy
   brace-delimited sections inside quote-delimited strings, etc
   full-loop test cases for escaped {}s.
     Somewhere in the process we need to unescape them and I'm not sure where it goes.
-  task.promise
   command is None
   cancelled during init
   failing during init
