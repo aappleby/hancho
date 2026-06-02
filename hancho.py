@@ -904,8 +904,7 @@ class Task:
     def create_asyncio_task(self):
         assert Utils.in_event_loop()
 
-        if self._state is None:
-            self._state = self.WAITING()
+        if self._asyncio_task is None:
             self._asyncio_task = asyncio.create_task(self.task_top(), context=self._context)
 
         # Recurse through all tasks referenced by _config so we don't deadlock while waiting for
@@ -930,13 +929,48 @@ class Task:
         """
 
         try:
-            while self._state:
-                if not isawaitable(self._state):
-                    raise AssertionError("Task._state is not awaitable, it should be")
-                next_state = await self._state
+
+            while True:
+                is_cancelled = False
+                for name, files in self._config.items():
+                    if Task.is_input_field(name):
+                        for i, file in enumerate(files):
+                            if isinstance(file, Task):
+                                task = cast(Task, file)
+                                task_status = await cast(asyncio.Task, task._asyncio_task)
+                                if task_status == Task.Status.FAILED:
+                                    is_cancelled = True
+                                    break
+                                files[i] = task._out_files
+                        if is_cancelled:
+                            break
+                        self._config[name] = Utils.flatten(files)
+
+                if is_cancelled:
+                    self._state = None
+                    self._status = Task.Status.CANCELLED
+                    self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+                    break
+
+                next_state = self.SETUP()
+
+
+
+
                 if next_state is None:
                     break
                 self._state = next_state
+
+                while self._state:
+                    if not isawaitable(self._state):
+                        raise AssertionError("Task._state is not awaitable, it should be")
+                    next_state = await self._state
+                    if next_state is None:
+                        break
+                    self._state = next_state
+
+                break
+
 
         finally:
             if self._core_count:
@@ -944,26 +978,6 @@ class Task:
                 self._core_count = 0
 
         return self._status
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def WAITING(self):
-        """Await everything awaitable in this task's config. If any of this tasks's dependencies
-        failed, we propagate a cancellation to downstream tasks."""
-
-        # Await our dependencies. If any of our dependencies failed, we are cancelled.
-        for name, files in self._config.items():
-            if Task.is_input_field(name):
-                for i, file in enumerate(files):
-                    if isinstance(file, Task):
-                        task = cast(Task, file)
-                        task_status = await cast(asyncio.Task, task._asyncio_task)
-                        if task_status == Task.Status.FAILED:
-                            return self.CANCELLED()
-                        files[i] = task._out_files
-                self._config[name] = Utils.flatten(files)
-
-        return self.SETUP()
 
     # -----------------------------------------------------------------------------------------------
 
