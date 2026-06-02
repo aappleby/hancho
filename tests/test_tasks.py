@@ -22,8 +22,6 @@ def setUpModule():
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    for t in doctests:
-        t.shortDescription = lambda: None # type: ignore
     tests.addTests(doctests)
     return tests
 
@@ -68,13 +66,13 @@ class TestTasks(unittest.TestCase):
         # If all tasks are OK, we should get 0 from run_tasks.
         good_task = hancho.Task(command = "echo Hello World", debug = True)
         self.run_tasks(0)
-        self.assertIsInstance(good_task._status, hancho.Task.FINISHED)
+        self.assertIsNone(good_task._error)
 
     def test_run_tasks_nonzero(self):
         # If any task fails, we should get -1 from run_tasks.
         bad_task = hancho.Task(command = "echo skldjlksdlfj && (exit 255)")
         self.run_tasks(-1)
-        self.assertIsInstance(bad_task._status, hancho.Task.FAILED) #type:ignore
+        self.assertIsInstance(bad_task._error, hancho.Task.FAILED) #type:ignore
 
     #--------------------------------------------------------------------------------
 
@@ -197,7 +195,7 @@ class TestTasks(unittest.TestCase):
         )
         self.assertFalse(Path("build/narp/foo.o").exists())
         self.run_tasks(0)
-        self.assertIsInstance(good_task._status, hancho.Task.FINISHED) #type:ignore
+        self.assertIsNone(good_task._error)
         self.assertTrue(Path("build/narp/foo.o").exists())
 
     def test_bad_build_path(self):
@@ -208,7 +206,7 @@ class TestTasks(unittest.TestCase):
             out_obj  = "../../../foo.o",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(bad_task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
 
     #--------------------------------------------------------------------------------
@@ -228,7 +226,7 @@ class TestTasks(unittest.TestCase):
             command = r"echo {run_cmd('This is totally not a valid command.')}",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_unexpandable_command(self):
         task = hancho.Task(
@@ -236,7 +234,7 @@ class TestTasks(unittest.TestCase):
             command = r"echo Hello {missing} world!",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_garbage_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
@@ -244,13 +242,13 @@ class TestTasks(unittest.TestCase):
             command = "aklsjdflksjdlfkjldfk",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(garbage_task._status, hancho.Task.FAILED)
+        self.assertIsInstance(garbage_task._error, hancho.Task.FAILED)
 
     def test_missing_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
         bad_task = hancho.Task(not_a_command = "echo Hello World")
         self.run_tasks(-1)
-        self.assertIsInstance(bad_task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.
@@ -265,7 +263,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "colliding_output.txt",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(task2._status, hancho.Task.BROKEN)
+        self.assertIsInstance(task2._error, hancho.Task.BROKEN)
 
     #--------------------------------------------------------------------------------
 
@@ -327,7 +325,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "missing_src.txt",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_missing_dep(self):
         # We should fail if a dependency is missing even if it's not used by the command.
@@ -339,7 +337,7 @@ class TestTasks(unittest.TestCase):
             out_obj = "result.txt",
         )
         self.run_tasks(-1)
-        self.assertIsInstance(task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     #--------------------------------------------------------------------------------
 
@@ -436,7 +434,7 @@ class TestTasks(unittest.TestCase):
         # Creating a task with multiple depfile inputs should fail.
         bad_task = hancho.Task(command = "echo Hello World", in_depfile = ["foo.txt", "bar.txt"])
         self.run_tasks(-1)
-        self.assertIsInstance(bad_task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
@@ -546,9 +544,9 @@ class TestTasks(unittest.TestCase):
         )
         self.assertFalse(os.path.exists("build/pass_result.txt"))
         self.run_tasks(-1)
-        self.assertIsInstance(task_that_fails._status, hancho.Task.FAILED)
-        self.assertIsInstance(task_that_passes._status, hancho.Task.FINISHED)
-        self.assertIsInstance(should_be_cancelled._status, hancho.Task.CANCELLED)
+        self.assertIsInstance(task_that_fails._error, hancho.Task.FAILED)
+        self.assertIsNone(task_that_passes._error)
+        self.assertIsInstance(should_be_cancelled._error, hancho.Task.CANCELLED)
         self.assertTrue(os.path.exists("build/pass_result.txt"))
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
@@ -561,7 +559,7 @@ class TestTasks(unittest.TestCase):
         ])
 
         self.run_tasks(-1)
-        self.assertIsInstance(bad_task._status, hancho.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.

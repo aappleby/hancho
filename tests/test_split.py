@@ -14,8 +14,6 @@ def setUpModule():
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    for t in doctests:
-        t.shortDescription = lambda: None # type: ignore
     tests.addTests(doctests)
     return tests
 

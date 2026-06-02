@@ -114,10 +114,7 @@ def main():
     #----------------------------------------
     # Run all tasks
 
-    time_a = time.perf_counter()
     result = Runner.sync_run_tasks()
-    time_build = time.perf_counter() - time_a
-    Log.log_v(f"Running {Task.tasks_enabled} tasks took {time_build:.3f} seconds", 0x8080FF)
 
     #----------------------------------------
     # Done
@@ -310,7 +307,7 @@ class Log:
 class Utils:
 
     rand : random.Random
-    mtime_calls = 0
+    mtime_calls : int
 
     @staticmethod
     def reset():
@@ -759,8 +756,6 @@ class Task:
         Task.id_counter = 0
         Task.tasks_enabled = 0
 
-    class PENDING(Exception):   pass  # noqa: E701
-    class FINISHED(Exception):  pass  # noqa: E701
     class FAILED(Exception):    pass  # noqa: E701
     class CANCELLED(Exception): pass  # noqa: E701
     class SKIPPED(Exception):   pass  # noqa: E701
@@ -775,7 +770,7 @@ class Task:
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task | None = None
-        self._status = Task.PENDING
+        self._error = None
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -877,29 +872,27 @@ class Task:
     async def task_top(self):
         try:
             await self.task_main()
-            self._status = Task.FINISHED("Everything OK!")
         except Task.BROKEN as ex:
-            self.log_error("Task broken!", str(ex))
-            self._status = ex
+            self.log_error("Task broken!", "<exception>", ex)
+            self._error = ex
         except Task.FAILED as ex:
-            self.log_error("Task failed!", str(ex))
-            self._status = ex
+            self.log_error("Task failed!", "<exception>", ex)
+            self._error = ex
         except Task.CANCELLED as ex:
-            #self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
             self.log_v(str(ex), 0x404040)
-            self._status = ex
+            self._error = ex
         except Task.SKIPPED as ex:
-            self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-            self._status = ex
+            self.log_v(str(ex), 0x404040)
+            self._error = ex
         except Exception as ex:
-            self.log_error("Task failed!", "Task threw an exception", ex)
-            self._status = ex
+            self.log_error("Task failed!", "<exception>", ex)
+            self._error = ex
         finally:
             if self._core_count:
                 Runner.release(self._core_count)
                 self._core_count = 0
 
-        return self._status
+        return self._error
 
     # ----------------------------------------------------------------------------------------------
 
@@ -965,7 +958,7 @@ class Task:
                     task = cast(Task, file)
                     task_status = await cast(asyncio.Task, task._asyncio_task)
                     if isinstance(task_status, Task.FAILED):
-                        raise Task.CANCELLED(f"Task is cancelled: '{c.name}' : '{c.desc}'\n")
+                        raise Task.CANCELLED(f"Task is cancelled: '{c.name}' : '{c.desc}'")
                     files[i] = task._out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
@@ -1036,7 +1029,7 @@ class Task:
         # Check if we need a rebuild
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{c.name}' : '{c.desc}'\n")
+            raise Task.SKIPPED(f"Task is up-to-date: '{c.name}' : '{c.desc}'")
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # Wait for enough jobs to free up to run this task.
@@ -1888,29 +1881,30 @@ class Runner:
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        tasks_pending = 0
+        tasks_awaited = 0
         tasks_finished = 0
         tasks_broken = 0
         tasks_failed = 0
         tasks_cancelled = 0
         tasks_skipped = 0
 
+        time_a = time.perf_counter()
+
         while True:
             all_tasks = asyncio.all_tasks()
-            current = asyncio.current_task()
+            this_task = asyncio.current_task()
 
             if len(all_tasks) == 1:
-                assert current in all_tasks
+                assert this_task in all_tasks
                 break
 
             for task in all_tasks:
-                if task == current:
+                if task == this_task:
                     continue
                 status = await task
+                tasks_awaited += 1
                 match status.__class__:
-                    case Task.PENDING:
-                        tasks_pending += 1
-                    case Task.FINISHED:
+                    case None:
                         tasks_finished += 1
                     case Task.BROKEN:
                         tasks_broken += 1
@@ -1926,17 +1920,21 @@ class Runner:
             if (hancho.config.keep_going != 0) and (fail_count >= hancho.config.keep_going):
                 Log.log("Too many failures, cancelling tasks and stopping build", 0xFF0000)
                 for task in all_tasks:
-                    if task != current:
+                    if task != this_task:
                         task.cancel()
                 break
 
-        Log.log_v(f"Mtime calls:      {Utils.mtime_calls}")
-        Log.log_v(f"Tasks pending:    {tasks_pending}")
-        Log.log_v(f"Tasks finished:   {tasks_finished}")
-        Log.log_v(f"Tasks broken:     {tasks_broken}")
-        Log.log_v(f"Tasks failed:     {tasks_failed}")
-        Log.log_v(f"Tasks cancelled:  {tasks_cancelled}")
-        Log.log_v(f"Tasks skipped:    {tasks_skipped}")
+        time_build = time.perf_counter() - time_a
+        Log.log_v(f"Running {tasks_finished} tasks took {time_build:.3f} seconds", 0x8080FF)
+
+        Log.log_d(f"Tasks created:    {len(Runner.all_tasks)}")
+        Log.log_d(f"Tasks awaited:    {tasks_awaited}")
+        Log.log_d(f"Tasks finished:   {tasks_finished}")
+        Log.log_d(f"Tasks broken:     {tasks_broken}")
+        Log.log_d(f"Tasks failed:     {tasks_failed}")
+        Log.log_d(f"Tasks cancelled:  {tasks_cancelled}")
+        Log.log_d(f"Tasks skipped:    {tasks_skipped}")
+        Log.log_d(f"Mtime calls:      {Utils.mtime_calls}")
 
         if tasks_failed or tasks_broken:
             Log.log("hancho: BUILD FAILED", 0xFF8080)
