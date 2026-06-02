@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -132,13 +133,12 @@ class Log:
     buffer : str
     con_w : int
     reset_color = "\x1B[0m"
-
-    @classmethod
-    def reset(cls):
-        cls.buffer = ""
-        cls.con_w = shutil.get_terminal_size().columns
-
     match_escapes = re.compile(r"\x1B.*?m")
+
+    @staticmethod
+    def reset():
+        Log.buffer = ""
+        Log.con_w = shutil.get_terminal_size().columns
 
     @staticmethod
     def clip_printable(text, width):
@@ -160,9 +160,8 @@ class Log:
 
         return result
 
-
-    @classmethod
-    def log(cls, color : int, message : str | list[str]):
+    @staticmethod
+    def log(color : int, message : str | list[str]):
 
         if isinstance(message, list):
             for m in message:
@@ -173,7 +172,7 @@ class Log:
         for i, line in enumerate(lines):
             if not hancho.config.wrap:
                 line = Log.clip_printable(line, Log.con_w)
-            cls.buffer += line + "\n"
+            Log.buffer += line + "\n"
 
             use_newline = (i < len(lines) - 1) or hancho.config.debug or hancho.config.verbose
 
@@ -185,18 +184,18 @@ class Log:
                 sys.stdout.write("\n" if use_newline else "\x1B[K")
                 sys.stdout.flush()
 
-    @classmethod
-    def log_fatal(cls, message):
+    @staticmethod
+    def log_fatal(message):
         Log.log(0xFF0000, message)
         sys.exit(-1)
 
-    @classmethod
-    def log_d(cls, message):
+    @staticmethod
+    def log_d(message):
         if hancho.config.debug:
             Log.log(0x606060, message)
 
-    @classmethod
-    def log_v(cls, message, color = 0x606060):
+    @staticmethod
+    def log_v(message, color = 0x606060):
         if hancho.config.debug or hancho.config.verbose:
             Log.log(color, message)
 
@@ -245,7 +244,7 @@ class Log:
             ld = "{"
             rd = "}"
         elif Utils.is_collection(val):
-            items = [(None, val2) for val2 in val]
+            items = [(None, val2) for val2 in cast(abc.Collection, val)]
             ld = "["
             rd = "]"
         else:
@@ -276,59 +275,112 @@ class Log:
 ####################################################################################################
 # region Utils
 
-
-
 class Utils:
-    @classmethod
-    def reset(cls):
-        import random
-        cls.rand = random.Random()
+
+    rand : random.Random
+
+    @staticmethod
+    def reset():
+        Utils.rand = random.Random()
 
     #----------------------------------------
 
     @staticmethod
-    def recursify_any(func: abc.Callable[..., bool]):
+    def recursify_all(func: abc.Callable[..., bool]):
         """Turns a function that maps scalars to bools into one that evaluates any([func(x) for x in v])."""
 
-        def result(v, *args, **kwargs):
+        def outer(v, *args, **kwargs):
             if Utils.is_collection(v):
-                return any(result(v2, *args, **kwargs) for v2 in v)
+                return all(outer(v2, *args, **kwargs) for v2 in v)
             elif Utils.is_mapping(v):
-                return any(result(v2, *args, **kwargs) for _, v2 in v.items())
+                return all(outer(v2, *args, **kwargs) for _, v2 in v.items())
             else:
                 return func(v, *args, **kwargs)
 
-        return result
+        return outer
 
     @staticmethod
-    def recursify_map(func : abc.Callable[..., Any]):
-        """Turns a function that maps scalars into one that maps Tree[scalar]"""
+    def recursify_map(func: abc.Callable[..., Any]):
+        """
+        Creates a function that recursively applies 'func' to a Tree[T], creating a new Tree[T] in the process.
+        """
 
-        def result(val, *args, **kwargs):
-            if Utils.is_collection(val):
-                return [result(v, *args, **kwargs) for v in val]
-            elif Utils.is_mapping(val):
-                return {k: result(v, *args, **kwargs) for k, v in val.items()}
-            else:
-                return func(val, *args, **kwargs)
-
-        return result
-
-    @staticmethod
-    def recursify_visit_kv(func: abc.Callable[...]):
-        """Turns a function that visits (key, val) pairs into one that visits Tree[dict]"""
-
-        def result(k, v, *args, **kwargs):
+        def outer(v, *args, **kwargs):
             if Utils.is_collection(v):
-                for (k2, v2) in enumerate(v):
-                    result(k2, v2, *args, **kwargs)
+                return [outer(v2, *args, **kwargs) for v2 in v]
             elif Utils.is_mapping(v):
-                for (k2, v2) in v.items():
-                    result(k2, v2, *args, **kwargs)
+                return {k2: outer(v2, *args, **kwargs) for k2, v2 in v.items()}
             else:
-                func(k, v, *args, **kwargs)
+                return func(v, *args, **kwargs)
 
-        return result
+        return outer
+
+    @staticmethod
+    def recursify_xip(func):
+        """
+        Creates a static function that recursively applies 'func' to a Tree[T], modifying the tree in-place.
+        """
+
+        def outer(v, *args, **kwargs):
+            if Utils.is_collection(v):
+                for k2, v2 in enumerate(v):
+                    v[k2] = outer(v2, *args, **kwargs)
+            elif Utils.is_mapping(v):
+                for k2, v2 in v.items():
+                    v[k2] = outer(v2, *args, **kwargs)
+            else:
+                v = func(v, *args, **kwargs)
+            return v
+
+        return outer
+
+    @staticmethod
+    def recursify_xip2(func):
+        """
+        Creates a member function that recursively applies 'self.func' to a Tree[T], modifying the tree in-place.
+        """
+
+        def outer(self, v, *args, **kwargs):
+            if Utils.is_collection(v):
+                for k2, v2 in enumerate(v):
+                    v[k2] = outer(self, v2, *args, **kwargs)
+            elif Utils.is_mapping(v):
+                for k2, v2 in v.items():
+                    v[k2] = outer(self, v2, *args, **kwargs)
+            else:
+                v = func(self, v, *args, **kwargs)
+            return v
+
+        return outer
+
+    @staticmethod
+    def recursify_pairwise(func):
+        """
+        Creates a function with two args that effectively
+        1. Flattens both arguments.
+        2. Creates a list of all possible pairs using one element of each argument.
+        3. Creates a list by applying 'func' to each element of the previous list
+        4. Returns the list if len(list) > 1, otherwise returns the scalar in list[0].
+        """
+
+        def inner(accum, a, b, *args, **kwargs):
+            if Utils.is_collection(a):
+                for c in a:
+                    inner(accum, c, b, *args, **kwargs)
+            elif Utils.is_collection(b):
+                for c in b:
+                    inner(accum, a, c, *args, **kwargs)
+            else:
+                accum.append(func(a, b, *args, **kwargs))
+
+        def outer(a, b, *args, **kwargs):
+            accum = []
+            inner(accum, a, b, *args, **kwargs)
+            return accum[0] if len(accum) == 1 else accum
+
+        return outer
+
+    # ----------------------------------------
 
     @staticmethod
     def stringify(variant) -> str:
@@ -353,8 +405,20 @@ class Utils:
 
     #----------------------------------------
 
-    @classmethod
-    def is_collection(cls, variant : Any) -> bool:
+    @staticmethod
+    def is_scalar(v):
+        return not Utils.is_collection(v) and not Utils.is_mapping(v)
+
+    @staticmethod
+    def is_flat[T](c : Any, as_type : type[T]):
+        if Utils.is_collection(c):
+            return all(isinstance(v, as_type) for v in c)
+        elif Utils.is_mapping(c):
+            return all(isinstance(v, as_type) for v in c.values())
+        return isinstance(c, as_type)
+
+    @staticmethod
+    def is_collection(variant : Any) -> bool:
         """
         Mappings and non-array iterables are not considered Collections in Hancho so that
         we don't turn "foo" into ('f', 'o', 'o').
@@ -363,14 +427,14 @@ class Utils:
             return False
         return isinstance(variant, abc.Collection)
 
-    @classmethod
-    def is_iterable(cls, variant : Any) -> bool:
+    @staticmethod
+    def is_iterable(variant : Any) -> bool:
         if isinstance(variant, (str, bytes, bytearray, abc.Mapping)):
             return False
         return isinstance(variant, abc.Iterable)
 
-    @classmethod
-    def is_mapping(cls, variant : Any) -> bool:
+    @staticmethod
+    def is_mapping(variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
 
     #----------------------------------------
@@ -378,15 +442,15 @@ class Utils:
 
     braced = re.compile(r"\{(\\.|[^\\}])*\}")
 
-    @recursify_any
+    @recursify_all
     def is_literal(v: Any) -> bool:
         return isinstance(v, str) and len(v) != 0 and Utils.braced.search(v) is None
 
-    @recursify_any
+    @recursify_all
     def is_braced(v: Any) -> bool:
         return isinstance(v, str) and len(v) != 0 and Utils.braced.search(v) is not None
 
-    @recursify_any
+    @recursify_all
     def is_macro(v: Any) -> bool:
         return (
             isinstance(v, str)
@@ -395,7 +459,7 @@ class Utils:
             and (m.group() == v)
         )
 
-    @recursify_any
+    @recursify_all
     def is_template(v: Any) -> bool:
         return (
             isinstance(v, str)
@@ -406,8 +470,8 @@ class Utils:
 
     #----------------------------------------
 
-    @classmethod
-    def weave(cls, lhs, rhs, *args) -> list[str]:
+    @staticmethod
+    def weave(lhs, rhs, *args) -> list[str]:
         """
         This function does a 'cross join' in the database sense, every line in lhs will be joined
         to every line in rhs (and this will be repeated with *args if present). This is useful for
@@ -424,18 +488,18 @@ class Utils:
     #if not hancho.config.use_color or os.name == "nt":
     #    return ""
 
-    @classmethod
-    def hex_to_rgb(cls, h : int) -> tuple[int, int, int]:
+    @staticmethod
+    def hex_to_rgb(h : int) -> tuple[int, int, int]:
         return ((h >> 16) & 0xFF, (h >>  8) & 0xFF, (h >>  0) & 0xFF)
 
-    @classmethod
-    def rgb_to_hex(cls, r : int, g : int, b : int) -> int:
+    @staticmethod
+    def rgb_to_hex(r : int, g : int, b : int) -> int:
         return (r << 16) | (g << 8) | (b << 0)
 
     #----------------------------------------
 
-    @classmethod
-    def rgb_to_ansi(cls, r : int, g : int, b : int) -> str:
+    @staticmethod
+    def rgb_to_ansi(r : int, g : int, b : int) -> str:
         if r == 0 and g == 0 and b == 0:
             return "\x1B[0m"
         return f"\x1B[38;2;{r};{g};{b}m"
@@ -444,64 +508,46 @@ class Utils:
     def hex_to_ansi(hex : int = 0):
         return Utils.rgb_to_ansi(*Utils.hex_to_rgb(hex))
 
-    @classmethod
-    def obj_to_ansi(cls, obj):
+    @staticmethod
+    def obj_to_ansi(obj):
         return Utils.rgb_to_ansi(*Utils.obj_to_rgb(obj))
 
     #----------------------------------------
 
-    @classmethod
-    def obj_to_hex(cls, obj) -> int:
+    @staticmethod
+    def obj_to_hex(obj) -> int:
         return Utils.rgb_to_hex(*Utils.obj_to_rgb(obj))
 
-    @classmethod
-    def obj_to_rgb(cls, obj) -> tuple[int, int, int]:
+    @staticmethod
+    def obj_to_rgb(obj) -> tuple[int, int, int]:
         import colorsys
-        rand = cls.rand
-        rand.seed(id(obj))
-        r, g, b = colorsys.hsv_to_rgb(rand.random(), 0.3, 1.0)
+        Utils.rand.seed(id(obj))
+        r, g, b = colorsys.hsv_to_rgb(Utils.rand.random(), 0.3, 1.0)
         return (int(r * 255), int(g * 255), int(b * 255))
 
     #----------------------------------------
 
-    @classmethod
-    def run_cmd(cls, cmd : str):
+    @staticmethod
+    def run_cmd(cmd : str):
         """Runs a console command synchronously and returns its stdout with whitespace stripped."""
         result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
     #----------------------------------------
 
-    @classmethod
-    def mtime(cls, filename : str):
+    @staticmethod
+    def mtime(filename : str):
         """Gets the file's mtime and tracks how many times we've called mtime()"""
         Stats.mtime_calls += 1
         return os.stat(filename).st_mtime_ns
 
     #----------------------------------------
 
-    @classmethod
-    def flatten(cls, variant : Any) -> list[Any]:
+    @staticmethod
+    def flatten(variant : Any) -> list[Any]:
         if Utils.is_iterable(variant):
             return [x for element in variant for x in Utils.flatten(element)]
         return [] if variant is None else [variant]
-
-    #----------------------------------------
-
-    @staticmethod
-    def _visit(k1, v1, func):
-        if Utils.is_collection(v1):
-            for k2, v2 in enumerate(v1):
-                Utils._visit(k2, v2, func)
-        elif Utils.is_mapping(v1):
-            for k2, v2 in v1.items():
-                Utils._visit(k2, v2, func)
-        else:
-            func(k1, v1)
-
-    @staticmethod
-    def visit(v, func):
-        return Utils._visit(None, v, func)
 
 # endregion
 ####################################################################################################
@@ -517,85 +563,73 @@ class Path:
     # path, which we can do with simple string manipulation.
 
     @staticmethod
+    @Utils.recursify_pairwise
     def rel(path1, path2):
-        if Utils.is_collection(path1):
-            result = [Path.rel(p, path2) for p in path1]
-        elif Utils.is_collection(path2):
-            result = [Path.rel(path1, p) for p in path2]
-        elif isinstance(path1, str) and isinstance(path2, str):
-            path1 = cast(str, Path.norm(path1))
-            path2 = cast(str, Path.norm(path2))
-            result = path1.removeprefix(path2 + "/") if path1 != path2 else "."
-        else:
-            raise AssertionError(f"rel() Don't know how to join a {type(path1).__name__} with a {type(path2).__name__}")
-        return result
+        return path1.removeprefix(path2 + "/") if path1 != path2 else "."
 
     @staticmethod
+    @Utils.recursify_pairwise
     def join(lhs, rhs):
-        # This version returns a str if lhs is str and rhs is str.
-        result = [os.path.join(lh, rh) for lh in Utils.flatten(lhs) for rh in Utils.flatten(rhs)]
-        return result[0] if len(result) == 1 else result
+        return os.path.join(lhs, rhs)
 
-    @staticmethod
-    def join2(lhs, rhs):
-        # This version returns [str] if lhs is str and rhs is str.
-        result = [os.path.join(lh, rh) for lh in Utils.flatten(lhs) for rh in Utils.flatten(rhs)]
-        return result
-
+    #----------------------------------------
     # We want these functions to work on Tree[str], so we run them through recursify.
 
     @staticmethod
-    @Utils.recursify_map
+    @Utils.recursify_xip
     def abs(p): return os.path.abspath(p) if p else ""
 
     @staticmethod
-    @Utils.recursify_map
-    def base(p): return os.path.basename(p)
+    @Utils.recursify_xip
+    def real(p): return os.path.realpath(p) if p else ""
 
     @staticmethod
-    @Utils.recursify_map
-    def norm(p): return os.path.normpath(p)
-
-    @staticmethod
-    @Utils.recursify_map
-    def real(p): return os.path.realpath(p)
-
-    @staticmethod
-    @Utils.recursify_map
-    def ext(p, new_ext): return os.path.splitext(p)[0] + new_ext
-
-    stem = Utils.recursify_map(lambda path: os.path.splitext(os.path.basename(path))[0])
-
-    @staticmethod
-    @Utils.recursify_any
-    def isabs(v): return isinstance(v, str) and len(v) > 0 and os.path.isabs(v)
-
-    @staticmethod
-    @Utils.recursify_any
-    def isfile(path): return isinstance(path, str) and os.path.isfile(path)
-
-    @staticmethod
-    @Utils.recursify_any
-    def isdir(path): return isinstance(path, str) and os.path.isdir(path)
-
-    @staticmethod
-    @Utils.recursify_any
-    def exists(path): return isinstance(path, str) and os.path.exists(path)
+    @Utils.recursify_xip
+    def norm(p): return os.path.normpath(p) if p else ""
 
     #----------------------------------------
 
     @staticmethod
-    @Utils.recursify_map
+    @Utils.recursify_xip
+    def base(p): return os.path.basename(p)
+
+    @staticmethod
+    @Utils.recursify_xip
+    def ext(p, new_ext): return os.path.splitext(p)[0] + new_ext
+
+    @staticmethod
+    @Utils.recursify_xip
+    def stem(p): return os.path.splitext(os.path.basename(p))[0]
+
+    @staticmethod
+    @Utils.recursify_xip
     def dirname(path): return os.path.dirname(path)
 
     @staticmethod
-    @Utils.recursify_map
+    @Utils.recursify_xip
     def split(path): return os.path.split(path)
 
     @staticmethod
-    @Utils.recursify_map
+    @Utils.recursify_xip
     def splitext(path): return os.path.splitext(path)
 
+    #----------------------------------------
+
+    @staticmethod
+    @Utils.recursify_all
+    def isabs(v): return isinstance(v, str) and len(v) > 0 and os.path.isabs(v)
+
+    @staticmethod
+    @Utils.recursify_all
+    def isfile(path): return isinstance(path, str) and os.path.isfile(path)
+
+    @staticmethod
+    @Utils.recursify_all
+    def isdir(path): return isinstance(path, str) and os.path.isdir(path)
+
+    @staticmethod
+    @Utils.recursify_all
+    def exists(path): return isinstance(path, str) and os.path.exists(path)
 
 # endregion
 ####################################################################################################
@@ -749,7 +783,6 @@ class Task:
         if not self._config.command:
             raise ValueError(f"Task {self._config.name} has no command! >{self._config.command}<")
 
-
         # ----------------------------------------
         # Check that all commands are valid
 
@@ -841,6 +874,12 @@ class Task:
             if Utils.in_event_loop():
                 self.create_asyncio_task()
 
+    @Utils.recursify_xip2
+    def create_parent_tasks(self, v):
+        if isinstance(v, Task):
+            v.create_asyncio_task()
+        return v
+
     def create_asyncio_task(self):
         assert Utils.in_event_loop()
 
@@ -850,11 +889,8 @@ class Task:
 
         # Recurse through all tasks referenced by _config so we don't deadlock while waiting for
         # them.
-        def visit(k, v):
-            if isinstance(v, Task):
-                v.create_asyncio_task()
 
-        Utils.visit(self._config, visit)
+        self.create_parent_tasks(self._config)
 
     # Promises temporarily disabled
     #def promise(self, field : str):
@@ -863,19 +899,20 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     async def task_top(self):
+        """
+        Hancho is using async member functions as both the names of states in a state machine and
+        as the implementation of the states themselves. This is slightly weird, but it allows for
+        a really nice system where states can run asynchronously and can pass parameters to each
+        other.
+
+        To dispatch each state function, we await the coroutine in self._state - this will return
+        either the next coroutine to run, or None if the task is complete. The self._state field
+        will stay at the last awaited coroutine (FINISHED, FAILED, etc) so that other tasks can
+        check on this one's status. Both the coroutine and the corresponding async function have
+        '__name__' fields that we can use for comparing and pretty-printing states.
+        """
+
         try:
-            # Hancho is using async member functions as both the names of states in a state machine
-            # and as the implementation of the states themselves. This is slightly weird, but it
-            # allows for a really nice system where states can run asynchronously and can pass
-            # parameters to each other.
-
-            # To dispatch each state function, we await the coroutine in self._state - this will
-            # return either the next coroutine to run, or None if the task is complete. The
-            # self._state field will stay at the last awaited coroutine (FINISHED, FAILED, etc)
-            # so that other tasks can check on this one's status. Both the coroutine and the
-            # corresponding async function have '__name__' fields that we can use for comparing
-            # and pretty-printing states.
-
             while self._state:
                 if not isawaitable(self._state):
                     raise AssertionError("Task._state is not awaitable, it should be")
@@ -899,100 +936,32 @@ class Task:
 
         # First, flatten all inputs and outputs.
         for name, files in self._config.items():
-            if not Task.is_io_field(name):
-                continue
-            self._config[name] = Utils.flatten(files)
+            if Task.is_io_field(name):
+                self._config[name] = Utils.flatten(files)
 
         # Await our dependencies. If any of our dependencies failed, we are cancelled.
         for name, files in self._config.items():
-            if not Task.is_io_field(name):
-                continue
-            for i, file in enumerate(files):
+            if Task.is_input_field(name):
+                for i, file in enumerate(files):
 
-                # Promises temporarily disabled
-                #if isinstance(file, Promise):
-                #    promise = cast(Promise, file)
-                #    result = await promise.task._asyncio_task
-                #    if result.__name__ == "FAILED":
-                #        return self.CANCELLED()
-                #    files[i] = promise.task[promise.field]
-                #elif isinstance(file, Task):
+                    # Promises temporarily disabled
+                    #if isinstance(file, Promise):
+                    #    promise = cast(Promise, file)
+                    #    result = await promise.task._asyncio_task
+                    #    if result.__name__ == "FAILED":
+                    #        return self.CANCELLED()
+                    #    files[i] = promise.task[promise.field]
+                    #elif isinstance(file, Task):
 
-                if isinstance(file, Task):
-                    task = cast(Task, file)
-                    result = await cast(asyncio.Task, task._asyncio_task)
-                    if result.__name__ == "FAILED":
-                        return self.CANCELLED()
-                    files[i] = task._out_files
-            self._config[name] = Utils.flatten(files)
+                    if isinstance(file, Task):
+                        task = cast(Task, file)
+                        result = await cast(asyncio.Task, task._asyncio_task)
+                        if result.__name__ == "FAILED":
+                            return self.CANCELLED()
+                        files[i] = task._out_files
+                self._config[name] = Utils.flatten(files)
 
         return self.SETUP()
-
-    # -----------------------------------------------------------------------------------------------
-    # Make all paths absolute and move all output files so they're under build_dir.
-
-    # If an input source had an absolute path and we swap the extension on it to make the
-    # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-    # lives under build_dir.
-
-    def fix_paths(self, name, files):
-        c = self._config
-        e = self._expand
-
-        if not files or not Task.is_io_field(name):
-            return files
-
-        files = Utils.flatten(files)
-
-        # All our inputs and outputs should be flat arrays of strings now.
-        if Task.is_io_field(name):
-            for i, _ in enumerate(files):
-                assert isinstance(files[i], str)
-
-        # Expand all in_ and out_ filenames.
-        # We _must_ expand these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != abs(prefix + swap(path))
-        files = Expander.expand_all(files, e)
-
-        # Relative paths are relative to script_cwd, so we tack that on to produce absolute paths.
-        files = Path.join2(c.script_cwd, files)
-        files = Utils.flatten(files)
-        files = Path.abs(files)
-
-        # Path _must_ be normed after expansion and joining, otherwise it might look like it's
-        # under script_cwd but it's not because the path could have "../../../../.." in it.
-        files = cast(list[str], Path.norm(files))
-
-        for i, _ in enumerate(files):
-            assert isinstance(files[i], str)
-
-            # Move all outputs under build_dir and ensure their directories exist.
-            if Task.is_output_field(name):
-                if not files[i].startswith(c.build_dir):
-                    files[i] = files[i].replace(c.task_cwd, c.build_dir)
-                if files[i].startswith(c.build_dir):
-                    dirname = Path.dirname(files[i])
-                    if dirname is not None:
-                        os.makedirs(dirname, exist_ok=True)
-
-            # Gather all file paths to _in_files/_out_files.
-            # WARNING: These filenames _must_ be absolute as they may be read from other repos.
-
-            assert Path.isabs(files[i])
-
-            # The check for is_depfile_field must come first, as it's a special case of a file that
-            # is technically an _output_ file, but also counts as an input file.
-            if Task.is_depfile_field(name):
-                if Path.isfile(files[i]):
-                    self._in_files.append(files[i])
-            elif Task.is_output_field(name):
-                self._out_files.append(files[i])
-            elif Task.is_input_field(name):
-                self._in_files.append(files[i])
-
-        assert isinstance(files, list)
-
-        return files
 
     # -----------------------------------------------------------------------------------------------
 
@@ -1009,27 +978,73 @@ class Task:
             self.log_d(0xFFFFFF, line)
 
         # ----------------------------------------
-        # Fix the paths in our in/out fields to point to the right directories.
+        # Path cleanup
 
-        for k, v in c.items():
-            if Task.is_io_field(k):
-                c[k] = self.fix_paths(k, v)
+        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+        # relative to script_cwd if we're calling a callback.
+        rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
 
-        # Now that we have gathered all the absolute paths, we can convert them back to
-        # relative so our command lines aren't enormous.
-        for k, v in c.items():
-            if Task.is_io_field(k):
-                for i in range(len(v)):
-                    if isinstance(c.command[0], str):
-                        v[i] = Path.rel(v[i], c.task_cwd)
-                    else:
-                        v[i] = Path.rel(v[i], c.script_cwd)
-                c[k] = v
+        for name, files in c.items():
+            if Task.is_io_field(name):
 
-        # Unwrap filenames if they're an array of one element.
-        for k, v in c.items():
-            if Task.is_io_field(k):
-                c[k] = v[0] if len(v) == 1 else v
+                # If an input source had an absolute path and we swap the extension on it to make the
+                # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+                # lives under build_dir.
+
+                # All our input and output fields should contain flat arrays of strings now.
+                assert Utils.is_flat(files, str)
+
+                # Fix the paths in our in/out fields to point to the right directories.
+                #files = self.fix_paths(name, files)
+                # Expand all in_ and out_ filenames.
+                # We _must_ expand these first before joining paths or the paths will be incorrect:
+                # prefix + swap(abs_path) != abs(prefix + swap(path))
+                files = Expander.expand_all(files, e)
+
+                # Initially, all our file paths are relative to the script_cwd that created this task.
+                # Join script_cwd with the filenames to produce absolute paths.
+                files = Path.join(c.script_cwd, files)
+                files = Utils.flatten(files)
+
+                assert Path.isabs(files)
+                #files = Path.abs(files)
+
+                # Path _must_ be normed after expansion and joining, otherwise it might look like it's
+                # under script_cwd but it's not because the path could have "../../../../.." in it.
+                files = cast(list[str], Path.norm(files))
+
+                # Move all outputs under build_dir and ensure their directories exist.
+                if Task.is_output_field(name):
+                    for i, _ in enumerate(files):
+
+                        # Note these conditionals are _NOT_ an if/elif pair!
+                        if not files[i].startswith(c.build_dir):
+                            files[i] = files[i].replace(c.task_cwd, c.build_dir)
+
+                        if files[i].startswith(c.build_dir):
+                            dirname = Path.dirname(files[i])
+                            if dirname is not None:
+                                os.makedirs(dirname, exist_ok=True)
+
+
+                # Gather all absolute file paths to _in_files/_out_files.
+                for i, _ in enumerate(files):
+                    # The check for is_depfile_field must come first, as it's a special case of a file that
+                    # is technically an _output_ file, but also counts as an input file.
+                    if Task.is_depfile_field(name):
+                        if Path.isfile(files[i]):
+                            self._in_files.append(files[i])
+                    elif Task.is_output_field(name):
+                        self._out_files.append(files[i])
+                    elif Task.is_input_field(name):
+                        self._in_files.append(files[i])
+
+                # Convert the fixed paths back to relative so our command lines aren't enormous.
+                for i in range(len(files)):
+                    files[i] = Path.rel(files[i], rel_dir)
+
+                # And unwrap filenames if they're an array of one element.
+                c[name] = files[0] if len(files) == 1 else files
 
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
@@ -1284,35 +1299,35 @@ class Stats:
     tasks_cancelled : int
     tasks_broken    : int
 
-    @classmethod
-    def reset(cls):
-        cls.id_counter = 0
-        cls.mtime_calls = 0
-        cls.time_load  = 0
-        cls.time_start = 0
-        cls.time_build = 0
-        cls.tasks_started = 0
-        cls.tasks_finished = 0
-        cls.tasks_failed = 0
-        cls.tasks_skipped = 0
-        cls.tasks_cancelled = 0
-        cls.tasks_broken = 0
+    @staticmethod
+    def reset():
+        Stats.id_counter = 0
+        Stats.mtime_calls = 0
+        Stats.time_load  = 0
+        Stats.time_start = 0
+        Stats.time_build = 0
+        Stats.tasks_started = 0
+        Stats.tasks_finished = 0
+        Stats.tasks_failed = 0
+        Stats.tasks_skipped = 0
+        Stats.tasks_cancelled = 0
+        Stats.tasks_broken = 0
 
-    @classmethod
-    def print_build_stats(cls):
-        Log.log_v(f"tasks started:    {cls.tasks_started}")
-        Log.log_v(f"tasks finished:   {cls.tasks_finished}")
-        Log.log_v(f"tasks failed:     {cls.tasks_failed}")
-        Log.log_v(f"tasks skipped:    {cls.tasks_skipped}")
-        Log.log_v(f"tasks cancelled:  {cls.tasks_cancelled}")
-        Log.log_v(f"tasks broken:     {cls.tasks_broken}")
-        Log.log_v(f"mtime calls:      {cls.mtime_calls}")
+    @staticmethod
+    def print_build_stats():
+        Log.log_v(f"tasks started:    {Stats.tasks_started}")
+        Log.log_v(f"tasks finished:   {Stats.tasks_finished}")
+        Log.log_v(f"tasks failed:     {Stats.tasks_failed}")
+        Log.log_v(f"tasks skipped:    {Stats.tasks_skipped}")
+        Log.log_v(f"tasks cancelled:  {Stats.tasks_cancelled}")
+        Log.log_v(f"tasks broken:     {Stats.tasks_broken}")
+        Log.log_v(f"mtime calls:      {Stats.mtime_calls}")
 
         sys.stdout.write("\n")
 
-        if cls.tasks_failed or cls.tasks_broken:
+        if Stats.tasks_failed or Stats.tasks_broken:
             Log.log(0xFF8080, "hancho: BUILD FAILED")
-        elif cls.tasks_finished:
+        elif Stats.tasks_finished:
             Log.log(0x80FF80, "hancho: BUILD PASSED")
         else:
             Log.log(0x8080FF, "hancho: BUILD CLEAN ")
@@ -1389,13 +1404,16 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
     # region
 
-    def __init__(self, context : Dict | Expander, trace : bool):
+    def __init__(self, context : Dict, trace : bool):
+        self._context : Dict
+        self.trace : bool
+
         # We save a copy of 'trace', otherwise we end up printing traces of reading trace.... :P
         super().__setattr__("_context", context)
         super().__setattr__("trace", trace)
 
-    @classmethod
-    def wrap(cls, context : Dict | Expander, trace : bool):
+    @staticmethod
+    def wrap(context : Dict | Expander, trace : bool):
         if isinstance(context, Expander):
             return context
 
@@ -1416,10 +1434,10 @@ class Expander(abc.MutableMapping[str, object]):
         return key in self._context
 
     def __iter__(self):
-        yield from self._context
+        yield from cast(Dict, self._context)
 
     def __len__(self):
-        return self._context.__len__()
+        return cast(Dict, self._context).__len__()
 
     def __repr__(self):
         result = f"{self.__class__.__name__} @ {hex(id(self))}"
@@ -1434,10 +1452,10 @@ class Expander(abc.MutableMapping[str, object]):
             raise KeyError from ex
 
     def __setitem__(self, key, val):
-        self._context.__setitem__(key, val)
+        cast(Dict, self._context).__setitem__(key, val)
 
     def __delitem__(self, key):
-        self._context.__delitem__(key)
+        cast(Dict, self._context).__delitem__(key)
 
     #----------------------------------------
 
@@ -1596,7 +1614,7 @@ class Expander(abc.MutableMapping[str, object]):
 #        return result
 
     @staticmethod
-    @Utils.recursify_map
+    @Utils.recursify_xip
     def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
         if Utils.is_macro(val):
             result = Expander._expand_macro(context, val)
@@ -1609,14 +1627,10 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     @staticmethod
+    @Utils.recursify_xip
     def expand_all[T](variant : Any, context : Dict | Expander, as_type : type[T] = object):
-        if Utils.is_collection(variant):
-            return [Expander.expand_all(v, context) for v in cast(list, variant)]
-        elif Utils.is_mapping(variant):
-            return {k: Expander.expand_all(v, context) for k, v in cast(dict, variant).items()}
-        elif not Utils.is_braced(variant):
+        if not Utils.is_braced(variant):
             return variant
-
         econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
 
         # Keep expanding the template until it's no longer a template or it's no
@@ -1642,9 +1656,9 @@ class Tracer:
     MAX_DEPTH : int = 20
     trellis_stack : list[str]
 
-    @classmethod
-    def reset(cls):
-        cls.trellis_stack = []
+    @staticmethod
+    def reset():
+        Tracer.trellis_stack = []
 
     def __init__(self, context : Dict | Expander, enter_message):
         self.trace : bool = cast(bool, getattr(context, "trace", False))
@@ -1715,19 +1729,19 @@ class Loader:
     cv_token : contextvars.Token
     match_pointer = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
 
-    @classmethod
-    def reset(cls, *args, **kwargs):
-        cls.real_filenames = set()
-        cls.dedupe = {}
-        cls.loaded_files = []
+    @staticmethod
+    def reset(*args, **kwargs):
+        Loader.real_filenames = set()
+        Loader.dedupe = {}
+        Loader.loaded_files = []
 
         root_config = Dict(Loader.default_config(), *args, **kwargs)
 
-        if not hasattr(cls, "cv_config"):
-            cls.cv_config  = contextvars.ContextVar("config")
-        if hasattr(cls, "cv_token"):
-            cls.cv_config.reset(cls.cv_token)
-        cls.cv_token = cls.cv_config.set(root_config)
+        if not hasattr(Loader, "cv_config"):
+            Loader.cv_config  = contextvars.ContextVar("config")
+        if hasattr(Loader, "cv_token"):
+            Loader.cv_config.reset(Loader.cv_token)
+        Loader.cv_token = Loader.cv_config.set(root_config)
 
     # -----------------------------------------------------------------------------------------------
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
@@ -1787,8 +1801,8 @@ class Loader:
 
     # -----------------------------------------------------------------------------------------------
 
-    @classmethod
-    def parse_flags(cls, args : list[str]):
+    @staticmethod
+    def parse_flags(args : list[str]):
         assert Utils.is_collection(args)
 
         import argparse
@@ -1850,8 +1864,8 @@ class Loader:
 
     # -----------------------------------------------------------------------------------------------
 
-    @classmethod
-    def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
+    @staticmethod
+    def load_file(script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
         script_path = Expander.expand_all(script_path, hancho.config, str)
         script_path = cast(str, Path.abs(script_path))
 
@@ -1860,10 +1874,10 @@ class Loader:
             Loader.loaded_files.append(script_path)
             source = file.read()
 
-        return cls.load_str(script_path, is_repo, source, *args, **kwargs)
+        return Loader.load_str(script_path, is_repo, source, *args, **kwargs)
 
-    @classmethod
-    def load_str(cls, script_path, is_repo : bool, source : str, *args, **kwargs) -> types.ModuleType:
+    @staticmethod
+    def load_str(script_path, is_repo : bool, source : str, *args, **kwargs) -> types.ModuleType:
         """This is split out from load_script for testing purposes."""
 
         code = compile(source, script_path, "exec", dont_inherit=True)
@@ -1910,11 +1924,11 @@ class Loader:
         config_dump = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
         dedupe_key = hash((Path.real(script_path), config_dump))
-        dedupe = cls.dedupe.get(dedupe_key, None)
+        dedupe = Loader.dedupe.get(dedupe_key, None)
         if dedupe is not None:
             return dedupe
 
-        cls.dedupe[dedupe_key] = new_module
+        Loader.dedupe[dedupe_key] = new_module
 
         # ----------------------------------------
         # Run the module.
@@ -1935,64 +1949,64 @@ class Runner:
     core_sem  : asyncio.Semaphore
     core_lock : asyncio.Lock
 
-    @classmethod
-    def reset(cls, core_max):
-        cls.all_tasks = []
-        cls.core_max  = core_max
-        cls.core_sem  = asyncio.Semaphore(core_max)
-        cls.core_lock = asyncio.Lock()
+    @staticmethod
+    def reset(core_max):
+        Runner.all_tasks = []
+        Runner.core_max  = core_max
+        Runner.core_sem  = asyncio.Semaphore(core_max)
+        Runner.core_lock = asyncio.Lock()
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    async def acquire(cls, count):
+    @staticmethod
+    async def acquire(count):
         if count > Runner.core_max:
             raise ValueError("Tried to acquire {count} cores, which exceeds the max {Runner.core_max}")
         async with Runner.core_lock:
             for _ in range(count):
                 await Runner.core_sem.acquire()
 
-    @classmethod
-    def release(cls, count):
+    @staticmethod
+    def release(count):
         for _ in range(count):
             Runner.core_sem.release()
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    def enable_all_tasks(cls):
-        for task in cls.all_tasks:
+    @staticmethod
+    def enable_all_tasks():
+        for task in Runner.all_tasks:
             task.enable()
 
-    @classmethod
-    def enable_root_tasks(cls):
-        for task in cls.all_tasks:
+    @staticmethod
+    def enable_root_tasks():
+        for task in Runner.all_tasks:
             if task._config.this_repo == Loader.root_repo:
                 task.enable()
 
-    @classmethod
-    def enable_tasks_by_regex(cls, target_regex):
-        for task in cls.all_tasks:
+    @staticmethod
+    def enable_tasks_by_regex(target_regex):
+        for task in Runner.all_tasks:
             if target_regex.search(task._config.name):
                 task.enable()
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    def sync_run_tasks(cls):
+    @staticmethod
+    def sync_run_tasks():
         """Synchronously run all tasks until we're done with all of them."""
-        return asyncio.run(cls.async_run_tasks())
+        return asyncio.run(Runner.async_run_tasks())
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    async def async_run_tasks(cls):
+    @staticmethod
+    async def async_run_tasks():
         """Run all tasks until we run out."""
 
         # Create asyncio tasks for all enabled Hancho tasks.
 
         time_a = time.perf_counter()
-        for task in cls.all_tasks:
+        for task in Runner.all_tasks:
             if task._config.enabled:
                 task.create_asyncio_task()
 
@@ -2004,7 +2018,6 @@ class Runner:
         # tasks after awaiting each one. Because we're awaiting tasks in the order they were
         # created, this will effectively walk through all tasks in dependency order.
 
-        #while cls.started_tasks:
         while True:
             all_tasks = asyncio.all_tasks()
             current = asyncio.current_task()
@@ -2036,10 +2049,10 @@ class Runner:
 
     #--------------------------------------------------------------------------------
 
-    @classmethod
-    def run_tool(cls, tool : str):
+    @staticmethod
+    def run_tool(tool : str):
         if tool == "clean":
-            for task in cls.all_tasks:
+            for task in Runner.all_tasks:
                 build_root = Path.real(Expander.eval(task._expand, "build_root", str))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
