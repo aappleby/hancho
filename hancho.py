@@ -985,14 +985,12 @@ class Task:
             # join(str, str) to return a str will be happy.
             config[key] = files[0] if len(files) == 1 else files
 
+        # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
         config.name    = Expander.expand_all("{name}", expand)
         config.desc    = Expander.expand_all("{desc}", expand)
         config.command = Expander.expand_all("{command}", expand)
-
-        if config.strict and Utils.is_braced(config.command):
-            raise Task.BROKEN("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         self.log_d("Task config after expand:", 0xFFFFFF)
         for line in str(config).split("\n"):
@@ -1002,6 +1000,12 @@ class Task:
         if config.dry_run:
             self.log_v(f"Task done : '{config.name}' - '{config.desc}'")
             return
+
+        # ----------------------------------------
+        # Run some sanity checks
+
+        if config.strict and Utils.is_braced(config.command):
+            raise Task.BROKEN("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         # Check for missing inputs
         for file in self._in_files:
@@ -1022,17 +1026,24 @@ class Task:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.real_filenames.add(real_file)
 
-        # Check if we need a rebuild
+        # ----------------------------------------
+        # See if we need to rebuild our outputs
+
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
             raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
+
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
+        # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
+
         await Runner.acquire(config.core_count)
         self._core_count = config.core_count
 
+        # ----------------------------------------
         # Run all the task's commands
+
         self.log(f"Task started : '{config.name}' - '{config.desc}'")
 
         for command in cast(list, config.command):
@@ -1045,7 +1056,9 @@ class Task:
             else:
                 raise Task.FAILED(f"Command {command} is not a string or a callable?")
 
+        # ----------------------------------------
         # Done!
+
         self.log_v(f"Task done : '{config.name}' - '{config.desc}'")
 
     # ----------------------------------------------------------------------------------------------
@@ -1218,20 +1231,13 @@ class Task:
         self.log(f"    reason   = '{reason}'", 0xFF0000)
         self.log(f"    except   = '{ex}'", 0xFF0000)
         if self._stdout or self._stderr:
-            self.log_stdout()
-
-    # -----------------------------------------------------------------------------------------------
-
-    def log_stdout(self):
-        self.log("========== Stdout ==========")
-        for line in self._stdout.strip().split("\n"):
-            self.log(line)
-        self.log("========== Stderr ==========")
-        for line in self._stderr.strip().split("\n"):
-            self.log(line)
-        self.log("============================")
-
-    # -----------------------------------------------------------------------------------------------
+            self.log("========== Stdout ==========")
+            for line in self._stdout.strip().split("\n"):
+                self.log(line)
+            self.log("========== Stderr ==========")
+            for line in self._stderr.strip().split("\n"):
+                self.log(line)
+            self.log("============================")
 
 # endregion
 ####################################################################################################
