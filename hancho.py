@@ -315,10 +315,13 @@ class Utils:
         Utils.mtime_calls = 0
 
     #----------------------------------------
+    # Yes Claude, I know these recursify functions are weird and probably need better names.
 
     @staticmethod
     def recursify_all(func: abc.Callable[..., bool]):
-        """Turns a function that maps scalars to bools into one that evaluates any([func(x) for x in v])."""
+        """
+        Creates a function that recursively checks if 'func' is true for all fields of a Tree[T].
+        """
 
         def outer(v, *args, **kwargs):
             if Utils.is_collection(v):
@@ -974,12 +977,6 @@ class Task:
         # relative to script_cwd if we're calling a callback.
 
         for key, files in [i for i in config.items() if Task.is_io_field(*i)]:
-
-            # All our input and output fields should contain flat arrays of strings now.
-            if not Utils.is_flat_list_of(files, str):
-                raise Task.BROKEN(
-                    "SETUP got a task without flattened input/output fields, or some of the " +
-                    "fields were non-strings")
 
             # Do all the file path remapping so our commands will work
             files = self.remap_io_field_paths(key, files)
