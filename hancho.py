@@ -766,9 +766,6 @@ class Task:
         # really possible.
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
-        # State machine, holds a pending coroutine for the next state (or None)
-        self._state = None
-
         # Bookkeeping stuff
         self._task_id : int = 0
         self._stdout : str = ""
@@ -915,160 +912,189 @@ class Task:
     # -----------------------------------------------------------------------------------------------
 
     async def task_top(self):
-        """
-        Hancho is using async member functions as both the names of states in a state machine and
-        as the implementation of the states themselves. This is slightly weird, but it allows for
-        a really nice system where states can run asynchronously and can pass parameters to each
-        other.
-
-        To dispatch each state function, we await the coroutine in self._state - this will return
-        either the next coroutine to run, or None if the task is complete. The self._state field
-        will stay at the last awaited coroutine (FINISHED, FAILED, etc) so that other tasks can
-        check on this one's status. Both the coroutine and the corresponding async function have
-        '__name__' fields that we can use for comparing and pretty-printing states.
-        """
-
         try:
 
-            while True:
-                ####################################################################################
+            ####################################################################################
 
-                is_cancelled = False
-                for name, files in self._config.items():
-                    if Task.is_input_field(name):
-                        for i, file in enumerate(files):
-                            if isinstance(file, Task):
-                                task = cast(Task, file)
-                                task_status = await cast(asyncio.Task, task._asyncio_task)
-                                if task_status == Task.Status.FAILED:
-                                    is_cancelled = True
-                                    break
-                                files[i] = task._out_files
-                        if is_cancelled:
-                            break
-                        self._config[name] = Utils.flatten(files)
+            is_cancelled = False
+            for name, files in self._config.items():
+                if Task.is_input_field(name):
+                    for i, file in enumerate(files):
+                        if isinstance(file, Task):
+                            task = cast(Task, file)
+                            task_status = await cast(asyncio.Task, task._asyncio_task)
+                            if task_status == Task.Status.FAILED:
+                                is_cancelled = True
+                                break
+                            files[i] = task._out_files
+                    if is_cancelled:
+                        break
+                    self._config[name] = Utils.flatten(files)
 
-                if is_cancelled:
-                    self._state = None
-                    self._status = Task.Status.CANCELLED
-                    self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+            if is_cancelled:
+                self._status = Task.Status.CANCELLED
+                self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+                return self._status
+
+            ####################################################################################
+
+            # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
+            Task.id_counter += 1
+            self._task_id = Task.id_counter
+
+            c = self._config
+            e = self._expand
+
+            self.log_d("Task config before expand:", 0xFFFFFF)
+            for line in str(c).strip().split("\n"):
+                self.log_d(line, 0xFFFFFF)
+
+            # ----------------------------------------
+            # Path cleanup
+
+            # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+            # relative to script_cwd if we're calling a callback.
+            #rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
+
+            for name, files in c.items():
+                if not Task.is_io_field(name):
+                    continue
+
+                # First, flatten our list of files so we don't have to deal with weird nested
+                # structures.
+                files = Utils.flatten(files)
+
+                # All our input and output fields should contain flat arrays of strings now.
+                if not Utils.is_flat_list_of(files, str):
+                    raise AssertionError(
+                        "SETUP got a task without flattened input/output fields, or some of the " +
+                        "fields were non-strings"
+                    )
+
+                # Do all the file path remapping so our commands will work
+                files = self.remap_io_field_paths(name, files)
+
+                # and unwrap filenames if they're an array of one element so that scripts expecting
+                # join(str, str) to return a str will be happy.
+                c[name] = files[0] if len(files) == 1 else files
+
+            # ----------------------------------------
+            # Paths are cleaned up, we can expand name/desc/command
+
+            c.name    = Expander.expand_all("{name}", e)
+            c.desc    = Expander.expand_all("{desc}", e)
+            c.command = Expander.expand_all("{command}", e)
+
+            if c.strict and Utils.is_braced(c.command):
+                self._status = Task.Status.BROKEN
+                rebuild_reason = "We are in strict mode and this task's command has curly braces in it - did you typo a template?"
+                self.log_broken(rebuild_reason)
+                return self._status
+
+
+            self.log_d("Task config after expand:", 0xFFFFFF)
+            for line in str(c).strip().split("\n"):
+                self.log_d(line, 0xFFFFFF)
+
+            if c.dry_run:
+                self._status = Task.Status.FINISHED
+                self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
+                return self._status
+
+            ####################################################################################
+
+            broke_reason = ""
+
+            # Check for missing inputs
+            for file in self._in_files:
+                assert Path.isabs(file)
+                if not Path.exists(file):
+                    broke_reason = f"Input file missing - {file}"
                     break
 
-                ####################################################################################
-
-                # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
-                Task.id_counter += 1
-                self._task_id = Task.id_counter
-
-                c = self._config
-                e = self._expand
-
-                self.log_d("Task config before expand:", 0xFFFFFF)
-                for line in str(c).strip().split("\n"):
-                    self.log_d(line, 0xFFFFFF)
-
-                # ----------------------------------------
-                # Path cleanup
-
-                # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-                # relative to script_cwd if we're calling a callback.
-                #rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
-
-                for name, files in c.items():
-                    if not Task.is_io_field(name):
-                        continue
-
-                    # First, flatten our list of files so we don't have to deal with weird nested
-                    # structures.
-                    files = Utils.flatten(files)
-
-                    # All our input and output fields should contain flat arrays of strings now.
-                    if not Utils.is_flat_list_of(files, str):
-                        raise AssertionError(
-                            "SETUP got a task without flattened input/output fields, or some of the " +
-                            "fields were non-strings"
-                        )
-
-                    # Do all the file path remapping so our commands will work
-                    files = self.remap_io_field_paths(name, files)
-
-                    # and unwrap filenames if they're an array of one element so that scripts expecting
-                    # join(str, str) to return a str will be happy.
-                    c[name] = files[0] if len(files) == 1 else files
-
-                # ----------------------------------------
-                # Paths are cleaned up, we can expand name/desc/command
-
-                c.name    = Expander.expand_all("{name}", e)
-                c.desc    = Expander.expand_all("{desc}", e)
-                c.command = Expander.expand_all("{command}", e)
-
-                if c.strict and Utils.is_braced(c.command):
-                    self._state = None
-                    self._status = Task.Status.BROKEN
-                    reason = "We are in strict mode and this task's command has curly braces in it - did you typo a template?"
-                    self.log_broken(reason)
+            # Check that all build files would end up under build_dir
+            for file in self._out_files:
+                assert Path.isabs(file)
+                if not file.startswith(self._config.build_dir):
+                    broke_reason = f"Path error, output file {file} is not under build_dir {self._config.build_dir}"
                     break
 
+            # Check for task collisions
+            for file in self._out_files:
+                real_file = cast(str, Path.real(file))
+                if real_file in Loader.real_filenames:
+                    broke_reason = f"TaskCollision: Multiple tasks build {real_file}"
+                    break
+                Loader.real_filenames.add(real_file)
 
-                self.log_d("Task config after expand:", 0xFFFFFF)
-                for line in str(c).strip().split("\n"):
-                    self.log_d(line, 0xFFFFFF)
+            if broke_reason:
+                self._status = Task.Status.BROKEN
+                self.log_broken(broke_reason)
+                return self._status
 
-                if c.dry_run:
-                    self._state = None
-                    self._status = Task.Status.FINISHED
-                    self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
+            ####################################################################################
+            # Check if we need a rebuild
+
+            rebuild_reason = self.rebuild_reason()
+
+            if rebuild_reason and rebuild_reason.startswith("BROKEN"):
+                self._status = Task.Status.BROKEN
+                self.log_broken(f"BROKEN: Invalid dependency file format {c.depformat}")
+                return None
+
+            elif rebuild_reason:
+                pass
+            else:
+                self._status = Task.Status.SKIPPED
+                self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+                return None
+
+            ####################################################################################
+
+            """Wait for enough jobs to free up to run this task and then run the commands."""
+
+            await Runner.acquire(self._config.core_count)
+            self._core_count = self._config.core_count
+
+            self.log(f"Task started : '{self._config.name}' - '{self._config.desc}'")
+            self.log_v(f"Task rebuilding because: {rebuild_reason}")
+
+            #self._state = self.RUN_COMMAND()
+
+            ####################################################################################
+
+            fail_reason = ""
+            fail_ex = None
+
+            for command in self._config.command:
+                if isinstance(command, str):
+                    returncode = await self.run_process(command)
+                    if returncode:
+                        fail_reason = "Command return code was non-zero"
+                        break
+
+                elif callable(command):
+                    self.log_v(f"{Path.rel(c.script_cwd, c.repo_dir)}$ {command}", 0x8080FF)
+
+                    try:
+                        await self.call_callback(command)
+                    except Exception as ex:
+                        fail_reason = "Callback threw an exception"
+                        fail_ex = ex
+                        break
+
+                else:
+                    fail_reason = "Command is not a string or a callable?"
                     break
 
-                #self._state = self.SANITY_CHECK()
+            if fail_reason:
+                self._status = Task.Status.FAILED
+                self.log_failed(fail_reason, fail_ex)
+            else:
+                self._status = Task.Status.FINISHED
+                self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
 
-                ####################################################################################
-
-                broke_reason = ""
-
-                # Check for missing inputs
-                for file in self._in_files:
-                    assert Path.isabs(file)
-                    if not Path.exists(file):
-                        broke_reason = f"Input file missing - {file}"
-                        break
-
-                # Check that all build files would end up under build_dir
-                for file in self._out_files:
-                    assert Path.isabs(file)
-                    if not file.startswith(self._config.build_dir):
-                        broke_reason = f"Path error, output file {file} is not under build_dir {self._config.build_dir}"
-                        break
-
-                # Check for task collisions
-                for file in self._out_files:
-                    real_file = cast(str, Path.real(file))
-                    if real_file in Loader.real_filenames:
-                        broke_reason = f"TaskCollision: Multiple tasks build {real_file}"
-                        break
-                    Loader.real_filenames.add(real_file)
-
-                if broke_reason:
-                    self._state = None
-                    self._status = Task.Status.BROKEN
-                    self.log_broken(broke_reason)
-                    break
-
-                self._state = self.CHECK_DEPS()
-
-                ####################################################################################
-
-                while self._state:
-                    if not isawaitable(self._state):
-                        raise AssertionError("Task._state is not awaitable, it should be")
-                    next_state = await self._state
-                    if next_state is None:
-                        break
-                    self._state = next_state
-
-                break
-
+            self._state = None
 
         finally:
             if self._core_count:
@@ -1146,60 +1172,34 @@ class Task:
 
     # -----------------------------------------------------------------------------------------------
 
-    async def SANITY_CHECK(self):
-        # Check for missing inputs
-        for file in self._in_files:
-            assert Path.isabs(file)
-            if not Path.exists(file):
-                return self.BROKEN(f"Input file missing - {file}")
-
-        # Check that all build files would end up under build_dir
-        for file in self._out_files:
-            assert Path.isabs(file)
-            if not file.startswith(self._config.build_dir):
-                return self.BROKEN(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
-
-        # Check for task collisions
-        for file in self._out_files:
-            real_file = cast(str, Path.real(file))
-            if real_file in Loader.real_filenames:
-                return self.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            Loader.real_filenames.add(real_file)
-
-        return self.CHECK_DEPS()
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def CHECK_DEPS(self):
-        # Check if we need a rebuild
-
+    def rebuild_reason(self) -> str:
         c = self._config
         cwd = os.getcwd()
 
         if self._config.rebuild:
-            return self.RUNNING("Target forced to rebuild")
+            return "Target forced to rebuild"
         if not self._in_files:
-            return self.RUNNING("Always rebuild a target with no inputs")
+            return "Always rebuild a target with no inputs"
         if not self._out_files:
-            return self.RUNNING("Always rebuild a target with no outputs")
+            return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
         for file in self._out_files:
             if not Path.exists(file):
-                return self.RUNNING(f"{Path.rel(file, cwd)} is missing")
+                return f"{Path.rel(file, cwd)} is missing"
 
         # Check if any of our input files are newer than the output files.
         min_out = min(Utils.mtime(f) for f in self._out_files)
         if Utils.mtime(__file__) >= min_out:
-            return self.RUNNING("hancho.py has changed")
+            return "hancho.py has changed"
 
         for file in self._in_files:
             if Utils.mtime(file) >= min_out:
-                return self.RUNNING(f"{Path.rel(file, cwd)} has changed")
+                return f"{Path.rel(file, cwd)} has changed"
 
         for file in self._loaded_files:
             if Utils.mtime(file) >= min_out:
-                return self.RUNNING(f"{Path.rel(file, cwd)} has changed")
+                return f"{Path.rel(file, cwd)} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
 
@@ -1215,93 +1215,48 @@ class Task:
                     deplines = depcontents.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    return self.BROKEN(f"Invalid dependency file format {c.depformat}")
+                    return f"BROKEN: Invalid dependency file format {c.depformat}"
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [cast(str, Path.join(c.task_cwd, d)) for d in deplines]
                 for abs_file in deplines:
                     if Utils.mtime(abs_file) >= min_out:
-                        return self.RUNNING(f"Rebuilding because {Path.rel(abs_file, cwd)} has changed")
-
+                        return f"Rebuilding because {Path.rel(abs_file, cwd)} has changed"
 
         # All checks passed; we don't need to rebuild this output.
-        return self.SKIPPED()
+        return ""
 
-    # -----------------------------------------------------------------------------------------------
 
-    async def RUNNING(self, reason):
-        """Wait for enough jobs to free up to run this task and then run the commands."""
+    #-----------------------------------------------------------------------------------------------
 
-        await Runner.acquire(self._config.core_count)
-        self._core_count = self._config.core_count
-
-        self.log(f"Task started : '{self._config.name}' - '{self._config.desc}'")
-        self.log_v(f"Task rebuilding because: {reason}")
-
-        return self.RUN_COMMAND(0)
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def RUN_COMMAND(self, index):
+    async def run_process(self, command):
         c = self._config
-        command = c.command[index]
+        self.log_v(f"{Path.rel(c.task_cwd, c.repo_dir)}$ {command}", 0x8080FF)
 
-        if isinstance(command, str):
-            self.log_v(f"{Path.rel(c.task_cwd, c.repo_dir)}$ {command}", 0x8080FF)
+        # Create the subprocess via asyncio and then await the result.
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd    = c.task_cwd,
+            stdout = asyncio.subprocess.PIPE,
+            stderr = asyncio.subprocess.PIPE,
+        )
+        (stdout_data, stderr_data) = await proc.communicate()
 
-            # Create the subprocess via asyncio and then await the result.
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                cwd    = c.task_cwd,
-                stdout = asyncio.subprocess.PIPE,
-                stderr = asyncio.subprocess.PIPE,
-            )
-            (stdout_data, stderr_data) = await proc.communicate()
+        self._stdout = stdout_data.decode()
+        self._stderr = stderr_data.decode()
+        return proc.returncode
 
-            self._stdout = stdout_data.decode()
-            self._stderr = stderr_data.decode()
-
-            if proc.returncode:
-                return self.FAILED("Command return code was non-zero")
-
-        elif callable(command):
-            self.log_v(f"{Path.rel(c.script_cwd, c.repo_dir)}$ {command}", 0x8080FF)
-
-            try:
-                with chdir(c.script_cwd):
-                    result = command(self)
-                    while isawaitable(result):
-                        result = await result
-            except Exception as ex:
-                return self.FAILED("Callback threw an exception", ex)
-
-        else:
-            return self.BROKEN("Command is not a string or a callable?")
-
-        if index == len(c.command) - 1:
-            return self.FINISHED()
-        else:
-            return self.RUN_COMMAND(index + 1)
-
+    async def call_callback(self, command):
+        c = self._config
+        with chdir(c.script_cwd):
+            result = command(self)
+            while isawaitable(result):
+                result = await result
+        return result
 
     # -----------------------------------------------------------------------------------------------
 
-    async def FINISHED(self):
-        self._status = Task.Status.FINISHED
-        self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
-        return None
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def CANCELLED(self):
-        self._status = Task.Status.CANCELLED
-        self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-        return None
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def FAILED(self, reason, ex = None):
-        self._status = Task.Status.FAILED
+    def log_failed(self, reason, ex = None):
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
         self.log("Command failed!", 0xFF0000)
@@ -1314,33 +1269,9 @@ class Task:
         self.log(f"    except   = '{ex}'", 0xFF0000)
         self.log_stdout()
 
-        return None
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def SKIPPED(self):
-        self._status = Task.Status.SKIPPED
-        self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-        return None
-
     # -----------------------------------------------------------------------------------------------
 
     def log_broken(self, reason):
-        self._status = Task.Status.BROKEN
-        script_path = Path.join(self._config.script_cwd, self._config.script_file)
-
-        self.log("Task broken!", 0xFF0000)
-        self.log(f"From {script_path}:", 0xFF0000)
-        self.log(f"    Task     = '{self._config.name}' : '{self._config.desc}'", 0xFF0000)
-        self.log(f"    task_cwd = '{self._config.task_cwd}'", 0xFF0000)
-        self.log(f"    getcwd   = '{os.getcwd()}'", 0xFF0000)
-        self.log(f"    command  = '{self._config.command}'", 0xFF0000)
-        self.log(f"    reason   = '{reason}'", 0xFF0000)
-
-        return None
-
-    async def BROKEN(self, reason):
-        self._status = Task.Status.BROKEN
         script_path = Path.join(self._config.script_cwd, self._config.script_file)
 
         self.log("Task broken!", 0xFF0000)

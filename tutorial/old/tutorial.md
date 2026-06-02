@@ -125,7 +125,6 @@ Task @ 0x727f0371d6a0 {
     _task_index = 0,
     _in_files = [],
     _out_files = [],
-    _state = 0,
     _reason = None,
     _asyncio_task = None,
     _loaded_files = [
