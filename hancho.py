@@ -135,7 +135,7 @@ class Log:
     buffer : str
     con_w : int
     reset_color = "\x1B[0m"
-    match_escapes = re.compile(r"\x1B.*?m")
+    match_escapes = re.compile(r"(\x1B.*?m)")
 
     @staticmethod
     def reset():
@@ -144,23 +144,39 @@ class Log:
 
     @staticmethod
     def clip_printable(text, width):
-        result = ""
+        """
+        Clips a string with embedded escape codes (such as ANSI color codes) so that it fits in
+        'width' without breaking the escape codes.
+
+        If the printable portion exceeds 'width', it will be clipped and capped with '...'.
+        """
+        # Split the text using the escape sequences as separators.
+        # Even chunks are printable text, odd chunks are escape sequences.
+        chunks = Log.match_escapes.split(text)
+
+        # Measure the printable portion of the string.
         accum = 0
+        for i, chunk in enumerate(chunks):
+            if (i & 1) == 0:
+                accum += len(chunk)
 
-        while text:
-            match = Log.match_escapes.search(text)
-            if not match:
-                result += text[:width - accum]
-                break
-            chunk = text[:match.start()][:width - accum]
-            result += chunk
-            accum += len(chunk)
-            if accum == width:
-                return result
-            result += match.group()
-            text = text[match.end():]
+        # If it fits in 'width', do nothing.
+        if accum <= width:
+            return text
 
-        return result
+        # If it doesn't fit, concatenate text and escape codes but clip text when we hit width-3
+        # and then append the '...'.
+        accum = 0
+        result = ""
+        for i, chunk in enumerate(chunks):
+            if i & 1:
+                result += chunk
+            else:
+                chunk = chunk[:(width - 3) - accum]
+                result += chunk
+                accum += len(chunk)
+
+        return result + "..."
 
     @staticmethod
     def log(message : str | list[str], color : int = 0):
@@ -931,31 +947,36 @@ class Task:
     async def task_top(self):
         try:
             await self.task_main()
+            self._status = Task.Status.FINISHED
         except TaskBroken as ex:
-            self._status = Task.Status.BROKEN
             self.log_error("Task broken!", str(ex), ex.err)
+            self._status = Task.Status.BROKEN
         except TaskFailed as ex:
-            self._status = Task.Status.FAILED
             self.log_error("Task failed!", str(ex), ex.err)
-        except TaskCancelled:
-            self._status = Task.Status.CANCELLED
-            self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-        except TaskSkipped:
-            self._status = Task.Status.SKIPPED
-            self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
-        except Exception as ex:
             self._status = Task.Status.FAILED
+        except TaskCancelled:
+            self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+            self._status = Task.Status.CANCELLED
+        except TaskSkipped:
+            self.log_v(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
+            self._status = Task.Status.SKIPPED
+        except Exception as ex:
             self.log_error("Task failed!", "Task threw an exception", ex)
+            self._status = Task.Status.FAILED
         finally:
             if self._core_count:
                 Runner.release(self._core_count)
                 self._core_count = 0
+
         return self._status
 
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
+        c = self._config
+        e = self._expand
 
+        # Await all tasks in our input fields,
         for name, files in self._config.items():
             if Task.is_input_field(name):
                 for i, file in enumerate(files):
@@ -967,21 +988,13 @@ class Task:
                         files[i] = task._out_files
                 self._config[name] = Utils.flatten(files)
 
-        ####################################################################################
-
         # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
         Task.id_counter += 1
         self._task_id = Task.id_counter
 
-        c = self._config
-        e = self._expand
-
         self.log_d("Task config before expand:", 0xFFFFFF)
-        for line in str(c).strip().split("\n"):
+        for line in str(c).split("\n"):
             self.log_d(line, 0xFFFFFF)
-
-        # ----------------------------------------
-        # Path cleanup
 
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_cwd if we're calling a callback.
@@ -1008,7 +1021,6 @@ class Task:
             # join(str, str) to return a str will be happy.
             c[name] = files[0] if len(files) == 1 else files
 
-        # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
         c.name    = Expander.expand_all("{name}", e)
@@ -1019,15 +1031,13 @@ class Task:
             raise TaskBroken("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         self.log_d("Task config after expand:", 0xFFFFFF)
-        for line in str(c).strip().split("\n"):
+        for line in str(c).split("\n"):
             self.log_d(line, 0xFFFFFF)
 
+        # Dry runs early out after config expansion
         if c.dry_run:
-            self._status = Task.Status.FINISHED
             self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
             return
-
-        ####################################################################################
 
         # Check for missing inputs
         for file in self._in_files:
@@ -1048,49 +1058,33 @@ class Task:
                 raise TaskBroken(f"TaskCollision: Multiple tasks build {real_file}", None)
             Loader.real_filenames.add(real_file)
 
-        ####################################################################################
         # Check if we need a rebuild
-
         rebuild_reason = self.rebuild_reason()
-
         if not rebuild_reason:
             raise TaskSkipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", None)
+        self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
-        ####################################################################################
-
-        """Wait for enough jobs to free up to run this task and then run the commands."""
-
+        # Wait for enough jobs to free up to run this task.
         await Runner.acquire(self._config.core_count)
         self._core_count = self._config.core_count
 
+        # Run all the task's commands
         self.log(f"Task started : '{self._config.name}' - '{self._config.desc}'")
-        self.log_v(f"Task rebuilding because: {rebuild_reason}")
-
-        ####################################################################################
-
-        fail_reason = ""
-        fail_ex = None
 
         for command in self._config.command:
             if isinstance(command, str):
-                returncode = await self.run_process(command)
+                returncode = await self.run_command(command)
                 if returncode:
-                    fail_reason = "Command return code was non-zero"
-                    break
+                    raise TaskFailed(f"Command return code was non-zero : {returncode}", None)
 
             elif callable(command):
                 await self.call_callback(command)
 
             else:
-                fail_reason = "Command is not a string or a callable?"
-                break
+                raise TaskFailed(f"Command {command} is not a string or a callable?", None)
 
-        if fail_reason:
-            self._status = Task.Status.FAILED
-            self.log_error("Task failed!", fail_reason, fail_ex)
-        else:
-            self._status = Task.Status.FINISHED
-            self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
+        # Done!
+        self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1217,7 +1211,7 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    async def run_process(self, command):
+    async def run_command(self, command):
         c = self._config
         self.log_v(f"{Path.rel(c.task_cwd, c.repo_dir)}$ {command}", 0x8080FF)
 
@@ -1243,7 +1237,7 @@ class Task:
 
         with chdir(self._config.script_cwd):
             result = command(self)
-            while isawaitable(result):
+            if isawaitable(result):
                 result = await result
 
         return result
