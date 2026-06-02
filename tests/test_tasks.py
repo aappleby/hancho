@@ -248,8 +248,9 @@ class TestTasks(unittest.TestCase):
 
     def test_missing_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
-        with self.assertRaises(ValueError):
-            hancho.Task(not_a_command = "echo Hello World")
+        bad_task = hancho.Task(not_a_command = "echo Hello World")
+        self.run_tasks(-1)
+        self.assertEqual(bad_task._status, hancho.Task.Status.BROKEN)
 
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.
@@ -433,11 +434,9 @@ class TestTasks(unittest.TestCase):
 
     def test_multiple_depfiles(self):
         # Creating a task with multiple depfile inputs should assert.
-        with self.assertRaises(AssertionError):
-            hancho.Task(
-                command = "echo Hello World",
-                in_depfile = ["foo.txt", "bar.txt"]
-            )
+        bad_task = hancho.Task(command = "echo Hello World", in_depfile = ["foo.txt", "bar.txt"])
+        self.run_tasks(-1)
+        self.assertEqual(bad_task._status, hancho.Task.Status.BROKEN)
 
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
@@ -556,13 +555,13 @@ class TestTasks(unittest.TestCase):
 
 
     def test_no_mixed_commands(self):
-        with self.assertRaises(ValueError):
-            hancho.Task(
-                command = [
-                    "echo Hello World",
-                    lambda task: print(f"Hello World {type(task)}"),
-                ]
-            )
+        bad_task = hancho.Task(command = [
+            "echo Hello World",
+            lambda task: print(f"Hello World {type(task)}")
+        ])
+
+        self.run_tasks(-1)
+        self.assertEqual(bad_task._status, hancho.Task.Status.BROKEN)
 
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.

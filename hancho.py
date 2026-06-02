@@ -751,10 +751,7 @@ class Tool(Dict):
 
 class Task:
 
-    class TaskException(Exception):
-        def __init__(self, msg, err):
-            super().__init__(msg)
-            self.err = err
+    class TaskException(Exception): pass # noqa: E701
     class Broken(TaskException):    pass # noqa: E701
     class Failed(TaskException):    pass # noqa: E701
     class Cancelled(TaskException): pass # noqa: E701
@@ -802,59 +799,6 @@ class Task:
 
         self._in_files  = []
         self._out_files = []
-
-        # ----------------------------------------
-        # Expand all fields that don't depend on input/output filenames (basically everything)
-        # except name/desc/command
-
-        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
-                        "script_cwd", "script_file", "build_root", "build_dir"]
-
-        flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
-                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild",
-                        "trace", "build_all"]
-
-        for f in path_fields:
-            if f in self._config:
-                self._config[f] = Path.norm(self._expand[f])
-        for f in flag_fields:
-            if f in self._config:
-                self._config[f] = self._expand[f]
-
-        # ----------------------------------------
-        # Flatten all inputs/outputs and the command
-
-        for k, v in self._config.items():
-            if Task.is_io_field(k) or k == "command":
-                v = Utils.flatten(v)
-                self._config[k] = v
-            if Task.is_depfile_field(k) and len(v) > 1:
-                raise AssertionError("Tasks can't have more than one dependency file!")
-
-        if not self._config.command:
-            raise ValueError(f"Task {self._config.name} has no command! >{self._config.command}<")
-
-        # ----------------------------------------
-        # Check that all commands are valid
-
-        for command in self._config.command:
-            if type(command) is not type(self._config.command[0]):
-                self.log(f"Commands aren't the same type: {self._config.command}", 0xFF0000)
-                raise ValueError(f"Commands aren't the same type: {self._config.command}")
-
-            if not isinstance(command, str) and not callable(command):
-                raise ValueError(f"Don't know what to do with command '{command}'")
-
-        # ----------------------------------------
-        # Check for missing paths
-
-        if not Path.exists(self._config.task_cwd):
-            raise ValueError(f"Task working directory '{self._config.task_cwd}' does not exist")
-
-        if not self._config.build_dir.startswith(self._config.repo_dir):
-            raise ValueError(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
-
-        # ----------------------------------------
 
         Runner.all_tasks.append(self)
 
@@ -943,10 +887,10 @@ class Task:
             await self.task_main()
             self._status = Task.Status.FINISHED
         except Task.Broken as ex:
-            self.log_error("Task broken!", str(ex), ex.err)
+            self.log_error("Task broken!", str(ex))
             self._status = Task.Status.BROKEN
         except Task.Failed as ex:
-            self.log_error("Task failed!", str(ex), ex.err)
+            self.log_error("Task failed!", str(ex))
             self._status = Task.Status.FAILED
         except Task.Cancelled:
             self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
@@ -970,7 +914,60 @@ class Task:
         c = self._config
         e = self._expand
 
+        # ----------------------------------------
+        # Expand all fields that don't depend on input/output filenames (basically everything)
+        # except name/desc/command
+
+        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
+                        "script_cwd", "script_file", "build_root", "build_dir"]
+
+        flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
+                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild",
+                        "trace", "build_all"]
+
+        for f in path_fields:
+            if f in self._config:
+                self._config[f] = Path.norm(self._expand[f])
+        for f in flag_fields:
+            if f in self._config:
+                self._config[f] = self._expand[f]
+
+        # ----------------------------------------
+        # Flatten all inputs/outputs and the command
+
+        for k, v in self._config.items():
+            if Task.is_io_field(k) or k == "command":
+                v = Utils.flatten(v)
+                self._config[k] = v
+            if Task.is_depfile_field(k) and len(v) > 1:
+                raise Task.Broken("Tasks can't have more than one dependency file!")
+
+        if not self._config.command:
+            raise Task.Broken(f"Task {self._config.name} has no command! >{self._config.command}<")
+
+        # ----------------------------------------
+        # Check that all commands are valid
+
+        for command in self._config.command:
+            if type(command) is not type(self._config.command[0]):
+                self.log(f"Commands aren't the same type: {self._config.command}", 0xFF0000)
+                raise Task.Broken(f"Commands aren't the same type: {self._config.command}")
+
+            if not isinstance(command, str) and not callable(command):
+                raise Task.Broken(f"Don't know what to do with command '{command}'")
+
+        # ----------------------------------------
+        # Check for missing paths
+
+        if not Path.exists(self._config.task_cwd):
+            raise Task.Broken(f"Task working directory '{self._config.task_cwd}' does not exist")
+
+        if not self._config.build_dir.startswith(self._config.repo_dir):
+            raise Task.Broken(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
+
+        # ----------------------------------------
         # Await all tasks in our input fields,
+
         for name, files in self._config.items():
             if Task.is_input_field(name):
                 for i, file in enumerate(files):
@@ -978,7 +975,7 @@ class Task:
                         task = cast(Task, file)
                         task_status = await cast(asyncio.Task, task._asyncio_task)
                         if task_status == Task.Status.FAILED:
-                            raise Task.Cancelled(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", None)
+                            raise Task.Cancelled(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n")
                         files[i] = task._out_files
                 self._config[name] = Utils.flatten(files)
 
@@ -1005,8 +1002,7 @@ class Task:
             if not Utils.is_flat_list_of(files, str):
                 raise Task.Broken(
                     "SETUP got a task without flattened input/output fields, or some of the " +
-                    "fields were non-strings", None
-                )
+                    "fields were non-strings")
 
             # Do all the file path remapping so our commands will work
             files = self.remap_io_field_paths(name, files)
@@ -1037,25 +1033,25 @@ class Task:
         for file in self._in_files:
             assert Path.isabs(file)
             if not Path.exists(file):
-                raise Task.Broken(f"Input file missing - {file}", None)
+                raise Task.Broken(f"Input file missing - {file}")
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
             if not file.startswith(self._config.build_dir):
-                raise Task.Broken(f"Path error, output file {file} is not under build_dir {self._config.build_dir}", None)
+                raise Task.Broken(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
 
         # Check for task collisions
         for file in self._out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.real_filenames:
-                raise Task.Broken(f"TaskCollision: Multiple tasks build {real_file}", None)
+                raise Task.Broken(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.real_filenames.add(real_file)
 
         # Check if we need a rebuild
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
-            raise Task.Skipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n", None)
+            raise Task.Skipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n")
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # Wait for enough jobs to free up to run this task.
@@ -1069,13 +1065,13 @@ class Task:
             if isinstance(command, str):
                 returncode = await self.run_command(command)
                 if returncode:
-                    raise Task.Failed(f"Command return code was non-zero : {returncode}", None)
+                    raise Task.Failed(f"Command return code was non-zero : {returncode}")
 
             elif callable(command):
                 await self.call_callback(command)
 
             else:
-                raise Task.Failed(f"Command {command} is not a string or a callable?", None)
+                raise Task.Failed(f"Command {command} is not a string or a callable?")
 
         # Done!
         self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
@@ -1192,7 +1188,7 @@ class Task:
                     deplines = depcontents.read().split()
                     deplines = [d for d in deplines[1:] if d != "\\"]
                 else:
-                    raise Task.Broken(f"Invalid depfile format {c.depformat}", None)
+                    raise Task.Broken(f"Invalid depfile format {c.depformat}")
 
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [cast(str, Path.join(c.task_cwd, d)) for d in deplines]
