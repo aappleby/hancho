@@ -1021,7 +1021,43 @@ class Task:
                     self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
                     break
 
-                self._state = self.SANITY_CHECK()
+                #self._state = self.SANITY_CHECK()
+
+                ####################################################################################
+
+                broke_reason = ""
+
+                # Check for missing inputs
+                for file in self._in_files:
+                    assert Path.isabs(file)
+                    if not Path.exists(file):
+                        broke_reason = f"Input file missing - {file}"
+                        break
+
+                # Check that all build files would end up under build_dir
+                for file in self._out_files:
+                    assert Path.isabs(file)
+                    if not file.startswith(self._config.build_dir):
+                        broke_reason = f"Path error, output file {file} is not under build_dir {self._config.build_dir}"
+                        break
+
+                # Check for task collisions
+                for file in self._out_files:
+                    real_file = cast(str, Path.real(file))
+                    if real_file in Loader.real_filenames:
+                        broke_reason = f"TaskCollision: Multiple tasks build {real_file}"
+                        break
+                    Loader.real_filenames.add(real_file)
+
+                if broke_reason:
+                    self._state = None
+                    self._status = Task.Status.BROKEN
+                    self.log_broken(broke_reason)
+                    break
+
+                self._state = self.CHECK_DEPS()
+
+                ####################################################################################
 
                 while self._state:
                     if not isawaitable(self._state):
