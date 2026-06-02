@@ -576,41 +576,41 @@ class Path:
     # We want these functions to work on Tree[str], so we run them through recursify.
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def abs(p): return os.path.abspath(p) if p else ""
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def real(p): return os.path.realpath(p) if p else ""
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def norm(p): return os.path.normpath(p) if p else ""
 
     #----------------------------------------
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def base(p): return os.path.basename(p)
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def ext(p, new_ext): return os.path.splitext(p)[0] + new_ext
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def stem(p): return os.path.splitext(os.path.basename(p))[0]
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def dirname(path): return os.path.dirname(path)
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def split(path): return os.path.split(path)
 
     @staticmethod
-    @Utils.recursify_xip
+    @Utils.recursify_map
     def splitext(path): return os.path.splitext(path)
 
     #----------------------------------------
@@ -699,7 +699,7 @@ class Dict(dict):
     # Expander convenience helpers
 
     def eval[T](self, expr : str, as_type: type[T] = object) -> T:
-        result = Expander.eval(self, expr)
+        result = Expander.eval(expr, self)
         assert isinstance(result, as_type)
         return result
 
@@ -985,66 +985,70 @@ class Task:
         rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
 
         for name, files in c.items():
-            if Task.is_io_field(name):
+            if not Task.is_io_field(name):
+                continue
 
-                # If an input source had an absolute path and we swap the extension on it to make the
-                # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
-                # lives under build_dir.
+            # If an input source had an absolute path and we swap the extension on it to make the
+            # output filename, we'll have a '.o' file or similar inside task_cwd. Move it so it
+            # lives under build_dir.
 
-                # All our input and output fields should contain flat arrays of strings now.
-                assert Utils.is_flat(files, str)
+            # All our input and output fields should contain flat arrays of strings now.
+            assert Utils.is_flat(files, str)
 
-                # Fix the paths in our in/out fields to point to the right directories.
-                #files = self.fix_paths(name, files)
-                # Expand all in_ and out_ filenames.
-                # We _must_ expand these first before joining paths or the paths will be incorrect:
-                # prefix + swap(abs_path) != abs(prefix + swap(path))
-                files = Expander.expand_all(files, e)
+            # Fix the paths in our in/out fields to point to the right directories.
+            #files = self.fix_paths(name, files)
+            # Expand all in_ and out_ filenames.
+            # We _must_ expand these first before joining paths or the paths will be incorrect:
+            # prefix + swap(abs_path) != abs(prefix + swap(path))
+            files = Expander.expand_all(files, e)
 
-                # Initially, all our file paths are relative to the script_cwd that created this task.
-                # Join script_cwd with the filenames to produce absolute paths.
-                files = Path.join(c.script_cwd, files)
-                files = Utils.flatten(files)
+            # Initially, all our file paths are relative to the script_cwd that created this task.
+            # Join script_cwd with the filenames to produce absolute paths.
+            files = Path.join(c.script_cwd, files)
+            files = Utils.flatten(files)
 
-                assert Path.isabs(files)
-                #files = Path.abs(files)
+            assert Path.isabs(files)
+            assert Utils.is_flat(files, str)
+            #files = Path.abs(files)
 
-                # Path _must_ be normed after expansion and joining, otherwise it might look like it's
-                # under script_cwd but it's not because the path could have "../../../../.." in it.
-                files = cast(list[str], Path.norm(files))
+            # Path _must_ be normed after expansion and joining, otherwise it might look like it's
+            # under script_cwd but it's not because the path could have "../../../../.." in it.
+            files = cast(list[str], Path.norm(files))
 
-                # Move all outputs under build_dir and ensure their directories exist.
-                if Task.is_output_field(name):
-                    for i, _ in enumerate(files):
+            files = cast(list[str], files)
 
-                        # Note these conditionals are _NOT_ an if/elif pair!
-                        if not files[i].startswith(c.build_dir):
-                            files[i] = files[i].replace(c.task_cwd, c.build_dir)
-
-                        if files[i].startswith(c.build_dir):
-                            dirname = Path.dirname(files[i])
-                            if dirname is not None:
-                                os.makedirs(dirname, exist_ok=True)
-
-
-                # Gather all absolute file paths to _in_files/_out_files.
+            # Move all outputs under build_dir and ensure their directories exist.
+            if Task.is_output_field(name):
                 for i, _ in enumerate(files):
-                    # The check for is_depfile_field must come first, as it's a special case of a file that
-                    # is technically an _output_ file, but also counts as an input file.
-                    if Task.is_depfile_field(name):
-                        if Path.isfile(files[i]):
-                            self._in_files.append(files[i])
-                    elif Task.is_output_field(name):
-                        self._out_files.append(files[i])
-                    elif Task.is_input_field(name):
+
+                    # Note these conditionals are _NOT_ an if/elif pair!
+                    if not files[i].startswith(c.build_dir):
+                        files[i] = files[i].replace(c.task_cwd, c.build_dir)
+
+                    if files[i].startswith(c.build_dir):
+                        dirname = Path.dirname(files[i])
+                        if dirname is not None:
+                            os.makedirs(dirname, exist_ok=True)
+
+
+            # Gather all absolute file paths to _in_files/_out_files.
+            for i, _ in enumerate(files):
+                # The check for is_depfile_field must come first, as it's a special case of a file that
+                # is technically an _output_ file, but also counts as an input file.
+                if Task.is_depfile_field(name):
+                    if Path.isfile(files[i]):
                         self._in_files.append(files[i])
+                elif Task.is_output_field(name):
+                    self._out_files.append(files[i])
+                elif Task.is_input_field(name):
+                    self._in_files.append(files[i])
 
-                # Convert the fixed paths back to relative so our command lines aren't enormous.
-                for i in range(len(files)):
-                    files[i] = Path.rel(files[i], rel_dir)
+            # Convert the fixed paths back to relative so our command lines aren't enormous.
+            for i in range(len(files)):
+                files[i] = Path.rel(files[i], rel_dir)
 
-                # And unwrap filenames if they're an array of one element.
-                c[name] = files[0] if len(files) == 1 else files
+            # And unwrap filenames if they're an array of one element.
+            c[name] = files[0] if len(files) == 1 else files
 
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
@@ -1551,7 +1555,7 @@ class Expander(abc.MutableMapping[str, object]):
     # 4. The global hancho module
 
     @staticmethod
-    def _eval(context : Dict | Expander, expr : str):
+    def _eval(expr : str, context : Dict | Expander):
         assert Utils.is_literal(expr)
         with Tracer(context, f"_eval('{expr}')") as tracer:
             _locals = ChainMap(context, Loader.cv_config.get(), aliases)
@@ -1561,11 +1565,11 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     @staticmethod
-    def _expand_macro(context : Dict | Expander, macro : str) -> Any:
+    def _expand_macro(macro : str, context : Dict | Expander) -> Any:
         assert Utils.is_macro(macro)
         with Tracer(context, f"_expand_macro('{macro}')") as tracer:
             try: # catch non-recursion errors and return original macro
-                result = Expander.eval(context, macro[1:-1])
+                result = Expander.eval(macro[1:-1], context)
             except RecursionError as err:
                 raise err
             except Exception:
@@ -1574,13 +1578,13 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     @staticmethod
-    def _expand_template(context : Dict | Expander, template: str) -> str:
+    def _expand_template(template: str, context : Dict | Expander) -> str:
         assert Utils.is_template(template)
         with Tracer(context, f"_expand_template('{template}')") as tracer:
             blocks = Expander.split(template)
             for (i, block) in enumerate(blocks):
                 if isinstance(block, Expander.Macro):
-                    value = Expander._expand_macro(context, block)
+                    value = Expander._expand_macro(block, context)
                     block = Utils.stringify(value)
                 blocks[i] = block
             result = "".join(blocks)
@@ -1590,9 +1594,10 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     @staticmethod
-    def eval[T](context : Dict | Expander, expr : str, as_type : type[T] = object) -> T:
+    @Utils.recursify_xip
+    def eval[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
         assert Utils.is_literal(expr)
-        result = Expander._eval(context, expr)
+        result = Expander._eval(expr, context)
         assert isinstance(result, as_type)
         return result
 
@@ -1617,9 +1622,9 @@ class Expander(abc.MutableMapping[str, object]):
     @Utils.recursify_xip
     def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
         if Utils.is_macro(val):
-            result = Expander._expand_macro(context, val)
+            result = Expander._expand_macro(val, context)
         elif Utils.is_template(val):
-            result = Expander._expand_template(context, val)
+            result = Expander._expand_template(val, context)
         else:
             result = val
 
@@ -1810,7 +1815,6 @@ class Loader:
 
         # pylint: disable=line-too-long
         # fmt: off
-
         parser.add_argument("target",  nargs="?", default = None, type=str.strip,       help="A regex that selects the targets to build. Defaults to all targets in the root repo.")
         parser.add_argument("-C", "--root_dir",   default = None, type=str.strip,       help="Change directory before starting the build")
         parser.add_argument("-f", "--root_file",  default = None, type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
@@ -1829,10 +1833,8 @@ class Loader:
         #parser.add_argument("--use_color",        default = None, action="store_true",  help="Use color in the console output")
         parser.add_argument("--wrap",             default = None, action="store_true",  help="Wrap lines around the console instead of clipping them")
         parser.add_argument("--strict",           default = None, action="store_true",  help="Checks for common footguns like typo'd templates")
-
         # fmt: on
 
-        # Ignore the name of the script that loaded Hancho
         (flags, unrecognized) = parser.parse_known_args(args)
 
         # Unrecognized command line parameters also become module config fields if they are
@@ -1852,7 +1854,7 @@ class Loader:
                     val = False
                 else:
                     for converter in (float, int, str):
-                        try: # extra flag converter
+                        try:  # extra flag converter
                             val = converter(val)
                             break
                         except ValueError:
@@ -2006,6 +2008,7 @@ class Runner:
         # Create asyncio tasks for all enabled Hancho tasks.
 
         time_a = time.perf_counter()
+
         for task in Runner.all_tasks:
             if task._config.enabled:
                 task.create_asyncio_task()
@@ -2013,10 +2016,7 @@ class Runner:
         Stats.time_start = time.perf_counter() - time_a
         Log.log_v(f"Starting {Stats.tasks_started} tasks took {Stats.time_start:.3f} seconds")
 
-        # Tasks can create other tasks, and we don't want to block waiting on a whole batch of
-        # tasks to complete before starting more. Instead, we just keep queuing up any pending
-        # tasks after awaiting each one. Because we're awaiting tasks in the order they were
-        # created, this will effectively walk through all tasks in dependency order.
+        # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
         while True:
             all_tasks = asyncio.all_tasks()
@@ -2053,7 +2053,7 @@ class Runner:
     def run_tool(tool : str):
         if tool == "clean":
             for task in Runner.all_tasks:
-                build_root = Path.real(Expander.eval(task._expand, "build_root", str))
+                build_root = Path.real(Expander.eval("build_root", task._expand, str))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(0x8080FF, f"Wiping build_root {build_root}")
@@ -2068,7 +2068,7 @@ class Runner:
 # region aliases and if __name__ == "__main__"
 
 # These are aliases to stuff in Hancho that have been pulled out so they can be used by
-# template expansion so you can do {flatten(x)} instead of {Utils.flatten(x)} in macros, and
+# template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros, and
 # use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
 
 aliases = Dict(
