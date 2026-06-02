@@ -262,7 +262,7 @@ class Log:
         pad = (tab * indent)
         separator = ", "
         chunks = []
-        width = len(pad) + len(prefix) + len(ld) + (len(separator) * (len(items) - 1)) + len(rd) + len(",")
+        width = len(pad) + len(prefix) + len(ld) + (len(separator) * (len(items) - 1)) + len(rd)
 
         for k, v in items:
             chunk = Log.dump_to_str(k, v, 0, print_id, max_width, tab, True)
@@ -1544,8 +1544,8 @@ class Expander(abc.MutableMapping[str, object]):
         with Tracer(context, f"_expand_macro('{macro}')") as tracer:
             try: # catch non-recursion errors and return original macro
                 result = Expander.eval(macro[1:-1], context)
-            except RecursionError as err:
-                raise err
+            except RecursionError:
+                raise
             except Exception:
                 result = macro
             tracer.log_result(result)
