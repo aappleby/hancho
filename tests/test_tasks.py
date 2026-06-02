@@ -433,7 +433,7 @@ class TestTasks(unittest.TestCase):
         self.assertLess(mtime2, mtime3)
 
     def test_multiple_depfiles(self):
-        # Creating a task with multiple depfile inputs should assert.
+        # Creating a task with multiple depfile inputs should fail.
         bad_task = hancho.Task(command = "echo Hello World", in_depfile = ["foo.txt", "bar.txt"])
         self.run_tasks(-1)
         self.assertEqual(bad_task._status, hancho.Task.Status.BROKEN)

@@ -229,26 +229,27 @@ class Log:
         # In "key : type = ", don't print these types.
         basic_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None))
 
-        skip_type = isinstance(val, basic_types)
-
         # Generate the "key : type = " prefix.
         prefix = ""
         if key is not None:
             prefix += str(key) + " "
-        if not skip_type:
+        if not isinstance(val, basic_types):
             prefix += ": " + type(val).__name__ + " "
         if print_id:
             prefix += ": " + hex(id(val)) + " "
         if prefix:
             prefix += "= "
 
-        # Unwrap a few types that we want to view as containers
-        if   isinstance(val, Task):
-            val = val.__dict__
+        # Don't recurse into a few types that need special handling
+        if isinstance(val, Task):
+            val = f"<Task {val._config.name}>"
         elif isinstance(val, Expander):
-            val = val._context
+            val = "<Expander>"
         elif isinstance(val, contextvars.Context):
-            val = list(val.keys())
+            #val = list(val.keys())
+            val = "<Context>"
+        elif isinstance(val, types.ModuleType):
+            val = f"<Module {val.__name__}>"
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
@@ -820,20 +821,20 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def is_depfile_field(name : str) -> bool:
-        return name == "in_depfile"
+    def is_depfile_field(key : str, val : Any = None) -> bool:
+        return key == "in_depfile"
 
     @staticmethod
-    def is_output_field(name : str):
-        return name and (Task.is_depfile_field(name) or name.startswith("out_"))
+    def is_output_field(key : str, val : Any = None):
+        return key and (Task.is_depfile_field(key) or key.startswith("out_"))
 
     @staticmethod
-    def is_input_field(name : str):
-        return name and name.startswith("in_")
+    def is_input_field(key : str, val : Any = None):
+        return key and key.startswith("in_")
 
     @staticmethod
-    def is_io_field(name : str):
-        return Task.is_input_field(name) or Task.is_output_field(name)
+    def is_io_field(key : str, val : Any = None):
+        return Task.is_input_field(key) or Task.is_output_field(key)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -914,9 +915,14 @@ class Task:
         c = self._config
         e = self._expand
 
+        if e.debug:
+            self.log("Task config before expand:", 0xFFFFFF)
+            for line in str(c).split("\n"):
+                self.log(line, 0xFFFFFF)
+
         # ----------------------------------------
-        # Expand all fields that don't depend on input/output filenames (basically everything)
-        # except name/desc/command
+        # Expand all fields that don't depend on input/output filenames (basically everything
+        # except name/desc/command)
 
         path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
                         "script_cwd", "script_file", "build_root", "build_dir"]
@@ -926,77 +932,64 @@ class Task:
                         "trace", "build_all"]
 
         for f in path_fields:
-            if f in self._config:
-                self._config[f] = Path.norm(self._expand[f])
+            if f in c:
+                c[f] = Path.norm(self._expand[f])
         for f in flag_fields:
-            if f in self._config:
-                self._config[f] = self._expand[f]
+            if f in c:
+                c[f] = self._expand[f]
 
         # ----------------------------------------
-        # Flatten all inputs/outputs and the command
+        # Flatten the commands and check that they're valid
 
-        for k, v in self._config.items():
-            if Task.is_io_field(k) or k == "command":
-                v = Utils.flatten(v)
-                self._config[k] = v
-            if Task.is_depfile_field(k) and len(v) > 1:
-                raise Task.Broken("Tasks can't have more than one dependency file!")
+        c.command = Utils.flatten(c.command)
 
-        if not self._config.command:
-            raise Task.Broken(f"Task {self._config.name} has no command! >{self._config.command}<")
+        if not c.command:
+            raise Task.Broken(f"Task {c.name} has no command!")
 
-        # ----------------------------------------
-        # Check that all commands are valid
-
-        for command in self._config.command:
-            if type(command) is not type(self._config.command[0]):
-                self.log(f"Commands aren't the same type: {self._config.command}", 0xFF0000)
-                raise Task.Broken(f"Commands aren't the same type: {self._config.command}")
-
-            if not isinstance(command, str) and not callable(command):
-                raise Task.Broken(f"Don't know what to do with command '{command}'")
+        for command in c.command:
+            if type(command) is not type(c.command[0]):
+                raise Task.Broken(f"Commands aren't the same type: {c.command}")
 
         # ----------------------------------------
         # Check for missing paths
 
-        if not Path.exists(self._config.task_cwd):
-            raise Task.Broken(f"Task working directory '{self._config.task_cwd}' does not exist")
+        if not Path.exists(c.task_cwd):
+            raise Task.Broken(f"Task working directory '{c.task_cwd}' does not exist")
 
-        if not self._config.build_dir.startswith(self._config.repo_dir):
-            raise Task.Broken(f"Build_dir {self._config.build_dir} is not under repo dir {self._config.repo_dir}")
+        if not c.build_dir.startswith(c.repo_dir):
+            raise Task.Broken(f"Build_dir {c.build_dir} is not under repo dir {c.repo_dir}")
 
         # ----------------------------------------
-        # Await all tasks in our input fields,
+        # Await all tasks in our input fields and then flatten them.
 
-        for name, files in self._config.items():
-            if Task.is_input_field(name):
-                for i, file in enumerate(files):
-                    if isinstance(file, Task):
-                        task = cast(Task, file)
-                        task_status = await cast(asyncio.Task, task._asyncio_task)
-                        if task_status == Task.Status.FAILED:
-                            raise Task.Cancelled(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n")
-                        files[i] = task._out_files
-                self._config[name] = Utils.flatten(files)
+        for key, files in [i for i in c.items() if Task.is_input_field(*i)]:
+            files = Utils.flatten(files)
 
+            if key == "in_depfile" and len(files) > 1:
+                raise Task.Broken("Tasks can't have more than one dependency file!")
+
+            for i, file in enumerate(files):
+                if isinstance(file, Task):
+                    task = cast(Task, file)
+                    task_status = await cast(asyncio.Task, task._asyncio_task)
+                    if task_status == Task.Status.FAILED:
+                        raise Task.Cancelled(f"Task is cancelled: '{c.name}' : '{c.desc}'\n")
+                    files[i] = task._out_files
+
+            # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
+            c[key] = Utils.flatten(files)
+
+        # ----------------------------------------
         # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
+
         Task.id_counter += 1
         self._task_id = Task.id_counter
 
-        self.log_d("Task config before expand:", 0xFFFFFF)
-        for line in str(c).split("\n"):
-            self.log_d(line, 0xFFFFFF)
-
+        # ----------------------------------------
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_cwd if we're calling a callback.
 
-        for name, files in c.items():
-            if not Task.is_io_field(name):
-                continue
-
-            # First, flatten our list of files so we don't have to deal with weird nested
-            # structures.
-            files = Utils.flatten(files)
+        for key, files in [i for i in c.items() if Task.is_io_field(*i)]:
 
             # All our input and output fields should contain flat arrays of strings now.
             if not Utils.is_flat_list_of(files, str):
@@ -1005,11 +998,11 @@ class Task:
                     "fields were non-strings")
 
             # Do all the file path remapping so our commands will work
-            files = self.remap_io_field_paths(name, files)
+            files = self.remap_io_field_paths(key, files)
 
             # and unwrap filenames if they're an array of one element so that scripts expecting
             # join(str, str) to return a str will be happy.
-            c[name] = files[0] if len(files) == 1 else files
+            c[key] = files[0] if len(files) == 1 else files
 
         # Paths are cleaned up, we can expand name/desc/command
 
@@ -1026,7 +1019,7 @@ class Task:
 
         # Dry runs early out after config expansion
         if c.dry_run:
-            self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
+            self.log_v(f"Task done : '{c.name}' - '{c.desc}'")
             return
 
         # Check for missing inputs
@@ -1038,8 +1031,8 @@ class Task:
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
-            if not file.startswith(self._config.build_dir):
-                raise Task.Broken(f"Path error, output file {file} is not under build_dir {self._config.build_dir}")
+            if not file.startswith(c.build_dir):
+                raise Task.Broken(f"Path error, output file {file} is not under build_dir {c.build_dir}")
 
         # Check for task collisions
         for file in self._out_files:
@@ -1051,30 +1044,28 @@ class Task:
         # Check if we need a rebuild
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
-            raise Task.Skipped(f"Task is up-to-date: '{self._config.name}' : '{self._config.desc}'\n")
+            raise Task.Skipped(f"Task is up-to-date: '{c.name}' : '{c.desc}'\n")
         self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # Wait for enough jobs to free up to run this task.
-        await Runner.acquire(self._config.core_count)
-        self._core_count = self._config.core_count
+        await Runner.acquire(c.core_count)
+        self._core_count = c.core_count
 
         # Run all the task's commands
-        self.log(f"Task started : '{self._config.name}' - '{self._config.desc}'")
+        self.log(f"Task started : '{c.name}' - '{c.desc}'")
 
-        for command in self._config.command:
+        for command in cast(list, c.command):
             if isinstance(command, str):
                 returncode = await self.run_command(command)
                 if returncode:
                     raise Task.Failed(f"Command return code was non-zero : {returncode}")
-
             elif callable(command):
                 await self.call_callback(command)
-
             else:
                 raise Task.Failed(f"Command {command} is not a string or a callable?")
 
         # Done!
-        self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
+        self.log_v(f"Task done : '{c.name}' - '{c.desc}'")
 
     # ----------------------------------------------------------------------------------------------
 
