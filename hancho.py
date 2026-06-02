@@ -31,95 +31,9 @@ from inspect import isawaitable
 from typing import Any, cast
 
 hancho = sys.modules[__name__]
-
-# endregion
-####################################################################################################
-# region Main
+sys.modules["hancho"] = hancho
 
 type Tree[T] = T | list[Tree[T]] | dict[Any, Tree[T]]
-
-def __getattr__(name):
-    # Any attribute read that's not global in this module gets redirected to the per-script context
-    # dict.
-
-    if name == "config":
-        return Loader.cv_config.get()
-    elif name in aliases:
-        return aliases[name]
-    else:
-        raise AttributeError(name)
-
-def __dir__():
-    return [*hancho.__dict__.keys(), *aliases.keys(), "config"]
-
-# ----------------------------------------
-
-def init(*args, **kwargs):
-    """
-    Re-initializes all of Hancho.
-    If you are importing Hancho directly, you should call this as
-    hancho.init(debug = True, quiet = False, myoption=1234)
-    """
-    reset(*args, **kwargs)
-
-# ----------------------------------------
-
-def reset(*args, **kwargs):
-    Loader.reset(*args, **kwargs)
-    Log.reset()
-    Utils.reset()
-    Task.reset()
-    Tracer.reset()
-    Runner.reset(hancho.config.core_max)
-
-# ----------------------------------------
-
-def main():
-
-    flags = Loader.parse_flags(sys.argv[1:])
-    init(flags)
-
-    #----------------------------------------
-    # Load all build scripts
-
-    time_a = time.perf_counter()
-
-    script_path = cast(str, Path.join(hancho.config.root_dir, hancho.config.root_file))
-    if not Path.exists(script_path):
-        path = Path.rel(script_path, os.getcwd())
-        Log.log_fatal(f"Could not load build script {path}")
-    Loader.root_repo = Loader.load_file(script_path, True)
-
-    time_load = time.perf_counter() - time_a
-    Log.log_v(f"Loading .hancho files took {time_load:.3f} seconds", 0x8080FF)
-
-    #----------------------------------------
-    # Run tools if needed
-
-    if hancho.config.tool:
-        result = Runner.run_tool(hancho.config.tool)
-        return result
-
-    #----------------------------------------
-    # Start all tasks
-
-    if hancho.config.target:
-        target_regex = re.compile(hancho.config.target)
-        Runner.enable_tasks_by_regex(target_regex)
-    elif hancho.config.build_all:
-        Runner.enable_all_tasks()
-    else:
-        Runner.enable_root_tasks()
-
-    #----------------------------------------
-    # Run all tasks
-
-    result = Runner.sync_run_tasks()
-
-    #----------------------------------------
-    # Done
-
-    return result
 
 # endregion
 ####################################################################################################
@@ -1305,7 +1219,7 @@ class Expander(abc.MutableMapping[str, object]):
             tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
             tag_a = Utils.obj_to_ansi(context) + tag_a + Log.reset_color
             tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
-            Tracer.log2(f"wrap {tag_a} -> {tag_b}")
+            Tracer.log(f"wrap {tag_a} -> {tag_b}")
 
         return result
 
@@ -1370,7 +1284,7 @@ class Expander(abc.MutableMapping[str, object]):
             elif Utils.is_template(result) or Utils.is_macro(result):
                 result = Expander.expand_all(result, self)
 
-            trace.log_result(result)
+            trace.save_result(result)
 
         return result
 
@@ -1425,7 +1339,7 @@ class Expander(abc.MutableMapping[str, object]):
             _locals = ChainMap(context, Loader.cv_config.get(), aliases)
             _globals = hancho.__dict__
             result = eval(expr, _globals, _locals)
-            tracer.log_result(result)
+            tracer.save_result(result)
         return result
 
     @staticmethod
@@ -1446,7 +1360,7 @@ class Expander(abc.MutableMapping[str, object]):
                 result = macro
             except BaseException:
                 raise
-            tracer.log_result(result)
+            tracer.save_result(result)
         return result
 
     @staticmethod
@@ -1464,7 +1378,7 @@ class Expander(abc.MutableMapping[str, object]):
                     block = Utils.stringify(value)
                 blocks[i] = block
             result = "".join(blocks)
-            tracer.log_result(result)
+            tracer.save_result(result)
         return result
 
     #----------------------------------------
@@ -1474,7 +1388,6 @@ class Expander(abc.MutableMapping[str, object]):
     def eval[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
         """
         Eval plus recursive application and type checking.
-        Eval every string in a big mess of nested dicts and lists.
         """
         assert Utils.is_literal(expr)
         result = Expander._eval(expr, context)
@@ -1484,6 +1397,9 @@ class Expander(abc.MutableMapping[str, object]):
     @staticmethod
     @Utils.recursify_apply_mip
     def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
+        """
+        Expand plus recursive application and type checking.
+        """
         if Utils.is_macro(val):
             result = Expander._expand_macro(val, context)
         elif Utils.is_template(val):
@@ -1497,16 +1413,18 @@ class Expander(abc.MutableMapping[str, object]):
     @staticmethod
     @Utils.recursify_apply_mip
     def expand_all[T](variant : Any, context : Dict | Expander, as_type : type[T] = object):
+        """
+        Repeatedly expands 'template' until it no longer contains braces, it stops changing,
+        or we hit our expansion limit.
+        """
         if not Utils.is_braced(variant):
             return variant
         econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
 
-        # Keep expanding the template until it's no longer a template or it's no
-        # longer changing.
-        for _ in range(Tracer.MAX_RECURSION):
+        for _ in range(Tracer.MAX_EXPANDS):
             with Tracer(econtext, f"expand_all('{variant}')") as tracer:
                 result = Expander.expand_once(variant, econtext)
-                tracer.log_result(result)
+                tracer.save_result(result)
             if not Utils.is_braced(result) or result == variant:
                 assert isinstance(result, as_type)
                 return result
@@ -1519,9 +1437,9 @@ class Expander(abc.MutableMapping[str, object]):
 # Expansion tracing class used by Expander
 
 class Tracer:
-    # The maximum number of recursion levels we will do to expand a macro. This is also used to
-    # limit the number of template-expansion passes we do. Tests currently require MAX_RECURSION >= 6.
-    MAX_RECURSION : int = 20
+    # The maximum number of expansions we will do to expand a macro.
+    # Tests currently require MAX_EXPANDS >= 6.
+    MAX_EXPANDS : int = 20
     trellis_stack : list[str]
 
     @staticmethod
@@ -1538,20 +1456,12 @@ class Tracer:
         color = Utils.obj_to_hex(self.context)
         context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
         context_tag = context_tag.upper()
-        if len(Tracer.trellis_stack) >= Tracer.MAX_RECURSION:
+        if len(Tracer.trellis_stack) >= Tracer.MAX_EXPANDS:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
         if self.trace:
-            Tracer.log2(f"┏ {context_tag}." + self.enter_message, color)
+            Tracer.log(f"┏ {context_tag}." + self.enter_message, color)
         Tracer.trellis_stack.append(Utils.hex_to_ansi(color) + "┃ ")
         return self
-
-    def log_result(self, result : Any):
-        self.result = result
-        return result
-
-    def print_result(self, text):
-        if self.trace:
-            Tracer.log2("┗ " + Utils.obj_to_ansi(self.result) + text, Utils.obj_to_hex(self.context))
 
     def __exit__(self, *_):
         Tracer.trellis_stack.pop()
@@ -1571,14 +1481,16 @@ class Tracer:
             self.print_result(text)
         return False
 
-    def log(self, text : str, color : int = 0):
-        """Prints a trace message to the log."""
+    def save_result(self, result : Any):
+        self.result = result
+        return result
+
+    def print_result(self, text):
         if self.trace:
-            buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
-            Log.log(buffer, color)
+            Tracer.log("┗ " + Utils.obj_to_ansi(self.result) + text, Utils.obj_to_hex(self.context))
 
     @staticmethod
-    def log2(text : str, color : int = 0):
+    def log(text : str, color : int = 0):
         """Prints a trace message to the log."""
         buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
         Log.log(buffer, color)
@@ -1779,8 +1691,8 @@ class Loader:
 
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical module configs are
-        # deduped. This relies on __repr__ and the fields relied on by dump_to_str being stable
-        # during a build, which they should be in practice.
+        # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
+        # build, which they should be in practice.
 
         config_dump = Log.dump_to_str(key = "Config", val = new_config)
 
@@ -1903,10 +1815,10 @@ class Runner:
             for task in all_tasks:
                 if task == this_task:
                     continue
-                status = await task
+                error = await task
                 tasks_awaited += 1
-                match status.__class__:
-                    case None:
+                match error.__class__:
+                    case types.NoneType:
                         tasks_finished += 1
                     case Task.BROKEN:
                         tasks_broken += 1
@@ -1965,6 +1877,77 @@ class Runner:
 
 # endregion
 ####################################################################################################
+# region init/reset/main
+
+def init(*args, **kwargs):
+    """
+    Re-initializes all of Hancho.
+    If you are importing Hancho directly, you should call this as
+    hancho.init(debug = True, quiet = False, myoption=1234)
+    """
+    reset(*args, **kwargs)
+
+# ----------------------------------------
+
+def reset(*args, **kwargs):
+    Loader.reset(*args, **kwargs)
+    Log.reset()
+    Utils.reset()
+    Task.reset()
+    Tracer.reset()
+    Runner.reset(hancho.config.core_max)
+
+# ----------------------------------------
+
+def main():
+
+    flags = Loader.parse_flags(sys.argv[1:])
+    init(flags)
+
+    #----------------------------------------
+    # Load all build scripts
+
+    time_a = time.perf_counter()
+
+    script_path = cast(str, Path.join(hancho.config.root_dir, hancho.config.root_file))
+    if not Path.exists(script_path):
+        path = Path.rel(script_path, os.getcwd())
+        Log.log_fatal(f"Could not load build script {path}")
+    Loader.root_repo = Loader.load_file(script_path, True)
+
+    time_load = time.perf_counter() - time_a
+    Log.log_v(f"Loading .hancho files took {time_load:.3f} seconds", 0x8080FF)
+
+    #----------------------------------------
+    # Run tools if needed
+
+    if hancho.config.tool:
+        result = Runner.run_tool(hancho.config.tool)
+        return result
+
+    #----------------------------------------
+    # Start all tasks
+
+    if hancho.config.target:
+        target_regex = re.compile(hancho.config.target)
+        Runner.enable_tasks_by_regex(target_regex)
+    elif hancho.config.build_all:
+        Runner.enable_all_tasks()
+    else:
+        Runner.enable_root_tasks()
+
+    #----------------------------------------
+    # Run all tasks
+
+    result = Runner.sync_run_tasks()
+
+    #----------------------------------------
+    # Done
+
+    return result
+
+# endregion
+# ####################################################################################################
 # region aliases and if __name__ == "__main__"
 
 # These are aliases to stuff in Hancho that have been pulled out so they can be used by
@@ -1972,7 +1955,6 @@ class Runner:
 # use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
 
 aliases = Dict(
-    # path.dirname and path.basename used by makefile-related rules
     path = os.path,
     abs  = Path.abs,
     base = Path.base,
@@ -1989,10 +1971,22 @@ aliases = Dict(
     weave   = Utils.weave,
 )
 
-# ---------------------------------------------------------------------------------------------------
+# The 'global' hancho.config is actually instantiated per script context, otherwise scripts can
+# break each other by changing shared config fields. To ensure each script sees the right config,
+# we make the module-level __getattr__ redirect to the config stored in the ContextVar.
+#
+# This is also where we look up command aliases so that script macros don't have to use
+# fully-qualified names like 'hancho.Path.norm'.
 
-if __name__ == "__main__" and "hancho" not in sys.modules:
-    sys.modules["hancho"] = hancho
+def __getattr__(name):
+    if name == "config":
+        return Loader.cv_config.get()
+    elif name in aliases:
+        return aliases[name]
+    else:
+        raise AttributeError(name)
+
+# ---------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     result = main()
