@@ -931,6 +931,8 @@ class Task:
         try:
 
             while True:
+                ####################################################################################
+
                 is_cancelled = False
                 for name, files in self._config.items():
                     if Task.is_input_field(name):
@@ -952,14 +954,74 @@ class Task:
                     self.log_v(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'\n", 0x404040)
                     break
 
-                next_state = self.SETUP()
+                ####################################################################################
 
+                # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
+                Task.id_counter += 1
+                self._task_id = Task.id_counter
 
+                c = self._config
+                e = self._expand
 
+                self.log_d("Task config before expand:", 0xFFFFFF)
+                for line in str(c).strip().split("\n"):
+                    self.log_d(line, 0xFFFFFF)
 
-                if next_state is None:
+                # ----------------------------------------
+                # Path cleanup
+
+                # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+                # relative to script_cwd if we're calling a callback.
+                #rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
+
+                for name, files in c.items():
+                    if not Task.is_io_field(name):
+                        continue
+
+                    # First, flatten our list of files so we don't have to deal with weird nested
+                    # structures.
+                    files = Utils.flatten(files)
+
+                    # All our input and output fields should contain flat arrays of strings now.
+                    if not Utils.is_flat_list_of(files, str):
+                        raise AssertionError(
+                            "SETUP got a task without flattened input/output fields, or some of the " +
+                            "fields were non-strings"
+                        )
+
+                    # Do all the file path remapping so our commands will work
+                    files = self.remap_io_field_paths(name, files)
+
+                    # and unwrap filenames if they're an array of one element so that scripts expecting
+                    # join(str, str) to return a str will be happy.
+                    c[name] = files[0] if len(files) == 1 else files
+
+                # ----------------------------------------
+                # Paths are cleaned up, we can expand name/desc/command
+
+                c.name    = Expander.expand_all("{name}", e)
+                c.desc    = Expander.expand_all("{desc}", e)
+                c.command = Expander.expand_all("{command}", e)
+
+                if c.strict and Utils.is_braced(c.command):
+                    self._state = None
+                    self._status = Task.Status.BROKEN
+                    reason = "We are in strict mode and this task's command has curly braces in it - did you typo a template?"
+                    self.log_broken(reason)
                     break
-                self._state = next_state
+
+
+                self.log_d("Task config after expand:", 0xFFFFFF)
+                for line in str(c).strip().split("\n"):
+                    self.log_d(line, 0xFFFFFF)
+
+                if c.dry_run:
+                    self._state = None
+                    self._status = Task.Status.FINISHED
+                    self.log_v(f"Task done : '{self._config.name}' - '{self._config.desc}'")
+                    break
+
+                self._state = self.SANITY_CHECK()
 
                 while self._state:
                     if not isawaitable(self._state):
@@ -1045,68 +1107,6 @@ class Task:
             files[i] = Path.rel(files[i], rel_dir)
 
         return files
-
-    # -----------------------------------------------------------------------------------------------
-
-    async def SETUP(self):
-        # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
-        Task.id_counter += 1
-        self._task_id = Task.id_counter
-
-        c = self._config
-        e = self._expand
-
-        self.log_d("Task config before expand:", 0xFFFFFF)
-        for line in str(c).strip().split("\n"):
-            self.log_d(line, 0xFFFFFF)
-
-        # ----------------------------------------
-        # Path cleanup
-
-        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-        # relative to script_cwd if we're calling a callback.
-        #rel_dir = c.task_cwd if isinstance(c.command[0], str) else c.script_cwd
-
-        for name, files in c.items():
-            if not Task.is_io_field(name):
-                continue
-
-            # First, flatten our list of files so we don't have to deal with weird nested
-            # structures.
-            files = Utils.flatten(files)
-
-            # All our input and output fields should contain flat arrays of strings now.
-            if not Utils.is_flat_list_of(files, str):
-                raise AssertionError(
-                    "SETUP got a task without flattened input/output fields, or some of the " +
-                    "fields were non-strings"
-                )
-
-            # Do all the file path remapping so our commands will work
-            files = self.remap_io_field_paths(name, files)
-
-            # and unwrap filenames if they're an array of one element so that scripts expecting
-            # join(str, str) to return a str will be happy.
-            c[name] = files[0] if len(files) == 1 else files
-
-        # ----------------------------------------
-        # Paths are cleaned up, we can expand name/desc/command
-
-        c.name    = Expander.expand_all("{name}", e)
-        c.desc    = Expander.expand_all("{desc}", e)
-        c.command = Expander.expand_all("{command}", e)
-
-        if c.strict and Utils.is_braced(c.command):
-            return self.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
-
-        self.log_d("Task config after expand:", 0xFFFFFF)
-        for line in str(c).strip().split("\n"):
-            self.log_d(line, 0xFFFFFF)
-
-        if c.dry_run:
-            return self.FINISHED()
-        else:
-            return self.SANITY_CHECK()
 
     # -----------------------------------------------------------------------------------------------
 
@@ -1288,6 +1288,20 @@ class Task:
         return None
 
     # -----------------------------------------------------------------------------------------------
+
+    def log_broken(self, reason):
+        self._status = Task.Status.BROKEN
+        script_path = Path.join(self._config.script_cwd, self._config.script_file)
+
+        self.log("Task broken!", 0xFF0000)
+        self.log(f"From {script_path}:", 0xFF0000)
+        self.log(f"    Task     = '{self._config.name}' : '{self._config.desc}'", 0xFF0000)
+        self.log(f"    task_cwd = '{self._config.task_cwd}'", 0xFF0000)
+        self.log(f"    getcwd   = '{os.getcwd()}'", 0xFF0000)
+        self.log(f"    command  = '{self._config.command}'", 0xFF0000)
+        self.log(f"    reason   = '{reason}'", 0xFF0000)
+
+        return None
 
     async def BROKEN(self, reason):
         self._status = Task.Status.BROKEN
