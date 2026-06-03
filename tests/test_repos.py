@@ -11,20 +11,23 @@ import hancho
 
 ####################################################################################################
 
+
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
+
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
     tests.addTests(doctests)
     return tests
 
+
 ####################################################################################################
 
-class TestRepos(unittest.TestCase):
 
+class TestRepos(unittest.TestCase):
     def setUp(self):
-        hancho.init(quiet = True)
+        hancho.init(quiet=True)
         sys.stdout.flush()
 
     def tearDown(self):
@@ -34,9 +37,10 @@ class TestRepos(unittest.TestCase):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
         result = subprocess.run(
             ["python3", "../hancho.py", "-q", "-f", "sticky_hancho1.hancho"],
-            cwd = os.path.dirname(__file__),
+            cwd=os.path.dirname(__file__),
         )
         self.assertEqual(0, result.returncode)
+
 
 ####################################################################################################
 

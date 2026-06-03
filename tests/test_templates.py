@@ -11,19 +11,23 @@ from hancho import Dict
 
 ####################################################################################################
 
+
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
+
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
     tests.addTests(doctests)
     return tests
 
+
 ####################################################################################################
+
 
 class TestTemplates(unittest.TestCase):
     def setUp(self):
-        hancho.init(quiet = True)
+        hancho.init(quiet=True)
         sys.stdout.flush()
 
     def doctest_basic_eval(self):
@@ -258,11 +262,6 @@ class TestTemplates(unittest.TestCase):
         'cc -O2 -Wall main.c'
         >>> d.eval("flags")
         ['-O2', '-Wall']
-
-#        >>> d.eval("{flags}")
-#        Traceback (most recent call last):
-#        ...
-#        AttributeError: 'Dict' object has no attribute 'O2'
         """
 
     def doctest_flatten_lists(self):
@@ -292,26 +291,26 @@ class TestTemplates(unittest.TestCase):
         # Testing escape sequences in templates is annoying. Double-check that we can use proxies
         # to build strings with escape sequences.
 
-        d = Dict(a = 1, bs = '\\', lb = '{', rb = '}')
+        d = Dict(a=1, bs="\\", lb="{", rb="}")
         self.assertEqual(d.expand_all(r"{lb}a{rb}"), 1)
         self.assertEqual(d.expand_all(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
 
     def test_expand_failed_to_terminate1(self):
         # Single recursion
         with self.assertRaises(RecursionError):
-            bad_dict = Dict(flarp = "asdf {flarp}")
+            bad_dict = Dict(flarp="asdf {flarp}")
             bad_dict.expand_all("{flarp}")
 
         # Double recursion
         with self.assertRaises(RecursionError):
-            bad_dict = Dict(foo = "asdf {bar}", bar = "qwer {foo}")
+            bad_dict = Dict(foo="asdf {bar}", bar="qwer {foo}")
             bad_dict.expand_all("{foo}")
 
         # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
         # in 'bad_dict'
         with self.assertRaises(RecursionError):
-            subthing = Dict(foo = "{subthing.foo} x")
-            bad_dict = Dict(command = "{subthing.foo}", subthing = subthing)
+            subthing = Dict(foo="{subthing.foo} x")
+            bad_dict = Dict(command="{subthing.foo}", subthing=subthing)
             bad_dict.expand_all("{command}")
 
 

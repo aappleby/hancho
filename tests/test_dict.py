@@ -11,29 +11,33 @@ from hancho import Dict
 
 ####################################################################################################
 
+
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
+
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
     tests.addTests(doctests)
     return tests
 
+
 ####################################################################################################
+
 
 class TestDict(unittest.TestCase):
     def setUp(self):
-        hancho.init(quiet = True)
+        hancho.init(quiet=True)
         sys.stdout.flush()
 
     def test_basic_access(self):
-        d = Dict({'a': 1, 'b': 2})
+        d = Dict({"a": 1, "b": 2})
         self.assertEqual(d.a, 1)
-        self.assertEqual(d['b'], 2)
+        self.assertEqual(d["b"], 2)
         with self.assertRaises(AttributeError):
             _ = d.missing
         with self.assertRaises(KeyError):
-            _ = d['missing']
+            _ = d["missing"]
 
     def doctest_dict_upgrades(self):
         # Internal dicts should be upgraded to hancho.Dict
@@ -50,21 +54,21 @@ class TestDict(unittest.TestCase):
         """
 
     def test_init_upgrades_dict(self):
-        d = Dict(child = {'x': 1})
+        d = Dict(child={"x": 1})
         self.assertIsInstance(d.child, Dict)
         self.assertEqual(d.child.x, 1)
 
     def test_merge_rightmost_wins(self):
-        d1 = Dict({'a': 1, 'b': 2})
-        d2 = Dict({'b': 3, 'c': 4})
+        d1 = Dict({"a": 1, "b": 2})
+        d2 = Dict({"b": 3, "c": 4})
         merged = Dict(d1, d2)
         self.assertEqual(merged.a, 1)
         self.assertEqual(merged.b, 3)
         self.assertEqual(merged.c, 4)
 
     def test_recursive_merge(self):
-        d1 = Dict({'a': {'x': 1, 'y': 2}})
-        d2 = Dict({'a': {'y': 3, 'z': 4}})
+        d1 = Dict({"a": {"x": 1, "y": 2}})
+        d2 = Dict({"a": {"y": 3, "z": 4}})
         merged = Dict(d1, d2)
         self.assertIsInstance(merged.a, Dict)
         self.assertEqual(merged.a.x, 1)
@@ -118,20 +122,20 @@ class TestDict(unittest.TestCase):
 
     # Immutability disabled for now, going to revisit with MappingProxyType later
 
-#    def doctest_immutable_dicts(self):
-#        # hancho.Dicts should be (as) immutable (as possible)
-#        r"""
-#        >>> d = Dict(a = 1)
-#        >>> d.a = 2
-#        Traceback (most recent call last):
-#        ...
-#        TypeError: ('Hancho.Dict is immutable', 'a', 2)
-#
-#        >>> d['a'] = 2
-#        Traceback (most recent call last):
-#        ...
-#        TypeError: ('Hancho.Dict is immutable', 'a', 2)
-#        """
+    #def doctest_immutable_dicts(self):
+    #    # hancho.Dicts should be (as) immutable (as possible)
+    #    r"""
+    #    >>> d = Dict(a = 1)
+    #    >>> d.a = 2
+    #    Traceback (most recent call last):
+    #    ...
+    #    TypeError: ('Hancho.Dict is immutable', 'a', 2)
+    #
+    #    >>> d['a'] = 2
+    #    Traceback (most recent call last):
+    #    ...
+    #    TypeError: ('Hancho.Dict is immutable', 'a', 2)
+    #    """
 
     def doctest_right_overrides_left(self):
         # Right side should always override left side if right val is not None
@@ -141,6 +145,7 @@ class TestDict(unittest.TestCase):
         >>> Dict(dict(bar = 2), dict(bar = 3))
         _ : Dict = {bar = 3}
         """
+
 
 ####################################################################################################
 

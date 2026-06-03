@@ -10,19 +10,22 @@ import hancho
 
 ####################################################################################################
 
+
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init(quiet = True)
+    hancho.init(quiet=True)
+
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
     tests.addTests(doctests)
     return tests
 
+
 ####################################################################################################
 
-class TestTest(unittest.TestCase):
 
+class TestTest(unittest.TestCase):
     def setUp(self):
         sys.stdout.flush()
 
@@ -31,6 +34,7 @@ class TestTest(unittest.TestCase):
 
     def test_foo(self):
         pass
+
 
 ####################################################################################################
 
