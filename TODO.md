@@ -15,6 +15,7 @@
   We can probably use more map/reduce to clean up some verbosity
 
 # FIXME Tests
+  big long cancellation chain test
   dry run
   task output collision that uses symlinks
   brace-delimited sections inside quote-delimited strings, etc

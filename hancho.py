@@ -21,12 +21,13 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 import types
 from collections import ChainMap, abc
-from contextlib import chdir
+from contextlib import chdir, suppress
 from inspect import isawaitable
 from typing import Any, cast
 
@@ -687,7 +688,8 @@ class Task:
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._asyncio_task : asyncio.Task | None = None
-        self._error = None
+
+        self._error2 : BaseException | None = None
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -720,6 +722,16 @@ class Task:
 
     def __repr__(self):
         return Log.dump_to_str(key = "Task", val = self)
+
+    # ----------------------------------------------------------------------------------------------
+
+#    def __await__(self):
+#        if self._asyncio_task is not None:
+#            return self._asyncio_task.__await__()
+#
+#    def cancel(self):
+#        if self._asyncio_task is not None:
+#            return self._asyncio_task.cancel()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -777,7 +789,15 @@ class Task:
         assert Utils.in_event_loop()
 
         if self._asyncio_task is None:
-            self._asyncio_task = asyncio.create_task(self.task_top(), context=self._context)
+            t = asyncio.create_task(self.task_top(), context=self._context)
+            Runner.live_set.add(t)
+
+            def blah(t):
+                Runner.done_queue.put_nowait(t)
+
+            t.add_done_callback(blah)
+
+            self._asyncio_task = t
 
         # Recurse through all tasks referenced by _config so we don't deadlock while waiting for
         # them.
@@ -786,30 +806,41 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
+    # FIXME what exceptions should propagate out of the task? All of them, if we catch them at the
+    # other end?
+
+
     async def task_top(self):
         try:
             await self.task_main()
+        except asyncio.CancelledError as ex:
+            self.log_v(f"<asyncio.CancelledError {ex}>")
+            self._error2 = ex
+            raise
         except Task.BROKEN as ex:
             self.log_error("Task broken!", "<exception>", ex)
-            self._error = ex
+            self._error2 = ex
         except Task.FAILED as ex:
             self.log_error("Task failed!", "<exception>", ex)
-            self._error = ex
+            self._error2 = ex
         except Task.CANCELLED as ex:
             self.log_v(str(ex), 0x404040)
-            self._error = ex
+            self._error2 = ex
         except Task.SKIPPED as ex:
             self.log_v(str(ex), 0x404040)
-            self._error = ex
+            self._error2 = ex
         except Exception as ex:
-            self.log_error("Task failed!", "<exception>", ex)
-            self._error = ex
+            self.log_error("Task threw an exception!", type(ex), ex)
+            self._error2 = ex
         finally:
             if self._core_count:
                 Runner.release(self._core_count)
                 self._core_count = 0
 
-        return self._error
+        if self._error2:
+            raise self._error2
+
+        return self._out_files
 
     # ----------------------------------------------------------------------------------------------
 
@@ -872,9 +903,12 @@ class Task:
             for i, file in enumerate(files):
                 if isinstance(file, Task):
                     task = cast(Task, file)
-                    task_status = await cast(asyncio.Task, task._asyncio_task)
-                    if isinstance(task_status, Task.FAILED):
-                        raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'")
+                    try:
+                        await cast(asyncio.Task, task._asyncio_task)
+                        #print(f"out_files = {out_files}")
+                    except Exception as err:
+                        raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
+
                     files[i] = task._out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
@@ -919,7 +953,7 @@ class Task:
         # Run some sanity checks
 
         if config.strict and Utils.is_braced(config.command):
-            raise Task.BROKEN("Task broken!", "We are in strict mode and this task's command has curly braces in it - did you typo a template?")
+            raise Task.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         # Check for missing inputs
         for file in self._in_files:
@@ -947,7 +981,6 @@ class Task:
         if not rebuild_reason:
             raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
 
-        self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
@@ -959,6 +992,7 @@ class Task:
         # Run all the task's commands
 
         self.log(f"Task started : '{config.name}' - '{config.desc}'")
+        self.log_v(f"Task rebuilding because: {rebuild_reason}")
 
         for command in cast(list, config.command):
             if isinstance(command, str):
@@ -1110,8 +1144,15 @@ class Task:
             cwd    = config.task_cwd,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
+            start_new_session = True
         )
-        (stdout_data, stderr_data) = await proc.communicate()
+        try:
+            (stdout_data, stderr_data) = await proc.communicate()
+        except asyncio.CancelledError as err:
+            with suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            await proc.communicate()
+            raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
 
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
@@ -1138,12 +1179,12 @@ class Task:
 
         self.log(type, 0xFF0000)
         self.log(f"From {script_path}:", 0xFF0000)
-        self.log(f"    Task     = '{self._config.name}' : '{self._config.desc}'", 0xFF0000)
-        self.log(f"    task_cwd = '{self._config.task_cwd}'", 0xFF0000)
-        self.log(f"    getcwd   = '{os.getcwd()}'", 0xFF0000)
-        self.log(f"    command  = '{self._config.command}'", 0xFF0000)
-        self.log(f"    reason   = '{reason}'", 0xFF0000)
-        self.log(f"    except   = '{ex}'", 0xFF0000)
+        self.log(f"    Task       = '{self._config.name}' : '{self._config.desc}'", 0xFF0000)
+        self.log(f"    time       = {time.perf_counter()}")
+        self.log(f"    os.getcwd  = {os.getcwd()}", 0xFF0000)
+        self.log(f"    command    = {self._config.command}", 0xFF0000)
+        self.log(f"    reason     = '{reason}'", 0xFF0000)
+        self.log(f"    except     = '{ex}'", 0xFF0000)
         if self._stdout or self._stderr:
             self.log("========== Stdout ==========")
             for line in self._stdout.strip().split("\n"):
@@ -1727,28 +1768,47 @@ class Runner:
     core_max  : int
     core_sem  : asyncio.Semaphore
     core_lock : asyncio.Lock
+    done_queue : asyncio.Queue
+    live_set : set
 
-    @staticmethod
-    def reset(core_max):
-        Runner.all_tasks = []
-        Runner.core_max  = core_max
-        Runner.core_sem  = asyncio.Semaphore(core_max)
-        Runner.core_lock = asyncio.Lock()
+    tasks_awaited = 0
+    tasks_finished = 0
+    tasks_broken = 0
+    tasks_failed = 0
+    tasks_cancelled = 0
+    tasks_skipped = 0
+
+
+    @classmethod
+    def reset(cls, core_max):
+        cls.all_tasks = []
+        cls.core_max  = core_max
+        cls.core_sem  = asyncio.Semaphore(core_max)
+        cls.core_lock = asyncio.Lock()
+        cls.done_queue = asyncio.Queue()
+        cls.live_set = set()
+
+        cls.tasks_awaited = 0
+        cls.tasks_finished = 0
+        cls.tasks_broken = 0
+        cls.tasks_failed = 0
+        cls.tasks_cancelled = 0
+        cls.tasks_skipped = 0
 
     #--------------------------------------------------------------------------------
 
-    @staticmethod
-    async def acquire(count):
-        if count > Runner.core_max:
-            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {Runner.core_max}")
-        async with Runner.core_lock:
+    @classmethod
+    async def acquire(cls, count):
+        if count > cls.core_max:
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.core_max}")
+        async with cls.core_lock:
             for _ in range(count):
-                await Runner.core_sem.acquire()
+                await cls.core_sem.acquire()
 
-    @staticmethod
-    def release(count):
+    @classmethod
+    def release(cls, count):
         for _ in range(count):
-            Runner.core_sem.release()
+            cls.core_sem.release()
 
     #--------------------------------------------------------------------------------
 
@@ -1783,81 +1843,75 @@ class Runner:
         """Run all tasks until we run out."""
 
         # Create asyncio tasks for all enabled Hancho tasks.
-
         time_a = time.perf_counter()
-
         for task in Runner.all_tasks:
             if task._config.enabled:
                 task.create_asyncio_task()
-
         time_start = time.perf_counter() - time_a
         Log.log_v(f"Starting {Task.tasks_enabled} tasks took {time_start:.3f} seconds")
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
-
-        tasks_awaited = 0
-        tasks_finished = 0
-        tasks_broken = 0
-        tasks_failed = 0
-        tasks_cancelled = 0
-        tasks_skipped = 0
-
+        bail_out = False
         time_a = time.perf_counter()
-
-        while True:
-            all_tasks = asyncio.all_tasks()
-            this_task = asyncio.current_task()
-
-            if len(all_tasks) == 1:
-                assert this_task in all_tasks
-                break
-
-            for task in all_tasks:
-                if task == this_task:
-                    continue
-                error = await task
-                tasks_awaited += 1
-                match error.__class__:
-                    case types.NoneType:
-                        tasks_finished += 1
-                    case Task.BROKEN:
-                        tasks_broken += 1
-                    case Task.FAILED:
-                        tasks_failed += 1
+        while Runner.live_set:
+            try:
+                finished = await Runner.done_queue.get()
+                _ = finished.result()
+                Runner.tasks_finished += 1
+            except Exception as err:
+                match err.__class__:
+                    case asyncio.CancelledError:
+                        Runner.tasks_cancelled += 1
                     case Task.CANCELLED:
-                        tasks_cancelled += 1
+                        Runner.tasks_cancelled += 1
+                    case Task.BROKEN:
+                        Runner.tasks_broken += 1
+                    case Task.FAILED:
+                        Runner.tasks_failed += 1
                     case Task.SKIPPED:
-                        tasks_skipped += 1
+                        Runner.tasks_skipped += 1
+                    case _:
+                        Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}")
+                        Runner.tasks_failed += 1
+            finally:
+                Runner.live_set.discard(finished)
+                Runner.tasks_awaited += 1
 
-
-            fail_count = tasks_failed + tasks_broken
+            fail_count = Runner.tasks_failed + Runner.tasks_broken
             if (hancho.config.keep_going != 0) and (fail_count >= hancho.config.keep_going):
-                Log.log("Too many failures, cancelling tasks and stopping build", 0xFF0000)
-                for task in all_tasks:
-                    if task != this_task:
-                        task.cancel()
+                bail_out = True
                 break
-
         time_build = time.perf_counter() - time_a
-        Log.log_v(f"Running {tasks_finished} tasks took {time_build:.3f} seconds", 0x8080FF)
 
-        Log.log_d(f"Tasks created:    {len(Runner.all_tasks)}")
-        Log.log_d(f"Tasks awaited:    {tasks_awaited}")
-        Log.log_d(f"Tasks finished:   {tasks_finished}")
-        Log.log_d(f"Tasks broken:     {tasks_broken}")
-        Log.log_d(f"Tasks failed:     {tasks_failed}")
-        Log.log_d(f"Tasks cancelled:  {tasks_cancelled}")
-        Log.log_d(f"Tasks skipped:    {tasks_skipped}")
-        Log.log_d(f"Mtime calls:      {Utils.mtime_calls}")
+        if bail_out:
+            Log.log(f"Too many failures after {Runner.tasks_awaited}, cancelling tasks and stopping build", 0xFF0000)
 
-        if tasks_failed or tasks_broken:
+            # Cancel all the asyncio.Tasks that haven't completed yet
+            Log.log_d(f"Cancelling {len(Runner.live_set)} tasks")
+            for t in Runner.live_set:
+                t.cancel()
+
+            # and then wait on their cancellation to complete (it isn't instantaneous)
+            await asyncio.gather(*Runner.live_set, return_exceptions=True)
+
+        Log.log(f"Running {Runner.tasks_finished} tasks took {time_build:.3f} seconds", 0x8080FF)
+        Log.log_v(f"Tasks created:    {len(Runner.all_tasks)}")
+        Log.log_v(f"Tasks awaited:    {Runner.tasks_awaited}")
+        Log.log_v(f"Tasks finished:   {Runner.tasks_finished}")
+        Log.log_v(f"Tasks broken:     {Runner.tasks_broken}")
+        Log.log_v(f"Tasks failed:     {Runner.tasks_failed}")
+        Log.log_v(f"Tasks cancelled:  {Runner.tasks_cancelled}")
+        Log.log_v(f"Tasks skipped:    {Runner.tasks_skipped}")
+        Log.log_v(f"Mtime calls:      {Utils.mtime_calls}")
+
+        if Runner.tasks_failed or Runner.tasks_broken:
             Log.log("hancho: BUILD FAILED", 0xFF8080)
-        elif tasks_finished:
+        elif Runner.tasks_finished:
             Log.log("hancho: BUILD PASSED", 0x80FF80)
         else:
-            Log.log("hancho: BUILD CLEAN ", 0x8080FF)
+            Log.log("hancho: BUILD CLEAN", 0x8080FF)
 
-        return -1 if tasks_failed or tasks_broken else 0
+        return -1 if Runner.tasks_failed or Runner.tasks_broken else 0
 
     #--------------------------------------------------------------------------------
 
