@@ -780,12 +780,8 @@ class Task:
 
         if self._aio_task is None:
             t = asyncio.create_task(self.task_top(), context=self._context)
-            Runner.live_set.add(t)
-
-            def blah(t):
-                Runner.done_queue.put_nowait(t)
-
-            t.add_done_callback(blah)
+            Runner.live_aio_tasks.add(t)
+            t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
 
             self._aio_task = t
 
@@ -1764,8 +1760,9 @@ class Runner:
     core_max  : int
     core_sem  : asyncio.Semaphore
     core_lock : asyncio.Lock
-    done_queue : asyncio.Queue
-    live_set : set[asyncio.Task]
+
+    aio_done_queue : asyncio.Queue
+    live_aio_tasks : set[asyncio.Task]
 
     tasks_awaited = 0
     tasks_finished = 0
@@ -1781,8 +1778,8 @@ class Runner:
         cls.core_max  = core_max
         cls.core_sem  = asyncio.Semaphore(core_max)
         cls.core_lock = asyncio.Lock()
-        cls.done_queue = asyncio.Queue()
-        cls.live_set = set()
+        cls.aio_done_queue = asyncio.Queue()
+        cls.live_aio_tasks = set()
 
         cls.tasks_awaited = 0
         cls.tasks_finished = 0
@@ -1852,9 +1849,9 @@ class Runner:
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
         time_a = time.perf_counter()
-        while Runner.live_set and Runner.count_failures() <= hancho.config.max_errors:
+        while Runner.live_aio_tasks and Runner.count_failures() <= hancho.config.max_errors:
             try:
-                finished_aio_task = await Runner.done_queue.get()
+                finished_aio_task = await Runner.aio_done_queue.get()
                 _ = finished_aio_task.result()
                 Runner.tasks_finished += 1
             except Exception as err:
@@ -1873,7 +1870,7 @@ class Runner:
                         Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}")
                         Runner.tasks_failed += 1
             finally:
-                Runner.live_set.discard(finished_aio_task)
+                Runner.live_aio_tasks.discard(finished_aio_task)
                 Runner.tasks_awaited += 1
         time_build = time.perf_counter() - time_a
 
@@ -1881,12 +1878,12 @@ class Runner:
             Log.log(f"Too many failures after {Runner.tasks_awaited}, cancelling tasks and stopping build", 0xFF0000)
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            Log.log_d(f"Cancelling {len(Runner.live_set)} tasks")
-            for t in Runner.live_set:
+            Log.log_d(f"Cancelling {len(Runner.live_aio_tasks)} tasks")
+            for t in Runner.live_aio_tasks:
                 t.cancel()
 
-            # and then wait on their cancellation to complete (it isn't instantaneous)
-            await asyncio.gather(*Runner.live_set, return_exceptions=True)
+            # and then wait on their cancellations to complete (it isn't instantaneous)
+            await asyncio.gather(*Runner.live_aio_tasks, return_exceptions=True)
 
         Log.log(f"Running {Runner.tasks_finished} tasks took {time_build:.3f} seconds", 0x8080FF)
         Log.log_v(f"Tasks created:    {len(Runner.all_tasks)}")
