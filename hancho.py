@@ -381,7 +381,7 @@ class Utils:
     #----------------------------------------
     # Checks if a string needs template expansion. Empty strings are considered literals.
 
-    #braced = re.compile(r"\{(\\.|[^\\}])*\}")
+    # Matches non-escaped brace pairs
     braced = re.compile(r"(?<!\\)\{(\\.|[^\\}])*\}")
 
     @recursify_all
@@ -689,7 +689,7 @@ class Task:
         # actually need to run this task if its outputs are up to date.
         self._aio_task : asyncio.Task | None = None
 
-        self._error2 : BaseException | None = None
+        self._error : BaseException | None = None
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
@@ -785,9 +785,7 @@ class Task:
 
             self._aio_task = t
 
-        # Recurse through all tasks referenced by _config so we don't deadlock while waiting for
-        # them.
-
+        # Start all tasks referenced by _config so we don't deadlock while waiting for them.
         self.create_parent_tasks(self._config)
 
     # ----------------------------------------------------------------------------------------------
@@ -801,30 +799,30 @@ class Task:
             await self.task_main()
         except asyncio.CancelledError as ex:
             self.log_v(f"<asyncio.CancelledError {ex}>")
-            self._error2 = ex
+            self._error = ex
             raise
         except Task.BROKEN as ex:
             self.log_error("Task broken!", "<exception>", ex)
-            self._error2 = ex
+            self._error = ex
         except Task.FAILED as ex:
             self.log_error("Task failed!", "<exception>", ex)
-            self._error2 = ex
+            self._error = ex
         except Task.CANCELLED as ex:
             self.log_v(str(ex), 0x404040)
-            self._error2 = ex
+            self._error = ex
         except Task.SKIPPED as ex:
             self.log_v(str(ex), 0x404040)
-            self._error2 = ex
+            self._error = ex
         except Exception as ex:
             self.log_error("Task threw an exception!", type(ex), ex)
-            self._error2 = ex
+            self._error = ex
         finally:
             if self._core_count:
                 Runner.release(self._core_count)
                 self._core_count = 0
 
-        if self._error2:
-            raise self._error2
+        if self._error:
+            raise self._error
 
         return self._out_files
 
