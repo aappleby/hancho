@@ -90,27 +90,32 @@ class Log:
         return result + "..."
 
     @staticmethod
-    def log(message : str | list[str], color : int = 0):
+    def log(message: str | list[str], color: int = 0):
 
         if isinstance(message, list):
             for m in message:
                 Log.log(m, color)
             return
 
-        lines = message.split('\n')
+        lines = message.split("\n")
         for i, line in enumerate(lines):
             if not hancho.config.wrap:
                 line = Log.clip_printable(line, Log.con_w)
             Log.buffer += line + "\n"
 
-            use_newline = (i < len(lines) - 1) or hancho.config.debug or hancho.config.verbose
+            use_newline = (
+                (i < len(lines) - 1)
+                or hancho.config.debug
+                or hancho.config.verbose
+                or hancho.config.scroll
+            )
 
             if not hancho.config.quiet:
                 sys.stdout.write("" if use_newline else "\r")
                 sys.stdout.write(Utils.hex_to_ansi(color))
                 sys.stdout.write(line)
                 sys.stdout.write(Log.reset_color)
-                sys.stdout.write("\n" if use_newline else "\x1B[K")
+                sys.stdout.write("\n" if use_newline else "\x1b[K")
                 sys.stdout.flush()
 
     @staticmethod
@@ -161,6 +166,10 @@ class Log:
             val = "<Context>"
         elif isinstance(val, types.ModuleType):
             val = f"<Module {val.__name__}>"
+
+        if isinstance(val, argparse.Namespace):
+            val = val.__dict__
+            pass
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
@@ -640,8 +649,13 @@ class Dict(dict):
     #----------------------------------------
     # Expander convenience helpers
 
-    def eval[T](self, expr : str, as_type: type[T] = object) -> T:
-        result = Expander.eval(expr, self)
+    def eval_once[T](self, expr : str, as_type: type[T] = object) -> T:
+        result = Expander.eval_once(expr, self)
+        assert isinstance(result, as_type)
+        return result
+
+    def eval_all[T](self, text : Tree[str], as_type : type[T] = object) -> T:
+        result = Expander.eval_all(text, self)
         assert isinstance(result, as_type)
         return result
 
@@ -746,7 +760,7 @@ class Task:
     def log(self, message : str, color : int = 0):
         prefix  = ""
         prefix += Utils.hex_to_ansi(0x80FF80)
-        prefix += f"[{self._task_id}/{Task.tasks_enabled}] "
+        prefix += f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] "
         prefix += Utils.hex_to_ansi(color)
         prefix += message
         prefix += Log.reset_color
@@ -819,6 +833,8 @@ class Task:
         if self._error:
             raise self._error
 
+        dry_run = "(DRY RUN)" if self._config.dry_run else ""
+        self.log_v(f"Task done {dry_run}: '{self._config.name}' - '{self._config.desc}'")
         return self._out_files
 
     # ----------------------------------------------------------------------------------------------
@@ -884,7 +900,6 @@ class Task:
                     task = cast(Task, file)
                     try:
                         await cast(asyncio.Task, task._aio_task)
-                        #print(f"out_files = {out_files}")
                     except Exception as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
 
@@ -925,7 +940,6 @@ class Task:
 
         # Dry runs early out after config expansion
         if config.dry_run:
-            self.log_v(f"Task done : '{config.name}' - '{config.desc}'")
             return
 
         # ----------------------------------------
@@ -974,24 +988,14 @@ class Task:
 
         for command in cast(list, config.command):
             if isinstance(command, str):
-                try:
-                    returncode = await self.run_command(command)
-                except Exception as ex:
-                    print(f"command exception {ex}")
-                    pass
-                finally:
-                    pass
-                if returncode:
-                    raise Task.FAILED(f"Command return code was non-zero : {returncode}")
+                await self.run_command(command)
+
             elif callable(command):
                 await self.call_callback(command)
             else:
                 raise Task.FAILED(f"Command {command} is not a string or a callable?")
 
-        # ----------------------------------------
         # Done!
-
-        self.log_v(f"Task done : '{config.name}' - '{config.desc}'")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1066,7 +1070,7 @@ class Task:
         config = self._config
         cwd = os.getcwd()
 
-        if config.rebuild:
+        if config.build_all:
             return "Target forced to rebuild"
         if not self._in_files:
             return "Always rebuild a target with no inputs"
@@ -1119,6 +1123,7 @@ class Task:
 
     async def run_command(self, command):
         config = self._config
+        #print(f"v {self._config.verbose} d {self._config.debug}")
         self.log_v(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}", 0x8080FF)
 
         # Create the subprocess via asyncio and then await the result.
@@ -1138,9 +1143,23 @@ class Task:
                 os.killpg(proc.pid, signal.SIGKILL)
             await proc.communicate()
             raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
+        except Exception as ex:
+            raise Task.FAILED(f"Command threw an exception : {ex}") from ex
+
+        if proc.returncode:
+            raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
+
+        if (self._stdout or self._stderr) and (self._config.verbose or self._config.debug):
+            self.log_v("========== Stdout ==========")
+            for line in self._stdout.strip().split("\n"):
+                self.log(line)
+            self.log("========== Stderr ==========")
+            for line in self._stderr.strip().split("\n"):
+                self.log(line)
+            self.log("============================")
 
         return proc.returncode
 
@@ -1174,14 +1193,6 @@ class Task:
         self.log(f"    command    = {self._config.command}", 0xFF0000)
         self.log(f"    reason     = '{reason}'", 0xFF0000)
         self.log(f"    except     = '{ex}'", 0xFF0000)
-        if self._stdout or self._stderr:
-            self.log("========== Stdout ==========")
-            for line in self._stdout.strip().split("\n"):
-                self.log(line)
-            self.log("========== Stderr ==========")
-            for line in self._stderr.strip().split("\n"):
-                self.log(line)
-            self.log("============================")
 
 # endregion
 ####################################################################################################
@@ -1383,7 +1394,7 @@ class Expander(abc.MutableMapping[str, object]):
         assert Utils.is_macro(macro)
         with Tracer(context, f"_expand_macro('{macro}')") as tracer:
             try:
-                result = Expander.eval(macro[1:-1], context)
+                result = Expander.eval_once(macro[1:-1], context)
             except RecursionError:
                 raise
             except Exception:
@@ -1415,7 +1426,7 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     @Utils.recursify_apply_mip
-    def eval[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
+    def eval_once[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
         """
         Eval plus recursive application and type checking.
         """
@@ -1423,6 +1434,34 @@ class Expander(abc.MutableMapping[str, object]):
         result = Expander._eval(expr, context)
         assert isinstance(result, as_type)
         return result
+
+    @staticmethod
+    @Utils.recursify_apply_mip
+    def eval_all[T](expr : Any, context : Dict | Expander, as_type : type[T] = object):
+        """
+        Evaluates 'expr' and then keeps expanding or evaluating it until it no longer contains
+        braces, it stops changing, or we hit our expansion limit.
+        """
+        econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
+
+        for _ in range(Tracer.MAX_EXPANDS):
+            with Tracer(econtext, f"eval_all('{expr}')") as tracer:
+
+                match = Utils.braced.search(expr)
+
+                if match is None:
+                    result = Expander._eval(expr, econtext)
+                elif match.group() == expr:
+                    result = Expander._expand_macro(expr, econtext)
+                else:
+                    result = Expander._expand_template(expr, econtext)
+
+                tracer.save_result(result)
+            if not Utils.is_braced(result) or result == expr:
+                assert isinstance(result, as_type)
+                return result
+            expr = result
+        raise RecursionError("eval_all() - Template expansion failed to terminate")
 
     @staticmethod
     @Utils.recursify_apply_mip
@@ -1547,6 +1586,8 @@ class Loader:
 
         root_config = Dict(Loader.default_config(), *args, **kwargs)
 
+        #print(root_config)
+
         if not hasattr(Loader, "cv_config"):
             Loader.cv_config  = contextvars.ContextVar("config")
         if hasattr(Loader, "cv_token"):
@@ -1599,11 +1640,11 @@ class Loader:
             debug       = False,
             dry_run     = False,
             quiet       = False,
-            rebuild     = False,
             trace       = False,
             build_all   = False,
             wrap        = False,
             strict      = True,
+            scroll      = False,
         )
         return result
 
@@ -1624,15 +1665,16 @@ class Loader:
         parser.add_argument("--build_tag",        default = None, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
         parser.add_argument("-j", "--core_max",   default = None, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
         parser.add_argument("--max_errors",       default = None, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument("-v", "--verbose",    default = None, action="store_true",  help="Show verbose build info")
-        parser.add_argument("-q", "--quiet",      default = None, action="store_true",  help="Mute all output")
-        parser.add_argument("-n", "--dry_run",    default = None, action="store_true",  help="Do not run commands")
-        parser.add_argument("-d", "--debug",      default = None, action="store_true",  help="Print debugging information")
-        parser.add_argument("-a", "--build_all",  default = None, action="store_true",  help="Build absolutely everything in all build scripts loaded.")
-        parser.add_argument("--rebuild",          default = None, action="store_true",  help="Rebuild everything")
-        parser.add_argument("--trace",            default = None, action="store_true",  help="Trace all text expansion")
-        parser.add_argument("--wrap",             default = None, action="store_true",  help="Wrap lines around the console instead of clipping them")
-        parser.add_argument("--strict",           default = None, action="store_true",  help="Checks for common footguns like typo'd templates")
+
+        parser.add_argument("-v", "--verbose",   action = argparse.BooleanOptionalAction, help="Show verbose build info")
+        parser.add_argument("-q", "--quiet",     action = argparse.BooleanOptionalAction, help="Mute all output")
+        parser.add_argument("-n", "--dry_run",   action = argparse.BooleanOptionalAction, help="Do not run commands")
+        parser.add_argument("-d", "--debug",     action = argparse.BooleanOptionalAction, help="Print debugging information")
+        parser.add_argument("-a", "--build_all", action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
+        parser.add_argument("--trace",           action = argparse.BooleanOptionalAction, help="Trace all text expansion")
+        parser.add_argument("--wrap",            action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("--strict",          action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
+        parser.add_argument("--scroll",          action = argparse.BooleanOptionalAction, help="Makes the output scroll instead of keeping it on one line like Ninja.")
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args(args)
@@ -1660,6 +1702,10 @@ class Loader:
                         except ValueError:
                             pass
                 extra_flags[key] = val
+
+        #print(hancho.Log.dump_to_str(key = "flags", val = flags))
+        #print(hancho.Log.dump_to_str(key = "extra_flags", val = extra_flags))
+
 
         flags = Dict(vars(flags), extra_flags)
         return flags
@@ -1882,6 +1928,8 @@ class Runner:
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*Runner.live_aio_tasks, return_exceptions=True)
 
+        hancho.config.scroll = True
+
         Log.log(f"Running {Runner.tasks_finished} tasks took {time_build:.3f} seconds", 0x8080FF)
         Log.log_v(f"Tasks created:    {len(Runner.all_tasks)}")
         Log.log_v(f"Tasks awaited:    {Runner.tasks_awaited}")
@@ -1907,7 +1955,7 @@ class Runner:
     def run_tool(tool : str):
         if tool == "clean":
             for task in Runner.all_tasks:
-                build_root = Path.real(Expander.eval("build_root", task._expand, str))
+                build_root = Path.real(Expander.eval_all("build_root", task._expand, str))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}", 0x8080FF)
@@ -1945,6 +1993,11 @@ def main():
 
     flags = Loader.parse_flags(sys.argv[1:])
     init(flags)
+
+    Log.log_v(f"Hancho started as '{" ".join(sys.argv)}'")
+    Log.log_v(f"Hancho root at {hancho.config.root_dir}")
+    Log.log_v(f"Hancho repo at {hancho.config.eval_all("repo_dir")}")
+    Log.log_v(f"Hancho root script at {os.path.join(hancho.config.expand_all("{script_cwd}"), hancho.config.expand_all("{script_file}"))}")
 
     #----------------------------------------
     # Load all build scripts

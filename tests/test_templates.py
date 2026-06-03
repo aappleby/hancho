@@ -34,19 +34,19 @@ class TestTemplates(unittest.TestCase):
         # Basic evaluation should work
         """
         >>> d = Dict(a = 1, b = 2)
-        >>> d.eval("a")
+        >>> d.eval_once("a")
         1
-        >>> d.eval("b")
+        >>> d.eval_once("b")
         2
-        >>> d.eval("{a}{b}{a}{b}")
+        >>> d.eval_once("{a}{b}{a}{b}")
         Traceback (most recent call last):
         ...
         AssertionError
-        >>> d.eval("{a}")
+        >>> d.eval_once("{a}")
         Traceback (most recent call last):
         ...
         AssertionError
-        >>> d.eval("{b}")
+        >>> d.eval_once("{b}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -56,13 +56,13 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Expanding basic templates should work
         >>> d = Dict(a = 1, b = 2, c = 3)
-        >>> d.eval("a")
+        >>> d.eval_once("a")
         1
         >>> d.expand_once("a")
         'a'
         >>> d.expand_all("a")
         'a'
-        >>> d.eval("{a}")
+        >>> d.eval_once("{a}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -70,7 +70,7 @@ class TestTemplates(unittest.TestCase):
         1
         >>> d.expand_all("{a}")
         1
-        >>> d.eval("{a}{b}{c}")
+        >>> d.eval_once("{a}{b}{c}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -84,7 +84,7 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Multiply-nested braces should work
         >>> d = Dict(a = "b", b = 777)
-        >>> d.eval("{{a}}")
+        >>> d.eval_once("{{a}}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -92,7 +92,7 @@ class TestTemplates(unittest.TestCase):
         '{b}'
         >>> d.expand_all("{{a}}")
         777
-        >>> d.eval("{{{{{{a}}}}}}")
+        >>> d.eval_once("{{{{{{a}}}}}}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -106,9 +106,9 @@ class TestTemplates(unittest.TestCase):
         r"""
         # We should be able to expand nested templates
         >>> d = Dict(a = Dict(b = "{c}"), c = 10)
-        >>> d.eval("a.b")
+        >>> d.eval_once("a.b")
         '{c}'
-        >>> d.eval("{a.b}")
+        >>> d.eval_once("{a.b}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -151,13 +151,13 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Wrapping a field in {} makes us expand it before eval
         >>> d = Dict(a = 1, b = 2, c = 3, name_a = 'a', name_b = 'b', name_c = 'c')
-        >>> d.eval("name_a + name_b + name_c")
+        >>> d.eval_once("name_a + name_b + name_c")
         'abc'
         >>> d.expand_once("name_a + name_b + name_c")
         'name_a + name_b + name_c'
         >>> d.expand_all("name_a + name_b + name_c")
         'name_a + name_b + name_c'
-        >>> d.eval("{name_a} + {name_b} + {name_c}")
+        >>> d.eval_once("{name_a} + {name_b} + {name_c}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -217,15 +217,15 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Nones should turn into empty strings
         >>> d = Dict(a = None, b = "x{a}y")
-        >>> d.eval("a") is None
+        >>> d.eval_once("a") is None
         True
-        >>> d.eval("b")
+        >>> d.eval_once("b")
         'x{a}y'
-        >>> d.eval("{a}")
+        >>> d.eval_once("{a}")
         Traceback (most recent call last):
         ...
         AssertionError
-        >>> d.eval("{b}")
+        >>> d.eval_once("{b}")
         Traceback (most recent call last):
         ...
         AssertionError
@@ -260,7 +260,7 @@ class TestTemplates(unittest.TestCase):
         >>> d = Dict(flags = ["-O2", "-Wall"])
         >>> d.expand_once("cc {flags} main.c")
         'cc -O2 -Wall main.c'
-        >>> d.eval("flags")
+        >>> d.eval_once("flags")
         ['-O2', '-Wall']
         """
 
@@ -268,13 +268,13 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Lists should be flattened before joining with spaces
         >>> d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
-        >>> d.eval("flags")
+        >>> d.eval_once("flags")
         [[['a'], 'b'], 'c', 'd', ['e', 'f']]
         >>> d.expand_once("flags")
         'flags'
         >>> d.expand_all("flags")
         'flags'
-        >>> d.eval("{flags}")
+        >>> d.eval_once("{flags}")
         Traceback (most recent call last):
         ...
         AssertionError
