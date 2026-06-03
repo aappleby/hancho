@@ -521,8 +521,9 @@ class TestTasks(unittest.TestCase):
     def test_cancellation(self):
         # A task that receives a cancellation exception should not run.
 
-        # Note: not using -k0 will break the cancellation test
-        hancho.init(quiet = True, keep_going = 0)
+        # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
+        # failure to see the cancellation.
+        hancho.init(quiet = True, max_errors = 999)
 
         task_that_fails = hancho.Task(
             desc    = "task that fails",

@@ -126,7 +126,7 @@ Task @ 0x727f0371d6a0 {
     _in_files = [],
     _out_files = [],
     _reason = None,
-    _asyncio_task = None,
+    _aio_task = None,
     _loaded_files = [
         "/home/aappleby/repos/hancho/tutorial/build.hancho",
     ]

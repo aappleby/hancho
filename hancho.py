@@ -687,7 +687,7 @@ class Task:
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
-        self._asyncio_task : asyncio.Task | None = None
+        self._aio_task : asyncio.Task | None = None
 
         self._error2 : BaseException | None = None
 
@@ -722,16 +722,6 @@ class Task:
 
     def __repr__(self):
         return Log.dump_to_str(key = "Task", val = self)
-
-    # ----------------------------------------------------------------------------------------------
-
-#    def __await__(self):
-#        if self._asyncio_task is not None:
-#            return self._asyncio_task.__await__()
-#
-#    def cancel(self):
-#        if self._asyncio_task is not None:
-#            return self._asyncio_task.cancel()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -777,18 +767,18 @@ class Task:
             self._config.enabled = True
             Task.tasks_enabled += 1
             if Utils.in_event_loop():
-                self.create_asyncio_task()
+                self.create_aio_task()
 
     @Utils.recursify_apply_mip_member
     def create_parent_tasks(self, v):
         if isinstance(v, Task):
-            v.create_asyncio_task()
+            v.create_aio_task()
         return v
 
-    def create_asyncio_task(self):
+    def create_aio_task(self):
         assert Utils.in_event_loop()
 
-        if self._asyncio_task is None:
+        if self._aio_task is None:
             t = asyncio.create_task(self.task_top(), context=self._context)
             Runner.live_set.add(t)
 
@@ -797,7 +787,7 @@ class Task:
 
             t.add_done_callback(blah)
 
-            self._asyncio_task = t
+            self._aio_task = t
 
         # Recurse through all tasks referenced by _config so we don't deadlock while waiting for
         # them.
@@ -861,7 +851,7 @@ class Task:
                         "script_cwd", "script_file", "build_root", "build_dir"]
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
-                        "keep_going", "verbose", "debug", "dry_run", "quiet", "rebuild",
+                        "max_errors", "verbose", "debug", "dry_run", "quiet", "rebuild",
                         "trace", "build_all"]
 
         for f in path_fields:
@@ -904,7 +894,7 @@ class Task:
                 if isinstance(file, Task):
                     task = cast(Task, file)
                     try:
-                        await cast(asyncio.Task, task._asyncio_task)
+                        await cast(asyncio.Task, task._aio_task)
                         #print(f"out_files = {out_files}")
                     except Exception as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
@@ -996,7 +986,13 @@ class Task:
 
         for command in cast(list, config.command):
             if isinstance(command, str):
-                returncode = await self.run_command(command)
+                try:
+                    returncode = await self.run_command(command)
+                except Exception as ex:
+                    print(f"command exception {ex}")
+                    pass
+                finally:
+                    pass
                 if returncode:
                     raise Task.FAILED(f"Command return code was non-zero : {returncode}")
             elif callable(command):
@@ -1605,7 +1601,7 @@ class Loader:
             tool        = "",
 
             enabled     = False,
-            keep_going  = 1,     # this matches Ninja
+            max_errors  = 0,
             verbose     = False,
             debug       = False,
             dry_run     = False,
@@ -1634,7 +1630,7 @@ class Loader:
         parser.add_argument("-t", "--tool",       default = None, type=str.strip,       help="Run a subtool.")
         parser.add_argument("--build_tag",        default = None, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
         parser.add_argument("-j", "--core_max",   default = None, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
-        parser.add_argument("-k", "--keep_going", default = None, type=int,             help="Keep going until N jobs fail (0 means infinity)")
+        parser.add_argument("--max_errors",       default = None, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
         parser.add_argument("-v", "--verbose",    default = None, action="store_true",  help="Show verbose build info")
         parser.add_argument("-q", "--quiet",      default = None, action="store_true",  help="Mute all output")
         parser.add_argument("-n", "--dry_run",    default = None, action="store_true",  help="Do not run commands")
@@ -1769,7 +1765,7 @@ class Runner:
     core_sem  : asyncio.Semaphore
     core_lock : asyncio.Lock
     done_queue : asyncio.Queue
-    live_set : set
+    live_set : set[asyncio.Task]
 
     tasks_awaited = 0
     tasks_finished = 0
@@ -1794,6 +1790,10 @@ class Runner:
         cls.tasks_failed = 0
         cls.tasks_cancelled = 0
         cls.tasks_skipped = 0
+
+    @classmethod
+    def count_failures(cls):
+        return cls.tasks_broken + cls.tasks_failed
 
     #--------------------------------------------------------------------------------
 
@@ -1846,17 +1846,16 @@ class Runner:
         time_a = time.perf_counter()
         for task in Runner.all_tasks:
             if task._config.enabled:
-                task.create_asyncio_task()
+                task.create_aio_task()
         time_start = time.perf_counter() - time_a
         Log.log_v(f"Starting {Task.tasks_enabled} tasks took {time_start:.3f} seconds")
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
-        bail_out = False
         time_a = time.perf_counter()
-        while Runner.live_set:
+        while Runner.live_set and Runner.count_failures() <= hancho.config.max_errors:
             try:
-                finished = await Runner.done_queue.get()
-                _ = finished.result()
+                finished_aio_task = await Runner.done_queue.get()
+                _ = finished_aio_task.result()
                 Runner.tasks_finished += 1
             except Exception as err:
                 match err.__class__:
@@ -1874,16 +1873,11 @@ class Runner:
                         Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}")
                         Runner.tasks_failed += 1
             finally:
-                Runner.live_set.discard(finished)
+                Runner.live_set.discard(finished_aio_task)
                 Runner.tasks_awaited += 1
-
-            fail_count = Runner.tasks_failed + Runner.tasks_broken
-            if (hancho.config.keep_going != 0) and (fail_count >= hancho.config.keep_going):
-                bail_out = True
-                break
         time_build = time.perf_counter() - time_a
 
-        if bail_out:
+        if Runner.count_failures() > hancho.config.max_errors:
             Log.log(f"Too many failures after {Runner.tasks_awaited}, cancelling tasks and stopping build", 0xFF0000)
 
             # Cancel all the asyncio.Tasks that haven't completed yet

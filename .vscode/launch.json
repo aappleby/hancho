@@ -11,7 +11,7 @@
       "request" : "launch",
       //"module"  : "tests.test_tasks",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_bad_build_path"],
+      "args"    : ["tests.test_tasks.TestTasks.test_cancellation"],
       "preLaunchTask": "Wipe build",
     },
 
