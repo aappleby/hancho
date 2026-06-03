@@ -45,8 +45,10 @@ class TestTasks(unittest.TestCase):
         assert os.getcwd().endswith("/tests")
         shutil.rmtree("build", ignore_errors = True)
         # OK, now we should be good to start up Hancho.
-        hancho.init(quiet = True)
-        #hancho.init(verbose = True)
+
+        # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
+        # failure to see the cancellation.
+        hancho.init(quiet = True, max_errors = 999)
         sys.stdout.flush()
 
     def tearDown(self):
@@ -508,6 +510,16 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
 
+    def test_sync_callback_raises(self):
+        def callback(_):
+            time.sleep(0.1)
+            raise ValueError("I do not like value.")
+
+        task = hancho.Task(command = callback, out_file = "test_async_callback.txt")
+        self.run_tasks(-1)
+        self.assertIsInstance(task._error, ValueError)
+        self.assertFalse(Path("build/test_async_callback.txt").exists())
+
     def test_async_callback(self):
         async def callback(task):
             await asyncio.sleep(0.1)
@@ -518,13 +530,18 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
 
+    def test_async_callback_raises(self):
+        async def callback(_):
+            await asyncio.sleep(0.1)
+            raise ValueError("I do not like value.")
+
+        task = hancho.Task(command = callback, out_file = "test_async_callback.txt")
+        self.run_tasks(-1)
+        self.assertIsInstance(task._error, ValueError)
+        self.assertFalse(Path("build/test_async_callback.txt").exists())
+
     def test_cancellation(self):
         # A task that receives a cancellation exception should not run.
-
-        # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
-        # failure to see the cancellation.
-        hancho.init(quiet = True, max_errors = 999)
-
         task_that_fails = hancho.Task(
             desc    = "task that fails",
             command = "(exit 255)",

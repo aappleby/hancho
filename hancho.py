@@ -782,17 +782,12 @@ class Task:
             t = asyncio.create_task(self.task_top(), context=self._context)
             Runner.live_aio_tasks.add(t)
             t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
-
             self._aio_task = t
 
         # Start all tasks referenced by _config so we don't deadlock while waiting for them.
         self.create_parent_tasks(self._config)
 
     # ----------------------------------------------------------------------------------------------
-
-    # FIXME what exceptions should propagate out of the task? All of them, if we catch them at the
-    # other end?
-
 
     async def task_top(self):
         try:
@@ -965,7 +960,6 @@ class Task:
         if not rebuild_reason:
             raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
 
-
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
 
@@ -1098,7 +1092,6 @@ class Task:
                 return f"{Path.rel(file, cwd)} has changed"
 
         # Check all dependencies in the C dependencies file, if present.
-
         if config.in_depfile and Path.exists(config.in_depfile):
             self.log_d(f"Found C dependencies file {config.in_depfile}")
             with open(config.in_depfile) as depcontents:
@@ -1139,6 +1132,8 @@ class Task:
         try:
             (stdout_data, stderr_data) = await proc.communicate()
         except asyncio.CancelledError as err:
+            # We don't trust asyncio to clean up all cancelled processes, so we do it the hard way
+            # here and kill the whole process group.
             with suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             await proc.communicate()
@@ -1155,10 +1150,14 @@ class Task:
         callback_dir = Path.rel(self._config.script_cwd, self._config.repo_dir)
         self.log_v(f"{callback_dir}$ {command}", 0x8080FF)
 
-        with chdir(self._config.script_cwd):
-            result = command(self)
-            if isawaitable(result):
-                result = await result
+        try:
+            with chdir(self._config.script_cwd):
+                result = command(self)
+                if isawaitable(result):
+                    result = await result
+        except Exception as err:
+            self.log_error("Callback threw an exception!", type(err), err)
+            raise err
 
         return result
 
