@@ -36,6 +36,14 @@ sys.modules["hancho"] = hancho
 
 type Tree[T] = T | list[Tree[T]] | dict[Any, Tree[T]]
 
+def object_to_tag(obj):
+    tag = (str(type(obj).__name__)[:2] + "_" + hex(id(obj))[-4:]).upper()
+    return tag
+
+#func_name = sys._getframe().f_code.co_name
+#call_name = sys._getframe().f_back.f_code.co_name
+#print(f"func_name {func_name}, caller {call_name}")
+
 # endregion
 ####################################################################################################
 # region Log
@@ -357,7 +365,7 @@ class Utils:
 
     @staticmethod
     def in_event_loop() -> bool:
-        try:
+        try: # in_event_loop
             asyncio.get_running_loop()
             return True
         except RuntimeError:
@@ -391,33 +399,68 @@ class Utils:
     # Checks if a string needs template expansion. Empty strings are considered literals.
 
     # Matches non-escaped brace pairs
-    braced = re.compile(r"(?<!\\)\{(\\.|[^\\}])*\}")
+    #braced = re.compile(r"(?<!\\)\{(\\.|[^\\}])*\}")
 
-    @recursify_all
-    def is_literal(v: Any) -> bool:
-        return isinstance(v, str) and len(v) != 0 and Utils.braced.search(v) is None
+    # Matches non-escaped _innermost_ brace pairs
+    braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
 
-    @recursify_all
+    @staticmethod
     def is_braced(v: Any) -> bool:
-        return isinstance(v, str) and len(v) != 0 and Utils.braced.search(v) is not None
+        if not isinstance(v, str) or not v:
+            return False
 
-    @recursify_all
+        m = Utils.braced.search(v)
+        return m is not None
+
+    @staticmethod
+    def is_literal(v: Any) -> bool:
+        if not isinstance(v, str) or not v:
+            return False
+
+        m = Utils.braced.search(v)
+        return m is None
+
+    @staticmethod
+    def is_expr(v: Any) -> bool:
+        if not isinstance(v, str) or not v:
+            return False
+
+        m = Utils.braced.search(v)
+        return m is None
+
+    @staticmethod
     def is_macro(v: Any) -> bool:
-        return (
-            isinstance(v, str)
-            and (len(v) != 0)
-            and (m := Utils.braced.search(v)) is not None
-            and (m.group() == v)
-        )
+        if not isinstance(v, str) or not v:
+            return False
 
-    @recursify_all
+        m = Utils.braced.search(v)
+        return m is not None and m.group() == v
+
+    @staticmethod
     def is_template(v: Any) -> bool:
-        return (
-            isinstance(v, str)
-            and (len(v) != 0)
-            and (m := Utils.braced.search(v)) is not None
-            and (m.group() != v)
-        )
+        if not isinstance(v, str) or not v:
+            return False
+
+        m = Utils.braced.search(v)
+        return m is not None and m.group() != v
+
+    #----------------------------------------
+
+    @staticmethod
+    def as_literal(v: Any) -> Expander.Literal | None:
+        return Expander.Literal(v) if Utils.is_literal(v) else None
+
+    @staticmethod
+    def as_expr(v: Any) -> Expander.Expr | None:
+        return Expander.Expr(v) if Utils.is_expr(v) else None
+
+    @staticmethod
+    def as_macro(v: Any) -> Expander.Macro | None:
+        return Expander.Macro(v) if Utils.is_macro(v) else None
+
+    @staticmethod
+    def as_template(v: Any) -> Expander.Template | None:
+        return Expander.Template(v) if Utils.is_template(v) else None
 
     #----------------------------------------
 
@@ -451,6 +494,7 @@ class Utils:
         if r == 0 and g == 0 and b == 0:
             return "\x1B[0m"
         return f"\x1B[38;2;{r};{g};{b}m"
+        #return ""
 
     @staticmethod
     def hex_to_ansi(hexcode : int = 0):
@@ -623,19 +667,19 @@ class Dict(dict):
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
 
     def __getattr__(self, key : str):
-        try:
+        try: # Dict.__getattr__
             return dict.__getitem__(self, key)
         except KeyError:
             self.on_keyerror(key)
 
     def __setattr__(self, key : str, val : Any):
-        try:
+        try: # Dict.__setattr__
             return dict.__setitem__(self, key, val)
         except KeyError:
             self.on_keyerror(key)
 
     def __delattr__(self, key : str):
-        try:
+        try: # Dict.__delattr__
             return dict.__delitem__(self, key)
         except KeyError:
             self.on_keyerror(key)
@@ -649,23 +693,15 @@ class Dict(dict):
     #----------------------------------------
     # Expander convenience helpers
 
-    def eval_once[T](self, expr : str, as_type: type[T] = object) -> T:
-        result = Expander.eval_once(expr, self)
+    #def eval[T](self, text : Tree[str], as_type : type[T] = object) -> T:
+    def eval[T](self, text : str, as_type : type[T] = object) -> T:
+        result = Expander.eval(text, Expander(self))
         assert isinstance(result, as_type)
         return result
 
-    def eval_all[T](self, text : Tree[str], as_type : type[T] = object) -> T:
-        result = Expander.eval_all(text, self)
-        assert isinstance(result, as_type)
-        return result
-
-    def expand_once[T](self, text : str, as_type : type[T] = object) -> T:
-        result = Expander.expand_once(text, self)
-        assert isinstance(result, as_type)
-        return result
-
-    def expand_all[T](self, text : Tree[str], as_type : type[T] = object) -> T:
-        result = Expander.expand_all(text, self)
+    #def expand[T](self, text : Tree[str], as_type : type[T] = object) -> T:
+    def expand[T](self, text : str, as_type : type[T] = object) -> T:
+        result = Expander.expand(text, Expander(self))
         assert isinstance(result, as_type)
         return result
 
@@ -804,7 +840,7 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_top(self):
-        try:
+        try: # Task.task_top
             await self.task_main()
         except asyncio.CancelledError as ex:
             self.log_v(f"<asyncio.CancelledError {ex}>")
@@ -898,7 +934,7 @@ class Task:
             for i, file in enumerate(files):
                 if isinstance(file, Task):
                     task = cast(Task, file)
-                    try:
+                    try: # Task.task_main, awaiting inputs
                         await cast(asyncio.Task, task._aio_task)
                     except Exception as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
@@ -930,9 +966,13 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
-        config.name    = Expander.expand_all("{name}", expand)
-        config.desc    = Expander.expand_all("{desc}", expand)
-        config.command = Expander.expand_all("{command}", expand)
+        #config.name    = Expander.expand_any_all("{name}", expand)
+        #config.desc    = Expander.expand_any_all("{desc}", expand)
+        #config.command = Expander.expand_any_all("{command}", expand)
+
+        config.name    = expand.name
+        config.desc    = expand.desc
+        config.command = expand.command
 
         self.log_d("Task config after expand:", 0xFFFFFF)
         for line in str(config).split("\n"):
@@ -1015,7 +1055,8 @@ class Task:
         # Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-        files = Expander.expand_all(files, expand)
+
+        files = Expander.expand(files, expand) # FIXME expand.expand(files)
 
         # Initially, all our file paths are relative to the script_cwd that created this task.
         # Join script_cwd with the filenames to produce absolute paths.
@@ -1134,7 +1175,7 @@ class Task:
             stderr = asyncio.subprocess.PIPE,
             start_new_session = True
         )
-        try:
+        try: # Task.run_command
             (stdout_data, stderr_data) = await proc.communicate()
         except asyncio.CancelledError as err:
             # We don't trust asyncio to clean up all cancelled processes, so we do it the hard way
@@ -1169,7 +1210,7 @@ class Task:
         callback_dir = Path.rel(self._config.script_cwd, self._config.repo_dir)
         self.log_v(f"{callback_dir}$ {command}", 0x8080FF)
 
-        try:
+        try: # Task.call_callback
             with chdir(self._config.script_cwd):
                 result = command(self)
                 if isawaitable(result):
@@ -1232,13 +1273,21 @@ class Expander(abc.MutableMapping[str, object]):
         def __repr__(self):
             return "L" + str.__repr__(self)
 
+    class Expr(str):
+        def __repr__(self):
+            return "E" + str.__repr__(self)
+
     class Macro(str):
         def __repr__(self):
             return "M" + str.__repr__(self)
 
+    class Template(str):
+        def __repr__(self):
+            return "T" + str.__repr__(self)
+
     #----------------------------------------
 
-    def __init__(self, context : Dict, trace : bool):
+    def __init__(self, context : Dict, trace : bool | None = None):
         # These are just type annotations, because writing to fields while we're in the constructor
         # of a class that overrides __setattr__ does strange things.
         self._context : Dict
@@ -1246,21 +1295,34 @@ class Expander(abc.MutableMapping[str, object]):
 
         # The actual seet is here.
         super().__setattr__("_context", context)
+
+        if trace is None:
+            trace = getattr(context, "trace", hancho.config.trace)
         super().__setattr__("trace", trace)
 
-    @staticmethod
-    def wrap(context : Dict | Expander, trace : bool):
-        if isinstance(context, Expander):
-            return context
 
-        result = Expander(context, trace)
+    @staticmethod
+    def wrap(source : Dict | Expander, trace : bool | None = None) -> Expander:
+
+        if trace is None:
+            trace = getattr(source, "trace", False)
+
+        if isinstance(source, Expander) and source.trace == trace:
+            return source
+
+        if isinstance(source, Expander):
+            result = Expander(source._context, trace)
+        elif isinstance(source, Dict):
+            result = Expander(source, trace)
+        else:
+            raise TypeError("Don't know how to wrap a {type(source)} = {source}")
 
         if trace:
-            tag_a = (str(type(context).__name__)[:2] + "_" + hex(id(context))[-4:]).upper()
+            tag_a = (str(type(source).__name__)[:2] + "_" + hex(id(source))[-4:]).upper()
             tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-            tag_a = Utils.obj_to_ansi(context) + tag_a + Log.reset_color
+            tag_a = Utils.obj_to_ansi(source) + tag_a + Log.reset_color
             tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
-            Tracer.log(f"wrap {tag_a} -> {tag_b}")
+            Tracer._log(f"wrap {tag_a} -> {tag_b}")
 
         return result
 
@@ -1293,7 +1355,7 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     def __getattr__(self, key):
-        try:
+        try: # Expander.__getattr__
             return self._get(key)
         except KeyError as ex:
             raise AttributeError from ex
@@ -1314,16 +1376,21 @@ class Expander(abc.MutableMapping[str, object]):
         assert Utils.is_literal(key)
 
         with Tracer(self, f"_get('{key}')") as trace:
-            result = self._context[key]
+            try: # Expander._get
+                result = self._context[key]
+            except Exception:
+                trace.log(f"{Utils.rgb_to_ansi(255, 128, 128)}Key not found{Log.reset_color}")
+                #print(f"Expander._get could not find key {key} - exception {type(ex)} {ex}")
+                raise
 
             if isinstance(result, Expander):
                 pass
             elif Utils.is_mapping(result):
                 result = Expander.wrap(result, self.trace)
             elif Utils.is_collection(result):
-                result = [Expander.expand_all(v, self) for v in cast(list, result)]
+                result = [Expander.eval(v, self) for v in cast(list, result)] # FIXME [self.expand(v) for v in result]
             elif Utils.is_template(result) or Utils.is_macro(result):
-                result = Expander.expand_all(result, self)
+                result = Expander.eval(result, self) # FIXME self.expand(result)
 
             trace.save_result(result)
 
@@ -1364,141 +1431,111 @@ class Expander(abc.MutableMapping[str, object]):
 
         return result
 
-    #--------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
+    # IMPORTANT IMPORTANT IMPORTANT
+    # If you can't eval something, you return the it unchanged - TEFINAE.
+    # Template Expansion Failure Is Not An Error.
+    # This should be the _only_ try/except block in the expansion code.
 
     @staticmethod
-    def _eval(expr : str, context : Dict | Expander):
-        """
-        Evaluates (and optionally traces) an expression using four sources of symbol lookup:
-        1. The config we're expanding
-        2. The script-local hancho.config
-        3. Convenience aliases
-        4. The global hancho module
-        """
-        assert Utils.is_literal(expr)
-        with Tracer(context, f"_eval('{expr}')") as tracer:
+    def _eval_or_default(expr : str, default, context : Dict | Expander, tracer : Tracer):
+        try: # Expander.expand_or_default
             _locals = ChainMap(context, Loader.cv_config.get(), aliases)
             _globals = hancho.__dict__
             result = eval(expr, _globals, _locals)
+        except RecursionError as err:
+            tracer.log(f"Recursion error {err}")
+            raise err
+        except Exception as _:
+            tracer.log(f"Could not eval '{expr}', returning '{default}'")
+            result = default
+        return result
+
+    @staticmethod
+    def _eval_expr(expr : str, context : Dict | Expander) -> Any:
+        assert Utils.is_expr(expr)
+        with Tracer(context, f"eval_expr('{expr}')") as tracer:
+            result = Expander._eval_or_default(expr, expr, context, tracer)
             tracer.save_result(result)
         return result
 
     @staticmethod
-    def _expand_macro(macro : str, context : Dict | Expander) -> Any:
-        """
-        Expands a macro like "{len(options)}" into 20 or whatever.
-        If a 'normal' exception is raised during eval, we return the macro unchanged (see TEFINAE
-        in the docs). If it's RecursionError or one of the "special" exceptions that don't inherit
-        from an exception, propagate that back out so we don't break ctrl-c and such.
-        """
+    def _eval_macro(macro : str, context : Dict | Expander) -> Any:
         assert Utils.is_macro(macro)
-        with Tracer(context, f"_expand_macro('{macro}')") as tracer:
-            try:
-                result = Expander.eval_once(macro[1:-1], context)
-            except RecursionError:
-                raise
-            except Exception:
-                result = macro
-            except BaseException:
-                raise
+        with Tracer(context, f"eval_macro('{macro}')") as tracer:
+            result = Expander.Expr(macro[1:-1])
+            result = Expander._eval_or_default(result, macro, context, tracer)
             tracer.save_result(result)
         return result
 
     @staticmethod
-    def _expand_template(template: str, context : Dict | Expander) -> str:
-        """
-        Expands a template by splitting it into Literal and Macro chunks, replacing each macro with
-        their eval'd-and-stringized contents, and then gluing evrything back together again.
-        """
+    def _eval_template(template : str, context : Dict | Expander) -> str:
         assert Utils.is_template(template)
-        with Tracer(context, f"_expand_template('{template}')") as tracer:
+        with Tracer(context, f"eval_template('{template}')") as tracer:
             blocks = Expander.split(template)
             for (i, block) in enumerate(blocks):
                 if isinstance(block, Expander.Macro):
-                    value = Expander._expand_macro(block, context)
-                    block = Utils.stringify(value)
-                blocks[i] = block
+                    result = Expander._eval_macro(block, context)
+                    blocks[i] = Utils.stringify(result)
             result = "".join(blocks)
             tracer.save_result(result)
         return result
 
-    #----------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @staticmethod
     @Utils.recursify_apply_mip
-    def eval_once[T](expr : str, context : Dict | Expander, as_type : type[T] = object) -> T:
-        """
-        Eval plus recursive application and type checking.
-        """
-        assert Utils.is_literal(expr)
-        result = Expander._eval(expr, context)
+    def eval[T](val : Any, context : Dict | Expander, as_type : type[T] = object) -> Any:
+        with Tracer(context, f"eval('{val}')") as tracer:
+
+            if not isinstance(val, str):
+                result = val
+            else:
+                match = Utils.braced.search(val)
+                if match is None:
+                    result = Expander._eval_expr(val, context)
+                elif match.group() == val:
+                    result = Expander._eval_macro(val, context)
+                else:
+                    result = Expander._eval_template(val, context)
+
+                if result != val:
+                    #if Utils.is_braced(result):
+                    result = Expander.eval(result, context)
+                else:
+                    tracer.log(f"Result '{val}' is a fixed point.")
+
+            tracer.save_result(result)
         assert isinstance(result, as_type)
         return result
 
     @staticmethod
     @Utils.recursify_apply_mip
-    def eval_all[T](expr : Any, context : Dict | Expander, as_type : type[T] = object):
-        """
-        Evaluates 'expr' and then keeps expanding or evaluating it until it no longer contains
-        braces, it stops changing, or we hit our expansion limit.
-        """
-        econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
-
-        for _ in range(Tracer.MAX_EXPANDS):
-            with Tracer(econtext, f"eval_all('{expr}')") as tracer:
-
-                match = Utils.braced.search(expr)
-
-                if match is None:
-                    result = Expander._eval(expr, econtext)
-                elif match.group() == expr:
-                    result = Expander._expand_macro(expr, econtext)
-                else:
-                    result = Expander._expand_template(expr, econtext)
-
-                tracer.save_result(result)
-            if not Utils.is_braced(result) or result == expr:
-                assert isinstance(result, as_type)
-                return result
-            expr = result
-        raise RecursionError("eval_all() - Template expansion failed to terminate")
-
-    @staticmethod
-    @Utils.recursify_apply_mip
-    def expand_once[T](val : Any, context : Dict | Expander, as_type : type[T] = object):
-        """
-        Expand plus recursive application and type checking.
-        """
-        if Utils.is_macro(val):
-            result = Expander._expand_macro(val, context)
-        elif Utils.is_template(val):
-            result = Expander._expand_template(val, context)
-        else:
+    def expand(val : Any, context : Dict | Expander) -> Any:
+        with Tracer(context, f"expand('{val}')") as tracer:
             result = val
 
-        assert isinstance(result, as_type)
+            if isinstance(val, str) and (match := Utils.braced.search(val)):
+
+                if match.group() == val:
+                    result = Expander._eval_macro(val, context)
+                else:
+                    result = Expander._eval_template(val, context)
+
+                if result != val:
+                    if Utils.is_braced(result):
+                        result = Expander.expand(result, context)
+                else:
+                    tracer.log(f"Result '{val}' is a fixed point.")
+
+                result = Utils.stringify(result)
+                tracer.save_result(result)
+            else:
+                result = Utils.stringify(result)
+                tracer.save_result(result)
+        assert isinstance(result, str)
         return result
 
-    @staticmethod
-    @Utils.recursify_apply_mip
-    def expand_all[T](variant : Any, context : Dict | Expander, as_type : type[T] = object):
-        """
-        Repeatedly expands 'template' until it no longer contains braces, it stops changing,
-        or we hit our expansion limit.
-        """
-        if not Utils.is_braced(variant):
-            return variant
-        econtext = Expander.wrap(context, trace = getattr(context, "trace", False))
-
-        for _ in range(Tracer.MAX_EXPANDS):
-            with Tracer(econtext, f"expand_all('{variant}')") as tracer:
-                result = Expander.expand_once(variant, econtext)
-                tracer.save_result(result)
-            if not Utils.is_braced(result) or result == variant:
-                assert isinstance(result, as_type)
-                return result
-            variant = result
-        raise RecursionError("expand_all() - Template expansion failed to terminate")
 
 # endregion
 ####################################################################################################
@@ -1523,31 +1560,38 @@ class Tracer:
 
     def __enter__(self):
         color = Utils.obj_to_hex(self.context)
-        context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
-        context_tag = context_tag.upper()
+        context_tag = object_to_tag(self.context)
+        #context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
+        #context_tag = context_tag.upper()
         if len(Tracer.trellis_stack) >= Tracer.MAX_EXPANDS:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
-        if self.trace:
-            Tracer.log(f"┏ {context_tag}." + self.enter_message, color)
+        self.log(f"┏ {context_tag}." + self.enter_message, color)
         Tracer.trellis_stack.append(Utils.hex_to_ansi(color) + "┃ ")
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, exc_type, exc_value, traceback):
         Tracer.trellis_stack.pop()
         if isinstance(self.result, (Expander, Dict)):
-            text = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
-            self.print_result(text)
+            #text = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
+            tag = object_to_tag(self.result)
+            self.print_result(tag)
         else:
-            text = str(self.result)
-            if isinstance(self.result, str):
-                text = "'" + text + "'"
+            text = "= "
 
             if self.result is None:
-                text = "<None>"
-            if self.result == "":
-                text = "<Empty>"
-
+                text += "<None>"
+            elif self.result == "":
+                text += "<Empty>"
+            text += repr(self.result)
             self.print_result(text)
+
+            if exc_type:
+                self.log(f"exc_type  = {exc_type}")
+            if exc_value:
+                self.log(f"exc_value = {exc_value}")
+            if traceback:
+                self.log(f"traceback = {traceback}")
+
         return False
 
     def save_result(self, result : Any):
@@ -1555,11 +1599,15 @@ class Tracer:
         return result
 
     def print_result(self, text):
-        if self.trace:
-            Tracer.log("┗ " + Utils.obj_to_ansi(self.result) + text, Utils.obj_to_hex(self.context))
+        if self.trace or hancho.config.trace:
+            Tracer._log("┗ " + Utils.obj_to_ansi(self.result) + text, Utils.obj_to_hex(self.context))
+
+    def log(self, text : str, color : int = 0):
+        if self.trace or hancho.config.trace:
+            Tracer._log(text, color)
 
     @staticmethod
-    def log(text : str, color : int = 0):
+    def _log(text : str, color : int = 0):
         """Prints a trace message to the log."""
         buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
         Log.log(buffer, color)
@@ -1714,7 +1762,8 @@ class Loader:
 
     @staticmethod
     def load_file(script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        script_path = Expander.expand_all(script_path, hancho.config, str)
+        expander = Expander.wrap(hancho.config)
+        script_path = Expander.expand(script_path, expander)
         script_path = cast(str, Path.abs(script_path))
 
         if not Path.isfile(script_path):
@@ -1893,7 +1942,7 @@ class Runner:
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
         time_a = time.perf_counter()
         while Runner.live_aio_tasks and Runner.count_failures() <= hancho.config.max_errors:
-            try:
+            try: # async_run_tasks
                 finished_aio_task = await Runner.aio_done_queue.get()
                 _ = finished_aio_task.result()
                 Runner.tasks_finished += 1
@@ -1955,7 +2004,7 @@ class Runner:
     def run_tool(tool : str):
         if tool == "clean":
             for task in Runner.all_tasks:
-                build_root = Path.real(Expander.eval_all("build_root", task._expand, str))
+                build_root = Path.real(Expander.expand("build_root", task._expand))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}", 0x8080FF)
@@ -1994,10 +2043,16 @@ def main():
     flags = Loader.parse_flags(sys.argv[1:])
     init(flags)
 
+    root_dir    = hancho.config.expand("root_dir")
+    repo_dir    = hancho.config.expand("repo_dir")
+    script_dir  = hancho.config.expand("script_cwd")
+    script_file = hancho.config.expand("script_file")
+    script_path = os.path.join(script_dir, script_file)
+
     Log.log_v(f"Hancho started as '{" ".join(sys.argv)}'")
-    Log.log_v(f"Hancho root at {hancho.config.root_dir}")
-    Log.log_v(f"Hancho repo at {hancho.config.eval_all("repo_dir")}")
-    Log.log_v(f"Hancho root script at {os.path.join(hancho.config.expand_all("{script_cwd}"), hancho.config.expand_all("{script_file}"))}")
+    Log.log_v(f"Hancho root at {root_dir}")
+    Log.log_v(f"Hancho repo at {repo_dir}")
+    Log.log_v(f"Hancho root script at {script_path}")
 
     #----------------------------------------
     # Load all build scripts
