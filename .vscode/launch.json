@@ -10,7 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_templates.TestTemplates"],
+      "args"    : ["tests.test_tasks.TestTasks.test_bad_run_cmd"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -41,7 +41,7 @@
       "module"  : "hancho",
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
-      "args"    : ["-d", "-v", "-j1", "--rebuild"],
+      //"args"    : ["-d", "-v", "-j1", "--rebuild"],
       "preLaunchTask": "Wipe build",
     },
 

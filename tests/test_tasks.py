@@ -71,7 +71,7 @@ class TestTasks(unittest.TestCase):
 
     def test_run_tasks_zero(self):
         # If all tasks are OK, we should get 0 from run_tasks.
-        good_task = hancho.Task(command="echo Hello World", debug=True)
+        good_task = hancho.Task(command="echo Hello World")
         self.run_tasks(0)
         self.assertIsNone(good_task._error)
 

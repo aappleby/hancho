@@ -138,6 +138,19 @@ class Log:
 
         return result + "..."
 
+#    @staticmethod
+#    def prefix(line: str):
+#        assert '\n' not in line
+#        assert '\x1b' not in line
+#        Log.line_buffer += Log.hex_to_ansi(Log.current_color) + line
+
+#    @staticmethod
+#    def log(line: str):
+#        assert '\n' not in line
+#        assert '\x1b' not in line
+#        Log.line_buffer += Log.hex_to_ansi(Log.current_color) + line
+#        Log.flush_line()
+
     @staticmethod
     def log(message: str | list[str], end : bool = True):
         if hancho.config.quiet:
@@ -290,20 +303,20 @@ class Log:
 
 class Colors(Log.Color, Enum):
     # 12 half-saturated, 80% value colors evenly spaced around the HSV wheel
-    RED     = Log.Color(0xCC6666) # 0xFF0000, # fully saturated version
-    PINK    = Log.Color(0xCC6699) # 0xFF0088,
-    MAGENTA = Log.Color(0xCC66CC) # 0xFF00FF,
-    VIOLET  = Log.Color(0x9966CC) # 0x8800FF,
-    BLUE    = Log.Color(0x6666CC) # 0x0000FF,
-    SKY     = Log.Color(0x6699CC) # 0x0088FF,
-    TEAL    = Log.Color(0x66CCCC) # 0x00FFFF,
-    AQUA    = Log.Color(0x66CC99) # 0x00FF88,
-    GREEN   = Log.Color(0x66CC66) # 0x00FF00,
-    LIME    = Log.Color(0x99CC66) # 0x88FF00,
-    YELLOW  = Log.Color(0xCCCC66) # 0xFFFF00,
-    ORANGE  = Log.Color(0xCC9966) # 0xFF8800,
+    RED     = 0xCC6666 # 0xFF0000, # fully saturated version
+    PINK    = 0xCC6699 # 0xFF0088,
+    MAGENTA = 0xCC66CC # 0xFF00FF,
+    VIOLET  = 0x9966CC # 0x8800FF,
+    BLUE    = 0x6666CC # 0x0000FF,
+    SKY     = 0x6699CC # 0x0088FF,
+    TEAL    = 0x66CCCC # 0x00FFFF,
+    AQUA    = 0x66CC99 # 0x00FF88,
+    GREEN   = 0x66CC66 # 0x00FF00,
+    LIME    = 0x99CC66 # 0x88FF00,
+    YELLOW  = 0xCCCC66 # 0xFFFF00,
+    ORANGE  = 0xCC9966 # 0xFF8800,
     # And the "go back to default" color :D
-    RESET   = Log.Color(-1)
+    RESET   = -1
 
 # endregion
 ####################################################################################################
@@ -474,7 +487,10 @@ class Utils:
     # Matches non-escaped _innermost_ brace pairs
     braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
 
-    @staticmethod
+    # FIXME should we re-recursify these? we needed it for is_braced
+    # 'cause expansion turns command into [command]
+
+    @recursify_all
     def is_braced(v: Any) -> bool:
         if not isinstance(v, str) or not v:
             return False
@@ -1423,8 +1439,11 @@ class Expander(abc.MutableMapping[str, object]):
             elif Utils.is_mapping(result):
                 result = Expander.wrap(result)
             elif Utils.is_collection(result):
+                # FIXME Expand doesn't work here and I'm not sure if it should. Probably not?
+                #result = [Expander.expand(v, self) for v in cast(list, result)] # FIXME [self.expand(v) for v in result]
                 result = [Expander.eval(v, self) for v in cast(list, result)] # FIXME [self.expand(v) for v in result]
             elif Utils.is_template(result) or Utils.is_macro(result):
+                #result = Expander.expand(result, self) # FIXME self.expand(result)
                 result = Expander.eval(result, self) # FIXME self.expand(result)
 
             trace.save_result(result)
@@ -1799,7 +1818,9 @@ class Loader:
 
     @staticmethod
     def load_file(script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        #script_path = hancho.config.expand("script_path")
+        # We _do_ need to expand script_path because it might contain
+        # "{hancho_dir}/tools/tools_base.hancho"
+        script_path = hancho.config.expand(script_path)
         script_path = cast(str, Path.abs(script_path))
 
         if not Path.isfile(script_path):
