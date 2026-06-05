@@ -228,6 +228,10 @@ class TestTasks(unittest.TestCase):
         self.assertTrue("I am runnning the Linux operating system.\n" in task._stdout)
 
     def test_bad_run_cmd(self):
+        """
+        Trying to run an arbitrary command and use it in a template shoudl report BROKEN if the
+        embedded command is invalid.
+        """
         task = hancho.Task(
             desc="Broken run_cmd",
             command=r"echo {run_cmd('This is totally not a valid command.')}",
@@ -236,6 +240,10 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_unexpandable_command(self):
+        """
+        Commands that have residual braces after expansion should be reported as broken but ONLY
+        if we are in 'strict' mode.
+        """
         task = hancho.Task(
             desc="Unexpandable command",
             command=r"echo Hello {missing} world!",
@@ -244,7 +252,9 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_garbage_command(self):
-        # Non-existent command line commands should cause Hancho to fail the build.
+        """
+        Non-existent command line commands should cause Hancho to fail the build.
+        """
         garbage_task = hancho.Task(
             command="aklsjdflksjdlfkjldfk",
         )
@@ -252,13 +262,17 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(garbage_task._error, hancho.Task.FAILED)
 
     def test_missing_command(self):
-        # Non-existent command line commands should cause Hancho to fail the build.
+        """
+        Non-existent commands should cause Hancho to fail the build.
+        """
         bad_task = hancho.Task(not_a_command="echo Hello World")
         self.run_tasks(-1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_task_collision(self):
-        # If multiple distinct commands generate the same output file, that's an error.
+        """
+        If multiple distinct commands generate the same output file, that's an error.
+        """
         hancho.Task(
             command="touch {out_obj}",
             in_src=__file__,

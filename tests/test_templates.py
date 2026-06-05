@@ -322,6 +322,12 @@ class TestTemplates(unittest.TestCase):
             bad_dict.expand("{command}")
         pass
 
+    def test_recursive_expansion(self):
+        d = Dict(a = 1, b = 2, c = 3)
+        v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
+        r = d.expand(v)
+        self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
+
 
 ####################################################################################################
 

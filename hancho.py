@@ -25,9 +25,11 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 import types
 from collections import ChainMap, abc
 from contextlib import chdir, suppress
+from enum import Enum
 from inspect import isawaitable
 from typing import Any, cast
 
@@ -55,6 +57,45 @@ class Log:
     con_w : int
     reset_color = "\x1B[0m"
     match_escapes = re.compile(r"(\x1B.*?m)")
+    color : int = 0
+    at_newline : bool = True
+
+    COLORS : dict[str, Color]
+
+    trellis_stack : list[str] = []   # noqa: RUF012
+    color_stack   : list[int] = [0]  # noqa: RUF012
+
+    # ----------------------------------------------------------------------------------------------
+
+    class Color:
+        def __init__(self, color):
+            self.old_color = color
+            self.new_color = color
+        def __enter__(self):
+            self.old_color = Log.color
+            Log.color = self.new_color
+            return self
+        def __exit__(self, exc_type, exc_value, tb):
+            Log.color = self.old_color
+
+    class Indent:
+        def __init__(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, tb):
+            pass
+
+    # ----------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def hex_to_ansi(hex : int = 0):
+        r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
+        return f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else Log.reset_color
+
+    # ----------------------------------------------------------------------------------------------
 
     @staticmethod
     def reset():
@@ -98,48 +139,59 @@ class Log:
         return result + "..."
 
     @staticmethod
-    def log(message: str | list[str], color: int = 0):
+    def log(message: str | list[str], end : bool = True):
+        if hancho.config.quiet:
+            return
 
         if isinstance(message, list):
             for m in message:
-                Log.log(m, color)
+                Log.log(m)
             return
 
         lines = message.split("\n")
         for i, line in enumerate(lines):
+            line = Log.hex_to_ansi(Log.color) + line
+
             if not hancho.config.wrap:
                 line = Log.clip_printable(line, Log.con_w)
             Log.buffer += line + "\n"
 
-            use_newline = (
+            scroll = (
                 (i < len(lines) - 1)
                 or hancho.config.debug
                 or hancho.config.verbose
                 or hancho.config.scroll
             )
 
-            if not hancho.config.quiet:
-                sys.stdout.write("" if use_newline else "\r")
-                sys.stdout.write(Utils.hex_to_ansi(color))
-                sys.stdout.write(line)
-                sys.stdout.write(Log.reset_color)
-                sys.stdout.write("\n" if use_newline else "\x1b[K")
-                sys.stdout.flush()
+            sys.stdout.write(line)
+            if end:
+                if scroll:
+                    sys.stdout.write("\n")
+                else:
+                    sys.stdout.write("\x1b[K")
+                    sys.stdout.write("\r")
+            sys.stdout.flush()
+
 
     @staticmethod
     def log_fatal(message):
-        Log.log(message, 0xFF0000)
-        sys.exit(-1)
+        with Log.Color(0xFF0000):
+            Log.log(message)
+            sys.exit(-1)
 
     @staticmethod
     def log_d(message):
         if hancho.config.debug:
-            Log.log(message, 0x606060)
+            with Log.Color(0x606060):
+                Log.log(message)
 
     @staticmethod
-    def log_v(message : str, color : int = 0x606060):
+    def log_v(message : str, color = None):
+        if color is None:
+            color = Log.color
         if hancho.config.debug or hancho.config.verbose:
-            Log.log(message, color)
+            with Log.Color(color):
+                Log.log(message)
 
     @staticmethod
     def dump_to_str(key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
@@ -232,6 +284,27 @@ class Log:
         # Done, we can fit this dump on one line.
         return pad + prefix + ld + separator.join(chunks) + rd
 
+#endregion
+####################################################################################################
+#region
+
+class Colors(Log.Color, Enum):
+    # 12 half-saturated, 80% value colors evenly spaced around the HSV wheel
+    RED     = Log.Color(0xCC6666) # 0xFF0000, # fully saturated version
+    PINK    = Log.Color(0xCC6699) # 0xFF0088,
+    MAGENTA = Log.Color(0xCC66CC) # 0xFF00FF,
+    VIOLET  = Log.Color(0x9966CC) # 0x8800FF,
+    BLUE    = Log.Color(0x6666CC) # 0x0000FF,
+    SKY     = Log.Color(0x6699CC) # 0x0088FF,
+    TEAL    = Log.Color(0x66CCCC) # 0x00FFFF,
+    AQUA    = Log.Color(0x66CC99) # 0x00FF88,
+    GREEN   = Log.Color(0x66CC66) # 0x00FF00,
+    LIME    = Log.Color(0x99CC66) # 0x88FF00,
+    YELLOW  = Log.Color(0xCCCC66) # 0xFFFF00,
+    ORANGE  = Log.Color(0xCC9966) # 0xFF8800,
+    # And the "go back to default" color :D
+    RESET   = Log.Color(-1)
+
 # endregion
 ####################################################################################################
 # region Utils
@@ -252,7 +325,7 @@ class Utils:
     @staticmethod
     def recursify_all(func: abc.Callable[..., bool]):
         """
-        Creates a function that recursively checks if 'func' is true for all fields of a Tree[T].
+        Creates a function that recursively checks if 'func' is True for all fields of a Tree[T].
         """
 
         def outer(v, *args, **kwargs):
@@ -398,9 +471,6 @@ class Utils:
     #----------------------------------------
     # Checks if a string needs template expansion. Empty strings are considered literals.
 
-    # Matches non-escaped brace pairs
-    #braced = re.compile(r"(?<!\\)\{(\\.|[^\\}])*\}")
-
     # Matches non-escaped _innermost_ brace pairs
     braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
 
@@ -480,41 +550,11 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def hex_to_rgb(hexcode : int) -> tuple[int, int, int]:
-        return ((hexcode >> 16) & 0xFF, (hexcode >>  8) & 0xFF, (hexcode >>  0) & 0xFF)
-
-    @staticmethod
-    def rgb_to_hex(r : int, g : int, b : int) -> int:
-        return (r << 16) | (g << 8) | (b << 0)
-
-    #----------------------------------------
-
-    @staticmethod
-    def rgb_to_ansi(r : int, g : int, b : int) -> str:
-        if r == 0 and g == 0 and b == 0:
-            return "\x1B[0m"
-        return f"\x1B[38;2;{r};{g};{b}m"
-        #return ""
-
-    @staticmethod
-    def hex_to_ansi(hexcode : int = 0):
-        return Utils.rgb_to_ansi(*Utils.hex_to_rgb(hexcode))
-
-    @staticmethod
-    def obj_to_ansi(obj):
-        return Utils.rgb_to_ansi(*Utils.obj_to_rgb(obj))
-
-    #----------------------------------------
-
-    @staticmethod
     def obj_to_hex(obj) -> int:
-        return Utils.rgb_to_hex(*Utils.obj_to_rgb(obj))
-
-    @staticmethod
-    def obj_to_rgb(obj) -> tuple[int, int, int]:
         Utils.rand.seed(id(obj))
         r, g, b = colorsys.hsv_to_rgb(Utils.rand.random(), 0.3, 1.0)
-        return (int(r * 255), int(g * 255), int(b * 255))
+        r, g, b = (int(r * 255), int(g * 255), int(b * 255))
+        return (r << 16) | (g << 8) | (b << 0)
 
     #----------------------------------------
 
@@ -693,14 +733,12 @@ class Dict(dict):
     #----------------------------------------
     # Expander convenience helpers
 
-    #def eval[T](self, text : Tree[str], as_type : type[T] = object) -> T:
-    def eval[T](self, text : str, as_type : type[T] = object) -> T:
+    def eval[T](self, text : Any, as_type : type[T] = object) -> T:
         result = Expander.eval(text, Expander(self))
         assert isinstance(result, as_type)
         return result
 
-    #def expand[T](self, text : Tree[str], as_type : type[T] = object) -> T:
-    def expand[T](self, text : str, as_type : type[T] = object) -> T:
+    def expand[T](self, text : Any, as_type : type[T] = object) -> T:
         result = Expander.expand(text, Expander(self))
         assert isinstance(result, as_type)
         return result
@@ -733,7 +771,7 @@ class Task:
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
         self._config  = Dict(hancho.config, *args, **kwargs)
-        self._expand  = Expander.wrap(self._config, self._config.trace)
+        self._expand  = Expander.wrap(self._config)
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -794,13 +832,12 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def log(self, message : str, color : int = 0):
-        prefix  = ""
-        prefix += Utils.hex_to_ansi(0x80FF80)
-        prefix += f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] "
-        prefix += Utils.hex_to_ansi(color)
-        prefix += message
-        prefix += Log.reset_color
-        Log.log(prefix)
+        with Log.Color(0x80FF80):
+            prefix = f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] "
+            Log.log(prefix, end=False)
+
+        with Log.Color(color):
+            Log.log(message)
 
     def log_d(self, message : str, color : int = 0):
         if self._config.debug:
@@ -897,10 +934,10 @@ class Task:
 
         for f in path_fields:
             if f in config:
-                config[f] = Path.norm(self._expand[f])
+                config[f] = Path.norm(expand[f])
         for f in flag_fields:
             if f in config:
-                config[f] = self._expand[f]
+                config[f] = expand[f]
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
@@ -965,10 +1002,6 @@ class Task:
 
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
-
-        #config.name    = Expander.expand_any_all("{name}", expand)
-        #config.desc    = Expander.expand_any_all("{desc}", expand)
-        #config.command = Expander.expand_any_all("{command}", expand)
 
         config.name    = expand.name
         config.desc    = expand.desc
@@ -1055,7 +1088,6 @@ class Task:
         # Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-
         files = Expander.expand(files, expand) # FIXME expand.expand(files)
 
         # Initially, all our file paths are relative to the script_cwd that created this task.
@@ -1288,6 +1320,7 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     def __init__(self, context : Dict, trace : bool | None = None):
+        assert trace is None or isinstance(trace, bool)
         # These are just type annotations, because writing to fields while we're in the constructor
         # of a class that overrides __setattr__ does strange things.
         self._context : Dict
@@ -1302,27 +1335,29 @@ class Expander(abc.MutableMapping[str, object]):
 
 
     @staticmethod
-    def wrap(source : Dict | Expander, trace : bool | None = None) -> Expander:
-
-        if trace is None:
-            trace = getattr(source, "trace", False)
+    def wrap(source : Dict | Expander, tracer = None) -> Expander:
+        trace = getattr(source, "trace", False) if tracer is None else tracer.trace
 
         if isinstance(source, Expander) and source.trace == trace:
             return source
 
         if isinstance(source, Expander):
-            result = Expander(source._context, trace)
+            result = Expander(source._context, tracer)
         elif isinstance(source, Dict):
-            result = Expander(source, trace)
+            result = Expander(source, tracer)
         else:
             raise TypeError("Don't know how to wrap a {type(source)} = {source}")
 
         if trace:
             tag_a = (str(type(source).__name__)[:2] + "_" + hex(id(source))[-4:]).upper()
             tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-            tag_a = Utils.obj_to_ansi(source) + tag_a + Log.reset_color
-            tag_b = Utils.obj_to_ansi(result) + tag_b + Log.reset_color
-            Tracer._log(f"wrap {tag_a} -> {tag_b}")
+            #tag_a = Utils.obj_to_ansi(source) + tag_a + Log.reset_color
+            #tag_b = Utils.obj_to_ansi(result) + tag_b + Log.d
+            if tracer:
+                tracer.log("wrap ")
+                tracer.log(tag_a)
+                tracer.log(" -> ")
+                tracer.log(tag_b)
 
         return result
 
@@ -1379,14 +1414,14 @@ class Expander(abc.MutableMapping[str, object]):
             try: # Expander._get
                 result = self._context[key]
             except Exception:
-                trace.log(f"{Utils.rgb_to_ansi(255, 128, 128)}Key not found{Log.reset_color}")
-                #print(f"Expander._get could not find key {key} - exception {type(ex)} {ex}")
+                with Colors.RED:
+                    trace.log(f"Key not found - {key}")
                 raise
 
             if isinstance(result, Expander):
                 pass
             elif Utils.is_mapping(result):
-                result = Expander.wrap(result, self.trace)
+                result = Expander.wrap(result)
             elif Utils.is_collection(result):
                 result = [Expander.eval(v, self) for v in cast(list, result)] # FIXME [self.expand(v) for v in result]
             elif Utils.is_template(result) or Utils.is_macro(result):
@@ -1492,6 +1527,13 @@ class Expander(abc.MutableMapping[str, object]):
                 result = val
             else:
                 match = Utils.braced.search(val)
+
+                # eval = select:
+                #    m == None:         _eval_expr
+                #    m.group() == val:  _eval_macro
+                #    m.group() != val:  _eval_template
+                # result = Expander.{eval}(val, context)
+
                 if match is None:
                     result = Expander._eval_expr(val, context)
                 elif match.group() == val:
@@ -1500,7 +1542,6 @@ class Expander(abc.MutableMapping[str, object]):
                     result = Expander._eval_template(val, context)
 
                 if result != val:
-                    #if Utils.is_braced(result):
                     result = Expander.eval(result, context)
                 else:
                     tracer.log(f"Result '{val}' is a fixed point.")
@@ -1528,12 +1569,8 @@ class Expander(abc.MutableMapping[str, object]):
                 else:
                     tracer.log(f"Result '{val}' is a fixed point.")
 
-                result = Utils.stringify(result)
-                tracer.save_result(result)
-            else:
-                result = Utils.stringify(result)
-                tracer.save_result(result)
-        assert isinstance(result, str)
+            result = Utils.stringify(result)
+            tracer.save_result(result)
         return result
 
 
@@ -1547,50 +1584,55 @@ class Tracer:
     # Tests currently require MAX_EXPANDS >= 6.
     MAX_EXPANDS : int = 20
     trellis_stack : list[str]
+    bol = True
 
     @staticmethod
     def reset():
         Tracer.trellis_stack = []
 
     def __init__(self, context : Dict | Expander, enter_message):
-        self.trace : bool = cast(bool, getattr(context, "trace", False))
+        self.trace : bool = getattr(context, "trace", False) or hancho.config.trace
         self.context = context
         self.enter_message = enter_message
         self.result = None
+        self.color = Utils.obj_to_hex(self.context)
+        self.context_tag = object_to_tag(self.context)
 
     def __enter__(self):
-        color = Utils.obj_to_hex(self.context)
-        context_tag = object_to_tag(self.context)
-        #context_tag = str(type(self.context).__name__)[:2] + "_" + hex(id(self.context))[-4:]
-        #context_tag = context_tag.upper()
         if len(Tracer.trellis_stack) >= Tracer.MAX_EXPANDS:
             raise RecursionError("Tracer.__enter__ - Template expansion failed to terminate")
-        self.log(f"┏ {context_tag}." + self.enter_message, color)
-        Tracer.trellis_stack.append(Utils.hex_to_ansi(color) + "┃ ")
+
+        self.log(f"┏ {self.context_tag}." + self.enter_message)
+        Tracer.trellis_stack.append("┃ ")
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, tb):
         Tracer.trellis_stack.pop()
         if isinstance(self.result, (Expander, Dict)):
-            #text = (str(type(self.result).__name__)[:2] + "_" + hex(id(self.result))[-4:]).upper()
-            tag = object_to_tag(self.result)
-            self.print_result(tag)
+            if self.trace or hancho.config.trace:
+                self.log(f"┗ {object_to_tag(self.result)}")
         else:
+            if exc_type:
+                self.log(f"┃ exc_type  {exc_type}")
+            if exc_value:
+                self.log(f"┃ exc_value {exc_value}")
+            if tb:
+                summary = traceback.extract_tb(tb)
+                filename, line_no, func_name, _ = summary[-1]
+                self.log(f"┃ location  {filename} line {line_no} @{func_name}")
+
             text = "= "
 
             if self.result is None:
                 text += "<None>"
             elif self.result == "":
                 text += "<Empty>"
-            text += repr(self.result)
-            self.print_result(text)
+            else:
+                with Log.Color(0xFF00FF):
+                    text += repr(self.result)
+            if self.trace or hancho.config.trace:
+                self.log(f"┗ {text}")
 
-            if exc_type:
-                self.log(f"exc_type  = {exc_type}")
-            if exc_value:
-                self.log(f"exc_value = {exc_value}")
-            if traceback:
-                self.log(f"traceback = {traceback}")
 
         return False
 
@@ -1600,17 +1642,12 @@ class Tracer:
 
     def print_result(self, text):
         if self.trace or hancho.config.trace:
-            Tracer._log("┗ " + Utils.obj_to_ansi(self.result) + text, Utils.obj_to_hex(self.context))
+            self.log(f"┗ {text}")
 
-    def log(self, text : str, color : int = 0):
+    def log(self, text : str, color : int = 0, end=True):
         if self.trace or hancho.config.trace:
-            Tracer._log(text, color)
-
-    @staticmethod
-    def _log(text : str, color : int = 0):
-        """Prints a trace message to the log."""
-        buffer = "".join(Tracer.trellis_stack) + text + Log.reset_color
-        Log.log(buffer, color)
+            Log.log("".join(Tracer.trellis_stack), end = False)
+            Log.log(text, end = True)
 
 # endregion
 ####################################################################################################
@@ -1738,9 +1775,9 @@ class Loader:
                 if val is None:
                     # this is so that --foo turns into {foo:True}
                     val = True
-                elif val in ["True", "true", "1"]:
+                elif val in ["True", "True", "1"]:
                     val = True
-                elif val in ["False", "false", "0"]:
+                elif val in ["False", "False", "0"]:
                     val = False
                 else:
                     for converter in (float, int, str):
@@ -1762,8 +1799,7 @@ class Loader:
 
     @staticmethod
     def load_file(script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
-        expander = Expander.wrap(hancho.config)
-        script_path = Expander.expand(script_path, expander)
+        #script_path = hancho.config.expand("script_path")
         script_path = cast(str, Path.abs(script_path))
 
         if not Path.isfile(script_path):
@@ -1967,7 +2003,7 @@ class Runner:
         time_build = time.perf_counter() - time_a
 
         if Runner.count_failures() > hancho.config.max_errors:
-            Log.log(f"Too many failures after {Runner.tasks_awaited}, cancelling tasks and stopping build", 0xFF0000)
+            Log.log(f"Too many failures after {Runner.tasks_awaited}, cancelling tasks and stopping build") #, 0xFF0000)
 
             # Cancel all the asyncio.Tasks that haven't completed yet
             Log.log_d(f"Cancelling {len(Runner.live_aio_tasks)} tasks")
@@ -1979,7 +2015,7 @@ class Runner:
 
         hancho.config.scroll = True
 
-        Log.log(f"Running {Runner.tasks_finished} tasks took {time_build:.3f} seconds", 0x8080FF)
+        Log.log(f"Running {Runner.tasks_finished} tasks took {time_build:.3f} seconds") #, 0x8080FF)
         Log.log_v(f"Tasks created:    {len(Runner.all_tasks)}")
         Log.log_v(f"Tasks awaited:    {Runner.tasks_awaited}")
         Log.log_v(f"Tasks finished:   {Runner.tasks_finished}")
@@ -1990,11 +2026,11 @@ class Runner:
         Log.log_v(f"Mtime calls:      {Utils.mtime_calls}")
 
         if Runner.tasks_failed or Runner.tasks_broken:
-            Log.log("hancho: BUILD FAILED", 0xFF8080)
+            Log.log("hancho: BUILD FAILED")#, 0xFF8080)
         elif Runner.tasks_finished:
-            Log.log("hancho: BUILD PASSED", 0x80FF80)
+            Log.log("hancho: BUILD PASSED")#, 0x80FF80)
         else:
-            Log.log("hancho: BUILD CLEAN", 0x8080FF)
+            Log.log("hancho: BUILD CLEAN")#, 0x8080FF)
 
         return -1 if Runner.tasks_failed or Runner.tasks_broken else 0
 
@@ -2007,9 +2043,9 @@ class Runner:
                 build_root = Path.real(Expander.expand("build_root", task._expand))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
-                    Log.log(f"Wiping build_root {build_root}", 0x8080FF)
+                    Log.log(f"Wiping build_root {build_root}")#, 0x8080FF)
                     shutil.rmtree(build_root, ignore_errors=True)
-            Log.log("Clean done", 0x8080FF)
+            Log.log("Clean done")#, 0x8080FF)
             return 0
         else:
             raise AssertionError(f"Don't know how to run tool {tool}")
