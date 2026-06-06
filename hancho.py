@@ -550,24 +550,6 @@ class Utils:
     #----------------------------------------
 
     @staticmethod
-    def as_literal(v: Any) -> Expander.Literal | None:
-        return Expander.Literal(v) if Utils.is_literal(v) else None
-
-    @staticmethod
-    def as_expr(v: Any) -> Expander.Expr | None:
-        return Expander.Expr(v) if Utils.is_expr(v) else None
-
-    @staticmethod
-    def as_macro(v: Any) -> Expander.Macro | None:
-        return Expander.Macro(v) if Utils.is_macro(v) else None
-
-    @staticmethod
-    def as_template(v: Any) -> Expander.Template | None:
-        return Expander.Template(v) if Utils.is_template(v) else None
-
-    #----------------------------------------
-
-    @staticmethod
     def weave(lhs, rhs, *args) -> list[str]:
         """
         This function does a 'cross join' in the database sense, every line in lhs will be joined
@@ -1323,6 +1305,24 @@ class Expander(abc.MutableMapping[str, object]):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
+    #----------------------------------------
+
+    def __init__(self, context : Dict, trace : bool | None = None):
+        assert trace is None or isinstance(trace, bool)
+        # These are just type annotations, because writing to fields while we're in the constructor
+        # of a class that overrides __setattr__ does strange things.
+        self._context : Dict
+        self.trace : bool
+
+        # The actual seet is here.
+        super().__setattr__("_context", context)
+
+        if trace is None:
+            trace = getattr(context, "trace", hancho.config.trace)
+        super().__setattr__("trace", trace)
+
+    #----------------------------------------
+
     @classmethod
     def reset(cls):
         # The maximum recursion depth we will do to expand a macro.
@@ -1350,23 +1350,6 @@ class Expander(abc.MutableMapping[str, object]):
             weave   = Utils.weave,
         )
 
-    # Trivial string wrappers that let us differentiate "literal" strings and "{macro}" strings.
-    class Literal(str):
-        def __repr__(self):
-            return "L" + str.__repr__(self)
-
-    class Expr(str):
-        def __repr__(self):
-            return "E" + str.__repr__(self)
-
-    class Macro(str):
-        def __repr__(self):
-            return "M" + str.__repr__(self)
-
-    class Template(str):
-        def __repr__(self):
-            return "T" + str.__repr__(self)
-
     @staticmethod
     def track_depth(func):
         def wrapper(*args, **kwargs):
@@ -1378,23 +1361,6 @@ class Expander(abc.MutableMapping[str, object]):
             finally:
                 Expander.depth -= 1
         return wrapper
-
-    #----------------------------------------
-
-    def __init__(self, context : Dict, trace : bool | None = None):
-        assert trace is None or isinstance(trace, bool)
-        # These are just type annotations, because writing to fields while we're in the constructor
-        # of a class that overrides __setattr__ does strange things.
-        self._context : Dict
-        self.trace : bool
-
-        # The actual seet is here.
-        super().__setattr__("_context", context)
-
-        if trace is None:
-            trace = getattr(context, "trace", hancho.config.trace)
-        super().__setattr__("trace", trace)
-
 
     @staticmethod
     def wrap(source : Dict | Expander, tracer = None) -> Expander:
@@ -1410,16 +1376,16 @@ class Expander(abc.MutableMapping[str, object]):
         else:
             raise TypeError("Don't know how to wrap a {type(source)} = {source}")
 
-        if trace:
-            tag_a = (str(type(source).__name__)[:2] + "_" + hex(id(source))[-4:]).upper()
-            tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-            #tag_a = Utils.obj_to_ansi(source) + tag_a + Log.reset_color
-            #tag_b = Utils.obj_to_ansi(result) + tag_b + Log.d
-            if tracer:
-                tracer.log("wrap ")
-                tracer.log(tag_a)
-                tracer.log(" -> ")
-                tracer.log(tag_b)
+        #if trace:
+        #    tag_a = (str(type(source).__name__)[:2] + "_" + hex(id(source))[-4:]).upper()
+        #    tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
+        #    #tag_a = Utils.obj_to_ansi(source) + tag_a + Log.reset_color
+        #    #tag_b = Utils.obj_to_ansi(result) + tag_b + Log.d
+        #    #if tracer:
+        #    #    tracer.log("wrap ")
+        #    #    tracer.log(tag_a)
+        #    #    tracer.log(" -> ")
+        #    #    tracer.log(tag_b)
 
         return result
 
@@ -1506,31 +1472,30 @@ class Expander(abc.MutableMapping[str, object]):
             elif c == '}' and lbrace >= 0:
                 rbrace = i
                 if cursor < lbrace:
-                    result.append(Expander.Literal(text[cursor:lbrace]))
-                result.append(Expander.Macro(text[lbrace:rbrace+1]))
+                    result.append(text[cursor:lbrace])
+                result.append(text[lbrace:rbrace+1])
                 cursor = rbrace + 1
                 lbrace = -1
                 rbrace = -1
 
         if cursor < len(text):
-            result.append(Expander.Literal(text[cursor:]))
+            result.append(text[cursor:])
 
         return result
 
     # ----------------------------------------------------------------------------------------------
     # IMPORTANT IMPORTANT IMPORTANT
-    # If you can't eval something, you return the default - TEFINAE.
+    # If you can't eval a macro, you return it unchanged. TEFINAE.
     # Template Expansion Failure Is Not An Error.
     # This should be the _only_ try/except block in the expansion code.
 
     @Utils.recursify_apply_mip
     @track_depth
     @staticmethod
-    def _expand(val : Any, context : Dict | Expander) -> str:
-        if not isinstance(val, str):
-            return val
+    def _expand(text : Any, context : Dict | Expander) -> str:
+        if not isinstance(text, str):
+            return text
 
-        text = cast(str, val)
         match = Utils.braced.search(text)
 
         if not match:
@@ -1538,21 +1503,19 @@ class Expander(abc.MutableMapping[str, object]):
 
         elif match.group() == text:
             with Tracer(context, f"eval_macro({text!r})") as tracer:
-                macro = text
                 try:
                     _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
-                    result = eval(macro[1:-1], hancho.__dict__, _locals)
+                    result = eval(text[1:-1], hancho.__dict__, _locals)
                 except RecursionError as err:
                     Log.log_e(f"Recursion error {err}\n")
                     raise err
                 except Exception as _:
-                    result = macro
+                    result = text
                 tracer.save_result(result)
 
         else:
             with Tracer(context, f"expand_template({text!r})") as tracer:
-                template = text
-                blocks = Expander.split(template)
+                blocks = Expander.split(text)
                 for (i, block) in enumerate(blocks):
                     result = Expander._expand(block, context)
                     blocks[i] = Utils.stringify(result)
@@ -2052,15 +2015,17 @@ def main():
         if flags.verbose:
             Log.log_v("Verbose mode on\n")
 
-    root_dir    = hancho.config.expand("{root_dir}")
-    repo_dir    = hancho.config.expand("{repo_dir}")
+    expander = Expander(hancho.config)
+
+    root_dir    = expander.root_dir
+    repo_dir    = expander.repo_dir
 
     Log.log_v(f"Hancho root at {root_dir}\n")
     Log.log_v(f"Hancho repo at {repo_dir}\n")
 
-    script_dir  = hancho.config.expand("{script_cwd}")
-    script_file = hancho.config.expand("{script_file}")
-    script_path = os.path.join(script_dir, script_file)
+    script_dir  = expander.script_cwd
+    script_file = expander.script_file
+    script_path = os.path.join(cast(str, script_dir), cast(str, script_file))
 
     Log.log_v(f"Hancho root script at {script_path}\n")
 
