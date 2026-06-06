@@ -36,11 +36,16 @@ from typing import Any, cast
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
-type Tree[T] = T | list[Tree[T]] | dict[Any, Tree[T]]
+# Config fields often have arbitrarily nested lists of stuff due to things like
+#
+#     obj1 = [foo.o, bar.o]
+#     link(in_objs = [objs1, ...])
+#
+# and so we define a 'Tree' type that is basically 'either a T, or arbitrarily nested list of T'
+# This is only used as a type annotation, but be aware when reading the functions below that
+# some of them look like they operate on Ts, but they've been 'recursified' to work on Tree[T]s.
 
-def object_to_tag(obj):
-    tag = (str(type(obj).__name__)[:2] + "_" + hex(id(obj))[-4:]).upper()
-    return tag
+type Tree[T] = T | list[Tree[T]]
 
 # endregion
 ####################################################################################################
@@ -67,7 +72,7 @@ class Log:
     INFO     =  0
     DEBUG    = 10
     VERBOSE  = 20
-    NORMAL  = 30
+    NORMAL   = 30
     WARNING  = 40
     ERROR    = 50
     CRITICAL = 60
@@ -117,6 +122,7 @@ class Log:
             if not Log.wrap:
                 line = Log.clip_printable(line, Log.con_w)
             sys.stdout.write(line)
+            sys.stdout.flush()
             Log.at_newline = True
         else:
             Log.at_newline = False
@@ -224,18 +230,18 @@ class Log:
 
 class Colors(int, Enum):
     # 12 half-saturated, 80% value colors evenly spaced around the HSV wheel
-    RED     = 0xCC6666 # 0xFF0000, # fully saturated version
-    PINK    = 0xCC6699 # 0xFF0088,
-    MAGENTA = 0xCC66CC # 0xFF00FF,
-    VIOLET  = 0x9966CC # 0x8800FF,
-    BLUE    = 0x6666CC # 0x0000FF,
-    SKY     = 0x6699CC # 0x0088FF,
-    TEAL    = 0x66CCCC # 0x00FFFF,
-    AQUA    = 0x66CC99 # 0x00FF88,
-    GREEN   = 0x66CC66 # 0x00FF00,
-    LIME    = 0x99CC66 # 0x88FF00,
-    YELLOW  = 0xCCCC66 # 0xFFFF00,
-    ORANGE  = 0xCC9966 # 0xFF8800,
+    RED     = 0xCC6666
+    PINK    = 0xCC6699
+    MAGENTA = 0xCC66CC
+    VIOLET  = 0x9966CC
+    BLUE    = 0x6666CC
+    SKY     = 0x6699CC
+    TEAL    = 0x66CCCC
+    AQUA    = 0x66CC99
+    GREEN   = 0x66CC66
+    LIME    = 0x99CC66
+    YELLOW  = 0xCCCC66
+    ORANGE  = 0xCC9966
     # And the "go back to default" color :D
     RESET   = -1
 
@@ -462,7 +468,7 @@ class Utils:
 
     @staticmethod
     def in_event_loop() -> bool:
-        try: # in_event_loop
+        try:
             asyncio.get_running_loop()
             return True
         except RuntimeError:
@@ -732,19 +738,19 @@ class Dict(dict):
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
 
     def __getattr__(self, key : str):
-        try: # Dict.__getattr__
+        try:
             return dict.__getitem__(self, key)
         except KeyError:
             self.on_keyerror(key)
 
     def __setattr__(self, key : str, val : Any):
-        try: # Dict.__setattr__
+        try:
             return dict.__setitem__(self, key, val)
         except KeyError:
             self.on_keyerror(key)
 
     def __delattr__(self, key : str):
-        try: # Dict.__delattr__
+        try:
             return dict.__delitem__(self, key)
         except KeyError:
             self.on_keyerror(key)
@@ -759,12 +765,12 @@ class Dict(dict):
     # Expander convenience helpers
 
     def eval[T](self, text : Any, as_type : type[T] = object) -> T:
-        result = Expander.eval(text, Expander(self))
+        result =  Expander(self).eval(text)
         assert isinstance(result, as_type)
         return result
 
     def expand[T](self, text : Any, as_type : type[T] = object) -> T:
-        result = Expander.expand(text, Expander(self))
+        result = Expander(self).expand(text)
         assert isinstance(result, as_type)
         return result
 
@@ -854,19 +860,16 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def _log(self, message : str):
-        #with Colors.LIME:
-        with Log.color(0x00FF33):
+        with Log.color(Colors.LIME):
             Log.log(f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
         Log.log(message)
 
     def _log_d(self, message : str):
         if self._config.debug:
-            #with Log.Color(0x404040):
             self._log(message)
 
     def _log_v(self, message : str):
         if self._config.verbose or self._config.debug:
-            #with Log.Color(0x404040):
             self._log(message)
 
     # ----------------------------------------------------------------------------------------------
@@ -899,7 +902,7 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_top(self):
-        try: # Task.task_top
+        try:
             await self.task_main()
         except asyncio.CancelledError as ex:
             self._log_v(f"<asyncio.CancelledError {ex}>\n")
@@ -993,7 +996,7 @@ class Task:
             for i, file in enumerate(files):
                 if isinstance(file, Task):
                     task = cast(Task, file)
-                    try: # Task.task_main, awaiting inputs
+                    try:
                         await cast(asyncio.Task, task._aio_task)
                     except Exception as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
@@ -1025,7 +1028,7 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
-        config.name    = Expander.expand("{name}", expand)
+        config.name    = expand.name
         config.desc    = expand.desc
         config.command = expand.command
 
@@ -1111,7 +1114,7 @@ class Task:
         # Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path))
-        files = Expander.expand(files, expand) # FIXME expand.expand(files)
+        files = expand.expand(files)
 
         # Initially, all our file paths are relative to the script_cwd that created this task.
         # Join script_cwd with the filenames to produce absolute paths.
@@ -1231,7 +1234,7 @@ class Task:
             stderr = asyncio.subprocess.PIPE,
             start_new_session = True
         )
-        try: # Task.run_command
+        try:
             (stdout_data, stderr_data) = await proc.communicate()
         except asyncio.CancelledError as err:
             # We don't trust asyncio to clean up all cancelled processes, so we do it the hard way
@@ -1266,7 +1269,7 @@ class Task:
         callback_dir = Path.rel(self._config.script_cwd, self._config.repo_dir)
         self._log_v(f"{callback_dir}$ {command}\n")
 
-        try: # Task.call_callback
+        try:
             with chdir(self._config.script_cwd):
                 result = command(self)
                 if isawaitable(result):
@@ -1329,8 +1332,28 @@ class Expander(abc.MutableMapping[str, object]):
     def reset(cls):
         # The maximum recursion depth we will do to expand a macro.
         # Tests currently require MAX_DEPTHS >= 6.
-        Expander.MAX_DEPTH = 20
-        Expander.depth = 0
+        cls.MAX_DEPTH = 20
+        cls.depth = 0
+
+        # These are aliases to stuff in Hancho that have been pulled out so they can be used by
+        # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros,
+        # and use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
+        cls.aliases = Dict(
+            path = os.path,
+            abs  = Path.abs,
+            base = Path.base,
+            ext  = Path.ext,
+            norm = Path.norm,
+            real = Path.real,
+            rel  = Path.rel,
+            stem = Path.stem,
+            load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs),
+            repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs),
+
+            flatten = Utils.flatten,
+            run_cmd = Utils.run_cmd,
+            weave   = Utils.weave,
+        )
 
     # Trivial string wrappers that let us differentiate "literal" strings and "{macro}" strings.
     class Literal(str):
@@ -1409,7 +1432,7 @@ class Expander(abc.MutableMapping[str, object]):
     # MutableMapping interface
 
     def __getitem__(self, key):
-        try: # Expander.__getitem__
+        try:
             return self._get(key)
         except AttributeError as ex:
             raise KeyError from ex
@@ -1434,7 +1457,7 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     def __getattr__(self, key):
-        try: # Expander.__getattr__
+        try:
             return self._get(key)
         except KeyError as ex:
             raise AttributeError from ex
@@ -1447,6 +1470,12 @@ class Expander(abc.MutableMapping[str, object]):
 
     #----------------------------------------
 
+    def eval(self, val : Any):
+        return Expander._eval(val, self)
+
+    def expand(self, val : Any):
+        return Expander._expand(val, self)
+
     def _get(self, key):
         """
         Reads and expands a field stored in our context. Mappings will be wrapped in an Expander so
@@ -1455,7 +1484,7 @@ class Expander(abc.MutableMapping[str, object]):
         assert Utils.is_literal(key)
 
         with Tracer(self, f"_get('{key}')") as trace:
-            try: # Expander._get
+            try:
                 result = self._context[key]
             except Exception:
                 #if trace.trace:
@@ -1468,12 +1497,9 @@ class Expander(abc.MutableMapping[str, object]):
             elif Utils.is_mapping(result):
                 result = Expander.wrap(result)
             elif Utils.is_collection(result):
-                # FIXME Expand doesn't work here and I'm not sure if it should. Probably not?
-                #result = [Expander.expand(v, self) for v in cast(list, result)] # FIXME [self.expand(v) for v in result]
-                result = [Expander.eval(v, self) for v in cast(list, result)] # FIXME [self.expand(v) for v in result]
+                result = [self.eval(v) for v in cast(list, result)]
             elif Utils.is_template(result) or Utils.is_macro(result):
-                #result = Expander.expand(result, self) # FIXME self.expand(result)
-                result = Expander.eval(result, self) # FIXME self.expand(result)
+                result = self.eval(result)
 
             trace.save_result(result)
 
@@ -1522,10 +1548,9 @@ class Expander(abc.MutableMapping[str, object]):
 
     @staticmethod
     def _eval_or_default(expr : str, default, context : Dict | Expander, tracer : Tracer):
-        try: # Expander.expand_or_default
-            _locals = ChainMap(context, Loader.cv_config.get(), aliases)
-            _globals = hancho.__dict__
-            result = eval(expr, _globals, _locals)
+        try:
+            _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
+            result = eval(expr, hancho.__dict__, _locals)
         except RecursionError as err:
             Log.log_e(f"Recursion error {err}\n")
             raise err
@@ -1577,11 +1602,9 @@ class Expander(abc.MutableMapping[str, object]):
             tracer.save_result(result)
         return result
 
-    # ----------------------------------------------------------------------------------------------
-
     @Utils.recursify_apply_mip
     @staticmethod
-    def eval[T](val : Any, context : Dict | Expander, as_type : type[T] = object) -> Any:
+    def _eval(val : Any, context : Dict | Expander) -> Any:
         if not isinstance(val, str):
             return val
 
@@ -1594,14 +1617,13 @@ class Expander(abc.MutableMapping[str, object]):
             result = Expander._eval_template(val, context)
 
         if result != val:
-            result = Expander.eval(result, context)
+            result = Expander._eval(result, context)
 
-        assert isinstance(result, as_type)
         return result
 
     @Utils.recursify_apply_mip
     @staticmethod
-    def expand(val : Any, context : Dict | Expander) -> str:
+    def _expand(val : str, context : Dict | Expander) -> str:
         result = val
 
         if isinstance(val, str) and (match := Utils.braced.search(val)):
@@ -1611,7 +1633,7 @@ class Expander(abc.MutableMapping[str, object]):
                 result = Expander._eval_template(val, context)
 
             if result != val and Utils.is_braced(result):
-                result = Expander.expand(result, context)
+                result = Expander._expand(result, context)
 
         return Utils.stringify(result)
 
@@ -1634,7 +1656,7 @@ class Tracer:
             return self
 
         with Log.color(Utils.obj_to_hex(self.context)):
-            Log.log(f"{object_to_tag(self.context)}." + self.enter_message + "\n")
+            Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
 
         Log.indent_depth += 1
         return self
@@ -1645,7 +1667,7 @@ class Tracer:
         Log.indent_depth -= 1
 
         if isinstance(self.result, (Expander, Dict)):
-            Log.log(f"{object_to_tag(self.result)}\n")
+            Log.log(f"{Tracer.object_to_tag(self.result)}\n")
             return False
 
         with Log.indent(), Log.color(self.color):
@@ -1672,6 +1694,11 @@ class Tracer:
 
     def save_result(self, result : Any):
         self.result = result
+
+    @staticmethod
+    def object_to_tag(obj):
+        tag = (str(type(obj).__name__)[:2] + "_" + hex(id(obj))[-4:]).upper()
+        return tag
 
 # endregion
 ####################################################################################################
@@ -1798,7 +1825,7 @@ class Loader:
                     val = False
                 else:
                     for converter in (float, int, str):
-                        try:  # extra flag converter
+                        try:
                             val = converter(val)
                             break
                         except ValueError:
@@ -1977,7 +2004,7 @@ class Runner:
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
         time_a = time.perf_counter()
         while cls.live_aio_tasks and cls.count_failures() <= hancho.config.max_errors:
-            try: # async_run_tasks
+            try:
                 finished_aio_task = await cls.aio_done_queue.get()
                 _ = finished_aio_task.result()
                 cls.tasks_finished += 1
@@ -2040,7 +2067,7 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = Path.real(Expander.expand("build_root", task._expand))
+                build_root = Path.real(task._expand.expand("build_root"))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}\n")
@@ -2156,28 +2183,7 @@ def main():
 
 # endregion
 # ####################################################################################################
-# region aliases and if __name__ == "__main__"
-
-# These are aliases to stuff in Hancho that have been pulled out so they can be used by
-# template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros, and
-# use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
-
-aliases = Dict(
-    path = os.path,
-    abs  = Path.abs,
-    base = Path.base,
-    ext  = Path.ext,
-    norm = Path.norm,
-    real = Path.real,
-    rel  = Path.rel,
-    stem = Path.stem,
-    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs),
-    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs),
-
-    flatten = Utils.flatten,
-    run_cmd = Utils.run_cmd,
-    weave   = Utils.weave,
-)
+# region if __name__ == "__main__"
 
 # The 'global' hancho.config is actually instantiated per script context, otherwise scripts can
 # break each other by changing shared config fields. To ensure each script sees the right config,
@@ -2189,16 +2195,17 @@ aliases = Dict(
 def __getattr__(name):
     if name == "config":
         return Loader.cv_config.get()
-    elif name in aliases:
-        return aliases[name]
+    elif name in Expander.aliases:
+        # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
+        # template/macro expansion.
+        return Expander.aliases[name]
     else:
         raise AttributeError(name)
 
 # ---------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    result = main()
-    sys.exit(result)
+    sys.exit(main())
 else:
     init()
 

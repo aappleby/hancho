@@ -137,9 +137,9 @@ class TestTemplates(unittest.TestCase):
         # an Expander, as it is then expanded in the nested context.
         >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
         >>> e = Expander(d, True)
-        >>> Expander.expand("{a.b}", d)
+        >>> Expander._expand("{a.b}", d)
         '20'
-        >>> Expander.expand("{a.b}", e)
+        >>> Expander._expand("{a.b}", e)
         '10'
         >>> True
         True
@@ -153,16 +153,16 @@ class TestTemplates(unittest.TestCase):
 
         # This read is _not_ through the expander, so "{c}" will be evaluated in the _outer_
         # context.
-        result = Expander.expand("{a.b}", d)
+        result = Expander._expand("{a.b}", d)
         self.assertEqual(result, '20')
 
-        result = d.expand("{a.b}")
+        result = Expander._expand("{a.b}", e)
         self.assertEqual(result, '10')
 
         # This read _is_ through the expander - reading a.b will produce an Expander wrapped around
         # the inner dict which will then immediately expand "{c}" in the context of the inner dict
         # and return 10.
-        result = Expander.expand("{a.b}", e)
+        result = Expander._expand("{a.b}", e)
         self.assertEqual(result, '10')
 
     def doctest_expand_before_eval(self):
@@ -246,9 +246,9 @@ class TestTemplates(unittest.TestCase):
         True
         >>> Expander._eval_macro("{b}", d)
         'x{a}y'
-        >>> Expander.expand("a", d)
+        >>> d.expand("a")
         'a'
-        >>> Expander.expand("b", d)
+        >>> d.expand("b")
         'b'
         >>> Expander._eval_macro("{b}", d)
         'x{a}y'
