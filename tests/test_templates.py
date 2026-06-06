@@ -20,6 +20,7 @@ def setUpModule():
 #    print(repr(result))
 #    result = d.expand(r"{bs}{lb}a{bs}{rb}")
 #    print(repr(result))
+    #hancho.init(quiet = True)
 
     os.chdir(os.path.dirname(__file__))
 
@@ -140,6 +141,8 @@ class TestTemplates(unittest.TestCase):
         '20'
         >>> Expander.expand("{a.b}", e)
         '10'
+        >>> True
+        True
         """
 
     def test_read_nested_c_first(self):
@@ -327,6 +330,23 @@ class TestTemplates(unittest.TestCase):
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
         r = d.expand(v)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
+
+    def test_eval_vs_expand(self):
+        d = Dict(a = "'  hello", b = " world   '.strip() ")
+
+        # Eval'ing the template should run the strip() inside the expanded template
+        self.assertEqual(
+            'hello world',
+            d.eval("{a}{b}")
+        )
+
+        # Expand'ing the template should _not_ eval the strip() as the expanded template has no
+        # braces.
+        self.assertEqual(
+            "'  hello world   '.strip() ",
+            d.expand("{a}{b}")
+        )
+
 
 
 ####################################################################################################

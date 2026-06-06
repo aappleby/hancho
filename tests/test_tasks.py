@@ -62,7 +62,7 @@ class TestTasks(unittest.TestCase):
         sys.stdout.flush()
 
     def run_tasks(self, expected):
-        hancho.config.build_all = True
+        hancho.config.rebuild = True
         hancho.Runner.enable_all_tasks()
         result = hancho.Runner.sync_run_tasks()
         self.assertEqual(result, expected)
@@ -151,6 +151,11 @@ class TestTasks(unittest.TestCase):
     #          b*ase_path = os.path.abspath("subrepo")
     #      )
     #      self.assertEqual(0, hancho.app.build_all())
+#        hancho.config.rebuild = True
+#        hancho.Runner.enable_all_tasks()
+#        result = hancho.Runner.sync_run_tasks()
+
+
     #      self.assertTrue(Path("build/subrepo/repo.txt").exists())
     #
     #    def _test_subrepos1(self):

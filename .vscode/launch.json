@@ -23,11 +23,19 @@
     },
 
     {
-      "name"    : "Debug scratch",
+      "name"    : "Debug scratch/build.hancho",
       "type"    : "debugpy",
       "request" : "launch",
-      //"program" : "${workspaceFolder}/hancho.py",
-      //"cwd"     : "${workspaceFolder}/scratch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/scratch",
+      "args"    : ["-d", "-v", "-j1", "--trace"],
+      "preLaunchTask": "Wipe build",
+    },
+
+    {
+      "name"    : "Debug scratch/build.py",
+      "type"    : "debugpy",
+      "request" : "launch",
       "program" : "${workspaceFolder}/scratch/build.py",
       "cwd"     : "${workspaceFolder}/scratch",
       "args"    : ["-d", "-v", "-j1"],
