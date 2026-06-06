@@ -43,44 +43,30 @@ class TestTemplates(unittest.TestCase):
         # Basic evaluation should work
         """
         >>> d = Dict(a = 1, b = 2)
-        >>> d.eval("a")
-        1
         >>> d.expand("a")
         'a'
-        >>> d.eval("b")
-        2
         >>> d.expand("b")
         'b'
-        >>> d.eval("{a}{b}{a}{b}")
-        1212
         >>> d.expand("{a}{b}{a}{b}")
         '1212'
-        >>> d.eval("{a}")
-        1
+        >>> d.expand("{{a}{b}{a}{b}}")
+        1212
         >>> d.expand("{a}")
-        '1'
-        >>> d.eval("{b}")
-        2
+        1
         >>> d.expand("{b}")
-        '2'
+        2
         """
 
     def doctest_basic_expand(self):
         r"""
         # Expanding basic templates should work
         >>> d = Dict(a = 1, b = 2, c = 3)
-        >>> d.eval("a")
-        1
         >>> d.expand("a")
         'a'
 
-        >>> d.eval("{a}")
-        1
         >>> d.expand("{a}")
-        '1'
+        1
 
-        >>> d.eval("{a}{b}{c}")
-        123
         >>> d.expand("{a}{b}{c}")
         '123'
         """
@@ -89,46 +75,30 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Multiply-nested braces should work
         >>> d = Dict(a = "b", b = 777)
-        >>> Expander._eval_template("{{a}}", d)
-        '{b}'
         >>> d.expand("{{a}}")
-        '777'
-        >>> Expander._eval_template("{{{{{{a}}}}}}", d)
-        '{{{{{b}}}}}'
+        777
         >>> d.expand("{{{{{{a}}}}}}")
-        '777'
+        777
         """
 
     def doctest_nested_templates(self):
         r"""
         # We should be able to expand nested templates
         >>> d = Dict(a = Dict(b = "{c}"), c = 10)
-        >>> Expander._eval_expr("a.b", d)
-        '{c}'
-        >>> Expander._eval_macro("{a.b}", d)
-        '{c}'
-        >>> Expander._eval_template(">{a.b}<", d)
-        '>{c}<'
-        >>> Expander._eval_expr("a.b", d)
-        '{c}'
-        >>> Expander._eval_macro("{a.b}", d)
-        '{c}'
         >>> d.expand("a.b")
         'a.b'
         >>> d.expand("{a.b}")
-        '10'
+        10
         """
 
     def doctest_extra_braces(self):
         r"""
         # Additional {} around an expression essentially adds extra evals
         >>> d = Dict(a = "1 + 1", b = "{a}")
-        >>> Expander._eval_macro("{a}", d)
+        >>> d.expand("{a}")
         '1 + 1'
-        >>> Expander._eval_template("{{a}}", d)
-        '{1 + 1}'
         >>> d.expand("{{a}}")
-        '2'
+        2
         """
 
     def doctest_read_nested_c_first(self):
@@ -137,12 +107,10 @@ class TestTemplates(unittest.TestCase):
         # an Expander, as it is then expanded in the nested context.
         >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
         >>> e = Expander(d, True)
-        >>> Expander._expand("{a.b}", d)
-        '20'
-        >>> Expander._expand("{a.b}", e)
-        '10'
-        >>> True
-        True
+        >>> d.expand("{a.b}")
+        20
+        >>> e.expand("{a.b}")
+        10
         """
 
     def test_read_nested_c_first(self):
@@ -153,17 +121,15 @@ class TestTemplates(unittest.TestCase):
 
         # This read is _not_ through the expander, so "{c}" will be evaluated in the _outer_
         # context.
-        result = Expander._expand("{a.b}", d)
-        self.assertEqual(result, '20')
-
-        result = Expander._expand("{a.b}", e)
-        self.assertEqual(result, '10')
+        result = d.expand("{a.b}")
+        self.assertEqual(result, 20)
 
         # This read _is_ through the expander - reading a.b will produce an Expander wrapped around
         # the inner dict which will then immediately expand "{c}" in the context of the inner dict
         # and return 10.
+        # FIXME BROKEN
         result = Expander._expand("{a.b}", e)
-        self.assertEqual(result, '10')
+        self.assertEqual(result, 10)
 
     def doctest_expand_before_eval(self):
         r"""
@@ -171,34 +137,24 @@ class TestTemplates(unittest.TestCase):
         # using ABC instead of abc because abc is a module name :/
         >>> d = Dict(A = 1, B = 2, C = 3, name_a = 'A', name_b = 'B', name_c = 'C')
 
-        >>> d.eval("name_a + name_b + name_c")
-        'ABC'
         >>> d.expand("name_a + name_b + name_c")
         'name_a + name_b + name_c'
 
-        >>> d.eval("{name_a + name_b + name_c}")
-        'ABC'
         >>> d.expand("{name_a + name_b + name_c}")
         'ABC'
 
-        >>> d.eval("{name_a} + {name_b} + {name_c}")
-        6
         >>> d.expand("{name_a} + {name_b} + {name_c}")
         'A + B + C'
 
-        >>> d.eval("{{name_a} + {name_b} + {name_c}}")
-        6
         >>> d.expand("{{name_a} + {name_b} + {name_c}}")
-        '6'
+        6
         """
 
     def doctest_assemble_pieces(self):
         r"""
         # Expanding a template can assemble a new template from pieces, which then also gets expanded
         >>> d = Dict(part_a = '{f', part_b = 'o', part_c = 'o}', foo = 10)
-        >>> Expander._eval_template("{part_a}{part_b}{part_c}", d)
-        '{foo}'
-        >>> d.eval("{part_a}{part_b}{part_c}")
+        >>> d.expand("{part_a}{part_b}{part_c}")
         10
 
         # And that can go multiple levels deep
@@ -206,9 +162,7 @@ class TestTemplates(unittest.TestCase):
         ...   foo = "{part_a2}{part_b2}{part_c2}",
         ...   part_a2 = '{b', part_b2 = 'a', part_c2 = 'r}',
         ...   bar = 12)
-        >>> Expander._eval_template("{part_a1}{part_b1}{part_c1}", d)
-        '{foo}'
-        >>> d.eval("{part_a1}{part_b1}{part_c1}")
+        >>> d.expand("{part_a1}{part_b1}{part_c1}")
         12
         """
 
@@ -218,7 +172,7 @@ class TestTemplates(unittest.TestCase):
         >>> d = Dict(a = 1, b = lambda x : x + 1)
         >>> d
         _ : Dict = {a = 1, b : function = <object>}
-        >>> Expander._eval_template("foo {b(a)} bar", d)
+        >>> d.expand("foo {b(a)} bar")
         'foo 2 bar'
         """
 
@@ -226,11 +180,11 @@ class TestTemplates(unittest.TestCase):
         r"""
         # TEFINAE - Text Expansion Failure Is Not An Error
         >>> d = Dict(a = 1)
-        >>> Expander._eval_macro("{missing}", d)
+        >>> d.expand("{missing}")
         '{missing}'
-        >>> Expander._eval_template("{a} {missing}", d)
+        >>> d.expand("{a} {missing}")
         '1 {missing}'
-        >>> Expander._eval_macro("{a + missing}", d)
+        >>> d.expand("{a + missing}")
         '{a + missing}'
         """
 
@@ -238,33 +192,28 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Nones should turn into empty strings
         >>> d = Dict(a = None, b = "x{a}y")
-        >>> Expander._eval_expr("a", d) is None
-        True
-        >>> Expander._eval_expr("b", d)
-        'x{a}y'
-        >>> Expander._eval_macro("{a}", d) is None
-        True
-        >>> Expander._eval_macro("{b}", d)
-        'x{a}y'
         >>> d.expand("a")
         'a'
         >>> d.expand("b")
         'b'
-        >>> Expander._eval_macro("{b}", d)
-        'x{a}y'
+        >>> d.expand("{a}") is None
+        True
         >>> d.expand("{b}")
         'xy'
-        >>> Expander._eval_template("foo {b} bar", d)
-        'foo x{a}y bar'
-        >>> d.expand("foo {b} bar")
-        'foo xy bar'
         """
+
+    def test_template_nones(self):
+        # Nones should turn into empty strings
+        d = Dict(a = None, b = "x{a}y", trace = True)
+        self.assertEqual(Expander._expand("a",   d), 'a')
+        self.assertEqual(Expander._expand("b",   d), 'b')
+        self.assertEqual(Expander._expand("{a}", d),  None)
+        self.assertEqual(Expander._expand("{b}", d), 'xy')
+
 
     def doctest_order_of_expansion(self):
         r"""
         >>> d = Dict(a = "{b}", b = 10)
-        >>> Expander._eval_template("{a} + 0", d)
-        '{b} + 0'
         >>> d.expand("{a} + 0")
         '10 + 0'
         """
@@ -273,26 +222,21 @@ class TestTemplates(unittest.TestCase):
         r"""
         # Lists should be joined with spaces
         >>> d = Dict(flags = ["-O2", "-Wall"])
-        >>> Expander._eval_template("cc {flags} main.c", d)
+        >>> d.expand("cc {flags} main.c")
         'cc -O2 -Wall main.c'
-        >>> d.eval("flags")
-        ['-O2', '-Wall']
+
+        #>>> d.eval("flags")
+        #['-O2', '-Wall']
         """
 
     def doctest_flatten_lists(self):
         r"""
         # Lists should be flattened before joining with spaces
         >>> d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
-        >>> d.eval("flags")
-        [[['a'], 'b'], 'c', 'd', ['e', 'f']]
         >>> d.expand("flags")
         'flags'
-        >>> d.eval("{flags}")
-        [[['a'], 'b'], 'c', 'd', ['e', 'f']]
         >>> d.expand("{flags}")
-        'a b c d e f'
-        >>> d.eval("flags = '{flags}'")
-        "flags = 'a b c d e f'"
+        [[['a'], 'b'], 'c', 'd', ['e', 'f']]
         >>> d.expand("flags = '{flags}'")
         "flags = 'a b c d e f'"
         """
@@ -301,7 +245,7 @@ class TestTemplates(unittest.TestCase):
         # Testing escape sequences in templates is annoying. Double-check that we can use proxies
         # to build strings with escape sequences.
         d = Dict(a=1, bs="\\", lb="{", rb="}")
-        self.assertEqual(d.eval(r"{lb}a{rb}"), 1)
+        self.assertEqual(d.expand(r"{lb}a{rb}"), 1)
         self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
 
     def test_expand_failed_to_terminate1(self):
@@ -331,22 +275,33 @@ class TestTemplates(unittest.TestCase):
         r = d.expand(v)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
-    def test_eval_vs_expand(self):
-        d = Dict(a = "'  hello", b = " world   '.strip() ")
+    def test_multi_eval(self):
+        d = Dict(a = "'  hello", b = " world   '.strip() ", c = "{a}{b}", trace = True)
 
-        # Eval'ing the template should run the strip() inside the expanded template
-        self.assertEqual(
-            'hello world',
-            d.eval("{a}{b}")
-        )
+        self.assertEqual(d.expand("c"),         "c")
+        self.assertEqual(d.expand("{c}"),       "'  hello world   '.strip() ")
+        self.assertEqual(d.expand("{{c}}"),     "hello world")
+        self.assertEqual(d.expand("{{{c}}}"),   "{hello world}")
+        self.assertEqual(d.expand("{{{{c}}}}"), "{{hello world}}")
 
-        # Expand'ing the template should _not_ eval the strip() as the expanded template has no
-        # braces.
-        self.assertEqual(
-            "'  hello world   '.strip() ",
-            d.expand("{a}{b}")
-        )
 
+    # This is gonna fail right now.
+    def doctest_embedded_eval(self):
+        """
+        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
+        >>> d.expand("{foo}")
+        '1 + 1'
+        >>> d.expand("{foo} {bar}")
+        '1 + 1 2 + 2'
+
+        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\\"2 + 2\\"")
+        >>> d.expand("{foo}")
+        '1 + 1'
+        >>> d.expand("{bar}")
+        '\"2 + 2\"'
+        >>> d.expand("{foo} {bar}")
+        '1 + 1 \"2 + 2\"'
+        """
 
 
 ####################################################################################################

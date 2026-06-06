@@ -764,13 +764,8 @@ class Dict(dict):
     #----------------------------------------
     # Expander convenience helpers
 
-    def eval[T](self, text : Any, as_type : type[T] = object) -> T:
-        result =  Expander(self).eval(text)
-        assert isinstance(result, as_type)
-        return result
-
     def expand[T](self, text : Any, as_type : type[T] = object) -> T:
-        result = Expander(self).expand(text)
+        result = Expander._expand(text, self)
         assert isinstance(result, as_type)
         return result
 
@@ -1470,9 +1465,6 @@ class Expander(abc.MutableMapping[str, object]):
 
     #----------------------------------------
 
-    def eval(self, val : Any):
-        return Expander._eval(val, self)
-
     def expand(self, val : Any):
         return Expander._expand(val, self)
 
@@ -1481,27 +1473,12 @@ class Expander(abc.MutableMapping[str, object]):
         Reads and expands a field stored in our context. Mappings will be wrapped in an Expander so
         that expansions in nested dicts works correctly.
         """
-        assert Utils.is_literal(key)
 
-        with Tracer(self, f"_get('{key}')") as trace:
-            try:
-                result = self._context[key]
-            except Exception:
-                #if trace.trace:
-                #    with Colors.RED:
-                #        Log.log(f"Key not found - {key}\n")
-                raise
-
-            if isinstance(result, Expander):
-                pass
-            elif Utils.is_mapping(result):
-                result = Expander.wrap(result)
-            elif Utils.is_collection(result):
-                result = [self.eval(v) for v in cast(list, result)]
-            elif Utils.is_template(result) or Utils.is_macro(result):
-                result = self.eval(result)
-
-            trace.save_result(result)
+        result = self._context[key]
+        if Utils.is_mapping(result) and not isinstance(result, Expander):
+            result = Expander.wrap(result)
+        else:
+            result = self.expand(result)
 
         return result
 
@@ -1546,96 +1523,46 @@ class Expander(abc.MutableMapping[str, object]):
     # Template Expansion Failure Is Not An Error.
     # This should be the _only_ try/except block in the expansion code.
 
-    @staticmethod
-    def _eval_or_default(expr : str, default, context : Dict | Expander, tracer : Tracer):
-        try:
-            _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
-            result = eval(expr, hancho.__dict__, _locals)
-        except RecursionError as err:
-            Log.log_e(f"Recursion error {err}\n")
-            raise err
-        except Exception as _:
-            #Log.log(f"Could not eval '{expr}', returning '{default}'\n")
-            result = default
-        return result
-
-    @track_depth
-    @staticmethod
-    def _eval_expr(expr : str, context : Dict | Expander) -> Any:
-        assert Utils.is_expr(expr)
-        with Tracer(context, f"_eval_expr('{expr}')") as tracer:
-            result = Expander._eval_or_default(expr, expr, context, tracer)
-            tracer.save_result(result)
-        return result
-
-    @track_depth
-    @staticmethod
-    def _eval_macro(macro : str, context : Dict | Expander) -> Any:
-        assert Utils.is_macro(macro)
-        with Tracer(context, f"_eval_macro('{macro}')") as tracer:
-            result = Expander.Expr(macro[1:-1])
-            result = Expander._eval_or_default(result, macro, context, tracer)
-            tracer.save_result(result)
-        return result
-
-    @track_depth
-    @staticmethod
-    def _expand_macro(macro : str, context : Dict | Expander) -> Any:
-        assert Utils.is_macro(macro)
-        with Tracer(context, f"_eval_macro('{macro}')") as tracer:
-            result = Expander.Expr(macro[1:-1])
-            result = Expander._eval_or_default(result, macro, context, tracer)
-            tracer.save_result(result)
-        return result
-
-    @track_depth
-    @staticmethod
-    def _eval_template(template : str, context : Dict | Expander) -> str:
-        assert Utils.is_template(template)
-        with Tracer(context, f"_eval_template('{template}')") as tracer:
-            blocks = Expander.split(template)
-            for (i, block) in enumerate(blocks):
-                if isinstance(block, Expander.Macro):
-                    result = Expander._eval_macro(block, context)
-                    blocks[i] = Utils.stringify(result)
-            result = "".join(blocks)
-            tracer.save_result(result)
-        return result
-
     @Utils.recursify_apply_mip
+    @track_depth
     @staticmethod
-    def _eval(val : Any, context : Dict | Expander) -> Any:
+    def _expand(val : Any, context : Dict | Expander) -> str:
         if not isinstance(val, str):
             return val
 
-        match = Utils.braced.search(val)
-        if match is None:
-            result = Expander._eval_expr(val, context)
-        elif match.group() == val:
-            result = Expander._eval_macro(val, context)
-        else:
-            result = Expander._eval_template(val, context)
+        text = cast(str, val)
+        match = Utils.braced.search(text)
 
-        if result != val:
-            result = Expander._eval(result, context)
+        if not match:
+            return text
+
+        elif match.group() == text:
+            with Tracer(context, f"eval_macro({text!r})") as tracer:
+                macro = text
+                try:
+                    _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
+                    result = eval(macro[1:-1], hancho.__dict__, _locals)
+                except RecursionError as err:
+                    Log.log_e(f"Recursion error {err}\n")
+                    raise err
+                except Exception as _:
+                    result = macro
+                tracer.save_result(result)
+
+        else:
+            with Tracer(context, f"expand_template({text!r})") as tracer:
+                template = text
+                blocks = Expander.split(template)
+                for (i, block) in enumerate(blocks):
+                    result = Expander._expand(block, context)
+                    blocks[i] = Utils.stringify(result)
+                result = "".join(blocks)
+                tracer.save_result(result)
+
+        if result != text:
+            result = Expander._expand(result, context)
 
         return result
-
-    @Utils.recursify_apply_mip
-    @staticmethod
-    def _expand(val : str, context : Dict | Expander) -> str:
-        result = val
-
-        if isinstance(val, str) and (match := Utils.braced.search(val)):
-            if match.group() == val:
-                result = Expander._eval_macro(val, context)
-            else:
-                result = Expander._eval_template(val, context)
-
-            if result != val and Utils.is_braced(result):
-                result = Expander._expand(result, context)
-
-        return Utils.stringify(result)
 
 # endregion
 ####################################################################################################
@@ -1659,28 +1586,30 @@ class Tracer:
             Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
 
         Log.indent_depth += 1
+
         return self
 
     def __exit__(self, exc_type, exc_value, tb):
         if not (self.trace or hancho.config.trace):
             return
+
+        with Log.color(self.color):
+            if exc_type:
+                Log.log(f"exc_type  : {exc_type}\n")
+            if exc_value:
+                Log.log(f"exc_value : {exc_value}\n")
+            if tb:
+                summary = traceback.extract_tb(tb)
+                filename, line_no, func_name, _ = summary[-1]
+                Log.log(f"location  : {filename} line {func_name}@{line_no}\n")
+
         Log.indent_depth -= 1
+
+        Log.log("└ ")
 
         if isinstance(self.result, (Expander, Dict)):
             Log.log(f"{Tracer.object_to_tag(self.result)}\n")
             return False
-
-        with Log.indent(), Log.color(self.color):
-            if exc_type:
-                Log.log(f"exc_type  {exc_type}\n")
-            if exc_value:
-                Log.log(f"exc_value {exc_value}\n")
-            if tb:
-                summary = traceback.extract_tb(tb)
-                filename, line_no, func_name, _ = summary[-1]
-                Log.log(f"location  {filename} line {line_no} @{func_name}\n")
-
-        Log.log("└ ")
 
         with Log.color(Utils.obj_to_hex(self.result)):
             if self.result is None:
@@ -2205,6 +2134,17 @@ def __getattr__(name):
 # ---------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
+#    hancho.init()
+#
+#    d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\"2 + 2\"", trace = True)
+#    d.eval("{foo}")
+#    print()
+#    d.eval("{bar}")
+#    print()
+#    d.expand("{foo} {bar}")
+#
+#    sys.exit(0)
+
     sys.exit(main())
 else:
     init()

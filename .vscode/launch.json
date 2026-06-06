@@ -10,7 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_bad_run_cmd"],
+      "args"    : ["tests.test_templates.TestTemplates.test_read_nested_c_first"],
       "preLaunchTask": "Wipe build",
     },
 
