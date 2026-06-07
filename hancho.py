@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-#!/usr/bin/python3
 # region header
 
 """
@@ -58,7 +57,6 @@ class Log:
     def reset(cls):
         cls.start  : float = time.time( )
         cls.buffer : str  = ""
-        cls.dirty  : bool = False
         cls.indent_depth : int  = 0
         cls.current_color  : int  = -1
         cls.line_buffer = ""
@@ -69,39 +67,48 @@ class Log:
     @staticmethod
     @contextmanager
     def color(new_color):
-        old_color = Log.current_color
-        Log.current_color = new_color
-        yield
-        Log.current_color = old_color
+        try:
+            old_color = Log.current_color
+            Log.current_color = new_color
+            yield
+        finally:
+            Log.current_color = old_color
 
     @staticmethod
     @contextmanager
     def indent():
-        Log.indent_depth += 1
-        yield
-        Log.indent_depth -= 1
+        # Not dead, used in test suites
+        try:
+            Log.indent_depth += 1
+            yield
+        finally:
+            Log.indent_depth -= 1
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def log(cls, text):
+        hex = cls.current_color
+        r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
+        color_prefix = f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else ""
+        color_suffix = "\x1B[0m" if hex >= 0 else ""
+
         for i, line in enumerate(text.split("\n")):
             if not cls.line_buffer:
                 cls.line_buffer += f"[{time.time() - Log.start:12.6f}] " + "│ " * Log.indent_depth
 
             if line:
-                hex = cls.current_color
-                r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
-                cls.line_buffer += f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else "\x1B[0m"
-                cls.line_buffer += line
+                cls.line_buffer += color_prefix + line + color_suffix
 
             if i > 0:
                 cls.line_buffer += "\x1B[0m\n"
 
             if cls.line_buffer[-1] == '\n':
                 cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
+                # Ensure that QUIET mutes absolutely everything
+                if Options.verbosity > LogLevel.QUIET:
+                    sys.stdout.write(cls.line_buffer)
                 Log.buffer += cls.line_buffer
-                sys.stdout.write(cls.line_buffer)
                 cls.line_buffer = ""
 
     @classmethod
@@ -141,7 +148,7 @@ class Log:
 
         return result
 
-class Verbosity(int, Enum):
+class LogLevel(int, Enum):
     QUIET    = 0
     FATAL    = 10
     CRITICAL = 20
@@ -157,7 +164,7 @@ class Verbosity(int, Enum):
 
 #endregion
 ####################################################################################################
-#region
+#region Colors
 
 class Colors(int, Enum):
     """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
@@ -176,9 +183,6 @@ class Colors(int, Enum):
     ORANGE  = 0xCC9966
     RESET   = -1  # The "go back to default" color :D
 
-    DEBUG   = 0x804040
-    VERBOSE = 0x404040
-
 # endregion
 ####################################################################################################
 # region Utils
@@ -189,8 +193,8 @@ class Utils:
     def reset(cls):
         cls.rand : random.Random = random.Random()
         cls.mtime_calls : int = 0
-        # Matches non-escaped _innermost_ brace pairs
-        cls.braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
+
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def dump_to_str(cls, key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
@@ -228,7 +232,6 @@ class Utils:
 
         if isinstance(val, argparse.Namespace):
             val = val.__dict__
-            pass
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
@@ -283,6 +286,7 @@ class Utils:
         # Done, we can fit this dump on one line.
         return pad + prefix + ld + separator.join(chunks) + rd
 
+    # ----------------------------------------------------------------------------------------------
     # Yes Claude, I know these recursify functions are weird and probably need better names.
 
     @staticmethod
@@ -318,46 +322,6 @@ class Utils:
         return outer
 
     @staticmethod
-    def recursify_apply_mip(func):
-        """
-        MIP = Modify In-Place
-        Creates a static function that recursively applies 'func' to a Tree[T], modifying the tree in-place.
-        """
-
-        def outer(v, *args, **kwargs):
-            if Utils.is_collection(v):
-                for k2, v2 in enumerate(v):
-                    v[k2] = outer(v2, *args, **kwargs)
-            elif Utils.is_mapping(v):
-                for k2, v2 in v.items():
-                    v[k2] = outer(v2, *args, **kwargs)
-            else:
-                v = func(v, *args, **kwargs)
-            return v
-
-        return outer
-
-    @staticmethod
-    def recursify_apply_mip_member(func):
-        """
-        MIP = Modify In-Place
-        Creates a member function that recursively applies 'self.func' to a Tree[T], modifying the tree in-place.
-        """
-
-        def outer(self, v, *args, **kwargs):
-            if Utils.is_collection(v):
-                for k2, v2 in enumerate(v):
-                    v[k2] = outer(self, v2, *args, **kwargs)
-            elif Utils.is_mapping(v):
-                for k2, v2 in v.items():
-                    v[k2] = outer(self, v2, *args, **kwargs)
-            else:
-                v = func(self, v, *args, **kwargs)
-            return v
-
-        return outer
-
-    @staticmethod
     def recursify_pairwise_map(func):
         """
         Creates a function with two args that effectively
@@ -367,7 +331,6 @@ class Utils:
         4. Returns the list if len(list) > 1, otherwise returns the scalar in list[0].
         """
 
-        @staticmethod
         def inner(accum, a, b, *args, **kwargs):
             if Utils.is_collection(a):
                 for c in a:
@@ -378,13 +341,14 @@ class Utils:
             else:
                 accum.append(func(a, b, *args, **kwargs))
 
-        @staticmethod
         def outer(a, b, *args, **kwargs):
             accum = []
             inner(accum, a, b, *args, **kwargs)
             return accum[0] if len(accum) == 1 else accum
 
         return outer
+
+    # ----------------------------------------------------------------------------------------------
 
     @staticmethod
     def stringify(variant) -> str:
@@ -434,8 +398,8 @@ class Utils:
 
     @staticmethod
     def obj_to_hex(obj) -> int:
-        Utils.rand.seed(id(obj))
-        r, g, b = colorsys.hsv_to_rgb(Utils.rand.random(), 0.3, 1.0)
+        hue = random.Random(id(obj)).random()
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.3, 1.0)
         r, g, b = (int(r * 255), int(g * 255), int(b * 255))
         return (r << 16) | (g << 8) | (b << 0)
 
@@ -641,17 +605,17 @@ class Options:
         quiet     = root_config.pop("quiet", False)
 
         if isinstance(verbosity, str):
-            verbosity = Verbosity[verbosity.upper()]
+            verbosity = LogLevel[verbosity.upper()]
         elif trace:
-            verbosity = Verbosity.TRACE
+            verbosity = LogLevel.TRACE
         elif debug:
-            verbosity = Verbosity.DEBUG
+            verbosity = LogLevel.DEBUG
         elif verbose:
-            verbosity = Verbosity.VERBOSE
+            verbosity = LogLevel.VERBOSE
         elif quiet:
-            verbosity = Verbosity.QUIET
+            verbosity = LogLevel.QUIET
         else:
-            verbosity = Verbosity.NORMAL
+            verbosity = LogLevel.NORMAL
 
         cls.verbosity = verbosity
 
@@ -659,7 +623,7 @@ class Options:
 
         if not hasattr(cls, "_cv_config"):
             cls._cv_config : contextvars.ContextVar = contextvars.ContextVar("config")
-        if hasattr(cls, "cv_token"):
+        if hasattr(cls, "_cv_token"):
             cls._cv_config.reset(cls._cv_token)
 
         cls._cv_token : contextvars.Token = cls._cv_config.set(root_config)
@@ -678,8 +642,6 @@ class Options:
     # task configs the fields stay in the same order.
     # This is a function so that when we re-initialize Hancho during tests, we pick up a fresh
     # copy of os.getcwd() if it changed.
-
-    # FIXME can we support per-task verbosity for debugging?
 
     @classmethod
     def default_config(cls):
@@ -736,7 +698,7 @@ class Options:
         parser.add_argument("-d", "--debug",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=debug. Print debugging information")
         parser.add_argument("--trace",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=trace. Trace all text expansion")
 
-        choices = [v.lower() for v in Verbosity.__members__]
+        choices = [v.lower() for v in LogLevel.__members__]
         parser.add_argument("-v", "--verbosity", choices=choices, help="Select verbosity level. Quiet = none, Trace = maximal spam")
 
 
@@ -755,9 +717,9 @@ class Options:
                 if val is None:
                     # this is so that --foo turns into {foo:True}
                     val = True
-                elif val in ["True", "True", "1"]:
+                elif val in ["True", "true", "1"]:
                     val = True
-                elif val in ["False", "False", "0"]:
+                elif val in ["False", "false", "0"]:
                     val = False
                 else:
                     for converter in (float, int, str):
@@ -840,11 +802,11 @@ class Task:
 
     @staticmethod
     def is_output_field(key : str):
-        return key and (Task.is_depfile_field(key) or key.startswith("out_"))
+        return (key != "") and (Task.is_depfile_field(key) or key.startswith("out_"))
 
     @staticmethod
     def is_input_field(key : str):
-        return key and key.startswith("in_")
+        return (key != "") and key.startswith("in_")
 
     @staticmethod
     def is_io_field(key : str):
@@ -852,30 +814,14 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    def log_at(self, verbosity : Verbosity, message : str):
-        if not verbosity:
-            return
-        lines = message.split("\n")
-        for i, line in enumerate(lines):
-            if not line:
-                continue
-            with Log.color(Colors.LIME):
-                Log.log(f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
-            Log.log(line)
-            if i < len(lines) - 1:
-                Log.log("\n")
-
     def log(self, message : str):
-        self.log_at(Verbosity.NORMAL, message)
-
-    def log_e(self, message : str):
-        self.log_at(Verbosity.ERROR, message)
-
-    def log_d(self, message : str):
-        self.log_at(Verbosity.DEBUG, message)
-
-    def log_v(self, message : str):
-        self.log_at(Verbosity.VERBOSE, message)
+        for i, line in enumerate(message.split("\n")):
+            if i > 0:
+                Log.log("\n")
+            if line:
+                with Log.color(Colors.LIME):
+                    Log.log(f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
+                Log.log(line)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -886,11 +832,15 @@ class Task:
             if Utils.in_event_loop():
                 self.create_aio_task()
 
-    @Utils.recursify_apply_mip_member
-    def create_parent_tasks(self, v):
-        if isinstance(v, Task):
-            v.create_aio_task()
-        return v
+    def create_parent_tasks(self, variant):
+        if isinstance(variant, Task):
+            variant.create_aio_task()
+        elif Utils.is_collection(variant):
+            for v in variant:
+                self.create_parent_tasks(v)
+        elif isinstance(variant, dict):
+            for v in variant.values():
+                self.create_parent_tasks(v)
 
     def create_aio_task(self):
         assert Utils.in_event_loop()
@@ -910,7 +860,8 @@ class Task:
         try:
             await self.task_main()
         except asyncio.CancelledError as ex:
-            self.log_v(f"<asyncio.CancelledError {ex}>\n")
+            if LogLevel.VERBOSE:
+                self.log(f"<asyncio.CancelledError {ex}>\n")
             self._error = ex
             raise
         except Task.BROKEN as ex:
@@ -920,10 +871,12 @@ class Task:
             self.log_error("Task failed!", "<exception>", ex)
             self._error = ex
         except Task.CANCELLED as ex:
-            self.log_v(str(ex) + "\n")
+            if LogLevel.VERBOSE:
+                self.log(str(ex) + "\n")
             self._error = ex
         except Task.SKIPPED as ex:
-            self.log_v(str(ex) + "\n")
+            if LogLevel.VERBOSE:
+                self.log(str(ex) + "\n")
             self._error = ex
         except Exception as ex:
             self.log_error("Task threw an exception!", type(ex), ex)
@@ -937,7 +890,8 @@ class Task:
             raise self._error
 
         dry_run = "(DRY RUN)" if self._config.dry_run else ""
-        self.log_v(f"Task done {dry_run}: '{self._config.name}' - '{self._config.desc}'\n")
+        if LogLevel.VERBOSE:
+            self.log(f"Task done {dry_run}: '{self._config.name}' - '{self._config.desc}'\n")
         return self._out_files
 
     # ----------------------------------------------------------------------------------------------
@@ -946,9 +900,9 @@ class Task:
         config = self._config
         expand = self._expand
 
-        if Verbosity.DEBUG:
-            self.log_d("Task config before expand:\n")
-            self.log_d(str(config) + "\n")
+        if LogLevel.DEBUG:
+            self.log("Task config before expand:\n")
+            self.log(str(config) + "\n")
 
         # ----------------------------------------
         # Expand all fields that don't depend on input/output filenames (basically everything
@@ -969,10 +923,11 @@ class Task:
         # ----------------------------------------
         # Flatten the commands and check that they're valid
 
+        config.command = Utils.flatten(config.command)
+
         if not config.command:
             raise Task.BROKEN(f"Task {config.name} has no command!")
 
-        config.command = Utils.flatten(config.command)
         for command in config.command:
             if type(command) is not type(config.command[0]):
                 raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
@@ -999,7 +954,10 @@ class Task:
                 if isinstance(file, Task):
                     task = cast(Task, file)
                     try:
-                        await cast(asyncio.Task, task._aio_task)
+                        if task._aio_task is None:
+                            raise AssertionError("One of a task's input sub-tasks was not started")
+                        else:
+                            await cast(asyncio.Task, task._aio_task)
                     except Exception as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
 
@@ -1032,9 +990,9 @@ class Task:
         config.desc    = expand.desc
         config.command = expand.command
 
-        if Verbosity.DEBUG:
-            self.log_d("Task config after expand:\n")
-            self.log_d(str(config) + "\n")
+        if LogLevel.DEBUG:
+            self.log("Task config after expand:\n")
+            self.log(str(config) + "\n")
 
         # Dry runs early out after config expansion
         if config.dry_run:
@@ -1043,13 +1001,13 @@ class Task:
         # ----------------------------------------
         # Run some sanity checks
 
-        def is_braced(v: Any) -> bool:
-            if isinstance(v, list):
-                return any(is_braced(v2) for v2 in v)
-            return (Utils.braced.search(v) is not None) if isinstance(v, str) else False
-
-        if Options.strict and is_braced(config.command):
-            raise Task.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
+        if Options.strict:
+            for command in config.command:
+                if not isinstance(command, str):
+                    continue
+                blocks = Expander.split(command)
+                if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
+                    raise Task.BROKEN("STRICT: Command has curly braces in it")
 
         # Check for missing inputs
         for file in self._in_files:
@@ -1087,7 +1045,8 @@ class Task:
         # Run all the task's commands
 
         self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
-        self.log_v(f"Task rebuilding because: {rebuild_reason}\n")
+        if LogLevel.VERBOSE:
+            self.log(f"Task rebuilding because: {rebuild_reason}\n")
 
         for command in cast(list, config.command):
             if isinstance(command, str):
@@ -1124,7 +1083,7 @@ class Task:
         # Join script_cwd with the filenames to produce absolute paths.
         files = Path.join(config.script_cwd, files)
 
-        # Expanding may have made our files array non-flat, but its contents should be all
+        # Expanding may have made our files array non-flat, but all of its contents should be
         # absolute paths now.
         files = Utils.flatten(files)
         assert Path.isabs(files)
@@ -1146,9 +1105,9 @@ class Task:
                         os.makedirs(dirname, exist_ok=True)
 
         # Gather all absolute file paths to _in_files/_out_files.
+        # The check for is_depfile_field must come first, as it's a special case of a file that
+        # is technically an _output_ file, but also counts as an input file.
         for i in range(len(files)):
-            # The check for is_depfile_field must come first, as it's a special case of a file that
-            # is technically an _output_ file, but also counts as an input file.
             if Task.is_depfile_field(name):
                 if Path.isfile(files[i]):
                     self._in_files.append(files[i])
@@ -1200,7 +1159,8 @@ class Task:
 
         # Check all dependencies in the C dependencies file, if present.
         if config.in_depfile and Path.exists(config.in_depfile):
-            self.log_d(f"Found C dependencies file {config.in_depfile}\n")
+            if LogLevel.DEBUG:
+                self.log(f"Found C dependencies file {config.in_depfile}\n")
             with open(config.in_depfile) as depcontents:
                 deplines = None
                 if config.depformat == "msvc":
@@ -1226,8 +1186,10 @@ class Task:
 
     async def run_command(self, command):
         config = self._config
-        with Log.color(Colors.BLUE):
-            self.log_v(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}\n")
+
+        if LogLevel.VERBOSE:
+            with Log.color(Colors.BLUE):
+                self.log(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}\n")
 
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
@@ -1255,14 +1217,16 @@ class Task:
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        if Verbosity.VERBOSE and (self._stdout or self._stderr):
-            self.log_v("========== Stdout ==========\n")
-            for line in self._stdout.strip().split("\n"):
-                self.log_v(line + "\n")
-            self.log_v("========== Stderr ==========\n")
-            for line in self._stderr.strip().split("\n"):
-                self.log_v(line + "\n")
-            self.log_v("============================\n")
+        if LogLevel.VERBOSE and (self._stdout or self._stderr):
+            self.log("========== Stdout ==========\n")
+            if self._stdout:
+                for line in self._stdout.strip().split("\n"):
+                    self.log(line + "\n")
+            self.log("========== Stderr ==========\n")
+            if self._stderr:
+                for line in self._stderr.strip().split("\n"):
+                    self.log(line + "\n")
+            self.log("============================\n")
 
         return proc.returncode
 
@@ -1270,13 +1234,13 @@ class Task:
 
     async def call_callback(self, command):
         callback_dir = Path.rel(self._config.script_cwd, self._config.repo_dir)
-        self.log_v(f"{callback_dir}$ {command}\n")
+        if LogLevel.VERBOSE:
+            self.log(f"{callback_dir}$ {command}\n")
 
         try:
-            with chdir(self._config.script_cwd):
-                result = command(self)
-                if isawaitable(result):
-                    result = await result
+            result = command(self)
+            if isawaitable(result):
+                result = await result
         except Exception as err:
             self.log_error("Callback threw an exception!", type(err), err)
             raise err
@@ -1286,17 +1250,21 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def log_error(self, type, reason, ex = None):
-        script_path = Path.join(self._config.script_cwd, self._config.script_file)
-
-        with Log.color(Colors.RED):
-            self.log_e(type + "\n")
-            self.log_e(f"From {script_path}:\n")
-            self.log_e(f"    Task       = '{self._config.name}' : '{self._config.desc}'\n")
-            self.log_e(f"    time       = {time.perf_counter()}\n")
-            self.log_e(f"    os.getcwd  = {os.getcwd()}\n")
-            self.log_e(f"    command    = {self._config.command}\n")
-            self.log_e(f"    reason     = '{reason}'\n")
-            self.log_e(f"    except     = '{ex}'\n")
+        if LogLevel.ERROR:
+            script_path = Path.join(self._config.script_cwd, self._config.script_file)
+            with Log.color(Colors.RED):
+                self.log(type + "\n")
+                self.log(f"From {script_path}:\n")
+                self.log(f"    Task       = '{self._config.name}' : '{self._config.desc}'\n")
+                self.log(f"    time       = {time.perf_counter()}\n")
+                self.log(f"    os.getcwd  = {os.getcwd()}\n")
+                self.log(f"    command    = {self._config.command}\n")
+                self.log(f"    reason     = '{reason}'\n")
+                if ex:
+                    frame = traceback.extract_tb(ex.__traceback__)[-1]
+                    self.log(f"    except     = '{ex}'\n")
+                    self.log(f"    location   = {frame.filename} {frame.name} @ {frame.lineno}\n")
+                    self.log(f"               = {frame.line}\n")
 
 # endregion
 ####################################################################################################
@@ -1316,9 +1284,6 @@ class Task:
 # The result of this is that the functions here are mutually recursive in a way that can lead to
 # confusing callstacks, but that should handle every possible case of stuff inside other stuff.
 #
-# The depth checks are to prevent recursive runaway - the MAX_DEPTH limit is arbitrary but should
-# suffice.
-#
 # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
 # expandable by that dict. This allows nested dicts to contain templates that can only be expanded
 # an outer dict, and things will still Just Work.
@@ -1331,8 +1296,6 @@ class Expander(abc.MutableMapping[str, object]):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    #----------------------------------------
-
     def __init__(self, context : Dict):
         # These are just type annotations, because writing to fields while we're in the constructor
         # of a class that overrides __setattr__ does strange things.
@@ -1341,18 +1304,18 @@ class Expander(abc.MutableMapping[str, object]):
         # The actual set is here.
         super().__setattr__("_context", context)
 
+    @staticmethod
+    def wrap(source : Dict | Expander) -> Expander:
+        return Expander(source) if isinstance(source, (Dict, dict)) else source
+
     #----------------------------------------
 
     @classmethod
     def reset(cls):
-        # The maximum recursion depth we will do to expand a macro.
-        # Tests currently require MAX_DEPTHS >= 6.
-        cls.MAX_DEPTH = 20
-        cls.depth = 0
-
-        # These are aliases to stuff in Hancho that have been pulled out so they can be used by
-        # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros,
-        # and use "hancho.flatten(x)" in your script instead of "hancho.Utils.flatten(x)"
+        # These are aliases for methods in Hancho that have been pulled out so they can be used by
+        # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
+        # It's also read by the module-level __getattr__ so you can use "hancho.flatten(x)" instead
+        # of "hancho.Utils.flatten(x)"
         cls.aliases = Dict(
             path = os.path,
             abs  = Path.abs,
@@ -1369,44 +1332,6 @@ class Expander(abc.MutableMapping[str, object]):
             run_cmd = Utils.run_cmd,
             weave   = Utils.weave,
         )
-
-    @staticmethod
-    def track_depth(func):
-        def wrapper(*args, **kwargs):
-            if Expander.depth >= Expander.MAX_DEPTH:
-                raise RecursionError("Template expansion failed to terminate")
-            try:
-                Expander.depth += 1
-                return func(*args, **kwargs)
-            finally:
-                Expander.depth -= 1
-        return wrapper
-
-    @staticmethod
-    def wrap(source : Dict | Expander) -> Expander:
-
-        if isinstance(source, Expander):
-            return source
-
-        if isinstance(source, Expander):
-            result = Expander(source._context)
-        elif isinstance(source, Dict):
-            result = Expander(source)
-        else:
-            raise TypeError("Don't know how to wrap a {type(source)} = {source}")
-
-        #if tracer:
-        #    tag_a = (str(type(source).__name__)[:2] + "_" + hex(id(source))[-4:]).upper()
-        #    tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-        #    Log.log("wrap ")
-        #    with Log.color(Utils.obj_to_hex(source)):
-        #        Log.log(tag_a)
-        #    Log.log(" -> ")
-        #    with Log.color(Utils.obj_to_hex(result)):
-        #        Log.log(tag_b)
-        #    Log.log("\n")
-
-        return result
 
     #----------------------------------------
     # MutableMapping interface
@@ -1459,15 +1384,13 @@ class Expander(abc.MutableMapping[str, object]):
         that expansions in nested dicts works correctly.
         """
 
+        # The "trace" key is a special case, as we don't want to trace reading trace...
         if key == "trace":
             return self._context[key]
 
         with Tracer(self, f"_get({key})") as tracer:
             result = self._context[key]
-            if Utils.is_mapping(result) and not isinstance(result, Expander):
-                result = Expander.wrap(result)
-            else:
-                result = self.expand(result)
+            result = Expander.wrap(result) if Utils.is_mapping(result) else self.expand(result)
             tracer.save_result(result)
 
         return result
@@ -1475,15 +1398,14 @@ class Expander(abc.MutableMapping[str, object]):
     #----------------------------------------
 
     @staticmethod
-    def split(text) -> list[str]:
+    def split(text : str) -> list[str]:
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
-        list of string literals and expressions. Escaped braces don't count as delimiters.
+        list of string literals and macros. Escaped braces don't count as delimiters.
         """
         result = []
         cursor = 0
         lbrace = -1
-        rbrace = -1
         escaped = False
 
         for i, c in enumerate(text):
@@ -1494,13 +1416,11 @@ class Expander(abc.MutableMapping[str, object]):
             elif c == '{':
                 lbrace = i
             elif c == '}' and lbrace >= 0:
-                rbrace = i
                 if cursor < lbrace:
                     result.append(text[cursor:lbrace])
-                result.append(text[lbrace:rbrace+1])
-                cursor = rbrace + 1
+                result.append(text[lbrace:i+1])
+                cursor = i + 1
                 lbrace = -1
-                rbrace = -1
 
         if cursor < len(text):
             result.append(text[cursor:])
@@ -1513,10 +1433,9 @@ class Expander(abc.MutableMapping[str, object]):
     # Template Expansion Failure Is Not An Error.
     # This should be the _only_ try/except block in the expansion code.
 
-    @track_depth
     @staticmethod
-    def _eval_macro(macro : str, context : Dict | Expander) -> Any:
-        with Tracer(context, f"eval_macro({macro!r})") as tracer:
+    def _eval_macro(macro, context):
+        with Tracer(context, f"_eval_macro({macro!r})") as tracer:
             try:
                 _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
                 result = eval(macro[1:-1], hancho.__dict__, _locals)
@@ -1525,34 +1444,33 @@ class Expander(abc.MutableMapping[str, object]):
             tracer.save_result(result)
         return result
 
-    @track_depth
     @staticmethod
-    def _expand_template(template : str, context : Dict | Expander):
-        with Tracer(context, f"expand_template({template!r})") as tracer:
-            blocks = Expander.split(template)
-            for (i, block) in enumerate(blocks):
-                result = Expander._expand(block, context)
-                blocks[i] = Utils.stringify(result)
-            result = "".join(blocks)
+    def _expand_blocks(blocks, context):
+        with Tracer(context, f"_expand_blocks({blocks!r})") as tracer:
+            result = "".join(Utils.stringify(Expander._expand(b, context)) for b in blocks)
             tracer.save_result(result)
         return result
 
-    @Utils.recursify_apply_mip
-    @track_depth
     @staticmethod
-    def _expand(variant : Any, context : Dict | Expander) -> str:
-        match = Utils.braced.search(variant) if isinstance(variant, str) else None
-        if match is None:
+    def _expand(variant, context):
+        if isinstance(variant, list):
+            return [Expander._expand(t, context) for t in variant]
+        if not isinstance(variant, str) or not variant:
             return variant
 
-        if match.group() == variant:
-            result = Expander._eval_macro(variant, context)
-        else:
-            result = Expander._expand_template(variant, context)
+        blocks = Expander.split(variant)
+        if len(blocks) == 1 and blocks[0][0] != '{':
+            return variant
 
-        if result != variant:
-            result = Expander._expand(result, context)
+        with Tracer(context, f"_expand({variant!r})") as tracer:
+            if len(blocks) == 1:
+                result = Expander._eval_macro(variant, context)
+            else:
+                result = Expander._expand_blocks(blocks, context)
 
+            if result != variant:
+                result = Expander._expand(result, context)
+            tracer.save_result(result)
         return result
 
 # endregion
@@ -1568,12 +1486,13 @@ class Tracer:
         self.color = Utils.obj_to_hex(context)
         self.context = context
         self.result = None
+        self.context_color = Utils.obj_to_hex(self.context)
 
     def __enter__(self):
-        if (Options.verbosity < Verbosity.TRACE) and not self.trace:
+        if not (LogLevel.TRACE or self.trace):
             return self
 
-        with Log.color(Utils.obj_to_hex(self.context)):
+        with Log.color(self.context_color):
             Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
 
         Log.indent_depth += 1
@@ -1581,8 +1500,8 @@ class Tracer:
         return self
 
     def __exit__(self, exc_type, exc_value, tb):
-        if (Options.verbosity < Verbosity.TRACE) and not self.trace:
-            return
+        if not (LogLevel.TRACE or self.trace):
+            return False
 
         with Log.color(self.color):
             if exc_type:
@@ -1661,7 +1580,7 @@ class Loader:
         (script_cwd, script_file) = Path.split(script_path)
         (script_name, _) = Path.splitext(script_file)
 
-        if Verbosity.VERBOSE:
+        if LogLevel.VERBOSE:
             Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
 
         new_module = types.ModuleType(script_name)
@@ -1714,7 +1633,7 @@ class Loader:
         # ----------------------------------------
         # Run the module.
 
-        with (chdir(new_config.script_cwd), Options.set_cv_config(new_config)):
+        with chdir(new_config.script_cwd), Options.set_cv_config(new_config):
             exec(code, new_module.__dict__)
 
         return new_module
@@ -1728,8 +1647,6 @@ class Runner:
     @classmethod
     def reset(cls):
         cls.all_tasks : list[Task] = []
-        if Options.core_max is None:
-            pass
         cls.core_sem : asyncio.Semaphore = asyncio.Semaphore(Options.core_max)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
@@ -1753,8 +1670,14 @@ class Runner:
         if count > Options.core_max:
             raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {Options.core_max}")
         async with cls.core_lock:
-            for _ in range(count):
-                await cls.core_sem.acquire()
+            acquired = 0
+            try:
+                while acquired < count:
+                    await cls.core_sem.acquire()
+                    acquired += 1
+            except:
+                cls.release(acquired)
+                raise
 
     @classmethod
     def release(cls, count):
@@ -1800,48 +1723,47 @@ class Runner:
             if task._config.enabled:
                 task.create_aio_task()
         time_start = time.perf_counter() - time_a
-        if Verbosity.VERBOSE:
+        if LogLevel.VERBOSE:
             Log.log(f"Starting {Task.tasks_enabled} tasks took {time_start:.3f} seconds\n")
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
         time_a = time.perf_counter()
         while cls.live_aio_tasks and cls.count_failures() <= Options.max_errors:
+            finished_aio_task = None
+
             try:
                 finished_aio_task = await cls.aio_done_queue.get()
                 _ = finished_aio_task.result()
                 cls.tasks_finished += 1
-            except Exception as err:
-                match err.__class__:
-                    case asyncio.CancelledError:
-                        cls.tasks_cancelled += 1
-                    case Task.CANCELLED:
-                        cls.tasks_cancelled += 1
-                    case Task.BROKEN:
-                        cls.tasks_broken += 1
-                    case Task.FAILED:
-                        cls.tasks_failed += 1
-                    case Task.SKIPPED:
-                        cls.tasks_skipped += 1
-                    case _:
-                        if Verbosity.DEBUG:
-                            Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}\n")
-                        cls.tasks_failed += 1
+            except asyncio.CancelledError:
+                cls.tasks_cancelled += 1
+            except Task.CANCELLED:
+                cls.tasks_cancelled += 1
+            except Task.BROKEN:
+                cls.tasks_broken += 1
+            except Task.FAILED:
+                cls.tasks_failed += 1
+            except Task.SKIPPED:
+                cls.tasks_skipped += 1
+            except BaseException as err:
+                if LogLevel.DEBUG:
+                    Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}\n")
+                cls.tasks_failed += 1
+
             finally:
-                cls.live_aio_tasks.discard(finished_aio_task)
+                if finished_aio_task is not None:
+                    cls.live_aio_tasks.discard(finished_aio_task)
                 cls.tasks_awaited += 1
         time_build = time.perf_counter() - time_a
 
-        if Verbosity.VERBOSE:
+        if LogLevel.VERBOSE:
             Log.log(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
-
-        if Options.max_errors is None:
-            pass
 
         if cls.count_failures() > Options.max_errors:
             Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            if Verbosity.VERBOSE:
+            if LogLevel.VERBOSE:
                 Log.log(f"Cancelling {len(cls.live_aio_tasks)} tasks\n")
             for t in cls.live_aio_tasks:
                 t.cancel()
@@ -1892,54 +1814,58 @@ def reset(*args, **kwargs):
     Task.reset()
     Runner.reset()
 
-# ----------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 def main():
 
     flags = Options.parse_flags(sys.argv[1:])
     init(flags)
 
+    expander = Expander(Options.cv_config())
+
     # ------------------------------------
     # Startup banner
 
-    expander = Expander(Options.cv_config())
+    if LogLevel.VERBOSE:
 
-    root_dir    = expander.root_dir
-    root_file   = expander.root_file
-    repo_dir    = expander.repo_dir
+        root_dir    = expander.root_dir
+        root_file   = expander.root_file
+        repo_dir    = expander.repo_dir
 
-    script_dir  = expander.script_cwd
-    script_file = expander.script_file
-    script_path = os.path.join(cast(str, script_dir), cast(str, script_file))
+        script_dir  = expander.script_cwd
+        script_file = expander.script_file
+        script_path = os.path.join(cast(str, script_dir), cast(str, script_file))
 
-    if Verbosity.VERBOSE:
         Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
         Log.log(f"Verbosity is {Options.verbosity}\n")
+
         with Log.color(Colors.LIME):
             Log.log("Verbose mode on\n")
+            if LogLevel.DEBUG:
+                Log.log("Debug mode on\n")
+
         Log.log(f"Hancho root at {root_dir}\n")
         Log.log(f"Hancho repo at {repo_dir}\n")
         Log.log(f"Hancho root script at {script_path}\n")
-
-    if Verbosity.DEBUG:
-        with Log.color(Colors.LIME):
-            Log.log("Debug mode on\n")
 
     # ------------------------------------
     # Load all build scripts
 
     time_a = time.perf_counter()
 
+    root_dir    = expander.root_dir
+    root_file   = expander.root_file
     script_path = cast(str, Path.join(root_dir, root_file))
     if not Path.exists(script_path):
         path = Path.rel(script_path, os.getcwd())
-        if Verbosity.FATAL:
+        if LogLevel.FATAL:
             Log.log(f"Could not load build script {path}\n")
+            sys.exit(-1)
     Loader.root_repo = Loader.load_file(script_path, True)
 
     time_load = time.perf_counter() - time_a
 
-    if Verbosity.VERBOSE:
+    if LogLevel.VERBOSE:
         Log.log(f"Loading .hancho files took {time_load:.3f} seconds\n")
 
     # ------------------------------------
@@ -1956,7 +1882,7 @@ def main():
 
     Options.scroll = True
 
-    if Verbosity.VERBOSE:
+    if LogLevel.VERBOSE:
         Log.log(f"Tasks created:    {len(Runner.all_tasks)}\n")
         Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
         Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
@@ -1976,8 +1902,6 @@ def main():
         with Log.color(Colors.BLUE):
             Log.log("BUILD CLEAN\n")
 
-    sys.stdout.write("\x1B[0m")
-
     return result
 
 # endregion
@@ -1996,7 +1920,7 @@ def __getattr__(name):
         return Options.cv_config()
     elif name in Expander.aliases:
         # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
-        # template/macro expansion.
+        # template/macro expansion. That's handled in Expander._eval_macro above.
         return Expander.aliases[name]
     else:
         raise AttributeError(name)

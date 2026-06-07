@@ -33,7 +33,7 @@ class TestSplitTemplate(unittest.TestCase):
 
     def doctest_basic(self):
         r"""
-        #Templates split into literal (L) and macro (M) chunks.
+        # Escaped braces should _not_ split.
         >>> Expander.split(r"a \{b\} c")
         ['a \\{b\\} c']
         """
@@ -168,8 +168,8 @@ class TestSplitTemplate(unittest.TestCase):
         self.assertEqual(Expander.split(r"a{b\}"), [r"a{b\}"])
 
         # Escaped backslashes should _not_ cause a following brace to be ignored.
-        self.assertEqual(Expander.split(r"a\\{b}"), ["a\\\\", "{b}"])
-        self.assertEqual(Expander.split(r"a{b\\}"), ["a", r"{b\\}"])
+        self.assertEqual(Expander.split(r"a\\{b}"), [r"a\\", r"{b}"])
+        self.assertEqual(Expander.split(r"a{b\\}"), [r"a", r"{b\\}"])
 
         self.assertEqual(Expander.split(r"a \{a\} a"), [r"a \{a\} a"])
         self.assertEqual(Expander.split(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
