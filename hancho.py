@@ -67,12 +67,6 @@ class Log:
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def should_log(verbosity : Verbosity):
-        if not isinstance(verbosity, Verbosity):
-            assert isinstance(verbosity, Verbosity)
-        return verbosity <= Options.verbosity
-
-    @staticmethod
     @contextmanager
     def color(new_color):
         old_color = Log.current_color
@@ -157,6 +151,9 @@ class Verbosity(int, Enum):
     VERBOSE  = 60
     DEBUG    = 70
     TRACE    = 80
+
+    def __bool__(self):
+        return self.value <= Options.verbosity
 
 #endregion
 ####################################################################################################
@@ -658,9 +655,6 @@ class Options:
 
         cls.verbosity = verbosity
 
-        #if cls.verbosity == Verbosity.TRACE:
-        #    root_config.trace = True
-
         # Set up our config contextvar
 
         if not hasattr(cls, "_cv_config"):
@@ -859,7 +853,7 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def log_at(self, verbosity : Verbosity, message : str):
-        if not Log.should_log(verbosity):
+        if not verbosity:
             return
         lines = message.split("\n")
         for i, line in enumerate(lines):
@@ -952,7 +946,7 @@ class Task:
         config = self._config
         expand = self._expand
 
-        if Log.should_log(Verbosity.DEBUG):
+        if Verbosity.DEBUG:
             self.log_d("Task config before expand:\n")
             self.log_d(str(config) + "\n")
 
@@ -1038,7 +1032,7 @@ class Task:
         config.desc    = expand.desc
         config.command = expand.command
 
-        if Log.should_log(Verbosity.DEBUG):
+        if Verbosity.DEBUG:
             self.log_d("Task config after expand:\n")
             self.log_d(str(config) + "\n")
 
@@ -1261,7 +1255,7 @@ class Task:
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        if Log.should_log(Verbosity.VERBOSE) and (self._stdout or self._stderr):
+        if Verbosity.VERBOSE and (self._stdout or self._stderr):
             self.log_v("========== Stdout ==========\n")
             for line in self._stdout.strip().split("\n"):
                 self.log_v(line + "\n")
@@ -1667,7 +1661,7 @@ class Loader:
         (script_cwd, script_file) = Path.split(script_path)
         (script_name, _) = Path.splitext(script_file)
 
-        if Log.should_log(Verbosity.VERBOSE):
+        if Verbosity.VERBOSE:
             Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
 
         new_module = types.ModuleType(script_name)
@@ -1806,7 +1800,7 @@ class Runner:
             if task._config.enabled:
                 task.create_aio_task()
         time_start = time.perf_counter() - time_a
-        if Log.should_log(Verbosity.VERBOSE):
+        if Verbosity.VERBOSE:
             Log.log(f"Starting {Task.tasks_enabled} tasks took {time_start:.3f} seconds\n")
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
@@ -1829,7 +1823,7 @@ class Runner:
                     case Task.SKIPPED:
                         cls.tasks_skipped += 1
                     case _:
-                        if Log.should_log(Verbosity.DEBUG):
+                        if Verbosity.DEBUG:
                             Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}\n")
                         cls.tasks_failed += 1
             finally:
@@ -1837,7 +1831,7 @@ class Runner:
                 cls.tasks_awaited += 1
         time_build = time.perf_counter() - time_a
 
-        if Log.should_log(Verbosity.VERBOSE):
+        if Verbosity.VERBOSE:
             Log.log(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
 
         if Options.max_errors is None:
@@ -1847,7 +1841,7 @@ class Runner:
             Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            if Log.should_log(Verbosity.VERBOSE):
+            if Verbosity.VERBOSE:
                 Log.log(f"Cancelling {len(cls.live_aio_tasks)} tasks\n")
             for t in cls.live_aio_tasks:
                 t.cancel()
@@ -1918,7 +1912,7 @@ def main():
     script_file = expander.script_file
     script_path = os.path.join(cast(str, script_dir), cast(str, script_file))
 
-    if Log.should_log(Verbosity.VERBOSE):
+    if Verbosity.VERBOSE:
         Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
         Log.log(f"Verbosity is {Options.verbosity}\n")
         with Log.color(Colors.LIME):
@@ -1927,7 +1921,7 @@ def main():
         Log.log(f"Hancho repo at {repo_dir}\n")
         Log.log(f"Hancho root script at {script_path}\n")
 
-    if Log.should_log(Verbosity.DEBUG):
+    if Verbosity.DEBUG:
         with Log.color(Colors.LIME):
             Log.log("Debug mode on\n")
 
@@ -1939,13 +1933,13 @@ def main():
     script_path = cast(str, Path.join(root_dir, root_file))
     if not Path.exists(script_path):
         path = Path.rel(script_path, os.getcwd())
-        if Log.should_log(Verbosity.FATAL):
+        if Verbosity.FATAL:
             Log.log(f"Could not load build script {path}\n")
     Loader.root_repo = Loader.load_file(script_path, True)
 
     time_load = time.perf_counter() - time_a
 
-    if Log.should_log(Verbosity.VERBOSE):
+    if Verbosity.VERBOSE:
         Log.log(f"Loading .hancho files took {time_load:.3f} seconds\n")
 
     # ------------------------------------
@@ -1962,7 +1956,7 @@ def main():
 
     Options.scroll = True
 
-    if Log.should_log(Verbosity.VERBOSE):
+    if Verbosity.VERBOSE:
         Log.log(f"Tasks created:    {len(Runner.all_tasks)}\n")
         Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
         Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
