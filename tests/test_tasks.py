@@ -234,7 +234,7 @@ class TestTasks(unittest.TestCase):
 
     def test_bad_run_cmd(self):
         """
-        Trying to run an arbitrary command and use it in a template shoudl report BROKEN if the
+        Trying to run an arbitrary command and use it in a template should report BROKEN if the
         embedded command is invalid.
         """
         task = hancho.Task(

@@ -84,21 +84,17 @@ class Log:
     @staticmethod
     @contextmanager
     def color(new_color):
-        try:
-            old_color = Log.current_color
-            Log.set_color(new_color)
-            yield
-        finally:
-            Log.set_color(old_color)
+        old_color = Log.current_color
+        Log.set_color(new_color)
+        yield
+        Log.set_color(old_color)
 
     @staticmethod
     @contextmanager
     def indent():
-        try:
-            Log.indent_depth += 1
-            yield
-        finally:
-            Log.indent_depth -= 1
+        Log.indent_depth += 1
+        yield
+        Log.indent_depth -= 1
 
     # ----------------------------------------------------------------------------------------------
 
@@ -503,49 +499,6 @@ class Utils:
 
     # Matches non-escaped _innermost_ brace pairs
     braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
-
-    # FIXME should we re-recursify these? we needed it for is_braced
-    # 'cause expansion turns command into [command]
-
-    @recursify_all
-    def is_braced(v: Any) -> bool:
-        if not isinstance(v, str) or not v:
-            return False
-
-        m = Utils.braced.search(v)
-        return m is not None
-
-    @staticmethod
-    def is_literal(v: Any) -> bool:
-        if not isinstance(v, str) or not v:
-            return False
-
-        m = Utils.braced.search(v)
-        return m is None
-
-    @staticmethod
-    def is_expr(v: Any) -> bool:
-        if not isinstance(v, str) or not v:
-            return False
-
-        m = Utils.braced.search(v)
-        return m is None
-
-    @staticmethod
-    def is_macro(v: Any) -> bool:
-        if not isinstance(v, str) or not v:
-            return False
-
-        m = Utils.braced.search(v)
-        return m is not None and m.group() == v
-
-    @staticmethod
-    def is_template(v: Any) -> bool:
-        if not isinstance(v, str) or not v:
-            return False
-
-        m = Utils.braced.search(v)
-        return m is not None and m.group() != v
 
     #----------------------------------------
 
@@ -1021,7 +974,12 @@ class Task:
         # ----------------------------------------
         # Run some sanity checks
 
-        if config.strict and Utils.is_braced(config.command):
+        def is_braced(v: Any) -> bool:
+            if isinstance(v, list):
+                return any(is_braced(v2) for v2 in v)
+            return Utils.braced.search(v) is not None if isinstance(v, str) else False
+
+        if config.strict and is_braced(config.command):
             raise Task.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         # Check for missing inputs
