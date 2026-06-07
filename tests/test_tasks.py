@@ -57,13 +57,11 @@ class TestTasks(unittest.TestCase):
         sys.stdout.flush()
 
     def tearDown(self):
-        # duration = time.time() - self.startTime
-        # print(f"{duration:.3f}s ", end="", file = sys.stderr)
         sys.stdout.flush()
 
     def run_tasks(self, expected):
-        hancho.config.rebuild = True
-        hancho.Runner.enable_all_tasks()
+        for task in hancho.Runner.all_tasks:
+            task.enable()
         result = hancho.Runner.sync_run_tasks()
         self.assertEqual(result, expected)
 
