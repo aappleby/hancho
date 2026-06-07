@@ -198,7 +198,7 @@ class Utils:
         cls.rand : random.Random = random.Random()
         cls.mtime_calls : int = 0
 
-    # These types are already "flat" and don't need to be turned into a list.
+    # These types are considered already "flat" and don't need to be turned into a list.
     flat_types = (str, bytes, bytearray, range, abc.Mapping)
 
     # These types don't get dumped because they're either uninteresting or not really dumpable.
@@ -210,7 +210,8 @@ class Utils:
     })
 
     # These types don't need a type annotation when dumped.
-    base_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None), *opaque_types.keys())
+    base_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None),
+                  *opaque_types.keys())
 
     # ----------------------------------------------------------------------------------------------
 
@@ -430,8 +431,10 @@ class Utils:
 
     @staticmethod
     def flatten(variant: Tree[Any]) -> list[Any]:
+        if variant is None:
+            return []
         if isinstance(variant, Utils.flat_types) or not isinstance(variant, abc.Iterable):
-            return [] if variant is None else [variant]
+            return [variant]
         else:
             return [x for element in variant for x in Utils.flatten(element)]
 
