@@ -943,12 +943,10 @@ class Task:
         self._task_id = Task.id_counter
 
         # ----------------------------------------
-        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-        # relative to script_cwd if we're calling a callback.
+        # Do all the file path remapping so our commands will work
 
         for key, files in [i for i in config.items() if Task.is_io_field(*i)]:
 
-            # Do all the file path remapping so our commands will work
             files = self.remap_io_field_paths(key, files)
 
             # and unwrap filenames if they're an array of one element so that scripts expecting
@@ -1328,22 +1326,22 @@ class Expander(abc.MutableMapping[str, object]):
             return source
 
         if isinstance(source, Expander):
-            result = Expander(source._context, tracer)
+            result = Expander(source._context, trace)
         elif isinstance(source, Dict):
-            result = Expander(source, tracer)
+            result = Expander(source, trace)
         else:
             raise TypeError("Don't know how to wrap a {type(source)} = {source}")
 
-        #if trace:
+        #if tracer:
         #    tag_a = (str(type(source).__name__)[:2] + "_" + hex(id(source))[-4:]).upper()
         #    tag_b = (str(type(result).__name__)[:2] + "_" + hex(id(result))[-4:]).upper()
-        #    #tag_a = Utils.obj_to_ansi(source) + tag_a + Log.reset_color
-        #    #tag_b = Utils.obj_to_ansi(result) + tag_b + Log.d
-        #    #if tracer:
-        #    #    tracer.log("wrap ")
-        #    #    tracer.log(tag_a)
-        #    #    tracer.log(" -> ")
-        #    #    tracer.log(tag_b)
+        #    Log.log("wrap ")
+        #    with Log.color(Utils.obj_to_hex(source)):
+        #        Log.log(tag_a)
+        #    Log.log(" -> ")
+        #    with Log.color(Utils.obj_to_hex(result)):
+        #        Log.log(tag_b)
+        #    Log.log("\n")
 
         return result
 
@@ -1398,11 +1396,13 @@ class Expander(abc.MutableMapping[str, object]):
         that expansions in nested dicts works correctly.
         """
 
-        result = self._context[key]
-        if Utils.is_mapping(result) and not isinstance(result, Expander):
-            result = Expander.wrap(result)
-        else:
-            result = self.expand(result)
+        with Tracer(self, f"_get({key})") as tracer:
+            result = self._context[key]
+            if Utils.is_mapping(result) and not isinstance(result, Expander):
+                result = Expander.wrap(result, tracer)
+            else:
+                result = self.expand(result)
+            tracer.save_result(result)
 
         return result
 
@@ -1454,9 +1454,7 @@ class Expander(abc.MutableMapping[str, object]):
         if not isinstance(text, str):
             return text
 
-        match = Utils.braced.search(text)
-
-        if not match:
+        if not (match := Utils.braced.search(text)):
             return text
 
         elif match.group() == text:
@@ -1469,6 +1467,8 @@ class Expander(abc.MutableMapping[str, object]):
                     raise err
                 except Exception as _:
                     result = text
+                if result != text:
+                    result = Expander._expand(result, context)
                 tracer.save_result(result)
 
         else:
@@ -1478,10 +1478,9 @@ class Expander(abc.MutableMapping[str, object]):
                     result = Expander._expand(block, context)
                     blocks[i] = Utils.stringify(result)
                 result = "".join(blocks)
+                if result != text:
+                    result = Expander._expand(result, context)
                 tracer.save_result(result)
-
-        if result != text:
-            result = Expander._expand(result, context)
 
         return result
 
