@@ -202,7 +202,7 @@ class TestTemplates(unittest.TestCase):
 
     def test_template_nones(self):
         # Nones should turn into empty strings
-        d = Dict(a = None, b = "x{a}y", trace = True)
+        d = Dict(a = None, b = "x{a}y")
         self.assertEqual(Expander._expand("a",   d), 'a')
         self.assertEqual(Expander._expand("b",   d), 'b')
         self.assertEqual(Expander._expand("{a}", d),  None)
@@ -274,7 +274,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self):
-        d = Dict(a = "'  test_mul", b = "ti_eval   '.strip() ", c = "{a}{b}", trace = True)
+        d = Dict(a = "'  test_mul", b = "ti_eval   '.strip() ", c = "{a}{b}")
 
         self.assertEqual(d.expand("c"),         "c")
         self.assertEqual(d.expand("{c}"),       "'  test_multi_eval   '.strip() ")
