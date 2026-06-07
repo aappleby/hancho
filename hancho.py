@@ -61,27 +61,15 @@ class Log:
         cls.dirty  : bool = False
         cls.indent_depth : int  = 0
         cls.current_color  : int  = -1
-        cls.at_newline = True
         cls.line_buffer = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
-
-    class Verbosity(int, Enum):
-        QUIET    = 0
-        FATAL    = 10
-        CRITICAL = 20
-        ERROR    = 30
-        WARNING  = 40
-        NORMAL   = 50
-        VERBOSE  = 60
-        DEBUG    = 70
-        TRACE    = 80
 
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def should_log(verbosity : Log.Verbosity):
-        if not isinstance(verbosity, Log.Verbosity):
-            assert isinstance(verbosity, Log.Verbosity)
+    def should_log(verbosity : Verbosity):
+        if not isinstance(verbosity, Verbosity):
+            assert isinstance(verbosity, Verbosity)
         return verbosity <= Options.verbosity
 
     @staticmethod
@@ -102,48 +90,25 @@ class Log:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def _emit(cls, text):
-        if not text:
-            return
-
-        hex = cls.current_color
-        r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
-        prefix = f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else "\x1B[0m"
-        text = prefix + text
-
-        cls.line_buffer += text
-        Log.buffer += text
-
-        if text[-1] == "\n":
-            line = cls.line_buffer
-            cls.line_buffer = ""
-            if not Options.wrap:
-                line = Log.clip_printable(line, Options.con_w)
-            sys.stdout.write(line)
-            Log.at_newline = True
-        else:
-            Log.at_newline = False
-        sys.stdout.flush()
-
-    # FIXME smonsh these back together
-    @classmethod
-    def _log(cls, text: str):
-        if Log.at_newline:
-            prefix  = f"[{time.time() - Log.start:12.6f}] "
-            prefix += "│ " * Log.indent_depth
-            with Log.color(-1):
-                Log._emit(prefix)
-        Log._emit(text)
-
-    # FIXME Logging should be controlled by "if Log.should_log(verbosity)"
-
-    @classmethod
     def log(cls, text):
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
+        for i, line in enumerate(text.split("\n")):
+            if not cls.line_buffer:
+                cls.line_buffer += f"[{time.time() - Log.start:12.6f}] " + "│ " * Log.indent_depth
+
+            if line:
+                hex = cls.current_color
+                r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
+                cls.line_buffer += f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else "\x1B[0m"
+                cls.line_buffer += line
+
             if i > 0:
-                Log._log('\n')
-            Log._log(line)
+                cls.line_buffer += "\x1B[0m\n"
+
+            if cls.line_buffer[-1] == '\n':
+                cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
+                Log.buffer += cls.line_buffer
+                sys.stdout.write(cls.line_buffer)
+                cls.line_buffer = ""
 
     @classmethod
     def clip_printable(cls, text, width):
@@ -181,6 +146,17 @@ class Log:
             result += '\n'
 
         return result
+
+class Verbosity(int, Enum):
+    QUIET    = 0
+    FATAL    = 10
+    CRITICAL = 20
+    ERROR    = 30
+    WARNING  = 40
+    NORMAL   = 50
+    VERBOSE  = 60
+    DEBUG    = 70
+    TRACE    = 80
 
 #endregion
 ####################################################################################################
@@ -668,23 +644,22 @@ class Options:
         quiet     = root_config.pop("quiet", False)
 
         if isinstance(verbosity, str):
-            verbosity = Log.Verbosity[verbosity.upper()]
+            verbosity = Verbosity[verbosity.upper()]
         elif trace:
-            verbosity = Log.Verbosity.TRACE
+            verbosity = Verbosity.TRACE
         elif debug:
-            verbosity = Log.Verbosity.DEBUG
+            verbosity = Verbosity.DEBUG
         elif verbose:
-            verbosity = Log.Verbosity.VERBOSE
+            verbosity = Verbosity.VERBOSE
         elif quiet:
-            verbosity = Log.Verbosity.QUIET
+            verbosity = Verbosity.QUIET
         else:
-            verbosity = Log.Verbosity.NORMAL
+            verbosity = Verbosity.NORMAL
 
-        root_config.verbosity = verbosity
         cls.verbosity = verbosity
 
-        if root_config.verbosity == Log.Verbosity.TRACE:
-            root_config.trace = True
+        #if cls.verbosity == Verbosity.TRACE:
+        #    root_config.trace = True
 
         # Set up our config contextvar
 
@@ -767,7 +742,7 @@ class Options:
         parser.add_argument("-d", "--debug",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=debug. Print debugging information")
         parser.add_argument("--trace",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=trace. Trace all text expansion")
 
-        choices = [v.lower() for v in Log.Verbosity.__members__]
+        choices = [v.lower() for v in Verbosity.__members__]
         parser.add_argument("-v", "--verbosity", choices=choices, help="Select verbosity level. Quiet = none, Trace = maximal spam")
 
 
@@ -883,7 +858,7 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    def log_at(self, verbosity : Log.Verbosity, message : str):
+    def log_at(self, verbosity : Verbosity, message : str):
         if not Log.should_log(verbosity):
             return
         lines = message.split("\n")
@@ -897,16 +872,16 @@ class Task:
                 Log.log("\n")
 
     def log(self, message : str):
-        self.log_at(Log.Verbosity.NORMAL, message)
+        self.log_at(Verbosity.NORMAL, message)
 
     def log_e(self, message : str):
-        self.log_at(Log.Verbosity.ERROR, message)
+        self.log_at(Verbosity.ERROR, message)
 
     def log_d(self, message : str):
-        self.log_at(Log.Verbosity.DEBUG, message)
+        self.log_at(Verbosity.DEBUG, message)
 
     def log_v(self, message : str):
-        self.log_at(Log.Verbosity.VERBOSE, message)
+        self.log_at(Verbosity.VERBOSE, message)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -977,7 +952,7 @@ class Task:
         config = self._config
         expand = self._expand
 
-        if Log.should_log(Log.Verbosity.DEBUG):
+        if Log.should_log(Verbosity.DEBUG):
             self.log_d("Task config before expand:\n")
             self.log_d(str(config) + "\n")
 
@@ -1063,7 +1038,7 @@ class Task:
         config.desc    = expand.desc
         config.command = expand.command
 
-        if Log.should_log(Log.Verbosity.DEBUG):
+        if Log.should_log(Verbosity.DEBUG):
             self.log_d("Task config after expand:\n")
             self.log_d(str(config) + "\n")
 
@@ -1286,7 +1261,7 @@ class Task:
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        if Log.should_log(Log.Verbosity.VERBOSE) and (self._stdout or self._stderr):
+        if Log.should_log(Verbosity.VERBOSE) and (self._stdout or self._stderr):
             self.log_v("========== Stdout ==========\n")
             for line in self._stdout.strip().split("\n"):
                 self.log_v(line + "\n")
@@ -1601,7 +1576,7 @@ class Tracer:
         self.result = None
 
     def __enter__(self):
-        if not self.trace:
+        if (Options.verbosity < Verbosity.TRACE) and not self.trace:
             return self
 
         with Log.color(Utils.obj_to_hex(self.context)):
@@ -1612,7 +1587,7 @@ class Tracer:
         return self
 
     def __exit__(self, exc_type, exc_value, tb):
-        if not self.trace:
+        if (Options.verbosity < Verbosity.TRACE) and not self.trace:
             return
 
         with Log.color(self.color):
@@ -1692,7 +1667,7 @@ class Loader:
         (script_cwd, script_file) = Path.split(script_path)
         (script_name, _) = Path.splitext(script_file)
 
-        if Log.should_log(Log.Verbosity.VERBOSE):
+        if Log.should_log(Verbosity.VERBOSE):
             Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
 
         new_module = types.ModuleType(script_name)
@@ -1831,7 +1806,7 @@ class Runner:
             if task._config.enabled:
                 task.create_aio_task()
         time_start = time.perf_counter() - time_a
-        if Log.should_log(Log.Verbosity.VERBOSE):
+        if Log.should_log(Verbosity.VERBOSE):
             Log.log(f"Starting {Task.tasks_enabled} tasks took {time_start:.3f} seconds\n")
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
@@ -1854,7 +1829,7 @@ class Runner:
                     case Task.SKIPPED:
                         cls.tasks_skipped += 1
                     case _:
-                        if Log.should_log(Log.Verbosity.DEBUG):
+                        if Log.should_log(Verbosity.DEBUG):
                             Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}\n")
                         cls.tasks_failed += 1
             finally:
@@ -1862,7 +1837,7 @@ class Runner:
                 cls.tasks_awaited += 1
         time_build = time.perf_counter() - time_a
 
-        if Log.should_log(Log.Verbosity.VERBOSE):
+        if Log.should_log(Verbosity.VERBOSE):
             Log.log(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
 
         if Options.max_errors is None:
@@ -1872,7 +1847,7 @@ class Runner:
             Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            if Log.should_log(Log.Verbosity.VERBOSE):
+            if Log.should_log(Verbosity.VERBOSE):
                 Log.log(f"Cancelling {len(cls.live_aio_tasks)} tasks\n")
             for t in cls.live_aio_tasks:
                 t.cancel()
@@ -1943,7 +1918,7 @@ def main():
     script_file = expander.script_file
     script_path = os.path.join(cast(str, script_dir), cast(str, script_file))
 
-    if Log.should_log(Log.Verbosity.VERBOSE):
+    if Log.should_log(Verbosity.VERBOSE):
         Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
         Log.log(f"Verbosity is {Options.verbosity}\n")
         with Log.color(Colors.LIME):
@@ -1952,7 +1927,7 @@ def main():
         Log.log(f"Hancho repo at {repo_dir}\n")
         Log.log(f"Hancho root script at {script_path}\n")
 
-    if Log.should_log(Log.Verbosity.DEBUG):
+    if Log.should_log(Verbosity.DEBUG):
         with Log.color(Colors.LIME):
             Log.log("Debug mode on\n")
 
@@ -1964,13 +1939,13 @@ def main():
     script_path = cast(str, Path.join(root_dir, root_file))
     if not Path.exists(script_path):
         path = Path.rel(script_path, os.getcwd())
-        if Log.should_log(Log.Verbosity.FATAL):
+        if Log.should_log(Verbosity.FATAL):
             Log.log(f"Could not load build script {path}\n")
     Loader.root_repo = Loader.load_file(script_path, True)
 
     time_load = time.perf_counter() - time_a
 
-    if Log.should_log(Log.Verbosity.VERBOSE):
+    if Log.should_log(Verbosity.VERBOSE):
         Log.log(f"Loading .hancho files took {time_load:.3f} seconds\n")
 
     # ------------------------------------
@@ -1987,7 +1962,7 @@ def main():
 
     Options.scroll = True
 
-    if Log.should_log(Log.Verbosity.VERBOSE):
+    if Log.should_log(Verbosity.VERBOSE):
         Log.log(f"Tasks created:    {len(Runner.all_tasks)}\n")
         Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
         Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
@@ -2006,6 +1981,8 @@ def main():
     else:
         with Log.color(Colors.BLUE):
             Log.log("BUILD CLEAN\n")
+
+    sys.stdout.write("\x1B[0m")
 
     return result
 
