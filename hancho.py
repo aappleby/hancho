@@ -55,16 +55,14 @@ class Log:
 
     @classmethod
     def reset(cls):
-        Log.start  : float = time.time( )
-        Log.buffer : str  = ""
-        Log.dirty  : bool = False
-        Log.indent_depth : int  = 0
-        Log.current_color  : int  = -1
-        Log.at_newline = True
-        Log.line_buffer = ""
-        Log.max_one_newline = re.compile(r"[^\n]*\n?$")
-
-    match_escapes = re.compile(r"(\x1B.*?m)")
+        cls.start  : float = time.time( )
+        cls.buffer : str  = ""
+        cls.dirty  : bool = False
+        cls.indent_depth : int  = 0
+        cls.current_color  : int  = -1
+        cls.at_newline = True
+        cls.line_buffer = ""
+        cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
     class Verbosity(int, Enum):
         QUIET    = 0
@@ -77,11 +75,11 @@ class Log:
         DEBUG    = 70
         TRACE    = 80
 
+    # ----------------------------------------------------------------------------------------------
+
     @staticmethod
     def should_log(verbosity):
         return verbosity <= Options.verbosity
-
-    # ----------------------------------------------------------------------------------------------
 
     @staticmethod
     @contextmanager
@@ -108,7 +106,6 @@ class Log:
         hex = cls.current_color
         r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
         prefix = f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else "\x1B[0m"
-
         text = prefix + text
 
         cls.line_buffer += text
@@ -129,20 +126,12 @@ class Log:
     def _log_at(cls, verbosity, text: str):
         if not text or not Log.should_log(verbosity):
             return
-
-        assert Log.max_one_newline.match(text)
-
         if Log.at_newline:
             prefix  = f"[{time.time() - Log.start:12.6f}] "
             prefix += "│ " * Log.indent_depth
-
             with Log.color(-1):
                 Log._emit(prefix)
-
         Log._emit(text)
-
-        if verbosity == Log.Verbosity.FATAL:
-            sys.exit(-1)
 
     @classmethod
     def log_at(cls, verbosity, text):
@@ -179,7 +168,15 @@ class Log:
     def log_c(cls, message : str): Log.log_at(Log.Verbosity.CRITICAL, message)
 
     @classmethod
-    def log_fatal(cls, message): Log.log_at(Log.Verbosity.FATAL, message)
+    def log_fatal(cls, message):
+        with Log.color(0xFF0022):
+            Log.log_at(Log.Verbosity.FATAL, "\n")
+            Log.log_at(Log.Verbosity.FATAL, "===========================\n")
+            Log.log_at(Log.Verbosity.FATAL, message)
+            Log.log_at(Log.Verbosity.FATAL, "===========================\n")
+            Log.log_at(Log.Verbosity.FATAL, "Fatal error, shutting down!\n")
+            Log.log_at(Log.Verbosity.FATAL, "===========================\n")
+        sys.exit(-1)
 
     @classmethod
     def set_color(cls, hex):
@@ -227,7 +224,8 @@ class Log:
 #region
 
 class Colors(int, Enum):
-    # 12 half-saturated, 80% value colors evenly spaced around the HSV wheel
+    """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
+
     RED     = 0xCC6666
     PINK    = 0xCC6699
     MAGENTA = 0xCC66CC
@@ -240,8 +238,7 @@ class Colors(int, Enum):
     LIME    = 0x99CC66
     YELLOW  = 0xCCCC66
     ORANGE  = 0xCC9966
-    # And the "go back to default" color :D
-    RESET   = -1
+    RESET   = -1  # The "go back to default" color :D
 
 # endregion
 ####################################################################################################
@@ -253,6 +250,8 @@ class Utils:
     def reset(cls):
         cls.rand : random.Random = random.Random()
         cls.mtime_calls : int = 0
+        # Matches non-escaped _innermost_ brace pairs
+        cls.braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
 
     @classmethod
     def dump_to_str(cls, key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
@@ -307,7 +306,7 @@ class Utils:
             else:
                 return (tab * indent) + prefix + repr(val)
 
-        # Extract key-value pairs and set delimiters for our container types.
+        # Extract key-value pairs and delimiters for our container types.
         if isinstance(val, tuple):
             items = [(None, val2) for val2 in val]
             ld = "("
@@ -345,7 +344,6 @@ class Utils:
         # Done, we can fit this dump on one line.
         return pad + prefix + ld + separator.join(chunks) + rd
 
-    #----------------------------------------
     # Yes Claude, I know these recursify functions are weird and probably need better names.
 
     @staticmethod
@@ -449,8 +447,6 @@ class Utils:
 
         return outer
 
-    # ----------------------------------------
-
     @staticmethod
     def stringify(variant) -> str:
         """Converts any type into a template-compatible string."""
@@ -462,8 +458,6 @@ class Utils:
         else:
             return str(variant)
 
-    # ----------------------------------------
-
     @staticmethod
     def in_event_loop() -> bool:
         try:
@@ -471,16 +465,6 @@ class Utils:
             return True
         except RuntimeError:
             return False
-
-    #----------------------------------------
-
-    @staticmethod
-    def is_flat_list_of[T](c : Any, as_type : type[T]):
-        if Utils.is_collection(c):
-            return all(isinstance(v, as_type) for v in c)
-        elif Utils.is_mapping(c):
-            return all(isinstance(v, as_type) for v in c.values())
-        return isinstance(c, as_type)
 
     @staticmethod
     def is_collection(variant : Any) -> bool:
@@ -496,14 +480,6 @@ class Utils:
     def is_mapping(variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
 
-    #----------------------------------------
-    # Checks if a string needs template expansion. Empty strings are considered literals.
-
-    # Matches non-escaped _innermost_ brace pairs
-    braced = re.compile(r"(?<!\\)\{(?:\\.|[^\\{}])*\}")
-
-    #----------------------------------------
-
     @staticmethod
     def weave(lhs, rhs, *args) -> list[str]:
         """
@@ -517,8 +493,6 @@ class Utils:
         rhs2 = Utils.weave(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
         return [lh + rh for lh in lhs2 for rh in rhs2]
 
-    #----------------------------------------
-
     @staticmethod
     def obj_to_hex(obj) -> int:
         Utils.rand.seed(id(obj))
@@ -526,23 +500,17 @@ class Utils:
         r, g, b = (int(r * 255), int(g * 255), int(b * 255))
         return (r << 16) | (g << 8) | (b << 0)
 
-    #----------------------------------------
-
     @staticmethod
     def run_cmd(cmd : str):
         """Runs a console command synchronously and returns its stdout with whitespace stripped."""
         result = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
-    #----------------------------------------
-
     @staticmethod
     def mtime(filename : str):
         """Gets the file's mtime and tracks how many times we've called mtime()"""
         Utils.mtime_calls += 1
         return os.stat(filename).st_mtime_ns
-
-    #----------------------------------------
 
     @staticmethod
     def flatten(variant: Tree[Any]) -> list[Any]:
@@ -557,7 +525,7 @@ class Utils:
 # endregion
 ####################################################################################################
 # region Path
-# These are just equivalents of the os.path.* functions that work on Tree[str].
+# We want the os.path.* functions to work on Tree[str], so we run them through recursify.
 
 class Path:
 
@@ -575,9 +543,6 @@ class Path:
     @Utils.recursify_pairwise_map
     def join(lhs, rhs): return os.path.join(lhs, rhs)
 
-    #----------------------------------------
-    # We want these functions to work on Tree[str], so we run them through recursify.
-
     @staticmethod
     @Utils.recursify_map
     def abs(p): return os.path.abspath(p) if p else ""
@@ -589,8 +554,6 @@ class Path:
     @staticmethod
     @Utils.recursify_map
     def norm(p): return os.path.normpath(p) if p else ""
-
-    #----------------------------------------
 
     @staticmethod
     @Utils.recursify_map
@@ -615,8 +578,6 @@ class Path:
     @staticmethod
     @Utils.recursify_map
     def splitext(path): return os.path.splitext(path)
-
-    #----------------------------------------
 
     @staticmethod
     @Utils.recursify_all
@@ -712,7 +673,7 @@ class Tool(Dict):
 
 # endregion
 ####################################################################################################
-# region Config
+# region Options
 # Handles global configuration options
 
 class Options:
@@ -732,10 +693,9 @@ class Options:
         cls.tool        = root_config.pop("tool", None)
         cls.wrap        = root_config.pop("wrap", False)
 
-        # ---------
         # Handle all the verbosity-related flags
 
-        verbosity = root_config.pop("verbosity", "NORMAL")
+        verbosity = root_config.pop("verbosity", None)
         trace     = root_config.pop("trace", False)
         debug     = root_config.pop("debug", False)
         verbose   = root_config.pop("verbose", False)
@@ -760,24 +720,23 @@ class Options:
         if root_config.verbosity == Log.Verbosity.TRACE:
             root_config.trace = True
 
-        # ---------
         # Set up our config contextvar
 
-        if not hasattr(cls, "cv_config"):
-            cls.cv_config : contextvars.ContextVar = contextvars.ContextVar("config")
+        if not hasattr(cls, "_cv_config"):
+            cls._cv_config : contextvars.ContextVar = contextvars.ContextVar("config")
         if hasattr(cls, "cv_token"):
-            cls.cv_config.reset(cls.cv_token)
+            cls._cv_config.reset(cls._cv_token)
 
-        cls.cv_token : contextvars.Token = cls.cv_config.set(root_config)
-
-    @classmethod
-    def get(cls):
-        return cls.cv_config.get()
+        cls._cv_token : contextvars.Token = cls._cv_config.set(root_config)
 
     @classmethod
-    def set(cls, new_config):
+    def cv_config(cls):
+        return cls._cv_config.get()
+
+    @classmethod
+    def set_cv_config(cls, new_config):
         """Note that this method can be used as a context manager"""
-        return cls.cv_config.set(new_config)
+        return cls._cv_config.set(new_config)
 
     # ----------------------------------------------------------------------------------------------
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
@@ -794,7 +753,6 @@ class Options:
             desc        = "_",
             command     = None,
 
-            is_repo     = True,
             this_repo   = hancho,
             this_module = hancho,
 
@@ -898,7 +856,7 @@ class Task:
     def __init__(self, *args, **kwargs):
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
-        self._config  = Dict(Options.get(), *args, **kwargs)
+        self._config  = Dict(Options.cv_config(), *args, **kwargs)
         self._expand  = Expander.wrap(self._config)
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -942,19 +900,19 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def is_depfile_field(key : str, val : Any = None) -> bool:
+    def is_depfile_field(key : str) -> bool:
         return key == "in_depfile"
 
     @staticmethod
-    def is_output_field(key : str, val : Any = None):
+    def is_output_field(key : str):
         return key and (Task.is_depfile_field(key) or key.startswith("out_"))
 
     @staticmethod
-    def is_input_field(key : str, val : Any = None):
+    def is_input_field(key : str):
         return key and key.startswith("in_")
 
     @staticmethod
-    def is_io_field(key : str, val : Any = None):
+    def is_io_field(key : str):
         return Task.is_input_field(key) or Task.is_output_field(key)
 
     # ----------------------------------------------------------------------------------------------
@@ -1050,12 +1008,10 @@ class Task:
         # Expand all fields that don't depend on input/output filenames (basically everything
         # except name/desc/command)
 
-        # FIXME you've hacked up default_config, make sure these lists still match up
+        path_fields  = ["build_dir", "build_root", "hancho_dir", "repo_dir", "repo_file",
+                        "root_dir", "root_file", "script_cwd", "script_file", "task_cwd", ]
 
-        path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
-                        "script_cwd", "script_file", "build_root", "build_dir"]
-
-        flag_fields  = ["core_count", "depformat", "build_tag", "target", "verbosity", "dry_run"]
+        flag_fields = [ "build_tag", "core_count", "depformat", "dry_run", "enabled", "in_depfile",]
 
         for f in path_fields:
             if f in config:
@@ -1087,7 +1043,7 @@ class Task:
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
 
-        for key, files in [i for i in config.items() if Task.is_input_field(*i)]:
+        for key, files in [i for i in config.items() if Task.is_input_field(i[0])]:
             files = Utils.flatten(files)
 
             if key == "in_depfile" and len(files) > 1:
@@ -1115,7 +1071,7 @@ class Task:
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
 
-        for key, files in [i for i in config.items() if Task.is_io_field(*i)]:
+        for key, files in [i for i in config.items() if Task.is_io_field(i[0])]:
 
             files = self.remap_io_field_paths(key, files)
 
@@ -1617,7 +1573,7 @@ class Expander(abc.MutableMapping[str, object]):
     def _eval_macro(macro : str, context : Dict | Expander) -> Any:
         with Tracer(context, f"eval_macro({macro!r})") as tracer:
             try:
-                _locals = ChainMap(context, Options.get(), Expander.aliases)
+                _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
                 result = eval(macro[1:-1], hancho.__dict__, _locals)
             except Exception as _:
                 result = macro
@@ -1739,7 +1695,7 @@ class Loader:
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
-        script_path = Options.get().expand(script_path)
+        script_path = Options.cv_config().expand(script_path)
         script_path = cast(str, Path.abs(script_path))
 
         if not Path.isfile(script_path):
@@ -1773,12 +1729,11 @@ class Loader:
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
         # script.
 
-        old_config = Options.get()
+        old_config = Options.cv_config()
 
         new_config = Dict(
             old_config,
             Dict(
-                is_repo     = is_repo,
                 script_cwd  = script_cwd,
                 script_file = script_file,
                 repo_dir    = script_cwd  if is_repo else old_config.repo_dir,
@@ -1813,7 +1768,7 @@ class Loader:
         # ----------------------------------------
         # Run the module.
 
-        with (chdir(new_config.script_cwd), Options.set(new_config)):
+        with (chdir(new_config.script_cwd), Options.set_cv_config(new_config)):
             exec(code, new_module.__dict__)
 
         return new_module
@@ -2020,7 +1975,7 @@ def main():
         if Log.should_log(Log.Verbosity.VERBOSE):
             Log.log_v("Verbose mode on\n")
 
-    expander = Expander(Options.get())
+    expander = Expander(Options.cv_config())
 
     root_dir    = expander.root_dir
     repo_dir    = expander.repo_dir
@@ -2039,7 +1994,7 @@ def main():
 
     time_a = time.perf_counter()
 
-    script_path = cast(str, Path.join(Options.get().root_dir, Options.get().root_file))
+    script_path = cast(str, Path.join(Options.cv_config().root_dir, Options.cv_config().root_file))
     if not Path.exists(script_path):
         path = Path.rel(script_path, os.getcwd())
         Log.log_fatal(f"Could not load build script {path}\n")
@@ -2093,7 +2048,7 @@ def main():
 
 def __getattr__(name):
     if name == "config":
-        return Options.get()
+        return Options.cv_config()
     elif name in Expander.aliases:
         # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
         # template/macro expansion.
