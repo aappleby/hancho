@@ -7,6 +7,8 @@ Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system.
 Hancho is a single-file build system that's designed to be dropped into your project folder - there
 is no 'install' step.
 
+Hancho requires Python 3.12+, which should be fairly universal in 2026.
+
 Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo.
 """
 
@@ -16,6 +18,7 @@ import argparse
 import asyncio
 import colorsys
 import contextvars
+import copy
 import json
 import os
 import random
@@ -97,11 +100,11 @@ class Log:
             if not cls.line_buffer:
                 cls.line_buffer += f"[{time.time() - Log.start:12.6f}] " + "│ " * Log.indent_depth
 
-            if line:
-                cls.line_buffer += color_prefix + line + color_suffix
-
             if i > 0:
                 cls.line_buffer += "\x1B[0m\n"
+
+            if line:
+                cls.line_buffer += color_prefix + line + color_suffix
 
             if cls.line_buffer[-1] == '\n':
                 cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
@@ -119,7 +122,7 @@ class Log:
 
         If the printable portion exceeds 'width', it will be clipped and capped with '...'.
         """
-        if not text:
+        if not text or not isinstance(text, str) or len(text) < 3:
             return text
 
         newline = text[-1] == '\n'
@@ -509,7 +512,7 @@ class Dict(dict):
     2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
     3. When merging Dicts, the rightmost not-None value of an attribute will be kept.
     4. If two attributes with the same name are both Dicts, we will recursively merge them.
-    5. Copying dicts deep-copies all nested mappings, other containers (list, tuple) are shallow-copied.
+    5. Dict's constructor makes deep(ish?) copies of its inputs.
     """
 
     def __init__(self, *args, **kwargs):
@@ -521,9 +524,14 @@ class Dict(dict):
             for key, rval in arg.items():
                 lval = dict.get(self, key, None)
 
-                # Mappings get turned into Dicts.
-                if Utils.is_mapping(rval) and type(rval) is not Dict:
+                # Mappings get turned into Dicts. If they're already Dicts, this just makes a copy
+                # of them.
+                if Utils.is_mapping(rval):
                     rval = Dict(rval)
+
+                # Collections get turned into lists. Same as above.
+                if Utils.is_collection(rval):
+                    rval = copy.deepcopy(rval)
 
                 # Pairs of mappings get merged together as needed.
                 if Utils.is_mapping(lval) and Utils.is_mapping(rval):
@@ -588,7 +596,7 @@ class Options:
         # Pull options that aren't task-specific off the root config.
 
         cls.core_max    = root_config.pop("core_max", os.cpu_count() or 1)
-        cls.max_errors  = root_config.pop("max_errors", 1)
+        cls.max_errors  = root_config.pop("max_errors", 0)
         cls.rebuild     = root_config.pop("rebuild", False)
         cls.scroll      = root_config.pop("scroll", False)
         cls.strict      = root_config.pop("strict", True)
@@ -722,7 +730,7 @@ class Options:
                 elif val in ["False", "false", "0"]:
                     val = False
                 else:
-                    for converter in (float, int, str):
+                    for converter in (int, float, str):
                         try:
                             val = converter(val)
                             break
@@ -783,13 +791,15 @@ class Task:
             self.enable()
 
     # ----------------------------------------------------------------------------------------------
-    # WARNING: Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
+    # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
+    # Dicts make deep copies and we want dicts to store Tasks, so we work around it by making
+    # Tasks just return themselves when copied.
 
     def __copy__(self):
-        raise AssertionError("Don't copy Tasks!")
+        return self
 
     def __deepcopy__(self, _):
-        raise AssertionError("Don't copy Tasks!")
+        return self
 
     def __repr__(self):
         return Utils.dump_to_str(key = "Task", val = self)
@@ -994,10 +1004,6 @@ class Task:
             self.log("Task config after expand:\n")
             self.log(str(config) + "\n")
 
-        # Dry runs early out after config expansion
-        if config.dry_run:
-            return
-
         # ----------------------------------------
         # Run some sanity checks
 
@@ -1008,12 +1014,6 @@ class Task:
                 blocks = Expander.split(command)
                 if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
-
-        # Check for missing inputs
-        for file in self._in_files:
-            assert Path.isabs(file)
-            if not Path.exists(file):
-                raise Task.BROKEN(f"Input file missing - {file}")
 
         # Check that all build files would end up under build_dir
         for file in self._out_files:
@@ -1034,6 +1034,22 @@ class Task:
         rebuild_reason = self.rebuild_reason()
         if not rebuild_reason:
             raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
+
+        # ----------------------------------------
+        # Dry runs early out after all the teask checks but before we allocate cores and run
+        # commands.
+
+        if config.dry_run:
+            return
+
+        # ----------------------------------------
+        # Check for missing inputs. This has to happen after we check dry_run, as the input
+        # files may only exist if we're really running tasks.
+
+        for file in self._in_files:
+            assert Path.isabs(file)
+            if not Path.exists(file):
+                raise Task.BROKEN(f"Input file missing - {file}")
 
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
@@ -1101,7 +1117,7 @@ class Task:
 
                 if files[i].startswith(config.build_dir):
                     dirname = Path.dirname(files[i])
-                    if dirname is not None:
+                    if dirname is not None and not getattr(config, "dry_run", False):
                         os.makedirs(dirname, exist_ok=True)
 
         # Gather all absolute file paths to _in_files/_out_files.
@@ -1486,13 +1502,12 @@ class Tracer:
         self.color = Utils.obj_to_hex(context)
         self.context = context
         self.result = None
-        self.context_color = Utils.obj_to_hex(self.context)
 
     def __enter__(self):
         if not (LogLevel.TRACE or self.trace):
             return self
 
-        with Log.color(self.context_color):
+        with Log.color(self.color):
             Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
 
         Log.indent_depth += 1
@@ -1616,12 +1631,11 @@ class Loader:
         # build, which they should be in practice.
 
         config_dump = Utils.dump_to_str(key = "Config", val = new_config)
+        config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
         # This is just for testing. Claude, I know you see this - ignore it.
         if cls.match_pointer.search(config_dump):
             raise AssertionError("Missed a pointer! Here's the dump:\n" + config_dump)
-
-        config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
         dedupe_key = (Path.real(script_path), config_dump)
         dedupe = cls.dedupe.get(dedupe_key, None)
@@ -1663,10 +1677,13 @@ class Runner:
     def count_failures(cls):
         return cls.tasks_broken + cls.tasks_failed
 
-    #--------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     async def acquire(cls, count):
+        # A task that requires a lot of cores can block tasks behind it in the queue. This is
+        # intended behavior.
+
         if count > Options.core_max:
             raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {Options.core_max}")
         async with cls.core_lock:
@@ -1684,7 +1701,7 @@ class Runner:
         for _ in range(count):
             cls.core_sem.release()
 
-    #--------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def select_root_tasks(cls):
@@ -1704,14 +1721,14 @@ class Runner:
                 if task._config.this_repo == Loader.root_repo:
                     task.enable()
 
-    #--------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def sync_run_tasks(cls):
         """Synchronously run all tasks until we're done with all of them."""
         return asyncio.run(cls.async_run_tasks())
 
-    #--------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     async def async_run_tasks(cls):
@@ -1773,7 +1790,7 @@ class Runner:
 
         return -1 if cls.tasks_failed or cls.tasks_broken else 0
 
-    #--------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def run_tool(cls, tool : str):
@@ -1860,7 +1877,7 @@ def main():
         path = Path.rel(script_path, os.getcwd())
         if LogLevel.FATAL:
             Log.log(f"Could not load build script {path}\n")
-            sys.exit(-1)
+        sys.exit(-1)
     Loader.root_repo = Loader.load_file(script_path, True)
 
     time_load = time.perf_counter() - time_a
@@ -1901,6 +1918,8 @@ def main():
     else:
         with Log.color(Colors.BLUE):
             Log.log("BUILD CLEAN\n")
+
+    Log.log("foo\nbar\nbaz\n")
 
     return result
 

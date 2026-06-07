@@ -670,6 +670,23 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/slow_result.txt").exists())
 
+    def test_dry_run(self):
+        hancho.init(verbosity = "quiet", max_errors=999, dry_run = True)
+        task1 = hancho.Task(
+            command = "echo foo >> {out_file}",
+            out_file = "dry_stuff/test1.txt",
+        )
+        hancho.Task(
+            command = "cp {in_file} {out_file}",
+            in_file = task1,
+            out_file = "dry_stuff/test2.txt"
+        )
+        self.assertFalse(Path("build/dry_stuff/test1.txt").exists())
+        self.assertFalse(Path("build/dry_stuff/test2.txt").exists())
+        self.run_tasks(0)
+        self.assertFalse(Path("build/dry_stuff/test1.txt").exists())
+        self.assertFalse(Path("build/dry_stuff/test2.txt").exists())
+
 
 ####################################################################################################
 
