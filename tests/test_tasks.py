@@ -53,7 +53,7 @@ class TestTasks(unittest.TestCase):
 
         # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
         # failure to see the cancellation.
-        hancho.init(verbosity = hancho.Log.Verbosity.QUIET, max_errors=999)
+        hancho.init(verbosity = "quiet", max_errors=999)
         sys.stdout.flush()
 
     def tearDown(self):
@@ -298,7 +298,7 @@ class TestTasks(unittest.TestCase):
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
         def run():
-            hancho.init(verbosity = "QUIET")
+            hancho.init(verbosity = "quiet")
             hancho.Task(
                 command="sleep 0.1 && touch {out_obj}",
                 in_src=[],
@@ -320,7 +320,7 @@ class TestTasks(unittest.TestCase):
         dummy = "data/dummy.txt"
 
         def run():
-            hancho.init(verbosity = "QUIET")
+            hancho.init(verbosity = "quiet")
             hancho.Task(
                 name="test_dep_changed {in_src}",
                 command="sleep 0.1 && touch {out_obj}",
@@ -411,7 +411,7 @@ class TestTasks(unittest.TestCase):
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
-            hancho.init(verbosity = "QUIET")
+            hancho.init(verbosity = "quiet")
             time.sleep(0.01)
             compile = hancho.Tool(
                 name="test_header_changed {in_src}",
@@ -434,7 +434,7 @@ class TestTasks(unittest.TestCase):
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild
         def run():
-            hancho.init(verbosity = "QUIET")
+            hancho.init(verbosity = "quiet")
             time.sleep(0.01)
             compile = hancho.Dict(
                 name="test_input_changed {in_src}",
@@ -484,7 +484,7 @@ class TestTasks(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
-        hancho.init(verbosity = "QUIET", flarpy="flarp.txt")
+        hancho.init(verbosity = "quiet", flarpy="flarp.txt")
         self.assertEqual("flarp.txt", hancho.config.flarpy)
 
         hancho.Task(

@@ -34,7 +34,7 @@ def load_tests(loader, tests, ignore):
 
 class TestTemplates(unittest.TestCase):
     def setUp(self):
-        hancho.init(verbosity = "QUIET")
+        hancho.init(verbosity = "quiet")
         sys.stdout.flush()
 
     def doctest_basic_eval(self):
@@ -104,7 +104,7 @@ class TestTemplates(unittest.TestCase):
         # Reading a field from a nested Dict should read the _innermost_ 'c' if the Dict is inside
         # an Expander, as it is then expanded in the nested context.
         >>> d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-        >>> e = Expander(d, True)
+        >>> e = Expander(d)
         >>> d.expand("{a.b}")
         20
         >>> e.expand("{a.b}")
@@ -115,7 +115,7 @@ class TestTemplates(unittest.TestCase):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
         # nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-        e = Expander(d, True)
+        e = Expander(d)
 
         # This read is _not_ through the expander, so "{c}" will be evaluated in the _outer_
         # context.

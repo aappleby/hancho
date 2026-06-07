@@ -27,7 +27,7 @@ def load_tests(loader, tests, ignore):
 
 class TestDict(unittest.TestCase):
     def setUp(self):
-        hancho.init(verbosity = "QUIET")
+        hancho.init(verbosity = "quiet")
         sys.stdout.flush()
 
     def test_basic_access(self):

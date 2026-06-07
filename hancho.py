@@ -51,18 +51,14 @@ type Tree[T] = T | list[Tree[T]]
 ####################################################################################################
 # region Log
 
-
 class Log:
 
     @classmethod
-    def reset(cls, verbosity):
+    def reset(cls):
         Log.start  : float = time.time( )
-        Log.verbosity = verbosity
         Log.buffer : str  = ""
-        Log.con_w  : int  = shutil.get_terminal_size().columns
         Log.dirty  : bool = False
         Log.indent_depth : int  = 0
-        Log.wrap   : bool = False
         Log.current_color  : int  = -1
         Log.at_newline = True
         Log.line_buffer = ""
@@ -83,7 +79,7 @@ class Log:
 
     @staticmethod
     def should_log(verbosity):
-        return verbosity <= Log.verbosity
+        return verbosity <= Options.verbosity
 
     # ----------------------------------------------------------------------------------------------
 
@@ -121,8 +117,8 @@ class Log:
         if text[-1] == "\n":
             line = cls.line_buffer
             cls.line_buffer = ""
-            if not Log.wrap:
-                line = Log.clip_printable(line, Log.con_w)
+            if not Options.wrap:
+                line = Log.clip_printable(line, Options.con_w)
             sys.stdout.write(line)
             sys.stdout.flush()
             Log.at_newline = True
@@ -716,6 +712,174 @@ class Tool(Dict):
 
 # endregion
 ####################################################################################################
+# region Config
+# Handles global configuration options
+
+class Options:
+
+    @classmethod
+    def reset(cls, root_config):
+        cls.con_w       = shutil.get_terminal_size().columns
+
+        # Pull options that aren't task-specific off the root config.
+
+        cls.core_max    = root_config.pop("core_max", os.cpu_count() or 1)
+        cls.max_errors  = root_config.pop("max_errors", 1)
+        cls.rebuild     = root_config.pop("rebuild", False)
+        cls.scroll      = root_config.pop("scroll", False)
+        cls.strict      = root_config.pop("strict", True)
+        cls.target      = root_config.pop("target", None)
+        cls.tool        = root_config.pop("tool", None)
+        cls.wrap        = root_config.pop("wrap", False)
+
+        # ---------
+        # Handle all the verbosity-related flags
+
+        verbosity = root_config.pop("verbosity", "NORMAL")
+        trace     = root_config.pop("trace", False)
+        debug     = root_config.pop("debug", False)
+        verbose   = root_config.pop("verbose", False)
+        quiet     = root_config.pop("quiet", False)
+
+        if isinstance(verbosity, str):
+            verbosity = Log.Verbosity[verbosity.upper()]
+        elif trace:
+            verbosity = Log.Verbosity.TRACE
+        elif debug:
+            verbosity = Log.Verbosity.DEBUG
+        elif verbose:
+            verbosity = Log.Verbosity.VERBOSE
+        elif quiet:
+            verbosity = Log.Verbosity.QUIET
+        else:
+            verbosity = Log.Verbosity.NORMAL
+
+        root_config.verbosity = verbosity
+        cls.verbosity = verbosity
+
+        if root_config.verbosity == Log.Verbosity.TRACE:
+            root_config.trace = True
+
+        # ---------
+        # Set up our config contextvar
+
+        if not hasattr(cls, "cv_config"):
+            cls.cv_config : contextvars.ContextVar = contextvars.ContextVar("config")
+        if hasattr(cls, "cv_token"):
+            cls.cv_config.reset(cls.cv_token)
+
+        cls.cv_token : contextvars.Token = cls.cv_config.set(root_config)
+
+    @classmethod
+    def get(cls):
+        return cls.cv_config.get()
+
+    @classmethod
+    def set(cls, new_config):
+        """Note that this method can be used as a context manager"""
+        return cls.cv_config.set(new_config)
+
+    # ----------------------------------------------------------------------------------------------
+    # We spell all these defaults out explicitly so that when this config gets merged with flags and
+    # task configs the fields stay in the same order.
+    # This is a function so that when we re-initialize Hancho during tests, we pick up a fresh
+    # copy of os.getcwd() if it changed.
+
+    # FIXME can we support per-task verbosity for debugging?
+
+    @classmethod
+    def default_config(cls):
+        result = Dict(
+            name        = "_",
+            desc        = "_",
+            command     = None,
+
+            is_repo     = True,
+            this_repo   = hancho,
+            this_module = hancho,
+
+            hancho_dir  = Path.dirname(__file__),
+            root_dir    = os.getcwd(),
+            root_file   = "build.hancho",
+            repo_dir    = "{root_dir}",
+            repo_file   = "{root_file}",
+            script_cwd  = "{repo_dir}",
+            script_file = "{root_file}",
+            task_cwd    = "{repo_dir}",
+            build_root  = "{repo_dir}/build",
+            build_tag   = "",
+            build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
+
+            depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
+            in_depfile  = [],
+
+            core_count  = 1,
+            enabled     = False,
+            dry_run     = False
+        )
+        return result
+
+    @classmethod
+    def parse_flags(cls, args : list[str]):
+        assert Utils.is_collection(args)
+
+        parser = argparse.ArgumentParser()
+
+        # pylint: disable=line-too-long
+        # fmt: off
+        parser.add_argument("target",  nargs="?", default=argparse.SUPPRESS, type=str.strip,       help="A regex that selects the targets to build. Defaults to all targets in the root repo.")
+        parser.add_argument("-C", "--root_dir",   default=argparse.SUPPRESS, type=str.strip,       help="Change directory before starting the build")
+        parser.add_argument("-f", "--root_file",  default=argparse.SUPPRESS, type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
+        parser.add_argument("-t", "--tool",       default=argparse.SUPPRESS, type=str.strip,       help="Run a subtool.")
+        parser.add_argument("--build_tag",        default=argparse.SUPPRESS, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument("-j", "--core_max",   default=argparse.SUPPRESS, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
+        parser.add_argument("--max_errors",       default=argparse.SUPPRESS, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
+        parser.add_argument("-n", "--dry_run",    default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Do not run commands")
+        parser.add_argument("-a", "--rebuild",    default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
+        parser.add_argument("--wrap",             default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("--strict",           default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
+        parser.add_argument("--scroll",           default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Makes the output scroll instead of keeping it on one line like Ninja.")
+        parser.add_argument("-q", "--quiet",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=quiet. Mute all output")
+        parser.add_argument("-d", "--debug",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=debug. Print debugging information")
+        parser.add_argument("--trace",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=trace. Trace all text expansion")
+
+        choices = [v.lower() for v in Log.Verbosity.__members__]
+        parser.add_argument("-v", "--verbosity", choices=choices, help="Select verbosity level. Quiet = none, Trace = maximal spam")
+
+
+        # fmt: on
+
+        (flags, unrecognized) = parser.parse_known_args(args)
+
+        # Unrecognized command line parameters also become module config fields if they are
+        # flag-like
+        extra_flags = {}
+        for span in unrecognized:
+            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
+                key = match.group(1)
+                val = match.group(2)
+
+                if val is None:
+                    # this is so that --foo turns into {foo:True}
+                    val = True
+                elif val in ["True", "True", "1"]:
+                    val = True
+                elif val in ["False", "False", "0"]:
+                    val = False
+                else:
+                    for converter in (float, int, str):
+                        try:
+                            val = converter(val)
+                            break
+                        except ValueError:
+                            pass
+                extra_flags[key] = val
+
+        flags = Dict(vars(flags), extra_flags)
+        return flags
+
+# endregion
+####################################################################################################
 # region Task
 # Task object + bookkeeping
 
@@ -734,7 +898,7 @@ class Task:
     def __init__(self, *args, **kwargs):
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
-        self._config  = Dict(hancho.config, *args, **kwargs)
+        self._config  = Dict(Options.get(), *args, **kwargs)
         self._expand  = Expander.wrap(self._config)
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -886,11 +1050,12 @@ class Task:
         # Expand all fields that don't depend on input/output filenames (basically everything
         # except name/desc/command)
 
+        # FIXME you've hacked up default_config, make sure these lists still match up
+
         path_fields  = ["hancho_dir", "task_cwd", "root_dir", "root_file", "repo_dir", "repo_file",
                         "script_cwd", "script_file", "build_root", "build_dir"]
 
-        flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
-                        "max_errors", "verbosity", "dry_run", "rebuild", "trace"]
+        flag_fields  = ["core_count", "depformat", "build_tag", "target", "verbosity", "dry_run"]
 
         for f in path_fields:
             if f in config:
@@ -982,7 +1147,7 @@ class Task:
                 return any(is_braced(v2) for v2 in v)
             return (Utils.braced.search(v) is not None) if isinstance(v, str) else False
 
-        if config.strict and is_braced(config.command):
+        if Options.strict and is_braced(config.command):
             raise Task.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
 
         # Check for missing inputs
@@ -1107,7 +1272,7 @@ class Task:
         config = self._config
         cwd = os.getcwd()
 
-        if config.rebuild:
+        if Options.rebuild or getattr(config, "rebuild", False):
             return "Target forced to rebuild"
         if not self._in_files:
             return "Always rebuild a target with no inputs"
@@ -1267,19 +1432,13 @@ class Expander(abc.MutableMapping[str, object]):
 
     #----------------------------------------
 
-    def __init__(self, context : Dict, trace : bool | None = None):
-        assert trace is None or isinstance(trace, bool)
+    def __init__(self, context : Dict):
         # These are just type annotations, because writing to fields while we're in the constructor
         # of a class that overrides __setattr__ does strange things.
         self._context : Dict
-        self.trace : bool
 
-        # The actual seet is here.
+        # The actual set is here.
         super().__setattr__("_context", context)
-
-        if trace is None:
-            trace = getattr(context, "trace", hancho.config.trace)
-        super().__setattr__("trace", trace)
 
     #----------------------------------------
 
@@ -1323,16 +1482,15 @@ class Expander(abc.MutableMapping[str, object]):
         return wrapper
 
     @staticmethod
-    def wrap(source : Dict | Expander, tracer = None) -> Expander:
-        trace = getattr(source, "trace", False) if tracer is None else tracer.trace
+    def wrap(source : Dict | Expander) -> Expander:
 
-        if isinstance(source, Expander) and source.trace == trace:
+        if isinstance(source, Expander):
             return source
 
         if isinstance(source, Expander):
-            result = Expander(source._context, trace)
+            result = Expander(source._context)
         elif isinstance(source, Dict):
-            result = Expander(source, trace)
+            result = Expander(source)
         else:
             raise TypeError("Don't know how to wrap a {type(source)} = {source}")
 
@@ -1400,10 +1558,13 @@ class Expander(abc.MutableMapping[str, object]):
         that expansions in nested dicts works correctly.
         """
 
+        if key == "trace":
+            return self._context[key]
+
         with Tracer(self, f"_get({key})") as tracer:
             result = self._context[key]
             if Utils.is_mapping(result) and not isinstance(result, Expander):
-                result = Expander.wrap(result, tracer)
+                result = Expander.wrap(result)
             else:
                 result = self.expand(result)
             tracer.save_result(result)
@@ -1456,7 +1617,7 @@ class Expander(abc.MutableMapping[str, object]):
     def _eval_macro(macro : str, context : Dict | Expander) -> Any:
         with Tracer(context, f"eval_macro({macro!r})") as tracer:
             try:
-                _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
+                _locals = ChainMap(context, Options.get(), Expander.aliases)
                 result = eval(macro[1:-1], hancho.__dict__, _locals)
             except Exception as _:
                 result = macro
@@ -1501,14 +1662,14 @@ class Expander(abc.MutableMapping[str, object]):
 class Tracer:
 
     def __init__(self, context : Dict | Expander, enter_message):
-        self.trace : bool = getattr(context, "trace", False) or hancho.config.trace
+        self.trace = getattr(context, "trace", False)
         self.enter_message = enter_message
         self.color = Utils.obj_to_hex(context)
         self.context = context
         self.result = None
 
     def __enter__(self):
-        if not (self.trace or hancho.config.trace):
+        if not self.trace:
             return self
 
         with Log.color(Utils.obj_to_hex(self.context)):
@@ -1519,7 +1680,7 @@ class Tracer:
         return self
 
     def __exit__(self, exc_type, exc_value, tb):
-        if not (self.trace or hancho.config.trace):
+        if not self.trace:
             return
 
         with Log.color(self.color):
@@ -1565,142 +1726,20 @@ class Tracer:
 class Loader:
 
     @classmethod
-    def reset(cls, *args, **kwargs):
+    def reset(cls):
         cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
         cls.real_filenames : set[str] = set()
         cls.dedupe : dict[tuple[str, str], types.ModuleType] = {}
         cls.loaded_files : list[str] = []
-
         cls.root_repo : types.ModuleType | None = None
-        cls.root_config : Dict = Dict(cls.default_config(), *args, **kwargs)
 
-        if not hasattr(cls, "cv_config"):
-            cls.cv_config : contextvars.ContextVar = contextvars.ContextVar("config")
-        if hasattr(cls, "cv_token"):
-            cls.cv_config.reset(cls.cv_token)
-
-        cls.cv_token : contextvars.Token = cls.cv_config.set(cls.root_config)
-
-    # -----------------------------------------------------------------------------------------------
-    # We spell all these defaults out explicitly so that when this config gets merged with flags and
-    # task configs the fields stay in the same order.
-    # This is a function so that when we re-initialize Hancho during tests, we pick up a fresh
-    # copy of os.getcwd() if it changed.
-
-    @classmethod
-    def default_config(cls):
-        result = Dict(
-            name        = "_",
-            desc        = "_",
-            command     = None,
-
-            hancho_dir  = Path.dirname(__file__),
-            root_dir    = os.getcwd(),
-            root_file   = "build.hancho",
-            repo_dir    = "{root_dir}",
-            repo_file   = "{root_file}",
-            script_file = "{root_file}",
-
-            task_cwd    = "{repo_dir}",
-            script_cwd  = "{repo_dir}",
-
-            is_repo     = True,
-            this_repo   = hancho,
-            this_module = hancho,
-
-            build_root  = "{repo_dir}/build",
-            build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
-
-            core_count  = 1,
-            core_max    = os.cpu_count() or 1,
-
-            depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
-            in_depfile  = [],
-
-            build_tag   = "",
-            target      = "",
-            tool        = "",
-
-            enabled     = False,
-            max_errors  = 0,
-            verbosity   = "NORMAL",
-            dry_run     = False,
-            trace       = False,
-            rebuild     = False,
-            wrap        = False,
-            strict      = True,
-            scroll      = False,
-        )
-        return result
-
-    # -----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def parse_flags(cls, args : list[str]):
-        assert Utils.is_collection(args)
-
-        parser = argparse.ArgumentParser()
-
-        # pylint: disable=line-too-long
-        # fmt: off
-        parser.add_argument("target",  nargs="?", default = None, type=str.strip,       help="A regex that selects the targets to build. Defaults to all targets in the root repo.")
-        parser.add_argument("-C", "--root_dir",   default = None, type=str.strip,       help="Change directory before starting the build")
-        parser.add_argument("-f", "--root_file",  default = None, type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
-        parser.add_argument("-t", "--tool",       default = None, type=str.strip,       help="Run a subtool.")
-        parser.add_argument("--build_tag",        default = None, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
-        parser.add_argument("-j", "--core_max",   default = None, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
-        parser.add_argument("--max_errors",       default = None, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
-
-        parser.add_argument("-n", "--dry_run",   action = argparse.BooleanOptionalAction, help="Do not run commands")
-        parser.add_argument("-a", "--rebuild",   action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
-        parser.add_argument("--trace",           action = argparse.BooleanOptionalAction, help="Trace all text expansion")
-        parser.add_argument("--wrap",            action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
-        parser.add_argument("--strict",          action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
-        parser.add_argument("--scroll",          action = argparse.BooleanOptionalAction, help="Makes the output scroll instead of keeping it on one line like Ninja.")
-
-        choices = [v.lower() for v in Log.Verbosity.__members__]
-
-        parser.add_argument("-v", "--verbosity", choices=choices, default="NORMAL", help="Select verbosity level")
-
-
-        # fmt: on
-
-        (flags, unrecognized) = parser.parse_known_args(args)
-
-        # Unrecognized command line parameters also become module config fields if they are
-        # flag-like
-        extra_flags = {}
-        for span in unrecognized:
-            if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
-                key = match.group(1)
-                val = match.group(2)
-
-                if val is None:
-                    # this is so that --foo turns into {foo:True}
-                    val = True
-                elif val in ["True", "True", "1"]:
-                    val = True
-                elif val in ["False", "False", "0"]:
-                    val = False
-                else:
-                    for converter in (float, int, str):
-                        try:
-                            val = converter(val)
-                            break
-                        except ValueError:
-                            pass
-                extra_flags[key] = val
-
-        flags = Dict(vars(flags), extra_flags)
-        return flags
-
-    # -----------------------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
-        script_path = hancho.config.expand(script_path)
+        script_path = Options.get().expand(script_path)
         script_path = cast(str, Path.abs(script_path))
 
         if not Path.isfile(script_path):
@@ -1734,7 +1773,7 @@ class Loader:
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
         # script.
 
-        old_config = cls.cv_config.get()
+        old_config = Options.get()
 
         new_config = Dict(
             old_config,
@@ -1774,7 +1813,7 @@ class Loader:
         # ----------------------------------------
         # Run the module.
 
-        with (chdir(new_config.script_cwd), cls.cv_config.set(new_config)):
+        with (chdir(new_config.script_cwd), Options.set(new_config)):
             exec(code, new_module.__dict__)
 
         return new_module
@@ -1786,10 +1825,11 @@ class Loader:
 class Runner:
 
     @classmethod
-    def reset(cls, core_max):
+    def reset(cls):
         cls.all_tasks : list[Task] = []
-        cls.core_max : int = core_max
-        cls.core_sem : asyncio.Semaphore = asyncio.Semaphore(core_max)
+        if Options.core_max is None:
+            pass
+        cls.core_sem : asyncio.Semaphore = asyncio.Semaphore(Options.core_max)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
         cls.live_aio_tasks : set[asyncio.Task] = set()
@@ -1809,8 +1849,8 @@ class Runner:
 
     @classmethod
     async def acquire(cls, count):
-        if count > cls.core_max:
-            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.core_max}")
+        if count > Options.core_max:
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {Options.core_max}")
         async with cls.core_lock:
             for _ in range(count):
                 await cls.core_sem.acquire()
@@ -1862,7 +1902,7 @@ class Runner:
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
         time_a = time.perf_counter()
-        while cls.live_aio_tasks and cls.count_failures() <= hancho.config.max_errors:
+        while cls.live_aio_tasks and cls.count_failures() <= Options.max_errors:
             try:
                 finished_aio_task = await cls.aio_done_queue.get()
                 _ = finished_aio_task.result()
@@ -1887,7 +1927,10 @@ class Runner:
                 cls.tasks_awaited += 1
         time_build = time.perf_counter() - time_a
 
-        if cls.count_failures() > hancho.config.max_errors:
+        if Options.max_errors is None:
+            pass
+
+        if cls.count_failures() > Options.max_errors:
             Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
@@ -1898,12 +1941,11 @@ class Runner:
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*cls.live_aio_tasks, return_exceptions=True)
 
-        hancho.config.scroll = True
+        Options.scroll = True
 
         Log.log(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
         Log.log_v(f"Tasks created:    {len(cls.all_tasks)}\n")
-        with Log.indent():
-            Log.log_v(f"Tasks awaited:    {cls.tasks_awaited}\n")
+        Log.log_v(f"Tasks awaited:    {cls.tasks_awaited}\n")
         Log.log_v(f"Tasks finished:   {cls.tasks_finished}\n")
         Log.log_v(f"Tasks broken:     {cls.tasks_broken}\n")
         Log.log_v(f"Tasks failed:     {cls.tasks_failed}\n")
@@ -1944,40 +1986,41 @@ def init(*args, **kwargs):
     """
     Re-initializes all of Hancho.
     If you are importing Hancho directly, you should call this as
-    hancho.init(verbosity = hancho.Log.Verbosity.DEBUG, myoption=1234)
+    hancho.init(verbosity = "debug", myoption=1234)
     """
     reset(*args, **kwargs)
 
 # ----------------------------------------
 
 def reset(*args, **kwargs):
-    Loader.reset(*args, **kwargs)
+    root_config : Dict = Dict(Options.default_config(), *args, **kwargs)
 
-    if isinstance(hancho.config.verbosity, str):
-        hancho.config.verbosity = Log.Verbosity[hancho.config.verbosity.upper()]
-    Log.reset(hancho.config.verbosity)
-
+    Options.reset(root_config)
+    Loader.reset()
+    Log.reset()
     Expander.reset()
     Utils.reset()
     Task.reset()
-    Runner.reset(hancho.config.core_max)
+    Runner.reset()
 
 # ----------------------------------------
 
 def main():
 
-    flags = Loader.parse_flags(sys.argv[1:])
+    flags = Options.parse_flags(sys.argv[1:])
     init(flags)
 
     Log.log_v(f"Hancho started as '{" ".join(sys.argv)}'\n")
+    Log.log_v(f"Verbosity is {Options.verbosity}\n")
+
 
     with Log.color(Colors.LIME):
-        if flags.verbosity == "DEBUG":
+        if Log.should_log(Log.Verbosity.DEBUG):
             Log.log_d("Debug mode on\n")
-        if flags.verbosity == "VERBOSE":
+        if Log.should_log(Log.Verbosity.VERBOSE):
             Log.log_v("Verbose mode on\n")
 
-    expander = Expander(hancho.config)
+    expander = Expander(Options.get())
 
     root_dir    = expander.root_dir
     repo_dir    = expander.repo_dir
@@ -1996,7 +2039,7 @@ def main():
 
     time_a = time.perf_counter()
 
-    script_path = cast(str, Path.join(hancho.config.root_dir, hancho.config.root_file))
+    script_path = cast(str, Path.join(Options.get().root_dir, Options.get().root_file))
     if not Path.exists(script_path):
         path = Path.rel(script_path, os.getcwd())
         Log.log_fatal(f"Could not load build script {path}\n")
@@ -2008,17 +2051,17 @@ def main():
     #----------------------------------------
     # Run tools if needed
 
-    if hancho.config.tool:
-        result = Runner.run_tool(hancho.config.tool)
+    if Options.tool:
+        result = Runner.run_tool(Options.tool)
         return result
 
     #----------------------------------------
     # Start all tasks
 
-    if hancho.config.target:
-        target_regex = re.compile(hancho.config.target)
+    if Options.target:
+        target_regex = re.compile(Options.target)
         Runner.enable_tasks_by_regex(target_regex)
-    elif hancho.config.rebuild:
+    elif Options.rebuild:
         Runner.enable_all_tasks()
     else:
         Runner.enable_root_tasks()
@@ -2032,8 +2075,8 @@ def main():
     # Done
 
     if not Log.at_newline:
-        #sys.stdout.write("\x1B[0m\n")
-        Log._emit("\n")
+        sys.stdout.write("\x1B[0m\n")
+        #Log._emit("\n")
         pass
     return result
 
@@ -2041,16 +2084,16 @@ def main():
 # ####################################################################################################
 # region if __name__ == "__main__"
 
-# The 'global' hancho.config is actually instantiated per script context, otherwise scripts can
-# break each other by changing shared config fields. To ensure each script sees the right config,
-# we make the module-level __getattr__ redirect to the config stored in the ContextVar.
+# The 'global' config is actually instantiated per script context, otherwise scripts can break each
+# other by changing shared config fields. To ensure each script sees the right config, we make the
+# module-level __getattr__ redirect to the config stored in the ContextVar in Config.
 #
 # This is also where we look up command aliases so that script macros don't have to use
 # fully-qualified names like 'hancho.Path.norm'.
 
 def __getattr__(name):
     if name == "config":
-        return Loader.cv_config.get()
+        return Options.get()
     elif name in Expander.aliases:
         # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
         # template/macro expansion.

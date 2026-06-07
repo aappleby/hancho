@@ -14,7 +14,7 @@ util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 
 link_cpp_bin = hancho.Tool(
     desc    = "Linking C++ bin {out_bin}",
-    command = "g++ {in_objs} -o {out_bin}",
+    command = "g++ {in_objs} -o {out_bin}"
 )
 
 main_app = hancho.Task(

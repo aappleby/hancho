@@ -25,7 +25,7 @@ def load_tests(loader, tests, ignore):
 
 class TestSplitTemplate(unittest.TestCase):
     def setUp(self):
-        hancho.init(verbosity = "QUIET")
+        hancho.init(verbosity = "quiet")
         sys.stdout.flush()
 
     def tearDown(self):
