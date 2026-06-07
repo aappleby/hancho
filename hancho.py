@@ -1447,6 +1447,30 @@ class Expander(abc.MutableMapping[str, object]):
     # Template Expansion Failure Is Not An Error.
     # This should be the _only_ try/except block in the expansion code.
 
+    @track_depth
+    @staticmethod
+    def _eval_macro(macro : str, context : Dict | Expander) -> Any:
+        with Tracer(context, f"eval_macro({macro!r})") as tracer:
+            try:
+                _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
+                result = eval(macro[1:-1], hancho.__dict__, _locals)
+            except Exception as _:
+                result = macro
+            tracer.save_result(result)
+        return result
+
+    @track_depth
+    @staticmethod
+    def _expand_template(template : str, context : Dict | Expander):
+        with Tracer(context, f"expand_template({template!r})") as tracer:
+            blocks = Expander.split(template)
+            for (i, block) in enumerate(blocks):
+                result = Expander._expand(block, context)
+                blocks[i] = Utils.stringify(result)
+            result = "".join(blocks)
+            tracer.save_result(result)
+        return result
+
     @Utils.recursify_apply_mip
     @track_depth
     @staticmethod
@@ -1454,34 +1478,20 @@ class Expander(abc.MutableMapping[str, object]):
         if not isinstance(text, str):
             return text
 
-        if not (match := Utils.braced.search(text)):
+        match = Utils.braced.search(text)
+        if match is None:
             return text
 
-        elif match.group() == text:
-            with Tracer(context, f"eval_macro({text!r})") as tracer:
-                try:
-                    _locals = ChainMap(context, Loader.cv_config.get(), Expander.aliases)
-                    result = eval(text[1:-1], hancho.__dict__, _locals)
-                except RecursionError as err:
-                    Log.log_e(f"Recursion error {err}\n")
-                    raise err
-                except Exception as _:
-                    result = text
-                if result != text:
-                    result = Expander._expand(result, context)
-                tracer.save_result(result)
-
+        #with Tracer(context, f"expand({text!r})") as tracer:
+        if match.group() == text:
+            result = Expander._eval_macro(text, context)
         else:
-            with Tracer(context, f"expand_template({text!r})") as tracer:
-                blocks = Expander.split(text)
-                for (i, block) in enumerate(blocks):
-                    result = Expander._expand(block, context)
-                    blocks[i] = Utils.stringify(result)
-                result = "".join(blocks)
-                if result != text:
-                    result = Expander._expand(result, context)
-                tracer.save_result(result)
+            result = Expander._expand_template(text, context)
 
+        if result != text:
+            result = Expander._expand(result, context)
+
+            #tracer.save_result(result)
         return result
 
 # endregion
