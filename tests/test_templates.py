@@ -169,7 +169,7 @@ class TestTemplates(unittest.TestCase):
         # Templates can call lambdas
         >>> d = Dict(a = 1, b = lambda x : x + 1)
         >>> d
-        _ : Dict = {a = 1, b : function = <object>}
+        _ : Dict = {a = 1, b = <function>}
         >>> d.expand("foo {b(a)} bar")
         'foo 2 bar'
         """

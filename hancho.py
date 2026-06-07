@@ -107,7 +107,8 @@ class Log:
                 cls.line_buffer += color_prefix + line + color_suffix
 
             if cls.line_buffer[-1] == '\n':
-                cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
+                if not Options.wrap:
+                    cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
                 # Ensure that QUIET mutes absolutely everything
                 if Options.verbosity > LogLevel.QUIET:
                     sys.stdout.write(cls.line_buffer)
@@ -133,19 +134,19 @@ class Log:
         # Even chunks are printable text, odd chunks are escape sequences.
         chunks = Log.match_escapes.split(text)
 
+        # Now stick the chunks back together while counting up the length of the printable chunks.
+        # If/when we exceed 'width', clip the result and add "...".
         accum = 0
         result = ""
         for i, chunk in enumerate(chunks):
-            if i & 1:
-                result += chunk
-            else:
+            odd = i & 1
+            result += chunk
+            if not odd:
                 accum += len(chunk)
-                if accum > width - 3:
-                    chunk = chunk[:(width - 3) - accum]
-                result += chunk
+                if accum > width:
+                    result = result[:width - 3 - accum] + "..."
+                    break
 
-        if accum > width:
-            result += "..."
         if newline:
             result += '\n'
 
@@ -197,6 +198,20 @@ class Utils:
         cls.rand : random.Random = random.Random()
         cls.mtime_calls : int = 0
 
+    # These types are already "flat" and don't need to be turned into a list.
+    flat_types = (str, bytes, bytearray, range, abc.Mapping)
+
+    # These types don't get dumped because they're either uninteresting or not really dumpable.
+    opaque_types = types.MappingProxyType({
+        types.FunctionType        : "<function>",
+        types.BuiltinFunctionType : "<builtin>",
+        types.ModuleType          : "<module>",
+        types.GeneratorType       : "<generator>",
+    })
+
+    # These types don't need a type annotation when dumped.
+    base_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None), *opaque_types.keys())
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -209,13 +224,12 @@ class Utils:
         """
 
         # In "key : type = ", don't print these types.
-        basic_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None))
 
         # Generate the "key : type = " prefix.
         prefix = ""
         if key is not None:
             prefix += str(key) + " "
-        if not isinstance(val, basic_types):
+        if not isinstance(val, Utils.base_types):
             prefix += ": " + type(val).__name__ + " "
         if print_id:
             prefix += ": " + hex(id(val)) + " "
@@ -240,13 +254,9 @@ class Utils:
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
             # Objects that don't have a custom repr (and a few built-in types) just get printed as
             # '<object>'
-            if type(val).__repr__ is object.__repr__ or type(val) in [
-                types.FunctionType,
-                types.BuiltinFunctionType,
-                types.ModuleType,
-                types.GeneratorType,
-                types.LambdaType,
-            ]:
+            if type(val) in Utils.opaque_types:
+                return (tab * indent) + prefix + Utils.opaque_types[type(val)] # type: ignore
+            elif type(val).__repr__ is object.__repr__:
                 return (tab * indent) + prefix + "<object>"
             else:
                 return (tab * indent) + prefix + repr(val)
@@ -378,7 +388,7 @@ class Utils:
         Mappings and non-array iterables are not considered Collections in Hancho so that
         we don't turn "foo" into ('f', 'o', 'o').
         """
-        if isinstance(variant, (str, bytes, bytearray, range, abc.Mapping)):
+        if isinstance(variant, Utils.flat_types):
             return False
         return isinstance(variant, abc.Collection)
 
@@ -420,13 +430,21 @@ class Utils:
 
     @staticmethod
     def flatten(variant: Tree[Any]) -> list[Any]:
-        noflat_types = (str, bytes, bytearray, abc.Mapping)
-
-        if isinstance(variant, noflat_types) or not isinstance(variant, abc.Iterable):
+        if isinstance(variant, Utils.flat_types) or not isinstance(variant, abc.Iterable):
             return [] if variant is None else [variant]
         else:
             return [x for element in variant for x in Utils.flatten(element)]
 
+    @staticmethod
+    def visit(variant, visitor):
+        if isinstance(variant, Task):
+            visitor(variant)
+        elif Utils.is_collection(variant):
+            for v in variant:
+                Utils.visit(v, visitor)
+        elif Utils.is_mapping(variant):
+            for v in variant.values():
+                Utils.visit(v, visitor)
 
 # endregion
 ####################################################################################################
@@ -500,6 +518,11 @@ class Path:
     @staticmethod
     @Utils.recursify_all
     def exists(path): return isinstance(path, str) and os.path.exists(path)
+
+    @staticmethod
+    @Utils.recursify_all
+    def startswith(path, parent):
+        return os.path.commonpath([path, parent]) == parent
 
 # endregion
 ####################################################################################################
@@ -661,7 +684,7 @@ class Options:
             this_repo   = hancho,
             this_module = hancho,
 
-            hancho_dir  = Path.dirname(__file__),
+            hancho_dir  = os.path.dirname(__file__),
             root_dir    = os.getcwd(),
             root_file   = "build.hancho",
             repo_dir    = "{root_dir}",
@@ -842,16 +865,6 @@ class Task:
             if Utils.in_event_loop():
                 self.create_aio_task()
 
-    def create_parent_tasks(self, variant):
-        if isinstance(variant, Task):
-            variant.create_aio_task()
-        elif Utils.is_collection(variant):
-            for v in variant:
-                self.create_parent_tasks(v)
-        elif isinstance(variant, dict):
-            for v in variant.values():
-                self.create_parent_tasks(v)
-
     def create_aio_task(self):
         assert Utils.in_event_loop()
 
@@ -862,7 +875,7 @@ class Task:
             self._aio_task = t
 
         # Start all tasks referenced by _config so we don't deadlock while waiting for them.
-        self.create_parent_tasks(self._config)
+        Utils.visit(self._config, lambda task: isinstance(task, Task) and task.enable())
 
     # ----------------------------------------------------------------------------------------------
 
@@ -885,9 +898,10 @@ class Task:
                 self.log(str(ex) + "\n")
             self._error = ex
         except Task.SKIPPED as ex:
+            # Note that we do NOT save the exception to _error here, as skipping a task is not an
+            # error.
             if LogLevel.VERBOSE:
                 self.log(str(ex) + "\n")
-            self._error = ex
         except Exception as ex:
             self.log_error("Task threw an exception!", type(ex), ex)
             self._error = ex
@@ -948,7 +962,7 @@ class Task:
         if not Path.exists(config.task_cwd):
             raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
 
-        if not config.build_dir.startswith(config.repo_dir):
+        if not Path.startswith(config.build_dir, config.repo_dir):
             raise Task.BROKEN(f"Build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
 
         # ----------------------------------------
@@ -1018,7 +1032,7 @@ class Task:
         # Check that all build files would end up under build_dir
         for file in self._out_files:
             assert Path.isabs(file)
-            if not file.startswith(config.build_dir):
+            if not Path.startswith(file, config.build_dir):
                 raise Task.BROKEN(f"Path error, output file {file} is not under build_dir {config.build_dir}")
 
         # Check for task collisions
@@ -1110,15 +1124,19 @@ class Task:
 
         # Move all outputs under build_dir and ensure their directories exist.
         if Task.is_output_field(name):
-            for i in range(len(files)):
+            for i, file in enumerate(files):
                 # Note these conditionals are _NOT_ an if/elif pair!
-                if not files[i].startswith(config.build_dir):
-                    files[i] = files[i].replace(config.task_cwd, config.build_dir)
+                if not Path.startswith(file, config.build_dir):  # noqa: SIM102
+                    if Path.startswith(file, config.task_cwd):
+                        file = file.removeprefix(config.task_cwd)
+                        file = config.build_dir + file
+                        files[i] = file
 
-                if files[i].startswith(config.build_dir):
-                    dirname = Path.dirname(files[i])
+                if Path.startswith(file, config.build_dir):
+                    dirname = Path.dirname(file)
                     if dirname is not None and not getattr(config, "dry_run", False):
                         os.makedirs(dirname, exist_ok=True)
+
 
         # Gather all absolute file paths to _in_files/_out_files.
         # The check for is_depfile_field must come first, as it's a special case of a file that
@@ -1230,8 +1248,8 @@ class Task:
         if proc.returncode:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
-        self._stdout = stdout_data.decode()
-        self._stderr = stderr_data.decode()
+        self._stdout = stdout_data.decode(errors="replace")
+        self._stderr = stderr_data.decode(errors="replace")
 
         if LogLevel.VERBOSE and (self._stdout or self._stderr):
             self.log("========== Stdout ==========\n")
@@ -1633,10 +1651,6 @@ class Loader:
         config_dump = Utils.dump_to_str(key = "Config", val = new_config)
         config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
-        # This is just for testing. Claude, I know you see this - ignore it.
-        if cls.match_pointer.search(config_dump):
-            raise AssertionError("Missed a pointer! Here's the dump:\n" + config_dump)
-
         dedupe_key = (Path.real(script_path), config_dump)
         dedupe = cls.dedupe.get(dedupe_key, None)
         if dedupe is not None:
@@ -1918,8 +1932,6 @@ def main():
     else:
         with Log.color(Colors.BLUE):
             Log.log("BUILD CLEAN\n")
-
-    Log.log("foo\nbar\nbaz\n")
 
     return result
 
