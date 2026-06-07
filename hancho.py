@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+#!/usr/bin/python3
 # region header
 
 """
@@ -78,7 +79,9 @@ class Log:
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def should_log(verbosity):
+    def should_log(verbosity : Log.Verbosity):
+        if not isinstance(verbosity, Log.Verbosity):
+            assert isinstance(verbosity, Log.Verbosity)
         return verbosity <= Options.verbosity
 
     @staticmethod
@@ -95,6 +98,13 @@ class Log:
         Log.indent_depth += 1
         yield
         Log.indent_depth -= 1
+
+#    @staticmethod
+#    @contextmanager
+#    def verbosity():
+#        Log.indent_depth += 1
+#        yield
+#        Log.indent_depth -= 1
 
     # ----------------------------------------------------------------------------------------------
 
@@ -117,10 +127,10 @@ class Log:
             if not Options.wrap:
                 line = Log.clip_printable(line, Options.con_w)
             sys.stdout.write(line)
-            sys.stdout.flush()
             Log.at_newline = True
         else:
             Log.at_newline = False
+        sys.stdout.flush()
 
     @classmethod
     def _log_at(cls, verbosity, text: str):
@@ -150,10 +160,14 @@ class Log:
     def log_t(cls, message : str): Log.log_at(Log.Verbosity.TRACE, message)
 
     @classmethod
-    def log_d(cls, message : str): Log.log_at(Log.Verbosity.DEBUG, message)
+    def log_d(cls, message : str):
+        with Log.color(0x804040):
+            Log.log_at(Log.Verbosity.DEBUG, message)
 
     @classmethod
-    def log_v(cls, message : str): Log.log_at(Log.Verbosity.VERBOSE, message)
+    def log_v(cls, message : str):
+        with Log.color(0x404040):
+            Log.log_at(Log.Verbosity.VERBOSE, message)
 
     @classmethod
     def log_n(cls, message : str): Log.log_at(Log.Verbosity.NORMAL, message)
@@ -917,18 +931,29 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
+    def _log_at(self, verbosity : Log.Verbosity, message : str):
+        if not Log.should_log(verbosity):
+            return
+        lines = message.split("\n")
+        for i, line in enumerate(lines):
+            if not line:
+                continue
+            with Log.color(Colors.LIME):
+                Log.log_at(verbosity, f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
+            Log.log_at(verbosity, line)
+            if i < len(lines) - 1:
+                Log.log_at(verbosity, "\n")
+
     def _log(self, message : str):
-        with Log.color(Colors.LIME):
-            Log.log(f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
-        Log.log(message)
+        self._log_at(Log.Verbosity.NORMAL, message)
 
     def _log_d(self, message : str):
-        if Log.should_log(Log.Verbosity.DEBUG):
-            self._log(message)
+        with Log.color(0x804040):
+            self._log_at(Log.Verbosity.DEBUG, message)
 
     def _log_v(self, message : str):
-        if Log.should_log(Log.Verbosity.VERBOSE):
-            self._log(message)
+        with Log.color(0x404040):
+            self._log_at(Log.Verbosity.VERBOSE, message)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1000,9 +1025,8 @@ class Task:
         expand = self._expand
 
         if Log.should_log(Log.Verbosity.DEBUG):
-            Log.log("Task config before expand:\n")
-            Log.log(str(config))
-            Log.log("\n")
+            self._log_d("Task config before expand:\n")
+            self._log_d(str(config) + "\n")
 
         # ----------------------------------------
         # Expand all fields that don't depend on input/output filenames (basically everything
@@ -1087,9 +1111,8 @@ class Task:
         config.command = expand.command
 
         if Log.should_log(Log.Verbosity.DEBUG):
-            Log.log("Task config after expand:")
-            Log.log(str(config))
-            Log.log("\n")
+            self._log_d("Task config after expand:\n")
+            self._log_d(str(config) + "\n")
 
         # Dry runs early out after config expansion
         if config.dry_run:
@@ -1310,14 +1333,14 @@ class Task:
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        if (self._stdout or self._stderr) and Log.should_log(self._config.verbosity):
+        if Log.should_log(Log.Verbosity.VERBOSE) and (self._stdout or self._stderr):
             self._log_v("========== Stdout ==========\n")
             for line in self._stdout.strip().split("\n"):
-                self._log(line + "\n")
-            self._log("========== Stderr ==========\n")
+                self._log_v(line + "\n")
+            self._log_v("========== Stderr ==========\n")
             for line in self._stderr.strip().split("\n"):
-                self._log(line + "\n")
-            self._log("============================\n")
+                self._log_v(line + "\n")
+            self._log_v("============================\n")
 
         return proc.returncode
 
@@ -1882,6 +1905,7 @@ class Runner:
                 cls.live_aio_tasks.discard(finished_aio_task)
                 cls.tasks_awaited += 1
         time_build = time.perf_counter() - time_a
+        Log.log_v(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
 
         if Options.max_errors is None:
             pass
@@ -1896,25 +1920,6 @@ class Runner:
 
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*cls.live_aio_tasks, return_exceptions=True)
-
-        Options.scroll = True
-
-        Log.log(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
-        Log.log_v(f"Tasks created:    {len(cls.all_tasks)}\n")
-        Log.log_v(f"Tasks awaited:    {cls.tasks_awaited}\n")
-        Log.log_v(f"Tasks finished:   {cls.tasks_finished}\n")
-        Log.log_v(f"Tasks broken:     {cls.tasks_broken}\n")
-        Log.log_v(f"Tasks failed:     {cls.tasks_failed}\n")
-        Log.log_v(f"Tasks cancelled:  {cls.tasks_cancelled}\n")
-        Log.log_v(f"Tasks skipped:    {cls.tasks_skipped}\n")
-        Log.log_v(f"Mtime calls:      {Utils.mtime_calls}\n")
-
-        if cls.tasks_failed or cls.tasks_broken:
-            Log.log("hancho: BUILD FAILED\n")
-        elif cls.tasks_finished:
-            Log.log("hancho: BUILD PASSED\n")
-        else:
-            Log.log("hancho: BUILD CLEAN\n")
 
         return -1 if cls.tasks_failed or cls.tasks_broken else 0
 
@@ -2019,8 +2024,26 @@ def main():
     # ------------------------------------
     # Done
 
-    if not Log.at_newline:
-        sys.stdout.write("\x1B[0m\n")
+    Options.scroll = True
+
+    Log.log_v(f"Tasks created:    {len(Runner.all_tasks)}\n")
+    Log.log_v(f"Tasks awaited:    {Runner.tasks_awaited}\n")
+    Log.log_v(f"Tasks finished:   {Runner.tasks_finished}\n")
+    Log.log_v(f"Tasks broken:     {Runner.tasks_broken}\n")
+    Log.log_v(f"Tasks failed:     {Runner.tasks_failed}\n")
+    Log.log_v(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+    Log.log_v(f"Tasks skipped:    {Runner.tasks_skipped}\n")
+    Log.log_v(f"Mtime calls:      {Utils.mtime_calls}\n")
+
+    if Runner.tasks_failed or Runner.tasks_broken:
+        with Log.color(Colors.RED):
+            Log.log("BUILD FAILED\n")
+    elif Runner.tasks_finished:
+        with Log.color(Colors.GREEN):
+            Log.log("BUILD PASSED\n")
+    else:
+        with Log.color(Colors.BLUE):
+            Log.log("BUILD CLEAN\n")
 
     return result
 

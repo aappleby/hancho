@@ -39,7 +39,7 @@ test = hancho.Dict(
     u = [print, len, Merp.__repr__, lambda x : x + 1, lambda x,y,z : x * y * z],
     v = [True, False],
     w = [b"1234", b"Hello World", bytearray("Hello", 'utf-8'), range(10)],
-    x = hancho.Task(command = "echo hello world"),
+    x = hancho.Task(command = "echo tests/dump.py"),
 )
 
 print('-' * 80)

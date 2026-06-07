@@ -274,13 +274,13 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self):
-        d = Dict(a = "'  hello", b = " world   '.strip() ", c = "{a}{b}", trace = True)
+        d = Dict(a = "'  test_mul", b = "ti_eval   '.strip() ", c = "{a}{b}", trace = True)
 
         self.assertEqual(d.expand("c"),         "c")
-        self.assertEqual(d.expand("{c}"),       "'  hello world   '.strip() ")
-        self.assertEqual(d.expand("{{c}}"),     "hello world")
-        self.assertEqual(d.expand("{{{c}}}"),   "{hello world}")
-        self.assertEqual(d.expand("{{{{c}}}}"), "{{hello world}}")
+        self.assertEqual(d.expand("{c}"),       "'  test_multi_eval   '.strip() ")
+        self.assertEqual(d.expand("{{c}}"),     "test_multi_eval")
+        self.assertEqual(d.expand("{{{c}}}"),   "{test_multi_eval}")
+        self.assertEqual(d.expand("{{{{c}}}}"), "{{test_multi_eval}}")
 
 
     # This is gonna fail right now.

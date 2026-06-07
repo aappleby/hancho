@@ -67,17 +67,17 @@ class TestTasks(unittest.TestCase):
 
     # ----------------------------------------------------------------------------------------------
 
-    def test_run_tasks_zero(self):
-        # If all tasks are OK, we should get 0 from run_tasks.
-        good_task = hancho.Task(command="echo Hello World")
-        self.run_tasks(0)
-        self.assertIsNone(good_task._error)
-
     def test_run_tasks_nonzero(self):
         # If any task fails, we should get -1 from run_tasks.
-        bad_task = hancho.Task(command="echo skldjlksdlfj && (exit 255)")
+        bad_task = hancho.Task(command="echo test_run_tasks_zero && (exit 255)")
         self.run_tasks(-1)
         self.assertIsInstance(bad_task._error, hancho.Task.FAILED)  # type:ignore
+
+    def test_run_tasks_zero(self):
+        # If all tasks are OK, we should get 0 from run_tasks.
+        good_task = hancho.Task(command="echo test_run_tasks_zero")
+        self.run_tasks(0)
+        self.assertIsNone(good_task._error)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -268,7 +268,7 @@ class TestTasks(unittest.TestCase):
         """
         Non-existent commands should cause Hancho to fail the build.
         """
-        bad_task = hancho.Task(not_a_command="echo Hello World")
+        bad_task = hancho.Task(not_a_command="echo test_missing_command")
         self.run_tasks(-1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
@@ -395,7 +395,7 @@ class TestTasks(unittest.TestCase):
     def test_doesnt_create_output(self):
         # Having a file mentioned in out_obj should not magically create it
         hancho.Task(
-            command="echo Hello World >> {out_txt}",
+            command="echo test_doesnt_create_output >> {out_txt}",
             in_src=[],
             out_txt="blarp.txt",
             out_obj="result.txt",
@@ -455,7 +455,7 @@ class TestTasks(unittest.TestCase):
 
     def test_multiple_depfiles(self):
         # Creating a task with multiple depfile inputs should fail.
-        bad_task = hancho.Task(command="echo Hello World", in_depfile=["foo.txt", "bar.txt"])
+        bad_task = hancho.Task(command="echo test_multiple_depfiles", in_depfile=["foo.txt", "bar.txt"])
         self.run_tasks(-1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
@@ -598,7 +598,7 @@ class TestTasks(unittest.TestCase):
 
     def test_no_mixed_commands(self):
         bad_task = hancho.Task(
-            command=["echo Hello World", lambda task: print(f"Hello World {type(task)}")]
+            command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
         )
 
         self.run_tasks(-1)
