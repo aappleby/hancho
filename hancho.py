@@ -51,12 +51,13 @@ type Tree[T] = T | list[Tree[T]]
 ####################################################################################################
 # region Log
 
+
 class Log:
 
     @classmethod
-    def reset(cls, priority):
+    def reset(cls, verbosity):
         Log.start  : float = time.time( )
-        Log.priority  : int  = priority
+        Log.verbosity = verbosity
         Log.buffer : str  = ""
         Log.con_w  : int  = shutil.get_terminal_size().columns
         Log.dirty  : bool = False
@@ -69,15 +70,20 @@ class Log:
 
     match_escapes = re.compile(r"(\x1B.*?m)")
 
-    INFO     =  0
-    DEBUG    = 10
-    VERBOSE  = 20
-    NORMAL   = 30
-    WARNING  = 40
-    ERROR    = 50
-    CRITICAL = 60
-    FATAL    = 70
-    QUIET    = 100
+    class Verbosity(int, Enum):
+        QUIET    = 0
+        FATAL    = 10
+        CRITICAL = 20
+        ERROR    = 30
+        WARNING  = 40
+        NORMAL   = 50
+        VERBOSE  = 60
+        DEBUG    = 70
+        TRACE    = 80
+
+    @staticmethod
+    def should_log(verbosity):
+        return verbosity <= Log.verbosity
 
     # ----------------------------------------------------------------------------------------------
 
@@ -124,10 +130,8 @@ class Log:
             Log.at_newline = False
 
     @classmethod
-    def _log_at(cls, priority : int, text: str):
-        if not text:
-            return
-        if priority < Log.priority:
+    def _log_at(cls, verbosity, text: str):
+        if not text or not Log.should_log(verbosity):
             return
 
         assert Log.max_one_newline.match(text)
@@ -141,43 +145,45 @@ class Log:
 
         Log._emit(text)
 
-        if priority == Log.FATAL:
+        if verbosity == Log.Verbosity.FATAL:
             sys.exit(-1)
 
     @classmethod
-    def log_at(cls, priority, text):
+    def log_at(cls, verbosity, text):
+        if not Log.should_log(verbosity):
+            return
         lines = text.split("\n")
         for i, line in enumerate(lines):
             if i > 0:
-                Log._log_at(priority, '\n')
-            Log._log_at(priority, line)
+                Log._log_at(verbosity, '\n')
+            Log._log_at(verbosity, line)
 
     @classmethod
-    def log(cls, message : str): Log.log_at(Log.NORMAL, message)
+    def log(cls, message : str): Log.log_at(Log.Verbosity.NORMAL, message)
 
     @classmethod
-    def log_i(cls, message : str): Log.log_at(Log.INFO, message)
+    def log_t(cls, message : str): Log.log_at(Log.Verbosity.TRACE, message)
 
     @classmethod
-    def log_d(cls, message : str): Log.log_at(Log.DEBUG, message)
+    def log_d(cls, message : str): Log.log_at(Log.Verbosity.DEBUG, message)
 
     @classmethod
-    def log_v(cls, message : str): Log.log_at(Log.VERBOSE, message)
+    def log_v(cls, message : str): Log.log_at(Log.Verbosity.VERBOSE, message)
 
     @classmethod
-    def log_n(cls, message : str): Log.log_at(Log.NORMAL, message)
+    def log_n(cls, message : str): Log.log_at(Log.Verbosity.NORMAL, message)
 
     @classmethod
-    def log_w(cls, message : str): Log.log_at(Log.WARNING, message)
+    def log_w(cls, message : str): Log.log_at(Log.Verbosity.WARNING, message)
 
     @classmethod
-    def log_e(cls, message : str): Log.log_at(Log.ERROR, message)
+    def log_e(cls, message : str): Log.log_at(Log.Verbosity.ERROR, message)
 
     @classmethod
-    def log_c(cls, message : str): Log.log_at(Log.CRITICAL, message)
+    def log_c(cls, message : str): Log.log_at(Log.Verbosity.CRITICAL, message)
 
     @classmethod
-    def log_fatal(cls, message): Log.log_at(Log.FATAL, message)
+    def log_fatal(cls, message): Log.log_at(Log.Verbosity.FATAL, message)
 
     @classmethod
     def set_color(cls, hex):
@@ -795,11 +801,11 @@ class Task:
         Log.log(message)
 
     def _log_d(self, message : str):
-        if self._config.debug:
+        if Log.should_log(Log.Verbosity.DEBUG):
             self._log(message)
 
     def _log_v(self, message : str):
-        if self._config.verbose or self._config.debug:
+        if Log.should_log(Log.Verbosity.VERBOSE):
             self._log(message)
 
     # ----------------------------------------------------------------------------------------------
@@ -871,10 +877,10 @@ class Task:
         config = self._config
         expand = self._expand
 
-        #if expand.debug:
-        #    self.log("Task config before expand:", 0xFFFFFF)
-        #    for line in str(config).split("\n"):
-        #        self.log(line, 0xFFFFFF)
+        if Log.should_log(Log.Verbosity.DEBUG):
+            Log.log("Task config before expand:\n")
+            Log.log(str(config))
+            Log.log("\n")
 
         # ----------------------------------------
         # Expand all fields that don't depend on input/output filenames (basically everything
@@ -884,8 +890,7 @@ class Task:
                         "script_cwd", "script_file", "build_root", "build_dir"]
 
         flag_fields  = ["core_count", "core_max", "depformat", "build_tag", "target", "tool",
-                        "max_errors", "verbose", "debug", "dry_run", "quiet", "rebuild",
-                        "trace"]
+                        "max_errors", "verbosity", "dry_run", "rebuild", "trace"]
 
         for f in path_fields:
             if f in config:
@@ -960,10 +965,10 @@ class Task:
         config.desc    = expand.desc
         config.command = expand.command
 
-        with Log.color(0xFFFFFF):
-            Log.log_i("Task config after expand:")
-            for line in str(config).split("\n"):
-                Log.log_i(line)
+        if Log.should_log(Log.Verbosity.DEBUG):
+            Log.log("Task config after expand:")
+            Log.log(str(config))
+            Log.log("\n")
 
         # Dry runs early out after config expansion
         if config.dry_run:
@@ -975,7 +980,7 @@ class Task:
         def is_braced(v: Any) -> bool:
             if isinstance(v, list):
                 return any(is_braced(v2) for v2 in v)
-            return Utils.braced.search(v) is not None if isinstance(v, str) else False
+            return (Utils.braced.search(v) is not None) if isinstance(v, str) else False
 
         if config.strict and is_braced(config.command):
             raise Task.BROKEN("We are in strict mode and this task's command has curly braces in it - did you typo a template?")
@@ -1155,7 +1160,6 @@ class Task:
 
     async def run_command(self, command):
         config = self._config
-        #print(f"v {self._config.verbose} d {self._config.debug}")
         with Log.color(Colors.BLUE):
             self._log_v(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}\n")
 
@@ -1185,7 +1189,7 @@ class Task:
         self._stdout = stdout_data.decode()
         self._stderr = stderr_data.decode()
 
-        if (self._stdout or self._stderr) and (self._config.verbose or self._config.debug):
+        if (self._stdout or self._stderr) and Log.should_log(self._config.verbosity):
             self._log_v("========== Stdout ==========\n")
             for line in self._stdout.strip().split("\n"):
                 self._log(line + "\n")
@@ -1474,24 +1478,19 @@ class Expander(abc.MutableMapping[str, object]):
     @Utils.recursify_apply_mip
     @track_depth
     @staticmethod
-    def _expand(text : Any, context : Dict | Expander) -> str:
-        if not isinstance(text, str):
-            return text
-
-        match = Utils.braced.search(text)
+    def _expand(variant : Any, context : Dict | Expander) -> str:
+        match = Utils.braced.search(variant) if isinstance(variant, str) else None
         if match is None:
-            return text
+            return variant
 
-        #with Tracer(context, f"expand({text!r})") as tracer:
-        if match.group() == text:
-            result = Expander._eval_macro(text, context)
+        if match.group() == variant:
+            result = Expander._eval_macro(variant, context)
         else:
-            result = Expander._expand_template(text, context)
+            result = Expander._expand_template(variant, context)
 
-        if result != text:
+        if result != variant:
             result = Expander._expand(result, context)
 
-            #tracer.save_result(result)
         return result
 
 # endregion
@@ -1624,10 +1623,8 @@ class Loader:
 
             enabled     = False,
             max_errors  = 0,
-            verbose     = False,
-            debug       = False,
+            verbosity   = "NORMAL",
             dry_run     = False,
-            quiet       = False,
             trace       = False,
             rebuild     = False,
             wrap        = False,
@@ -1654,15 +1651,18 @@ class Loader:
         parser.add_argument("-j", "--core_max",   default = None, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
         parser.add_argument("--max_errors",       default = None, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
 
-        parser.add_argument("-v", "--verbose",   action = argparse.BooleanOptionalAction, help="Show verbose build info")
-        parser.add_argument("-q", "--quiet",     action = argparse.BooleanOptionalAction, help="Mute all output")
         parser.add_argument("-n", "--dry_run",   action = argparse.BooleanOptionalAction, help="Do not run commands")
-        parser.add_argument("-d", "--debug",     action = argparse.BooleanOptionalAction, help="Print debugging information")
         parser.add_argument("-a", "--rebuild",   action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument("--trace",           action = argparse.BooleanOptionalAction, help="Trace all text expansion")
         parser.add_argument("--wrap",            action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
         parser.add_argument("--strict",          action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
         parser.add_argument("--scroll",          action = argparse.BooleanOptionalAction, help="Makes the output scroll instead of keeping it on one line like Ninja.")
+
+        choices = [v.lower() for v in Log.Verbosity.__members__]
+
+        parser.add_argument("-v", "--verbosity", choices=choices, default="NORMAL", help="Select verbosity level")
+
+
         # fmt: on
 
         (flags, unrecognized) = parser.parse_known_args(args)
@@ -1944,7 +1944,7 @@ def init(*args, **kwargs):
     """
     Re-initializes all of Hancho.
     If you are importing Hancho directly, you should call this as
-    hancho.init(debug = True, quiet = False, myoption=1234)
+    hancho.init(verbosity = hancho.Log.Verbosity.DEBUG, myoption=1234)
     """
     reset(*args, **kwargs)
 
@@ -1953,14 +1953,9 @@ def init(*args, **kwargs):
 def reset(*args, **kwargs):
     Loader.reset(*args, **kwargs)
 
-    if hancho.config.quiet:
-        Log.reset(Log.QUIET)
-    elif hancho.config.debug:
-        Log.reset(Log.DEBUG)
-    elif hancho.config.verbose:
-        Log.reset(Log.VERBOSE)
-    else:
-        Log.reset(Log.NORMAL)
+    if isinstance(hancho.config.verbosity, str):
+        hancho.config.verbosity = Log.Verbosity[hancho.config.verbosity.upper()]
+    Log.reset(hancho.config.verbosity)
 
     Expander.reset()
     Utils.reset()
@@ -1977,9 +1972,9 @@ def main():
     Log.log_v(f"Hancho started as '{" ".join(sys.argv)}'\n")
 
     with Log.color(Colors.LIME):
-        if flags.debug:
+        if flags.verbosity == "DEBUG":
             Log.log_d("Debug mode on\n")
-        if flags.verbose:
+        if flags.verbosity == "VERBOSE":
             Log.log_v("Verbose mode on\n")
 
     expander = Expander(hancho.config)
@@ -2066,17 +2061,6 @@ def __getattr__(name):
 # ---------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-#    hancho.init()
-#
-#    d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\"2 + 2\"", trace = True)
-#    d.eval("{foo}")
-#    print()
-#    d.eval("{bar}")
-#    print()
-#    d.expand("{foo} {bar}")
-#
-#    sys.exit(0)
-
     sys.exit(main())
 else:
     init()

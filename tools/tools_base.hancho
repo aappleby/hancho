@@ -111,13 +111,13 @@ def make(hancho, *, in_makefile, **kwargs):
         command="make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
         make_dir="{path.dirname(in_makefile)}",
         make_file="{path.basename(in_makefile)}",
-        flags="--quiet",
+        verbosity = "QUIET"
     )
     return hancho.Task(cmd, in_makefile=in_makefile, **kwargs)
 
 
 ####################################################################################################
-# Tests
+# Testsz
 
 run_test = hancho.Tool(
     desc="Running test {in_test}",

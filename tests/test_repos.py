@@ -27,7 +27,7 @@ def load_tests(loader, tests, ignore):
 
 class TestRepos(unittest.TestCase):
     def setUp(self):
-        hancho.init(quiet=True)
+        hancho.init(verbosity = "quiet")
         sys.stdout.flush()
 
     def tearDown(self):
@@ -36,7 +36,7 @@ class TestRepos(unittest.TestCase):
     def test_sticky_hancho(self):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
         result = subprocess.run(
-            ["python3", "../hancho.py", "-q", "-f", "sticky_hancho1.hancho"],
+            ["python3", "../hancho.py", "-v=quiet", "-f", "sticky_hancho1.hancho"],
             cwd=os.path.dirname(__file__),
         )
         self.assertEqual(0, result.returncode)

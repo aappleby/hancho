@@ -20,7 +20,6 @@ def setUpModule():
 #    print(repr(result))
 #    result = d.expand(r"{bs}{lb}a{bs}{rb}")
 #    print(repr(result))
-    #hancho.init(quiet = True)
 
     os.chdir(os.path.dirname(__file__))
 
@@ -35,8 +34,7 @@ def load_tests(loader, tests, ignore):
 
 class TestTemplates(unittest.TestCase):
     def setUp(self):
-        hancho.init(quiet=True)
-        #hancho.init(debug=True, verbose=True, trace=True)
+        hancho.init(verbosity = "QUIET")
         sys.stdout.flush()
 
     def doctest_basic_eval(self):

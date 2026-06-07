@@ -13,7 +13,7 @@ import hancho
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init(quiet=True)
+    hancho.init(verbosity = "QUIET")
 
 
 def load_tests(loader, tests, ignore):
