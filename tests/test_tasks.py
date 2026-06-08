@@ -705,6 +705,12 @@ class TestTasks(unittest.TestCase):
         mtime1a = mtime_ns("build/blerp/sherp")
         mtime2a = mtime_ns("build/blerp/nerp")
 
+        self.assertEqual(hancho.Runner.tasks_finished, 2)
+        self.assertEqual(hancho.Runner.tasks_broken, 0)
+        self.assertEqual(hancho.Runner.tasks_failed, 0)
+        self.assertEqual(hancho.Runner.tasks_cancelled, 0)
+        self.assertEqual(hancho.Runner.tasks_skipped, 0)
+
         (task1, task2) = run()
         self.assertTrue(isinstance(task1._error, hancho.Task.SKIPPED))
         self.assertTrue(task2._error is None)
@@ -715,6 +721,11 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1a, mtime1b) # first task clean, should be skipped
         self.assertLess(mtime2a, mtime2b)  # second task always rebuilds and the skipped task shouldn't stop it.
 
+        self.assertEqual(hancho.Runner.tasks_finished, 1)
+        self.assertEqual(hancho.Runner.tasks_broken, 0)
+        self.assertEqual(hancho.Runner.tasks_failed, 0)
+        self.assertEqual(hancho.Runner.tasks_cancelled, 0)
+        self.assertEqual(hancho.Runner.tasks_skipped, 1)
 
 ####################################################################################################
 
