@@ -948,7 +948,8 @@ class Task:
 
         # ----------------------------------------
         # Expand all fields that don't depend on input/output filenames (basically everything
-        # except name/desc/command)
+        # except name/desc/command). To prevent expansion-order issues, we expand to a temp Dict
+        # and then copy them back into config.
 
         path_fields  = ["build_dir", "build_root", "hancho_dir", "repo_dir", "repo_file",
                         "root_dir", "root_file", "script_cwd", "script_file", "task_cwd", "in_depfile",]
@@ -964,7 +965,8 @@ class Task:
             if f in config:
                 temp[f] = expand[f]
 
-        config.merge(temp)
+        for k, v in temp.items():
+            config[k] = v
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -1091,13 +1093,16 @@ class Task:
 
         # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path)). And just out of paranoia, we expand
-        # to a temp Dict and then merge back into the config.
+        # to a temp Dict and then copy them back into the config.
 
         temp = Dict()
+
         for key, files in config.items():
             if Task.is_io_field(key):
                 temp[key] = self._expander.expand(files)
-        config.merge(temp)
+
+        for k, v in temp.items():
+            config[k] = v
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1170,7 +1175,7 @@ class Task:
         Input and output file paths in .hancho scripts are declared relative to the directory the
         script is in (stored in the config under 'script_cwd').
         In general we want to run commands from the root of the repo and store output files in
-        repo/build. Additionally, our file paths may be text templates that we need to expand first.
+        repo/build.
         This function takes care of all of that and a few other things, and tries to do so in a
         robust way. Whether this actually turns out to be robust or not is yet to be determined.
         """
