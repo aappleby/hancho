@@ -17,8 +17,6 @@ could format your hard drive and email spam to your grandparents. Use responsibl
 
 """
 
-# FIXME you've got that doubled-build-path bug again
-
 from __future__ import annotations
 
 import argparse
@@ -1089,6 +1087,19 @@ class Task:
             raise Task.BROKEN(f"The build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
 
         # ----------------------------------------
+        # Expand all in_ and out_ filenames.
+
+        # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
+        # prefix + swap(abs_path) != abs(prefix + swap(path)). And just out of paranoia, we expand
+        # to a temp Dict and then merge back into the config.
+
+        temp = Dict()
+        for key, files in config.items():
+            if Task.is_io_field(key):
+                temp[key] = self._expander.expand(files)
+        config.merge(temp)
+
+        # ----------------------------------------
         # Do all the file path remapping so our commands will work
 
         for key, files in [i for i in config.items() if Task.is_io_field(i[0])]:
@@ -1165,12 +1176,6 @@ class Task:
         """
 
         config = self._config
-        expand = self._expander
-
-        # Expand all in_ and out_ filenames.
-        # We _must_ expand these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != abs(prefix + swap(path))
-        files = expand.expand(files)
 
         # Initially, all our file paths are relative to the script_cwd that created this task.
         # Join script_cwd with the filenames to produce absolute paths.
@@ -1725,12 +1730,11 @@ class Loader:
         code = compile(source, script_path, "exec", dont_inherit=True)
 
         (script_cwd, script_file) = Path.split(script_path)
-        (script_name, _) = Path.splitext(script_file)
 
         if LogLevel.VERBOSE:
             Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
 
-        new_module = types.ModuleType(script_name)
+        new_module = types.ModuleType(script_path)
         new_module.__dict__.update(
             __file__ = script_path,
             hancho   = hancho,
