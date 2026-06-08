@@ -104,33 +104,58 @@ class Log:
         color_prefix = f"\x1B[38;2;{r};{g};{b}m" if color_hex >= 0 else ""
         color_suffix = cls.reset_color if color_hex >= 0 else ""
 
-        for i, line in enumerate(text.split("\n")):
+        lines = text.splitlines(keepends=True)
+
+        for line in lines:
             if cls.line_buffer == "":
                 cls.line_buffer += cls.get_timestamp() + " " + cls.get_indentation()
 
-            if i > 0:
-                cls.line_buffer += "\n"
+            # Wrap the line in the color prefix/suffix, but don't lose newlines.
+            if line[-1] == '\n':
+                line = line[:-1]
+                line = color_prefix + line + color_suffix + '\n'
+            else:
+                line = color_prefix + line + color_suffix
 
-            if line:
-                cls.line_buffer += color_prefix + line + color_suffix
 
+            cls.line_buffer += line
             if cls.line_buffer[-1] == '\n':
-                if not Options.wrap:
-                    cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
-                cls.line_buffer += cls.reset_color
-                # Ensure that QUIET mutes absolutely everything
-                if Options.verbosity > LogLevel.QUIET:
-                    sys.stdout.write(cls.line_buffer)
-                Log.buffer += cls.line_buffer
-                cls.line_buffer = ""
+                cls.flush()
+
+    @classmethod
+    def flush(cls):
+        # Dumps the line buffer to stdout (if we're not in quiet mode) and the internal buffer and
+        # then clears it.
+        # If the line wasn't finished (because we're exiting the app), stick a newline on it.
+        if cls.line_buffer:
+            if cls.line_buffer[-1] != '\n':
+                cls.line_buffer += '\n'
+
+            cls.line_buffer += cls.reset_color
+            if not Options.wrap:
+                cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
+
+            # Ensure that QUIET mutes absolutely everything
+            if Options.verbosity > LogLevel.QUIET:
+                sys.stdout.write(cls.line_buffer)
+
+            Log.buffer += cls.line_buffer
+            cls.line_buffer = ""
+
+            sys.stdout.write(cls.line_buffer)
+            cls.line_buffer = ""
 
     @classmethod
     def log_exception(cls, ex):
-        frame = traceback.extract_tb(ex.__traceback__)[-1]
-        Log.log(f"type      = {type(ex)}\n")
-        Log.log(f"message   = '{ex}'\n")
-        Log.log(f"location  = {frame.filename} {frame.name} @ {frame.lineno}\n")
-        Log.log(f"line      = '{frame.line}'\n")
+        tb = traceback.extract_tb(ex.__traceback__)
+        if tb:
+            frame = tb[-1]
+            Log.log(f"type      = {type(ex)}\n")
+            Log.log(f"message   = '{ex}'\n")
+            Log.log(f"location  = {frame.filename} {frame.name} @ {frame.lineno}\n")
+            Log.log(f"line      = '{frame.line}'\n")
+        else:
+            Log.log(f"Could not extract traceback from {ex}!")
 
     @classmethod
     def get_timestamp(cls):
@@ -172,17 +197,22 @@ class Log:
             return text
 
         # If we do need to clip, stick the chunks back together until we exceed width-3, then
-        # clip the last chunk and add "..."
+        # clip the last chunk and add "...". After clipping, emit all the remaining escape codes in
+        # case they do something important.
+
         accum = 0
         result = ""
+        clipped = False
         for i, chunk in enumerate(chunks):
             if i & 1:
+                # Escape code
                 result += chunk
-            else:
+            elif not clipped:
+                # Printable text
                 accum += len(chunk)
                 if accum > width - 3:
                     result += chunk[:-(accum - width + 3)] + "..."
-                    break
+                    clipped = True
                 else:
                     result += chunk
 
@@ -1377,21 +1407,19 @@ class Task:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
         if LogLevel.VERBOSE and (self._stdout or self._stderr):
-            self.log_stdout()
+            self.log(self.dump_stdout())
 
         return proc.returncode
 
     # ----------------------------------------------------------------------------------------------
 
-    def log_stdout(self):
-        Log.log("---------------- Stdout ----------------\n")
-        if self._stdout:
-            for line in self._stdout.strip().split("\n"):
-                Log.log(line + "\n")
-        Log.log("---------------- Stderr ----------------\n")
-        if self._stderr:
-            for line in self._stderr.strip().split("\n"):
-                Log.log(line + "\n")
+    def dump_stdout(self) -> str:
+        result  = "---------------- Stdout ----------------\n"
+        result += self._stdout.strip() + "\n" if self._stdout else ""
+        result += "---------------- Stderr ----------------\n"
+        result += self._stderr.strip() + "\n" if self._stderr else ""
+        result += "----------------------------------------\n"
+        return result
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1429,7 +1457,7 @@ class Task:
                 Log.log(f"command   = {self._config.command}\n")
                 if ex:
                     Log.log_exception(ex)
-                self.log_stdout()
+                Log.log(self.dump_stdout())
 
             with Log.color(0xFF0000):
                 Log.log("========================================\n")
@@ -2151,9 +2179,11 @@ if __name__ == "__main__":
         with Log.color(Colors.RED):
             Log.log("Hancho hit an exception during startup:\n")
             Log.log_exception(ex)
-
             Log.log("BUILD FAILED\n")
             sys.exit(1)
+
+    # Don't leave the last line of the log sitting in line_buffer!
+    Log.flush()
     sys.exit(result)
 else:
     init()
