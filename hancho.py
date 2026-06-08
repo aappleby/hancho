@@ -789,15 +789,19 @@ class Options:
         parser.add_argument("-a", "--rebuild",    default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument("--wrap",             default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
         parser.add_argument("--strict",           default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
-        parser.add_argument("-q", "--quiet",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=quiet. Mute all output")
-        parser.add_argument("-d", "--debug",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=debug. Print debugging information")
-        parser.add_argument("--trace",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=trace. Trace all text expansion")
+        parser.add_argument("-q", "--quiet",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=quiet. Mutes all output")
+        parser.add_argument("-v", "--verbose",    default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=verbose. Prints extra info")
+        parser.add_argument("-d", "--debug",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=debug. Prints debugging information")
+        parser.add_argument("--trace",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=trace. Traces all text expansion")
+        # fmt: on
 
         choices = [v.lower() for v in LogLevel.__members__]
-        parser.add_argument("-v", "--verbosity", choices=choices, help="Select verbosity level. Quiet = none, Trace = maximal spam")
-
-
-        # fmt: on
+        parser.add_argument(
+            "--verbosity",
+            default=argparse.SUPPRESS,
+            choices=choices,
+            help="Manually select verbosity level. Quiet = none, Trace = maximal spam",
+        )
 
         (flags, unrecognized) = parser.parse_known_args(args)
 
@@ -1267,26 +1271,24 @@ class Task:
         files = cast(list[str], Path.norm(files))
 
         # Move all outputs under build_dir and ensure their directories exist.
+        # Note - This will also move "in_depfile" under build_dir - this is _intentional_ as it's
+        # an _output_ from the compiler.
         if Task.is_output_field(name):
             for i, file in enumerate(files):
-                # Note these conditionals are _NOT_ an if/elif pair!
+                # Note that this conditional and the one below do are _NOT_ an if/elif pair!
                 if not Path.startswith(file, config.build_dir):  # noqa: SIM102
                     if Path.startswith(file, config.task_cwd):
                         file = file.removeprefix(config.task_cwd)
                         file = config.build_dir + file
                         files[i] = file
 
-                if Path.startswith(file, config.build_dir):
+                if not config.dry_run and Path.startswith(file, config.build_dir):
                     dirname = Path.dirname(file)
-                    if dirname is not None and not config.dry_run:
-                        os.makedirs(dirname, exist_ok=True) #type:ignore
-
+                    os.makedirs(dirname, exist_ok=True) #type:ignore
 
         # Gather all absolute file paths to _in_files/_out_files.
-
         # The check for is_depfile_field must come first, as it's a special case of a file that
         # is technically _both_ an input and an output file, even though its name starts with "in".
-
         for i in range(len(files)):
             if Task.is_depfile_field(name):
                 if Path.isfile(files[i]):
@@ -2148,8 +2150,8 @@ def main():
 # other by changing shared config fields. To ensure each script sees the right config, we make the
 # module-level __getattr__ redirect to the config stored in the ContextVar in Options.
 #
-# This is also where we look up command aliases so that script macros don't have to use
-# fully-qualified names like 'hancho.Path.norm'.
+# This is also where we look up command aliases so that scripts don't have to use fully-qualified
+# names like 'hancho.Path.norm'.
 
 def __getattr__(name):
     if name == "config":
@@ -2179,9 +2181,9 @@ if __name__ == "__main__":
             Log.log_exception(ex)
             Log.log("BUILD FAILED\n")
             result = 1
-
-    # Don't leave the last line of the log sitting in line_buffer!
-    Log.flush()
+    finally:
+        # Don't leave the last line of the log sitting in line_buffer!
+        Log.flush()
     sys.exit(result)
 else:
     init()
