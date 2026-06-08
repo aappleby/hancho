@@ -64,6 +64,7 @@ class Log:
         cls.current_color  : int  = -1
         cls.line_buffer = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
+        cls.reset_color = "\x1B[0m"
 
     # ----------------------------------------------------------------------------------------------
 
@@ -94,14 +95,14 @@ class Log:
         hex = cls.current_color
         r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
         color_prefix = f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else ""
-        color_suffix = "\x1B[0m" if hex >= 0 else ""
+        color_suffix = cls.reset_color if hex >= 0 else ""
 
         for i, line in enumerate(text.split("\n")):
             if not cls.line_buffer:
                 cls.line_buffer += f"[{time.time() - Log.start:12.6f}] " + "│ " * Log.indent_depth
 
             if i > 0:
-                cls.line_buffer += "\x1B[0m\n"
+                cls.line_buffer += "\n"
 
             if line:
                 cls.line_buffer += color_prefix + line + color_suffix
@@ -109,6 +110,7 @@ class Log:
             if cls.line_buffer[-1] == '\n':
                 if not Options.wrap:
                     cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
+                cls.line_buffer += cls.reset_color
                 # Ensure that QUIET mutes absolutely everything
                 if Options.verbosity > LogLevel.QUIET:
                     sys.stdout.write(cls.line_buffer)
@@ -423,7 +425,7 @@ class Path:
     @staticmethod
     def abs(path):
         if Utils.is_collection(path):
-            return [Path.real(p) for p in path]
+            return [Path.abs(p) for p in path]
         return os.path.abspath(path) if path else ""
 
     @staticmethod
@@ -878,10 +880,9 @@ class Task:
                 self.log(str(ex) + "\n")
             self._error = ex
         except Task.SKIPPED as ex:
-            # Note that we do NOT save the exception to _error here, as skipping a task is not an
-            # error.
             if LogLevel.VERBOSE:
                 self.log(str(ex) + "\n")
+            self._error = ex
         except Exception as ex:
             self.log_error("Task threw an exception!", type(ex), ex)
             self._error = ex
@@ -903,6 +904,9 @@ class Task:
     async def task_main(self):
         config = self._config
         expand = self._expand
+
+        Task.id_counter += 1
+        self._task_id = Task.id_counter
 
         if LogLevel.DEBUG:
             self.log("Task config before expand:\n")
@@ -957,11 +961,13 @@ class Task:
             for i, file in enumerate(files):
                 if isinstance(file, Task):
                     task = cast(Task, file)
+                    if task._aio_task is None:
+                        raise AssertionError("One of a task's input sub-tasks was not started")
                     try:
-                        if task._aio_task is None:
-                            raise AssertionError("One of a task's input sub-tasks was not started")
-                        else:
-                            await cast(asyncio.Task, task._aio_task)
+                        await cast(asyncio.Task, task._aio_task)
+                    except Task.SKIPPED:
+                        # This input was clean and didn't need to rebuild.
+                        pass
                     except Exception as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
 
@@ -969,12 +975,6 @@ class Task:
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
             config[key] = Utils.flatten(files)
-
-        # ----------------------------------------
-        # Now that all our inputs are ready, grab a _task_id that we'll use in our logging.
-
-        Task.id_counter += 1
-        self._task_id = Task.id_counter
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1115,7 +1115,7 @@ class Task:
                 if Path.startswith(file, config.build_dir):
                     dirname = Path.dirname(file)
                     if dirname is not None and not getattr(config, "dry_run", False):
-                        os.makedirs(dirname, exist_ok=True)
+                        os.makedirs(dirname, exist_ok=True) #type:ignore
 
 
         # Gather all absolute file paths to _in_files/_out_files.
@@ -1632,11 +1632,11 @@ class Loader:
         config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
         dedupe_key = (Path.real(script_path), config_dump)
-        dedupe = cls.dedupe.get(dedupe_key, None)
+        dedupe = cls.dedupe.get(dedupe_key, None) #type:ignore
         if dedupe is not None:
             return dedupe
 
-        cls.dedupe[dedupe_key] = new_module
+        cls.dedupe[dedupe_key] = new_module #type:ignore
 
         # ----------------------------------------
         # Run the module.

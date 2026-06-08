@@ -687,6 +687,34 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(Path("build/dry_stuff/test1.txt").exists())
         self.assertFalse(Path("build/dry_stuff/test2.txt").exists())
 
+    def test_dependency_skipped(self):
+        def run():
+            hancho.init(verbosity = "quiet", core_max=1)
+            task1 = hancho.Task(command = "cp {in_file} {out_file}", in_file = "data/dummy.txt", out_file = "blerp/sherp")
+            task2 = hancho.Task(command = "cp {in_file} {out_file}", in_file = task1, out_file = "blerp/nerp", rebuild = True)
+            self.run_tasks(0)
+            return (task1, task2)
+
+        self.assertFalse(Path("build/blerp/sherp").exists())
+        self.assertFalse(Path("build/blerp/nerp").exists())
+        (task1, task2) = run()
+        self.assertTrue(task1._error is None)
+        self.assertTrue(task2._error is None)
+        self.assertTrue(Path("build/blerp/sherp").exists())
+        self.assertTrue(Path("build/blerp/nerp").exists())
+        mtime1a = mtime_ns("build/blerp/sherp")
+        mtime2a = mtime_ns("build/blerp/nerp")
+
+        (task1, task2) = run()
+        self.assertTrue(isinstance(task1._error, hancho.Task.SKIPPED))
+        self.assertTrue(task2._error is None)
+        self.assertTrue(Path("build/blerp/sherp").exists())
+        self.assertTrue(Path("build/blerp/nerp").exists())
+        mtime1b = mtime_ns("build/blerp/sherp")
+        mtime2b = mtime_ns("build/blerp/nerp")
+        self.assertEqual(mtime1a, mtime1b) # first task clean, should be skipped
+        self.assertLess(mtime2a, mtime2b)  # second task always rebuilds and the skipped task shouldn't stop it.
+
 
 ####################################################################################################
 
