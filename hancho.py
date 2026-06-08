@@ -63,7 +63,6 @@ class Log:
     @classmethod
     def reset(cls):
         cls.start  : float = time.time( )
-        cls.buffer : str  = ""
         cls.indent_depth : int  = 0
         cls.current_color  : int  = -1
         cls.line_buffer : str = ""
@@ -123,8 +122,7 @@ class Log:
 
     @classmethod
     def flush(cls):
-        # Dumps the line buffer to stdout (if we're not in quiet mode) and the internal buffer and
-        # then clears it.
+        # Dumps the line buffer to stdout (if we're not in quiet mode) and then clears it.
         if cls.line_buffer:
             # If the line wasn't finished (because we're exiting the app), stick a newline on it.
             if cls.line_buffer[-1] != '\n':
@@ -137,7 +135,6 @@ class Log:
             if Options.verbosity > LogLevel.QUIET:
                 sys.stdout.write(cls.line_buffer)
 
-            Log.buffer += cls.line_buffer
             cls.line_buffer = ""
 
     @classmethod
@@ -859,7 +856,7 @@ class Task:
         self._config  = Dict(Options.cv_config(), *args, **kwargs)
         self._expander  = Expander.wrap(self._config)
 
-        # Why this task rebuilt, or "" if it did not need to rebuilds.
+        # Why this task rebuilt, or "" if it did not need to rebuild.
         self._reason = ""
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -1061,7 +1058,9 @@ class Task:
         # ----------------------------------------
         # Run all the task's commands
 
-        self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
+        if LogLevel.NORMAL:
+            self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
+
         if LogLevel.VERBOSE:
             self.log(f"Task rebuilding because: {self._reason}\n")
 
@@ -1147,7 +1146,7 @@ class Task:
             # and callbacks execute from script_cwd (because you expect to be in the same directory
             # as the script when the callback is firing).
 
-            # This means that rel-ified paths can only be  rel'd to one of the two cwds, not both.
+            # This means that rel-ified paths can only be rel'd to one of the two cwds, not both.
             # And that means we disallow mixed cli/callback command lists.
 
             if type(command) is not type(config.command[0]):
@@ -1275,7 +1274,7 @@ class Task:
         # an _output_ from the compiler.
         if Task.is_output_field(name):
             for i, file in enumerate(files):
-                # Note that this conditional and the one below do are _NOT_ an if/elif pair!
+                # Note that this conditional and the one below are _NOT_ an if/elif pair!
                 if not Path.startswith(file, config.build_dir):  # noqa: SIM102
                     if Path.startswith(file, config.task_cwd):
                         file = file.removeprefix(config.task_cwd)
@@ -1389,15 +1388,22 @@ class Task:
         try:
             (stdout_data, stderr_data) = await proc.communicate()
         except asyncio.CancelledError as ex:
-            # We don't trust asyncio to clean up all cancelled processes, so we do it the hard way
-            # here and kill the whole process group.
+            # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
+            # usually (but not always) arises from hitting ctrl-c while the build is running.
+            #
+            # If we see a CancelledError while running a command, we can't trust asyncio to clean
+            # up all cancelled processes, so we do it the hard way here and kill the whole process
+            # group.
+            #
             # Note - this only works on Linux. We will need a slightly different implementation for
             # Windows, which is out of scope until Hancho is shippable.
             with suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             await proc.wait()
-            raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from ex
+            # Re-raise so that dependent tasks and the top-level except can see the error.
+            raise ex
         except Exception as ex:
+            # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
         self._stdout = stdout_data.decode(errors="replace")
@@ -1428,13 +1434,12 @@ class Task:
         if LogLevel.VERBOSE:
             self.log(f"{callback_dir}$ {command}\n")
 
-        try:
+        # Callbacks run from the script_cwd where they were defined so that relative paths used
+        # in the callback will be correct.
+        with chdir(self._config.script_cwd):
             result = command(self)
-            if isawaitable(result):
-                result = await result
-        except Exception as ex:
-            self.log_task_exception("Callback threw an exception!", ex)
-            raise
+        if isawaitable(result):
+            result = await result
 
         return result
 
@@ -1997,7 +2002,8 @@ class Runner:
             Log.log(f"Running {cls.tasks_finished} tasks took {time_build:.3f} seconds\n")
 
         if cls.count_failures() > Options.max_errors:
-            Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
+            if LogLevel.ERROR:
+                Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
             if LogLevel.VERBOSE:
