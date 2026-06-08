@@ -11,7 +11,13 @@ Hancho requires Python 3.12+, which should be fairly universal in 2026.
 
 Hancho's test suite can be found in /tests and can be run via "python -m unittest" in the root of
 the Hancho repo.
+
+WARNING - Hancho is NOT A SANDBOX, your build scripts can evaluate arbitrary Python code which
+could format your hard drive and email spam to your grandparents. Use responsibly.
+
 """
+
+# FIXME you've got that doubled-build-path bug again
 
 from __future__ import annotations
 
@@ -523,6 +529,9 @@ class Path:
 
     @staticmethod
     def startswith(path, parent):
+        # WARNING - 'startswith' can throw ValueError if there's a mix of abs/rel paths, or if the
+        # paths are on different volumes in Windows. We don't handle this yet, but we will need to
+        # eventually.
         if Utils.is_collection(path):
             return all(Path.startswith(p, parent) for p in path)
         return os.path.commonpath([path, parent]) == parent
@@ -545,7 +554,11 @@ class Dict(dict):
 
     def __init__(self, *args, **kwargs):
         super().__init__()
+        self.merge(*args, **kwargs)
 
+    # ----------------------------------------
+
+    def merge(self, *args, **kwargs):
         # Ignore Nones and empty dicts.
         for arg in filter(None, (*args, kwargs)):
             assert Utils.is_mapping(arg)
@@ -787,7 +800,7 @@ class Task:
         # Save the context, we will use it when we create the asyncio.Task
         self._context = contextvars.copy_context()
         self._config  = Dict(Options.cv_config(), *args, **kwargs)
-        self._expand  = Expander.wrap(self._config)
+        self._expander  = Expander.wrap(self._config)
 
         # Why this task rebuilt, or "" if it did not need to rebuilds.
         self._reason = ""
@@ -926,7 +939,7 @@ class Task:
 
     async def task_main(self):
         config = self._config
-        expand = self._expand
+        expand = self._expander
 
         Task.id_counter += 1
         self._task_id = Task.id_counter
@@ -944,12 +957,16 @@ class Task:
 
         flag_fields = [ "build_tag", "core_count", "depformat", "dry_run", "enabled", ]
 
+        temp = Dict()
+
         for f in path_fields:
             if f in config:
-                config[f] = Path.norm(expand[f])
+                temp[f] = Path.norm(expand[f])
         for f in flag_fields:
             if f in config:
-                config[f] = expand[f]
+                temp[f] = expand[f]
+
+        config.merge(temp)
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -1034,7 +1051,7 @@ class Task:
 
     def task_init(self):
         config = self._config
-        expand = self._expand
+        expand = self._expander
 
         if os.getcwd() != config.task_cwd:
             raise AssertionError("Running task_init while we're not in task's cwd")
@@ -1148,7 +1165,7 @@ class Task:
         """
 
         config = self._config
-        expand = self._expand
+        expand = self._expander
 
         # Expand all in_ and out_ filenames.
         # We _must_ expand these first before joining paths or the paths will be incorrect:
@@ -1300,11 +1317,11 @@ class Task:
         except Exception as ex:
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
-        if proc.returncode:
-            raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
-
         self._stdout = stdout_data.decode(errors="replace")
         self._stderr = stderr_data.decode(errors="replace")
+
+        if proc.returncode:
+            raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
         if LogLevel.VERBOSE and (self._stdout or self._stderr):
             self.log_stdout()
@@ -1367,8 +1384,8 @@ class Task:
 # region Expander
 # Hancho's text expansion system.
 #
-# WARNING - Hancho is NOT A SANDBOX, Expander can evaluate arbitrary Python code which could format
-# your hard drive and email spam to your grandparents. Use responsibly.
+# WARNING - Again, Hancho is NOT A SANDBOX. Expander is the part that evaluates the arbitrary
+# Python code that then formats your drive and spams your grandmother.
 #
 # Expander works similarly to Python's F-strings, but with quite a bit more power. The code here
 # requires some explanation.
@@ -1918,7 +1935,7 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = Path.real(task._expand.expand("build_root"))
+                build_root = Path.real(task._expander.expand("build_root"))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}\n")
