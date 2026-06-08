@@ -2,14 +2,15 @@
 # region header
 
 """
-Hancho v0.4.0 @ 2024-11-01 - A simple, pleasant build system.
+Hancho v1.0.0 @ 2026-06-05 - A simple, pleasant build system.
 
 Hancho is a single-file build system that's designed to be dropped into your project folder - there
 is no 'install' step.
 
 Hancho requires Python 3.12+, which should be fairly universal in 2026.
 
-Hancho's test suite can be found in 'test.hancho' in the root of the Hancho repo.
+Hancho's test suite can be found in /tests and can be run via "python -m unittest" in the root of
+the Hancho repo.
 """
 
 from __future__ import annotations
@@ -92,10 +93,13 @@ class Log:
 
     @classmethod
     def log(cls, text):
-        hex = cls.current_color
-        r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
-        color_prefix = f"\x1B[38;2;{r};{g};{b}m" if hex >= 0 else ""
-        color_suffix = cls.reset_color if hex >= 0 else ""
+        if not isinstance(text, str) or len(text) == 0:
+            return
+
+        color_hex = cls.current_color
+        r, g, b = ((color_hex >> 16) & 0xFF, (color_hex >>  8) & 0xFF, (color_hex >>  0) & 0xFF)
+        color_prefix = f"\x1B[38;2;{r};{g};{b}m" if color_hex >= 0 else ""
+        color_suffix = cls.reset_color if color_hex >= 0 else ""
 
         for i, line in enumerate(text.split("\n")):
             if cls.line_buffer == "":
@@ -136,7 +140,7 @@ class Log:
         chunks = Log.match_escapes.split(text)
 
         # Even chunks are printable text, odd chunks are escape sequences.
-        # If the printable characters fit on the line, we dont' need to clip.
+        # If the printable characters fit on the line, we don't need to clip.
 
         print_len = 0
         for i in range(0, len(chunks), 2):
@@ -177,6 +181,11 @@ class LogLevel(int, Enum):
     VERBOSE  = 60
     DEBUG    = 70
     TRACE    = 80
+
+    # This random __bool__ is what lets us say "if LogLevel.VERBOSE: <print stuff>".
+    # It's comparing the enum in the 'if' with the global verbosity setting in 'Options.verbosity',
+    # which is _not_ what you might expect by default. It's a really useful bit of syntactic sugar
+    # though, so it'll stay for now.
 
     def __bool__(self):
         return self.value <= Options.verbosity
@@ -235,10 +244,10 @@ class Utils:
         Hancho's pretty-printer for various types. Note that this is also used for script deduping:
         if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
         were identical, you should get one copy of the "stuff" module instead of two.
-        Changing the way things are pretty-printed will _not_ break the deduper,
-        """
 
-        # In "key : type = ", don't print these types.
+        As long as you're not doing something bizarre with configs or changing the dumper in the
+        middle of a build, the resulting strings should be stable enough to use for deduping.
+        """
 
         # Generate the "key : type = " prefix.
         prefix = ""
@@ -356,7 +365,7 @@ class Utils:
         This function does a 'cross join' in the database sense, every line in lhs will be joined
         to every line in rhs (and this will be repeated with *args if present). This is useful for
         adding prefixes / suffixes to a bunch of strings, or generating all possible combinations
-        of two sets of options, etecetera.
+        of two sets of options, et cetera.
         """
 
         lhs2 = Utils.flatten(lhs)
@@ -530,7 +539,9 @@ class Dict(dict):
     2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
     3. When merging Dicts, the rightmost not-None value of an attribute will be kept.
     4. If two attributes with the same name are both Dicts, we will recursively merge them.
-    5. Dict's constructor makes deep(ish?) copies of its inputs.
+    5. Dict's constructor makes copies of all basic container types (collections and mappings) in
+    its inputs. I can't guarantee that everything you might put in a Dict will be deep-copied, but
+    it should be close enough.
     """
 
     def __init__(self, *args, **kwargs):
@@ -728,19 +739,23 @@ class Options:
         (flags, unrecognized) = parser.parse_known_args(args)
 
         # Unrecognized command line parameters also become module config fields if they are
-        # flag-like
+        # flag-like.
+        # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
+        # become bools (regardless of capitalization), everything else becomes a string.
+
         extra_flags = {}
         for span in unrecognized:
             if match := re.match(r"-+([^=\s]+)(?:=(\S+))?", span):
                 key = match.group(1)
                 val = match.group(2)
 
+
                 if val is None:
                     # this is so that --foo turns into {foo:True}
                     val = True
-                elif val in ["True", "true", "1"]:
+                elif val.lower() == "true":
                     val = True
-                elif val in ["False", "false", "0"]:
+                elif val.lower() == "false":
                     val = False
                 else:
                     for converter in (int, float, str):
@@ -1164,8 +1179,10 @@ class Task:
 
 
         # Gather all absolute file paths to _in_files/_out_files.
+
         # The check for is_depfile_field must come first, as it's a special case of a file that
-        # is technically an _output_ file, but also counts as an input file.
+        # is technically _both_ an input and an output file, even though its name starts with "in".
+
         for i in range(len(files)):
             if Task.is_depfile_field(name):
                 if Path.isfile(files[i]):
@@ -1272,7 +1289,7 @@ class Task:
             # Windows, which is out of scope until Hancho is shippable.
             with suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
-            await proc.communicate()
+            await proc.wait()
             raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
         except Exception as ex:
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
@@ -1314,17 +1331,17 @@ class Task:
                 result = await result
         except Exception as err:
             self.log_error("Callback threw an exception!", type(err), err)
-            raise err
+            raise
 
         return result
 
     # ----------------------------------------------------------------------------------------------
 
-    def log_error(self, type, reason, ex = None):
+    def log_error(self, error_type, reason, ex = None):
         if LogLevel.ERROR:
             script_path = Path.join(self._config.script_cwd, self._config.script_file)
             with Log.color(Colors.RED):
-                self.log(type + "\n")
+                self.log(error_type + "\n")
                 self.log(f"From {script_path}:\n")
                 self.log(f"    Task       = '{self._config.name}' : '{self._config.desc}'\n")
                 self.log(f"    time       = {time.perf_counter()}\n")
@@ -1512,7 +1529,7 @@ class Expander(abc.MutableMapping[str, object]):
             try:
                 _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
                 result = eval(macro[1:-1], hancho.__dict__, _locals)
-            except Exception as _:
+            except Exception:
                 result = macro
             tracer.save_result(result)
         return result
@@ -1527,6 +1544,9 @@ class Expander(abc.MutableMapping[str, object]):
     # Hancho's template expansions can contain infinite loops, so we need some simple recursion
     # depth tracking here. Hancho's test suites currently pass with MAX_DEPTH = 7, but we set it to
     # 20 just for future growth.
+
+    # The expand_depth is global mutable state, but it's only ever modified inside _expand, which
+    # is synchronous and should only be touched by one thread at a time.
     expand_depth : int = 0
     MAX_DEPTH : int = 20
 
@@ -1857,6 +1877,7 @@ class Runner:
             # Cancel all the asyncio.Tasks that haven't completed yet
             if LogLevel.VERBOSE:
                 Log.log(f"Cancelling {len(cls.live_aio_tasks)} tasks\n")
+            cls.tasks_cancelled += len(cls.live_aio_tasks)
             for t in cls.live_aio_tasks:
                 t.cancel()
 
@@ -1918,11 +1939,11 @@ def main():
     # ------------------------------------
     # Startup banner
 
+    root_dir    = expander.root_dir
+    root_file   = expander.root_file
+
     if LogLevel.VERBOSE:
-
-        root_dir    = expander.root_dir
         repo_dir    = expander.repo_dir
-
         script_dir  = expander.script_cwd
         script_file = expander.script_file
         script_path = os.path.join(cast(str, script_dir), cast(str, script_file))
@@ -1944,8 +1965,6 @@ def main():
 
     time_a = time.perf_counter()
 
-    root_dir    = expander.root_dir
-    root_file   = expander.root_file
     script_path = cast(str, Path.join(root_dir, root_file))
     if not Path.exists(script_path):
         path = Path.rel(script_path, os.getcwd())
