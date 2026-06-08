@@ -26,7 +26,6 @@ import contextvars
 import copy
 import json
 import os
-import random
 import re
 import shutil
 import signal
@@ -107,7 +106,7 @@ class Log:
 
         for i, line in enumerate(text.split("\n")):
             if cls.line_buffer == "":
-                cls.line_buffer += f"[{time.time() - Log.start:12.6f}] " + "│ " * Log.indent_depth
+                cls.line_buffer += cls.get_timestamp() + " " + cls.get_indentation()
 
             if i > 0:
                 cls.line_buffer += "\n"
@@ -126,9 +125,26 @@ class Log:
                 cls.line_buffer = ""
 
     @classmethod
+    def log_exception(cls, ex):
+        frame = traceback.extract_tb(ex.__traceback__)[-1]
+        Log.log(f"type      = {type(ex)}\n")
+        Log.log(f"message   = '{ex}'\n")
+        Log.log(f"location  = {frame.filename} {frame.name} @ {frame.lineno}\n")
+        Log.log(f"line      = '{frame.line}'\n")
+
+    @classmethod
+    def get_timestamp(cls):
+        """Returns the timestamp string that is placed at the left of log entries."""
+        return f"[{time.time() - Log.start:12.6f}]"
+
+    @classmethod
+    def get_indentation(cls):
+        return "│ " * cls.indent_depth
+
+    @classmethod
     def clip_printable(cls, text, width) -> str:
         """
-        Clips a string with embedded escape codes (such as ANSI color codes) so that it fits in
+        Clips a string with embedded escape codesf (such as ANSI color codes) so that it fits in
         'width' without breaking the escape codes.
 
         If the printable portion exceeds 'width', it will be clipped and capped with '...'.
@@ -186,7 +202,9 @@ class LogLevel(int, Enum):
     DEBUG    = 70
     TRACE    = 80
 
-    # This random __bool__ is what lets us say "if LogLevel.VERBOSE: <print stuff>".
+    # WARNING - This __bool__ conversion does not do what you think. It's here because it's what
+    # lets us say "if LogLevel.VERBOSE: <print stuff>".
+    #
     # It's comparing the enum in the 'if' with the global verbosity setting in 'Options.verbosity',
     # which is _not_ what you might expect by default. It's a really useful bit of syntactic sugar
     # though, so it'll stay for now.
@@ -376,8 +394,17 @@ class Utils:
         return [lh + rh for lh in lhs2 for rh in rhs2]
 
     @staticmethod
+    def obj_to_float(obj) -> float:
+        """
+        Generates a 'random' float in the range [0.0,1.0) out of the object's ID. Multiplying by
+        an irrational constant (phi in this case) helps ensure that colors don't collide
+        unnecessarily in obj_to_hex below.
+        """
+        return (id(obj) * 0.618033988749895) % 1.0
+
+    @staticmethod
     def obj_to_hex(obj) -> int:
-        hue = random.Random(id(obj)).random()
+        hue = Utils.obj_to_float(obj)
         r, g, b = colorsys.hsv_to_rgb(hue, 0.3, 1.0)
         r, g, b = (int(r * 255), int(g * 255), int(b * 255))
         return (r << 16) | (g << 8) | b
@@ -564,17 +591,13 @@ class Dict(dict):
                 lval = dict.get(self, key, None)
 
                 # Mappings get turned into Dicts. If they're already Dicts, this just makes a copy
-                # of them.
+                # of them. Pairs of mappings get merged together.
                 if Utils.is_mapping(rval):
-                    rval = Dict(rval)
+                    rval = Dict(lval, rval) if Utils.is_mapping(lval) else Dict(rval)
 
                 # Collections get turned into lists. Same as above.
                 if Utils.is_collection(rval):
                     rval = copy.deepcopy(rval)
-
-                # Pairs of mappings get merged together as needed.
-                if Utils.is_mapping(lval) and Utils.is_mapping(rval):
-                    rval = Dict(lval, rval)
 
                 if lval is None or rval is not None:
                     dict.__setitem__(self, key, rval)
@@ -904,10 +927,10 @@ class Task:
             self._error = ex
             raise
         except Task.BROKEN as ex:
-            self.log_error("Task broken!", "<exception>", ex)
+            self.log_task_exception("Task broken!", ex)
             self._error = ex
         except Task.FAILED as ex:
-            self.log_error("Task failed!", "<exception>", ex)
+            self.log_task_exception("Task failed!", ex)
             self._error = ex
         except Task.CANCELLED as ex:
             if LogLevel.VERBOSE:
@@ -918,7 +941,7 @@ class Task:
                 self.log(str(ex) + "\n")
             self._error = ex
         except Exception as ex:
-            self.log_error("Task threw an exception!", type(ex), ex)
+            self.log_task_exception("Task threw an exception!", ex)
             self._error = ex
         finally:
             if self._core_count:
@@ -951,8 +974,12 @@ class Task:
         # except name/desc/command). To prevent expansion-order issues, we expand to a temp Dict
         # and then copy them back into config.
 
+        # We _can't_ expand input/output paths here as they may refer to output paths for tasks
+        # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
+        # you'll find it in task_init below.
+
         path_fields  = ["build_dir", "build_root", "hancho_dir", "repo_dir", "repo_file",
-                        "root_dir", "root_file", "script_cwd", "script_file", "task_cwd", "in_depfile",]
+                        "root_dir", "root_file", "script_cwd", "script_file", "task_cwd"]
 
         flag_fields = [ "build_tag", "core_count", "depformat", "dry_run", "enabled", ]
 
@@ -975,7 +1002,9 @@ class Task:
 
         # ----------------------------------------
         # Do all our task setup while chdir'd into the task's cwd so that relative paths will be
-        # correct while we're checking input file existence.
+        # correct while we're checking input file existence. The task_init function is synchronous,
+        # so there can be no await'ed points that could interrupt us - os.getcwd() should be stable
+        # while we're doing this.
 
         with chdir(config.task_cwd):
             self.task_init()
@@ -1014,12 +1043,17 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def await_inputs(self):
-        config = self._config
 
-        for key, files in config.items():
+        # Copy the dict key-values, as it's generally a bad idea to modify a container you're
+        # iterating over - _especially_ if it has an await in the middle of it.
+        items = list(self._config.items())
+        temp = Dict()
+
+        for key, files in items:
             if not Task.is_input_field(key):
                 continue
 
+            # Our file list has never been flattened, so do it now.
             files = Utils.flatten(files)
 
             if key == "in_depfile" and len(files) > 1:
@@ -1039,13 +1073,17 @@ class Task:
                     except Task.SKIPPED:
                         # This input was clean and didn't need to rebuild.
                         pass
-                    except BaseException as err:
-                        raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
+                    except BaseException as ex:
+                        raise Task.CANCELLED(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'") from ex
 
                     files[i] = task._out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
-            config[key] = Utils.flatten(files)
+            temp[key] = Utils.flatten(files)
+
+        # We've awaited everything, copy the file lists back into the config.
+        for k, v in temp.items():
+            self._config[k] = v
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1093,13 +1131,14 @@ class Task:
 
         # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
         # prefix + swap(abs_path) != abs(prefix + swap(path)). And just out of paranoia, we expand
-        # to a temp Dict and then copy them back into the config.
+        # to a temp Dict, norm them (because who knows how the user may have written the template)
+        # and then copy them back into the config.
 
         temp = Dict()
 
         for key, files in config.items():
             if Task.is_io_field(key):
-                temp[key] = self._expander.expand(files)
+                temp[key] = Path.norm(self._expander.expand(files))
 
         for k, v in temp.items():
             config[k] = v
@@ -1191,8 +1230,8 @@ class Task:
         files = Utils.flatten(files)
         assert Path.isabs(files)
 
-        # Path _must_ be normed after expansion and joining, otherwise it might look like it's
-        # under script_cwd but it's not because the path could have "../../../../.." in it.
+        # Path _must_ be normed after joining, otherwise it might look like it's under script_cwd
+        # but it's not because the path could have "../../../../.." in it.
         files = cast(list[str], Path.norm(files))
 
         # Move all outputs under build_dir and ensure their directories exist.
@@ -1315,7 +1354,7 @@ class Task:
         )
         try:
             (stdout_data, stderr_data) = await proc.communicate()
-        except asyncio.CancelledError as err:
+        except asyncio.CancelledError as ex:
             # We don't trust asyncio to clean up all cancelled processes, so we do it the hard way
             # here and kill the whole process group.
             # Note - this only works on Linux. We will need a slightly different implementation for
@@ -1323,7 +1362,7 @@ class Task:
             with suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             await proc.wait()
-            raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
+            raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from ex
         except Exception as ex:
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
@@ -1341,15 +1380,14 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def log_stdout(self):
-        self.log("========== Stdout ==========\n")
+        Log.log("---------------- Stdout ----------------\n")
         if self._stdout:
             for line in self._stdout.strip().split("\n"):
-                self.log(line + "\n")
-        self.log("========== Stderr ==========\n")
+                Log.log(line + "\n")
+        Log.log("---------------- Stderr ----------------\n")
         if self._stderr:
             for line in self._stderr.strip().split("\n"):
-                self.log(line + "\n")
-        self.log("============================\n")
+                Log.log(line + "\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1362,32 +1400,35 @@ class Task:
             result = command(self)
             if isawaitable(result):
                 result = await result
-        except Exception as err:
-            self.log_error("Callback threw an exception!", type(err), err)
+        except Exception as ex:
+            self.log_task_exception("Callback threw an exception!", ex)
             raise
 
         return result
 
     # ----------------------------------------------------------------------------------------------
 
-    def log_error(self, error_type, reason, ex = None):
+    def log_task_exception(self, message, ex = None):
         if LogLevel.ERROR:
             script_path = Path.join(self._config.script_cwd, self._config.script_file)
+
+            with Log.color(0xFF0000):
+                Log.log("========================================\n")
+                Log.log(message + "\n")
+                Log.log("========================================\n")
+
             with Log.color(Colors.RED):
-                self.log(error_type + "\n")
-                self.log(f"From {script_path}:\n")
-                self.log(f"    Task       = '{self._config.name}' : '{self._config.desc}'\n")
-                self.log(f"    time       = {time.perf_counter()}\n")
-                self.log(f"    os.getcwd  = {os.getcwd()}\n")
-                self.log(f"    task cwd   = {self._config.task_cwd}\n")
-                self.log(f"    command    = {self._config.command}\n")
-                self.log(f"    reason     = '{reason}'\n")
+                Log.log(f"Script    = {script_path}:\n")
+                Log.log(f"Task      = '{self._config.name}' : '{self._config.desc}'\n")
+                Log.log(f"os.getcwd = {os.getcwd()}\n")
+                Log.log(f"task cwd  = {self._config.task_cwd}\n")
+                Log.log(f"command   = {self._config.command}\n")
                 if ex:
-                    frame = traceback.extract_tb(ex.__traceback__)[-1]
-                    self.log(f"    except     = '{ex}'\n")
-                    self.log(f"    location   = {frame.filename} {frame.name} @ {frame.lineno}\n")
-                    self.log(f"               = {frame.line}\n")
+                    Log.log_exception(ex)
                 self.log_stdout()
+
+            with Log.color(0xFF0000):
+                Log.log("========================================\n")
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1909,9 +1950,9 @@ class Runner:
                 cls.tasks_failed += 1
             except Task.SKIPPED:
                 cls.tasks_skipped += 1
-            except BaseException as err:
+            except BaseException as ex:
                 if LogLevel.DEBUG:
-                    Log.log(f"Weird exception {type(err)} >{err}< at {time.perf_counter()}\n")
+                    Log.log(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
                 cls.tasks_failed += 1
 
             finally:
@@ -1929,6 +1970,11 @@ class Runner:
             # Cancel all the asyncio.Tasks that haven't completed yet
             if LogLevel.VERBOSE:
                 Log.log(f"Cancelling {len(cls.live_aio_tasks)} tasks\n")
+
+            # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
+            # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
+            # to failures or someone ctrl-c'ing the build, this is purely cosmetic.
+
             cls.tasks_cancelled += len(cls.live_aio_tasks)
             for t in cls.live_aio_tasks:
                 t.cancel()
@@ -2088,7 +2134,20 @@ def __getattr__(name):
 # --------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    sys.exit(main())
+
+    # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD" message
+    # if we failed to catch an exception in run_tasks.
+    result = None
+    try:
+        result = main()
+    except BaseException as ex:
+        with Log.color(Colors.RED):
+            Log.log("Hancho hit an exception during startup:\n")
+            Log.log_exception(ex)
+
+            Log.log("BUILD FAILED\n")
+            sys.exit(1)
+    sys.exit(result)
 else:
     init()
 
