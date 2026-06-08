@@ -144,7 +144,7 @@ class Log:
     @classmethod
     def clip_printable(cls, text, width) -> str:
         """
-        Clips a string with embedded escape codesf (such as ANSI color codes) so that it fits in
+        Clips a string with embedded escape codes (such as ANSI color codes) so that it fits in
         'width' without breaking the escape codes.
 
         If the printable portion exceeds 'width', it will be clipped and capped with '...'.
@@ -396,11 +396,15 @@ class Utils:
     @staticmethod
     def obj_to_float(obj) -> float:
         """
-        Generates a 'random' float in the range [0.0,1.0) out of the object's ID. Multiplying by
-        an irrational constant (phi in this case) helps ensure that colors don't collide
-        unnecessarily in obj_to_hex below.
+        Generates a 'random' float in the range [0.0,1.0) by hashing the object's ID.
         """
-        return (id(obj) * 0.618033988749895) % 1.0
+        temp = id(obj)
+        temp *= 0x4F9B2A1D # doesn't matter what this constant is as long as it's odd.
+        temp ^= temp >> 17
+        temp *= 0x4F9B2A1D
+        temp ^= temp >> 17
+
+        return (temp & 0xFFFFFFFF) / 0xFFFFFFFF
 
     @staticmethod
     def obj_to_hex(obj) -> int:
@@ -2137,10 +2141,13 @@ if __name__ == "__main__":
 
     # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD" message
     # if we failed to catch an exception in run_tasks.
+    # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
+    # misinterpreted as a Hancho bug.
+
     result = None
     try:
         result = main()
-    except BaseException as ex:
+    except Exception as ex:
         with Log.color(Colors.RED):
             Log.log("Hancho hit an exception during startup:\n")
             Log.log_exception(ex)
