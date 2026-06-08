@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# region header
+# region Header
 
 """
 Hancho v1.0.0 @ 2026-06-05 - A simple, pleasant build system.
@@ -377,7 +377,7 @@ class Utils:
         hue = random.Random(id(obj)).random()
         r, g, b = colorsys.hsv_to_rgb(hue, 0.3, 1.0)
         r, g, b = (int(r * 255), int(g * 255), int(b * 255))
-        return (r << 16) | (g << 8) | (b << 0)
+        return (r << 16) | (g << 8) | b
 
     @staticmethod
     def run_cmd(cmd : str):
@@ -627,7 +627,6 @@ class Options:
         cls.core_max    = root_config.pop("core_max", os.cpu_count() or 1)
         cls.max_errors  = root_config.pop("max_errors", 0)
         cls.rebuild     = root_config.pop("rebuild", False)
-        cls.scroll      = root_config.pop("scroll", False)
         cls.strict      = root_config.pop("strict", True)
         cls.target      = root_config.pop("target", None)
         cls.tool        = root_config.pop("tool", None)
@@ -697,7 +696,7 @@ class Options:
             build_tag   = "",
             build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
-            depformat   = "gcc" if sys.platform.startswith("linux") else "msvc",
+            depformat   = "gcc" if sys.platform != "win32" else "msvc",
             in_depfile  = [],
 
             core_count  = 1,
@@ -725,7 +724,6 @@ class Options:
         parser.add_argument("-a", "--rebuild",    default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument("--wrap",             default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
         parser.add_argument("--strict",           default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
-        parser.add_argument("--scroll",           default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Makes the output scroll instead of keeping it on one line like Ninja.")
         parser.add_argument("-q", "--quiet",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=quiet. Mute all output")
         parser.add_argument("-d", "--debug",      default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=debug. Print debugging information")
         parser.add_argument("--trace",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=trace. Trace all text expansion")
@@ -920,9 +918,9 @@ class Task:
         if self._error:
             raise self._error
 
-        dry_run = "(DRY RUN)" if self._config.dry_run else ""
+        dry_run = " (DRY RUN)" if self._config.dry_run else ""
         if LogLevel.VERBOSE:
-            self.log(f"Task done {dry_run}: '{self._config.name}' - '{self._config.desc}'\n")
+            self.log(f"Task done{dry_run}: '{self._config.name}' - '{self._config.desc}'\n")
         return self._out_files
 
     # ----------------------------------------------------------------------------------------------
@@ -1053,6 +1051,15 @@ class Task:
         for command in config.command:
             if command == "":
                 raise Task.BROKEN("Command is an empty string")
+
+            # In order to provide the least amount of bafflement to users, CLI commands execute
+            # from task_cwd (which is usually the root of the repo, the most common cwd)
+            # and callbacks execute from script_cwd (because you expect to be in the same directory
+            # as the script when the callback is firing).
+
+            # This means that rel-ified paths can only be  rel'd to one of the two cwds, not both.
+            # And that means we disallow mixed cli/callback command lists.
+
             if type(command) is not type(config.command[0]):
                 raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
 
@@ -1063,7 +1070,7 @@ class Task:
             raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
 
         if not Path.startswith(config.build_dir, config.repo_dir):
-            raise Task.BROKEN(f"Build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
+            raise Task.BROKEN(f"The build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1692,7 +1699,6 @@ class Loader:
         new_module = types.ModuleType(script_name)
         new_module.__dict__.update(
             __file__ = script_path,
-            __code__ = code,
             hancho   = hancho,
         )
 
@@ -1884,7 +1890,7 @@ class Runner:
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*cls.live_aio_tasks, return_exceptions=True)
 
-        return -1 if cls.tasks_failed or cls.tasks_broken else 0
+        return 1 if cls.tasks_failed or cls.tasks_broken else 0
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1970,7 +1976,7 @@ def main():
         path = Path.rel(script_path, os.getcwd())
         if LogLevel.FATAL:
             Log.log(f"Could not load build script {path}\n")
-        sys.exit(-1)
+        sys.exit(1)
     Loader.root_repo = Loader.load_file(script_path, True)
 
     time_load = time.perf_counter() - time_a
@@ -1989,8 +1995,6 @@ def main():
 
     # ------------------------------------
     # Done
-
-    Options.scroll = True
 
     if LogLevel.VERBOSE:
         Log.log(f"Tasks created:    {len(Runner.all_tasks)}\n")
@@ -2020,7 +2024,7 @@ def main():
 
 # The 'global' config is actually instantiated per script context, otherwise scripts can break each
 # other by changing shared config fields. To ensure each script sees the right config, we make the
-# module-level __getattr__ redirect to the config stored in the ContextVar in Config.
+# module-level __getattr__ redirect to the config stored in the ContextVar in Options.
 #
 # This is also where we look up command aliases so that script macros don't have to use
 # fully-qualified names like 'hancho.Path.norm'.

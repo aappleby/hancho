@@ -70,7 +70,7 @@ class TestTasks(unittest.TestCase):
     def test_run_tasks_nonzero(self):
         # If any task fails, we should get -1 from run_tasks.
         bad_task = hancho.Task(command="echo test_run_tasks_zero && (exit 255)")
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.FAILED)  # type:ignore
 
     def test_run_tasks_zero(self):
@@ -215,7 +215,7 @@ class TestTasks(unittest.TestCase):
             in_src="src/foo.c",
             out_obj="../../../foo.o",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
 
@@ -239,7 +239,7 @@ class TestTasks(unittest.TestCase):
             desc="Broken run_cmd",
             command=r"echo {run_cmd('This is totally not a valid command.')}",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_unexpandable_command(self):
@@ -251,7 +251,7 @@ class TestTasks(unittest.TestCase):
             desc="Unexpandable command",
             command=r"echo Hello {missing} world!",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_garbage_command(self):
@@ -261,7 +261,7 @@ class TestTasks(unittest.TestCase):
         garbage_task = hancho.Task(
             command="aklsjdflksjdlfkjldfk",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(garbage_task._error, hancho.Task.FAILED)
 
     def test_missing_command(self):
@@ -269,7 +269,7 @@ class TestTasks(unittest.TestCase):
         Non-existent commands should cause Hancho to fail the build.
         """
         bad_task = hancho.Task(not_a_command="echo test_missing_command")
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_task_collision(self):
@@ -286,7 +286,7 @@ class TestTasks(unittest.TestCase):
             in_src=__file__,
             out_obj="colliding_output.txt",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task2._error, hancho.Task.BROKEN)
 
     # ----------------------------------------------------------------------------------------------
@@ -347,7 +347,7 @@ class TestTasks(unittest.TestCase):
             in_src="src/does_not_exist.txt",
             out_obj="missing_src.txt",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_missing_dep(self):
@@ -359,7 +359,7 @@ class TestTasks(unittest.TestCase):
             in_dep=["missing_dep.txt"],
             out_obj="result.txt",
         )
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     # ----------------------------------------------------------------------------------------------
@@ -456,7 +456,7 @@ class TestTasks(unittest.TestCase):
     def test_multiple_depfiles(self):
         # Creating a task with multiple depfile inputs should fail.
         bad_task = hancho.Task(command="echo test_multiple_depfiles", in_depfile=["foo.txt", "bar.txt"])
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_multiple_commands(self):
@@ -537,7 +537,7 @@ class TestTasks(unittest.TestCase):
             raise ValueError("I do not like value.")
 
         task = hancho.Task(command=callback, out_file="test_async_callback.txt")
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_async_callback.txt").exists())
 
@@ -557,7 +557,7 @@ class TestTasks(unittest.TestCase):
             raise ValueError("I do not like value.")
 
         task = hancho.Task(command=callback, out_file="test_async_callback.txt")
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_async_callback.txt").exists())
 
@@ -582,7 +582,7 @@ class TestTasks(unittest.TestCase):
             out_obj="should_not_be_created.txt",
         )
         self.assertFalse(os.path.exists("build/pass_result.txt"))
-        self.run_tasks(-1)
+        self.run_tasks(1)
 
         self.assertIsInstance(task_that_fails._error, hancho.Task.FAILED)
         self.assertIsNone(task_that_passes._error)
@@ -601,7 +601,7 @@ class TestTasks(unittest.TestCase):
             command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
         )
 
-        self.run_tasks(-1)
+        self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_task_creates_task(self):

@@ -36,7 +36,7 @@ Hancho is a single-file Python build system (similar to Make/Ninja) that uses .h
 - `main` branch: Stable, all tests passing. All other branches have been merged in to get ready for 1.0.
 
 ### Common Tasks
-- Run tests: `cd tests && python run_tests.py`
+- Run tests: `python -m unittest` in the repo root.
 - Run hancho: `python hancho.py` or `./hancho.py`
 - Test suite uses unittest framework
 - Build artifacts go in `build/` directories (gitignored)
