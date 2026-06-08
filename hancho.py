@@ -33,6 +33,7 @@ import types
 from collections import ChainMap, abc
 from contextlib import chdir, contextmanager, suppress
 from enum import Enum
+from functools import wraps
 from inspect import isawaitable
 from typing import Any, cast
 
@@ -197,7 +198,6 @@ class Utils:
 
     @classmethod
     def reset(cls):
-        cls.rand : random.Random = random.Random()
         cls.mtime_calls : int = 0
 
     # These types are considered already "flat" and don't need to be turned into a list.
@@ -1465,6 +1465,12 @@ class Expander(abc.MutableMapping[str, object]):
             tracer.save_result(result)
         return result
 
+    # Hancho's template expansions can contain infinite loops, so we need some simple recursion
+    # depth tracking here. Hancho's test suites currently pass with MAX_DEPTH = 7, but we set it to
+    # 20 just for future growth.
+    expand_depth : int = 0
+    MAX_DEPTH : int = 20
+
     @staticmethod
     def _expand(variant, context):
         if isinstance(variant, list):
@@ -1483,9 +1489,17 @@ class Expander(abc.MutableMapping[str, object]):
                 result = Expander._expand_blocks(blocks, context)
 
             if result != variant:
-                result = Expander._expand(result, context)
+                if Expander.expand_depth >= Expander.MAX_DEPTH:
+                    raise RecursionError("Template expansion failed to terminate")
+                try:
+                    Expander.expand_depth += 1
+                    result = Expander._expand(result, context)
+                finally:
+                    Expander.expand_depth -= 1
+
             tracer.save_result(result)
         return result
+
 
 # endregion
 ####################################################################################################
