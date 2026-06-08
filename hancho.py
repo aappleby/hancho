@@ -432,7 +432,7 @@ class Utils:
         temp *= 0x4F9B2A1D
         temp ^= temp >> 17
 
-        return (temp & 0xFFFFFFFF) / 0xFFFFFFFF
+        return (temp & 0xFFFFFFFF) / 0x100000000
 
     @staticmethod
     def obj_to_hex(obj) -> int:
@@ -1088,7 +1088,7 @@ class Task:
             # Our file list has never been flattened, so do it now.
             files = Utils.flatten(files)
 
-            if key == "in_depfile" and len(files) > 1:
+            if Task.is_depfile_field(key) and len(files) > 1:
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
             for i, file in enumerate(files):
@@ -2095,10 +2095,10 @@ def main():
 
     script_path = cast(str, Path.join(root_dir, root_file))
     if not Path.exists(script_path):
-        path = Path.rel(script_path, os.getcwd())
         if LogLevel.FATAL:
-            Log.log(f"Could not load build script {path}\n")
-        sys.exit(1)
+            with Log.color(0xFF0000):
+                Log.log(f"Could not load build script {script_path}\n")
+        raise FileNotFoundError(script_path)
     Loader.root_repo = Loader.load_file(script_path, True)
 
     time_load = time.perf_counter() - time_a
@@ -2178,7 +2178,7 @@ if __name__ == "__main__":
             Log.log("Hancho hit an exception during startup:\n")
             Log.log_exception(ex)
             Log.log("BUILD FAILED\n")
-            sys.exit(1)
+            result = 1
 
     # Don't leave the last line of the log sitting in line_buffer!
     Log.flush()
