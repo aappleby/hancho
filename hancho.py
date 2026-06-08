@@ -286,7 +286,8 @@ class Utils:
         pad = (tab * indent)
         separator = ", "
         chunks = []
-        width = len(pad) + len(prefix) + len(ld) + (len(separator) * (len(items) - 1)) + len(rd)
+        num_separators = len(items) - 1 if len(items) else 0
+        width = len(pad) + len(prefix) + len(ld) + (len(separator) * num_separators) + len(rd)
 
         for k, v in items:
             chunk = Utils.dump_to_str(k, v, 0, print_id, max_width, tab, True)
@@ -769,6 +770,9 @@ class Task:
         self._config  = Dict(Options.cv_config(), *args, **kwargs)
         self._expand  = Expander.wrap(self._config)
 
+        # Why this task rebuilt, or "" if it did not need to rebuilds.
+        self._reason = ""
+
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._aio_task : asyncio.Task | None = None
@@ -917,9 +921,9 @@ class Task:
         # except name/desc/command)
 
         path_fields  = ["build_dir", "build_root", "hancho_dir", "repo_dir", "repo_file",
-                        "root_dir", "root_file", "script_cwd", "script_file", "task_cwd", ]
+                        "root_dir", "root_file", "script_cwd", "script_file", "task_cwd", "in_depfile",]
 
-        flag_fields = [ "build_tag", "core_count", "depformat", "dry_run", "enabled", "in_depfile",]
+        flag_fields = [ "build_tag", "core_count", "depformat", "dry_run", "enabled", ]
 
         for f in path_fields:
             if f in config:
@@ -927,6 +931,90 @@ class Task:
         for f in flag_fields:
             if f in config:
                 config[f] = expand[f]
+
+        # ----------------------------------------
+        # Await all tasks in our input fields and then flatten them.
+
+        await self.await_inputs()
+
+        # ----------------------------------------
+        # Do all our task setup while chdir'd into the task's cwd so that relative paths will be
+        # correct while we're checking input file existence.
+
+        with chdir(config.task_cwd):
+            self.task_init()
+
+        # ----------------------------------------
+        # Dry runs early out after all the task checks but before we allocate cores and run
+        # commands.
+
+        if config.dry_run:
+            return
+
+        # ----------------------------------------
+        # Wait for enough jobs to free up to run this task.
+
+        await Runner.acquire(config.core_count)
+        self._core_count = config.core_count
+
+        # ----------------------------------------
+        # Run all the task's commands
+
+        self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
+        if LogLevel.VERBOSE:
+            self.log(f"Task rebuilding because: {self._reason}\n")
+
+        for command in cast(list, config.command):
+            if isinstance(command, str):
+                await self.run_command(command)
+
+            elif callable(command):
+                await self.call_callback(command)
+            else:
+                raise Task.FAILED(f"Command {command} is not a string or a callable?")
+
+        # Done!
+
+    # ----------------------------------------------------------------------------------------------
+
+    async def await_inputs(self):
+        config = self._config
+
+        for key, files in config.items():
+            if not Task.is_input_field(key):
+                continue
+
+            files = Utils.flatten(files)
+
+            if key == "in_depfile" and len(files) > 1:
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
+
+            for i, file in enumerate(files):
+                if isinstance(file, Task):
+                    task = cast(Task, file)
+                    if task._aio_task is None:
+                        raise AssertionError("One of a task's input sub-tasks was not started")
+                    try:
+                        await task._aio_task
+                    except Task.SKIPPED:
+                        # This input was clean and didn't need to rebuild.
+                        pass
+                    except Exception as err:
+                        raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
+
+                    files[i] = task._out_files
+
+            # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
+            config[key] = Utils.flatten(files)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def task_init(self):
+        config = self._config
+        expand = self._expand
+
+        if os.getcwd() != config.task_cwd:
+            raise AssertionError("Running task_init while we're not in task's cwd")
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
@@ -948,33 +1036,6 @@ class Task:
 
         if not Path.startswith(config.build_dir, config.repo_dir):
             raise Task.BROKEN(f"Build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
-
-        # ----------------------------------------
-        # Await all tasks in our input fields and then flatten them.
-
-        for key, files in [i for i in config.items() if Task.is_input_field(i[0])]:
-            files = Utils.flatten(files)
-
-            if key == "in_depfile" and len(files) > 1:
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
-
-            for i, file in enumerate(files):
-                if isinstance(file, Task):
-                    task = cast(Task, file)
-                    if task._aio_task is None:
-                        raise AssertionError("One of a task's input sub-tasks was not started")
-                    try:
-                        await cast(asyncio.Task, task._aio_task)
-                    except Task.SKIPPED:
-                        # This input was clean and didn't need to rebuild.
-                        pass
-                    except Exception as err:
-                        raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
-
-                    files[i] = task._out_files
-
-            # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
-            config[key] = Utils.flatten(files)
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1025,49 +1086,19 @@ class Task:
         # ----------------------------------------
         # See if we need to rebuild our outputs
 
-        rebuild_reason = self.rebuild_reason()
-        if not rebuild_reason:
+        self._reason = self.rebuild_reason()
+        if not self._reason:
             raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
 
         # ----------------------------------------
-        # Dry runs early out after all the teask checks but before we allocate cores and run
-        # commands.
+        # Check for missing inputs. We have to check dry_run, as the input files may only exist if
+        # we're really running tasks.
 
-        if config.dry_run:
-            return
-
-        # ----------------------------------------
-        # Check for missing inputs. This has to happen after we check dry_run, as the input
-        # files may only exist if we're really running tasks.
-
-        for file in self._in_files:
-            assert Path.isabs(file)
-            if not Path.exists(file):
-                raise Task.BROKEN(f"Input file missing - {file}")
-
-        # ----------------------------------------
-        # Wait for enough jobs to free up to run this task.
-
-        await Runner.acquire(config.core_count)
-        self._core_count = config.core_count
-
-        # ----------------------------------------
-        # Run all the task's commands
-
-        self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
-        if LogLevel.VERBOSE:
-            self.log(f"Task rebuilding because: {rebuild_reason}\n")
-
-        for command in cast(list, config.command):
-            if isinstance(command, str):
-                await self.run_command(command)
-
-            elif callable(command):
-                await self.call_callback(command)
-            else:
-                raise Task.FAILED(f"Command {command} is not a string or a callable?")
-
-        # Done!
+        if not config.dry_run:
+            for file in self._in_files:
+                assert Path.isabs(file)
+                if not Path.exists(file):
+                    raise Task.BROKEN(f"Input file missing - {file}")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1143,6 +1174,9 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def rebuild_reason(self) -> str:
+        """
+        Figures out why we have to run a Task, or returns "" if we don't.
+        """
         config = self._config
         cwd = os.getcwd()
 
@@ -1232,17 +1266,22 @@ class Task:
         self._stderr = stderr_data.decode(errors="replace")
 
         if LogLevel.VERBOSE and (self._stdout or self._stderr):
-            self.log("========== Stdout ==========\n")
-            if self._stdout:
-                for line in self._stdout.strip().split("\n"):
-                    self.log(line + "\n")
-            self.log("========== Stderr ==========\n")
-            if self._stderr:
-                for line in self._stderr.strip().split("\n"):
-                    self.log(line + "\n")
-            self.log("============================\n")
+            self.log_stdout()
 
         return proc.returncode
+
+    # ----------------------------------------------------------------------------------------------
+
+    def log_stdout(self):
+        self.log("========== Stdout ==========\n")
+        if self._stdout:
+            for line in self._stdout.strip().split("\n"):
+                self.log(line + "\n")
+        self.log("========== Stderr ==========\n")
+        if self._stderr:
+            for line in self._stderr.strip().split("\n"):
+                self.log(line + "\n")
+        self.log("============================\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1272,6 +1311,7 @@ class Task:
                 self.log(f"    Task       = '{self._config.name}' : '{self._config.desc}'\n")
                 self.log(f"    time       = {time.perf_counter()}\n")
                 self.log(f"    os.getcwd  = {os.getcwd()}\n")
+                self.log(f"    task cwd   = {self._config.task_cwd}\n")
                 self.log(f"    command    = {self._config.command}\n")
                 self.log(f"    reason     = '{reason}'\n")
                 if ex:
@@ -1279,6 +1319,7 @@ class Task:
                     self.log(f"    except     = '{ex}'\n")
                     self.log(f"    location   = {frame.filename} {frame.name} @ {frame.lineno}\n")
                     self.log(f"               = {frame.line}\n")
+                self.log_stdout()
 
 # endregion
 ####################################################################################################
@@ -1715,9 +1756,13 @@ class Runner:
     def select_root_tasks(cls):
         if Options.target:
             # Enable all tasks whose name matches the target regex
+            # NOTE - We have to expand "name" _before_ the task has initialized, which means some
+            # of its input fields may be Task references and the resulting name may be wonky if it
+            # includes those names via template. Maybe don't do that.
             target_regex = re.compile(Options.target)
             for task in cls.all_tasks:
-                if target_regex.search(task._config.name):
+                name = task._config.expand("{name}")
+                if target_regex.search(name):
                     task.enable()
         elif Options.rebuild:
             # Enable _everything_
