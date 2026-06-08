@@ -646,11 +646,6 @@ class Options:
     def cv_config(cls):
         return cls._cv_config.get()
 
-    @classmethod
-    def set_cv_config(cls, new_config):
-        """Note that this method can be used as a context manager"""
-        return cls._cv_config.set(new_config)
-
     # ----------------------------------------------------------------------------------------------
     # We spell all these defaults out explicitly so that when this config gets merged with flags and
     # task configs the fields stay in the same order.
@@ -999,7 +994,7 @@ class Task:
                     except Task.SKIPPED:
                         # This input was clean and didn't need to rebuild.
                         pass
-                    except Exception as err:
+                    except BaseException as err:
                         raise Task.CANCELLED(f"Task is cancelled: '{config.name}' : '{config.desc}'") from err
 
                     files[i] = task._out_files
@@ -1084,13 +1079,6 @@ class Task:
             Loader.real_filenames.add(real_file)
 
         # ----------------------------------------
-        # See if we need to rebuild our outputs
-
-        self._reason = self.rebuild_reason()
-        if not self._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
-
-        # ----------------------------------------
         # Check for missing inputs. We have to check dry_run, as the input files may only exist if
         # we're really running tasks.
 
@@ -1099,6 +1087,14 @@ class Task:
                 assert Path.isabs(file)
                 if not Path.exists(file):
                     raise Task.BROKEN(f"Input file missing - {file}")
+
+        # ----------------------------------------
+        # See if we need to rebuild our outputs
+
+        self._reason = self.rebuild_reason()
+        if not self._reason:
+            raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
+
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1145,7 +1141,7 @@ class Task:
 
                 if Path.startswith(file, config.build_dir):
                     dirname = Path.dirname(file)
-                    if dirname is not None and not getattr(config, "dry_run", False):
+                    if dirname is not None and not config.dry_run:
                         os.makedirs(dirname, exist_ok=True) #type:ignore
 
 
@@ -1224,8 +1220,10 @@ class Task:
                 # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
                 deplines = [cast(str, Path.join(config.task_cwd, d)) for d in deplines]
                 for abs_file in deplines:
+                    if not Path.exists(abs_file):
+                        return f"Rebuilding because {Path.rel(abs_file, cwd)} from the depfile is missing"
                     if Utils.mtime(abs_file) >= min_out:
-                        return f"Rebuilding because {Path.rel(abs_file, cwd)} has changed"
+                        return f"Rebuilding because {Path.rel(abs_file, cwd)} from the depfile has changed"
 
         # All checks passed; we don't need to rebuild this output.
         return ""
@@ -1696,8 +1694,12 @@ class Loader:
         # ----------------------------------------
         # Run the module.
 
-        with chdir(new_config.script_cwd), Options.set_cv_config(new_config):
-            exec(code, new_module.__dict__)
+        with chdir(new_config.script_cwd):
+            try:
+                old_token = Options._cv_config.set(new_config)
+                exec(code, new_module.__dict__)
+            finally:
+                Options._cv_config.reset(old_token)
 
         return new_module
 
