@@ -52,7 +52,7 @@ sys.modules["hancho"] = hancho
 type Tree[T] = T | list[Tree[T]]
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Log
 
 class Log:
@@ -191,7 +191,7 @@ class LogLevel(int, Enum):
         return self.value <= Options.verbosity
 
 #endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 #region Colors
 
 class Colors(int, Enum):
@@ -212,7 +212,7 @@ class Colors(int, Enum):
     RESET   = -1  # The "go back to default" color :D
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Utils
 
 class Utils:
@@ -266,7 +266,6 @@ class Utils:
         elif isinstance(val, Expander):
             val = "<Expander>"
         elif isinstance(val, contextvars.Context):
-            #val = list(val.keys())
             val = "<Context>"
         elif isinstance(val, types.ModuleType):
             val = f"<Module {val.__name__}>"
@@ -416,7 +415,7 @@ class Utils:
             visitor(variant)
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Path
 # These functions wrap the os.path.* functions so that they work on Tree[str]
 
@@ -529,7 +528,7 @@ class Path:
         return os.path.commonpath([path, parent]) == parent
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Dict
 
 class Dict(dict):
@@ -569,7 +568,7 @@ class Dict(dict):
                 if lval is None or rval is not None:
                     dict.__setitem__(self, key, rval)
 
-    #----------------------------------------
+    # ----------------------------------------
     # Object
 
     def on_keyerror(self, key):
@@ -599,7 +598,7 @@ class Dict(dict):
     def __repr__(self):
         return Utils.dump_to_str(key = getattr(self, "name", "_"), val = self)
 
-    #----------------------------------------
+    # ----------------------------------------
     # Expander convenience helpers
 
     def expand[T](self, text : Any, as_type : type[T] = object) -> T:
@@ -612,7 +611,7 @@ class Tool(Dict):
     pass
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Options
 # Handles global configuration options
 
@@ -768,7 +767,7 @@ class Options:
         return flags
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Task
 # Task object + bookkeeping
 
@@ -1364,7 +1363,7 @@ class Task:
                 self.log_stdout()
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Expander
 # Hancho's text expansion system.
 #
@@ -1405,7 +1404,7 @@ class Expander(abc.MutableMapping[str, object]):
     def wrap(source : Dict | Expander) -> Expander:
         return Expander(source) if isinstance(source, (Dict, dict)) else source
 
-    #----------------------------------------
+    # ----------------------------------------
 
     @classmethod
     def reset(cls):
@@ -1430,7 +1429,7 @@ class Expander(abc.MutableMapping[str, object]):
             weave   = Utils.weave,
         )
 
-    #----------------------------------------
+    # ----------------------------------------
     # MutableMapping interface
 
     def __getitem__(self, key):
@@ -1451,7 +1450,7 @@ class Expander(abc.MutableMapping[str, object]):
     def __len__(self):
         return cast(Dict, self._context).__len__()
 
-    #----------------------------------------
+    # ----------------------------------------
     # object interface
 
     def __repr__(self):
@@ -1470,7 +1469,7 @@ class Expander(abc.MutableMapping[str, object]):
     def __delattr__(self, key):
         self._context.__delattr__(key)
 
-    #----------------------------------------
+    # ----------------------------------------
 
     def expand(self, val : Any):
         return Expander._expand(val, self)
@@ -1492,7 +1491,7 @@ class Expander(abc.MutableMapping[str, object]):
 
         return result
 
-    #----------------------------------------
+    # ----------------------------------------
 
     @staticmethod
     def split(text : str) -> list[str]:
@@ -1588,7 +1587,7 @@ class Expander(abc.MutableMapping[str, object]):
 
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Tracer
 # Expansion tracing class used by Expander
 
@@ -1653,7 +1652,7 @@ class Tracer:
         return tag
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Loader
 
 class Loader:
@@ -1679,7 +1678,6 @@ class Loader:
             raise AssertionError(f"Could not find script {script_path}!")
 
         with open(script_path, encoding="utf-8") as file:
-            cls.loaded_files.append(script_path)
             source = file.read()
 
         return cls.load_str(script_path, is_repo, source, *args, **kwargs)
@@ -1735,7 +1733,10 @@ class Loader:
         if dedupe is not None:
             return dedupe
 
+        # Not deduped, record this module for future deduping and dependency checking.
+
         cls.dedupe[dedupe_key] = new_module #type:ignore
+        cls.loaded_files.append(script_path)
 
         # ----------------------------------------
         # Run the module.
@@ -1750,7 +1751,7 @@ class Loader:
         return new_module
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region Runner
 
 class Runner:
@@ -1909,7 +1910,7 @@ class Runner:
             raise AssertionError(f"Don't know how to run tool {tool}")
 
 # endregion
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region init/reset/main
 
 def init(*args, **kwargs):
@@ -2019,7 +2020,7 @@ def main():
     return result
 
 # endregion
-# ####################################################################################################
+# --------------------------------------------------------------------------------------------------
 # region if __name__ == "__main__"
 
 # The 'global' config is actually instantiated per script context, otherwise scripts can break each
@@ -2039,7 +2040,7 @@ def __getattr__(name):
     else:
         raise AttributeError(name)
 
-# ---------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     sys.exit(main())
