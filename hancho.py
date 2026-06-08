@@ -33,7 +33,6 @@ import types
 from collections import ChainMap, abc
 from contextlib import chdir, contextmanager, suppress
 from enum import Enum
-from functools import wraps
 from inspect import isawaitable
 from typing import Any, cast
 
@@ -63,7 +62,7 @@ class Log:
         cls.buffer : str  = ""
         cls.indent_depth : int  = 0
         cls.current_color  : int  = -1
-        cls.line_buffer = ""
+        cls.line_buffer : str = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
         cls.reset_color = "\x1B[0m"
 
@@ -99,7 +98,7 @@ class Log:
         color_suffix = cls.reset_color if hex >= 0 else ""
 
         for i, line in enumerate(text.split("\n")):
-            if not cls.line_buffer:
+            if cls.line_buffer == "":
                 cls.line_buffer += f"[{time.time() - Log.start:12.6f}] " + "│ " * Log.indent_depth
 
             if i > 0:
@@ -119,7 +118,7 @@ class Log:
                 cls.line_buffer = ""
 
     @classmethod
-    def clip_printable(cls, text, width):
+    def clip_printable(cls, text, width) -> str:
         """
         Clips a string with embedded escape codes (such as ANSI color codes) so that it fits in
         'width' without breaking the escape codes.
@@ -134,21 +133,34 @@ class Log:
             text = text[:-1]
 
         # Split the text using the escape sequences as separators.
-        # Even chunks are printable text, odd chunks are escape sequences.
         chunks = Log.match_escapes.split(text)
 
-        # Now stick the chunks back together while counting up the length of the printable chunks.
-        # If/when we exceed 'width', clip the result and add "...".
+        # Even chunks are printable text, odd chunks are escape sequences.
+        # If the printable characters fit on the line, we dont' need to clip.
+
+        print_len = 0
+        for i in range(0, len(chunks), 2):
+            print_len += len(chunks[i])
+
+        if print_len <= width:
+            if newline:
+                text += "\n"
+            return text
+
+        # If we do need to clip, stick the chunks back together until we exceed width-3, then
+        # clip the last chunk and add "..."
         accum = 0
         result = ""
         for i, chunk in enumerate(chunks):
-            odd = i & 1
-            result += chunk
-            if not odd:
+            if i & 1:
+                result += chunk
+            else:
                 accum += len(chunk)
-                if accum > width:
-                    result = result[:width - 3 - accum] + "..."
+                if accum > width - 3:
+                    result += chunk[:-(accum - width + 3)] + "..."
                     break
+                else:
+                    result += chunk
 
         if newline:
             result += '\n'
@@ -991,6 +1003,10 @@ class Task:
                         raise AssertionError("One of a task's input sub-tasks was not started")
                     try:
                         await task._aio_task
+                    except asyncio.CancelledError:
+                        # _This_ task was cancelled while waiting for inputs. We need to ensure
+                        # the exception makes it back to asyncio.
+                        raise
                     except Task.SKIPPED:
                         # This input was clean and didn't need to rebuild.
                         pass
@@ -1020,6 +1036,8 @@ class Task:
             raise Task.BROKEN(f"Task {config.name} has no command!")
 
         for command in config.command:
+            if command == "":
+                raise Task.BROKEN("Command is an empty string")
             if type(command) is not type(config.command[0]):
                 raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
 
@@ -1250,6 +1268,8 @@ class Task:
         except asyncio.CancelledError as err:
             # We don't trust asyncio to clean up all cancelled processes, so we do it the hard way
             # here and kill the whole process group.
+            # Note - this only works on Linux. We will need a slightly different implementation for
+            # Windows, which is out of scope until Hancho is shippable.
             with suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             await proc.communicate()
@@ -1743,7 +1763,7 @@ class Runner:
                 while acquired < count:
                     await cls.core_sem.acquire()
                     acquired += 1
-            except:
+            except BaseException:
                 cls.release(acquired)
                 raise
 
@@ -1901,7 +1921,6 @@ def main():
     if LogLevel.VERBOSE:
 
         root_dir    = expander.root_dir
-        root_file   = expander.root_file
         repo_dir    = expander.repo_dir
 
         script_dir  = expander.script_cwd
