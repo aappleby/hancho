@@ -1590,19 +1590,38 @@ class Expander(abc.MutableMapping[str, object]):
 # --------------------------------------------------------------------------------------------------
 # region Tracer
 # Expansion tracing class used by Expander
+#
+# The traces generated look like this - the EX_XXXX prefix is an identifier for the Expander being
+# used so you can tell when the expand context changes, the rest are the call arguments and the
+# return values.
+#
+# [    0.916905] EX_BE50._get(desc)
+# [    0.917224] │ EX_BE50._expand('Linking {name}')
+# [    0.917305] │ │ EX_BE50._expand_blocks(['Linking ', '{name}'])
+# [    0.917569] │ │ │ EX_BE50._expand('{name}')
+# [    0.917880] │ │ │ │ EX_BE50._eval_macro('{name}')
+# [    0.918016] │ │ │ │ │ EX_BE50._get(name)
+# [    0.918284] │ │ │ │ │ └ 'hello-world'
+# [    0.918592] │ │ │ │ └ 'hello-world'
+# [    0.918706] │ │ │ └ 'hello-world'
+# [    0.918977] │ │ └ 'Linking hello-world'
+# [    0.919282] │ └ 'Linking hello-world'
+# [    0.919394] └ 'Linking hello-world'
 
 class Tracer:
 
     def __init__(self, context : Dict | Expander, enter_message):
         self.trace = getattr(context, "trace", False)
         self.enter_message = enter_message
-        self.color = Utils.obj_to_hex(context)
+        self.color = None
         self.context = context
         self.result = None
 
     def __enter__(self):
         if not (LogLevel.TRACE or self.trace):
             return self
+
+        self.color = Utils.obj_to_hex(self.context)
 
         with Log.color(self.color):
             Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
