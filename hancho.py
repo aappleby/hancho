@@ -430,24 +430,28 @@ class Utils:
         return os.stat(filename).st_mtime_ns
 
     @staticmethod
-    def flatten(variant: Tree[Any]) -> list[Any]:
-        if variant is None:
-            return []
-        if isinstance(variant, Utils.flat_types) or not isinstance(variant, abc.Iterable):
-            return [variant]
-        else:
-            return [x for element in variant for x in Utils.flatten(element)]
+    def flatten(variant: Tree[Any], out : list | None = None):
+        if out is None:
+            out = []
+        if isinstance(variant, Utils.flat_types):
+            out.append(variant)
+        elif isinstance(variant, abc.Iterable):
+            for element in variant:
+                Utils.flatten(element, out)
+        elif variant is not None:
+            out.append(variant)
+        return out
 
     @staticmethod
     def visit(variant, visitor):
-        if isinstance(variant, Task):
-            visitor(variant)
-        elif Utils.is_collection(variant):
+        if Utils.is_collection(variant):
             for v in variant:
                 Utils.visit(v, visitor)
         elif Utils.is_mapping(variant):
             for v in variant.values():
                 Utils.visit(v, visitor)
+        else:
+            visitor(variant)
 
 # endregion
 ####################################################################################################
