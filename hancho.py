@@ -301,68 +301,6 @@ class Utils:
         return pad + prefix + ld + separator.join(chunks) + rd
 
     # ----------------------------------------------------------------------------------------------
-    # Yes Claude, I know these recursify functions are weird and probably need better names.
-
-    @staticmethod
-    def recursify_all(func: abc.Callable[..., bool]):
-        """
-        Creates a function that recursively checks if 'func' is True for all fields of a Tree[T].
-        """
-
-        def outer(v, *args, **kwargs):
-            if Utils.is_collection(v):
-                return all(outer(v2, *args, **kwargs) for v2 in v)
-            elif Utils.is_mapping(v):
-                return all(outer(v2, *args, **kwargs) for _, v2 in v.items())
-            else:
-                return func(v, *args, **kwargs)
-
-        return outer
-
-    @staticmethod
-    def recursify_map(func: abc.Callable[..., Any]):
-        """
-        Creates a function that recursively applies 'func' to a Tree[T], creating a new Tree[T] in the process.
-        """
-
-        def outer(v, *args, **kwargs):
-            if Utils.is_collection(v):
-                return [outer(v2, *args, **kwargs) for v2 in v]
-            elif Utils.is_mapping(v):
-                return {k2: outer(v2, *args, **kwargs) for k2, v2 in v.items()}
-            else:
-                return func(v, *args, **kwargs)
-
-        return outer
-
-    @staticmethod
-    def recursify_pairwise_map(func):
-        """
-        Creates a function with two args that effectively
-        1. Flattens both arguments.
-        2. Creates a list of all possible pairs using one element of each argument.
-        3. Creates a list by applying 'func' to each element of the previous list
-        4. Returns the list if len(list) > 1, otherwise returns the scalar in list[0].
-        """
-
-        def inner(accum, a, b, *args, **kwargs):
-            if Utils.is_collection(a):
-                for c in a:
-                    inner(accum, c, b, *args, **kwargs)
-            elif Utils.is_collection(b):
-                for c in b:
-                    inner(accum, a, c, *args, **kwargs)
-            else:
-                accum.append(func(a, b, *args, **kwargs))
-
-        def outer(a, b, *args, **kwargs):
-            accum = []
-            inner(accum, a, b, *args, **kwargs)
-            return accum[0] if len(accum) == 1 else accum
-
-        return outer
-
-    # ----------------------------------------------------------------------------------------------
 
     @staticmethod
     def stringify(variant) -> str:
@@ -456,7 +394,7 @@ class Utils:
 # endregion
 ####################################################################################################
 # region Path
-# We want the os.path.* functions to work on Tree[str], so we run them through recursify.
+# These functions wrap the os.path.* functions so that they work on Tree[str]
 
 class Path:
 
@@ -467,68 +405,103 @@ class Path:
     # path, which we can do with simple string manipulation.
 
     @staticmethod
-    @Utils.recursify_pairwise_map
-    def rel(path1, path2): return path1.removeprefix(path2 + "/") if path1 != path2 else "."
+    def rel(lhs, rhs):
+        if Utils.is_collection(lhs):
+            return [Path.rel(lh, rhs) for lh in lhs]
+        if Utils.is_collection(rhs):
+            return [Path.rel(lhs, rh) for rh in rhs]
+        return lhs.removeprefix(rhs + "/") if lhs != rhs else "."
 
     @staticmethod
-    @Utils.recursify_pairwise_map
-    def join(lhs, rhs): return os.path.join(lhs, rhs)
+    def join(lhs, rhs):
+        if Utils.is_collection(lhs):
+            return [Path.join(lh, rhs) for lh in lhs]
+        if Utils.is_collection(rhs):
+            return [Path.join(lhs, rh) for rh in rhs]
+        return os.path.join(lhs, rhs)
 
     @staticmethod
-    @Utils.recursify_map
-    def abs(p): return os.path.abspath(p) if p else ""
+    def abs(path):
+        if Utils.is_collection(path):
+            return [Path.real(p) for p in path]
+        return os.path.abspath(path) if path else ""
 
     @staticmethod
-    @Utils.recursify_map
-    def real(p): return os.path.realpath(p) if p else ""
+    def real(path):
+        if Utils.is_collection(path):
+            return [Path.real(p) for p in path]
+        return os.path.realpath(path) if path else ""
 
     @staticmethod
-    @Utils.recursify_map
-    def norm(p): return os.path.normpath(p) if p else ""
+    def norm(path):
+        if Utils.is_collection(path):
+            return [Path.norm(p) for p in path]
+        return os.path.normpath(path) if path else ""
 
     @staticmethod
-    @Utils.recursify_map
-    def base(p): return os.path.basename(p)
+    def base(path):
+        if Utils.is_collection(path):
+            return [Path.base(p) for p in path]
+        return os.path.basename(path)
 
     @staticmethod
-    @Utils.recursify_map
-    def ext(p, new_ext): return os.path.splitext(p)[0] + new_ext
+    def ext(path, new_ext):
+        if Utils.is_collection(path):
+            return [Path.ext(p, new_ext) for p in path]
+        return os.path.splitext(path)[0] + new_ext
 
     @staticmethod
-    @Utils.recursify_map
-    def stem(p): return os.path.splitext(os.path.basename(p))[0]
+    def stem(path):
+        if Utils.is_collection(path):
+            return [Path.stem(p) for p in path]
+        return os.path.splitext(os.path.basename(path))[0]
 
     @staticmethod
-    @Utils.recursify_map
-    def dirname(path): return os.path.dirname(path)
+    def dirname(path):
+        if Utils.is_collection(path):
+            return [Path.dirname(p) for p in path]
+        return os.path.dirname(path)
 
     @staticmethod
-    @Utils.recursify_map
-    def split(path): return os.path.split(path)
+    def split(path):
+        if Utils.is_collection(path):
+            return [Path.split(p) for p in path]
+        return os.path.split(path)
 
     @staticmethod
-    @Utils.recursify_map
-    def splitext(path): return os.path.splitext(path)
+    def splitext(path):
+        if Utils.is_collection(path):
+            return [Path.splitext(p) for p in path]
+        return os.path.splitext(path)
 
     @staticmethod
-    @Utils.recursify_all
-    def isabs(v): return isinstance(v, str) and len(v) > 0 and os.path.isabs(v)
+    def isabs(path):
+        if Utils.is_collection(path):
+            return all(Path.isabs(p) for p in path)
+        return isinstance(path, str) and len(path) > 0 and os.path.isabs(path)
 
     @staticmethod
-    @Utils.recursify_all
-    def isfile(path): return isinstance(path, str) and os.path.isfile(path)
+    def isfile(path):
+        if Utils.is_collection(path):
+            return all(Path.isfile(p) for p in path)
+        return isinstance(path, str) and os.path.isfile(path)
 
     @staticmethod
-    @Utils.recursify_all
-    def isdir(path): return isinstance(path, str) and os.path.isdir(path)
+    def isdir(path):
+        if Utils.is_collection(path):
+            return all(Path.isdir(p) for p in path)
+        return isinstance(path, str) and os.path.isdir(path)
 
     @staticmethod
-    @Utils.recursify_all
-    def exists(path): return isinstance(path, str) and os.path.exists(path)
+    def exists(path):
+        if Utils.is_collection(path):
+            return all(Path.exists(p) for p in path)
+        return isinstance(path, str) and os.path.exists(path)
 
     @staticmethod
-    @Utils.recursify_all
     def startswith(path, parent):
+        if Utils.is_collection(path):
+            return all(Path.startswith(p, parent) for p in path)
         return os.path.commonpath([path, parent]) == parent
 
 # endregion
