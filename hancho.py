@@ -117,7 +117,6 @@ class Log:
             else:
                 line = color_prefix + line + color_suffix
 
-
             cls.line_buffer += line
             if cls.line_buffer[-1] == '\n':
                 cls.flush()
@@ -126,12 +125,11 @@ class Log:
     def flush(cls):
         # Dumps the line buffer to stdout (if we're not in quiet mode) and the internal buffer and
         # then clears it.
-        # If the line wasn't finished (because we're exiting the app), stick a newline on it.
         if cls.line_buffer:
+            # If the line wasn't finished (because we're exiting the app), stick a newline on it.
             if cls.line_buffer[-1] != '\n':
                 cls.line_buffer += '\n'
 
-            cls.line_buffer += cls.reset_color
             if not Options.wrap:
                 cls.line_buffer = Log.clip_printable(cls.line_buffer, Options.con_w)
 
@@ -140,9 +138,6 @@ class Log:
                 sys.stdout.write(cls.line_buffer)
 
             Log.buffer += cls.line_buffer
-            cls.line_buffer = ""
-
-            sys.stdout.write(cls.line_buffer)
             cls.line_buffer = ""
 
     @classmethod
@@ -177,6 +172,8 @@ class Log:
         if not text or not isinstance(text, str) or len(text) < 3:
             return text
 
+        # We don't want to clip trailing newlines - if one is present, just remember it was there
+        # and we'll stick it back on at the end.
         newline = text[-1] == '\n'
         if newline:
             text = text[:-1]
@@ -216,6 +213,7 @@ class Log:
                 else:
                     result += chunk
 
+        # Stick that trailing newline back on.
         if newline:
             result += '\n'
 
