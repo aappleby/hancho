@@ -1826,12 +1826,8 @@ class Loader:
     def load_str(cls, script_path, is_repo : bool, source : str, *args, **kwargs) -> types.ModuleType:
         """This is split out from load_file for testing purposes."""
 
-        code = compile(source, script_path, "exec", dont_inherit=True)
-
-        (script_cwd, script_file) = Path.split(script_path)
-
-        if LogLevel.VERBOSE:
-            Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
+        # ----------------------------------------
+        # Create an empty module object
 
         new_module = types.ModuleType(script_path)
         new_module.__dict__.update(
@@ -1843,6 +1839,7 @@ class Loader:
         # Create the script-specific config that points the 'repo' and 'this' paths at the given
         # script.
 
+        (script_cwd, script_file) = Path.split(script_path)
         old_config = Options.cv_config()
 
         new_config = Dict(
@@ -1872,6 +1869,7 @@ class Loader:
         if dedupe is not None:
             return dedupe
 
+        # ----------------------------------------
         # Not deduped, record this module for future deduping and dependency checking.
 
         cls.dedupe[dedupe_key] = new_module #type:ignore
@@ -1879,6 +1877,11 @@ class Loader:
 
         # ----------------------------------------
         # Run the module.
+
+        if LogLevel.VERBOSE:
+            Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
+
+        code = compile(source, script_path, "exec", dont_inherit=True)
 
         with chdir(new_config.script_cwd):
             try:
