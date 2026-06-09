@@ -481,6 +481,18 @@ class Utils:
 
 class Path:
 
+    # WARNING - Both 'startswith' and 'rel' below can throw ValueError if there's a mix of abs/rel
+    # paths, or if the paths are on different volumes in Windows. We don't handle this yet, but we
+    # will need to eventually. If this occurs inside a macro you'll see the exception in the macro
+    # expansion trace and the macro will be returned unexpanded. Using 'commonpath' here is
+    # probably worth it though, as it handles some annoying edge cases.
+
+    @staticmethod
+    def startswith(path, parent):
+        if Utils.is_collection(path):
+            return all(Path.startswith(p, parent) for p in path)
+        return os.path.commonpath([path, parent]) == parent
+
     # Generating relative paths in the presence of symlinks doesn't work with either
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
     # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
@@ -588,15 +600,6 @@ class Path:
         if Utils.is_collection(path):
             return all(Path.exists(p) for p in path)
         return isinstance(path, str) and os.path.exists(path)
-
-    @staticmethod
-    def startswith(path, parent):
-        # WARNING - 'startswith' can throw ValueError if there's a mix of abs/rel paths, or if the
-        # paths are on different volumes in Windows. We don't handle this yet, but we will need to
-        # eventually.
-        if Utils.is_collection(path):
-            return all(Path.startswith(p, parent) for p in path)
-        return os.path.commonpath([path, parent]) == parent
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1398,6 +1401,7 @@ class Task:
             with Log.color(Colors.BLUE):
                 self.log(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}\n")
 
+        proc = None
         try:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
@@ -1418,9 +1422,10 @@ class Task:
             #
             # Note - this only works on Linux. We will need a slightly different implementation for
             # Windows, which is out of scope until Hancho is shippable.
-            with suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
-            await proc.wait()
+            if proc is not None:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                await proc.wait()
             # Re-raise so that dependent tasks and the top-level except can see the error.
             raise ex
         except Exception as ex:
