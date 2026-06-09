@@ -6,3 +6,5 @@ dist
 __pycache__
 scratch
 htmlcov
+sandbox/*
+!sandbox/README.md
