@@ -496,7 +496,7 @@ class TestTasks(unittest.TestCase):
 
     def test_sync_command(self):
         def sync_command(task):
-            force_touch(task._config.out_obj)
+            force_touch(task.config.out_obj)
 
         hancho.Task(
             desc="The 'command' field of rules should be OK handling a sync function",
@@ -512,7 +512,7 @@ class TestTasks(unittest.TestCase):
     def test_lambda_command(self):
         hancho.Task(
             desc="The 'command' field of rules should be OK handling a lambda",
-            command=lambda task: force_touch(task._config.out_obj),
+            command=lambda task: force_touch(task.config.out_obj),
             in_src=[],
             out_obj="{name}",
             name="result.txt",
@@ -524,7 +524,7 @@ class TestTasks(unittest.TestCase):
     def test_sync_callback(self):
         def callback(task):
             time.sleep(0.1)
-            force_touch(task._config.out_file)
+            force_touch(task.config.out_file)
 
         hancho.Task(command=callback, out_file="test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
@@ -544,7 +544,7 @@ class TestTasks(unittest.TestCase):
     def test_async_callback(self):
         async def callback(task):
             await asyncio.sleep(0.1)
-            force_touch(task._config.out_file)
+            force_touch(task.config.out_file)
 
         hancho.Task(command=callback, out_file="test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())

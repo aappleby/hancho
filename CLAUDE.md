@@ -12,6 +12,15 @@ there is no install step. Build scripts are plain Python, so they can run arbitr
 
 ## Interaction Guidelines
 
+### Autonomous Work Is Confined to `sandbox/`
+- The **only** filesystem changes Claude may make without explicit, specific permission are
+  inside the `sandbox/` folder (gitignored). Experiments, scratch scripts, generated test
+  builds, and trial `.hancho` files all go there.
+- **Anywhere outside `sandbox/`** - `hancho.py`, `examples/`, `tests/`, `tutorial/`, `docs/`,
+  `CLAUDE.md`, etc. - requires an explicit request before editing or creating files.
+- This is a hard boundary, not a default. "Go ahead" on a sandbox task does not extend to
+  touching the rest of the repo.
+
 ### Don't Be Proactive
 - **Don't** automatically run commands, tests, or investigations unless explicitly asked
 - **Don't** explore branches, check diffs, or analyze code without a request

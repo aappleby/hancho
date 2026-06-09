@@ -123,8 +123,8 @@ Task @ 0x727f0371d6a0 {
     out_bin = "app",
     build_dir = "{build_root}/{build_tag}/{repo_dir}",
     _task_index = 0,
-    _in_files = [],
-    _out_files = [],
+    in_files = [],
+    out_files = [],
     _reason = None,
     _aio_task = None,
     _loaded_files = [

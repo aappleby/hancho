@@ -309,7 +309,7 @@ class Utils:
 
         # Don't recurse into a few types that need special handling
         if isinstance(val, Task):
-            val = f"<Task {val._config.name}>"
+            val = f"<Task {val.config.name}>"
         elif isinstance(val, Expander):
             val = "<Expander>"
         elif isinstance(val, contextvars.Context):
@@ -868,10 +868,27 @@ class Task:
     class BROKEN(Exception):    pass  # noqa: E701
 
     def __init__(self, *args, **kwargs):
-        # Save the context, we will use it when we create the asyncio.Task
+        # The task's config contains all the commands, paths, options, inputs, dependent Tasks, and
+        # anything else needed to assemble and run the task's commands. It is expected that build
+        # scripts will need to read task.config in order to implement task callbacks, so the field
+        # is not underscore-prefixed like the later ones.
+        self.config  = Dict(Options.cv_config(), *args, **kwargs)
+
+        # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
+        # in addition to the individual in_/out_ fields, so these are public.
+        self.in_files  = []
+        self.out_files = []
+
+        # Reading a Dict field through an expander both expands the field's template if present,
+        # and also recursively wraps any Dicts accessed during template expansion with their own
+        # expanders.
+        # This enables a nested field access like "a.b.c" to first try expanding 'c' using 'b' as
+        # its context, and then if it fails to try 'a' afterwards.
+        self._expander  = Expander.wrap(self.config)
+
+        # The context field is what allows a Task to see its parent script's "hancho.config"
+        # even after it's been stuck on an asyncio queue and run from somewhere else entirely.
         self._context = contextvars.copy_context()
-        self._config  = Dict(Options.cv_config(), *args, **kwargs)
-        self._expander  = Expander.wrap(self._config)
 
         # Why this task rebuilt, or "" if it did not need to rebuild.
         self._reason = ""
@@ -880,6 +897,7 @@ class Task:
         # actually need to run this task if its outputs are up to date.
         self._aio_task : asyncio.Task | None = None
 
+        # The "return value" for the task as a whole, or "None" if the task was successful.
         self._error : BaseException | None = None
 
         # Tasks depend on all .hancho files that were loaded when the task was created.
@@ -891,11 +909,7 @@ class Task:
         self._task_id : int = 0
         self._stdout : str = ""
         self._stderr : str = ""
-
         self._core_count = 0
-
-        self._in_files  = []
-        self._out_files = []
 
         Runner.all_tasks.append(self)
 
@@ -948,8 +962,8 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def enable(self):
-        if not self._config.enabled:
-            self._config.enabled = True
+        if not self.config.enabled:
+            self.config.enabled = True
             Task.tasks_enabled += 1
             if Utils.in_event_loop():
                 self.create_aio_task()
@@ -964,7 +978,7 @@ class Task:
             self._aio_task = t
 
         # Start all tasks referenced by _config so we don't deadlock while waiting for them.
-        Utils.visit(self._config, lambda task: isinstance(task, Task) and task.enable())
+        Utils.visit(self.config, lambda task: isinstance(task, Task) and task.enable())
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1001,15 +1015,15 @@ class Task:
         if self._error:
             raise self._error
 
-        dry_run = " (DRY RUN)" if self._config.dry_run else ""
+        dry_run = " (DRY RUN)" if self.config.dry_run else ""
         if LogLevel.VERBOSE:
-            self.log(f"Task done{dry_run}: '{self._config.name}' - '{self._config.desc}'\n")
-        return self._out_files
+            self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
+        return self.out_files
 
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
-        config = self._config
+        config = self.config
         expand = self._expander
 
         Task.id_counter += 1
@@ -1101,7 +1115,7 @@ class Task:
 
         # Copy the dict key-values, as it's generally a bad idea to modify a container you're
         # iterating over - _especially_ if it has an await in the middle of it.
-        items = list(self._config.items())
+        items = list(self.config.items())
         temp = Dict()
 
         for key, files in items:
@@ -1129,21 +1143,21 @@ class Task:
                         # This input was clean and didn't need to rebuild.
                         pass
                     except BaseException as ex:
-                        raise Task.CANCELLED(f"Task is cancelled: '{self._config.name}' : '{self._config.desc}'") from ex
+                        raise Task.CANCELLED(f"Task is cancelled: '{self.config.name}' : '{self.config.desc}'") from ex
 
-                    files[i] = task._out_files
+                    files[i] = task.out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
             temp[key] = Utils.flatten(files)
 
         # We've awaited everything, copy the file lists back into the config.
         for k, v in temp.items():
-            self._config[k] = v
+            self.config[k] = v
 
     # ----------------------------------------------------------------------------------------------
 
     def task_init(self):
-        config = self._config
+        config = self.config
         expand = self._expander
 
         if os.getcwd() != config.task_cwd:
@@ -1232,13 +1246,13 @@ class Task:
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
         # Check that all build files would end up under build_dir
-        for file in self._out_files:
+        for file in self.out_files:
             assert Path.isabs(file)
             if not Path.startswith(file, config.build_dir):
                 raise Task.BROKEN(f"Path error, output file {file} is not under build_dir {config.build_dir}")
 
         # Check for task collisions
-        for file in self._out_files:
+        for file in self.out_files:
             real_file = cast(str, Path.real(file))
             if real_file in Loader.real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
@@ -1249,7 +1263,7 @@ class Task:
         # we're really running tasks.
 
         if not config.dry_run:
-            for file in self._in_files:
+            for file in self.in_files:
                 assert Path.isabs(file)
                 if not Path.exists(file):
                     raise Task.BROKEN(f"Input file missing - {file}")
@@ -1274,7 +1288,7 @@ class Task:
         robust way. Whether this actually turns out to be robust or not is yet to be determined.
         """
 
-        config = self._config
+        config = self.config
 
         # Initially, all our file paths are relative to the script_cwd that created this task.
         # Join script_cwd with the filenames to produce absolute paths.
@@ -1305,17 +1319,17 @@ class Task:
                     dirname = Path.dirname(file)
                     os.makedirs(dirname, exist_ok=True) #type:ignore
 
-        # Gather all absolute file paths to _in_files/_out_files.
+        # Gather all absolute file paths to in_files/out_files.
         # The check for is_depfile_field must come first, as it's a special case of a file that
         # is technically _both_ an input and an output file, even though its name starts with "in".
         for i in range(len(files)):
             if Task.is_depfile_field(name):
                 if Path.isfile(files[i]):
-                    self._in_files.append(files[i])
+                    self.in_files.append(files[i])
             elif Task.is_output_field(name):
-                self._out_files.append(files[i])
+                self.out_files.append(files[i])
             elif Task.is_input_field(name):
-                self._in_files.append(files[i])
+                self.in_files.append(files[i])
 
         # Convert the fixed paths back to relative so our command lines aren't enormous.
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
@@ -1333,27 +1347,27 @@ class Task:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
         """
-        config = self._config
+        config = self.config
         cwd = os.getcwd()
 
         if Options.rebuild or getattr(config, "rebuild", False):
             return "Target forced to rebuild"
-        if not self._in_files:
+        if not self.in_files:
             return "Always rebuild a target with no inputs"
-        if not self._out_files:
+        if not self.out_files:
             return "Always rebuild a target with no outputs"
 
         # Check if any of our output files are missing.
-        for file in self._out_files:
+        for file in self.out_files:
             if not Path.exists(file):
                 return f"{Path.rel(file, cwd)} is missing"
 
         # Check if any of our input files are newer than the output files.
-        min_out = min(Utils.mtime(f) for f in self._out_files)
+        min_out = min(Utils.mtime(f) for f in self.out_files)
         if Utils.mtime(__file__) >= min_out:
             return "hancho.py has changed"
 
-        for file in self._in_files:
+        for file in self.in_files:
             if Utils.mtime(file) >= min_out:
                 return f"{Path.rel(file, cwd)} has changed"
 
@@ -1395,7 +1409,7 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def run_command(self, command):
-        config = self._config
+        config = self.config
 
         if LogLevel.VERBOSE:
             with Log.color(Colors.BLUE):
@@ -1462,13 +1476,13 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def call_callback(self, command):
-        callback_dir = Path.rel(self._config.script_cwd, self._config.repo_dir)
+        callback_dir = Path.rel(self.config.script_cwd, self.config.repo_dir)
         if LogLevel.VERBOSE:
             self.log(f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script_cwd where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(self._config.script_cwd):
+        with chdir(self.config.script_cwd):
             result = command(self)
         if isawaitable(result):
             result = await result
@@ -1479,7 +1493,7 @@ class Task:
 
     def log_task_exception(self, message, ex = None):
         if LogLevel.ERROR:
-            script_path = Path.join(self._config.script_cwd, self._config.script_file)
+            script_path = Path.join(self.config.script_cwd, self.config.script_file)
 
             with Log.color(0xFF0000):
                 Log.log("========================================\n")
@@ -1488,10 +1502,10 @@ class Task:
 
             with Log.color(Colors.RED):
                 Log.log(f"Script    = {script_path}:\n")
-                Log.log(f"Task      = '{self._config.name}' : '{self._config.desc}'\n")
+                Log.log(f"Task      = '{self.config.name}' : '{self.config.desc}'\n")
                 Log.log(f"os.getcwd = {os.getcwd()}\n")
-                Log.log(f"task cwd  = {self._config.task_cwd}\n")
-                Log.log(f"command   = {self._config.command}\n")
+                Log.log(f"task cwd  = {self.config.task_cwd}\n")
+                Log.log(f"command   = {self.config.command}\n")
                 if ex:
                     Log.log_exception(ex)
                 Log.log(self.dump_stdout())
@@ -1972,7 +1986,7 @@ class Runner:
             # includes those names via template. Maybe don't do that.
             target_regex = re.compile(Options.target)
             for task in cls.all_tasks:
-                name = task._config.expand("{name}")
+                name = task.config.expand("{name}")
                 if target_regex.search(name):
                     task.enable()
         elif Options.rebuild:
@@ -1982,7 +1996,7 @@ class Runner:
         else:
             # Enable all tasks that were generated by the root repo.
             for task in cls.all_tasks:
-                if task._config.this_repo == Loader.root_repo:
+                if task.config.this_repo == Loader.root_repo:
                     task.enable()
 
     # ----------------------------------------------------------------------------------------------
@@ -2001,7 +2015,7 @@ class Runner:
         # Create asyncio tasks for all enabled Hancho tasks.
         time_a = time.perf_counter()
         for task in cls.all_tasks:
-            if task._config.enabled:
+            if task.config.enabled:
                 task.create_aio_task()
         time_start = time.perf_counter() - time_a
         if LogLevel.VERBOSE:
@@ -2191,9 +2205,10 @@ def main():
 # --------------------------------------------------------------------------------------------------
 # region if __name__ == "__main__"
 
-# The 'global' config is actually instantiated per script context, otherwise scripts can break each
-# other by changing shared config fields. To ensure each script sees the right config, we make the
-# module-level __getattr__ redirect to the config stored in the ContextVar in Options.
+# The 'global' hancho.config visible to scripts is actually instantiated per script context,
+# otherwise scripts can break each other by changing shared config fields. To ensure each script
+# sees the right config, we make the module-level __getattr__ redirect to the config stored in the
+# ContextVar in Options.
 #
 # This is also where we look up command aliases so that scripts don't have to use fully-qualified
 # names like 'hancho.Path.norm'.
