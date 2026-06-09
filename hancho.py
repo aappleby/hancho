@@ -707,10 +707,8 @@ class Options:
                 verbosity = LogLevel[verbosity.upper()]
             elif isinstance(verbosity, int):
                 verbosity = LogLevel(verbosity)
-            elif isinstance(verbosity, LogLevel):
-                pass
             else:
-                raise ValueError("Got an unknown verbosity '{type(verbosity)} = {verbosity}'")
+                raise ValueError(f"Got an unknown verbosity '{type(verbosity)} = {verbosity}'")
 
         elif trace:
             verbosity = LogLevel.TRACE
@@ -1434,11 +1432,11 @@ class Task:
 
         if self._stdout:
             result += "---------------- Stdout ----------------\n"
-            result += self._stdout.strip() + "\n" if self._stdout else ""
+            result += self._stdout.strip() + "\n"
 
         if self._stderr:
             result += "---------------- Stderr ----------------\n"
-            result += self._stderr.strip() + "\n" if self._stderr else ""
+            result += self._stderr.strip() + "\n"
 
         if self._stdout or self._stderr:
             result += "----------------------------------------\n"
