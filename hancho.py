@@ -497,7 +497,7 @@ class Path:
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
     # latter does generate them but "path/with/symlink/../foo" doesn't behave like you think it
     # should. What we really want is to just remove redundant cwd stuff off the beginning of the
-    # path, which we can do with simple string manipulation.
+    # path, which we can do with 'commonpath' and 'removeprefix'.
 
     @staticmethod
     def rel(lhs, rhs):
