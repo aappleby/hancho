@@ -702,8 +702,16 @@ class Options:
         verbose   = root_config.pop("verbose", False)
         quiet     = root_config.pop("quiet", False)
 
-        if isinstance(verbosity, str):
-            verbosity = LogLevel[verbosity.upper()]
+        if verbosity is not None:
+            if isinstance(verbosity, str):
+                verbosity = LogLevel[verbosity.upper()]
+            elif isinstance(verbosity, int):
+                verbosity = LogLevel(verbosity)
+            elif isinstance(verbosity, LogLevel):
+                pass
+            else:
+                raise ValueError("Got an unknown verbosity '{type(verbosity)} = {verbosity}'")
+
         elif trace:
             verbosity = LogLevel.TRACE
         elif debug:
@@ -1345,15 +1353,19 @@ class Task:
         if config.in_depfile and Path.exists(config.in_depfile):
             if LogLevel.DEBUG:
                 self.log(f"Found C dependencies file {config.in_depfile}\n")
-            with open(config.in_depfile) as depcontents:
+            with open(config.in_depfile, encoding="utf-8") as depcontents:
                 deplines = None
                 if config.depformat == "msvc":
                     # MSVC /sourceDependencies
                     deplines = json.load(depcontents)["Data"]["Includes"]
                 elif config.depformat == "gcc":
                     # GCC -MMD
-                    deplines = depcontents.read().split()
-                    deplines = [d for d in deplines[1:] if d != "\\"]
+                    # NOTE: This does not handle filenames with escaped spaces in them, but I don't
+                    # want to write a whole .d parser yet.
+                    deplines = depcontents.read()
+                    deplines = re.sub(r"\\\s*\n", "", deplines)
+                    deplines = deplines.split()
+                    deplines = [d for d in deplines if d[-1] != ':']
                 else:
                     raise Task.BROKEN(f"Invalid depfile format {config.depformat}")
 
@@ -1415,16 +1427,22 @@ class Task:
         if LogLevel.VERBOSE and (self._stdout or self._stderr):
             self.log(self.dump_stdout())
 
-        return proc.returncode
-
     # ----------------------------------------------------------------------------------------------
 
     def dump_stdout(self) -> str:
-        result  = "---------------- Stdout ----------------\n"
-        result += self._stdout.strip() + "\n" if self._stdout else ""
-        result += "---------------- Stderr ----------------\n"
-        result += self._stderr.strip() + "\n" if self._stderr else ""
-        result += "----------------------------------------\n"
+        result = ""
+
+        if self._stdout:
+            result += "---------------- Stdout ----------------\n"
+            result += self._stdout.strip() + "\n" if self._stdout else ""
+
+        if self._stderr:
+            result += "---------------- Stderr ----------------\n"
+            result += self._stderr.strip() + "\n" if self._stderr else ""
+
+        if self._stdout or self._stderr:
+            result += "----------------------------------------\n"
+
         return result
 
     # ----------------------------------------------------------------------------------------------
