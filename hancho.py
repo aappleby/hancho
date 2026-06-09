@@ -62,7 +62,7 @@ class Log:
 
     @classmethod
     def reset(cls):
-        cls.start  : float = time.time( )
+        cls.start  : float = time.time()
         cls.indent_depth : int  = 0
         cls.current_color  : int  = -1
         cls.line_buffer : str = ""
@@ -493,7 +493,15 @@ class Path:
             return [Path.rel(lh, rhs) for lh in lhs]
         if Utils.is_collection(rhs):
             return [Path.rel(lhs, rh) for rh in rhs]
-        return lhs.removeprefix(rhs + "/") if lhs != rhs else "."
+
+        prefix = os.path.commonpath([lhs, rhs])
+
+        if lhs == rhs:
+            return "."
+        elif prefix != rhs:
+            return lhs
+        else:
+            return lhs.removeprefix(prefix + "/")
 
     @staticmethod
     def join(lhs, rhs):
@@ -1082,6 +1090,9 @@ class Task:
         # Done!
 
     # ----------------------------------------------------------------------------------------------
+    # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
+    # modifying tasks after they're created but before they're started. If you point task B's
+    # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
     async def await_inputs(self):
 
@@ -1387,15 +1398,15 @@ class Task:
             with Log.color(Colors.BLUE):
                 self.log(f"{Path.rel(config.task_cwd, config.repo_dir)}$ {command}\n")
 
-        # Create the subprocess via asyncio and then await the result.
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd    = config.task_cwd,
-            stdout = asyncio.subprocess.PIPE,
-            stderr = asyncio.subprocess.PIPE,
-            start_new_session = True
-        )
         try:
+            # Create the subprocess via asyncio and then await the result.
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                cwd    = config.task_cwd,
+                stdout = asyncio.subprocess.PIPE,
+                stderr = asyncio.subprocess.PIPE,
+                start_new_session = True
+            )
             (stdout_data, stderr_data) = await proc.communicate()
         except asyncio.CancelledError as ex:
             # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
@@ -1668,12 +1679,16 @@ class Expander(abc.MutableMapping[str, object]):
             tracer.save_result(result)
         return result
 
-    # Hancho's template expansions can contain infinite loops, so we need some simple recursion
-    # depth tracking here. Hancho's test suites currently pass with MAX_DEPTH = 7, but we set it to
-    # 20 just for future growth.
-
+    # Hancho's template expansions can cause infinite loops, so we need some simple recursion depth
+    # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
+    # up the whole Python stack.
+    # If you do weird things like load scripts from inside macros and you hit MAX_DEPTH, that's a
+    # you problem.
+    # Hancho's test suites currently pass with MAX_DEPTH = 7, but we set it to 20 just in case.
+    #
     # The expand_depth is global mutable state, but it's only ever modified inside _expand, which
     # is synchronous and should only be touched by one thread at a time.
+
     expand_depth : int = 0
     MAX_DEPTH : int = 20
 
