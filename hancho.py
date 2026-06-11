@@ -1732,67 +1732,58 @@ class Expander(abc.MutableMapping[str, object]):
     @classmethod
     def _expand1(cls, variant, context):
         if cls.expand_depth >= cls.MAX_DEPTH:
-            raise RecursionError("Template expansion failed to terminate")
-        if variant is None:
-            return variant
-        if isinstance(variant, list):
-            return [cls._expand1(t, context) for t in variant]
-        if not isinstance(variant, str):
-            return variant
-
+            raise RecursionError(f"Template expansion failed to terminate, expand_depth = {cls.expand_depth}")
+        if cls.expand_steps >= 100:
+            raise RecursionError(f"Template expansion failed to terminate, expand_steps = {cls.expand_steps}")
 
         try:
             old_depth = Expander.expand_depth
+            Expander.expand_depth += 1
 
             old_variant = None
             while variant != old_variant:
+
+                if variant is None:
+                    return variant
                 if isinstance(variant, list):
                     return [cls._expand1(t, context) for t in variant]
-                if not isinstance(variant, str) or not variant:
+                if not isinstance(variant, str):
                     return variant
 
-                Expander.expand_depth += 1
 
                 blocks = cls.split(variant)
-                if len(blocks) == 1 and (not isinstance(blocks[0], str) or blocks[0][0] != '{'):
+                if len(blocks) == 1 and not is_macro(blocks[0]):
                     return variant
 
-                with Tracer(context, f"_expand({variant!r})") as tracer:
-                    if len(blocks) == 1:
-                        _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
-                        with Tracer(context, f"_eval_macro({blocks[0]!r})") as tracer:
-                            with suppress(Exception):
-                                blocks[0] = eval(blocks[0][1:-1], hancho.__dict__, _locals)
-                            tracer.save_result(blocks[0])
-                        result = blocks[0]
+                _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
+                for i, block in enumerate(blocks):
+                    if is_macro(block):
+                        with suppress(Exception):
+                            cls.expand_steps += 1
+                            blocks[i] = eval(block[1:-1], hancho.__dict__, _locals)
 
-                    else:
-                        _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
-                        for i, block in enumerate(blocks):
-                            with Tracer(context, f"_eval_macro({block!r})") as tracer:
-                                with suppress(Exception):
-                                    blocks[i] = eval(block[1:-1], hancho.__dict__, _locals)
-                                tracer.save_result(blocks[i])
+                if len(blocks) == 1:
+                    result = blocks[0]
+                else:
+                    blocks = [Expander._expand1(b, context) for b in blocks]
+                    blocks = [Utils.stringify(b) for b in blocks]
+                    result = "".join(blocks)
 
-                        with Tracer(context, f"_expand_blocks({blocks!r})") as tracer:
-                            blocks = [Expander._expand1(b, context) for b in blocks]
-                            blocks = [Utils.stringify(b) for b in blocks]
-                            result = "".join(blocks)
-                            tracer.save_result(result)
-                    tracer.save_result(result)
-
-                if result == variant:
-                    return result
-
+                old_variant = variant
                 variant = result
 
         finally:
             Expander.expand_depth = old_depth
+        return variant
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def _expand_inner(cls, variant, context):
+        cls.expand_steps = 0
+        cls.expand_depth = 0
+        cls.eval_count = 0
+        cls.eval_depth = 0
         #_assert(Expander._top_expand_depth == 1)
         return cls._expand1(variant, context)
         #return cls._expand2(variant, context)
