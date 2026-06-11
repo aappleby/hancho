@@ -10,7 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_dry_run"],
+      "args"    : ["tests.test_templates.TestTemplates"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -28,7 +28,7 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-v=trace", "-j1"],
+      "args"    : ["--trace", "-j1"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -38,7 +38,7 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/scratch/build.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-d", "-v", "-j1"],
+      "args"    : ["-d", "--verbose", "-j1"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -49,7 +49,7 @@
       "module"  : "hancho",
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
-      //"args"    : ["-d", "-v", "-j1", "--rebuild"],
+      //"args"    : ["-d", "--verbose", "-j1", "--rebuild"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -61,7 +61,7 @@
       "args"    : ["-C", "examples/dynamic_dependencies", "-d", "-v", "-j1"],
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       //"program" : "${workspaceFolder}/hancho.py",
-      //"args"    : ["-v", "--rebuild", "--debug"],
+      //"args"    : ["--verbose", "--rebuild", "--debug"],
       "preLaunchTask": "Wipe build",
     },
 

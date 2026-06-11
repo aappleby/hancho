@@ -60,6 +60,8 @@ type Tree[T] = T | list[Tree[T]]
 
 class Log:
 
+    # FIXME We need an option to save the log to the build directory
+
     @classmethod
     def reset(cls):
         cls.start  : float = time.time()
@@ -1238,7 +1240,7 @@ class Task:
         # Run some sanity checks
 
         if Options.strict:
-            for command in config.command:
+            for command in cast(list, config.command):
                 if not isinstance(command, str):
                     continue
                 blocks = Expander.split(command)
@@ -1633,7 +1635,11 @@ class Expander(abc.MutableMapping[str, object]):
 
         # The "trace" key is a special case, as we don't want to trace reading trace...
         if key == "trace":
-            return self._context[key]
+            #if hasattr(self._context, "trace"):
+            if "trace" in self._context:
+                return self._context.trace
+            else:
+                return False
 
         with Tracer(self, f"_get({key})") as tracer:
             result = self._context[key]
@@ -1645,16 +1651,19 @@ class Expander(abc.MutableMapping[str, object]):
     # ----------------------------------------
 
     @staticmethod
-    def split(text : str) -> list[str]:
+    def split2(text : str, out : list[str]):
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
         list of string literals and macros. Escaped braces don't count as delimiters.
         """
-        result = []
+        if not isinstance(text, str):
+            out.append(text)
+            return
+
         cursor = 0
         lbrace = -1
         escaped = False
-
+        chunk_count = 0
         for i, c in enumerate(text):
             if escaped:
                 escaped = False
@@ -1664,15 +1673,23 @@ class Expander(abc.MutableMapping[str, object]):
                 lbrace = i
             elif c == '}' and lbrace >= 0:
                 if cursor < lbrace:
-                    result.append(text[cursor:lbrace])
-                result.append(text[lbrace:i+1])
+                    out.append(text[cursor:lbrace])
+                    chunk_count += 1
+                out.append(text[lbrace:i+1])
+                chunk_count += 1
                 cursor = i + 1
                 lbrace = -1
 
         if cursor < len(text):
-            result.append(text[cursor:])
+            out.append(text[cursor:])
+            chunk_count += 1
+        return chunk_count
 
-        return result
+    @staticmethod
+    def split(text : str):
+        out = []
+        Expander.split2(text, out)
+        return out
 
     # ----------------------------------------------------------------------------------------------
     # IMPORTANT IMPORTANT IMPORTANT
@@ -1685,7 +1702,13 @@ class Expander(abc.MutableMapping[str, object]):
         with Tracer(context, f"_eval_macro({macro!r})") as tracer:
             try:
                 _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
+                assert macro[0]  == '{'
+                assert macro[-1] == '}'
                 result = eval(macro[1:-1], hancho.__dict__, _locals)
+            #except RecursionError:
+            #    # Don't let TEFINAE swallow our own MAX_DEPTH tripwire - if we do, the depth
+            #    # counter resets as we unwind and expansion livelocks instead of erroring.
+            #    raise
             except Exception:
                 result = macro
             tracer.save_result(result)
@@ -1708,37 +1731,103 @@ class Expander(abc.MutableMapping[str, object]):
     # The expand_depth is global mutable state, but it's only ever modified inside _expand, which
     # is synchronous and should only be touched by one thread at a time.
 
+    expand_steps = 0
     expand_depth : int = 0
     MAX_DEPTH : int = 20
 
-    @staticmethod
-    def _expand(variant, context):
+    @classmethod
+    def _expand1a(cls, variant, context):
         if isinstance(variant, list):
-            return [Expander._expand(t, context) for t in variant]
+            return [cls._expand(t, context) for t in variant]
         if not isinstance(variant, str) or not variant:
             return variant
 
-        blocks = Expander.split(variant)
+        blocks = cls.split(variant)
         if len(blocks) == 1 and blocks[0][0] != '{':
             return variant
 
         with Tracer(context, f"_expand({variant!r})") as tracer:
             if len(blocks) == 1:
-                result = Expander._eval_macro(variant, context)
+                result = cls._eval_macro(variant, context)
             else:
-                result = Expander._expand_blocks(blocks, context)
+                result = cls._expand_blocks(blocks, context)
 
             if result != variant:
-                if Expander.expand_depth >= Expander.MAX_DEPTH:
+                if cls.expand_depth >= cls.MAX_DEPTH:
                     raise RecursionError("Template expansion failed to terminate")
                 try:
-                    Expander.expand_depth += 1
-                    result = Expander._expand(result, context)
+                    cls.expand_depth += 1
+                    result = cls._expand(result, context)
                 finally:
                     Expander.expand_depth -= 1
 
             tracer.save_result(result)
         return result
+
+
+    # ----------------------------------------------------------------------------------------------
+
+    eval_count = 0
+    eval_depth = 0
+
+    @classmethod
+    def _expand2b(cls, variant, context):
+        if not isinstance(str, variant) or not variant:
+            return variant
+        def is_macro(v):
+            return isinstance(v, str) and len(v) >= 2 and v[0] == '{' and v[-1] == '}'
+
+        chunks = []
+
+        while variant:
+            if cls.eval_count >= 20 or cls.eval_depth >= 20 or len(variant) > 1024:
+                raise RecursionError("Template expansion failed to terminate")
+
+            cls.split2(variant, chunks)
+
+            with Tracer(context, f"_expand2({variant})") as trace1:
+                for i, chunk in enumerate(chunks):
+                    if not is_macro(chunk):
+                        continue
+                    with Tracer(context, f"_eval2({chunk})") as trace2:
+                        try:
+                            cls.eval_count += 1
+                            cls.eval_depth += 1
+                            _globals = hancho.__dict__
+                            _locals  = ChainMap(context, Options.cv_config(), cls.aliases)
+                            chunks[i] = eval(chunk, _globals, _locals)
+                            trace2.save_result(chunks[i])
+                        finally:
+                            cls.eval_depth -= 1
+
+                if len(chunks) == 1 and not is_macro(chunks[0]):
+                    trace1.save_result(chunks[0])
+                    return chunks[0]
+
+                variant = "".join(Utils.stringify(c) for c in chunks)
+                chunks.clear()
+                trace1.save_result(variant)
+
+    @classmethod
+    def _expand2a(cls, variant, context):
+        cls.eval_count = 0
+        cls.eval_depth = 0
+        return cls._expand2b(variant, context)
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def _expand(cls, variant, context):
+        cls.expand_steps = 0
+        cls.expand_depth = 0
+        return cls._expand1a(variant, context)
+
+    # ----------------------------------------------------------------------------------------------
+
+
+
+
+
 
 
 # endregion
