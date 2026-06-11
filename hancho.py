@@ -1715,34 +1715,6 @@ class Expander(abc.MutableMapping[str, object]):
     eval_count = 0
     eval_depth = 0
 
-    @staticmethod
-    def _eval_macro(macro, context):
-        #if not is_macro(macro):
-        #    return macro
-
-        with Tracer(context, f"_eval_macro({macro!r})") as tracer:
-            try:
-                _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
-                #_assert(macro[0]  == '{')
-                #_assert(macro[-1] == '}')
-                result = eval(macro[1:-1], hancho.__dict__, _locals)
-            #except RecursionError:
-            #    # Don't let TEFINAE swallow our own MAX_DEPTH tripwire - if we do, the depth
-            #    # counter resets as we unwind and expansion livelocks instead of erroring.
-            #    raise
-            except Exception:
-                #traceback.print_stack()
-                result = macro
-            tracer.save_result(result)
-        return result
-
-    @staticmethod
-    def _expand_blocks(blocks, context):
-        with Tracer(context, f"_expand_blocks({blocks!r})") as tracer:
-            result = "".join(Utils.stringify(Expander._expand_inner(b, context)) for b in blocks)
-            tracer.save_result(result)
-        return result
-
     # Hancho's template expansions can cause infinite loops, so we need some simple recursion depth
     # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
     # up the whole Python stack.
@@ -1760,98 +1732,52 @@ class Expander(abc.MutableMapping[str, object]):
     @classmethod
     def _expand1(cls, variant, context):
         if isinstance(variant, list):
-            return [cls._expand_inner(t, context) for t in variant]
+            return [cls._expand1(t, context) for t in variant]
         if not isinstance(variant, str) or not variant:
             return variant
+        if cls.expand_depth >= cls.MAX_DEPTH:
+            raise RecursionError("Template expansion failed to terminate")
 
-        blocks = cls.split(variant)
-        if len(blocks) == 1 and blocks[0][0] != '{':
-            return variant
 
         try:
-            with Tracer(context, f"_expand({variant!r})") as tracer:
-                if len(blocks) == 1:
-                    result = cls._eval_macro(variant, context)
-                else:
-                    result = cls._expand_blocks(blocks, context)
+            old_depth = Expander.expand_depth
 
-                if result != variant:
-                    if cls.expand_depth >= cls.MAX_DEPTH:
-                        raise RecursionError("Template expansion failed to terminate")
-                    Expander.expand_depth += 1
-                    result = cls._expand1(result, context)
+            old_variant = None
+            while variant != old_variant:
+                if isinstance(variant, list):
+                    return [cls._expand_inner(t, context) for t in variant]
+                if not isinstance(variant, str) or not variant:
+                    return variant
 
-                tracer.save_result(result)
+                Expander.expand_depth += 1
+
+                blocks = cls.split(variant)
+                if len(blocks) == 1 and blocks[0][0] != '{':
+                    return variant
+
+                with Tracer(context, f"_expand({variant!r})") as tracer:
+                    if len(blocks) == 1:
+                        _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
+                        with Tracer(context, f"_eval_macro({blocks[0]!r})") as tracer:
+                            with suppress(Exception):
+                                blocks[0] = eval(blocks[0][1:-1], hancho.__dict__, _locals)
+                            tracer.save_result(blocks[0])
+                        result = blocks[0]
+
+                    else:
+                        #result = cls._expand_blocks(blocks, context)
+                        with Tracer(context, f"_expand_blocks({blocks!r})") as tracer:
+                            result = "".join(Utils.stringify(Expander._expand_inner(b, context)) for b in blocks)
+                            tracer.save_result(result)
+                    tracer.save_result(result)
+
+                if result == variant:
+                    return result
+
+                variant = result
+
         finally:
-            Expander.expand_depth -= 1
-        return result
-
-    # ----------------------------------------------------------------------------------------------
-
-#    @classmethod
-#    def get_func_depth(cls, func):
-#        frame = sys._getframe()
-#        for i in range(0, 20):
-#            if not frame:
-#                break
-#            if frame.f_code.co_name == func.__name__:
-#                return i
-#            frame = frame.f_back
-#        raise RecursionError("Template expansion failed to terminate")
-
-    # ----------------------------------------------------------------------------------------------
-
-#    @classmethod
-#    def _expand2(cls, variant, context):
-#        if isinstance(variant, list):
-#            return [cls._expand2(t, context) for t in variant]
-#        if not isinstance(variant, str) or not variant:
-#            return variant
-#
-#        chunks = []
-#
-#        old_variant = None
-#        while variant != old_variant:
-#            if cls.eval_count >= 20 or cls.eval_depth >= 20 or len(variant) > 1024:
-#                cls.eval_count = 0
-#                cls.eval_depth = 0
-#                raise RecursionError(f"SDKFLSKJDF Template expansion failed to terminate {variant}")
-#
-#            cls.split2(variant, chunks)
-#
-#            if len(chunks) == 1 and not is_macro(chunks[0]):
-#                return chunks[0]
-#
-#            with Tracer(context, f"_expand2({variant})") as trace1:
-#                for i, chunk in enumerate(chunks):
-#                    if not is_macro(chunk):
-#                        continue
-#                    with Tracer(context, f"_eval2({chunk})") as trace2:
-#                        try:
-#                            cls.eval_count += 1
-#                            cls.eval_depth += 1
-#                            _globals = hancho.__dict__
-#                            _locals  = ChainMap(context, Options.cv_config(), cls.aliases)
-#                            try:
-#                                chunks[i] = eval(chunk[1:-1], _globals, _locals)
-#                            except Exception:
-#                                pass
-#                            finally:
-#                                pass
-#                            trace2.save_result(chunks[i])
-#                        finally:
-#                            cls.eval_depth -= 1
-#
-#                if len(chunks) == 1 and not isinstance(chunks[0], str):
-#                    trace1.save_result(chunks[0])
-#                    return chunks[0]
-#
-#                old_variant = variant
-#                variant = "".join(Utils.stringify(c) for c in chunks)
-#                chunks.clear()
-#                trace1.save_result(variant)
-#
-#        return variant
+            Expander.expand_depth = old_depth
 
     # ----------------------------------------------------------------------------------------------
 
