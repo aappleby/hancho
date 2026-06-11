@@ -1721,55 +1721,50 @@ class Expander(abc.MutableMapping[str, object]):
 
     @classmethod
     def _expand1(cls, variant, context):
-        #if cls.expand_depth >= cls.MAX_DEPTH:
-        #    raise RecursionError(f"Template expansion failed to terminate, expand_depth = {cls.expand_depth}")
 
-        try:
-            old_variant = None
-            while variant != old_variant:
+        old_variant = None
+        while variant != old_variant:
 
-                if variant is None:
-                    return variant
-                if isinstance(variant, list):
-                    return [cls._expand1(t, context) for t in variant]
-                if not isinstance(variant, str):
-                    return variant
+            if variant is None:
+                return variant
+            if isinstance(variant, list):
+                return [cls._expand1(t, context) for t in variant]
+            if not isinstance(variant, str):
+                return variant
 
-                if len(variant) > 500:
-                    pass
+            if len(variant) > 500:
+                pass
 
-                #if len(variant) > 1024:
-                #    raise RecursionError(f"Template expansion failed to terminate, len(variant) = {len(variant)}")
+            #if len(variant) > 1024:
+            #    raise RecursionError(f"Template expansion failed to terminate, len(variant) = {len(variant)}")
 
 
-                blocks = cls.split(variant)
-                if len(blocks) == 1 and not is_macro(blocks[0]):
-                    return variant
+            blocks = cls.split(variant)
+            if len(blocks) == 1 and not is_macro(blocks[0]):
+                return variant
 
-                _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
-                for i, block in enumerate(blocks):
-                    if is_macro(block):
-                        try:
-                            cls.expand_steps += 1
-                            if cls.expand_steps >= 100:
-                                raise RecursionError(f"Template expansion failed to terminate, expand_steps = {cls.expand_steps}")
-                            blocks[i] = eval(block[1:-1], hancho.__dict__, _locals)
-                        except RecursionError as err:
-                            raise err
-                        except Exception:
-                            pass
+            _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
+            for i, block in enumerate(blocks):
+                if is_macro(block):
+                    try:
+                        cls.expand_steps += 1
+                        if cls.expand_steps >= 100:
+                            raise RecursionError(f"Template expansion failed to terminate, expand_steps = {cls.expand_steps}")
+                        blocks[i] = eval(block[1:-1], hancho.__dict__, _locals)
+                    except RecursionError as err:
+                        raise err
+                    except Exception:
+                        pass
 
-                if len(blocks) == 1:
-                    result = blocks[0]
-                else:
-                    #blocks = [Expander._expand1(b, context) for b in blocks]
-                    blocks = [Utils.stringify(b) for b in blocks]
-                    result = "".join(blocks)
+            if len(blocks) == 1:
+                result = blocks[0]
+            else:
+                blocks = [Utils.stringify(b) for b in blocks]
+                result = "".join(blocks)
 
-                old_variant = variant
-                variant = result
-        except RecursionError as err:
-            raise err
+            old_variant = variant
+            variant = result
+
         return variant
 
     # ----------------------------------------------------------------------------------------------
