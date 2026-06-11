@@ -260,14 +260,22 @@ class TestTemplates(unittest.TestCase):
 
     def test_expand_failed_to_terminate1(self):
         # Single recursion
+
         with self.assertRaises(RecursionError):
             bad_dict = Dict(flarp="asdf {flarp}")
+            bad_dict.expand("{flarp}")
+
+        with self.assertRaises(RecursionError):
+            bad_dict = Expander.wrap(Dict(flarp="asdf {flarp}"))
             bad_dict.expand("{flarp}")
 
     def test_expand_failed_to_terminate2(self):
         # Double recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(foo="asdf {bar}", bar="qwer {foo}")
+            bad_dict.expand("{foo}")
+        with self.assertRaises(RecursionError):
+            bad_dict = Expander.wrap(Dict(foo="asdf {bar}", bar="qwer {foo}"))
             bad_dict.expand("{foo}")
 
     def test_expand_failed_to_terminate3(self):
@@ -277,7 +285,10 @@ class TestTemplates(unittest.TestCase):
             subthing = Dict(foo="{subthing.foo} x")
             bad_dict = Dict(command="{subthing.foo}", subthing=subthing)
             bad_dict.expand("{command}")
-        pass
+        with self.assertRaises(RecursionError):
+            subthing = Expander.wrap(Dict(foo="{subthing.foo} x"))
+            bad_dict = Expander.wrap(Dict(command="{subthing.foo}", subthing=subthing))
+            bad_dict.expand("{command}")
 
     def test_recursive_expansion(self):
         d = Dict(a = 1, b = 2, c = 3)
