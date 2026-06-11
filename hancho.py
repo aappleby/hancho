@@ -1635,12 +1635,7 @@ class Expander(abc.MutableMapping[str, object]):
     # ----------------------------------------
 
     def expand(self, val : Any):
-        try:
-            assert Expander._top_expand_depth == 0
-            Expander._top_expand_depth += 1
-            return Expander._expand_inner(val, self)
-        finally:
-            Expander._top_expand_depth -= 1
+        return Expander._expand_inner(val, self)
 
     def _get(self, key):
         """
@@ -1712,9 +1707,6 @@ class Expander(abc.MutableMapping[str, object]):
     # Template Expansion Failure Is Not An Error.
     # This should be the _only_ try/except block in the expansion code.
 
-    eval_count = 0
-    eval_depth = 0
-
     # Hancho's template expansions can cause infinite loops, so we need some simple recursion depth
     # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
     # up the whole Python stack.
@@ -1726,18 +1718,13 @@ class Expander(abc.MutableMapping[str, object]):
     # is synchronous and should only be touched by one thread at a time.
 
     expand_steps = 0
-    expand_depth : int = 0
-    MAX_DEPTH : int = 20
 
     @classmethod
     def _expand1(cls, variant, context):
-        if cls.expand_depth >= cls.MAX_DEPTH:
-            raise RecursionError(f"Template expansion failed to terminate, expand_depth = {cls.expand_depth}")
+        #if cls.expand_depth >= cls.MAX_DEPTH:
+        #    raise RecursionError(f"Template expansion failed to terminate, expand_depth = {cls.expand_depth}")
 
         try:
-            old_depth = Expander.expand_depth
-            Expander.expand_depth += 1
-
             old_variant = None
             while variant != old_variant:
 
@@ -1748,8 +1735,11 @@ class Expander(abc.MutableMapping[str, object]):
                 if not isinstance(variant, str):
                     return variant
 
-                if len(variant) > 1024:
-                    raise RecursionError(f"Template expansion failed to terminate, len(variant) = {len(variant)}")
+                if len(variant) > 500:
+                    pass
+
+                #if len(variant) > 1024:
+                #    raise RecursionError(f"Template expansion failed to terminate, len(variant) = {len(variant)}")
 
 
                 blocks = cls.split(variant)
@@ -1780,37 +1770,25 @@ class Expander(abc.MutableMapping[str, object]):
                 variant = result
         except RecursionError as err:
             raise err
-        finally:
-            Expander.expand_depth = old_depth
         return variant
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def _expand_inner(cls, variant, context):
-        cls.expand_steps = 0
-        cls.expand_depth = 0
-        cls.eval_count = 0
-        cls.eval_depth = 0
-        #_assert(Expander._top_expand_depth == 1)
-        return cls._expand1(variant, context)
-        #return cls._expand2(variant, context)
-
-    _top_expand_depth = 0
+        is_top = (cls.expand_steps == 0)
+        try:
+            return cls._expand1(variant, context)
+        finally:
+            if is_top:
+                cls.expand_steps = 0
 
     @classmethod
     def _expand(cls, variant, context):
-        cls.expand_steps = 0
-        cls.expand_depth = 0
-        cls.eval_count = 0
-        cls.eval_depth = 0
-
-        _assert(Expander._top_expand_depth == 0)
-        Expander._top_expand_depth += 1
         try:
             return cls._expand_inner(variant, context)
         finally:
-            Expander._top_expand_depth -= 1
+            pass
 
     # ----------------------------------------------------------------------------------------------
 
