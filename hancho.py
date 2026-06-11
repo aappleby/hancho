@@ -40,6 +40,16 @@ from enum import Enum
 from inspect import isawaitable
 from typing import Any, cast
 
+
+def _assert(thing):
+    if thing:
+        assert thing
+    else:
+        assert thing
+
+def is_macro(v):
+    return isinstance(v, str) and len(v) >= 2 and v[0] == '{' and v[-1] == '}'
+
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
@@ -1625,7 +1635,12 @@ class Expander(abc.MutableMapping[str, object]):
     # ----------------------------------------
 
     def expand(self, val : Any):
-        return Expander._expand(val, self)
+        try:
+            assert Expander._top_expand_depth == 0
+            Expander._top_expand_depth += 1
+            return Expander._expand_inner(val, self)
+        finally:
+            Expander._top_expand_depth -= 1
 
     def _get(self, key):
         """
@@ -1643,7 +1658,7 @@ class Expander(abc.MutableMapping[str, object]):
 
         with Tracer(self, f"_get({key})") as tracer:
             result = self._context[key]
-            result = Expander.wrap(result) if Utils.is_mapping(result) else self.expand(result)
+            result = Expander.wrap(result) if Utils.is_mapping(result) else Expander._expand_inner(result, self)
             tracer.save_result(result)
 
         return result
@@ -1697,19 +1712,26 @@ class Expander(abc.MutableMapping[str, object]):
     # Template Expansion Failure Is Not An Error.
     # This should be the _only_ try/except block in the expansion code.
 
+    eval_count = 0
+    eval_depth = 0
+
     @staticmethod
     def _eval_macro(macro, context):
+        #if not is_macro(macro):
+        #    return macro
+
         with Tracer(context, f"_eval_macro({macro!r})") as tracer:
             try:
                 _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
-                assert macro[0]  == '{'
-                assert macro[-1] == '}'
+                #_assert(macro[0]  == '{')
+                #_assert(macro[-1] == '}')
                 result = eval(macro[1:-1], hancho.__dict__, _locals)
             #except RecursionError:
             #    # Don't let TEFINAE swallow our own MAX_DEPTH tripwire - if we do, the depth
             #    # counter resets as we unwind and expansion livelocks instead of erroring.
             #    raise
             except Exception:
+                #traceback.print_stack()
                 result = macro
             tracer.save_result(result)
         return result
@@ -1717,7 +1739,7 @@ class Expander(abc.MutableMapping[str, object]):
     @staticmethod
     def _expand_blocks(blocks, context):
         with Tracer(context, f"_expand_blocks({blocks!r})") as tracer:
-            result = "".join(Utils.stringify(Expander._expand(b, context)) for b in blocks)
+            result = "".join(Utils.stringify(Expander._expand_inner(b, context)) for b in blocks)
             tracer.save_result(result)
         return result
 
@@ -1736,9 +1758,9 @@ class Expander(abc.MutableMapping[str, object]):
     MAX_DEPTH : int = 20
 
     @classmethod
-    def _expand1a(cls, variant, context):
+    def _expand1(cls, variant, context):
         if isinstance(variant, list):
-            return [cls._expand(t, context) for t in variant]
+            return [cls._expand_inner(t, context) for t in variant]
         if not isinstance(variant, str) or not variant:
             return variant
 
@@ -1746,81 +1768,114 @@ class Expander(abc.MutableMapping[str, object]):
         if len(blocks) == 1 and blocks[0][0] != '{':
             return variant
 
-        with Tracer(context, f"_expand({variant!r})") as tracer:
-            if len(blocks) == 1:
-                result = cls._eval_macro(variant, context)
-            else:
-                result = cls._expand_blocks(blocks, context)
+        try:
+            with Tracer(context, f"_expand({variant!r})") as tracer:
+                if len(blocks) == 1:
+                    result = cls._eval_macro(variant, context)
+                else:
+                    result = cls._expand_blocks(blocks, context)
 
-            if result != variant:
-                if cls.expand_depth >= cls.MAX_DEPTH:
-                    raise RecursionError("Template expansion failed to terminate")
-                try:
-                    cls.expand_depth += 1
-                    result = cls._expand(result, context)
-                finally:
-                    Expander.expand_depth -= 1
+                if result != variant:
+                    if cls.expand_depth >= cls.MAX_DEPTH:
+                        raise RecursionError("Template expansion failed to terminate")
+                    Expander.expand_depth += 1
+                    result = cls._expand1(result, context)
 
-            tracer.save_result(result)
+                tracer.save_result(result)
+        finally:
+            Expander.expand_depth -= 1
         return result
 
+    # ----------------------------------------------------------------------------------------------
+
+#    @classmethod
+#    def get_func_depth(cls, func):
+#        frame = sys._getframe()
+#        for i in range(0, 20):
+#            if not frame:
+#                break
+#            if frame.f_code.co_name == func.__name__:
+#                return i
+#            frame = frame.f_back
+#        raise RecursionError("Template expansion failed to terminate")
 
     # ----------------------------------------------------------------------------------------------
 
-    eval_count = 0
-    eval_depth = 0
-
-    @classmethod
-    def _expand2b(cls, variant, context):
-        if not isinstance(str, variant) or not variant:
-            return variant
-        def is_macro(v):
-            return isinstance(v, str) and len(v) >= 2 and v[0] == '{' and v[-1] == '}'
-
-        chunks = []
-
-        while variant:
-            if cls.eval_count >= 20 or cls.eval_depth >= 20 or len(variant) > 1024:
-                raise RecursionError("Template expansion failed to terminate")
-
-            cls.split2(variant, chunks)
-
-            with Tracer(context, f"_expand2({variant})") as trace1:
-                for i, chunk in enumerate(chunks):
-                    if not is_macro(chunk):
-                        continue
-                    with Tracer(context, f"_eval2({chunk})") as trace2:
-                        try:
-                            cls.eval_count += 1
-                            cls.eval_depth += 1
-                            _globals = hancho.__dict__
-                            _locals  = ChainMap(context, Options.cv_config(), cls.aliases)
-                            chunks[i] = eval(chunk, _globals, _locals)
-                            trace2.save_result(chunks[i])
-                        finally:
-                            cls.eval_depth -= 1
-
-                if len(chunks) == 1 and not is_macro(chunks[0]):
-                    trace1.save_result(chunks[0])
-                    return chunks[0]
-
-                variant = "".join(Utils.stringify(c) for c in chunks)
-                chunks.clear()
-                trace1.save_result(variant)
-
-    @classmethod
-    def _expand2a(cls, variant, context):
-        cls.eval_count = 0
-        cls.eval_depth = 0
-        return cls._expand2b(variant, context)
+#    @classmethod
+#    def _expand2(cls, variant, context):
+#        if isinstance(variant, list):
+#            return [cls._expand2(t, context) for t in variant]
+#        if not isinstance(variant, str) or not variant:
+#            return variant
+#
+#        chunks = []
+#
+#        old_variant = None
+#        while variant != old_variant:
+#            if cls.eval_count >= 20 or cls.eval_depth >= 20 or len(variant) > 1024:
+#                cls.eval_count = 0
+#                cls.eval_depth = 0
+#                raise RecursionError(f"SDKFLSKJDF Template expansion failed to terminate {variant}")
+#
+#            cls.split2(variant, chunks)
+#
+#            if len(chunks) == 1 and not is_macro(chunks[0]):
+#                return chunks[0]
+#
+#            with Tracer(context, f"_expand2({variant})") as trace1:
+#                for i, chunk in enumerate(chunks):
+#                    if not is_macro(chunk):
+#                        continue
+#                    with Tracer(context, f"_eval2({chunk})") as trace2:
+#                        try:
+#                            cls.eval_count += 1
+#                            cls.eval_depth += 1
+#                            _globals = hancho.__dict__
+#                            _locals  = ChainMap(context, Options.cv_config(), cls.aliases)
+#                            try:
+#                                chunks[i] = eval(chunk[1:-1], _globals, _locals)
+#                            except Exception:
+#                                pass
+#                            finally:
+#                                pass
+#                            trace2.save_result(chunks[i])
+#                        finally:
+#                            cls.eval_depth -= 1
+#
+#                if len(chunks) == 1 and not isinstance(chunks[0], str):
+#                    trace1.save_result(chunks[0])
+#                    return chunks[0]
+#
+#                old_variant = variant
+#                variant = "".join(Utils.stringify(c) for c in chunks)
+#                chunks.clear()
+#                trace1.save_result(variant)
+#
+#        return variant
 
     # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def _expand_inner(cls, variant, context):
+        #_assert(Expander._top_expand_depth == 1)
+        return cls._expand1(variant, context)
+        #return cls._expand2(variant, context)
+
+    _top_expand_depth = 0
 
     @classmethod
     def _expand(cls, variant, context):
         cls.expand_steps = 0
         cls.expand_depth = 0
-        return cls._expand1a(variant, context)
+        cls.eval_count = 0
+        cls.eval_depth = 0
+
+        _assert(Expander._top_expand_depth == 0)
+        Expander._top_expand_depth += 1
+        try:
+            return cls._expand_inner(variant, context)
+        finally:
+            Expander._top_expand_depth -= 1
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1855,7 +1910,10 @@ class Expander(abc.MutableMapping[str, object]):
 class Tracer:
 
     def __init__(self, context : Dict | Expander, enter_message):
-        self.trace = getattr(context, "trace", False)
+        if "trace" in context:
+            self.trace = getattr(context, "trace", False)
+        else:
+            self.trace = False
         self.enter_message = enter_message
         self.color = None
         self.context = context

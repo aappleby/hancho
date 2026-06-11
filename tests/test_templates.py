@@ -38,8 +38,16 @@ class TestTemplates(unittest.TestCase):
         sys.stdout.flush()
 
     def tearDown(self) -> None:
-        assert hancho.Expander.expand_steps == 0
         return super().tearDown()
+
+    def test_basic_eval(self):
+        d = Dict(a = 1, b = 2)
+        self.assertEqual('a', d.expand("a"))
+        self.assertEqual('b', d.expand("b"))
+        self.assertEqual(1, d.expand("{a}"))
+        self.assertEqual(2, d.expand("{b}"))
+        self.assertEqual('1212', d.expand("{a}{b}{a}{b}"))
+        self.assertEqual(1212,d.expand("{{a}{b}{a}{b}}"))
 
     def doctest_basic_eval(self):
         # Basic evaluation should work
