@@ -1731,12 +1731,14 @@ class Expander(abc.MutableMapping[str, object]):
 
     @classmethod
     def _expand1(cls, variant, context):
-        if isinstance(variant, list):
-            return [cls._expand1(t, context) for t in variant]
-        if not isinstance(variant, str) or not variant:
-            return variant
         if cls.expand_depth >= cls.MAX_DEPTH:
             raise RecursionError("Template expansion failed to terminate")
+        if variant is None:
+            return variant
+        if isinstance(variant, list):
+            return [cls._expand1(t, context) for t in variant]
+        if not isinstance(variant, str):
+            return variant
 
 
         try:
@@ -1745,14 +1747,14 @@ class Expander(abc.MutableMapping[str, object]):
             old_variant = None
             while variant != old_variant:
                 if isinstance(variant, list):
-                    return [cls._expand_inner(t, context) for t in variant]
+                    return [cls._expand1(t, context) for t in variant]
                 if not isinstance(variant, str) or not variant:
                     return variant
 
                 Expander.expand_depth += 1
 
                 blocks = cls.split(variant)
-                if len(blocks) == 1 and blocks[0][0] != '{':
+                if len(blocks) == 1 and (not isinstance(blocks[0], str) or blocks[0][0] != '{'):
                     return variant
 
                 with Tracer(context, f"_expand({variant!r})") as tracer:
@@ -1765,9 +1767,17 @@ class Expander(abc.MutableMapping[str, object]):
                         result = blocks[0]
 
                     else:
-                        #result = cls._expand_blocks(blocks, context)
+                        _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
+                        for i, block in enumerate(blocks):
+                            with Tracer(context, f"_eval_macro({block!r})") as tracer:
+                                with suppress(Exception):
+                                    blocks[i] = eval(block[1:-1], hancho.__dict__, _locals)
+                                tracer.save_result(blocks[i])
+
                         with Tracer(context, f"_expand_blocks({blocks!r})") as tracer:
-                            result = "".join(Utils.stringify(Expander._expand_inner(b, context)) for b in blocks)
+                            blocks = [Expander._expand1(b, context) for b in blocks]
+                            blocks = [Utils.stringify(b) for b in blocks]
+                            result = "".join(blocks)
                             tracer.save_result(result)
                     tracer.save_result(result)
 
