@@ -1648,7 +1648,7 @@ class Expander(abc.MutableMapping[str, object]):
             else:
                 return False
 
-        with Tracer(self, f"get({key})") as tracer:
+        with Tracer(self, "get", key) as tracer:
             result = self._context[key]
             result = Expander.wrap(result) if Utils.is_mapping(result) else Expander._expand(result, self)
             tracer.save_result(result)
@@ -1751,7 +1751,7 @@ class Expander(abc.MutableMapping[str, object]):
             old_variant = None
             while old_variant != variant and isinstance(variant, str) and '{' in variant:
                 old_variant = variant
-                with Tracer(context, f"expand({variant!r})") as tracer:
+                with Tracer(context, "expand", variant) as tracer:
                     variant = cls._expand_pass(variant, context)
                     tracer.save_result(variant)
         finally:
@@ -1789,7 +1789,7 @@ class Expander(abc.MutableMapping[str, object]):
 
             # Otherwise try and expand the macro. Failing is OK.
             # This should be the _only_ try/except block in the expansion code.
-            with Tracer(context, f"eval({block!r})") as tracer:
+            with Tracer(context, "eval", block) as tracer:
                 try:
                     blocks[i] = eval(
                         block[1:-1],
@@ -1858,15 +1858,18 @@ class Expander(abc.MutableMapping[str, object]):
 
 class Tracer:
 
-    def __init__(self, context : Dict | Expander, enter_message):
+    def __init__(self, context : Dict | Expander, enter_message1, enter_message2):
         if "trace" in context:
             self.trace = getattr(context, "trace", False)
         else:
             self.trace = False
-        self.enter_message = enter_message
+        self.enter_message = f"{enter_message1}({enter_message2!r})"
+        self.name = enter_message2
         self.color = None
         self.context = context
         self.result = None
+        if len(self.name) > 40:
+            self.name = self.name[:34] + "<snip>"
 
     def __enter__(self):
         if not (LogLevel.TRACE or self.trace):
@@ -1899,9 +1902,11 @@ class Tracer:
 
         Log.log("└ ")
 
+        type = self.result.__class__.__name__
+
         if isinstance(self.result, (Expander, Dict)):
             with Log.color(Utils.obj_to_hex(self.result)):
-                Log.log(f"{Tracer.object_to_tag(self.result)}\n")
+                Log.log(f"{self.name!r} : {type} = {Tracer.object_to_tag(self.result)}\n")
             return False
 
         with Log.color(Utils.obj_to_hex(self.result)):
@@ -1910,7 +1915,7 @@ class Tracer:
             elif self.result == "":
                 Log.log("<Empty>\n")
             else:
-                Log.log(repr(self.result) + "\n")
+                Log.log(f"{self.name!r} : {type} = {self.result!r}\n")
 
         return False
 
