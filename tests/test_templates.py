@@ -49,6 +49,57 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual('1212', d.expand("{a}{b}{a}{b}"))
         self.assertEqual(1212,d.expand("{{a}{b}{a}{b}}"))
 
+
+#    """Cycle/budget/regression tests for Hancho's template expander. Run from repo root.
+#    Cases 1-6: termination behavior. Cases 7-9: list-handling semantics.
+#    Case 7's expectation is a design decision - see comments."""
+#    import hancho
+#
+#    def test(name, fn, expect):
+#        try:
+#            r = fn()
+#            ok = (expect == r)
+#            outcome = f"returned {r!r}"
+#        except RecursionError:
+#            ok = (expect == "LOUD")
+#            outcome = "LOUD RecursionError"
+#        print(f"{'PASS' if ok else 'FAIL'}  {name:32s} -> {outcome}"[:110])
+#
+#    hancho.init()
+#    cv = hancho.Options.cv_config()
+#
+#    d1 = hancho.Dict(cv, a="{b}", b="{a}")
+#    test("mutual cycle (Expander)", lambda: hancho.Expander(d1).a, "LOUD")
+#
+#    d2 = hancho.Dict(cv, a="{a}")
+#    test("self cycle (silent by design)", lambda: hancho.Expander(d2).a, "{a}")
+#
+#    d3 = hancho.Dict(cv, a="x{a}")
+#    test("growth cycle (Dict.expand)", lambda: d3.expand("{a}"), "LOUD")
+#
+#    d4 = hancho.Dict(cv, name="proj")
+#    files = ["{name}_" + str(i) + ".txt" for i in range(60)]
+#    test("60-macro list, top level", lambda: len(hancho.Expander(d4).expand(files)), 60)
+#
+#    d5 = hancho.Dict(cv, **{f"k{i}": "{k" + str(i+1) + "}" for i in range(8)}, k8="bottom")
+#    test("8-deep legit chain", lambda: hancho.Expander(d5).k0, "bottom")
+#
+#    d6 = hancho.Dict(cv, good="GOOD", x="{y}", y="{x}")
+#    test("mixed sibling '{good} {x}'", lambda: hancho.Expander(d6).expand("{good} {x} {good}"), "LOUD")
+#
+#    # Case 7: macro evals to a list of macro-bearing strings, plain Dict context.
+#    # Original v1.0 expander returned ['x','x']. Decide and pin: ['x','x'] or ["{b}","{b}"].
+#    d7 = hancho.Dict(cv, a=["{b}", "{b}"], b="x")
+#    test("macro -> list of macros (Dict)", lambda: d7.expand("{a}"), ["x", "x"])
+#
+#    d8 = hancho.Dict(cv, a=["{b}", "{b}"], b="x")
+#    test("macro -> list of macros (Exp)", lambda: hancho.Expander(d8).expand("{a}"), ["x", "x"])
+#
+#    # Case 9: long templated list referenced from INSIDE another macro. Must expand
+#    # fully, not silently return the literal '{flags}' string after budget exhaustion.
+#    d9 = hancho.Dict(cv, name="proj", flags=["-D{name}_" + str(i) for i in range(60)])
+#    test("60-macro list via {flags}", lambda: len(hancho.Expander(d9).expand("{flags}")), 60)
+
     def doctest_basic_eval(self):
         # Basic evaluation should work
         """

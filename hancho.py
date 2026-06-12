@@ -47,9 +47,6 @@ def _assert(thing):
     else:
         assert thing
 
-def is_macro(v):
-    return isinstance(v, str) and len(v) >= 2 and v[0] == '{' and v[-1] == '}'
-
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
@@ -1635,7 +1632,7 @@ class Expander(abc.MutableMapping[str, object]):
     # ----------------------------------------
 
     def expand(self, val : Any):
-        return Expander._expand_inner(val, self)
+        return Expander._expand(val, self)
 
     def _get(self, key):
         """
@@ -1651,9 +1648,9 @@ class Expander(abc.MutableMapping[str, object]):
             else:
                 return False
 
-        with Tracer(self, f"_get({key})") as tracer:
+        with Tracer(self, f"get({key})") as tracer:
             result = self._context[key]
-            result = Expander.wrap(result) if Utils.is_mapping(result) else Expander._expand_inner(result, self)
+            result = Expander.wrap(result) if Utils.is_mapping(result) else Expander._expand(result, self)
             tracer.save_result(result)
 
         return result
@@ -1702,76 +1699,135 @@ class Expander(abc.MutableMapping[str, object]):
         return out
 
     # ----------------------------------------------------------------------------------------------
-    # IMPORTANT IMPORTANT IMPORTANT
-    # If you can't eval a macro, you return it unchanged. TEFINAE.
-    # Template Expansion Failure Is Not An Error.
-    # This should be the _only_ try/except block in the expansion code.
-
-    # Hancho's template expansions can cause infinite loops, so we need some simple recursion depth
+    # Hancho's template expansions can cause infinite loops, so we need some simple complexity
     # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
     # up the whole Python stack.
-    # If you do weird things like load scripts from inside macros and you hit MAX_DEPTH, that's a
+    # If you do weird things like load scripts from inside macros and you hit MAX_STEPS, that's a
     # you problem.
-    # Hancho's test suites currently pass with MAX_DEPTH = 7, but we set it to 20 just in case.
     #
-    # The expand_depth is global mutable state, but it's only ever modified inside _expand, which
-    # is synchronous and should only be touched by one thread at a time.
+    # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
+    # currently pass with MAX_STEPS = 12 and MAX_DEPTH = 3.
 
-    expand_steps = 0
+    cv_depth = contextvars.ContextVar("depth", default = 0)
+    cv_evals = contextvars.ContextVar("evals", default = 0)
+    MAX_EVALS = 50
+    MAX_DEPTH = 10
 
-    @classmethod
-    def _expand1(cls, variant, context):
-
-        old_variant = None
-        while variant != old_variant:
-
-            if isinstance(variant, list):
-                return [cls._expand1(t, context) for t in variant]
-            if not isinstance(variant, str):
-                return variant
-
-            blocks = cls.split(variant)
-
-            _locals = ChainMap(context, Options.cv_config(), Expander.aliases)
-            for i, block in enumerate(blocks):
-                if is_macro(block):
-                    try:
-                        if cls.expand_steps >= 100:
-                            raise RecursionError(f"Template expansion failed to terminate, expand_steps = {cls.expand_steps}")
-                        cls.expand_steps += 1
-                        blocks[i] = eval(block[1:-1], hancho.__dict__, _locals)
-                    except RecursionError as err:
-                        raise err
-                    except Exception:
-                        pass
-
-            result = blocks[0] if len(blocks) == 1 else "".join(Utils.stringify(b) for b in blocks)
-
-            old_variant = variant
-            variant = result
-
-        return variant
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def _expand_inner(cls, variant, context):
-        is_top = (cls.expand_steps == 0)
-        try:
-            return cls._expand1(variant, context)
-        finally:
-            if is_top:
-                cls.expand_steps = 0
+    # ----------------------------------------
 
     @classmethod
     def _expand(cls, variant, context):
+        """
+        The outer expand function handles setting/resetting the depth/evals-check vars and repeats
+        expansion until we reach a non-string or the string stops changing.
+        """
+
+        # Recurse early if we're trying to expand a list of strings.
+        # This ensures that every string gets its own independent depth and evals check.
+        if isinstance(variant, list):
+            result = []
+            for v in variant:
+                # Remember how much budget was spent.
+                saved = cls.cv_evals.get()
+                # Expand the list element.
+                result.append(cls._expand(v, context))
+                # Restore the budget so the next string in the list gets it.
+                cls.cv_evals.set(saved)
+            return result
+
+        # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
+        # something) or if it's a string with no macros in it.
+        if not (isinstance(variant, str) and '{' in variant):
+            return variant
+
+        # Bail out if we've gone through too many levels of recursion.
+        if (depth := cls.cv_depth.get()) >= cls.MAX_DEPTH:
+            raise RecursionError(f"Expansion failed to terminate after {depth} recursions: {variant!r}")
+        cls.cv_depth.set(depth + 1)
+
+        # OK, we have a string that could be a template. Keep expanding it until it stops changing
+        # or it's not a template.
         try:
-            return cls._expand_inner(variant, context)
+            old_variant = None
+            while old_variant != variant and isinstance(variant, str) and '{' in variant:
+                old_variant = variant
+                with Tracer(context, f"expand({variant!r})") as tracer:
+                    variant = cls._expand_pass(variant, context)
+                    tracer.save_result(variant)
         finally:
-            pass
+            # And then reset the depth/evals check vars when we're done.
+            if depth == 0:
+                cls.cv_evals.set(0)
+            cls.cv_depth.set(depth)
+
+        return variant
+
+    # ----------------------------------------
+    # IMPORTANT IMPORTANT IMPORTANT
+    # If you can't eval a macro, you return it unchanged.
+    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++ - we don't
+    # fail on expansion failure so we can retry somewhere/somewhen else.
+
+    @classmethod
+    def _expand_pass(cls, template, context):
+        """The inner expand function does one split-expand-rejoin pass on the template string."""
+
+        # Split the string into literal and macro blocks.
+        blocks = cls.split(template)
+
+        # Expand all macro blocks.
+        for i, block in enumerate(blocks):
+
+            # Skip literal blocks.
+            if len(block) < 2 or block[0] != "{" or block[-1] != "}":
+                continue
+
+            # Bail out if we've taken too many expansion steps already.
+            if (steps := cls.cv_evals.get()) >= cls.MAX_EVALS:
+                raise RecursionError(f"Expansion failed to terminate after {steps} evals: '{template!r}'")
+            cls.cv_evals.set(steps + 1)
+
+            # Otherwise try and expand the macro. Failing is OK.
+            # This should be the _only_ try/except block in the expansion code.
+            with Tracer(context, f"eval({block!r})") as tracer:
+                try:
+                    blocks[i] = eval(
+                        block[1:-1],
+                        hancho.__dict__,
+                        ChainMap(context, Options.cv_config(), cls.aliases),
+                    )
+                # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
+                # callers. As of Python 3.11, this includes asyncio.CancelledError.
+                except RecursionError:
+                    raise
+                except Exception:
+                    pass
+                tracer.save_result(blocks[i])
+
+        # If there was only one block in the list, unwrap it.
+        if len(blocks) == 1:
+            return blocks[0]
+
+        # Otherwise we stringify everything and join the blocks back together.
+        return "".join(Utils.stringify(b) for b in blocks)
 
     # ----------------------------------------------------------------------------------------------
 
+
+#    @classmethod
+#    def _expand_inner(cls, variant, context):
+#        if isinstance(variant, list):
+#            result = []
+#            for v in variant:
+#                saved = cls.cv_steps.get()
+#                result.append(cls._expand_inner(v, context))
+#                cls.cv_steps.set(saved)
+#            return result
+#        if not isinstance(variant, str):
+#            return variant
+#
+#        blocks = cls.split(variant)
+#
 
 
 
@@ -1844,7 +1900,8 @@ class Tracer:
         Log.log("└ ")
 
         if isinstance(self.result, (Expander, Dict)):
-            Log.log(f"{Tracer.object_to_tag(self.result)}\n")
+            with Log.color(Utils.obj_to_hex(self.result)):
+                Log.log(f"{Tracer.object_to_tag(self.result)}\n")
             return False
 
         with Log.color(Utils.obj_to_hex(self.result)):

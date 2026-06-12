@@ -90,7 +90,7 @@ region):
 - A `{...}` span is `eval`'d as a Python expression. The namespace is a `ChainMap` of the
   task's own config, the global config, and a set of **aliases**.
 - Expansion is **recursive** - the result of one expansion is itself expanded, up to
-  `MAX_DEPTH` (20) as an infinite-loop tripwire.
+  `MAX_STEPS` (currently 100) as an infinite-loop tripwire.
 - **TEFINAE - "Template Expansion Failure Is Not An Error."** If a macro can't be evaluated
   (e.g. it references a field that doesn't exist *in this context yet*), it is returned
   **unchanged** rather than throwing. This is deliberate: nested Dicts can carry templates
