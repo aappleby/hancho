@@ -1706,12 +1706,12 @@ class Expander(abc.MutableMapping[str, object]):
     # you problem.
     #
     # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
-    # currently pass with MAX_STEPS = 12 and MAX_DEPTH = 3.
+    # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
 
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
-    MAX_EVALS = 50
     MAX_DEPTH = 10
+    MAX_EVALS = 50
 
     # ----------------------------------------
 
@@ -1723,7 +1723,7 @@ class Expander(abc.MutableMapping[str, object]):
         """
 
         # Recurse early if we're trying to expand a list of strings.
-        # This ensures that every string gets its own independent depth and evals check.
+        # This ensures that every template gets its own independent depth and evals check.
         if isinstance(variant, list):
             result = []
             for v in variant:
@@ -1814,24 +1814,6 @@ class Expander(abc.MutableMapping[str, object]):
     # ----------------------------------------------------------------------------------------------
 
 
-#    @classmethod
-#    def _expand_inner(cls, variant, context):
-#        if isinstance(variant, list):
-#            result = []
-#            for v in variant:
-#                saved = cls.cv_steps.get()
-#                result.append(cls._expand_inner(v, context))
-#                cls.cv_steps.set(saved)
-#            return result
-#        if not isinstance(variant, str):
-#            return variant
-#
-#        blocks = cls.split(variant)
-#
-
-
-
-
 
 
 # endregion
@@ -1843,18 +1825,28 @@ class Expander(abc.MutableMapping[str, object]):
 # used so you can tell when the expand context changes, the rest are the call arguments and the
 # return values.
 #
-# [    0.916905] EX_BE50._get(desc)
-# [    0.917224] │ EX_BE50._expand('Linking {name}')
-# [    0.917305] │ │ EX_BE50._expand_blocks(['Linking ', '{name}'])
-# [    0.917569] │ │ │ EX_BE50._expand('{name}')
-# [    0.917880] │ │ │ │ EX_BE50._eval_macro('{name}')
-# [    0.918016] │ │ │ │ │ EX_BE50._get(name)
-# [    0.918284] │ │ │ │ │ └ 'hello-world'
-# [    0.918592] │ │ │ │ └ 'hello-world'
-# [    0.918706] │ │ │ └ 'hello-world'
-# [    0.918977] │ │ └ 'Linking hello-world'
-# [    0.919282] │ └ 'Linking hello-world'
-# [    0.919394] └ 'Linking hello-world'
+# [    0.443765] EX_53B0.get('name')
+# [    0.443795] └ 'name' : str = '_'
+# [    0.443838] EX_53B0.get('desc')
+# [    0.443865] │ EX_53B0.expand('Linking C++ bin {out_bin}')
+# [    0.443894] │ │ EX_53B0.eval('{out_bin}')
+# [    0.443973] │ │ │ EX_53B0.get('out_bin')
+# [    0.443999] │ │ │ └ 'out_bin' : str = 'build/examples/hello_gtk/hello_gtk'
+# [    0.444028] │ │ └ '{out_bin}' : str = 'build/examples/hello_gtk/hello_gtk'
+# [    0.444054] │ └ 'Linking C++ bin {out_bin}' : str = 'Linking C++ bin build/examples/hello_gtk/hello_gtk'
+# [    0.444077] └ 'desc' : str = 'Linking C++ bin build/examples/hello_gtk/hello_gtk'
+# [    0.444112] EX_53B0.get('command')
+# [    0.444135] │ EX_53B0.expand('{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}')
+# [    0.444166] │ │ EX_53B0.eval('{toolchain.linker}')
+# [    0.444211] │ │ │ EX_53B0.get('toolchain')
+# [    0.444233] │ │ │ └ 'toolchain' : Expander = EX_7AC0
+# [    0.444259] │ │ │ EX_7AC0.get('linker')
+# [    0.444273] │ │ │ └ 'linker' : str = 'x86_64-linux-gnu-g++'
+# [    0.444295] │ │ └ '{toolchain.linker}' : str = 'x86_64-linux-gnu-g++'
+# [    0.444320] │ │ EX_53B0.eval('{flags}')
+# [    0.444356] │ │ │ EX_53B0.get('flags')
+# [    0.444373] │ │ │ └ 'flags' : list = [None]
+# [    0.444398] │ │ └ '{flags}' : list = [None]
 
 class Tracer:
 
