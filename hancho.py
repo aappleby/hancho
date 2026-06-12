@@ -67,8 +67,6 @@ type Tree[T] = T | list[Tree[T]]
 
 class Log:
 
-    # FIXME We need an option to save the log to the build directory
-
     @classmethod
     def reset(cls):
         cls.start  : float = time.time()

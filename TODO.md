@@ -1,3 +1,10 @@
+
+# FIXME - investigate shadow dict of expanded templates as a cache
+# FIXME We need an option to save the log to the build directory
+# FIXME if we're gonna put stuff in the build directory, we should just do content hashing.
+
+
+
 00 - How to download and run Hancho, Trivial .hancho example
 01 - Example with {in_src} and {out_obj}
 02 - Example with separate tasks for compile and link
