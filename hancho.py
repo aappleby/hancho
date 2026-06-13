@@ -747,15 +747,15 @@ class Options:
 
         # Pull options that aren't task-specific off the root config.
 
-        #cls.compilation_db = root_config.pop("compilation_db", "{build_root}/compile_commands.json")
-
-        cls.core_max    = root_config.pop("core_max", os.cpu_count() or 1)
-        cls.max_errors  = root_config.pop("max_errors", 0)
-        cls.rebuild     = root_config.pop("rebuild", False)
-        cls.strict      = root_config.pop("strict", True)
-        cls.target      = root_config.pop("target", None)
-        cls.tool        = root_config.pop("tool", None)
-        cls.wrap        = root_config.pop("wrap", False)
+        cls.comp_db    = root_config.pop("comp_db", "compile_commands.json")
+        cls.hash_db    = root_config.pop("hash_db", "hancho_db.json")
+        cls.core_max   = root_config.pop("core_max", os.cpu_count() or 1)
+        cls.max_errors = root_config.pop("max_errors", 0)
+        cls.rebuild    = root_config.pop("rebuild", False)
+        cls.strict     = root_config.pop("strict", True)
+        cls.target     = root_config.pop("target", None)
+        cls.tool       = root_config.pop("tool", None)
+        cls.wrap       = root_config.pop("wrap", False)
 
         # Handle all the verbosity-related flags
 
@@ -913,9 +913,9 @@ class Task:
     def reset(cls):
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
-        cls.hash_db : dict[str, int] = {}
-        #cls.old_hash_db : dict = {}
-        #cls.new_hash_db : dict = {}
+        cls.compile_db : dict = {}
+        cls.old_hash_db : dict = {}
+        cls.new_hash_db : dict = {}
 
     class FAILED(Exception):    pass  # noqa: E701
     class CANCELLED(Exception): pass  # noqa: E701
@@ -924,101 +924,82 @@ class Task:
 
     @classmethod
     def load_hash_db(cls):
-        path = Options.cv_config().expand("{build_root}/hancho.db")
-        path = cast(str, Path.abs(path))
-        try:
-            with open(path) as contents:
-                cls.hash_db = json.load(contents)
-            with Log.color(0x00FF00):
-                Log.log(f"hancho.db loaded from {path}\n")
-        except FileNotFoundError:
-            with Log.color(0xFF0000):
-                Log.log("hancho.db not found\n")
+        filename = Options.cv_config().expand("{build_root}/{hash_db}")
+        filename = cast(str, Path.abs(filename))
 
-        for key in list(cls.hash_db.keys()):
-            if not Path.exists(key):
-                del cls.hash_db[key]
+        if not os.path.isfile(filename):
+            if LogLevel.VERBOSE:
+                with Log.color(0xFF0000):
+                    Log.log(f"Database not found : {filename!r}\n")
+            return
+
+        with open(filename) as contents:
+            cls.hash_db = json.load(contents)
+
+        if LogLevel.VERBOSE:
+            with Log.color(0x00FF00):
+                Log.log(f"Database loaded from : {filename!r}\n")
 
     @classmethod
-    def save_hash_db(cls):
-        path = Path.abs(Options.cv_config().expand("{build_root}/hancho.db"))
-        with open(cast(str, path), "w") as db:
-            json.dump(Task.hash_db, db, indent=4)
-        with Log.color(0x00FF00):
-            Log.log(f"hancho.db saved to {path}\n")
+    def save_hash_db(cls, db):
+        filename = Options.cv_config().expand("{build_root}/{hash_db}")
+        filename = cast(str, Path.abs(filename))
 
-#    @classmethod
-#    def load_compilation_db(cls):
-#        path = Options.cv_config().expand(Options.compilation_db)
-#        path = cast(str, Path.abs(path))
-#        try:
-#            with open(path) as contents:
-#                cls.old_hash_db = json.load(contents)
-#            if LogLevel.VERBOSE:
-#                with Log.color(0x00FF00):
-#                    Log.log(f"Loaded compilation database: {path}\n")
-#
-#        except FileNotFoundError:
-#            if LogLevel.ERROR:
-#                with Log.color(0xFF0000):
-#                    Log.log("Compilation database not found: {path}\n")
-#
-#    @classmethod
-#    def save_compilation_db(cls):
-#        # FIXME https://clang.llvm.org/docs/JSONCompilationDatabase.html
-#        old_path = Path.abs(Options.cv_config().expand(Options.compilation_db))
-#        new_path = Path.abs(Options.cv_config().expand(Options.compilation_db + ".temp"))
-#
-#        old_path = cast(str, old_path)
-#        new_path = cast(str, new_path)
-#
-#        new_db = {}
-#
-#        for task in Runner.all_tasks:
-#            if not task._enabled:
-#                continue
-#
-#            if not isinstance(task.config.command, list):
-#                print(f"command {task.config.command}")
-#                print(Utils.dump_to_str("task", task.__dict__))
-#                #assert isinstance(task.config.command, list)
-#
-#            callback_task = False
-#            for c in task.config.command:
-#                if not isinstance(c, str):
-#                    callback_task = True
-#                    break
-#            if callback_task:
-#                continue
-#
-#            for in_file in task.in_files:
-#                entry = {
-#                    "directory" : task.config.task_cwd,
-#                    "command"   : "; ".join(task.config.command),
-#                    "file"      : in_file,
-#                    "hash"      : Utils.hash_file(in_file)
-#                }
-#                if in_file in new_db:
-#                    print(f"!?!?!?!?!??!! {in_file}")
-#                    print(new_db[in_file])
-#                    print(entry)
-#                    print("-----")
-#                new_db[in_file] = entry
-#
-#        flat_db = list(new_db.values())
-#
-#        with open(cast(str, new_path), "w") as db_file:
-#            json.dump(flat_db, db_file, indent=4)
-#            db_file.write("\n")
-#            db_file.flush()
-#            os.fsync(db_file.fileno())
-#
-#        os.replace(new_path, old_path)
-#        new_path = old_path
-#
-#        if LogLevel.VERBOSE:
-#            with Log.color(0x00FF00):
-#                Log.log(f"Compilation database saved to {new_path}\n")
+        with open(filename, "w") as db_file:
+            json.dump(db, db_file, indent=4)
+        with Log.color(0x00FF00):
+            Log.log(f"Database saved to : {filename}\n")
+
+    @classmethod
+    def save_comp_db(cls):
+        # FIXME https://clang.llvm.org/docs/JSONCompilationDatabase.html
+        old_path = Path.abs(Options.cv_config().expand(Options.comp_db))
+        new_path = Path.abs(Options.cv_config().expand(Options.comp_db + ".temp"))
+
+        old_path = cast(str, old_path)
+        new_path = cast(str, new_path)
+
+        new_db = {}
+
+        for task in Runner.all_tasks:
+            if not task.config.enabled:
+                continue
+
+            if not isinstance(task.config.command, list):
+                print(f"command {task.config.command}")
+                print(Utils.dump_to_str("task", task.__dict__))
+                #assert isinstance(task.config.command, list)
+
+            callback_task = False
+            for c in task.config.command:
+                if not isinstance(c, str):
+                    callback_task = True
+                    break
+            if callback_task:
+                continue
+
+            for in_file in task.in_files:
+                entry = {
+                    "directory" : task.config.task_cwd,
+                    "command"   : "; ".join(task.config.command),
+                    "file"      : in_file,
+                }
+                new_db[in_file] = entry
+
+        flat_db = list(new_db.values())
+
+        with open(cast(str, new_path), "w") as db_file:
+            json.dump(flat_db, db_file, indent=4)
+            db_file.write("\n")
+            db_file.flush()
+            os.fsync(db_file.fileno())
+
+        os.replace(new_path, old_path)
+        new_path = old_path
+
+        if LogLevel.VERBOSE:
+            with Log.color(0x00FF00):
+                Log.log(f"Compilation database saved to {new_path}\n")
 
     def __init__(self, *args, **kwargs):
         # The task's config contains all the commands, paths, options, inputs, dependent Tasks, and
@@ -1505,25 +1486,24 @@ class Task:
 
         return files
 
-#    # ----------------------------------------------------------------------------------------------
-#    def check_for_modification(self, abs_path):
-#        #print(abs_path)
-#
-#        old_hash = Task.old_hash_db.get(abs_path, None)
-#        new_hash = Task.new_hash_db.get(abs_path, None)
-#
-#        if new_hash is None:
-#            with open(abs_path, "rb") as f:
-#                new_hash = Utils.hash(f.read())
-#            Task.new_hash_db[abs_path] = new_hash
-#
-#        if old_hash != new_hash:
-#            return f"Rebuilding because the hash has changed : {abs_path}"
-#        else:
-#            print(f"!!!!!!!!!!!Size/mtime/hash match for {abs_path}!!!!!!!!!!!")
-#            return ""
-#
-#    # ----------------------------------------------------------------------------------------------
+    # ----------------------------------------------------------------------------------------------
+
+    def check_for_modification(self, abs_path):
+        old_hash = Task.old_hash_db.get(abs_path, None)
+        new_hash = Task.new_hash_db.get(abs_path, None)
+
+        if new_hash is None:
+            with open(abs_path, "rb") as f:
+                new_hash = Utils.hash(f.read())
+            Task.new_hash_db[abs_path] = new_hash
+
+        if old_hash != new_hash:
+            return f"Rebuilding because the hash has changed : {abs_path}"
+        else:
+            print(f"!!!!!!!!!!!Size/mtime/hash match for {abs_path}!!!!!!!!!!!")
+            return ""
+
+    # ----------------------------------------------------------------------------------------------
 #
 #    @staticmethod
 #    def load_depfile(path, format, task_cwd):
@@ -2535,7 +2515,7 @@ def main():
         Runner.select_root_tasks()
         result = Runner.sync_run_tasks()
 
-    #Task.save_compilation_db()
+    #Task.save_comp_db()
 
     # ------------------------------------
     # Done
