@@ -61,7 +61,7 @@ class TestTasks(unittest.TestCase):
 
     def run_tasks(self, expected):
         for task in hancho.Runner.all_tasks:
-            task.enable()
+            task.enable_task()
         result = hancho.Runner.sync_run_tasks()
         self.assertEqual(result, expected)
 
