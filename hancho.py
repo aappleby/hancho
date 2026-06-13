@@ -53,8 +53,8 @@ sys.modules["hancho"] = hancho
 
 # Config fields often have arbitrarily nested lists of stuff due to things like
 #
-#     obj1 = [foo.o, bar.o]
-#     link(in_objs = [objs1, ...])
+#     main_objs = [foo_o, bar_o]
+#     link(in_objs = [main_objs, lib_objs, ...])
 #
 # and so we define a 'Tree' type that is basically 'either a T, or arbitrarily nested list of T'
 # This is only used as a type annotation, but be aware when reading the functions below that
@@ -280,53 +280,43 @@ class Utils:
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def hash(data):
+    def hash(key : abc.Buffer | tuple | list, h = (0,0)):
         # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
         # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
         # as a real 64-bit hash, but it'll do.
-        h1 = zlib.crc32(data)
-        h2 = zlib.adler32(data)
 
-        h1 ^= h2
-        h1  = (h1 * 0x58949537) & 0xFFFFFFFF
-        h2 ^= h1
-        h2  = (h2 * 0x58949537) & 0xFFFFFFFF
+        # Feistel-ish mix to tangle up the two 32-bit hashes.
+        def mix(h):
+            c = 0x58949537 # meaningless odd constant
+            j = 0x90678F0D # another meaningless constant
+            k = 0x48728717 # another meaningless constant
+            m = 0xFFFFFFFF # 32-bit mask
+            return (j ^ h[1] ^ ((h[0] * c) & m),
+                    k ^ h[0] ^ (h[0] >> 16))
 
-        return (h1 << 32) | h2
+        if isinstance(key, list):
+            for k in key:
+                h = Utils.hash(k, h)
+        elif isinstance(key, tuple):
+            a = mix(key)
+            b = mix(h)
+            h = mix((a[1] ^ b[0], b[0] ^ a[1]))
+        elif isinstance(key, str):
+            h = Utils.hash(key.encode())
+        elif isinstance(key, bytes):
+            Utils.hash_calls += 1
+            h = (zlib.crc32(key, h[0]), zlib.adler32(key, h[1]))
+            h = mix(h)
+            h = mix(h)
+            h = mix(h)
+        else:
+            raise ValueError(f"Don't know how to hash a {type(key)} = {key}")
+        return h
 
-#    @staticmethod
-#    def hash(key : abc.Buffer | tuple | list, h = (0,0)):
-#        if isinstance(key, list):
-#            for k in key:
-#                h = Utils.hash(k, h)
-#            return h
-#        if isinstance(key, str):
-#            key = key.encode()
-#
-#        Utils.hash_calls += 1
-#
-#        # Feistel-ish mix to tangle up the two 32-bit hashes.
-#        def mix(h):
-#            c = 0x58949537 # meaningless odd constant
-#            m = 0xFFFFFFFF # 32-bit mask
-#            return (h[1] ^ ((h[0] * c) & m), h[0] ^ (h[0] >> 16))
-#
-#        if isinstance(key, tuple):
-#            a = mix(key)
-#            b = mix(h)
-#            return mix((a[1] ^ b[0], b[0] ^ a[1]))
-#        else:
-#            # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
-#            # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
-#            # as a real 64-bit hash, but it'll do.
-#            h = (zlib.crc32(key, h[0]), zlib.adler32(key, h[1]))
-#            return mix(mix(mix(h)))
-#
-#    @staticmethod
-#    def hash_file(abs_path, h = (0,0)):
-#        with open(abs_path, "rb") as f:
-#            return Utils.hash(f.read(), h)
-#
+    @staticmethod
+    def hash_file(abs_path, h = (0,0)):
+        with open(abs_path, "rb") as f:
+            return Utils.hash(f.read(), h)
 
     # ----------------------------------------------------------------------------------------------
 
