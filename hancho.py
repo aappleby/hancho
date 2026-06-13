@@ -34,6 +34,7 @@ import sys
 import time
 import traceback
 import types
+import zlib  # for crc32, adler32
 from collections import ChainMap, abc
 from contextlib import chdir, contextmanager, suppress
 from enum import Enum
@@ -275,10 +276,29 @@ class Utils:
     def reset(cls):
         cls.mtime_calls : int = 0
 
+    # ----------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def hash(data):
+        # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
+        # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
+        # as a real 64-bit hash, but it'll do.
+        h1 = zlib.crc32(data)
+        h2 = zlib.adler32(data)
+
+        h1 ^= h2
+        h1  = (h1 * 0x58949537) & 0xFFFFFFFF
+        h2 ^= h1
+        h2  = (h2 * 0x58949537) & 0xFFFFFFFF
+
+        return (h1 << 32) | h2
+
+    # ----------------------------------------------------------------------------------------------
+
     # These types are considered already "flat" and don't need to be turned into a list.
     flat_types = (str, bytes, bytearray, range, abc.Mapping)
 
-    # These types don't get dumped because they're either uninteresting or not really dumpable.
+    # These types don't get dumped because they're not really dumpable.
     opaque_types = types.MappingProxyType({
         types.FunctionType        : "<function>",
         types.BuiltinFunctionType : "<builtin>",
@@ -289,8 +309,6 @@ class Utils:
     # These types don't need a type annotation when dumped.
     base_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None),
                   *opaque_types.keys())
-
-    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def dump_to_str(cls, key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
@@ -868,11 +886,37 @@ class Task:
     def reset(cls):
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
+        cls.hash_db : dict[str, int] = {}
 
     class FAILED(Exception):    pass  # noqa: E701
     class CANCELLED(Exception): pass  # noqa: E701
     class SKIPPED(Exception):   pass  # noqa: E701
     class BROKEN(Exception):    pass  # noqa: E701
+
+    @classmethod
+    def load_hash_db(cls):
+        path = Options.cv_config().expand("{build_root}/hancho.db")
+        path = cast(str, Path.abs(path))
+        try:
+            with open(path) as contents:
+                cls.hash_db = json.load(contents)
+            with Log.color(0x00FF00):
+                Log.log(f"hancho.db loaded from {path}\n")
+        except FileNotFoundError:
+            with Log.color(0xFF0000):
+                Log.log("hancho.db not found\n")
+
+        for key in list(cls.hash_db.keys()):
+            if not Path.exists(key):
+                del cls.hash_db[key]
+
+    @classmethod
+    def save_hash_db(cls):
+        path = Path.abs(Options.cv_config().expand("{build_root}/hancho.db"))
+        with open(cast(str, path), "w") as db:
+            json.dump(Task.hash_db, db, indent=4)
+        with Log.color(0x00FF00):
+            Log.log(f"hancho.db saved to {path}\n")
 
     def __init__(self, *args, **kwargs):
         # The task's config contains all the commands, paths, options, inputs, dependent Tasks, and
@@ -1356,6 +1400,19 @@ class Task:
         """
         config = self.config
         cwd = os.getcwd()
+
+#        for file in self.in_files:
+#            try:
+#                with open(file, "rb") as f:
+#                    hash = Utils.hash(f.read())
+#                    Task.hash_db[file] = hash
+#            except FileNotFoundError as err:
+#                raise Task.BROKEN(f"Input file missing - {file}") from err
+
+#            with open(file, "rb") as f:
+#                blah = f.read()
+#                hash = Utils.hash(blah)
+#                print(f"hash({file}) = {hash:016x}")
 
         if Options.rebuild or getattr(config, "rebuild", False):
             return "Target forced to rebuild"
@@ -2262,11 +2319,15 @@ def main():
     # ------------------------------------
     # Run all tasks and tools
 
+    Task.load_hash_db()
+
     if Options.tool:
         result = Runner.run_tool(Options.tool)
     else:
         Runner.select_root_tasks()
         result = Runner.sync_run_tasks()
+
+    Task.save_hash_db()
 
     # ------------------------------------
     # Done
