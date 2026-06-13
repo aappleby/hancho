@@ -275,6 +275,7 @@ class Utils:
     @classmethod
     def reset(cls):
         cls.mtime_calls : int = 0
+        #cls.hash_calls : int = 0
 
     # ----------------------------------------------------------------------------------------------
 
@@ -292,6 +293,40 @@ class Utils:
         h2  = (h2 * 0x58949537) & 0xFFFFFFFF
 
         return (h1 << 32) | h2
+
+#    @staticmethod
+#    def hash(key : abc.Buffer | tuple | list, h = (0,0)):
+#        if isinstance(key, list):
+#            for k in key:
+#                h = Utils.hash(k, h)
+#            return h
+#        if isinstance(key, str):
+#            key = key.encode()
+#
+#        Utils.hash_calls += 1
+#
+#        # Feistel-ish mix to tangle up the two 32-bit hashes.
+#        def mix(h):
+#            c = 0x58949537 # meaningless odd constant
+#            m = 0xFFFFFFFF # 32-bit mask
+#            return (h[1] ^ ((h[0] * c) & m), h[0] ^ (h[0] >> 16))
+#
+#        if isinstance(key, tuple):
+#            a = mix(key)
+#            b = mix(h)
+#            return mix((a[1] ^ b[0], b[0] ^ a[1]))
+#        else:
+#            # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
+#            # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
+#            # as a real 64-bit hash, but it'll do.
+#            h = (zlib.crc32(key, h[0]), zlib.adler32(key, h[1]))
+#            return mix(mix(mix(h)))
+#
+#    @staticmethod
+#    def hash_file(abs_path, h = (0,0)):
+#        with open(abs_path, "rb") as f:
+#            return Utils.hash(f.read(), h)
+#
 
     # ----------------------------------------------------------------------------------------------
 
@@ -722,6 +757,8 @@ class Options:
 
         # Pull options that aren't task-specific off the root config.
 
+        #cls.compilation_db = root_config.pop("compilation_db", "{build_root}/compile_commands.json")
+
         cls.core_max    = root_config.pop("core_max", os.cpu_count() or 1)
         cls.max_errors  = root_config.pop("max_errors", 0)
         cls.rebuild     = root_config.pop("rebuild", False)
@@ -887,6 +924,8 @@ class Task:
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
         cls.hash_db : dict[str, int] = {}
+        #cls.old_hash_db : dict = {}
+        #cls.new_hash_db : dict = {}
 
     class FAILED(Exception):    pass  # noqa: E701
     class CANCELLED(Exception): pass  # noqa: E701
@@ -918,6 +957,79 @@ class Task:
         with Log.color(0x00FF00):
             Log.log(f"hancho.db saved to {path}\n")
 
+#    @classmethod
+#    def load_compilation_db(cls):
+#        path = Options.cv_config().expand(Options.compilation_db)
+#        path = cast(str, Path.abs(path))
+#        try:
+#            with open(path) as contents:
+#                cls.old_hash_db = json.load(contents)
+#            if LogLevel.VERBOSE:
+#                with Log.color(0x00FF00):
+#                    Log.log(f"Loaded compilation database: {path}\n")
+#
+#        except FileNotFoundError:
+#            if LogLevel.ERROR:
+#                with Log.color(0xFF0000):
+#                    Log.log("Compilation database not found: {path}\n")
+#
+#    @classmethod
+#    def save_compilation_db(cls):
+#        # FIXME https://clang.llvm.org/docs/JSONCompilationDatabase.html
+#        old_path = Path.abs(Options.cv_config().expand(Options.compilation_db))
+#        new_path = Path.abs(Options.cv_config().expand(Options.compilation_db + ".temp"))
+#
+#        old_path = cast(str, old_path)
+#        new_path = cast(str, new_path)
+#
+#        new_db = {}
+#
+#        for task in Runner.all_tasks:
+#            if not task._enabled:
+#                continue
+#
+#            if not isinstance(task.config.command, list):
+#                print(f"command {task.config.command}")
+#                print(Utils.dump_to_str("task", task.__dict__))
+#                #assert isinstance(task.config.command, list)
+#
+#            callback_task = False
+#            for c in task.config.command:
+#                if not isinstance(c, str):
+#                    callback_task = True
+#                    break
+#            if callback_task:
+#                continue
+#
+#            for in_file in task.in_files:
+#                entry = {
+#                    "directory" : task.config.task_cwd,
+#                    "command"   : "; ".join(task.config.command),
+#                    "file"      : in_file,
+#                    "hash"      : Utils.hash_file(in_file)
+#                }
+#                if in_file in new_db:
+#                    print(f"!?!?!?!?!??!! {in_file}")
+#                    print(new_db[in_file])
+#                    print(entry)
+#                    print("-----")
+#                new_db[in_file] = entry
+#
+#        flat_db = list(new_db.values())
+#
+#        with open(cast(str, new_path), "w") as db_file:
+#            json.dump(flat_db, db_file, indent=4)
+#            db_file.write("\n")
+#            db_file.flush()
+#            os.fsync(db_file.fileno())
+#
+#        os.replace(new_path, old_path)
+#        new_path = old_path
+#
+#        if LogLevel.VERBOSE:
+#            with Log.color(0x00FF00):
+#                Log.log(f"Compilation database saved to {new_path}\n")
+
     def __init__(self, *args, **kwargs):
         # The task's config contains all the commands, paths, options, inputs, dependent Tasks, and
         # anything else needed to assemble and run the task's commands. It is expected that build
@@ -943,6 +1055,9 @@ class Task:
 
         # Why this task rebuilt, or "" if it did not need to rebuild.
         self._reason = ""
+
+        # True if this task is going to be built.
+        #self._enabled = False
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -999,6 +1114,10 @@ class Task:
     def is_io_field(key : str):
         return Task.is_input_field(key) or Task.is_output_field(key)
 
+#    def get_task_key(self):
+#        #return ",".join(Path.abs(self.out_files))
+#        return self.config.task_cwd + "$ " + ";".join(Utils.flatten(self.config.command))
+
     # ----------------------------------------------------------------------------------------------
 
     def log(self, message : str):
@@ -1036,6 +1155,7 @@ class Task:
     async def task_top(self):
         try:
             await self.task_main()
+            self._error = None
         except asyncio.CancelledError as ex:
             if LogLevel.VERBOSE:
                 self.log(f"<asyncio.CancelledError {ex}>\n")
@@ -1069,6 +1189,9 @@ class Task:
         dry_run = " (DRY RUN)" if self.config.dry_run else ""
         if LogLevel.VERBOSE:
             self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
+
+        #print(self.config.task_cwd + "$ " + ";".join(Utils.flatten(self.config.command)))
+
         return self.out_files
 
     # ----------------------------------------------------------------------------------------------
@@ -1391,6 +1514,90 @@ class Task:
             files[i] = Path.rel(files[i], rel_dir)
 
         return files
+
+#    # ----------------------------------------------------------------------------------------------
+#    def check_for_modification(self, abs_path):
+#        #print(abs_path)
+#
+#        old_hash = Task.old_hash_db.get(abs_path, None)
+#        new_hash = Task.new_hash_db.get(abs_path, None)
+#
+#        if new_hash is None:
+#            with open(abs_path, "rb") as f:
+#                new_hash = Utils.hash(f.read())
+#            Task.new_hash_db[abs_path] = new_hash
+#
+#        if old_hash != new_hash:
+#            return f"Rebuilding because the hash has changed : {abs_path}"
+#        else:
+#            print(f"!!!!!!!!!!!Size/mtime/hash match for {abs_path}!!!!!!!!!!!")
+#            return ""
+#
+#    # ----------------------------------------------------------------------------------------------
+#
+#    @staticmethod
+#    def load_depfile(path, format, task_cwd):
+#        with open(path, encoding="utf-8") as depcontents:
+#            deplines = None
+#            if format == "msvc":
+#                # MSVC /sourceDependencies
+#                deplines = json.load(depcontents)["Data"]["Includes"]
+#            elif format == "gcc":
+#                # GCC -MMD
+#                # NOTE: This does not handle filenames with escaped spaces in them, but I don't
+#                # want to write a whole .d parser yet.
+#                deplines = depcontents.read()
+#                deplines = re.sub(r"\\\s*\n", "", deplines)
+#                deplines = deplines.split()
+#                deplines = [d for d in deplines if d[-1] != ':']
+#            else:
+#                raise Task.BROKEN(f"Invalid depfile format {format}")
+#
+#        # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
+#        deplines = [cast(str, Path.join(task_cwd, d)) for d in deplines]
+#        return deplines
+#
+#    # ----------------------------------------------------------------------------------------------
+#
+#    def check_depfile(self):
+#        config = self.config
+#        cwd = os.getcwd()
+#
+#        if not config.in_depfile:
+#            return ""
+#        if not Path.exists(config.in_depfile):
+#            return ""
+#
+#        if LogLevel.DEBUG:
+#            self.log(f"Found C dependencies file {config.in_depfile}\n")
+#
+#        deplines = Task.load_depfile(config.in_depfile, config.depformat, config.task_cwd)
+#
+##        with open(config.in_depfile, encoding="utf-8") as depcontents:
+##            deplines = None
+##            if config.depformat == "msvc":
+##                # MSVC /sourceDependencies
+#                deplines = json.load(depcontents)["Data"]["Includes"]
+#            elif config.depformat == "gcc":
+#                # GCC -MMD
+#                # NOTE: This does not handle filenames with escaped spaces in them, but I don't
+#                # want to write a whole .d parser yet.
+#                deplines = depcontents.read()
+#                deplines = re.sub(r"\\\s*\n", "", deplines)
+#                deplines = deplines.split()
+#                deplines = [d for d in deplines if d[-1] != ':']
+#            else:
+#                raise Task.BROKEN(f"Invalid depfile format {config.depformat}")
+#
+#            # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
+#            deplines = [cast(str, Path.join(config.task_cwd, d)) for d in deplines]
+#        for abs_file in deplines:
+#            if not Path.exists(abs_file):
+#                return f"Rebuilding because {Path.rel(abs_file, cwd)} from the depfile is missing"
+#            #if Utils.mtime(abs_file) >= min_out:
+#            #    return f"Rebuilding because {Path.rel(abs_file, cwd)} from the depfile has changed"
+#
+#        return ""
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2192,6 +2399,17 @@ class Runner:
             except BaseException as ex:
                 if LogLevel.DEBUG:
                     Log.log(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
+                    Log.log_exception(ex)
+                    #tb = traceback.extract_tb(ex.__traceback__)
+                    #if tb:
+                    #    frame = tb[-1]
+                    #    Log.log(f"type      = {type(ex)}\n")
+                    #    Log.log(f"message   = '{ex}'\n")
+                    #    Log.log(f"location  = {frame.filename} {frame.name} @ {frame.lineno}\n")
+                    #    Log.log(f"line      = '{frame.line}'\n")
+                    #else:
+                    #    Log.log(f"Could not extract traceback from {ex}!")
+
                 cls.tasks_failed += 1
 
             finally:
@@ -2319,7 +2537,7 @@ def main():
     # ------------------------------------
     # Run all tasks and tools
 
-    Task.load_hash_db()
+    #Task.load_old_hash_db()
 
     if Options.tool:
         result = Runner.run_tool(Options.tool)
@@ -2327,7 +2545,7 @@ def main():
         Runner.select_root_tasks()
         result = Runner.sync_run_tasks()
 
-    Task.save_hash_db()
+    #Task.save_compilation_db()
 
     # ------------------------------------
     # Done
@@ -2341,6 +2559,7 @@ def main():
         Log.log(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
         Log.log(f"Tasks skipped:    {Runner.tasks_skipped}\n")
         Log.log(f"Mtime calls:      {Utils.mtime_calls}\n")
+        #Log.log(f"Hash calls:       {Utils.hash_calls}\n")
 
     if Runner.tasks_failed or Runner.tasks_broken:
         with Log.color(Colors.RED):
