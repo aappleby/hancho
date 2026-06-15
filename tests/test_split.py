@@ -34,48 +34,48 @@ class TestSplitTemplate(unittest.TestCase):
     def doctest_basic(self):
         r"""
         # Escaped braces should _not_ split.
-        >>> Expander.split(r"a \{b\} c")
+        >>> Expander.split_template(r"a \{b\} c")
         ['a \\{b\\} c']
         """
 
     def doctest_splitter(self):
         r"""
         # The splitter should tag each chunk of text as a literal or a macro
-        >>> Expander.split("foo")
+        >>> Expander.split_template("foo")
         ['foo']
-        >>> Expander.split("{bar}")
+        >>> Expander.split_template("{bar}")
         ['{bar}']
-        >>> Expander.split("foo {bar}")
+        >>> Expander.split_template("foo {bar}")
         ['foo ', '{bar}']
-        >>> Expander.split("{bar} baz")
+        >>> Expander.split_template("{bar} baz")
         ['{bar}', ' baz']
-        >>> Expander.split("foo {bar} baz")
+        >>> Expander.split_template("foo {bar} baz")
         ['foo ', '{bar}', ' baz']
-        >>> Expander.split("foo {bar} baz {flp} zrk")
+        >>> Expander.split_template("foo {bar} baz {flp} zrk")
         ['foo ', '{bar}', ' baz ', '{flp}', ' zrk']
         """
 
     def doctest_mismatched_braces(self):
         r"""
         # Mismatched braces shouldn't break anything
-        >>> Expander.split("{foo")
+        >>> Expander.split_template("{foo")
         ['{foo']
-        >>> Expander.split("foo}")
+        >>> Expander.split_template("foo}")
         ['foo}']
-        >>> Expander.split("{foo}}")
+        >>> Expander.split_template("{foo}}")
         ['{foo}', '}']
-        >>> Expander.split("{{foo}")
+        >>> Expander.split_template("{{foo}")
         ['{', '{foo}']
-        >>> Expander.split("{foo}}{")
+        >>> Expander.split_template("{foo}}{")
         ['{foo}', '}{']
-        >>> Expander.split("}{{foo}")
+        >>> Expander.split_template("}{{foo}")
         ['}{', '{foo}']
         """
 
     def doctest_split_innermost(self):
         """
         # We should be extracting the innermost macros
-        >>> Expander.split("{{foo}}")
+        >>> Expander.split_template("{{foo}}")
         ['{', '{foo}', '}']
         """
 
@@ -83,18 +83,18 @@ class TestSplitTemplate(unittest.TestCase):
     # def doctest_dont_split_inside_string(self):
     #     r"""
     #     # ...unless the innermost macro is inside a string
-    #     >>> Expander.split('{foo + "{bar}"}')
+    #     >>> Expander.split_template('{foo + "{bar}"}')
     #     ['foo + "{bar}"']
-    #     >>> Expander.split("{foo + '{bar}'}")
+    #     >>> Expander.split_template("{foo + '{bar}'}")
     #     [E"foo + '{bar}'"]
     #     """
 
     # def doctest_macros_inside_string(self):
     #     r"""
     #     # Macros inside a string should _not_ be split
-    #     >>> Expander.split("foo '{bar}' baz")
+    #     >>> Expander.split_template("foo '{bar}' baz")
     #     [L"foo '{bar}' baz"]
-    #     >>> Expander.split('foo "{bar}" baz')
+    #     >>> Expander.split_template('foo "{bar}" baz')
     #     ['foo "{bar}" baz']
     #     """
 
@@ -104,76 +104,76 @@ class TestSplitTemplate(unittest.TestCase):
 
     def test_basic(self):
         # Sanity check - Single braces should produce a block
-        self.assertEqual(Expander.split("a {b} c"), ["a ", "{b}", " c"])
+        self.assertEqual(Expander.split_template("a {b} c"), ["a ", "{b}", " c"])
 
         # Degenerate cases should produce single blocks
-        self.assertEqual(Expander.split(""), [])
-        self.assertEqual(Expander.split("{"), ["{"])
-        self.assertEqual(Expander.split("}"), ["}"])
-        self.assertEqual(Expander.split("a"), ["a"])
+        self.assertEqual(Expander.split_template(""), [])
+        self.assertEqual(Expander.split_template("{"), ["{"])
+        self.assertEqual(Expander.split_template("}"), ["}"])
+        self.assertEqual(Expander.split_template("a"), ["a"])
 
         # Multiple single-braced blocks should not produce empty text between them if they touch
-        self.assertEqual(Expander.split("{a}{b}{c}"), ["{a}", "{b}", "{c}"])
+        self.assertEqual(Expander.split_template("{a}{b}{c}"), ["{a}", "{b}", "{c}"])
 
         # But if there's whitespace between them, it should be preserved
         self.assertEqual(
-            Expander.split(" {a} {b} {c} "), [" ", "{a}", " ", "{b}", " ", "{c}", " "]
+            Expander.split_template(" {a} {b} {c} "), [" ", "{a}", " ", "{b}", " ", "{c}", " "]
         )
 
         # Whitespace inside a block should not split the block
-        self.assertEqual(Expander.split("{ a }{ b }{ c }"), ["{ a }", "{ b }", "{ c }"])
+        self.assertEqual(Expander.split_template("{ a }{ b }{ c }"), ["{ a }", "{ b }", "{ c }"])
 
         # Unmatched braces
-        self.assertEqual(Expander.split("{"), ["{"])
-        self.assertEqual(Expander.split("}"), ["}"])
+        self.assertEqual(Expander.split_template("{"), ["{"])
+        self.assertEqual(Expander.split_template("}"), ["}"])
 
-        self.assertEqual(Expander.split("{}"), ["{}"])
-        self.assertEqual(Expander.split("}{"), ["}{"])
-        self.assertEqual(Expander.split("{a"), ["{a"])
-        self.assertEqual(Expander.split("a}"), ["a}"])
+        self.assertEqual(Expander.split_template("{}"), ["{}"])
+        self.assertEqual(Expander.split_template("}{"), ["}{"])
+        self.assertEqual(Expander.split_template("{a"), ["{a"])
+        self.assertEqual(Expander.split_template("a}"), ["a}"])
 
-        self.assertEqual(Expander.split("a{b"), ["a{b"])
-        self.assertEqual(Expander.split("a}b"), ["a}b"])
-        self.assertEqual(Expander.split("}}{"), ["}}{"])
-        self.assertEqual(Expander.split("}{{"), ["}{{"])
-        self.assertEqual(Expander.split("{{}"), ["{", "{}"])
-        self.assertEqual(Expander.split("{}}"), ["{}", "}"])
+        self.assertEqual(Expander.split_template("a{b"), ["a{b"])
+        self.assertEqual(Expander.split_template("a}b"), ["a}b"])
+        self.assertEqual(Expander.split_template("}}{"), ["}}{"])
+        self.assertEqual(Expander.split_template("}{{"), ["}{{"])
+        self.assertEqual(Expander.split_template("{{}"), ["{", "{}"])
+        self.assertEqual(Expander.split_template("{}}"), ["{}", "}"])
 
         # Nesting
-        self.assertEqual(Expander.split("a{{b}}c"), ["a{", "{b}", "}c"])
-        self.assertEqual(Expander.split("{a{b}c}"), ["{a", "{b}", "c}"])
-        self.assertEqual(Expander.split("x{a{b}{c}d}y"), ["x{a", "{b}", "{c}", "d}y"])
-        self.assertEqual(Expander.split("{{{{a}}}}"), ["{{{", "{a}", "}}}"])
+        self.assertEqual(Expander.split_template("a{{b}}c"), ["a{", "{b}", "}c"])
+        self.assertEqual(Expander.split_template("{a{b}c}"), ["{a", "{b}", "c}"])
+        self.assertEqual(Expander.split_template("x{a{b}{c}d}y"), ["x{a", "{b}", "{c}", "d}y"])
+        self.assertEqual(Expander.split_template("{{{{a}}}}"), ["{{{", "{a}", "}}}"])
 
         # Adjacent blocks with different brace counts
         self.assertEqual(
-            Expander.split("{a}{{b}}{c}"), ["{a}", "{", "{b}", "}", "{c}"]
+            Expander.split_template("{a}{{b}}{c}"), ["{a}", "{", "{b}", "}", "{c}"]
         )
         self.assertEqual(
-            Expander.split("{{a}}{b}{{c}}"),
+            Expander.split_template("{{a}}{b}{{c}}"),
             ["{", "{a}", "}", "{b}", "{", "{c}", "}"],
         )
-        self.assertEqual(Expander.split("{{a}}"), ["{", "{a}", "}"])
-        self.assertEqual(Expander.split("{{a}{b}}"), ["{", "{a}", "{b}", "}"])
-        self.assertEqual(Expander.split("{{{a}}}"), ["{{", "{a}", "}}"])
+        self.assertEqual(Expander.split_template("{{a}}"), ["{", "{a}", "}"])
+        self.assertEqual(Expander.split_template("{{a}{b}}"), ["{", "{a}", "{b}", "}"])
+        self.assertEqual(Expander.split_template("{{{a}}}"), ["{{", "{a}", "}}"])
 
         # Escaped braces should be ignored.
-        self.assertEqual(Expander.split(r"a\{b\}c"), [r"a\{b\}c"])
-        self.assertEqual(Expander.split(r"a{\}}b"), ["a", r"{\}}", "b"])
-        self.assertEqual(Expander.split(r"a{\{}b"), ["a", r"{\{}", "b"])
+        self.assertEqual(Expander.split_template(r"a\{b\}c"), [r"a\{b\}c"])
+        self.assertEqual(Expander.split_template(r"a{\}}b"), ["a", r"{\}}", "b"])
+        self.assertEqual(Expander.split_template(r"a{\{}b"), ["a", r"{\{}", "b"])
 
-        self.assertEqual(Expander.split("\\"), ["\\"])
-        self.assertEqual(Expander.split(r"{\n}"), [r"{\n}"])
-        self.assertEqual(Expander.split(r"a\{b}"), [r"a\{b}"])
-        self.assertEqual(Expander.split(r"a{b\}"), [r"a{b\}"])
+        self.assertEqual(Expander.split_template("\\"), ["\\"])
+        self.assertEqual(Expander.split_template(r"{\n}"), [r"{\n}"])
+        self.assertEqual(Expander.split_template(r"a\{b}"), [r"a\{b}"])
+        self.assertEqual(Expander.split_template(r"a{b\}"), [r"a{b\}"])
 
         # Escaped backslashes should _not_ cause a following brace to be ignored.
-        self.assertEqual(Expander.split(r"a\\{b}"), [r"a\\", r"{b}"])
-        self.assertEqual(Expander.split(r"a{b\\}"), [r"a", r"{b\\}"])
+        self.assertEqual(Expander.split_template(r"a\\{b}"), [r"a\\", r"{b}"])
+        self.assertEqual(Expander.split_template(r"a{b\\}"), [r"a", r"{b\\}"])
 
-        self.assertEqual(Expander.split(r"a \{a\} a"), [r"a \{a\} a"])
-        self.assertEqual(Expander.split(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
-        self.assertEqual(Expander.split(r"a \\\{a\\\} a"), [r"a \\\{a\\\} a"])
+        self.assertEqual(Expander.split_template(r"a \{a\} a"), [r"a \{a\} a"])
+        self.assertEqual(Expander.split_template(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
+        self.assertEqual(Expander.split_template(r"a \\\{a\\\} a"), [r"a \\\{a\\\} a"])
 
 
 ####################################################################################################

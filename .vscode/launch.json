@@ -10,7 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_templates.TestTemplates.test_expand_failed_to_terminate3", "-vvv"],
+      "args"    : ["tests.test_tasks.TestTasks.test_header_changed", "-vvv"],
       //"args"    : ["tests.test_templates", "-vvv"],
       "preLaunchTask": "Wipe build",
     },
@@ -29,7 +29,7 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["--trace", "-j1"],
+      "args"    : ["--quiet", "-j1"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -51,7 +51,7 @@
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       //"args"    : ["-d", "--verbose", "-j1", "--rebuild"],
-      "preLaunchTask": "Wipe build",
+      //"preLaunchTask": "Wipe build",
     },
 
     {

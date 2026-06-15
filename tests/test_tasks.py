@@ -32,9 +32,13 @@ def mtime_ns(filename):
     return os.stat(filename).st_mtime_ns
 
 
-def force_touch(filename):
+def force_touch(filename, append_text = None):
     if not Path(filename).exists():
         Path(filename).touch()
+
+    if append_text:
+        with open(filename, "a") as f:
+            f.write(append_text)
     old_mtime = mtime_ns(filename)
     while old_mtime == mtime_ns(filename):
         os.utime(filename, None)
@@ -62,7 +66,7 @@ class TestTasks(unittest.TestCase):
     def run_tasks(self, expected):
         for task in hancho.Runner.all_tasks:
             task.enable_task()
-        result = hancho.Runner.sync_run_tasks()
+        result = hancho.build()
         self.assertEqual(result, expected)
 
     # ----------------------------------------------------------------------------------------------
@@ -88,8 +92,7 @@ class TestTasks(unittest.TestCase):
     #            out_file = "test_manual_queue.txt",
     #        )
     #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
-    #        result = hancho.Runner.sync_run_tasks()
-    #        self.assertEqual(result, 0)
+    #        self.run_tasks(0)
     #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
     #
     #    def _test_manual_queue2(self):
@@ -100,8 +103,7 @@ class TestTasks(unittest.TestCase):
     #        )
     #        t.start2()
     #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
-    #        result = hancho.Runner.sync_run_tasks()
-    #        self.assertEqual(result, 0)
+    #        self.run_tasks(0)
     #        self.assertTrue(os.path.exists("build/test_manual_queue.txt"))
     #
     #    def _test_manual_queue3(self):
@@ -131,8 +133,7 @@ class TestTasks(unittest.TestCase):
     #        self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
     #        self.assertFalse(os.path.exists("build/test_manual_queue3c.txt"))
     #
-    #        result = hancho.Runner.sync_run_tasks()
-    #        self.assertEqual(result, 0)
+    #        self.run_tasks(0)
     #
     #        self.assertTrue(os.path.exists("build/test_manual_queue3a.txt"))
     #        self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
@@ -148,10 +149,7 @@ class TestTasks(unittest.TestCase):
     #          build_files = "repo.txt",
     #          b*ase_path = os.path.abspath("subrepo")
     #      )
-    #      self.assertEqual(0, hancho.app.build_all())
-#        hancho.config.rebuild = True
-#        hancho.Runner.enable_all_tasks()
-#        result = hancho.Runner.sync_run_tasks()
+    #      self.run_tasks(0)
 
 
     #      self.assertTrue(Path("build/subrepo/repo.txt").exists())
@@ -409,7 +407,7 @@ class TestTasks(unittest.TestCase):
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
-            hancho.init(verbosity = "quiet")
+            hancho.init(verbosity = "debug")
             time.sleep(0.01)
             compile = hancho.Tool(
                 name="test_header_changed {in_src}",
