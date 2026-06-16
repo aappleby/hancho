@@ -818,31 +818,6 @@ class BuildDB:
             cls.save_json(cls.new_command_db, cls.command_db_path)
 
     # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def load_depfile(cls, path, format, task_cwd):
-        with open(path, encoding="utf-8") as depcontents:
-            deplines = None
-            if format == "msvc":
-                # MSVC /sourceDependencies
-                deplines = json.load(depcontents)["Data"]["Includes"]
-            elif format == "gcc":
-                # GCC -MMD
-                # NOTE: This does not handle filenames with escaped spaces in them, but I don't
-                # want to write a whole .d parser yet.
-                deplines = depcontents.read()
-                deplines = re.sub(r"\\\s*\n", "", deplines)
-                deplines = deplines.split()
-                deplines = [d for d in deplines if d[-1] != ':']
-            else:
-                raise Task.BROKEN(f"Invalid depfile format {format}")
-
-        # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-        deplines = [cast(str, Path.join(task_cwd, d)) for d in deplines]
-
-        return deplines
-
-    # ----------------------------------------------------------------------------------------------
     # Generate entries for our input db and command db. We're pre-computing the hash of each
     # input file here, which is a tiny bit of a waste as we might be able to skip it if we
     # did the stat size/mtime checks first. However, we need to ensure that the db entries are
@@ -851,24 +826,14 @@ class BuildDB:
     @classmethod
     def update_all_dbs(cls):
         for task in Runner.all_tasks:
-            # FIXME - We're adding the contents of the depfile to the list of inputs, but not
-            # the depfile itself - that seems OK? how could we test it?
-            if "in_depfile" in task.config:
-                files = Utils.flatten(task.config.in_depfile)
-                for file in files:
-                    if Path.exists(file):
-                        deplines = BuildDB.load_depfile(file, task.config.depformat, task.config.task_cwd)
-                        task.in_files.extend(deplines)
-
-
-
             callback_task = any(not isinstance(c, str) for c in task.config.command)
             if not task.config.enabled or callback_task:
                 continue
 
+            all_in_files = task.in_files + task.in_deps
 
-            for dep_file in task.in_files:
-                cls.update_input_db(dep_file)
+            for in_file in all_in_files:
+                cls.update_input_db(in_file)
 
             for out_file in task.out_files:
                 cls.update_command_db(out_file, task.config)
@@ -883,6 +848,9 @@ class BuildDB:
 
     @classmethod
     def update_input_db(cls, in_file):
+        if not os.path.exists(in_file):
+            return
+
         _stat = os.stat(in_file)
         new_stat = FileStat(
             hash2 = cls.hash_file(in_file),
@@ -895,6 +863,9 @@ class BuildDB:
 
     @classmethod
     def update_command_db(cls, out_file, config):
+        if not os.path.exists(out_file):
+            return
+
         command = Utils.flatten(config.command)
         for i, c in enumerate(command):
             if isinstance(c, str):
@@ -928,12 +899,22 @@ class BuildDB:
             if not Path.exists(out_file):
                 return f"Output file missing: {out_file}"
 
-        max_in  = max(cls.mtime(f) for f in task.in_files)
+
         min_out = min(cls.mtime(f) for f in task.out_files)
 
-        # If any inputs are newer than any outputs, we need to rebuild.
-        if max_in >= min_out:
-            return "Inputs are newer than outputs"
+        for f in task.in_files:
+            if cls.mtime(f) > min_out:
+                return f"Input {f} is newer than the outputs"
+
+        for f in task.in_deps:
+            if cls.mtime(f) > min_out:
+                return f"Dependency {f} is newer than the outputs"
+
+#        max_in  = max(cls.mtime(f) for f in task.in_files + task.in_deps)
+#
+#        # If any inputs are newer than any outputs, we need to rebuild.
+#        if max_in >= min_out:
+#            return "Inputs are newer than outputs"
 
         #if cls.mtime(__file__) >= min_out:
         #    return "hancho.py has changed"
@@ -1429,6 +1410,9 @@ class Task:
         self.in_files  = []
         self.out_files = []
 
+        # Additional input dependencies read from the source.o.d file.
+        self.in_deps  = []
+
         # The context field is what allows a Task to see its parent script's "hancho.config"
         # even after it's been stuck on an asyncio queue and run from somewhere else entirely.
         self._context = contextvars.copy_context()
@@ -1632,6 +1616,11 @@ class Task:
         self.sanity_check()
 
         # ----------------------------------------
+        # Load the inputs from the depfile if present, as we need to check them in rebuild_reason.
+
+        self.load_depfile()
+
+        # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
 
         self._reason = BuildDB.rebuild_reason(self)
@@ -1719,6 +1708,37 @@ class Task:
         # FIXME merge()
         for k, v in temp.items():
             self.config[k] = v
+
+    # ----------------------------------------------------------------------------------------------
+
+    def load_depfile(self):
+        if "in_depfile" not in self.config:
+            return []
+
+        format = self.config.depformat
+        task_cwd = self.config.task_cwd
+
+        for depfile in Utils.flatten(self.config.in_depfile):
+            if Path.exists(depfile):
+                with open(depfile, encoding="utf-8") as depcontents:
+                    deplines = None
+                    if format == "msvc":
+                        # MSVC /sourceDependencies
+                        deplines = json.load(depcontents)["Data"]["Includes"]
+                    elif format == "gcc":
+                        # GCC -MMD
+                        # NOTE: This does not handle filenames with escaped spaces in them, but I don't
+                        # want to write a whole .d parser yet.
+                        deplines = depcontents.read()
+                        deplines = re.sub(r"\\\s*\n", "", deplines)
+                        deplines = deplines.split()
+                        deplines = [d for d in deplines if d[-1] != ':']
+                    else:
+                        raise Task.BROKEN(f"Invalid depfile format {format}")
+
+                # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
+                deplines = [Path.join(task_cwd, d) for d in deplines]
+                self.in_deps.extend(deplines)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1888,19 +1908,10 @@ class Task:
         # The check for is_depfile_field must come first, as it's a special case of a file that
         # is technically _both_ an input and an output file, even though its name starts with "in".
         for i in range(len(files)):
-
-            # FIXME - We're adding the contents of the depfile to the list of inputs, but not
-            # the depfile itself - that seems OK? how could we test it?
             if Task.is_depfile_field(name):
                 pass
-                #for file in files:
-                #    if Path.exists(file):
-                #        deplines = BuildDB.load_depfile(file, config.depformat, config.task_cwd)
-                #        self.in_files.extend(deplines)
-
-            if Task.is_output_field(name):
+            elif Task.is_output_field(name):
                 self.out_files.append(files[i])
-
             elif Task.is_input_field(name):
                 self.in_files.append(files[i])
 
