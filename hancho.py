@@ -824,30 +824,6 @@ class BuildDB:
     # always populated and this is the easiest way to do it for now.
 
     @classmethod
-    def update_all_dbs(cls):
-        pass
-        for task in Runner.all_tasks:
-            callback_task = any(not isinstance(c, str) for c in task.config.command)
-            if not task.config.enabled or callback_task:
-                continue
-
-            all_in_files = task.in_files + task.in_deps
-
-            for in_file in all_in_files:
-                cls.update_input_db(in_file)
-
-            for out_file in task.out_files:
-                cls.update_command_db(out_file, task.config)
-
-            # Haven't tested this in an IDE, but I think it matches the spec.
-            for in_file in task.in_files:
-                cls.new_comp_db[in_file] = {
-                    "directory" : task.config.task_cwd,
-                    "command"   : "; ".join(task.config.command),
-                    "file"      : in_file,
-                }
-
-    @classmethod
     def update_input_db(cls, in_file):
         if not os.path.exists(in_file):
             return
@@ -1516,6 +1492,9 @@ class Task:
             self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
 
         BuildDB.task_complete(self)
+
+        for out_file in self.out_files:
+            BuildDB.update_command_db(out_file, self.config)
 
         return self.out_files
 
@@ -2619,7 +2598,6 @@ class Runner:
         # Save the new versions of the file stat and task info DBs.
 
         if not Options.cv_config().dry_run:
-            BuildDB.update_all_dbs()
             BuildDB.save()
 
 
