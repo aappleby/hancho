@@ -74,7 +74,7 @@ def __getattr__(name):
         return Options.cv_config()
     elif name in Utils.aliases:
         # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
-        # template/macro expansion. That's handled in Expander._eval_macro above.
+        # template/macro expansion. That's handled in Expander._expand_pass.
         return Utils.aliases[name]
     else:
         raise AttributeError(name)
@@ -486,8 +486,6 @@ class Utils:
         # Don't recurse into a few types that need special handling
         if isinstance(val, Task):
             val = f"<Task {val.config.name}>"
-        elif isinstance(val, Expander):
-            val = "<Expander>"
         elif isinstance(val, contextvars.Context):
             val = "<Context>"
         elif isinstance(val, types.ModuleType):
@@ -660,9 +658,9 @@ class BuildDB:
         input_db_path   = root_config.pop("input_db",   "{build_root}/hancho_inputs.json")
         command_db_path = root_config.pop("command_db", "{build_root}/hancho_commands.json")
 
-        comp_db_path    = root_config.expand(comp_db_path)
-        input_db_path   = root_config.expand(input_db_path)
-        command_db_path = root_config.expand(command_db_path)
+        comp_db_path    = root_config.expand(comp_db_path, str)
+        input_db_path   = root_config.expand(input_db_path, str)
+        command_db_path = root_config.expand(command_db_path, str)
 
         cls.comp_db_path    = cast(str, Path.abs(comp_db_path))
         cls.input_db_path   = cast(str, Path.abs(input_db_path))
@@ -1183,6 +1181,8 @@ class Dict(dict):
 
     def __init__(self, *args, **kwargs):
         super().__init__()
+        #super().__setattr__("_expander", Expander(self))
+        object.__setattr__(self, "_expander", Expander(self))
         self.merge(*args, **kwargs)
 
     # ----------------------------------------
@@ -1240,11 +1240,11 @@ class Dict(dict):
     # Expander convenience helpers
 
     def expand[T](self, text : Any, as_type : type[T] = object) -> T:
-        #result = Expander._expand(text, self)
         # Expander-mode _must_ be the default, otherwise things like
-        # config.expand("{rel(task_cwd, repo_dir)}") doesn't work because we try and call rel using
-        # {macros}, and macros are not paths.
-        result = Expander.wrap(self).expand(text)
+        # config.expand("{rel(task_cwd, repo_dir)}", str)
+        # doesn't work because we try and call rel using {macros}, and macros are not paths.
+
+        result = self._expander.expand(text)
         assert isinstance(result, as_type)
         return result
 
@@ -1432,13 +1432,6 @@ class Task:
         self.in_files  = []
         self.out_files = []
 
-        # Reading a Dict field through an expander both expands the field's template if present,
-        # and also recursively wraps any Dicts accessed during template expansion with their own
-        # expanders.
-        # This enables a nested field access like "a.b.c" to first try expanding 'c' using 'b' as
-        # its context, and then if it fails to try 'a' afterwards.
-        self._expander  = Expander.wrap(self.config)
-
         # The context field is what allows a Task to see its parent script's "hancho.config"
         # even after it's been stuck on an asyncio queue and run from somewhere else entirely.
         self._context = contextvars.copy_context()
@@ -1447,7 +1440,7 @@ class Task:
         self._reason = ""
 
         # True if this task is going to be built.
-        #self._enabled = False
+        self._enabled = False
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1590,7 +1583,6 @@ class Task:
 
     async def task_main(self):
         config = self.config
-        expand = self._expander
 
         Task.id_counter += 1
         self._task_id = Task.id_counter
@@ -1617,10 +1609,10 @@ class Task:
 
         for f in path_fields:
             if f in config:
-                temp[f] = Path.norm(expand[f])
+                temp[f] = Path.norm(config.expand('{' + f + '}'))
         for f in flag_fields:
             if f in config:
-                temp[f] = expand[f]
+                temp[f] = config.expand('{' + f + '}')
 
         # FIXME merge()
         for k, v in temp.items():
@@ -1735,7 +1727,6 @@ class Task:
 
     def task_init(self):
         config = self.config
-        expand = self._expander
 
         if os.getcwd() != config.task_cwd:
             raise AssertionError("Running task_init while we're not in task's cwd")
@@ -1783,7 +1774,7 @@ class Task:
         temp = Dict()
         for key, files in config.items():
             if Task.is_io_field(key):
-                temp[key] = Path.norm(self._expander.expand(files))
+                temp[key] = Path.norm(self.config.expand(files))
 
         # FIXME merge()
         for k, v in temp.items():
@@ -1806,9 +1797,9 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
-        config.name    = expand.name
-        config.desc    = expand.desc
-        config.command = expand.command
+        config.name    = config._expander.name
+        config.desc    = config._expander.desc
+        config.command = config._expander.command
 
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
@@ -1826,7 +1817,7 @@ class Task:
             for command in cast(list, config.command):
                 if not isinstance(command, str):
                     continue
-                blocks = Expander.split_template(command)
+                blocks = Expander._split_template(command)
                 if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
@@ -2061,9 +2052,6 @@ class Expander(abc.MutableMapping[str, object]):
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    # FIXME - All Dicts should always have an Expander attached so we don't keep creating them
-    # redundantly.
-
     def __init__(self, context : Dict):
         # These are just type annotations, because writing to fields while we're in the constructor
         # of a class that overrides __setattr__ does strange things.
@@ -2082,11 +2070,10 @@ class Expander(abc.MutableMapping[str, object]):
             raise KeyError from ex
 
     def __setitem__(self, key, val):
-        # FIXME why are we allowing this in expander? shouldn't this view be read-only?
-        self._context.__setitem__(key, val)
+        raise AssertionError("Expander.__setitem__ should not be used")
 
     def __delitem__(self, key):
-        self._context.__delitem__(key)
+        raise AssertionError("Expander.__delitem__ should not be used")
 
     def __iter__(self):
         yield from cast(Dict, self._context)
@@ -2105,29 +2092,24 @@ class Expander(abc.MutableMapping[str, object]):
         try:
             return self._get(key)
         except KeyError as ex:
+            traceback.print_exc()
             raise AttributeError from ex
 
     def __setattr__(self, key, val):
-        # FIXME why are we allowing this in expander? shouldn't this view be read-only?
-        self._context.__setattr__(key, val)
+        raise AssertionError("Expander.__setattr__ should not be used")
 
     def __delattr__(self, key):
-        self._context.__delattr__(key)
+        raise AssertionError("Expander.__delattr__ should not be used")
 
     # ----------------------------------------
 
-    def expand(self, val : Any):
-        return Expander._expand(val, self)
-
     def _get(self, key):
         """
-        Reads and expands a field stored in our context. Mappings will be wrapped in an Expander so
-        that expansions in nested dicts works correctly.
+        Reads and expands a field stored in our context.
         """
 
         # The "trace" key is a special case, as we don't want to trace reading trace...
         if key == "trace":
-            #if hasattr(self._context, "trace"):
             if "trace" in self._context:
                 return self._context.trace
             else:
@@ -2135,29 +2117,135 @@ class Expander(abc.MutableMapping[str, object]):
 
         with Tracer(self, "get", key) as tracer:
             result = self._context[key]
-            result = Expander.wrap(result) if Utils.is_mapping(result) else Expander._expand(result, self)
+            result = self.expand(result)
             tracer.save_result(result)
 
         return result
 
+    def __call__(self, key):
+        return self._get(key)
+
+    # ----------------------------------------------------------------------------------------------
+    # Hancho's template expansions can cause infinite loops, so we need some simple complexity
+    # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
+    # up the whole Python stack.
+    # If you do weird things like load scripts from inside macros and you hit MAX_STEPS, that's a
+    # you problem.
+    #
+    # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
+    # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
+
+    cv_depth = contextvars.ContextVar("depth", default = 0)
+    cv_evals = contextvars.ContextVar("evals", default = 0)
+    MAX_DEPTH = 30
+    MAX_EVALS = 300
+
+    # ----------------------------------------
+
+    def expand(self, variant):
+        """
+        The outer expand function handles setting/resetting the depth/evals-check vars and repeats
+        expansion until we reach a non-string or the string stops changing.
+        """
+
+        # Recurse early if we're trying to expand a list of strings.
+        # This ensures that every template gets its own independent depth and evals check.
+        if isinstance(variant, list):
+            result = []
+            for v in variant:
+                # Remember how much budget was spent.
+                saved = Expander.cv_evals.get()
+                # Expand the list element.
+                result.append(self.expand(v))
+                # Restore the budget so the next string in the list gets it.
+                Expander.cv_evals.set(saved)
+            return result
+
+        # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
+        # something) or if it's a string with no macros in it.
+        if not (isinstance(variant, str) and '{' in variant):
+            return variant
+
+        # Bail out if we've gone through too many levels of recursion.
+        if (depth := Expander.cv_depth.get()) >= Expander.MAX_DEPTH:
+            raise RecursionError(f"Expansion failed to terminate after {depth} recursions: {variant!r}")
+        Expander.cv_depth.set(depth + 1)
+
+        # OK, we have a string that could be a template. Keep expanding it until it stops changing
+        # or it's not a template.
+        try:
+            old_variant = None
+            while old_variant != variant and isinstance(variant, str) and '{' in variant:
+                old_variant = variant
+                with Tracer(self, "expand", variant) as tracer:
+                    variant = self._expand_pass(variant)
+                    tracer.save_result(variant)
+        finally:
+            # And then reset the depth/evals check vars when we're done.
+            if depth == 0:
+                Expander.cv_evals.set(0)
+            Expander.cv_depth.set(depth)
+
+        return variant
+
+    # ----------------------------------------
+    # IMPORTANT IMPORTANT IMPORTANT
+    # If you can't eval a macro, you return it unchanged.
+    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++ - we don't
+    # fail on expansion failure so we can retry somewhere/somewhen else.
+
+    def _expand_pass(self, template : str):
+        """The inner expand function does one split-expand-rejoin pass on the template string."""
+
+        # Split the string into literal and macro blocks.
+        blocks = Expander._split_template(template)
+
+        # Expand all macro blocks.
+        for i, block in enumerate(blocks):
+
+            # Skip literal blocks.
+            if len(block) < 2 or block[0] != "{" or block[-1] != "}":
+                continue
+
+            # Bail out if we've taken too many expansion steps already.
+            if (steps := Expander.cv_evals.get()) >= Expander.MAX_EVALS:
+                raise RecursionError(f"Expansion failed to terminate after {steps} evals: '{template!r}'")
+            Expander.cv_evals.set(steps + 1)
+
+            # Otherwise try and expand the macro. Failing is OK.
+            # This should be the _only_ try/except block in the expansion code.
+            with Tracer(self, "eval", block) as tracer:
+                try:
+                    blocks[i] = eval(
+                        block[1:-1],
+                        hancho.__dict__,
+                        ChainMap(self, Options.cv_config(), Utils.aliases),
+                    )
+                # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
+                # callers. As of Python 3.11, this includes asyncio.CancelledError.
+                except RecursionError:
+                    raise
+                except Exception:
+                    pass
+                tracer.save_result(blocks[i])
+
+        # If there was only one block in the list, unwrap it.
+        if len(blocks) == 1:
+            return blocks[0]
+
+        # Otherwise we stringify everything and join the blocks back together.
+        return "".join(Utils.stringify(b) for b in blocks)
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def reset(cls, root_config):
-        pass
-
-    @classmethod
-    def wrap(cls, source : Dict | Expander) -> Expander:
-        return Expander(source) if isinstance(source, (Dict, dict)) else source
-
-    @classmethod
-    def split_template(cls, text : str):
+    def _split_template(cls, text : str):
         out = []
-        cls.split_template2(text, out)
+        cls._split_template2(text, out)
         return out
 
     @classmethod
-    def split_template2(cls, text : str, out : list[str]):
+    def _split_template2(cls, text : str, out : list[str]):
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
         list of string literals and macros. Escaped braces don't count as delimiters.
@@ -2190,119 +2278,6 @@ class Expander(abc.MutableMapping[str, object]):
             out.append(text[cursor:])
             chunk_count += 1
         return chunk_count
-
-    # ----------------------------------------------------------------------------------------------
-    # Hancho's template expansions can cause infinite loops, so we need some simple complexity
-    # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
-    # up the whole Python stack.
-    # If you do weird things like load scripts from inside macros and you hit MAX_STEPS, that's a
-    # you problem.
-    #
-    # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
-    # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
-
-    cv_depth = contextvars.ContextVar("depth", default = 0)
-    cv_evals = contextvars.ContextVar("evals", default = 0)
-    MAX_DEPTH = 30
-    MAX_EVALS = 300
-
-    # ----------------------------------------
-
-    @classmethod
-    def _expand(cls, variant, context : Dict | Expander):
-        """
-        The outer expand function handles setting/resetting the depth/evals-check vars and repeats
-        expansion until we reach a non-string or the string stops changing.
-        """
-
-        # Recurse early if we're trying to expand a list of strings.
-        # This ensures that every template gets its own independent depth and evals check.
-        if isinstance(variant, list):
-            result = []
-            for v in variant:
-                # Remember how much budget was spent.
-                saved = cls.cv_evals.get()
-                # Expand the list element.
-                result.append(cls._expand(v, context))
-                # Restore the budget so the next string in the list gets it.
-                cls.cv_evals.set(saved)
-            return result
-
-        # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
-        # something) or if it's a string with no macros in it.
-        if not (isinstance(variant, str) and '{' in variant):
-            return variant
-
-        # Bail out if we've gone through too many levels of recursion.
-        if (depth := cls.cv_depth.get()) >= cls.MAX_DEPTH:
-            raise RecursionError(f"Expansion failed to terminate after {depth} recursions: {variant!r}")
-        cls.cv_depth.set(depth + 1)
-
-        # OK, we have a string that could be a template. Keep expanding it until it stops changing
-        # or it's not a template.
-        try:
-            old_variant = None
-            while old_variant != variant and isinstance(variant, str) and '{' in variant:
-                old_variant = variant
-                with Tracer(context, "expand", variant) as tracer:
-                    variant = cls._expand_pass(variant, context)
-                    tracer.save_result(variant)
-        finally:
-            # And then reset the depth/evals check vars when we're done.
-            if depth == 0:
-                cls.cv_evals.set(0)
-            cls.cv_depth.set(depth)
-
-        return variant
-
-    # ----------------------------------------
-    # IMPORTANT IMPORTANT IMPORTANT
-    # If you can't eval a macro, you return it unchanged.
-    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++ - we don't
-    # fail on expansion failure so we can retry somewhere/somewhen else.
-
-    @classmethod
-    def _expand_pass(cls, template : str, context : Dict | Expander):
-        """The inner expand function does one split-expand-rejoin pass on the template string."""
-
-        # Split the string into literal and macro blocks.
-        blocks = cls.split_template(template)
-
-        # Expand all macro blocks.
-        for i, block in enumerate(blocks):
-
-            # Skip literal blocks.
-            if len(block) < 2 or block[0] != "{" or block[-1] != "}":
-                continue
-
-            # Bail out if we've taken too many expansion steps already.
-            if (steps := cls.cv_evals.get()) >= cls.MAX_EVALS:
-                raise RecursionError(f"Expansion failed to terminate after {steps} evals: '{template!r}'")
-            cls.cv_evals.set(steps + 1)
-
-            # Otherwise try and expand the macro. Failing is OK.
-            # This should be the _only_ try/except block in the expansion code.
-            with Tracer(context, "eval", block) as tracer:
-                try:
-                    blocks[i] = eval(
-                        block[1:-1],
-                        hancho.__dict__,
-                        ChainMap(context, Options.cv_config(), Utils.aliases),
-                    )
-                # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
-                # callers. As of Python 3.11, this includes asyncio.CancelledError.
-                except RecursionError:
-                    raise
-                except Exception:
-                    pass
-                tracer.save_result(blocks[i])
-
-        # If there was only one block in the list, unwrap it.
-        if len(blocks) == 1:
-            return blocks[0]
-
-        # Otherwise we stringify everything and join the blocks back together.
-        return "".join(Utils.stringify(b) for b in blocks)
 
 
 # endregion
@@ -2339,14 +2314,14 @@ class Expander(abc.MutableMapping[str, object]):
 
 class Tracer:
 
-    def __init__(self, context : Dict | Expander, enter_message1, enter_message2):
+    def __init__(self, context : Expander, enter_message, name):
         if "trace" in context:
             self.trace = getattr(context, "trace", False)
         else:
             self.trace = False
         #self.trace = True
-        self.enter_message = f"{enter_message1}({enter_message2!r})"
-        self.name = enter_message2
+        self.enter_message = f"{enter_message}({name!r})"
+        self.name = name
         self.color = None
         self.context = context
         self.result = None
@@ -2387,7 +2362,7 @@ class Tracer:
             type = self.result.__class__.__name__
 
             with Log.color(Utils.obj_to_hex(self.result)):
-                if isinstance(self.result, (Expander, Dict)):
+                if Utils.is_mapping(self.result):
                     Log.log(f"{self.name!r} : {type} = {Tracer.object_to_tag(self.result)}\n")
                 elif self.result is None:
                     Log.log("<None>\n")
@@ -2433,9 +2408,10 @@ class Loader:
 
     @classmethod
     def load_file(cls, script_path : str, is_repo : bool, *args, **kwargs) -> types.ModuleType:
+        config = Options.cv_config()
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
-        script_path = Options.cv_config().expand(script_path)
+        script_path = config.expand(script_path, str)
         script_path = cast(str, Path.abs(script_path))
 
         if not Path.isfile(script_path):
@@ -2579,7 +2555,7 @@ class Runner:
             # includes those names via template. Maybe don't do that.
             target_regex = re.compile(Options.target)
             for task in cls.all_tasks:
-                name = task.config.expand("{name}")
+                name = task.config.expand("{name}", str)
                 if target_regex.search(name):
                     task.enable_task()
         elif Options.rebuild_all:
@@ -2678,7 +2654,7 @@ class Runner:
     def run_tool(cls, tool : str):
         if tool == "clean":
             for task in cls.all_tasks:
-                build_root = Path.real(task._expander.expand("build_root"))
+                build_root = Path.real(task.config.expand("{build_root}", str))
                 build_root = Path.rel(build_root, os.getcwd())
                 if Path.isdir(build_root):
                     Log.log(f"Wiping build_root {build_root}\n")
@@ -2713,7 +2689,7 @@ def init(*args, **kwargs):
 
 
     Loader.reset(root_config)
-    Expander.reset(root_config)
+    #Expander.reset(root_config)
     Task.reset(root_config)
     Runner.reset(root_config)
 
@@ -2748,11 +2724,11 @@ def banner_start():
     # ------------------------------------
     # Startup banner
 
-    e = Expander(Options.cv_config())
+    config = Options.cv_config()
 
-    root_dir    = e.root_dir
-    root_file   = e.root_file
-    repo_dir    = e.repo_dir
+    root_dir    = config.expand("{root_dir}", str)
+    root_file   = config.expand("{root_file}", str)
+    repo_dir    = config.expand("{repo_dir}", str)
 
     with LogLevel.VERBOSE, Colors.LIME:
         Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
@@ -2808,7 +2784,9 @@ def main():
 
         banner_start()
 
-        script_path = cast(str, Expander(Options.cv_config()).expand("{root_dir}/{root_file}"))
+        config = Options.cv_config()
+
+        script_path = config.expand("{root_dir}/{root_file}", str)
         Loader.load_root_file(script_path)
 
         result = build()
