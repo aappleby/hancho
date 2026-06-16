@@ -469,8 +469,8 @@ class TestTasks(unittest.TestCase):
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
-            #hancho.init(verbosity = "quiet")
-            hancho.init(verbosity = "trace")
+            hancho.init(verbosity = "quiet")
+            #hancho.init(verbosity = "trace")
             time.sleep(0.01)
             compile = hancho.Tool(
                 name="test_header_changed {in_src}",
@@ -718,11 +718,9 @@ class TestTasks(unittest.TestCase):
             in_file = task1,
             out_file = "dry_stuff/test2.txt"
         )
-        self.assertFalse(Path("build/dry_stuff/test1.txt").exists())
-        self.assertFalse(Path("build/dry_stuff/test2.txt").exists())
+        self.assertFalse(Path("build").exists())
         self.run_tasks(0)
-        self.assertFalse(Path("build/dry_stuff/test1.txt").exists())
-        self.assertFalse(Path("build/dry_stuff/test2.txt").exists())
+        self.assertFalse(Path("build").exists())
 
     def test_dependency_skipped(self):
         def run():

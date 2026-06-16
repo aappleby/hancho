@@ -134,8 +134,8 @@ class LogLevel(int, Enum):
     # which is _not_ what you might expect by default. It's a really useful bit of syntactic sugar
     # though, so it'll stay for now.
 
-#    def __bool__(self):
-#        return self.value <= Log.verbosity_out
+    def __bool__(self):
+        return self.value <= Log.verbosity_out
 
     def __enter__(self):
         self.old_verbosity_in = Log.verbosity_in
@@ -167,14 +167,12 @@ class Colors(int, Enum):
     DEFAULT = -1  # The "go back to default" color :D
 
     def __enter__(self):
-        #print(f"Colors.__enter__ {Log.current_color} -> {self}")
         self.old_color = Log.current_color
         Log.current_color = self
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         Log.current_color = self.old_color
-        #print(f"Colors.__exit__ {self} -> {Log.current_color}")
         return False
 
 # --------------------------------------------------------------------------------------------------
@@ -239,6 +237,9 @@ class Log:
 
         cls.verbosity_out = verbosity
 
+    @classmethod
+    def tracing(cls):
+        return cls.verbosity_out == LogLevel.TRACE
 
     # ----------------------------------------------------------------------------------------------
 
@@ -745,7 +746,6 @@ class BuildDB:
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
-        #print(f"Hashing {abs_path}")
         cls.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
@@ -839,8 +839,6 @@ class BuildDB:
 
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines = [cast(str, Path.join(task_cwd, d)) for d in deplines]
-
-        print(f"DEPLINES {path} {len(deplines)}")
 
         return deplines
 
@@ -964,6 +962,9 @@ class BuildDB:
             #assert new_command is not None
 
             if new_command is None:
+                new_command = cls.update_command_db(out_file, config)
+
+            if new_command is None:
                 return "Don't have a new command for this task?"
 
             if old_command != new_command:
@@ -992,6 +993,8 @@ class BuildDB:
             return f"No cached stats for : {filename}"
 
         new_stat = cls.new_input_db.get(filename, None)
+        if new_stat is None:
+            new_stat = cls.update_input_db(filename)
 
         # this had better exist because we just created it
         assert new_stat is not None
@@ -1011,16 +1014,11 @@ class BuildDB:
         if old_stat.st_size != new_stat.st_size:
             return f"File size has changed: {old_stat.st_size} -> {new_stat.st_size} : {filename}"
 
-        #if new_stat.hash2 == 0:
-        #    print(f"??????????????? >{filename}<")
-        #    new_stat.hash2 = Utils.hash_file(filename)
+        if new_stat.hash2 == 0:
+            new_stat.hash2 = cls.hash_file(filename)
 
         if old_stat.hash2 != new_stat.hash2:
             return f"Hash mismatch for : {filename}"
-        else:
-            #with LogLevel.ERROR, Colors.MAGENTA:
-            #    Log.log(f"Heyyy we got a hash match for {filename}!\n")
-            pass
 
         # Does not need to rebuild based on file stats / hash
         return ""
@@ -1181,7 +1179,6 @@ class Dict(dict):
 
     def __init__(self, *args, **kwargs):
         super().__init__()
-        #super().__setattr__("_expander", Expander(self))
         object.__setattr__(self, "_expander", Expander(self))
         self.merge(*args, **kwargs)
 
@@ -2045,7 +2042,7 @@ class Task:
 # an outer dict, and things will still Just Work.
 
 # this has to be a MutableMapping if we want to put it in the ChainMap for locals()
-class Expander(abc.MutableMapping[str, object]):
+class Expander(abc.MutableMapping[str, Any]):
     """
     This class is used to fetch and expand text templates from a dict during text expansion.
     It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
@@ -2053,17 +2050,16 @@ class Expander(abc.MutableMapping[str, object]):
     """
 
     def __init__(self, context : Dict):
-        # These are just type annotations, because writing to fields while we're in the constructor
-        # of a class that overrides __setattr__ does strange things.
-        self._context : Dict
-
-        # The actual set is here.
-        super().__setattr__("_context", context)
+        self._dict : Dict
+        # Don't use our __setattr__, as it's set to raise an assertion if used.
+        object.__setattr__(self, "_dict", context)
 
     # ----------------------------------------
     # MutableMapping interface
 
     def __getitem__(self, key):
+        if key == "_dict":
+            return object.__getattribute__(self, "_dict")
         try:
             return self._get(key)
         except AttributeError as ex:
@@ -2076,10 +2072,10 @@ class Expander(abc.MutableMapping[str, object]):
         raise AssertionError("Expander.__delitem__ should not be used")
 
     def __iter__(self):
-        yield from cast(Dict, self._context)
+        yield from cast(Dict, self._dict)
 
     def __len__(self):
-        return self._context.__len__()
+        return self._dict.__len__()
 
     # ----------------------------------------
     # object interface
@@ -2089,6 +2085,8 @@ class Expander(abc.MutableMapping[str, object]):
         return result
 
     def __getattr__(self, key):
+        if key == "_dict":
+            return object.__getattribute__(self, "_dict")
         try:
             return self._get(key)
         except KeyError as ex:
@@ -2100,30 +2098,6 @@ class Expander(abc.MutableMapping[str, object]):
 
     def __delattr__(self, key):
         raise AssertionError("Expander.__delattr__ should not be used")
-
-    # ----------------------------------------
-
-    def _get(self, key):
-        """
-        Reads and expands a field stored in our context.
-        """
-
-        # The "trace" key is a special case, as we don't want to trace reading trace...
-        if key == "trace":
-            if "trace" in self._context:
-                return self._context.trace
-            else:
-                return False
-
-        with Tracer(self, "get", key) as tracer:
-            result = self._context[key]
-            result = self.expand(result)
-            tracer.save_result(result)
-
-        return result
-
-    def __call__(self, key):
-        return self._get(key)
 
     # ----------------------------------------------------------------------------------------------
     # Hancho's template expansions can cause infinite loops, so we need some simple complexity
@@ -2236,6 +2210,30 @@ class Expander(abc.MutableMapping[str, object]):
         # Otherwise we stringify everything and join the blocks back together.
         return "".join(Utils.stringify(b) for b in blocks)
 
+    # ----------------------------------------
+
+    def _get(self, key):
+        """
+        Reads and expands a field stored in our context.
+        """
+
+        if key == "trace":
+            return getattr(self._dict, "trace", False)
+
+        with Tracer(self, "get", key) as tracer:
+            result = self._dict[key]
+            # We want the expander to show up as the result of _get...
+            if isinstance(result, Dict):
+                result = result._expander
+            tracer.save_result(result)
+
+        # ...but if there's a nested expansion it should show up _under_ the _get part of the trace
+        # and not inside it.
+        if not isinstance(result, Expander):
+            result = self.expand(result)
+
+        return result
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -2315,16 +2313,12 @@ class Expander(abc.MutableMapping[str, object]):
 class Tracer:
 
     def __init__(self, context : Expander, enter_message, name):
-        if "trace" in context:
-            self.trace = getattr(context, "trace", False)
-        else:
-            self.trace = False
-        #self.trace = True
         self.enter_message = f"{enter_message}({name!r})"
         self.name = name
         self.color = None
         self.context = context
         self.result = None
+        self.trace = getattr(context._dict, "trace", False) or Log.verbosity_out >= LogLevel.TRACE
         if len(self.name) > 40:
             self.name = self.name[:34] + "<snip>"
 
@@ -2334,7 +2328,8 @@ class Tracer:
 
         self.color = Utils.obj_to_hex(self.context)
 
-        with LogLevel.TRACE, Log.color(self.color):
+        # FIXME Make traces pierce through quiet mode for now
+        with LogLevel.QUIET, Log.color(self.color):
             Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
 
         Log.indent_depth += 1
@@ -2343,9 +2338,10 @@ class Tracer:
 
     def __exit__(self, exc_type, exc_value, tb):
         if not self.trace:
-            return
+            return False
 
-        with LogLevel.TRACE, Log.color(self.color):
+        # FIXME Make traces pierce through quiet mode for now
+        with LogLevel.QUIET, Log.color(self.color):
             if exc_type:
                 Log.log(f"exc_type  : {exc_type}\n")
             if exc_value:
@@ -2678,16 +2674,11 @@ def init(*args, **kwargs):
 
     # Log first so we can log errors
     Log.reset(root_config)
-
     # Options next to set up cv_config
     Options.reset(root_config)
-
     # Utils next, needs to set Utils.aliases so we can expand things
     Utils.reset(root_config)
-
     BuildDB.reset(root_config)
-
-
     Loader.reset(root_config)
     #Expander.reset(root_config)
     Task.reset(root_config)
@@ -2713,8 +2704,9 @@ def build():
     # ------------------------------------
     # Save the new versions of the file stat and task info DBs.
 
-    BuildDB.update_all_dbs()
-    BuildDB.save()
+    if not Options.cv_config().dry_run:
+        BuildDB.update_all_dbs()
+        BuildDB.save()
 
     return result
 
