@@ -423,11 +423,6 @@ class Utils:
 
     @classmethod
     def reset(cls, root_config):
-        cls.mtime_calls : int = 0
-        cls.hash_calls : int = 0
-        cls.hash_bytes : int = 0
-        cls.total_hash_time : float = 0
-
         # These are aliases for methods in Hancho that have been pulled out so they can be used by
         # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
         # It's also read by the module-level __getattr__ so you can use "hancho.flatten(x)" instead
@@ -626,12 +621,6 @@ class Utils:
         return result
 
     @staticmethod
-    def mtime(filename : str):
-        """Gets the file's mtime and tracks how many times we've called mtime()"""
-        Utils.mtime_calls += 1
-        return os.stat(filename).st_mtime_ns
-
-    @staticmethod
     def flatten(variant: Tree[Any], out : list | None = None):
         if out is None:
             out = []
@@ -662,6 +651,10 @@ class Utils:
 class BuildDB:
     @classmethod
     def reset(cls, root_config):
+        cls.mtime_calls : int = 0
+        cls.hash_calls : int = 0
+        cls.hash_bytes : int = 0
+        cls.hash_time : float = 0
 
         comp_db_path    = root_config.pop("comp_db",    "{build_root}/compile_commands.json")
         input_db_path   = root_config.pop("input_db",   "{build_root}/hancho_inputs.json")
@@ -688,6 +681,12 @@ class BuildDB:
         cls.new_command_db : dict[str, str] = {}
 
     # ----------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def mtime(filename : str):
+        """Gets the file's mtime and tracks how many times we've called mtime()"""
+        BuildDB.mtime_calls += 1
+        return os.stat(filename).st_mtime_ns
 
     @classmethod
     def hash(cls, key, h):
@@ -748,7 +747,7 @@ class BuildDB:
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
-        print(f"Hashing {abs_path}")
+        #print(f"Hashing {abs_path}")
         cls.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
@@ -820,8 +819,6 @@ class BuildDB:
         with Timer("save_command_db", LogLevel.VERBOSE, Colors.ORANGE):
             cls.save_json(cls.new_command_db, cls.command_db_path)
 
-
-
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -844,6 +841,9 @@ class BuildDB:
 
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines = [cast(str, Path.join(task_cwd, d)) for d in deplines]
+
+        print(f"DEPLINES {path} {len(deplines)}")
+
         return deplines
 
     # ----------------------------------------------------------------------------------------------
@@ -855,9 +855,27 @@ class BuildDB:
     @classmethod
     def update_all_dbs(cls):
         for task in Runner.all_tasks:
+            # FIXME - We're adding the contents of the depfile to the list of inputs, but not
+            # the depfile itself - that seems OK? how could we test it?
+            if "in_depfile" in task.config:
+                files = Utils.flatten(task.config.in_depfile)
+                for file in files:
+                    if Path.exists(file):
+                        deplines = BuildDB.load_depfile(file, task.config.depformat, task.config.task_cwd)
+                        task.in_files.extend(deplines)
+
+
+
             callback_task = any(not isinstance(c, str) for c in task.config.command)
             if not task.config.enabled or callback_task:
                 continue
+
+
+            for dep_file in task.in_files:
+                cls.update_input_db(dep_file)
+
+            for out_file in task.out_files:
+                cls.update_command_db(out_file, task.config)
 
             # Haven't tested this in an IDE, but I think it matches the spec.
             for in_file in task.in_files:
@@ -866,14 +884,6 @@ class BuildDB:
                     "command"   : "; ".join(task.config.command),
                     "file"      : in_file,
                 }
-
-    @classmethod
-    def update_dbs(cls, task):
-        for dep_file in task.in_files:
-            task.update_input_db(dep_file)
-
-        for out_file in task.out_files:
-            task.update_command_db(out_file)
 
     @classmethod
     def update_input_db(cls, in_file):
@@ -889,11 +899,12 @@ class BuildDB:
 
     @classmethod
     def update_command_db(cls, out_file, config):
-        command = config.command
+        command = Utils.flatten(config.command)
         for i, c in enumerate(command):
             if isinstance(c, str):
                 command[i] = re.sub(r"\s+", " ", c)
-        new_command = f"{config.task_cwd}:{config.script_cwd}:{command}"
+        #new_command = f"{config.task_cwd}:{config.script_cwd}:{command}"
+        new_command = str(command)
         cls.new_command_db[out_file] = new_command
         return new_command
 
@@ -921,29 +932,29 @@ class BuildDB:
             if not Path.exists(out_file):
                 return f"Output file missing: {out_file}"
 
-        max_in  = max(Utils.mtime(f) for f in task.in_files)
-        min_out = min(Utils.mtime(f) for f in task.out_files)
+        max_in  = max(cls.mtime(f) for f in task.in_files)
+        min_out = min(cls.mtime(f) for f in task.out_files)
 
         # If any inputs are newer than any outputs, we need to rebuild.
         if max_in >= min_out:
             return "Inputs are newer than outputs"
 
-        #if Utils.mtime(__file__) >= min_out:
+        #if cls.mtime(__file__) >= min_out:
         #    return "hancho.py has changed"
 
 #        # ------------------------------------
 #
 #        # Check if any of our input files are newer than the output files.
-#        min_out = min(Utils.mtime(f) for f in self.out_files)
-#        #if Utils.mtime(__file__) >= min_out:
+#        min_out = min(cls.mtime(f) for f in self.out_files)
+#        #if cls.mtime(__file__) >= min_out:
 #        #    return "hancho.py has changed"
 #
 #        for file in self.in_files:
-#            if Utils.mtime(file) >= min_out:
+#            if cls.mtime(file) >= min_out:
 #                return f"input {Path.rel(file, cwd)} has changed"
 #
 #        for file in self._loaded_files:
-#            if Utils.mtime(file) >= min_out:
+#            if cls.mtime(file) >= min_out:
 #                return f"loaded file {Path.rel(file, cwd)} has changed"
 
         #return self.check_depfile()
@@ -1893,12 +1904,13 @@ class Task:
             # FIXME - We're adding the contents of the depfile to the list of inputs, but not
             # the depfile itself - that seems OK? how could we test it?
             if Task.is_depfile_field(name):
-                for file in files:
-                    if Path.exists(file):
-                        deplines = BuildDB.load_depfile(file, config.depformat, config.task_cwd)
-                        self.in_files.extend(deplines)
+                pass
+                #for file in files:
+                #    if Path.exists(file):
+                #        deplines = BuildDB.load_depfile(file, config.depformat, config.task_cwd)
+                #        self.in_files.extend(deplines)
 
-            elif Task.is_output_field(name):
+            if Task.is_output_field(name):
                 self.out_files.append(files[i])
 
             elif Task.is_input_field(name):
@@ -2688,12 +2700,20 @@ def init(*args, **kwargs):
     """
     root_config : Dict = Dict(Options.default_config(), *args, **kwargs)
 
+    # Log first so we can log errors
     Log.reset(root_config)
-    BuildDB.reset(root_config)
+
+    # Options next to set up cv_config
     Options.reset(root_config)
+
+    # Utils next, needs to set Utils.aliases so we can expand things
+    Utils.reset(root_config)
+
+    BuildDB.reset(root_config)
+
+
     Loader.reset(root_config)
     Expander.reset(root_config)
-    Utils.reset(root_config)
     Task.reset(root_config)
     Runner.reset(root_config)
 
@@ -2717,6 +2737,7 @@ def build():
     # ------------------------------------
     # Save the new versions of the file stat and task info DBs.
 
+    BuildDB.update_all_dbs()
     BuildDB.save()
 
     return result
@@ -2759,10 +2780,10 @@ def banner_end():
         Log.log(f"Tasks failed:     {Runner.tasks_failed}\n")
         Log.log(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
         Log.log(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        Log.log(f"Mtime calls:      {Utils.mtime_calls}\n")
-        Log.log(f"Hash calls:       {Utils.hash_calls}\n")
-        Log.log(f"Hash bytes:       {Utils.hash_bytes}\n")
-        Log.log(f"Hash time:        {Utils.total_hash_time:8.6f}\n")
+        Log.log(f"Mtime calls:      {BuildDB.mtime_calls}\n")
+        Log.log(f"Hash calls:       {BuildDB.hash_calls}\n")
+        Log.log(f"Hash bytes:       {BuildDB.hash_bytes}\n")
+        Log.log(f"Hash time:        {BuildDB.hash_time:8.6f}\n")
 
         if Runner.tasks_failed or Runner.tasks_broken:
             with LogLevel.ERROR, Colors.RED:
