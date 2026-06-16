@@ -843,8 +843,8 @@ class BuildDB:
 
     @classmethod
     def update_command_db(cls, out_file, config):
-        if not os.path.exists(out_file):
-            return
+        #if not os.path.exists(out_file):
+        #    return
 
         if out_file in cls.new_command_db:
             return
@@ -1493,9 +1493,6 @@ class Task:
 
         BuildDB.task_complete(self)
 
-        for out_file in self.out_files:
-            BuildDB.update_command_db(out_file, self.config)
-
         return self.out_files
 
     # ----------------------------------------------------------------------------------------------
@@ -1553,7 +1550,8 @@ class Task:
         self.load_depfile()
 
         callback_task = any(not isinstance(c, str) for c in self.config.command)
-        if not callback_task:
+        #if not callback_task:
+        if True:
             # This _must_ come after the task is fully expanded
             for out_file in self.out_files:
                 BuildDB.update_command_db(out_file, config)
@@ -1565,12 +1563,13 @@ class Task:
                 BuildDB.update_input_db(file)
 
             # Haven't tested this in an IDE, but I think it matches the spec.
-            for in_file in self.in_files:
-                BuildDB.new_comp_db[in_file] = {
-                    "directory" : self.config.task_cwd,
-                    "command"   : "; ".join(self.config.command),
-                    "file"      : in_file,
-                }
+            if not callback_task:
+                for in_file in self.in_files:
+                    BuildDB.new_comp_db[in_file] = {
+                        "directory" : self.config.task_cwd,
+                        "command"   : "; ".join(self.config.command),
+                        "file"      : in_file,
+                    }
 
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
@@ -1595,6 +1594,7 @@ class Task:
         # ----------------------------------------
         # Run all the task's commands
 
+
         with LogLevel.NORMAL:
             self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
 
@@ -1610,7 +1610,10 @@ class Task:
             else:
                 raise Task.FAILED(f"Command {command} is not a string or a callable?")
 
+
+
         # Done!
+
 
     # ----------------------------------------------------------------------------------------------
     # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -1884,7 +1887,10 @@ class Task:
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
             )
+
             (stdout_data, stderr_data) = await proc.communicate()
+
+
         except asyncio.CancelledError as ex:
             # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
             # usually (but not always) arises from hitting ctrl-c while the build is running.
@@ -1914,6 +1920,7 @@ class Task:
         if self._stdout or self._stderr:
             with LogLevel.VERBOSE, Log.color(0x666666):
                 self.log(self.dump_stdout())
+
 
     # ----------------------------------------------------------------------------------------------
 
