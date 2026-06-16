@@ -825,6 +825,7 @@ class BuildDB:
 
     @classmethod
     def update_all_dbs(cls):
+        pass
         for task in Runner.all_tasks:
             callback_task = any(not isinstance(c, str) for c in task.config.command)
             if not task.config.enabled or callback_task:
@@ -1572,15 +1573,25 @@ class Task:
 
         self.load_depfile()
 
-        # This _must_ come after the task is fully expanded
-        for out_file in self.out_files:
-            BuildDB.update_command_db(out_file, config)
+        callback_task = any(not isinstance(c, str) for c in self.config.command)
+        if not callback_task:
+            # This _must_ come after the task is fully expanded
+            for out_file in self.out_files:
+                BuildDB.update_command_db(out_file, config)
 
-        for file in self.in_files:
-            BuildDB.update_input_db(file)
+            for file in self.in_files:
+                BuildDB.update_input_db(file)
 
-        for file in self.in_deps:
-            BuildDB.update_input_db(file)
+            for file in self.in_deps:
+                BuildDB.update_input_db(file)
+
+            # Haven't tested this in an IDE, but I think it matches the spec.
+            for in_file in self.in_files:
+                BuildDB.new_comp_db[in_file] = {
+                    "directory" : self.config.task_cwd,
+                    "command"   : "; ".join(self.config.command),
+                    "file"      : in_file,
+                }
 
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
@@ -2604,6 +2615,14 @@ class Runner:
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*cls.live_aio_tasks, return_exceptions=True)
 
+        # ------------------------------------
+        # Save the new versions of the file stat and task info DBs.
+
+        if not Options.cv_config().dry_run:
+            BuildDB.update_all_dbs()
+            BuildDB.save()
+
+
         return 1 if cls.tasks_failed or cls.tasks_broken else 0
 
     # ----------------------------------------------------------------------------------------------
@@ -2662,13 +2681,6 @@ def build():
     else:
         Runner.select_root_tasks()
         result = Runner.sync_run_tasks()
-
-    # ------------------------------------
-    # Save the new versions of the file stat and task info DBs.
-
-    if not Options.cv_config().dry_run:
-        BuildDB.update_all_dbs()
-        BuildDB.save()
 
     return result
 
