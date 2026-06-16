@@ -10,8 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_header_changed", "-vvv"],
-      //"args"    : ["tests.test_templates", "-vvv"],
+      "args"    : ["tests.test_tasks.TestTasks.test_input_changed", "-vvv"],
       "preLaunchTask": "Wipe build",
     },
 
@@ -29,8 +28,8 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["--quiet", "-j1"],
-      "preLaunchTask": "Wipe build",
+      "args"    : [],
+      //"preLaunchTask": "Wipe build",
     },
 
     {

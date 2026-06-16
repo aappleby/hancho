@@ -309,8 +309,52 @@ class TestTasks(unittest.TestCase):
         self.assertLess(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def test_input_changed(self):
+        # Changing a source file should trigger a rebuild
+        def run():
+            #hancho.init(verbosity = "trace")
+            hancho.init(verbosity = "quiet")
+            time.sleep(0.01)
+            compile = hancho.Dict(
+                name="test_input_changed {in_src}",
+                command="gcc -MMD -c {in_src} -o {out_obj}",
+                in_src=None,
+                in_depfile="{ext(out_obj, '.d')}",
+                out_obj="{ext(in_src, '.o')}",
+            )
+            hancho.Task(compile, in_src="src/test.cpp")
+            self.run_tasks(0)
+            return mtime_ns("build/src/test.o")
+
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("src/test.cpp")
+        mtime3 = run()
+
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
+
     def test_dep_changed(self):
-        # Changing a file in in_files[] should trigger a rebuild
+        # Changing a file in in_files[] should trigger a rebuild, even if it isn't used by the
+        # command.
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
         dummy = "data/dummy.txt"
@@ -334,6 +378,24 @@ class TestTasks(unittest.TestCase):
         mtime3 = run()
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     # ----------------------------------------------------------------------------------------------
 
@@ -407,7 +469,8 @@ class TestTasks(unittest.TestCase):
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
-            hancho.init(verbosity = "debug")
+            #hancho.init(verbosity = "quiet")
+            hancho.init(verbosity = "trace")
             time.sleep(0.01)
             compile = hancho.Tool(
                 name="test_header_changed {in_src}",
@@ -422,30 +485,6 @@ class TestTasks(unittest.TestCase):
         mtime1 = run()
         mtime2 = run()
         force_touch("src/test.hpp")
-        mtime3 = run()
-
-        self.assertEqual(mtime1, mtime2)
-        self.assertLess(mtime2, mtime3)
-
-    def test_input_changed(self):
-        # Changing a source file should trigger a rebuild
-        def run():
-            hancho.init(verbosity = "quiet")
-            time.sleep(0.01)
-            compile = hancho.Dict(
-                name="test_input_changed {in_src}",
-                command="gcc -MMD -c {in_src} -o {out_obj}",
-                in_src=None,
-                in_depfile="{ext(out_obj, '.d')}",
-                out_obj="{ext(in_src, '.o')}",
-            )
-            hancho.Task(compile, in_src="src/test.cpp")
-            self.run_tasks(0)
-            return mtime_ns("build/src/test.o")
-
-        mtime1 = run()
-        mtime2 = run()
-        force_touch("src/test.cpp")
         mtime3 = run()
 
         self.assertEqual(mtime1, mtime2)
@@ -624,9 +663,9 @@ class TestTasks(unittest.TestCase):
                 out_obj="dummy{index}.txt",
                 index=i,
             )
-        self.assertEqual(0, len(glob.glob("build/*")))
+        self.assertEqual(0, len(glob.glob("build/dummy*.txt")))
         self.run_tasks(0)
-        self.assertEqual(1000, len(glob.glob("build/*")))
+        self.assertEqual(1000, len(glob.glob("build/dummy*.txt")))
 
     def test_job_count(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.

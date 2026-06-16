@@ -156,11 +156,11 @@ class TestTemplates(unittest.TestCase):
         # If a macro evals to a list of macros and we're expanding it in a Dict context,
         # the list should _not_ be expanded as a non-template or non-string terminates expansion.
         d = Dict(a=["{b}","{b}"], b="x")
-        self.assertEqual(["{b}","{b}"], d.expand("{a}"))
+        self.assertEqual(["{b}","{b}"], Expander._expand("{a}", d))
 
         # But, if we're in an Expander context, the list _should_ be auto-expanded.
         e = Expander(d)
-        self.assertEqual(["x","x"], e.expand("{a}"))
+        self.assertEqual(["x","x"], Expander._expand("{a}", e))
 
     def test_macro_passthrough(self):
         number = 42
@@ -196,16 +196,16 @@ class TestTemplates(unittest.TestCase):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
         # nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-        e = Expander(d)
 
         # This read is _not_ through the expander, so "{c}" will be evaluated in the _outer_
         # context.
-        result = d.expand("{a.b}")
+        result = Expander._expand("{a.b}", d)
         self.assertEqual(result, 20)
 
         # This read _is_ through the expander - reading a.b will produce an Expander wrapped around
         # the inner dict which will then immediately expand "{c}" in the context of the inner dict
         # and return 10.
+        e = Expander(d)
         result = Expander._expand("{a.b}", e)
         self.assertEqual(result, 10)
 
