@@ -851,6 +851,9 @@ class BuildDB:
         if not os.path.exists(in_file):
             return
 
+        if in_file in cls.new_input_db:
+            return
+
         _stat = os.stat(in_file)
         new_stat = FileStat(
             hash2 = cls.hash_file(in_file),
@@ -864,6 +867,9 @@ class BuildDB:
     @classmethod
     def update_command_db(cls, out_file, config):
         if not os.path.exists(out_file):
+            return
+
+        if out_file in cls.new_command_db:
             return
 
         command = Utils.flatten(config.command)
@@ -884,6 +890,7 @@ class BuildDB:
         """
         config = task.config
 
+
         # ------------------------------------
 
         if Options.rebuild_all or config.get("rebuild", False):
@@ -902,6 +909,8 @@ class BuildDB:
 
         min_out = min(cls.mtime(f) for f in task.out_files)
 
+        # If any inputs are newer than any outputs, we need to rebuild.
+
         for f in task.in_files:
             if cls.mtime(f) > min_out:
                 return f"Input {f} is newer than the outputs"
@@ -910,54 +919,18 @@ class BuildDB:
             if cls.mtime(f) > min_out:
                 return f"Dependency {f} is newer than the outputs"
 
-#        max_in  = max(cls.mtime(f) for f in task.in_files + task.in_deps)
-#
-#        # If any inputs are newer than any outputs, we need to rebuild.
-#        if max_in >= min_out:
-#            return "Inputs are newer than outputs"
-
-        #if cls.mtime(__file__) >= min_out:
-        #    return "hancho.py has changed"
-
-#        # ------------------------------------
-#
-#        # Check if any of our input files are newer than the output files.
-#        min_out = min(cls.mtime(f) for f in self.out_files)
-#        #if cls.mtime(__file__) >= min_out:
-#        #    return "hancho.py has changed"
-#
-#        for file in self.in_files:
-#            if cls.mtime(file) >= min_out:
-#                return f"input {Path.rel(file, cwd)} has changed"
-#
-#        for file in self._loaded_files:
-#            if cls.mtime(file) >= min_out:
-#                return f"loaded file {Path.rel(file, cwd)} has changed"
-
-        #return self.check_depfile()
-
         for out_file in task.out_files:
-            #reason = cls.rebuild_reason_out(out_file)
             old_command = cls.old_command_db.get(out_file, None)
             new_command = cls.new_command_db.get(out_file, None)
-            #assert new_command is not None
 
-            if new_command is None:
-                new_command = cls.update_command_db(out_file, config)
-
-            if new_command is None:
-                return "Don't have a new command for this task?"
+            assert new_command is not None
 
             if old_command != new_command:
                 return f"Command used to generate file has changed : {out_file} : {old_command} : {new_command}"
 
-
         # ------------------------------------
 
-        all_inputs = []
-        all_inputs.extend(task.in_files)
-
-        for file in all_inputs:
+        for file in task.in_files:
             if reason := cls.rebuild_reason_in(file):
                 return reason
 
@@ -974,21 +947,12 @@ class BuildDB:
             return f"No cached stats for : {filename}"
 
         new_stat = cls.new_input_db.get(filename, None)
-        if new_stat is None:
-            new_stat = cls.update_input_db(filename)
 
         # this had better exist because we just created it
         assert new_stat is not None
 
         if (old_stat.st_size == new_stat.st_size) and (old_stat.st_mtime_ns == new_stat.st_mtime_ns):
             # Input size and mtime haven't changed - this file can't trigger a rebuild.
-            # FIXME sanity check for now
-            #if old_stat.hash2 != new_stat.hash2:
-            #    raise AssertionError(f"File's size and mtime haven't changed, but its hash did : {new_stat}")
-            #else:
-            #    #with LogLevel.ERROR, Colors.MAGENTA:
-            #    #    Log.log(f"Heyyy we got a hash match for {filename}!\n")
-            #    pass
             new_stat = old_stat
             return ""
 
@@ -1254,11 +1218,7 @@ class Options:
 
         if not hasattr(cls, "_cv_config"):
             cls._cv_config : contextvars.ContextVar = contextvars.ContextVar("config")
-        # FIXME I don't think we actually care about the token
-        if hasattr(cls, "_cv_token"):
-            cls._cv_config.reset(cls._cv_token)
-
-        cls._cv_token : contextvars.Token = cls._cv_config.set(root_config)
+        cls._cv_config.set(root_config)
 
     @classmethod
     def cv_config(cls):
@@ -1381,8 +1341,6 @@ class Options:
 # --------------------------------------------------------------------------------------------------
 # region Task
 # Task object + bookkeeping
-
-# FIXME this has instance-level and class-level stuff in it, that probably needs to be split apart.
 
 class Task:
 
@@ -1586,18 +1544,12 @@ class Task:
 
         flag_fields = [ "build_tag", "core_count", "depformat", "dry_run", "enabled", ]
 
-        temp = Dict()
-
         for f in path_fields:
             if f in config:
-                temp[f] = Path.norm(config.expand('{' + f + '}'))
+                config[f] = Path.norm(config.expand('{' + f + '}'))
         for f in flag_fields:
             if f in config:
-                temp[f] = config.expand('{' + f + '}')
-
-        # FIXME merge()
-        for k, v in temp.items():
-            config[k] = v
+                config[f] = config.expand('{' + f + '}')
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -1619,6 +1571,16 @@ class Task:
         # Load the inputs from the depfile if present, as we need to check them in rebuild_reason.
 
         self.load_depfile()
+
+        # This _must_ come after the task is fully expanded
+        for out_file in self.out_files:
+            BuildDB.update_command_db(out_file, config)
+
+        for file in self.in_files:
+            BuildDB.update_input_db(file)
+
+        for file in self.in_deps:
+            BuildDB.update_input_db(file)
 
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
@@ -1669,10 +1631,8 @@ class Task:
 
         # Copy the dict key-values, as it's generally a bad idea to modify a container you're
         # iterating over - _especially_ if it has an await in the middle of it.
-        items = list(self.config.items())
-        temp = Dict()
 
-        for key, files in items:
+        for key, files in list(self.config.items()):
             if not Task.is_input_field(key):
                 continue
 
@@ -1702,12 +1662,7 @@ class Task:
                     files[i] = task.out_files
 
             # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
-            temp[key] = Utils.flatten(files)
-
-        # We've awaited everything, copy the file lists back into the config.
-        # FIXME merge()
-        for k, v in temp.items():
-            self.config[k] = v
+            self.config[key] = Utils.flatten(files)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1788,14 +1743,9 @@ class Task:
         # to a temp Dict, norm them (because who knows how the user may have written the template)
         # and then copy them back into the config.
 
-        temp = Dict()
-        for key, files in config.items():
+        for key, files in list(config.items()):
             if Task.is_io_field(key):
-                temp[key] = Path.norm(self.config.expand(files))
-
-        # FIXME merge()
-        for k, v in temp.items():
-            config[k] = v
+                config[key] = Path.norm(self.config.expand(files))
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1821,6 +1771,7 @@ class Task:
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
             self.log(str(config) + "\n")
+
 
     # ----------------------------------------------------------------------------------------------
 
