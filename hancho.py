@@ -843,23 +843,6 @@ class BuildDB:
         cls.new_input_db[in_file] = new_stat
         return new_stat
 
-    @classmethod
-    def update_command_db(cls, out_file, config):
-        #if not os.path.exists(out_file):
-        #    return
-
-        if out_file in cls.new_command_db:
-            return
-
-        command = Utils.flatten(config.command)
-        for i, c in enumerate(command):
-            if isinstance(c, str):
-                command[i] = re.sub(r"\s+", " ", c)
-        #new_command = f"{config.task_cwd}:{config.script_cwd}:{command}"
-        new_command = str(command)
-        cls.new_command_db[out_file] = new_command
-        return new_command
-
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -1577,7 +1560,17 @@ class Task:
             # This _must_ come after the task is fully expanded
             for out_file in self.out_files:
                 if not callback_task:
-                    BuildDB.update_command_db(out_file, config)
+                    if out_file in BuildDB.new_command_db:
+                        continue
+
+                    command = Utils.flatten(config.command)
+                    for i, c in enumerate(command):
+                        if isinstance(c, str):
+                            command[i] = re.sub(r"\s+", " ", c)
+                    #new_command = f"{config.task_cwd}:{config.script_cwd}:{command}"
+                    new_command = str(command)
+                    BuildDB.new_command_db[out_file] = new_command
+
 
             # Haven't tested this in an IDE, but I think it matches the spec.
             for in_file in self.in_files:
