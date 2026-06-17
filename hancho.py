@@ -85,7 +85,7 @@ def __getattr__(name):
 
 @dataclass
 class FileStat:
-    hash2 : int = 0
+    hash : int = 0
     st_size : int = 0
     st_mtime_ns : float = 0
 
@@ -833,8 +833,7 @@ class BuildDB:
 
         _stat = os.stat(in_file)
         new_stat = FileStat(
-            hash2 = cls.hash_file(in_file),
-            #hash2 = 0,
+            hash = cls.hash_file(in_file),
             st_size = _stat.st_size,
             st_mtime_ns = _stat.st_mtime_ns
         )
@@ -936,11 +935,12 @@ class BuildDB:
         if old_stat.st_size != new_stat.st_size:
             return f"File size has changed: {old_stat.st_size} -> {new_stat.st_size} : {filename}"
 
-        if new_stat.hash2 == 0:
-            new_stat.hash2 = cls.hash_file(filename)
+        assert new_stat.hash != 0
+        #if new_stat.hash == 0:
+        #    new_stat.hash = cls.hash_file(filename)
 
-        if old_stat.hash2 != new_stat.hash2:
-            return f"Hash mismatch for : {filename}"
+        if old_stat.hash != new_stat.hash:
+            return f"Hash mismatch {old_stat.hash} -> {new_stat.hash} for : {filename}"
 
         # Does not need to rebuild based on file stats / hash
         return ""
@@ -1549,27 +1549,26 @@ class Task:
 
         self.load_depfile()
 
+        for file in self.in_files:
+            BuildDB.update_input_db(file)
+
+        for file in self.in_deps:
+            BuildDB.update_input_db(file)
+
         callback_task = any(not isinstance(c, str) for c in self.config.command)
-        #if not callback_task:
-        if True:
+        if not callback_task:
             # This _must_ come after the task is fully expanded
             for out_file in self.out_files:
-                BuildDB.update_command_db(out_file, config)
-
-            for file in self.in_files:
-                BuildDB.update_input_db(file)
-
-            for file in self.in_deps:
-                BuildDB.update_input_db(file)
+                if not callback_task:
+                    BuildDB.update_command_db(out_file, config)
 
             # Haven't tested this in an IDE, but I think it matches the spec.
-            if not callback_task:
-                for in_file in self.in_files:
-                    BuildDB.new_comp_db[in_file] = {
-                        "directory" : self.config.task_cwd,
-                        "command"   : "; ".join(self.config.command),
-                        "file"      : in_file,
-                    }
+            for in_file in self.in_files:
+                BuildDB.new_comp_db[in_file] = {
+                    "directory" : self.config.task_cwd,
+                    "command"   : "; ".join(self.config.command),
+                    "file"      : in_file,
+                }
 
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
