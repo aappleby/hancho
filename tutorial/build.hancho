@@ -2,7 +2,6 @@ import hancho
 
 app = hancho.Task(
     name = "build/app",
-    desc = "compile the thing",
     command = [
         "mkdir -p build",
         "g++ src/main.cpp src/util.cpp -o build/app"

@@ -1,7 +1,7 @@
 import hancho
 
 emcc = hancho.Tool(
-    desc="Compile Emscripten'd {in_src}",
+    name="Compile Emscripten'd {base(in_src)}",
     command="emcc {flags} {cc_includes} -c {in_src} -o {out_obj}",
     flags=[
         "-std=c++20",
@@ -18,7 +18,7 @@ emcc = hancho.Tool(
 )
 
 emld = hancho.Tool(
-    desc="Link Emscripten'd {out_js}",
+    name="Link Emscripten'd {base(out_js)}",
     command="emcc {flags} {in_objs} -o {out_js}",
     flags=[
         "-sEXPORT_ES6",
@@ -32,7 +32,7 @@ emld = hancho.Tool(
 )
 
 ems_package = hancho.Tool(
-    desc="Package {out_data}",
+    name="Package {base(out_data)}",
     command=[
         "rm -f {out_data}",
         "rm -f {out_js}",

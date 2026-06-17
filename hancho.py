@@ -36,7 +36,7 @@ import time
 import traceback
 import types
 import zlib  # for crc32, adler32
-from collections import ChainMap, abc
+from collections import ChainMap, Counter, abc
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
@@ -650,6 +650,7 @@ class Utils:
 class BuildDB:
     @classmethod
     def reset(cls, root_config):
+        cls.reasons = Counter()
         cls.mtime_calls : int = 0
         cls.hash_calls : int = 0
         cls.hash_bytes : int = 0
@@ -746,6 +747,7 @@ class BuildDB:
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
+        print(abs_path)
         cls.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
@@ -833,7 +835,8 @@ class BuildDB:
 
         _stat = os.stat(in_file)
         new_stat = FileStat(
-            hash = cls.hash_file(in_file),
+            #hash = cls.hash_file(in_file),
+            hash = 0,
             st_size = _stat.st_size,
             st_mtime_ns = _stat.st_mtime_ns
         )
@@ -870,16 +873,20 @@ class BuildDB:
         # ------------------------------------
 
         if Options.rebuild_all or config.get("rebuild", False):
+            cls.reasons["forced"] += 1
             return "Target forced to rebuild"
         if not task.in_files:
+            cls.reasons["no_inputs"] += 1
             return "Always rebuild a target with no inputs"
         if not task.out_files:
+            cls.reasons["no_outputs"] += 1
             return "Always rebuild a target with no outputs"
 
         # ------------------------------------
 
         for out_file in task.out_files:
             if not Path.exists(out_file):
+                cls.reasons["output_missing"] += 1
                 return f"Output file missing: {out_file}"
 
 
@@ -889,19 +896,23 @@ class BuildDB:
 
         for f in task.in_files:
             if cls.mtime(f) > min_out:
+                cls.reasons["input_changed"] += 1
                 return f"Input {f} is newer than the outputs"
 
         for f in task.in_deps:
             if cls.mtime(f) > min_out:
+                cls.reasons["dep_changed"] += 1
                 return f"Dependency {f} is newer than the outputs"
 
         for out_file in task.out_files:
             old_command = cls.old_command_db.get(out_file, None)
             new_command = cls.new_command_db.get(out_file, None)
 
-            assert new_command is not None
+            if new_command is None:
+                raise AssertionError(f"file {out_file} - new_command is None")
 
             if old_command != new_command:
+                cls.reasons["command_changed"] += 1
                 return f"Command used to generate file has changed : {out_file} : {old_command} : {new_command}"
 
         # ------------------------------------
@@ -910,6 +921,7 @@ class BuildDB:
             if reason := cls.rebuild_reason_in(file):
                 return reason
 
+        cls.reasons["*task_clean"] += 1
         return ""
 
 
@@ -920,6 +932,7 @@ class BuildDB:
 
         old_stat = cls.old_input_db.get(filename, None)
         if old_stat is None:
+            cls.reasons["no_stats"] += 1
             return f"No cached stats for : {filename}"
 
         new_stat = cls.new_input_db.get(filename, None)
@@ -930,19 +943,23 @@ class BuildDB:
         if (old_stat.st_size == new_stat.st_size) and (old_stat.st_mtime_ns == new_stat.st_mtime_ns):
             # Input size and mtime haven't changed - this file can't trigger a rebuild.
             new_stat = old_stat
+            cls.reasons["mtime_match"] += 1
             return ""
 
         if old_stat.st_size != new_stat.st_size:
+            cls.reasons["size_changed"] += 1
             return f"File size has changed: {old_stat.st_size} -> {new_stat.st_size} : {filename}"
 
-        assert new_stat.hash != 0
-        #if new_stat.hash == 0:
-        #    new_stat.hash = cls.hash_file(filename)
+        #assert new_stat.hash != 0
+        if new_stat.hash == 0:
+            new_stat.hash = cls.hash_file(filename)
 
         if old_stat.hash != new_stat.hash:
+            cls.reasons["hash_mismatch"] += 1
             return f"Hash mismatch {old_stat.hash} -> {new_stat.hash} for : {filename}"
 
         # Does not need to rebuild based on file stats / hash
+        cls.reasons["*hash_match"] += 1
         return ""
 
     @classmethod
@@ -1597,7 +1614,7 @@ class Task:
         with LogLevel.NORMAL:
             self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
 
-        with LogLevel.NORMAL, Log.color(0x404040):
+        with LogLevel.VERBOSE, Log.color(0x404040):
             self.log(f"Task rebuilding because: {self._reason}\n")
 
         for command in cast(list, config.command):
@@ -2698,7 +2715,7 @@ def banner_start():
 # --------------------------------------------------------------------------------------------------
 
 def banner_end():
-    with LogLevel.NORMAL:
+    with LogLevel.VERBOSE:
         Log.log(f"Tasks created:    {len(Runner.all_tasks)}\n")
         Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
         Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
@@ -2711,15 +2728,21 @@ def banner_end():
         Log.log(f"Hash bytes:       {BuildDB.hash_bytes}\n")
         Log.log(f"Hash time:        {BuildDB.hash_time:8.6f}\n")
 
-        if Runner.tasks_failed or Runner.tasks_broken:
-            with LogLevel.ERROR, Colors.RED:
-                Log.log("BUILD FAILED\n")
-        elif Runner.tasks_finished:
-            with Colors.GREEN:
-                Log.log("BUILD PASSED\n")
-        else:
-            with Colors.BLUE:
-                Log.log("BUILD CLEAN\n")
+    if Runner.tasks_failed or Runner.tasks_broken:
+        with LogLevel.ERROR, Colors.RED:
+            Log.log("BUILD FAILED\n")
+    elif Runner.tasks_finished:
+        with Colors.GREEN:
+            Log.log("BUILD PASSED\n")
+    else:
+        with Colors.BLUE:
+            Log.log("BUILD CLEAN\n")
+
+    with LogLevel.VERBOSE, Colors.BLUE:
+        for k, v in BuildDB.reasons.items():
+            Log.log(f"Rebuild reasons {k:13} = {v}\n")
+
+
 
 # --------------------------------------------------------------------------------------------------
 

@@ -3,7 +3,7 @@
 import hancho
 
 compile_cpp = hancho.Tool(
-    desc      = "Compile {in_src} -> {out_obj}",
+    name      = "Compile {base(in_src)} -> {base(out_obj)}",
     command   = "cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
     out_obj   = "{ext(in_src, '.o')}",
     in_depfile   = "{ext(out_obj, '.d')}",
@@ -11,7 +11,7 @@ compile_cpp = hancho.Tool(
 )
 
 link_cpp = hancho.Tool(
-    desc      = "Link {in_objs} -> {out_bin}",
+    name      = "Link {base(in_objs)} -> {base(out_bin)}",
     command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin} > NUL",
     libs      = "user32.lib"
 )

@@ -62,14 +62,14 @@ main_bin = hancho.Task(
 ####################################################################################################
 
 compile_cpp = hancho.Tool(
-    desc       = "Compile {in_src} -> {out_obj}",
+    name       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
     in_depfile = "{ext(out_obj, '.d')}",
     out_obj    = "{ext(in_src, '.o')}",
 )
 
 link_cpp = hancho.Tool(
-    desc    = "Link {in_objs} into {out_bin}",
+    name    = "Link {in_objs} into {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
@@ -89,14 +89,14 @@ app    = hancho.Task(tools.link_cpp, in_objs = [main_o, util_o], out_bin = "app"
 # tools.hancho
 
 compile_cpp = hancho.Tool(
-    desc       = "Compile {in_src} -> {out_obj}",
+    name       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
     in_depfile = "{ext(out_obj, '.d')}",
     out_obj    = "{ext(in_src, '.o')}",
 )
 
 link_cpp = hancho.Tool(
-    desc    = "Link {in_objs} into {out_bin}",
+    name    = "Link {in_objs} into {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 
@@ -111,14 +111,14 @@ app   = hancho.Task(tools.c_binary, in_src = glob("src/*.cpp"), out_bin = "app")
 # tools.hancho
 
 compile_cpp = hancho.Tool(
-    desc       = "Compile {in_src} -> {out_obj}",
+    name       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
     in_depfile = "{ext(out_obj, '.d')}",
     out_obj    = "{ext(in_src, '.o')}",
 )
 
 link_cpp = hancho.Tool(
-    desc    = "Link {in_objs} -> {out_bin}",
+    name    = "Link {in_objs} -> {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 

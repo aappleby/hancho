@@ -12,8 +12,7 @@ original_cwd = os.getcwd()
 src_files = glob("src/*")
 
 random_touch = hancho.Task(
-    name = "random touch",
-    desc = "Touch 3 random files in src/ - {in_src}",
+    name = "Touch 3 random files in src/ - {base(in_src)}",
     command = [
         "touch {in_src[0]}",
         "touch {in_src[1]}",
@@ -29,21 +28,19 @@ def generate_filelist(task):
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
-    name     = "generate_filelist {out_list}",
-    desc     = "Write the names of 3 random files in src/ to {out_list}",
+    name     = "Write the names of 3 random files in src/ to {base(out_list)}",
     command  = generate_filelist,
     in_src   = src_files,
     out_list = "filelist.txt",
 )
 
 def generate_result(task):
-    """Read build/filelist.txt and create a new task to cat those files together into result.txt"""
+    """Read build/filelist.txt and create a new task to cat those files together into {base(out_files)}"""
     c = task.config
     with chdir(c.script_cwd), open(c.in_filelist, encoding="utf-8") as file:
         from_filelist = [f.strip() for f in file.readlines()]
         new_task = hancho.Task(
-            name      = "concatenate {out_files}",
-            desc      = "Concatenate {base(in_files)} into {base(out_files)}",
+            name      = "Concatenate {base(in_files)} into {base(out_files)}",
             command   = "cat {in_files} > {out_files}",
             in_files  = from_filelist,
             in_deps   = [random_touch, filelist_txt],
@@ -51,16 +48,14 @@ def generate_result(task):
         )
 
     hancho.Task(
-        name    = "copy {in_text} -> {out_cat}",
-        desc    = "Copy the contents of {in_text} to {out_cat}",
+        name    = "Copy {base(in_text)} -> {base(out_cat)}",
         command = "cat {in_text} >> {out_cat}",
         in_text = new_task,
         out_cat = "result2.txt"
     )
 
 result_txt = hancho.Task(
-    name        = "generate_result",
-    desc        = "Read {in_filelist} and use its contents to generate another task",
+    name        = "Generate a new task from {base(in_filelist)}",
     command     = generate_result,
     in_filelist = filelist_txt,
 )
