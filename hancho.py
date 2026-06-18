@@ -423,7 +423,7 @@ class Log:
 class Utils:
 
     @classmethod
-    def reset(cls, root_config):
+    def reset(cls):
         # These are aliases for methods in Hancho that have been pulled out so they can be used by
         # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
         # It's also read by the module-level __getattr__ so you can use "hancho.flatten(x)" instead
@@ -657,36 +657,28 @@ class BuildDB:
         cls.hash_time : float = 0
 
         comp_db_path    = root_config.pop("comp_db",    "{build_root}/compile_commands.json")
-        input_db_path   = root_config.pop("input_db",   "{build_root}/hancho_inputs.json")
+        stat_db_path   = root_config.pop("stat_db",   "{build_root}/hancho_inputs.json")
         command_db_path = root_config.pop("command_db", "{build_root}/hancho_commands.json")
 
         comp_db_path    = root_config.expand(comp_db_path, str)
-        input_db_path   = root_config.expand(input_db_path, str)
+        stat_db_path   = root_config.expand(stat_db_path, str)
         command_db_path = root_config.expand(command_db_path, str)
 
         cls.comp_db_path    = cast(str, Path.abs(comp_db_path))
-        cls.input_db_path   = cast(str, Path.abs(input_db_path))
+        cls.stat_db_path   = cast(str, Path.abs(stat_db_path))
         cls.command_db_path = cast(str, Path.abs(command_db_path))
 
-        # Data for compile_commands.json
-        cls.old_comp_db : dict = {}
-        cls.new_comp_db : dict = {}
+        # Saved stats/commands from the previous build
+        cls.stat_db : dict[str, FileStat] = {}  # Hash, size, mtime for each input file
+        cls.command_db : dict[str, str] = {}    # Task settings (command) for each output file
 
-        # Hash, size, mtime for each input file
-        cls.old_input_db : dict[str, FileStat] = {}
-        cls.new_input_db : dict[str, FileStat] = {}
-
-        # Task settings (command) for each output file
-        cls.old_command_db : dict[str, str] = {}
+        # Same as the above dicts
+        cls.new_stat_db : dict[str, FileStat] = {}
         cls.new_command_db : dict[str, str] = {}
 
-    # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def mtime(filename : str):
-        """Gets the file's mtime and tracks how many times we've called mtime()"""
-        BuildDB.mtime_calls += 1
-        return os.stat(filename).st_mtime_ns
+
+    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def hash(cls, key, h):
@@ -747,7 +739,6 @@ class BuildDB:
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
-        print(abs_path)
         cls.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
@@ -777,13 +768,6 @@ class BuildDB:
             os.replace(temp_filename, filename)
 
     @classmethod
-    def save_json(cls, variant, path):
-        os.makedirs(os.path.dirname(path), exist_ok = True)
-        with cls.write_and_swap(path) as file:
-            json.dump(variant, file, indent=4, default=lambda x: x.__dict__)
-            file.write("\n")
-
-    @classmethod
     def load_json(cls, filename : str):
         if os.path.isfile(filename):
             with open(filename) as contents:
@@ -791,59 +775,73 @@ class BuildDB:
         else:
             return {}
 
+    @classmethod
+    def save_json(cls, variant, path):
+        os.makedirs(os.path.dirname(path), exist_ok = True)
+        with cls.write_and_swap(path) as file:
+            json.dump(variant, file, indent=4, default=lambda x: x.__dict__)
+            file.write("\n")
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def load(cls):
+    def pre_build(cls):
         with Timer("load_comp_db", LogLevel.VERBOSE, Colors.ORANGE):
             cls.old_comp_db = cls.load_json(cls.comp_db_path)
 
-        with Timer("load_input_db", LogLevel.VERBOSE, Colors.ORANGE):
-            cls.old_input_db = cls.load_json(cls.input_db_path)
+        with Timer("load_stat_db", LogLevel.VERBOSE, Colors.ORANGE):
+            cls.stat_db = cls.load_json(cls.stat_db_path)
 
         with Timer("load_command_db", LogLevel.VERBOSE, Colors.ORANGE):
-            cls.old_command_db = cls.load_json(cls.command_db_path)
+            cls.command_db = cls.load_json(cls.command_db_path)
 
         # Turn the dict-serialized FileStats back into FileStats.
-        for k, v in list(cls.old_input_db.items()):
-            cls.old_input_db[k] = FileStat(**cast(abc.Mapping, v))
-
-    @classmethod
-    def save(cls):
-        with Timer("save_comp_db", LogLevel.VERBOSE, Colors.ORANGE):
-            cls.save_json(list(cls.new_comp_db.values()), cls.comp_db_path)
-
-        with Timer("save_input_db", LogLevel.VERBOSE, Colors.ORANGE):
-            cls.save_json(cls.new_input_db, cls.input_db_path)
-
-        with Timer("save_command_db", LogLevel.VERBOSE, Colors.ORANGE):
-            cls.save_json(cls.new_command_db, cls.command_db_path)
+        for k, v in list(cls.stat_db.items()):
+            cls.stat_db[k] = FileStat(**cast(abc.Mapping, v))
 
     # ----------------------------------------------------------------------------------------------
-    # Generate entries for our input db and command db. We're pre-computing the hash of each
-    # input file here, which is a tiny bit of a waste as we might be able to skip it if we
-    # did the stat size/mtime checks first. However, we need to ensure that the db entries are
-    # always populated and this is the easiest way to do it for now.
 
     @classmethod
-    def update_input_db(cls, in_file):
-        if not os.path.exists(in_file):
-            return
+    def update_stat_db(cls, task, in_file):
+        if os.path.exists(in_file):
+            BuildDB.mtime_calls += 1
+            hash = cls.hash_file(in_file)
+            _stat = os.stat(in_file)
+            stat = FileStat(hash, _stat.st_size, _stat.st_mtime_ns)
+            cls.new_stat_db[in_file] = stat
 
-        if in_file in cls.new_input_db:
-            return
+    @classmethod
+    def commands_to_string(cls, commands):
+        if callable(commands[0]):
+            return str([c.__name__ for c in commands])
+        else:
+            return str(commands)
 
-        _stat = os.stat(in_file)
-        new_stat = FileStat(
-            #hash = cls.hash_file(in_file),
-            hash = 0,
-            st_size = _stat.st_size,
-            st_mtime_ns = _stat.st_mtime_ns
-        )
-        cls.new_input_db[in_file] = new_stat
-        return new_stat
+    @classmethod
+    def pre_task(cls, task):
+
+        # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
+        if "in_depfile" in task.config:
+            task.old_deplines = Task.load_depfile(
+                task.config.in_depfile, task.config.depformat, task.config.task_cwd
+            )
+            for file in task.old_deplines:
+                cls.update_stat_db(task, file)
+
+        for file in task.in_files:
+            cls.update_stat_db(task, file)
+
+        for out_file in task.out_files:
+            cls.update_stat_db(task, out_file)
+
+        # This _must_ come after the task is fully expanded
+        for out_file in task.out_files:
+            BuildDB.new_command_db[out_file] = cls.commands_to_string(task.config.command)
+
 
     # ----------------------------------------------------------------------------------------------
+
+    # FIXME we need to handle build dbs when we're building multiple repos...
 
     @classmethod
     def rebuild_reason(cls, task) -> str:
@@ -852,109 +850,149 @@ class BuildDB:
         """
         config = task.config
 
-
         # ------------------------------------
+        # Check the trivial reasons to rebuild
 
         if Options.rebuild_all or config.get("rebuild", False):
             cls.reasons["forced"] += 1
             return "Target forced to rebuild"
+
         if not task.in_files:
-            cls.reasons["no_inputs"] += 1
+            cls.reasons["no inputs"] += 1
             return "Always rebuild a target with no inputs"
+
         if not task.out_files:
-            cls.reasons["no_outputs"] += 1
+            cls.reasons["no outputs"] += 1
             return "Always rebuild a target with no outputs"
 
         # ------------------------------------
 
-        for out_file in task.out_files:
-            if not Path.exists(out_file):
-                cls.reasons["output_missing"] += 1
-                return f"Output file missing: {out_file}"
+        for filename in task.out_files:
+            if not Path.exists(filename):
+                cls.reasons["output missing"] += 1
+                return f"Output file missing: {filename}"
 
+            if filename not in cls.command_db:
+                cls.reasons["no old command"] += 1
+                return f"No cached command for : {filename}"
 
-        min_out = min(cls.mtime(f) for f in task.out_files)
-
-        # If any inputs are newer than any outputs, we need to rebuild.
-
-        for f in task.in_files:
-            if cls.mtime(f) > min_out:
-                cls.reasons["input_changed"] += 1
-                return f"Input {f} is newer than the outputs"
-
-        for f in task.in_deps:
-            if cls.mtime(f) > min_out:
-                cls.reasons["dep_changed"] += 1
-                return f"Dependency {f} is newer than the outputs"
-
-        for out_file in task.out_files:
-            old_command = cls.old_command_db.get(out_file, None)
-            new_command = cls.new_command_db.get(out_file, None)
-
-            if new_command is None:
-                raise AssertionError(f"file {out_file} - new_command is None")
+            old_command = cls.command_db.get(filename, None)
+            #new_command = str(task.config.command)
+            new_command = cls.commands_to_string(task.config.command)
 
             if old_command != new_command:
-                cls.reasons["command_changed"] += 1
-                return f"Command used to generate file has changed : {out_file} : {old_command} : {new_command}"
+                cls.reasons["command changed"] += 1
+                return f"Command used to generate file has changed : {filename} : {old_command} : {new_command}"
+
+            #mtime = BuildDB.old_stat_db[filename].st_mtime_ns
+            #if mtime < min_out_mtime or i == 0:
+            #    min_out_mtime = mtime
 
         # ------------------------------------
 
-        for file in task.in_files:
-            if reason := cls.rebuild_reason_in(file):
-                return reason
+        for filename in task.old_deplines:
+            if filename not in BuildDB.stat_db:
+                cls.reasons["no stats"] += 1
+                return f"No cached stats for : {filename}"
 
-        cls.reasons["*task_clean"] += 1
+            # If we don't trust mtime, can we trust this check?
+            #mtime = BuildDB.old_stat_db[filename].st_mtime_ns
+            #if mtime > min_out_mtime:
+            #    cls.reasons["dep_changed"] += 1
+            #    return "Deps are newer than the outputs"
+
+        # ------------------------------------
+
+        for filename in task.in_files:
+            if filename not in BuildDB.stat_db:
+                cls.reasons["no stats"] += 1
+                return f"No cached stats for : {filename}"
+
+            # If we don't trust mtime, can we trust this check?
+            #mtime = BuildDB.old_stat_db[filename].st_mtime_ns
+            #if mtime > min_out_mtime:
+            #    cls.reasons["input_changed"] += 1
+            #    return "Inputs are newer than the outputs"
+
+        # ------------------------------------
+
+        all_files = task.old_deplines + task.in_files
+
+        for filename in all_files:
+            old_stat = cls.stat_db.get(filename, None)
+            new_stat = cls.new_stat_db.get(filename, None)
+
+            assert old_stat is not None
+            assert new_stat is not None
+
+            if old_stat.st_mtime_ns != new_stat.st_mtime_ns:
+                cls.reasons["mtime mismatch"] += 1
+                return f"Mtime mismatch {old_stat.st_mtime_ns} != {new_stat.st_mtime_ns} for : {filename}"
+
+            if old_stat.st_size != new_stat.st_size:
+                cls.reasons["size mismatch"] += 1
+                return f"Size mismatch {old_stat.st_size} != {new_stat.st_size} for : {filename}"
+
+            #if (old_stat.st_size == new_stat.st_size) and (old_stat.st_mtime_ns == new_stat.st_mtime_ns):
+            #    # Input size and mtime haven't changed - this file can't trigger a rebuild.
+            #    new_stat = old_stat
+            #    cls.reasons["mtime_match"] += 1
+            #    return ""
+
+            #if old_stat.st_size != new_stat.st_size:
+            #    cls.reasons["size_changed"] += 1
+            #    return f"File size has changed: {old_stat.st_size} -> {new_stat.st_size} : {filename}"
+
+            if old_stat.hash != new_stat.hash:
+                cls.reasons["hash mismatch"] += 1
+                return f"Hash mismatch {old_stat.hash} -> {new_stat.hash} for : {filename}"
+
+            # Does not need to rebuild based on file stats / hash
+            cls.reasons["*hash match"] += 1
+
+        cls.reasons["*task clean"] += 1
         return ""
-
-
-    @classmethod
-    def rebuild_reason_in(cls, filename):
-        if not Path.exists(filename):
-            raise Task.BROKEN(f"Input file missing : {filename}")
-
-        old_stat = cls.old_input_db.get(filename, None)
-        if old_stat is None:
-            cls.reasons["no_stats"] += 1
-            return f"No cached stats for : {filename}"
-
-        new_stat = cls.new_input_db.get(filename, None)
-
-        # this had better exist because we just created it
-        assert new_stat is not None
-
-        if (old_stat.st_size == new_stat.st_size) and (old_stat.st_mtime_ns == new_stat.st_mtime_ns):
-            # Input size and mtime haven't changed - this file can't trigger a rebuild.
-            new_stat = old_stat
-            cls.reasons["mtime_match"] += 1
-            return ""
-
-        if old_stat.st_size != new_stat.st_size:
-            cls.reasons["size_changed"] += 1
-            return f"File size has changed: {old_stat.st_size} -> {new_stat.st_size} : {filename}"
-
-        #assert new_stat.hash != 0
-        if new_stat.hash == 0:
-            new_stat.hash = cls.hash_file(filename)
-
-        if old_stat.hash != new_stat.hash:
-            cls.reasons["hash_mismatch"] += 1
-            return f"Hash mismatch {old_stat.hash} -> {new_stat.hash} for : {filename}"
-
-        # Does not need to rebuild based on file stats / hash
-        cls.reasons["*hash_match"] += 1
-        return ""
-
-    @classmethod
-    def task_starting(cls, task):
-        pass
-
-    @classmethod
-    def task_complete(cls, task):
-        pass
 
     # ----------------------------------------------------------------------------------------------
 
+    @classmethod
+    def post_task(cls, task):
+        # We should have an updated depfile now.
+        if "in_depfile" in task.config:
+            new_deplines = Task.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
+            for file in new_deplines:
+                cls.update_stat_db(task, file)
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def post_build(cls):
+        if Options.cv_config().dry_run:
+            return
+
+        # Haven't tested this in an IDE, but I think it matches the spec.
+        comp_db = {}
+        for task in Runner.all_tasks:
+            if not task.config.enabled:
+                continue
+            callback_task = any(not isinstance(c, str) for c in task.config.command)
+            if callback_task:
+                continue
+            for in_file in task.in_files:
+                comp_db[in_file] = {
+                    "directory" : task.config.task_cwd,
+                    "command"   : "; ".join(task.config.command),
+                    "file"      : in_file,
+                }
+
+        with Timer("save_comp_db", LogLevel.VERBOSE, Colors.ORANGE):
+            cls.save_json(list(comp_db.values()), cls.comp_db_path)
+
+        with Timer("save_stat_db", LogLevel.VERBOSE, Colors.ORANGE):
+            cls.save_json(cls.new_stat_db, cls.stat_db_path)
+
+        with Timer("save_command_db", LogLevel.VERBOSE, Colors.ORANGE):
+            cls.save_json(cls.new_command_db, cls.command_db_path)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -991,11 +1029,13 @@ class Path:
         prefix = os.path.commonpath([lhs, rhs])
 
         if lhs == rhs:
-            return "."
+            result = "."
         elif prefix != rhs:
-            return lhs
+            result = lhs
         else:
-            return lhs.removeprefix(prefix + "/")
+            result = lhs.removeprefix(prefix + "/")
+
+        return result
 
     @staticmethod
     def join(lhs, rhs):
@@ -1213,6 +1253,9 @@ class Options:
             name        = "_",
             desc        = "_",
             command     = None,
+            enabled     = False,
+            core_count  = 1,
+            dry_run     = False,
 
             this_repo   = hancho,
             this_module = hancho,
@@ -1229,16 +1272,10 @@ class Options:
             build_tag   = "",
             build_dir   = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
-            depformat   = "gcc" if sys.platform != "win32" else "msvc",
-            in_depfile  = [],
-
+            depformat       = "gcc" if sys.platform != "win32" else "msvc",
             comp_db_path    = "{build_root}/compile_commands.json",
-            input_db_path   = "{build_root}/hancho_inputs.json",
+            stat_db_path   = "{build_root}/hancho_inputs.json",
             command_db_path = "{build_root}/hancho_commands.json",
-
-            core_count  = 1,
-            enabled     = False,
-            dry_run     = False
         )
         return result
 
@@ -1346,7 +1383,10 @@ class Task:
         self.out_files = []
 
         # Additional input dependencies read from the source.o.d file.
-        self.in_deps  = []
+        self.old_deplines = []
+
+        # File stats - (optional) hash, st_size, st_mtime_ns
+        self.stats = {}
 
         # The context field is what allows a Task to see its parent script's "hancho.config"
         # even after it's been stuck on an asyncio queue and run from somewhere else entirely.
@@ -1413,10 +1453,6 @@ class Task:
     def is_io_field(key : str):
         return Task.is_input_field(key) or Task.is_output_field(key)
 
-#    def get_task_key(self):
-#        #return ",".join(Path.abs(self.out_files))
-#        return self.config.task_cwd + "$ " + ";".join(Utils.flatten(self.config.command))
-
     # ----------------------------------------------------------------------------------------------
 
     def log(self, message : str):
@@ -1452,8 +1488,6 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_top(self):
-        BuildDB.task_starting(self)
-
         try:
             await self.task_main()
             self._error = None
@@ -1486,12 +1520,6 @@ class Task:
 
         if self._error:
             raise self._error
-
-        dry_run = " (DRY RUN)" if self.config.dry_run else ""
-        with LogLevel.VERBOSE:
-            self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
-
-        BuildDB.task_complete(self)
 
         return self.out_files
 
@@ -1542,43 +1570,10 @@ class Task:
         with chdir(config.task_cwd):
             self.task_init()
 
+
         self.sanity_check()
 
-        # ----------------------------------------
-        # Load the inputs from the depfile if present, as we need to check them in rebuild_reason.
-
-        self.load_depfile()
-
-        for file in self.in_files:
-            BuildDB.update_input_db(file)
-
-        for file in self.in_deps:
-            BuildDB.update_input_db(file)
-
-        callback_task = any(not isinstance(c, str) for c in self.config.command)
-        if not callback_task:
-            # This _must_ come after the task is fully expanded
-            for out_file in self.out_files:
-                if not callback_task:
-                    if out_file in BuildDB.new_command_db:
-                        continue
-
-                    command = Utils.flatten(config.command)
-                    for i, c in enumerate(command):
-                        if isinstance(c, str):
-                            command[i] = re.sub(r"\s+", " ", c)
-                    #new_command = f"{config.task_cwd}:{config.script_cwd}:{command}"
-                    new_command = str(command)
-                    BuildDB.new_command_db[out_file] = new_command
-
-
-            # Haven't tested this in an IDE, but I think it matches the spec.
-            for in_file in self.in_files:
-                BuildDB.new_comp_db[in_file] = {
-                    "directory" : self.config.task_cwd,
-                    "command"   : "; ".join(self.config.command),
-                    "file"      : in_file,
-                }
+        BuildDB.pre_task(self)
 
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
@@ -1603,7 +1598,6 @@ class Task:
         # ----------------------------------------
         # Run all the task's commands
 
-
         with LogLevel.NORMAL:
             self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
 
@@ -1611,18 +1605,18 @@ class Task:
             self.log(f"Task rebuilding because: {self._reason}\n")
 
         for command in cast(list, config.command):
-            if isinstance(command, str):
-                await self.run_command(command)
-
-            elif callable(command):
-                await self.call_callback(command)
-            else:
-                raise Task.FAILED(f"Command {command} is not a string or a callable?")
-
-
+            promise = (
+                self.call_callback(command) if callable(command) else self.run_command(command)
+            )
+            await promise
 
         # Done!
 
+        dry_run = " (DRY RUN)" if self.config.dry_run else ""
+        with LogLevel.VERBOSE:
+            self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
+
+        BuildDB.post_task(self)
 
     # ----------------------------------------------------------------------------------------------
     # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -1640,9 +1634,6 @@ class Task:
 
             # Our file list has never been flattened, so do it now.
             files = Utils.flatten(files)
-
-            if Task.is_depfile_field(key) and len(files) > 1:
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
             for i, file in enumerate(files):
                 if isinstance(file, Task):
@@ -1668,34 +1659,31 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    def load_depfile(self):
-        if "in_depfile" not in self.config:
+    @classmethod
+    def load_depfile(cls, filename, format, task_cwd):
+        assert isinstance(filename, str)
+        if not os.path.isfile(filename):
             return []
 
-        format = self.config.depformat
-        task_cwd = self.config.task_cwd
+        with open(filename, encoding="utf-8") as depcontents:
+            deplines = None
+            if format == "msvc":
+                # MSVC /sourceDependencies
+                deplines = json.load(depcontents)["Data"]["Includes"]
+            elif format == "gcc":
+                # GCC -MMD
+                # NOTE: This does not handle filenames with escaped spaces in them, but I don't
+                # want to write a whole .d parser yet.
+                deplines = depcontents.read()
+                deplines = re.sub(r"\\\s*\n", "", deplines)
+                deplines = deplines.split()
+                deplines = [d for d in deplines if d[-1] != ':']
+            else:
+                raise Task.BROKEN(f"Invalid depfile format {format}")
 
-        for depfile in Utils.flatten(self.config.in_depfile):
-            if Path.exists(depfile):
-                with open(depfile, encoding="utf-8") as depcontents:
-                    deplines = None
-                    if format == "msvc":
-                        # MSVC /sourceDependencies
-                        deplines = json.load(depcontents)["Data"]["Includes"]
-                    elif format == "gcc":
-                        # GCC -MMD
-                        # NOTE: This does not handle filenames with escaped spaces in them, but I don't
-                        # want to write a whole .d parser yet.
-                        deplines = depcontents.read()
-                        deplines = re.sub(r"\\\s*\n", "", deplines)
-                        deplines = deplines.split()
-                        deplines = [d for d in deplines if d[-1] != ':']
-                    else:
-                        raise Task.BROKEN(f"Invalid depfile format {format}")
-
-                # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-                deplines = [Path.join(task_cwd, d) for d in deplines]
-                self.in_deps.extend(deplines)
+        # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
+        deplines = [Path.join(task_cwd, d) for d in deplines]
+        return deplines
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1709,33 +1697,6 @@ class Task:
         # Flatten the commands and check that they're valid
 
         config.command = Utils.flatten(config.command)
-
-        if not config.command:
-            raise Task.BROKEN(f"Task {config.name} has no command!")
-
-        for command in config.command:
-            if command == "":
-                raise Task.BROKEN("Command is an empty string")
-
-            # In order to provide the least amount of bafflement to users, CLI commands execute
-            # from task_cwd (which is usually the root of the repo, the most common cwd)
-            # and callbacks execute from script_cwd (because you expect to be in the same directory
-            # as the script when the callback is firing).
-
-            # This means that rel-ified paths can only be rel'd to one of the two cwds, not both.
-            # And that means we disallow mixed cli/callback command lists.
-
-            if type(command) is not type(config.command[0]):
-                raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
-
-        # ----------------------------------------
-        # Check for missing paths
-
-        if not Path.exists(config.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
-
-        if not Path.startswith(config.build_dir, config.repo_dir):
-            raise Task.BROKEN(f"The build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
 
         # ----------------------------------------
         # Expand all in_ and out_ filenames.
@@ -1778,11 +1739,37 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def sanity_check(self):
+        """
+        Checks for various ways that a task can be broken and raises exceptions for them.
+        All of our 'raise Task.BROKEN's should be here (except for 'Invalid depfile format' above)
+        """
         config = self.config
 
-        # ----------------------------------------
-        # Run some sanity checks
+        if not Path.exists(config.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
 
+        if not Path.startswith(config.build_dir, config.repo_dir):
+            raise Task.BROKEN(f"The build_dir {config.build_dir} is not under repo dir {config.repo_dir}")
+
+        if not config.command:
+            raise Task.BROKEN(f"Task {config.name} has no command!")
+
+        for command in config.command:
+            if command == "":
+                raise Task.BROKEN("Command is an empty string")
+
+            # In order to provide the least amount of bafflement to users, CLI commands execute
+            # from task_cwd (which is usually the root of the repo, the most common cwd)
+            # and callbacks execute from script_cwd (because you expect to be in the same directory
+            # as the script when the callback is firing).
+
+            # This means that rel-ified paths can only be rel'd to one of the two cwds, not both.
+            # And that means we disallow mixed cli/callback command lists.
+
+            if type(command) is not type(config.command[0]):
+                raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
+
+        # In strict mode, we mark a task broken if its command still has curly braces.
         if Options.strict:
             for command in cast(list, config.command):
                 if not isinstance(command, str):
@@ -1804,15 +1791,25 @@ class Task:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.real_filenames.add(real_file)
 
-        # ----------------------------------------
         # Check for missing inputs. We have to check dry_run, as the input files may only exist if
         # we're really running tasks.
+        for file in self.in_files:
+            if not Path.isabs(file):
+                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")
+            if not Path.exists(file) and not config.dry_run:
+                raise Task.BROKEN(f"Input file missing - {file}")
 
-        if not config.dry_run:
-            for file in self.in_files:
-                assert Path.isabs(file)
-                if not Path.exists(file):
-                    raise Task.BROKEN(f"Input file missing - {file}")
+        # Check that task's commands are either strings or callables.
+        for command in cast(list, config.command):
+            if not isinstance(command, str) and not callable(command):
+                raise Task.BROKEN(f"Command {command} is not a string or a callable?")
+
+        # Tasks should have at most one depfile.
+        for key, files in list(self.config.items()):
+            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
+
+
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1871,10 +1868,10 @@ class Task:
         # Convert the fixed paths back to relative so our command lines aren't enormous.
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_cwd if we're calling a callback.
-        rel_dir = config.task_cwd if isinstance(config.command[0], str) else config.script_cwd
+        #rel_dir = config.task_cwd if isinstance(config.command[0], str) else config.script_cwd
 
-        for i in range(len(files)):
-            files[i] = Path.rel(files[i], rel_dir)
+        #for i in range(len(files)):
+        #    files[i] = Path.rel(files[i], rel_dir)
 
         return files
 
@@ -2358,6 +2355,8 @@ class Loader:
         cls.dedupe : dict[tuple[str, str], types.ModuleType] = {}
         cls.loaded_files : list[str] = []
         cls.root_repo : types.ModuleType | None = None
+        cls.all_repos = []
+        cls.all_modules = []
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2453,6 +2452,11 @@ class Loader:
                 exec(code, new_module.__dict__)
             finally:
                 Options._cv_config.reset(old_token)
+
+        if is_repo:
+            Loader.all_repos.append(new_module)
+        else:
+            Loader.all_modules.append(new_module)
 
         return new_module
 
@@ -2610,13 +2614,6 @@ class Runner:
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*cls.live_aio_tasks, return_exceptions=True)
 
-        # ------------------------------------
-        # Save the new versions of the file stat and task info DBs.
-
-        if not Options.cv_config().dry_run:
-            BuildDB.save()
-
-
         return 1 if cls.tasks_failed or cls.tasks_broken else 0
 
     # ----------------------------------------------------------------------------------------------
@@ -2652,7 +2649,7 @@ def init(*args, **kwargs):
     # Options next to set up cv_config
     Options.reset(root_config)
     # Utils next, needs to set Utils.aliases so we can expand things
-    Utils.reset(root_config)
+    Utils.reset()
     BuildDB.reset(root_config)
     Loader.reset(root_config)
     #Expander.reset(root_config)
@@ -2665,7 +2662,7 @@ def build():
     # ------------------------------------
     # Load our file stat and task info DBs.
 
-    BuildDB.load()
+    BuildDB.pre_build()
 
     # ------------------------------------
     # Run all tasks and tools
@@ -2675,6 +2672,11 @@ def build():
     else:
         Runner.select_root_tasks()
         result = Runner.sync_run_tasks()
+
+    # ------------------------------------
+    # Save the new versions of the file stat and task info DBs.
+
+    BuildDB.post_build()
 
     return result
 
@@ -2776,7 +2778,7 @@ def main():
 # region __main__
 
 if __name__ == "__main__":
-    sys.exit(main())
+            sys.exit(main())
 else:
     init()
 

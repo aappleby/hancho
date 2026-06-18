@@ -309,27 +309,9 @@ class TestTasks(unittest.TestCase):
         self.assertLess(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild
         def run():
-            #hancho.init(verbosity = "trace")
             hancho.init(verbosity = "quiet")
             time.sleep(0.01)
             compile = hancho.Dict(
@@ -378,24 +360,6 @@ class TestTasks(unittest.TestCase):
         mtime3 = run()
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     # ----------------------------------------------------------------------------------------------
 
@@ -470,7 +434,6 @@ class TestTasks(unittest.TestCase):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
             hancho.init(verbosity = "quiet")
-            #hancho.init(verbosity = "trace")
             time.sleep(0.01)
             compile = hancho.Tool(
                 name="test_header_changed {in_src}",
