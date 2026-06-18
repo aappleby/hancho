@@ -786,7 +786,7 @@ class BuildDB:
     @classmethod
     def pre_build(cls):
         with Timer("load_stat_db", LogLevel.VERBOSE, Colors.ORANGE):
-            cls.old_stat_db = cls.load_json(cls.stat_db_path)
+            cls.old_stat_db = cls.load_json(cast(str, cls.stat_db_path))
 
         # Turn the dict-serialized FileStats back into FileStats.
         for k, v in list(cls.old_stat_db.items()):
@@ -945,8 +945,6 @@ class BuildDB:
 
 
             for file in task.in_files:
-                assert os.path.exists(file)
-
                 cls.update_stat_db(stat_db, file)
 
                 # Haven't tested this in an IDE, but I think it matches the spec.
@@ -959,14 +957,11 @@ class BuildDB:
             if "in_depfile" in task.config:
                 deplines = Task.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
                 for file in deplines:
-                    assert os.path.exists(file)
-                    if os.path.exists(file):
-                        cls.update_stat_db(stat_db, file)
+                    cls.update_stat_db(stat_db, file)
 
             for file in task.out_files:
-                if os.path.exists(file):
-                    str_command = cls.commands_to_string(task.config.command)
-                    cls.update_stat_db(stat_db, file, str_command)
+                str_command = cls.commands_to_string(task.config.command)
+                cls.update_stat_db(stat_db, file, str_command)
 
         # Dump the stats as JSON.
         with Timer("save_stat_db", LogLevel.VERBOSE, Colors.ORANGE):
@@ -1594,6 +1589,14 @@ class Task:
             else:
                 await self.run_command(command)
 
+        # ----------------------------------------
+        # See if the task wrote all its output files
+
+        for file in self.out_files:
+            if not os.path.exists(file):
+                raise Task.FAILED(f"Task ran, but output file still missing: {file}")
+
+        # ----------------------------------------
         # Done!
 
         dry_run = " (DRY RUN)" if self.config.dry_run else ""

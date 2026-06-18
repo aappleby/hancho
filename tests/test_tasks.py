@@ -418,7 +418,7 @@ class TestTasks(unittest.TestCase):
 
     def test_doesnt_create_output(self):
         # Having a file mentioned in out_obj should not magically create it
-        hancho.Task(
+        bad_task = hancho.Task(
             command="echo test_doesnt_create_output >> {out_txt}",
             in_src=[],
             out_txt="blarp.txt",
@@ -426,7 +426,8 @@ class TestTasks(unittest.TestCase):
         )
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertFalse(os.path.exists("build/blarp.txt"))
-        self.run_tasks(0)
+        self.run_tasks(1)
+        self.assertIsInstance(bad_task._error, hancho.Task.FAILED)
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertTrue(os.path.exists("build/blarp.txt"))
 
