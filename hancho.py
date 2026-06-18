@@ -453,7 +453,7 @@ class Utils:
 
     # These types don't get dumped because they're not really dumpable.
     opaque_types = types.MappingProxyType({
-        types.FunctionType        : "<function>",
+        #types.FunctionType        : "<function>",
         types.BuiltinFunctionType : "<builtin>",
         types.ModuleType          : "<module>",
         types.GeneratorType       : "<generator>",
@@ -487,11 +487,13 @@ class Utils:
 
         # Don't recurse into a few types that need special handling
         if isinstance(val, Task):
-            val = f"<Task {val.config.name}>"
+            val = f"<Task {val.config.name}>" if indent > 0 else val.__dict__
         elif isinstance(val, contextvars.Context):
             val = "<Context>"
         elif isinstance(val, types.ModuleType):
             val = f"<Module {val.__name__}>"
+        elif isinstance(val, types.FunctionType):
+            val = f"<Function {val.__name__}>"
 
         if isinstance(val, argparse.Namespace):
             val = val.__dict__
@@ -793,15 +795,25 @@ class BuildDB:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def update_stat_db(cls, out_db, file, command):
+    def update_stat_db(cls, out_db, file, command = None):
         BuildDB.mtime_calls += 1
-        hash = cls.hash_file(file)
+
+        if file in out_db:
+            stat = out_db.get(file, FileStat())
+        else:
+            stat = FileStat()
+            out_db[file] = stat
+
         _stat = os.stat(file)
-        stat = FileStat(hash, _stat.st_size, _stat.st_mtime_ns, command)
-        out_db[file] = stat
+        stat.hash        = cls.hash_file(file)
+        stat.st_size     = _stat.st_size
+        stat.st_mtime_ns = _stat.st_mtime_ns
+        if command is not None:
+            stat.command = command
 
     @classmethod
     def commands_to_string(cls, commands):
+        commands = Utils.flatten(commands)
         if callable(commands[0]):
             commands = [c.__name__ for c in commands]
         return "; ".join(commands)
@@ -809,7 +821,13 @@ class BuildDB:
     @classmethod
     def pre_task(cls, task):
 
-        str_command = cls.commands_to_string(task.config.command)
+        if task.config.dry_run:
+            return
+
+        # Tasks should have at most one depfile.
+        for key, files in list(task.config.items()):
+            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
         # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
         if "in_depfile" in task.config:
@@ -819,16 +837,17 @@ class BuildDB:
             for file in task.old_deplines:
                     assert os.path.exists(file)
                     if os.path.exists(file):
-                        cls.update_stat_db(cls.mid_stat_db, file, str_command)
+                        cls.update_stat_db(cls.mid_stat_db, file)
 
         for file in task.in_files:
             assert os.path.exists(file)
             if os.path.exists(file):
-                cls.update_stat_db(cls.mid_stat_db, file, str_command)
+                cls.update_stat_db(cls.mid_stat_db, file)
 
         for file in task.out_files:
             if os.path.exists(file):
-                cls.update_stat_db(cls.mid_stat_db, file, cls.commands_to_string(task.config.command))
+                str_command = cls.commands_to_string(task.config.command)
+                cls.update_stat_db(cls.mid_stat_db, file, str_command)
 
 
     # ----------------------------------------------------------------------------------------------
@@ -921,15 +940,14 @@ class BuildDB:
         comp_db = {}
 
         for task in Runner.all_tasks:
-            if not task._complete:
-                pass
+            if isinstance(task._error, (Task.CANCELLED, Task.BROKEN, Task.FAILED)) or not task._complete:
+                continue
 
-            str_command = cls.commands_to_string(task.config.command)
 
             for file in task.in_files:
                 assert os.path.exists(file)
 
-                cls.update_stat_db(stat_db, file, str_command)
+                cls.update_stat_db(stat_db, file)
 
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
@@ -943,11 +961,11 @@ class BuildDB:
                 for file in deplines:
                     assert os.path.exists(file)
                     if os.path.exists(file):
-                        cls.update_stat_db(stat_db, file, str_command)
+                        cls.update_stat_db(stat_db, file)
 
             for file in task.out_files:
-                assert os.path.exists(file)
                 if os.path.exists(file):
+                    str_command = cls.commands_to_string(task.config.command)
                     cls.update_stat_db(stat_db, file, str_command)
 
         # Dump the stats as JSON.
@@ -1627,6 +1645,10 @@ class Task:
 
     @classmethod
     def load_depfile(cls, filename, format, task_cwd):
+        if not isinstance(filename, str):
+            print("!!!!!!!!!!!")
+            print(filename)
+            print("!!!!!!!!!!!")
         assert isinstance(filename, str)
         if not os.path.isfile(filename):
             return []
@@ -2534,7 +2556,7 @@ class Runner:
                 except Task.FAILED:
                     cls.tasks_failed += 1
                 except Task.SKIPPED:
-                    finished_aio_task.hancho_task.complete = True # type: ignore
+                    finished_aio_task.hancho_task._complete = True # type: ignore
                     cls.tasks_skipped += 1
                 except BaseException as ex:
                     with LogLevel.DEBUG:
@@ -2543,7 +2565,7 @@ class Runner:
                     cls.tasks_failed += 1
                 else:
                     # If _none_ of the above exceptions fired, we mark the task as complete.
-                    finished_aio_task.hancho_task.complete = True # type: ignore
+                    finished_aio_task.hancho_task._complete = True # type: ignore
                 finally:
                     if finished_aio_task is not None:
                         cls.live_aio_tasks.discard(finished_aio_task)
