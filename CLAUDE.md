@@ -126,7 +126,7 @@ but is never built). This is controlled by `Runner.select_root_tasks`:
 A task's `command` can be a string, a list of strings, or a callable (or a list of those,
 but not mixed types in one list):
 - **String commands** run as shell subprocesses from `task_cwd` (usually the repo root).
-- **Callbacks** are Python functions `f(task)` (may be async). They run from `script_cwd`
+- **Callbacks** are Python functions `f(task)` (may be async). They run from `script_dir`
   (the script's own directory) so relative paths behave intuitively. A callback can read
   files and even create *new* Tasks at build time - this is how dynamic dependencies work
   (see `examples/dynamic_dependencies`, e.g. read a generated filelist, then spawn a task to
@@ -164,7 +164,7 @@ during init).
 ### Important config fields (defaults in `Options.default_config`)
 - `root_dir` / `root_file` - where the build starts (`build.hancho` by default).
 - `repo_dir` / `repo_file` / `this_repo` - the current repo (rebased by `hancho.repo`).
-- `script_cwd` / `script_file` / `this_module` - the currently executing script.
+- `script_dir` / `script_file` / `this_module` - the currently executing script.
 - `task_cwd` - where shell commands run (defaults to `repo_dir`).
 - `build_root` (`{repo_dir}/build`), `build_tag`, `build_dir`
   (`{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}`) - where outputs go. `--build_tag`

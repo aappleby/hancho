@@ -15,6 +15,8 @@ from typing import cast
 
 import hancho
 
+VERBOSITY = "quiet"
+
 ####################################################################################################
 
 
@@ -57,15 +59,14 @@ class TestTasks(unittest.TestCase):
 
         # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
         # failure to see the cancellation.
-        hancho.init(verbosity = "quiet", max_errors=999)
+        hancho.init(verbosity = VERBOSITY, max_errors=999)
         sys.stdout.flush()
 
     def tearDown(self):
         sys.stdout.flush()
 
     def run_tasks(self, expected):
-        for task in hancho.Runner.all_tasks:
-            task.enable_task()
+        hancho.Runner.enable_all_tasks()
         result = hancho.build()
         self.assertEqual(result, expected)
 
@@ -294,7 +295,7 @@ class TestTasks(unittest.TestCase):
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
         def run():
-            hancho.init(verbosity = "quiet")
+            hancho.init(verbosity = VERBOSITY)
             hancho.Task(
                 command="sleep 0.1 && touch {out_obj}",
                 in_src=[],
@@ -312,7 +313,7 @@ class TestTasks(unittest.TestCase):
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild
         def run():
-            hancho.init(verbosity = "quiet")
+            hancho.init(verbosity = VERBOSITY)
             time.sleep(0.01)
             compile = hancho.Dict(
                 name="test_input_changed {in_src}",
@@ -342,7 +343,7 @@ class TestTasks(unittest.TestCase):
         dummy = "data/dummy.txt"
 
         def run():
-            hancho.init(verbosity = "quiet")
+            hancho.init(verbosity = VERBOSITY)
             hancho.Task(
                 name="test_dep_changed {in_src}",
                 command="sleep 0.1 && touch {out_obj}",
@@ -434,7 +435,7 @@ class TestTasks(unittest.TestCase):
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
-            hancho.init(verbosity = "quiet")
+            hancho.init(verbosity = VERBOSITY)
             time.sleep(0.01)
             compile = hancho.Tool(
                 name="test_header_changed {in_src}",
@@ -483,7 +484,7 @@ class TestTasks(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
-        hancho.init(verbosity = "quiet", flarpy="flarp.txt")
+        hancho.init(verbosity = VERBOSITY, flarpy="flarp.txt")
         self.assertEqual("flarp.txt", hancho.config.flarpy)
 
         hancho.Task(
@@ -672,7 +673,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/slow_result.txt").exists())
 
     def test_dry_run(self):
-        hancho.init(verbosity = "quiet", max_errors=999, dry_run = True)
+        hancho.init(verbosity = VERBOSITY, max_errors=999, dry_run = True)
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
@@ -688,7 +689,7 @@ class TestTasks(unittest.TestCase):
 
     def test_dependency_skipped(self):
         def run():
-            hancho.init(verbosity = "quiet", core_max=1)
+            hancho.init(verbosity = VERBOSITY, core_max=1)
             task1 = hancho.Task(name = "task1", command = "cp {in_file} {out_file}", in_file = "data/dummy.txt", out_file = "blerp/sherp")
             task2 = hancho.Task(name = "task2", command = "cp {in_file} {out_file}", in_file = task1, out_file = "blerp/nerp", rebuild = True)
             self.run_tasks(0)

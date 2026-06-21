@@ -41,7 +41,7 @@ compile_cpp = hancho.Tool(
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
-    includes   = None,
+    includes   = [],
     #----------
     in_src     = None,
     in_depfile = "{ext(out_obj, '.d')}",
@@ -68,18 +68,18 @@ link_cpp_bin = hancho.Tool(
     out_bin  = None,
 )
 
-def cc_library(*, out_lib, in_deps = None, in_srcs = None, in_data = None, in_hdrs = None):
+def cc_library(*, out_lib, in_deps = None, in_srcs = None, in_data = None, in_hdrs = None, **kwargs):
     objs = [
-        hancho.Task(compile_cpp, in_src = src)
+        hancho.Task(compile_cpp, in_src = src, **kwargs)
         for src in hancho.flatten(in_srcs)
     ]
-    bin  = hancho.Task(link_cpp_lib, out_lib = out_lib, in_objs=objs)
+    bin  = hancho.Task(link_cpp_lib, out_lib = out_lib, in_objs=objs, **kwargs)
     return bin
 
-def cc_binary(*, out_bin, in_deps = None, in_srcs = None, in_data = None):
+def cc_binary(*, out_bin, in_deps = None, in_srcs = None, in_data = None, **kwargs):
     objs = [
-        hancho.Task(compile_cpp, in_src=src)
+        hancho.Task(compile_cpp, in_src=src, **kwargs)
         for src in hancho.flatten(in_srcs)
     ]
-    bin = hancho.Task(link_cpp_bin, out_bin = out_bin, in_objs=objs, in_deps=in_deps)
+    bin = hancho.Task(link_cpp_bin, out_bin = out_bin, in_objs=objs, in_deps=in_deps, **kwargs)
     return bin

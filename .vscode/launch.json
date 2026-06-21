@@ -28,7 +28,8 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : [],
+      "args"    : ["--verbose"],
+      //"args"    : ["--trace"],
       //"preLaunchTask": "Wipe build",
     },
 
@@ -40,6 +41,16 @@
       "cwd"     : "${workspaceFolder}/scratch",
       "args"    : ["-d", "--verbose", "-j1"],
       "preLaunchTask": "Wipe build",
+    },
+
+    {
+      "name"    : "Debug examples/subrepos/build.hancho",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/examples/subrepos",
+      "args"    : ["--trace"],
+      //"preLaunchTask": "Wipe build",
     },
 
     {
@@ -58,7 +69,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "hancho",
-      "args"    : ["-C", "examples/dynamic_dependencies", "-d", "-v", "-j1"],
+      "args"    : ["-C", "examples/bazel-cpp-tutorial/stage1", "-d", "-v", "-j1"],
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       //"program" : "${workspaceFolder}/hancho.py",
       //"args"    : ["--verbose", "--rebuild", "--debug"],
