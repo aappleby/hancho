@@ -9,5 +9,5 @@ hancho.load("examples/examples.hancho")
 
 #hancho.Task(
 #    desc = "Run unit tests",
-#    command = "python3 -m unittest"
+#    command = f"{sys.executable} -m unittest"
 #)

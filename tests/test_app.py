@@ -49,7 +49,7 @@ class TestApp(unittest.TestCase):
         pass
 
     def test_we_can_show_help(self):
-        cmd = ["python3", "../hancho.py", "--help"]
+        cmd = [sys.executable, "../hancho.py", "--help"]
         result = subprocess.check_output(cmd, text=True)
         self.assertTrue("Hancho is a simple, pleasant build system" in result)
 

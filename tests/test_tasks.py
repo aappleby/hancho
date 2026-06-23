@@ -172,7 +172,7 @@ class TestTasks(unittest.TestCase):
     #    def _test_subrepos1(self):
     #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
     #        result = subprocess.run(
-    #            "python3 ../../hancho.py -v -d top_test1.hancho".split(),
+    #            f"{sys.executable} ../../hancho.py -v -d top_test1.hancho".split(),
     #            shell=True,
     #            text=True,
     #            capture_output=True,
@@ -185,7 +185,7 @@ class TestTasks(unittest.TestCase):
     #    def _test_subrepos2(self):
     #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
     #        result = subprocess.run(
-    #            "python3 ../../hancho.py -v -d top_test2.hancho".split(),
+    #            f"{sys.executable} ../../hancho.py -v -d top_test2.hancho".split(),
     #            shell=True,
     #            text=True,
     #            capture_output=True,
@@ -198,7 +198,7 @@ class TestTasks(unittest.TestCase):
     #    def _test_subrepos3(self):
     #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
     #        result = subprocess.run(
-    #            "python3 ../../hancho.py -v -d top_test3.hancho".split(),
+    #            f"{sys.executable} ../../hancho.py -v -d top_test3.hancho".split(),
     #            shell=True,
     #            text=True,
     #            capture_output=True,

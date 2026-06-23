@@ -1,3 +1,5 @@
+import sys
+
 import hancho
 
 emcc = hancho.Tool(
@@ -36,7 +38,7 @@ ems_package = hancho.Tool(
     command=[
         "rm -f {out_data}",
         "rm -f {out_js}",
-        "python3 $EMSDK/upstream/emscripten/tools/file_packager.py {out_data} {flags} --js-output={out_js} --preload {preloads} --exclude {excludes} 2> /dev/null",
+        sys.executable + " $EMSDK/upstream/emscripten/tools/file_packager.py {out_data} {flags} --js-output={out_js} --preload {preloads} --exclude {excludes} 2> /dev/null",
     ],
     flags="--no-node",
     excludes="*.cpp *.sv *.MD *.hex *.pcf *.v *.txt *.hancho",

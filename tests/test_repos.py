@@ -37,7 +37,7 @@ class TestRepos(unittest.TestCase):
     def _test_sticky_hancho(self):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
         result = subprocess.run(
-            ["python3", "../hancho.py", "-v=quiet", "-f", "sticky_hancho1.hancho"],
+            [sys.executable, "../hancho.py", "-v=quiet", "-f", "sticky_hancho1.hancho"],
             cwd=os.path.dirname(__file__),
         )
         self.assertEqual(0, result.returncode)
