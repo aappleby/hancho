@@ -9,7 +9,6 @@ import random
 import shutil
 import sys
 import time
-import traceback
 import unittest
 from pathlib import Path
 from typing import cast
@@ -17,6 +16,14 @@ from typing import cast
 import hancho
 
 VERBOSITY = "quiet"
+
+# the hancho references hit this and it's bogus because of the weird way hancho intercepts
+# attributes
+# pyright: reportAttributeAccessIssue=false
+
+if os.name == "nt" and "VCINSTALLDIR" not in os.environ:
+    print("Tests must run from a Visual Studio developer prompt!", file=sys.stderr)
+    sys.exit(1)
 
 ####################################################################################################
 
@@ -56,7 +63,7 @@ class TestTasks(unittest.TestCase):
     def setUp(self):
         self.startTime = time.time()
         # Always wipe the build dir before a test, but make sure we're in the right dir.
-        assert os.getcwd().endswith("/tests")
+        assert os.getcwd().endswith(os.sep + "tests")
         shutil.rmtree("build", ignore_errors=True)
         # OK, now we should be good to start up Hancho.
 
@@ -79,7 +86,7 @@ class TestTasks(unittest.TestCase):
         # If any task fails, we should get -1 from run_tasks.
         bad_task = hancho.Task(command="echo test_run_tasks_zero && (exit 255)")
         self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, hancho.Task.FAILED)  # type:ignore
+        self.assertIsInstance(bad_task._error, hancho.Task.FAILED) #type:ignore
 
     def test_run_tasks_zero(self):
         # If all tasks are OK, we should get 0 from run_tasks.
@@ -238,10 +245,10 @@ class TestTasks(unittest.TestCase):
     def test_good_run_cmd(self):
         task = hancho.Task(
             desc="Testing run_cmd",
-            command=r"echo I am runnning the {run_cmd('uname')} operating system.",
+            command=r"echo I am runnning in {run_cmd('cd')}",
         )
         self.run_tasks(0)
-        self.assertTrue("I am runnning the Linux operating system.\n" in task._stdout)
+        self.assertEqual(repr(f"I am runnning in {os.getcwd()}"), repr(task._stdout.strip()))
 
     def test_bad_run_cmd(self):
         """
@@ -311,7 +318,10 @@ class TestTasks(unittest.TestCase):
         def run():
             hancho.init(verbosity = VERBOSITY)
             hancho.Task(
-                command="sleep 0.1 && touch {out_obj}",
+                command=[
+                    lambda task : time.sleep(0.1),
+                    lambda task : force_touch(task.config.out_obj),
+                ],
                 in_src=[],
                 out_obj="result.txt",
             )
@@ -360,7 +370,11 @@ class TestTasks(unittest.TestCase):
             hancho.init(verbosity = VERBOSITY)
             hancho.Task(
                 desc="test_dep_changed {in_src}",
-                command="sleep 0.1 && touch {out_obj}",
+                #command="sleep 0.1 && touch {out_obj}",
+                command = [
+                    lambda task : time.sleep(0.1),
+                    lambda task : force_touch(task.config.out_obj),
+                ],
                 in_temp=dummy,
                 in_src="src/test.cpp",
                 out_obj="result.txt",
@@ -422,7 +436,8 @@ class TestTasks(unittest.TestCase):
 
         hancho.Task(
             desc="In_src is absolute path",
-            command="cp {in_src} {out_obj}",
+            #command="cp {in_src} {out_obj}",
+            command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
             in_src=os.path.abspath("src/foo.c"),
             out_obj="{ext(in_src, '.o')}",
         )
@@ -459,7 +474,11 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertTrue(os.path.exists("build/blarp.txt"))
 
-    def test_header_changed(self):
+    @unittest.skipUnless(sys.platform.startswith('linux'), "Requires Linux")
+    def test_header_changed_linux(self):
+        if not sys.platform.startswith('linux'):
+            return
+
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
             hancho.init(verbosity = VERBOSITY)
@@ -481,6 +500,32 @@ class TestTasks(unittest.TestCase):
 
         self.assertEqual(mtime1, mtime2)
         self.assertLess(mtime2, mtime3)
+
+    @unittest.skipUnless(sys.platform.startswith('win32'), "Requires Windows _and_ a developer prompt")
+    def test_header_changed_windows(self):
+        # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
+        def run():
+            hancho.init(verbosity = VERBOSITY) #type:ignore
+            time.sleep(0.01)
+            compile = hancho.Tool(
+                desc="test_header_changed {in_src}",
+                command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
+                in_depfile="{ext(out_obj, '.d')}",
+                out_obj="{ext(in_src, '.o')}",
+                depformat="msvc",
+            )
+            hancho.Task(compile, in_src="src/test.cpp")
+            self.run_tasks(0)
+            return mtime_ns("build/src/test.o")
+
+        mtime1 = run()
+        mtime2 = run()
+        force_touch("src/test.hpp")
+        mtime3 = run()
+
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
+
 
     def test_multiple_depfiles(self):
         # Creating a task with multiple depfile inputs should fail.
@@ -645,6 +690,8 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/dummy.txt").exists())
 
+    # This is really slow on Windows for some reason - takes 10 secondss.
+    @unittest.skipUnless(os.name == "posix", "requires Linux")
     def test_tons_of_tasks(self):
         # We should be able to queue up 1000+ tasks at once.
         for i in range(1000):
@@ -659,6 +706,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(1000, len(glob.glob("build/dummy*.txt")))
 
+    # This one takes about a second on Windows
     def test_job_count(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
@@ -717,8 +765,21 @@ class TestTasks(unittest.TestCase):
     def test_dependency_skipped(self):
         def run():
             hancho.init(verbosity = VERBOSITY, core_max=1)
-            task1 = hancho.Task(name = "task1", command = "cp {in_file} {out_file}", in_file = "data/dummy.txt", out_file = "blerp/sherp")
-            task2 = hancho.Task(name = "task2", command = "cp {in_file} {out_file}", in_file = task1, out_file = "blerp/nerp", rebuild = True)
+            task1 = hancho.Task(
+                name="task1",
+                #command="cp {in_file} {out_file}",
+                command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
+                in_file="data/dummy.txt",
+                out_file="blerp/sherp",
+            )
+            task2 = hancho.Task(
+                name="task2",
+                #command="cp {in_file} {out_file}",
+                command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
+                in_file=task1,
+                out_file="blerp/nerp",
+                rebuild=True,
+            )
             self.run_tasks(0)
             return (task1, task2)
 

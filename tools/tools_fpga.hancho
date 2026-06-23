@@ -18,20 +18,6 @@ iverilog = hancho.Tool(
     cc_includes = "{weave('-I', includes)}"
 )
 
-verilated_o = hancho.Task(
-    tools_base.compile_cpp,
-    in_src  = "/usr/local/share/verilator/include/verilated.cpp",
-    out_obj = "verilated.o",
-    build_dir = "{build_root}/verilator",
-)
-
-verilated_threads_o = hancho.Task(
-    tools_base.compile_cpp,
-    in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
-    out_obj = "verilated_threads.o",
-    build_dir = "{build_root}/verilator",
-)
-
 def gen_vlparams(c):
     result = []
     for key, val in c.items():
@@ -50,7 +36,28 @@ verilator_cmd = hancho.Tool(
     params = {},
 )
 
+verilated_o = None
+verilated_threads_o = None
+
 def verilator(hancho, *, in_top, **kwargs):
+    global verilated_o, verilated_threads_o
+
+    if not verilated_o:
+        verilated_o = hancho.Task(
+            tools_base.compile_cpp,
+            in_src  = "/usr/local/share/verilator/include/verilated.cpp",
+            out_obj = "verilated.o",
+            build_dir = "{build_root}/verilator",
+        )
+
+    if not verilated_threads_o:
+        verilated_threads_o = hancho.Task(
+            tools_base.compile_cpp,
+            in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
+            out_obj = "verilated_threads.o",
+            build_dir = "{build_root}/verilator",
+        )
+
     verilated = hancho.Task(
         verilator_cmd,
         kwargs,

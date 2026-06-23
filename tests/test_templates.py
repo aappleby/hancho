@@ -114,7 +114,7 @@ class TestTemplates(unittest.TestCase):
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
         result = test(Expander.MAX_EVALS)
-        self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) # type: ignore
+        self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) #type:ignore
 
         with self.assertRaises(RecursionError):
             result = test(Expander.MAX_EVALS + 1)

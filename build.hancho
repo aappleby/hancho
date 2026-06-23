@@ -1,13 +1,10 @@
 import hancho
 
+# pyright: reportAttributeAccessIssue=false
+
 tools_base  = hancho.load("tools/tools_base.hancho")
 tools_fpga  = hancho.load("tools/tools_fpga.hancho")
 tools_riscv = hancho.load("tools/tools_riscv.hancho")
 tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
 hancho.load("examples/examples.hancho")
-
-#hancho.Task(
-#    desc = "Run unit tests",
-#    command = f"{sys.executable} -m unittest"
-#)

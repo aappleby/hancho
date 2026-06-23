@@ -647,7 +647,7 @@ class Utils:
             # Objects that don't have a custom repr (and a few built-in types) just get printed as
             # '<object>'
             if type(val) in Utils.opaque_types:
-                return (tab * indent) + prefix + Utils.opaque_types[type(val)] # type: ignore
+                return (tab * indent) + prefix + Utils.opaque_types[type(val)] #type:ignore
             elif type(val).__repr__ is object.__repr__:
                 return (tab * indent) + prefix + "<object>"
             else:
@@ -1167,7 +1167,7 @@ class Path:
         elif prefix != rhs:
             result = lhs
         else:
-            result = lhs.removeprefix(prefix + "/")
+            result = lhs.removeprefix(prefix + os.sep)
 
         return result
 
@@ -1991,7 +1991,7 @@ class Task:
             # Windows, which is out of scope until Hancho is shippable.
             if proc is not None:
                 with suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
+                    os.killpg(proc.pid, signal.SIGKILL) #type:ignore
                 await proc.wait()
             # Re-raise so that dependent tasks and the top-level except can see the error.
             raise ex
@@ -2688,7 +2688,7 @@ class Runner:
                 except Task.FAILED:
                     cls.tasks_failed += 1
                 except Task.SKIPPED:
-                    finished_aio_task.hancho_task._complete = True # type: ignore
+                    finished_aio_task.hancho_task._complete = True #type:ignore
                     cls.tasks_skipped += 1
                 except BaseException as ex:
                     with LogLevel.DEBUG:
@@ -2697,7 +2697,7 @@ class Runner:
                     cls.tasks_failed += 1
                 else:
                     # If _none_ of the above exceptions fired, we mark the task as complete.
-                    finished_aio_task.hancho_task._complete = True # type: ignore
+                    finished_aio_task.hancho_task._complete = True #type:ignore
                 finally:
                     if finished_aio_task is not None:
                         cls.live_aio_tasks.discard(finished_aio_task)

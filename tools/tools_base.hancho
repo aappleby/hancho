@@ -32,52 +32,76 @@ check_cpp = hancho.Tool(
 
 # ----------------------------------------
 
-compile_cpp = hancho.Tool(
-    desc="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
-    command="{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} -o {out_obj}",
-    toolchain=default_toolchain,
-    flags=[
-        "-g",
-        "-O0",
-        "-MMD",
-        "-march={toolchain.arch}",
-        "-std={cpp_std}",
-        "-fdiagnostics-color=always",
-    ],
-    cpp_std="gnu++2a",
-    warnings = None,
-    defines = None,
-    includes = None,
-    out_obj = "{ext(in_src, '.o')}",
+if os.name == "posix":
+    compile_cpp = hancho.Tool(
+        desc="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
+        command="{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} -o {out_obj}",
+        toolchain=default_toolchain,
+        flags=[
+            "-g",
+            "-O0",
+            "-MMD",
+            "-march={toolchain.arch}",
+            "-std={cpp_std}",
+            "-fdiagnostics-color=always",
+        ],
+        cpp_std="gnu++2a",
+        warnings = None,
+        defines = None,
+        includes = None,
+        out_obj = "{ext(in_src, '.o')}",
 
-    # Note - this swaps out_obj and not in_src in case the user redirects out_obj
-    in_depfile = "{ext(out_obj, '.d')}",
+        # Note - this swaps out_obj and not in_src in case the user redirects out_obj
+        in_depfile = "{ext(out_obj, '.d')}",
 
-    cc_warnings="{weave('-W', warnings)}",
-    cc_defines ="{weave('-D', defines)}",
-    cc_includes="{weave('-I', includes)}",
-)
+        cc_warnings="{weave('-W', warnings)}",
+        cc_defines ="{weave('-D', defines)}",
+        cc_includes="{weave('-I', includes)}",
+    )
 
-if os.name == "nt":
-    compile_cpp.command = "cl.exe /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}"
-    compile_cpp.depformat = "msvc"
+    link_cpp_lib = hancho.Tool(
+        desc    = "Bundling C++ lib {base(out_lib)}",
+        command = "ar rcs {out_lib} {in_objs}",
+        in_objs = None,
+        out_lib = None,
+    )
 
+    link_cpp_bin = hancho.Tool(
+        desc      = "Linking C++ bin {base(out_bin)}",
+        toolchain = default_toolchain,
+        command   = "{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}",
+        flags     = None,
+        in_objs   = None,
+        in_libs   = None,
+        sys_libs  = None,
+        out_bin   = None,
+    )
+elif os.name == "nt":
+    compile_cpp = hancho.Tool(
+        desc="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
+        command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
+        depformat = "msvc",
+        in_src  = None,
+        in_depfile = "{ext(out_obj, '.d')}",
+        out_obj = "{ext(in_src, '.o')}",
+    )
 
-link_cpp_lib = hancho.Tool(
-    desc    = "Bundling C++ lib {base(out_lib)}",
-    command = "ar rcs {out_lib} {in_objs}",
-)
+    link_cpp_lib = hancho.Tool(
+        desc      = "Link {base(in_objs)} -> {base(out_bin)}",
+        command   = "link.exe {libs} {in_objs} {out_lib}",
+        libs      = None,
+        in_objs   = None,
+        out_lib   = None,
+    )
 
+    link_cpp_bin = hancho.Tool(
+        desc      = "Link {base(in_objs)} -> {base(out_bin)}",
+        command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin}",
+        libs      = "user32.lib"
+    )
+else:
+    raise AssertionError(f"Don't know how to compile or link stuff for os.name = {os.name}")
 
-link_cpp_bin = hancho.Tool(
-    desc      = "Linking C++ bin {base(out_bin)}",
-    toolchain = default_toolchain,
-    command   = "{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}",
-    in_objs   = None,
-    in_libs   = None,
-    flags     = None,
-    sys_libs  = None,
-)
 
 
 def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):

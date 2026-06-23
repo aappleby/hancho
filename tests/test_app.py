@@ -160,7 +160,7 @@ class TestApp(unittest.TestCase):
         self.assertNotEqual(val1, val2, val3)
 
         # Functions
-        def foo(): return 1 # type: ignore
+        def foo(): return 1 #type:ignore
         val1 = hancho.Utils.hash(foo, 0)
         def foo(): return 2
         val2 = hancho.Utils.hash(foo, 0)
