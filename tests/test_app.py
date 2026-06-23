@@ -207,6 +207,7 @@ class TestApp(unittest.TestCase):
             c: 0x? = (: 0x? = 3, : 0x? = 3, : 0x? = 3)
         }
         """).strip()
+        self.assertEqual(expected, d)
 
         c = contextvars.Context()
         d = hancho.Utils.dump_to_str("name", c)

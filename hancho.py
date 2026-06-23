@@ -561,7 +561,9 @@ class Utils:
             h = cls.hash(key.encode(), h)
         elif callable(key):
             h = cls.hash(key.__name__, h)
+            h = cls.hash(key.__defaults__, h)
             h = cls.hash(key.__code__.co_code, h)
+            h = cls.hash(key.__code__.co_consts, h)
         elif Utils.is_mapping(key):
             for k, v, in sorted(key.items()):
                 h = cls.hash(k, h)
@@ -569,6 +571,8 @@ class Utils:
         elif Utils.is_collection(key):
             for k in key:
                 h = cls.hash(k, h)
+        elif key is None:
+            h = join(*mix(*split(h)))
         else:
             raise TypeError(f"Don't know how to hash a {type(key)} = {key}")
         return h
