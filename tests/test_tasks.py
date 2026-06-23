@@ -376,6 +376,19 @@ class TestTasks(unittest.TestCase):
 
     # ----------------------------------------------------------------------------------------------
 
+    # FIXME need a test that checks that a task with no outputs always rebuilds
+
+#    def test_no_output_always_rebuilds(self):
+#        task = hancho.Task()
+
+    # FIXME test_command_changed
+    def test_command_changed(self):
+        pass
+
+    # FIXME how the hell do we test size changed / hash changed while _not_ changing the mtime?
+
+    # ----------------------------------------------------------------------------------------------
+
     def test_missing_input(self):
         # We should fail if an input is missing
         task = hancho.Task(

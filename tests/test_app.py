@@ -1,8 +1,11 @@
 #!/usr/bin/python3
 """Template file for creating new test cases"""
 
+import argparse
+import contextvars
 import doctest
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -15,6 +18,8 @@ import hancho
 # the hancho references hit this and it's bogus because of the weird way hancho intercepts
 # attributes
 # pyright: reportAttributeAccessIssue=false
+
+# FIXME we need some tests that run hancho as if it were launched from the command line
 
 ####################################################################################################
 
@@ -138,4 +143,100 @@ class TestApp(unittest.TestCase):
         self.assertEqual(text, f.getvalue())
 
     def test_hash(self):
-        pass
+        # The hash values themselves are meaningless, but we do want to check that they change when
+        # the seed changes.
+
+        # Byte strings
+        val1 = hancho.Utils.hash(b'1234', 0)
+        val2 = hancho.Utils.hash(b'1234', 1)
+        val3 = hancho.Utils.hash(b'2234', 0)
+        self.assertNotEqual(val1, val2, val3)
+
+        # String strings. Since there's no utf8 encoding going on, these should hash to the same
+        # values as byte strings.
+        val1 = hancho.Utils.hash('1234', 0)
+        val2 = hancho.Utils.hash('1234', 1)
+        val3 = hancho.Utils.hash('2234', 0)
+        self.assertNotEqual(val1, val2, val3)
+
+        # Functions
+        def foo(): return 1 # type: ignore
+        val1 = hancho.Utils.hash(foo, 0)
+        def foo(): return 2
+        val2 = hancho.Utils.hash(foo, 0)
+        def goo(): return 2
+        val3 = hancho.Utils.hash(goo, 0)
+        self.assertNotEqual(val1, val2, val3)
+
+        # Lists
+        val1 = hancho.Utils.hash([1, 2, 3], 0)
+        val2 = hancho.Utils.hash([1, 2, 3], 1)
+        val3 = hancho.Utils.hash([1, 2, 3, 0], 0)
+        self.assertNotEqual(val1, val2, val3)
+
+        # Ints
+        val1 = hancho.Utils.hash(123456789, 0)
+        val2 = hancho.Utils.hash(123456789, 1)
+        val3 = hancho.Utils.hash(123456788, 0)
+        self.assertNotEqual(val1, val2, val3)
+
+        # Dicts
+        val1 = hancho.Utils.hash({"a":1, "b":2, "c":3}, 0)
+        val2 = hancho.Utils.hash({"a":1, "b":2, "c":3}, 1)
+        val3 = hancho.Utils.hash({"a":1, "b":2, "c":4}, 0)
+        self.assertNotEqual(val1, val2, val3)
+
+        # Should assert on anything else
+        with self.assertRaises(TypeError):
+            val1 = hancho.Utils.hash(subprocess, 0)
+
+    def test_dumper(self):
+        thing1 = {"a": 1, "b":[2, "two"], "c":(3,3,3)}
+        d = hancho.Utils.dump_to_str("name", thing1)
+        self.assertEqual("name: dict = {a = 1, b = [2, 'two'], c = (3, 3, 3)}", d)
+
+        # Print IDs, but erase pointers before comparing
+        d = hancho.Utils.dump_to_str("name", thing1, print_id = True)
+        match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]+")
+        d = match_pointer.sub("0x?", d)
+
+        expected = textwrap.dedent("""
+        name: dict: 0x? = {
+            a: 0x? = 1,
+            b: 0x? = [: 0x? = 2, : 0x? = 'two'],
+            c: 0x? = (: 0x? = 3, : 0x? = 3, : 0x? = 3)
+        }
+        """).strip()
+
+        c = contextvars.Context()
+        d = hancho.Utils.dump_to_str("name", c)
+        self.assertEqual("name: Context = '<Context>'", d)
+
+        d = hancho.Utils.dump_to_str("name", contextvars)
+        self.assertEqual("name = '<Module contextvars>'", d)
+
+        d = hancho.Utils.dump_to_str("name", print)
+        self.assertEqual("name = <builtin>", d)
+
+        def blep():
+            pass
+
+        d = hancho.Utils.dump_to_str("name", blep)
+        self.assertEqual("name: function = '<Function blep>'", d)
+
+        n = argparse.Namespace(foo = 1, bar = 2)
+        d = hancho.Utils.dump_to_str("name", n)
+        self.assertEqual("name: Namespace = {foo = 1, bar = 2}", d)
+
+        class Blarp:
+            pass
+
+        d = hancho.Utils.dump_to_str("name", Blarp())
+        self.assertEqual("name: Blarp = <object>", d)
+
+    def test_weave(self):
+        a = ["a", "b", "c"]
+        b = ["1", "2", "3"]
+        c = hancho.Utils.weave(a, b)
+        self.assertEqual(['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'c1', 'c2', 'c3'], c)
+#

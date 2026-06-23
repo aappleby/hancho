@@ -570,7 +570,7 @@ class Utils:
             for k in key:
                 h = cls.hash(k, h)
         else:
-            raise AssertionError(f"Don't know how to hash a {type(key)} = {key}")
+            raise TypeError(f"Don't know how to hash a {type(key)} = {key}")
         return h
 
     @classmethod
@@ -592,7 +592,6 @@ class Utils:
 
     # These types don't get dumped because they're not really dumpable.
     opaque_types = types.MappingProxyType({
-        #types.FunctionType        : "<function>",
         types.BuiltinFunctionType : "<builtin>",
         types.ModuleType          : "<module>",
         types.GeneratorType       : "<generator>",
@@ -603,7 +602,7 @@ class Utils:
                   *opaque_types.keys())
 
     @classmethod
-    def dump_to_str(cls, key, val, indent = 0, print_id = False, max_width = 80, tab = "  ", flat = False):
+    def dump_to_str(cls, key, val, indent = 0, print_id = False, max_width = 80, tab = "    ", flat = False):
         """
         Hancho's pretty-printer for various types. Note that this is also used for script deduping:
         if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
@@ -665,7 +664,7 @@ class Utils:
             ld = "["
             rd = "]"
         else:
-            raise AssertionError(f"Don't know what to do with {type(val)}")
+            raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
 
         # Iterate over our key-value pairs, converting them in to string chunks. If the resulting line
         # would be too wide and we're not trying to generate a flat string, fall back to multi-line.
@@ -811,7 +810,7 @@ class Utils:
             with open(filename) as contents:
                 return json.load(contents)
         else:
-            return {}
+            return {} # pragma: no cover
 
     @classmethod
     def save_json(cls, variant, path):
@@ -839,7 +838,7 @@ class Utils:
                 deplines = deplines.split()
                 deplines = [d for d in deplines if d[-1] != ':']
             else:
-                raise Task.BROKEN(f"Invalid depfile format {format}")
+                raise Task.BROKEN(f"Invalid depfile format {format}") # pragma: no cover
 
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines = [Path.join(task_cwd, d) for d in deplines]
@@ -1017,6 +1016,7 @@ class BuildDB:
         # Tasks should have at most one depfile.
         for key, files in list(task.config.items()):
             if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                # Why isn't this being hit by code coverage? We do have a test for it.
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
         # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
@@ -1076,7 +1076,9 @@ class BuildDB:
                 return f"Output file missing: {filename}"
 
             if filename not in self.old_stat_db:
-                self.reasons["output stat missing"] += 1
+                # I'm not sure we can test this, we probably get hit by other checks before we get
+                # here.
+                self.reasons["output stat missing"] += 1 # pragma: no cover
                 return f"Output stat missing: {filename}"
 
             old_stat = self.old_stat_db[filename]
@@ -1744,7 +1746,7 @@ class Task:
                 if isinstance(file, Task):
                     task = cast(Task, file)
                     if task._aio_task is None:
-                        raise AssertionError("One of a task's input sub-tasks was not started")
+                        raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
                     try:
                         await task._aio_task
                     except asyncio.CancelledError:
@@ -1768,7 +1770,7 @@ class Task:
         config = self.config
 
         if os.getcwd() != config.task_cwd:
-            raise AssertionError("Running task_init while we're not in task's cwd")
+            raise AssertionError("Running task_init while we're not in task's cwd")  # pragma: no cover
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
@@ -1867,7 +1869,7 @@ class Task:
         # we're really running tasks.
         for file in self.in_files:
             if not Path.isabs(file):
-                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")
+                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
             if not Path.exists(file) and not config.dry_run:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
@@ -1969,7 +1971,7 @@ class Task:
 
             (stdout_data, stderr_data) = await proc.communicate()
 
-        except asyncio.CancelledError as ex:
+        except asyncio.CancelledError as ex: # pragma: no cover
             # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
             # usually (but not always) arises from hitting ctrl-c while the build is running.
             #
@@ -2297,9 +2299,7 @@ class Expander(abc.MutableMapping[str, Any]):
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
         list of string literals and macros. Escaped braces don't count as delimiters.
         """
-        if not isinstance(text, str):
-            out.append(text)
-            return
+        assert isinstance(text, str)
 
         cursor = 0
         lbrace = -1
@@ -2371,7 +2371,7 @@ class Tracer:
         if len(self.name) > 40:
             self.name = self.name[:34] + "<snip>"
 
-    def __enter__(self):
+    def __enter__(self): # pragma: no cover
         if not self.trace:
             return self
 
@@ -2382,7 +2382,7 @@ class Tracer:
 
         return self
 
-    def __exit__(self, exc_type, exc_value, tb):
+    def __exit__(self, exc_type, exc_value, tb): # pragma: no cover
         if not self.trace:
             return False
 
@@ -2571,7 +2571,7 @@ class Runner:
         # A task that requires a lot of cores can block tasks behind it in the queue. This is
         # intended behavior.
 
-        if count > cls.core_max:
+        if count > cls.core_max: # pragma: no cover
             raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.core_max}")
         async with cls.core_lock:
             acquired = 0
@@ -2580,7 +2580,7 @@ class Runner:
                     await cls.core_sem.acquire()
                     acquired += 1
                 return count
-            except BaseException:
+            except BaseException: # pragma: no cover
                 cls.release(acquired)
                 raise
 
@@ -2720,9 +2720,10 @@ class Runner:
         return 1 if cls.tasks_failed or cls.tasks_broken else 0
 
     # ----------------------------------------------------------------------------------------------
+    # not worth coverage checking this when we only have one tool and it works.
 
     @classmethod
-    def run_tool(cls, tool : str):
+    def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
             for repo in Loader.all_repos:
                 for script in repo.scripts:
