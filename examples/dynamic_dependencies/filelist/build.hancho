@@ -13,11 +13,7 @@ src_files = glob("src/*")
 
 random_touch = hancho.Task(
     desc = "Touch 3 random files in src/ - {base(in_src)}",
-    command = [
-        "touch {in_src[0]}",
-        "touch {in_src[1]}",
-        "touch {in_src[2]}",
-    ],
+    command = lambda task : (os.utime(src, None) for src in task.config.in_src),
     in_src = random.sample(src_files, 3),
 )
 
