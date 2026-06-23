@@ -234,7 +234,7 @@ class TestTasks(unittest.TestCase):
 
     # ----------------------------------------------------------------------------------------------
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux")
+    @unittest.skipUnless(os.name == "posix", "requires Linux")
     def test_good_run_cmd(self):
         task = hancho.Task(
             desc="Testing run_cmd",
@@ -331,7 +331,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.01)
             compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
-                command="gcc -MMD -c {in_src} -o {out_obj}",
+                command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
                 in_src=None,
                 in_depfile="{ext(out_obj, '.d')}",
                 out_obj="{ext(in_src, '.o')}",

@@ -80,7 +80,7 @@ def get_defaults():
         "build_tag"    : "",
         "build_dir"    : "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
 
-        "depformat"    : "gcc" if sys.platform != "win32" else "msvc",
+        "depformat"    : "gcc" if os.name == "posix" else "msvc",
         "comp_db_path" : "{build_root}/compile_commands.json",
         "stat_db_path" : "{build_root}/hancho.json",
     }
