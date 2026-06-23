@@ -625,7 +625,7 @@ class Utils:
                 prefix += ": "
             prefix += type(val).__name__
         if print_id:
-            prefix += ": " + hex(id(val))
+            prefix += ": " + Utils.hex_id(val)
         if prefix:
             prefix += " = "
 
@@ -789,6 +789,10 @@ class Utils:
                 Utils.visit(v, visitor)
         else:
             visitor(variant)
+
+    @staticmethod
+    def hex_id(obj):
+        return f"0x{id(obj):016x}"
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2123,7 +2127,7 @@ class Expander(abc.MutableMapping[str, Any]):
     # object interface
 
     def __repr__(self):
-        result = f"{self.__class__.__name__} @ {hex(id(self))}"
+        result = f"{self.__class__.__name__} @ {Utils.hex_id(self)}"
         return result
 
     def __getattr__(self, key):
@@ -2422,7 +2426,7 @@ class Tracer:
 
     @staticmethod
     def object_to_tag(obj):
-        tag = (str(type(obj).__name__)[:2] + "_" + hex(id(obj))[-4:]).upper()
+        tag = (str(type(obj).__name__)[:2] + "_" + Utils.hex_id(obj)[-4:]).upper()
         return tag
 
 # endregion

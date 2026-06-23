@@ -196,15 +196,22 @@ class TestApp(unittest.TestCase):
         self.assertEqual("name: dict = {a = 1, b = [2, 'two'], c = (3, 3, 3)}", d)
 
         # Print IDs, but erase pointers before comparing
-        d = hancho.Utils.dump_to_str("name", thing1, print_id = True)
+        d = hancho.Utils.dump_to_str("name", thing1, print_id = True, max_width = 80)
         match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]+")
         d = match_pointer.sub("0x?", d)
 
         expected = textwrap.dedent("""
         name: dict: 0x? = {
             a: 0x? = 1,
-            b: 0x? = [: 0x? = 2, : 0x? = 'two'],
-            c: 0x? = (: 0x? = 3, : 0x? = 3, : 0x? = 3)
+            b: 0x? = [
+                : 0x? = 2,
+                : 0x? = 'two'
+            ],
+            c: 0x? = (
+                : 0x? = 3,
+                : 0x? = 3,
+                : 0x? = 3
+            )
         }
         """).strip()
         self.assertEqual(expected, d)
