@@ -2,6 +2,12 @@
 # FIXME - investigate shadow dict of expanded templates as a cache
 # FIXME We need an option to save the log to the build directory
 # FIXME if we're gonna put stuff in the build directory, we should just do content hashing.
+# FIXME Implement module.__dir__() so "import * from hancho" works
+# FIXME We probably don't need to completely rebuild the stat db in post_build
+# FIXME I feel like we need an explicit "split blob of flags/config into per-task and per-app options" function...
+# FIXME Do we want to keep _loaded_files now that we have better change detection?
+# FIXME Do we want to re-enable rel'ing all in_/out_ paths?
+# FIEM
 
 
 

@@ -62,8 +62,8 @@ type Tree[T] = T | list[Tree[T]]
 # fmt: off
 def get_defaults():
     hancho_defaults = {
-        "name"         : "_",
-        "desc"         : "_",
+        "name"         : None,
+        "desc"         : None,
         "command"      : None,
         "enabled"      : False,
         "core_count"   : 1,
@@ -106,7 +106,6 @@ def get_defaults():
 
 cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("_script")
 
-# FIXME we should fill this out so that clients don't see _everyting_ in this module.
 #def __dir__():
 #    return list(cv_script.get().globals.keys()) + list(Utils.aliases.keys()) + ["Dict", "Task", "Tool", "Util"]
 
@@ -223,8 +222,6 @@ class Colors(int, Enum):
     LIME    = 0x99CC66
     YELLOW  = 0xCCCC66
     ORANGE  = 0xCC9966
-    RESET   = -1  # The "go back to default" color :D
-    DEFAULT = -1  # The "go back to default" color :D
 
     def __enter__(self):
         self.old_color = Log.current_color
@@ -245,27 +242,23 @@ class Log:
     time_origin   = time.perf_counter()
     indent_stack  = [] # noqa: RUF012
     current_color = -1
-    text_buffer   = "" # All text, regardless of verbosity. Used for debugging.
-    text_line     = ""
     line_buffer   = ""
     match_escapes = re.compile(r"(\x1B.*?m)")
-    reset_color   = "\x1B[0m"
     verbosity_in  = LogLevel.NORMAL
     verbosity_out = LogLevel.NORMAL # verbosity level we want to appear in the log
 
     @classmethod
     def reset(cls, root_config):
         cls.con_w = shutil.get_terminal_size().columns
-        cls.wrap  = root_config.pop("wrap", False)
+        cls.log_wrap      = root_config.pop("log_wrap", False)
+        cls.log_color     = root_config.pop("log_color", True)
+        cls.log_timestamp = root_config.pop("log_timestamp", True)
 
         cls.time_origin   = time.perf_counter()
         cls.indent_stack  = []
         cls.current_color = -1
-        cls.text_buffer   = ""
-        cls.text_line     = ""
         cls.line_buffer   = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
-        cls.reset_color   = "\x1B[0m"
         cls.verbosity_in  = LogLevel.NORMAL
 
         # Handle all the verbosity-related flags
@@ -297,10 +290,6 @@ class Log:
 
         cls.verbosity_out = verbosity
 
-    @classmethod
-    def tracing(cls):
-        return cls.verbosity_out == LogLevel.TRACE
-
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
@@ -318,51 +307,41 @@ class Log:
     def indent(color):
         # Not dead, used in test suites
         try:
-            Log.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color)
+            Log.indent_stack.append(Log.hex_to_ansi(color) + "│ ")
+            # + Log.reset_color(color)
             yield
         finally:
             Log.indent_stack.pop()
 
     # ----------------------------------------------------------------------------------------------
 
-    @classmethod
-    def log_raw(cls, text):
-        if not isinstance(text, str) or len(text) == 0:
-            return
-
-        lines = text.splitlines(keepends=True)
-
-        for line in lines:
-            if cls.text_line == "":
-                cls.text_line += cls.get_timestamp() + " " + cls.get_indentation()
-
-            cls.text_line += line
-            if cls.text_line[-1] == '\n':
-                cls.text_buffer += cls.text_line
-                cls.text_line = ""
-
-    # ----------------------------------------------------------------------------------------------
-
     @staticmethod
     def hex_to_ansi(hex):
-        r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
-        return f"\x1B[38;2;{r};{g};{b}m"
+        if hex and Log.log_color:
+            r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
+            return f"\x1B[38;2;{r};{g};{b}m"
+        else:
+            return ""
+
+    @classmethod
+    def reset_color(cls):
+        if Log.current_color != 0 and cls.log_color:
+            return "\x1B[0m"
+        else:
+            return ""
 
     @classmethod
     def log(cls, text):
         if not isinstance(text, str) or len(text) == 0:
             return
 
-        #cls.log_raw(text)
-
         if Log.verbosity_in > Log.verbosity_out:
             return
 
-        if cls.current_color >= 0:
+        if cls.current_color >= 0 and cls.log_color:
             hex = cls.current_color
-            r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
-            color_prefix = f"\x1B[38;2;{r};{g};{b}m"
-            color_suffix = cls.reset_color
+            color_prefix = Log.hex_to_ansi(hex)
+            color_suffix = Log.reset_color()
         else:
             color_prefix = ""
             color_suffix = ""
@@ -371,7 +350,7 @@ class Log:
 
         for line in lines:
             if cls.line_buffer == "":
-                cls.line_buffer += cls.get_timestamp() + " " + cls.get_indentation()
+                cls.line_buffer += cls.get_timestamp() + cls.get_indentation()
 
             # Wrap the line in the color prefix/suffix, but don't lose newlines.
             if line[-1] == '\n':
@@ -392,7 +371,7 @@ class Log:
             if cls.line_buffer[-1] != '\n':
                 cls.line_buffer += '\n'
 
-            if not Log.wrap:
+            if not Log.log_wrap:
                 cls.line_buffer = Log.clip_printable(cls.line_buffer, Log.con_w)
 
             assert Log.verbosity_in is not None
@@ -411,13 +390,13 @@ class Log:
             Log.log(f"message   = '{ex}'\n")
             Log.log(f"location  = {frame.filename} {frame.name} @ {frame.lineno}\n")
             Log.log(f"line      = '{frame.line}'\n")
-        else:
+        else: # pragma: no cover
             Log.log(f"Could not extract traceback from {ex}!")
 
     @classmethod
     def get_timestamp(cls):
         """Returns the timestamp string that is placed at the left of log entries."""
-        return f"[{time.perf_counter() - Log.time_origin:8.3f}]"
+        return f"[{time.perf_counter() - Log.time_origin:8.3f}] " if cls.log_timestamp else ""
 
     @classmethod
     def get_indentation(cls):
@@ -432,7 +411,7 @@ class Log:
         If the printable portion exceeds 'width', it will be clipped and capped with '...'.
         """
         if not text or not isinstance(text, str) or len(text) < 3:
-            return text
+            return text #pragma: no cover
 
         # We don't want to clip trailing newlines - if one is present, just remember it was there
         # and we'll stick it back on at the end.
@@ -486,7 +465,7 @@ class Log:
         if message:
             with Log.color(color):
                 Log.log(message)
-        Log.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color)
+        Log.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color())
 
     @classmethod
     def log_dedent(cls, color, message):
@@ -494,9 +473,9 @@ class Log:
         if message:
             with Log.color(color):
                 if message[-1] == '\n':
-                    Log.log("└ " + message[:-1] + cls.reset_color + '\n')
+                    Log.log("└ " + message[:-1] + cls.reset_color() + '\n')
                 else:
-                    Log.log("└ " + message + cls.reset_color)
+                    Log.log("└ " + message + cls.reset_color())
 
 
 #endregion
@@ -542,9 +521,6 @@ class Utils:
 
     @classmethod
     def hash(cls, key, h):
-        if not isinstance(h, int):
-            assert isinstance(h, int)
-
         # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
         # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
         # as a real 64-bit hash, but it'll do.
@@ -640,13 +616,15 @@ class Utils:
         # Generate the "key : type = " prefix.
         prefix = ""
         if key is not None:
-            prefix += str(key) + " "
+            prefix += str(key)
         if not isinstance(val, Utils.base_types):
-            prefix += ": " + type(val).__name__ + " "
+            if key:
+                prefix += ": "
+            prefix += type(val).__name__
         if print_id:
-            prefix += ": " + hex(id(val)) + " "
+            prefix += ": " + hex(id(val))
         if prefix:
-            prefix += "= "
+            prefix += " = "
 
         # Don't recurse into a few types that need special handling
         if isinstance(val, Task):
@@ -886,8 +864,6 @@ class Repo:
         self.scripts.append(script)
 
     # ----------------------------------------------------------------------------------------------
-    # FIXME each repo should get its own hancho.json
-    # FIXME and we probably don't need to completely rebuild these dicts...
 
     def post_build(self):
         if hancho.config.dry_run:
@@ -1071,8 +1047,6 @@ class BuildDB:
 
     # ----------------------------------------------------------------------------------------------
 
-    # FIXME we need to handle build dbs when we're building multiple repos...
-
     def rebuild_reason(self, task) -> str:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
@@ -1102,9 +1076,6 @@ class BuildDB:
                 return f"Output file missing: {filename}"
 
             if filename not in self.old_stat_db:
-                # FIXME
-                # This can happen if a file in a subrepo was built but we deleted the root repo's
-                # hancho.json
                 self.reasons["output stat missing"] += 1
                 return f"Output stat missing: {filename}"
 
@@ -1348,7 +1319,7 @@ class Dict(dict):
         return Dict(self, other)
 
     def __repr__(self):
-        return Utils.dump_to_str(key = getattr(self, "name", "_"), val = self)
+        return Utils.dump_to_str(key = getattr(self, "name", None), val = self)
 
     # ----------------------------------------
     # Expander convenience helpers
@@ -1372,9 +1343,6 @@ class Tool(Dict):
 # Handles global configuration options
 
 class Options:
-
-    # FIXME I feel like we need an explicit "split blob of flags/config into per-task and per-app
-    # options" function...
 
     @classmethod
     def reset(cls, root_config):
@@ -1409,7 +1377,9 @@ class Options:
         parser.add_argument("--max_errors",        default=argparse.SUPPRESS, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
         parser.add_argument("-n", "--dry_run",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Do not run commands")
         parser.add_argument("-a", "--rebuild",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
-        parser.add_argument("--wrap",              default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("--log_wrap",          default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("--log_color",         default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Use color in the log for better readability")
+        parser.add_argument("--log_timestamp",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Timestamp each log line")
         parser.add_argument("--strict",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
         parser.add_argument("-q", "--quiet",       default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=quiet. Mutes all output")
         parser.add_argument("-v", "--verbose",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=verbose. Prints extra info")
@@ -1518,7 +1488,6 @@ class Task:
         # Tasks depend on all .hancho files that were loaded when the task was created.
         # This is probably too wide a net, but tracking dependencies between .hancho files is not
         # really possible.
-        # FIXME currently ignoring this
         self._loaded_files : list[str] = list(Loader.loaded_files)
 
         # Bookkeeping stuff
@@ -1569,13 +1538,11 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def log(self, message : str):
-        for i, line in enumerate(message.split("\n")):
-            if i > 0:
-                Log.log("\n")
-            if line:
-                with Colors.LIME:
+        for line in message.splitlines(keepends=True):
+            with Colors.LIME:
+                if not Log.line_buffer:
                     Log.log(f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
-                Log.log(line)
+            Log.log(line)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1721,9 +1688,11 @@ class Task:
         # Run all the task's commands
 
         with LogLevel.NORMAL:
-            self.log(f"Task started : '{config.name}' - '{config.desc}'\n")
+            if config.name:
+                self.log(f"{config.name}: ")
+            self.log(f"{config.desc}\n")
 
-        with LogLevel.VERBOSE, Log.color(0x404040):
+        with LogLevel.VERBOSE, Log.color(0x606060):
             self.log(f"Task rebuilding because: {self._reason}\n")
 
         for command in cast(list, config.command):
@@ -1750,7 +1719,7 @@ class Task:
         build_db.post_task(self)
 
         dry_run = " (DRY RUN)" if self.config.dry_run else ""
-        with LogLevel.VERBOSE:
+        with LogLevel.VERBOSE, Log.color(0x606060):
             self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
 
 
@@ -1973,7 +1942,6 @@ class Task:
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_dir if we're calling a callback.
 
-        # FIXME should we still be doing this? I think we've fixed the issues now.
         #rel_dir = config.task_cwd if isinstance(config.command[0], str) else config.script_dir
         #for i in range(len(files)):
         #    files[i] = Path.rel(files[i], rel_dir)
@@ -2409,8 +2377,7 @@ class Tracer:
 
         self.color = Utils.obj_to_hex(self.context)
 
-        # FIXME Make traces pierce through quiet mode for now
-        with LogLevel.QUIET:
+        with LogLevel.TRACE:
             Log.log_indent(self.color, f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
 
         return self
@@ -2419,8 +2386,7 @@ class Tracer:
         if not self.trace:
             return False
 
-        # FIXME Make traces pierce through quiet mode for now
-        with LogLevel.QUIET:
+        with LogLevel.TRACE:
             if exc_type:
                 Log.log(f"exc_type  : {exc_type}\n")
             if exc_value:
@@ -2433,17 +2399,17 @@ class Tracer:
             type = self.result.__class__.__name__
             color = Utils.obj_to_hex(self.result)
 
-            Log.log_dedent(self.color, "")
-
+            message = ""
             with Log.color(color):
                 if Utils.is_mapping(self.result):
-                    Log.log(f"{self.name!r} : {type} = {Tracer.object_to_tag(self.result)}\n")
+                    message = f"{self.name!r} : {type} = {Tracer.object_to_tag(self.result)}\n"
                 elif self.result is None:
-                    Log.log("<None>\n")
+                    message = "<None>\n"
                 elif self.result == "":
-                    Log.log("<Empty>\n")
+                    message = "<Empty>\n"
                 else:
-                    Log.log(f"{self.name!r} : {type} = {self.result!r}\n")
+                    message = f"{self.name!r} : {type} = {self.result!r}\n"
+            Log.log_dedent(self.color, message)
 
         return False
 
@@ -2539,7 +2505,7 @@ class Loader:
             else:
                 new_repo = cv_script.get()._repo
 
-            new_module = types.ModuleType(Path.stem(script_path))
+            new_module = types.ModuleType(cast(str, Path.stem(script_path)))
             new_module.__dict__.update(
                 # this _has_ to be abs script path, otherwise we break contextlib.
                 __file__ = script_path,
@@ -2902,6 +2868,9 @@ class Main:
             with Timer("") as timer:
                 for repo in Loader.all_repos:
                     repo.post_build()
+        except BaseException as err:
+            print(f"??? {err}")
+            raise
         finally:
             with LogLevel.VERBOSE:
                 Log.log_dedent(Colors.BLUE, f"Saving stats took {timer.elapsed():8.6f} seconds\n")
@@ -2966,10 +2935,12 @@ class Main:
             with Colors.BLUE:
                 Log.log("BUILD CLEAN\n")
 
-        # FIXME should we show aggregate or per-repo build reasons?
-        #with LogLevel.VERBOSE, Colors.BLUE:
-        #    for k, v in BuildDB.reasons.items():
-        #        Log.log(f"Rebuild reasons {k:13} = {v}\n")
+        with LogLevel.VERBOSE, Colors.BLUE:
+            for repo in Loader.all_repos:
+                Log.log(f"Repo stats for {repo.name}\n")
+                with Log.indent(Colors.BLUE):
+                    for k, v in repo.build_db.reasons.items():
+                        Log.log(f"Rebuild reasons {k:13} = {v}\n")
 
 # endregion
 # --------------------------------------------------------------------------------------------------

@@ -12,7 +12,7 @@ def gen_ivparams(params):
     return result
 
 iverilog = hancho.Tool(
-    name = "Run iverilog on {base(in_sv)}",
+    desc = "Run iverilog on {base(in_sv)}",
     command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {cc_includes} {in_sv} -o {out_iv}",
     gen_ivparams = gen_ivparams,
     cc_includes = "{weave('-I', includes)}"
@@ -41,7 +41,7 @@ def gen_vlparams(c):
     return result
 
 verilator_cmd = hancho.Tool(
-    name = "Run Verilator on {base(in_top)}",
+    desc = "Run Verilator on {base(in_top)}",
     command = "verilator -Wno-width --public {gen_vlparams(params)} {cc_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
     out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
     out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_top)}",
@@ -92,7 +92,7 @@ def gen_chparams(c):
 
 
 yosys = hancho.Tool(
-    name = "Run yosys on {base(in_sv)}",
+    desc = "Run yosys on {base(in_sv)}",
     command = "yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {out_json};'",
     out_json = "{ext(in_sv, '.json')}",
     params = {},
@@ -103,32 +103,32 @@ yosys = hancho.Tool(
 
 
 sv2v = hancho.Tool(
-    name = "Run sv2v on {base(in_sv)}",
+    desc = "Run sv2v on {base(in_sv)}",
     command = "sv2v {cc_includes} {in_sv} -w {out_v}",
     cc_includes = "{weave('-I', includes)}",
     out_v = "{ext(in_sv, '.v')}",
 )
 
 nextpnr = hancho.Tool(
-    name    = "Run nextpnr-ice40 on {base(in_json)}",
+    desc    = "Run nextpnr-ice40 on {base(in_json)}",
     command = "nextpnr-ice40 {flags} -q --json {in_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
     out_asc = "{ext(in_json, '.asc')}",
     flags   = None,
 )
 
 icepack = hancho.Tool(
-    name    = "Run icepack on {base(in_asc)}",
+    desc    = "Run icepack on {base(in_asc)}",
     command = "icepack {in_asc} {out_bin}",
     out_bin = "{ext(in_asc, '.bin')}",
 )
 
 iceprog = hancho.Tool(
-    name    = "Run iceprog on {base(in_bin)}",
+    desc    = "Run iceprog on {base(in_bin)}",
     command = "iceprog -S {in_bin}",
 )
 
 synth = hancho.Tool(
-    name    = "Synth {base(in_sv)}",
+    desc    = "Synth {base(in_sv)}",
     command = [
         "yosys -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
         #"yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",

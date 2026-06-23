@@ -3,7 +3,7 @@
 import hancho
 
 util_o = hancho.Task(
-    name    = "Compile {base(in_src)}",
+    desc    = "Compile {base(in_src)}",
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "util.cpp",
     out_obj = "{ext(in_src, '.o')}"
@@ -11,7 +11,7 @@ util_o = hancho.Task(
 
 # This should not be built, as it's not in the root repo and it's not depended on by anything.
 broken_o = hancho.Task(
-    name    = "SHOULD NOT BE BUILT! Compile {base(in_src)}",
+    desc    = "SHOULD NOT BE BUILT! Compile {base(in_src)}",
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "broken.cpp",
     out_obj = "{ext(in_src, '.o')}",

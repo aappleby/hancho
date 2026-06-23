@@ -9,6 +9,7 @@ import random
 import shutil
 import sys
 import time
+import traceback
 import unittest
 from pathlib import Path
 from typing import cast
@@ -83,6 +84,17 @@ class TestTasks(unittest.TestCase):
         good_task = hancho.Task(command="echo test_run_tasks_zero")
         self.run_tasks(0)
         self.assertIsNone(good_task._error)
+
+    def test_asyncio_cancelled(self):
+        def asyncio_cancelled(_):
+            time.sleep(0.1)
+            raise asyncio.CancelledError()
+
+        hancho.Task(command=asyncio_cancelled, out_file="asyncio_cancelled.txt")
+        self.assertEqual(0, hancho.Runner.tasks_cancelled)
+        self.run_tasks(0)
+        self.assertEqual(1, hancho.Runner.tasks_cancelled)
+
 
     # ----------------------------------------------------------------------------------------------
 
@@ -316,7 +328,7 @@ class TestTasks(unittest.TestCase):
             hancho.init(verbosity = VERBOSITY)
             time.sleep(0.01)
             compile = hancho.Dict(
-                name="test_input_changed {in_src}",
+                desc="test_input_changed {in_src}",
                 command="gcc -MMD -c {in_src} -o {out_obj}",
                 in_src=None,
                 in_depfile="{ext(out_obj, '.d')}",
@@ -345,7 +357,7 @@ class TestTasks(unittest.TestCase):
         def run():
             hancho.init(verbosity = VERBOSITY)
             hancho.Task(
-                name="test_dep_changed {in_src}",
+                desc="test_dep_changed {in_src}",
                 command="sleep 0.1 && touch {out_obj}",
                 in_temp=dummy,
                 in_src="src/test.cpp",
@@ -438,7 +450,7 @@ class TestTasks(unittest.TestCase):
             hancho.init(verbosity = VERBOSITY)
             time.sleep(0.01)
             compile = hancho.Tool(
-                name="test_header_changed {in_src}",
+                desc="test_header_changed {in_src}",
                 command="gcc -MMD -c {in_src} -o {out_obj}",
                 in_depfile="{ext(out_obj, '.d')}",
                 out_obj="{ext(in_src, '.o')}",
@@ -501,11 +513,11 @@ class TestTasks(unittest.TestCase):
             force_touch(task.config.out_obj)
 
         hancho.Task(
+            name="result.txt",
             desc="The 'command' field of rules should be OK handling a sync function",
             command=sync_command,
             in_src=[],
             out_obj="{name}",
-            name="result.txt",
         )
         self.assertFalse(os.path.exists("build/result.txt"))
         self.run_tasks(0)
@@ -513,11 +525,11 @@ class TestTasks(unittest.TestCase):
 
     def test_lambda_command(self):
         hancho.Task(
+            name="result.txt",
             desc="The 'command' field of rules should be OK handling a lambda",
             command=lambda task: force_touch(task.config.out_obj),
             in_src=[],
             out_obj="{name}",
-            name="result.txt",
         )
         self.assertFalse(os.path.exists("build/result.txt"))
         self.run_tasks(0)

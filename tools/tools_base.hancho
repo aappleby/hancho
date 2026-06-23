@@ -14,7 +14,7 @@ default_toolchain = hancho.Dict(
 # ----------------------------------------
 
 check_cpp = hancho.Tool(
-    name = "Checking C++ syntax of {base(in_src)}",
+    desc = "Checking C++ syntax of {base(in_src)}",
     command = "{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} && touch {out_ok}",
 
     toolchain = default_toolchain,
@@ -33,7 +33,7 @@ check_cpp = hancho.Tool(
 # ----------------------------------------
 
 compile_cpp = hancho.Tool(
-    name="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
+    desc="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
     command="{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} -o {out_obj}",
     toolchain=default_toolchain,
     flags=[
@@ -64,13 +64,13 @@ if os.name == "nt":
 
 
 link_cpp_lib = hancho.Tool(
-    name    = "Bundling C++ lib {base(out_lib)}",
+    desc    = "Bundling C++ lib {base(out_lib)}",
     command = "ar rcs {out_lib} {in_objs}",
 )
 
 
 link_cpp_bin = hancho.Tool(
-    name      = "Linking C++ bin {base(out_bin)}",
+    desc      = "Linking C++ bin {base(out_bin)}",
     toolchain = default_toolchain,
     command   = "{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}",
     in_objs   = None,
@@ -106,7 +106,7 @@ def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwar
 
 def make(hancho, *, in_makefile, **kwargs):
     cmd = hancho.Tool(
-        name      = "Run makefile {base(in_makefile)}",
+        desc      = "Run makefile {base(in_makefile)}",
         command   = "make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
         make_dir  = "{path.dirname(in_makefile)}",
         make_file = "{path.basename(in_makefile)}",
@@ -119,7 +119,7 @@ def make(hancho, *, in_makefile, **kwargs):
 # Testsz
 
 run_test = hancho.Tool(
-    name     = "Running test {base(in_test)}",
+    desc     = "Running test {base(in_test)}",
     command  = "{in_test} {args} && touch {out_pass}",
     task_cwd = "{test_dir}",
     test_dir = "{source_dir}",

@@ -8,3 +8,4 @@ scratch
 htmlcov
 sandbox/*
 !sandbox/README.md
+.coverage

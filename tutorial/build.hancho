@@ -1,7 +1,7 @@
 import hancho
 
 app = hancho.Task(
-    name = "build/app",
+    desc = "Compile and link build/app",
     command = [
         "mkdir -p build",
         "g++ src/main.cpp src/util.cpp -o build/app"
@@ -11,4 +11,4 @@ app = hancho.Task(
 def bloop(task):
     print(f"Hello task {task._name}")
 
-hancho.Task(name = "blarp", command = bloop)
+hancho.Task(desc = "blarp", command = bloop)

@@ -37,7 +37,7 @@ ld_libs = [
 ]
 
 compile_cpp = hancho.Tool(
-    name       = "Compiling C++ {base(in_src)} -> {base(out_obj)}",
+    desc       = "Compiling C++ {base(in_src)} -> {base(out_obj)}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
@@ -49,7 +49,7 @@ compile_cpp = hancho.Tool(
 )
 
 link_cpp_lib = hancho.Tool(
-    name     = "Bundling C++ library {base(out_lib)}",
+    desc     = "Bundling C++ library {base(out_lib)}",
     command  = "ar rcs {out_lib} {in_objs}",
     #----------
     in_objs  = None,
@@ -57,7 +57,7 @@ link_cpp_lib = hancho.Tool(
 )
 
 link_cpp_bin = hancho.Tool(
-    name     = "Linking {base(out_bin)}",
+    desc     = "Linking {base(out_bin)}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_deps} {ld_libs}",
     #----------
     ld_flags = ld_flags,

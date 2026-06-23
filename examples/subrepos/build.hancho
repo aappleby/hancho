@@ -5,15 +5,14 @@ import hancho
 myrepo = hancho.repo("myrepo/build.hancho")
 
 main_o = hancho.Task(
-
-    name = "Compile {base(out_obj)}",
+    desc = "Compile {base(out_obj)}",
     command = "g++ -c {in_src} -o {out_obj}",
     in_src = "main.cpp",
     out_obj = "{ext(in_src, '.o')}"
 )
 
 main = hancho.Task(
-    name = "Link {base(out_bin)}",
+    desc = "Link {base(out_bin)}",
     command = "g++ {in_obj} -o {out_bin}",
     in_obj = [main_o, myrepo.util_o],
     out_bin = "main",
