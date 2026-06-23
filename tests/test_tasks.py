@@ -243,9 +243,12 @@ class TestTasks(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "requires Linux")
     def test_good_run_cmd(self):
+
+        command = r"echo I am runnning in {run_cmd('pwd')}" if os.name == 'posix' else r"echo I am runnning in {run_cmd('cd')}"
+
         task = hancho.Task(
             desc="Testing run_cmd",
-            command=r"echo I am runnning in {run_cmd('cd')}",
+            command=command,
         )
         self.run_tasks(0)
         self.assertEqual(repr(f"I am runnning in {os.getcwd()}"), repr(task._stdout.strip()))
@@ -474,45 +477,27 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertTrue(os.path.exists("build/blarp.txt"))
 
-    @unittest.skipUnless(sys.platform.startswith('linux'), "Requires Linux")
-    def test_header_changed_linux(self):
-        if not sys.platform.startswith('linux'):
-            return
-
+    def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
-        def run():
-            hancho.init(verbosity = VERBOSITY)
-            time.sleep(0.01)
-            compile = hancho.Tool(
-                desc="test_header_changed {in_src}",
-                command="gcc -MMD -c {in_src} -o {out_obj}",
-                in_depfile="{ext(out_obj, '.d')}",
-                out_obj="{ext(in_src, '.o')}",
-            )
-            hancho.Task(compile, in_src="src/test.cpp")
-            self.run_tasks(0)
-            return mtime_ns("build/src/test.o")
 
-        mtime1 = run()
-        mtime2 = run()
-        force_touch("src/test.hpp")
-        mtime3 = run()
+        if os.name == 'posix':
+            command="gcc -MMD -c {in_src} -o {out_obj}",
+            depformat="gcc"
+        elif os.name == 'nt':
+            command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
+            depformat="msvc"
+        else:
+            raise AssertionError("Don't know this platform")
 
-        self.assertEqual(mtime1, mtime2)
-        self.assertLess(mtime2, mtime3)
-
-    @unittest.skipUnless(sys.platform.startswith('win32'), "Requires Windows _and_ a developer prompt")
-    def test_header_changed_windows(self):
-        # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
         def run():
             hancho.init(verbosity = VERBOSITY) #type:ignore
             time.sleep(0.01)
             compile = hancho.Tool(
                 desc="test_header_changed {in_src}",
-                command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
+                command=command,
                 in_depfile="{ext(out_obj, '.d')}",
                 out_obj="{ext(in_src, '.o')}",
-                depformat="msvc",
+                depformat=depformat,
             )
             hancho.Task(compile, in_src="src/test.cpp")
             self.run_tasks(0)
