@@ -9,6 +9,12 @@ extend-include = ["*.hancho"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
-ignore = ["E501"]
+ignore = ["E501", "E701"]
 
-
+[tool.pyright]
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+reportMissingTypeArgument = "none"

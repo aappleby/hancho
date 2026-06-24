@@ -34,7 +34,7 @@ check_cpp = hancho.Tool(
 
 if os.name == "posix":
     compile_cpp = hancho.Tool(
-        desc="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
+        desc="Compiling {base(in_src)} -> {base(out_obj)}",
         command="{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} -o {out_obj}",
         toolchain=default_toolchain,
         flags=[
@@ -103,8 +103,7 @@ else:
     raise AssertionError(f"Don't know how to compile or link stuff for os.name = {os.name}")
 
 
-
-def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
+def cpp_lib(*, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
         obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
@@ -112,14 +111,15 @@ def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwar
     return hancho.Task(link_cpp_lib, in_objs=[in_objs, in_libs], out_lib=out_lib, **kwargs)
 
 
-def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
+def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, sys_libs=None, out_bin, **kwargs):
     in_objs = hancho.flatten(in_objs)
     for file in hancho.flatten(in_srcs):
-        obj = hancho.Task(compile_cpp, in_src=file, **kwargs)
+        obj = hancho.Task(compile_cpp, in_src=file)
         in_objs.append(obj)
     return hancho.Task(
         link_cpp_bin,
         in_objs=[in_objs, in_libs],
+        sys_libs = sys_libs,
         out_bin=out_bin,
         **kwargs
     )
@@ -128,7 +128,7 @@ def cpp_bin(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwar
 ####################################################################################################
 # Makefiles
 
-def make(hancho, *, in_makefile, **kwargs):
+def make(*, in_makefile, **kwargs):
     cmd = hancho.Tool(
         desc      = "Run makefile {base(in_makefile)}",
         command   = "make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
@@ -145,18 +145,17 @@ def make(hancho, *, in_makefile, **kwargs):
 run_test = hancho.Tool(
     desc     = "Running test {base(in_test)}",
     command  = "{in_test} {args} && touch {out_pass}",
-    task_cwd = "{test_dir}",
-    test_dir = "{source_dir}",
     args     = "",
     out_pass = "{in_test}.pass",
 )
 
-def cpp_test(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_bin, **kwargs):
-    objs = [hancho.Task(compile_cpp, in_src=src, **kwargs) for src in hancho.flatten(in_srcs)]
+def cpp_test(*, in_srcs=None, in_objs=None, in_libs=None, task_cwd, out_bin, **kwargs):
+    objs = [hancho.Task(compile_cpp, in_src=src) for src in hancho.flatten(in_srcs)]
     test_bin = hancho.Task(
         link_cpp_bin,
         in_objs=[objs, in_objs, in_libs],
         out_bin=out_bin,
+        test_dir = hancho.cwd(),
         **kwargs
     )
-    return hancho.Task(run_test, in_test=test_bin, **kwargs)
+    return hancho.Task(run_test, in_test=test_bin, task_cwd=task_cwd)

@@ -24,6 +24,7 @@ import asyncio
 import colorsys
 import contextvars
 import copy
+import inspect
 import json
 import os
 import re
@@ -60,8 +61,8 @@ type Tree[T] = T | list[Tree[T]]
 # task configs the fields stay in the same order.
 
 # fmt: off
-def get_defaults():
-    hancho_defaults = {
+def get_defaults() -> dict[str, Any]:
+    hancho_defaults : dict[str, Any] = {
         "name"         : None,
         "desc"         : None,
         "command"      : None,
@@ -73,6 +74,8 @@ def get_defaults():
         "root_dir"     : os.getcwd(),
         "repo_dir"     : "{root_dir}",
         "script_path"  : "{repo_dir}/<root_config>",
+        "script_dir"   : "{dirname(script_path)}",
+        "script_name"  : "{basename(script_path)}",
         "is_repo"      : False,
 
         "task_cwd"     : "{repo_dir}",
@@ -482,6 +485,12 @@ class Log:
 # --------------------------------------------------------------------------------------------------
 # region Utils
 
+def task(*args, **kwargs):
+    if callable(args[0]):
+        return args[0](**Dict(hancho.config, args[1:], kwargs))
+    else:
+        return Task(*args, **kwargs)
+
 class Utils:
 
     @classmethod
@@ -505,8 +514,10 @@ class Utils:
             dirname = Path.dirname,
             load = lambda file, *args, **kwargs : Loader.load_file(Dict(hancho.config, *args, kwargs, script_path = file, is_repo = False)).module,
             repo = lambda file, *args, **kwargs : Loader.load_file(Dict(hancho.config, *args, kwargs, script_path = file, is_repo = True)).module,
+            Task = task,
 
             log = lambda *args, **kwargs : Log.log(*args, **kwargs),
+            cwd = os.getcwd,
 
             flatten = Utils.flatten,
             run_cmd = Utils.run_cmd,
@@ -1379,17 +1390,17 @@ class Options:
         # pylint: disable=line-too-long
         # fmt: off
         parser.add_argument("target",  nargs="?",  default=argparse.SUPPRESS, type=str.strip,       help="A regex that selects the targets to build. Defaults to all targets in the root repo.")
-        parser.add_argument("-C", "--script_dir",  default=os.getcwd(),       type=str.strip,       help="Change directory before starting the build")
-        parser.add_argument("-f", "--script_file", default="build.hancho",    type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
+        parser.add_argument("-C", "--script-dir",  default=os.getcwd(),       type=str.strip,       help="Change directory before starting the build")
+        parser.add_argument("-f", "--script-file", default="build.hancho",    type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
         parser.add_argument("-t", "--tool",        default=argparse.SUPPRESS, type=str.strip,       help="Run a subtool.")
-        parser.add_argument("--build_tag",         default=argparse.SUPPRESS, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
-        parser.add_argument("-j", "--core_max",    default=argparse.SUPPRESS, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
-        parser.add_argument("--max_errors",        default=argparse.SUPPRESS, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument("-n", "--dry_run",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Do not run commands")
+        parser.add_argument("--build-tag",         default=argparse.SUPPRESS, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument("-j", "--core-max",    default=argparse.SUPPRESS, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
+        parser.add_argument("--max-errors",        default=argparse.SUPPRESS, type=int,             help="The maximum number of task errors we tolerate before abandoning the build")
+        parser.add_argument("-n", "--dry-run",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Do not run commands")
         parser.add_argument("-a", "--rebuild",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Build absolutely everything in all build scripts loaded.")
-        parser.add_argument("--log_wrap",          default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
-        parser.add_argument("--log_color",         default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Use color in the log for better readability")
-        parser.add_argument("--log_timestamp",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Timestamp each log line")
+        parser.add_argument("--log-wrap",          default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("--log-color",         default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Use color in the log for better readability")
+        parser.add_argument("--log-timestamp",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Timestamp each log line")
         parser.add_argument("--strict",            default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Checks for common footguns like typo'd templates")
         parser.add_argument("-q", "--quiet",       default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=quiet. Mutes all output")
         parser.add_argument("-v", "--verbose",     default=argparse.SUPPRESS, action = argparse.BooleanOptionalAction, help="Shortcut for --verbosity=verbose. Prints extra info")
@@ -1450,10 +1461,10 @@ class Task:
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
 
-    class FAILED(Exception):    pass  # noqa: E701
-    class CANCELLED(Exception): pass  # noqa: E701
-    class SKIPPED(Exception):   pass  # noqa: E701
-    class BROKEN(Exception):    pass  # noqa: E701
+    class FAILED(Exception):    pass
+    class CANCELLED(Exception): pass
+    class SKIPPED(Exception):   pass
+    class BROKEN(Exception):    pass
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2877,9 +2888,6 @@ class Main:
             with Timer("") as timer:
                 for repo in Loader.all_repos:
                     repo.post_build()
-        except BaseException as err:
-            print(f"??? {err}")
-            raise
         finally:
             with LogLevel.VERBOSE:
                 Log.log_dedent(Colors.BLUE, f"Saving stats took {timer.elapsed():8.6f} seconds\n")

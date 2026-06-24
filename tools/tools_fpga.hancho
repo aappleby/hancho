@@ -39,7 +39,7 @@ verilator_cmd = hancho.Tool(
 verilated_o = None
 verilated_threads_o = None
 
-def verilator(hancho, *, in_top, **kwargs):
+def verilator(*, in_top, **kwargs):
     global verilated_o, verilated_threads_o
 
     if not verilated_o:

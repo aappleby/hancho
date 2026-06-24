@@ -7,8 +7,7 @@
 # FIXME I feel like we need an explicit "split blob of flags/config into per-task and per-app options" function...
 # FIXME Do we want to keep _loaded_files now that we have better change detection?
 # FIXME Do we want to re-enable rel'ing all in_/out_ paths?
-# FIEM
-
+# FIXME Can we build examples/tutorial from examples/tutorial and also matcheroni/ and have it work somehow?
 
 
 00 - How to download and run Hancho, Trivial .hancho example

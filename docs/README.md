@@ -346,7 +346,7 @@ this function from ```base_rules.hancho``` compiles a list of source files and t
 along with other object files or libraries into a larger C++ library.
 
 ```py
-def cpp_lib(hancho, *, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
+def cpp_lib(*, in_srcs=None, in_objs=None, in_libs=None, out_lib, **kwargs):
     in_objs = flatten(in_objs)
     for file in flatten(in_srcs):
         obj = hancho.Task(compile_cpp, in_src=file, **kwargs)

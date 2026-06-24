@@ -174,7 +174,7 @@ during init).
 ### CLI flags (`Options.parse_flags`)
 `target` (regex), `-C/--root_dir`, `-f/--root_file`, `-t/--tool` (e.g. `clean` wipes
 `build_root`), `--build_tag`, `-j/--core_max`, `--max_errors`, `-n/--dry_run`,
-`-a/--rebuild`, `--log_wrap`, `--strict`, and verbosity shortcuts `-q/-v/-d/--trace` or
+`-a/--rebuild`, `--log-wrap`, `--strict`, and verbosity shortcuts `-q/-v/-d/--trace` or
 `--verbosity=LEVEL` (QUIET..TRACE). **Unrecognized `--flags` become config fields**
 (`--foo` -> `foo=True`, `--foo=3` -> `foo=3`), so scripts can read arbitrary CLI options.
 
