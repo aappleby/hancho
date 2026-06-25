@@ -1303,20 +1303,21 @@ class Dict(dict):
 
     def merge(self, *args, **kwargs):
         for rhs in (*args, kwargs):
-            Dict.generic_merge(
-                self, rhs,
+            Dict.generic_merge2(
+                self, rhs, self,
                 merge_dicts=True, merge_lists=True,
-                into_a=True, into_b=False,
                 keep_a=True, keep_b=True)
 
     # Merges self and args into a new dict, keeping only keys that were already in self.
     def fill(self, *args, **kwargs):
         result = None
-        for rhs in (*args, kwargs):
-            result = Dict.generic_merge(
-                result or self, rhs,
+        for i, rhs in enumerate((*args, kwargs)):
+            a = self if i == 0 else result
+            b = rhs
+            c = result
+            result = Dict.generic_merge2(
+                a, b, c,
                 merge_dicts=True, merge_lists=True,
-                into_a=result is not None, into_b=False,
                 keep_a=True, keep_b=False)
         return result
 
@@ -1325,10 +1326,16 @@ class Dict(dict):
         if a is None: return b
         if b is None: return a
 
-        if   into_a: result = a
-        elif into_b: result = b
-        else:        result = {}
+        if   into_a: c = a
+        elif into_b: c = b
+        else:        c = {}
 
+        cls.generic_merge2(a, b, c, merge_dicts, merge_lists, keep_a, keep_b)
+
+        return c
+
+    @classmethod
+    def generic_merge2(cls, a, b, c, merge_dicts, merge_lists, keep_a, keep_b):
         keys = a.keys() | b.keys()
         for key in keys:
             if key in a and key not in b and not keep_a: continue
@@ -1338,20 +1345,20 @@ class Dict(dict):
             rhs = b.get(key, None)
 
             if Utils.is_mapping(lhs) and Utils.is_mapping(rhs) and merge_dicts:
-                result[key] = cls.generic_merge(lhs, rhs, merge_dicts, merge_lists, into_a, into_b, keep_a, keep_b)
+                dst = c.get(key, Dict())
+                cls.generic_merge2(lhs, rhs, dst, merge_dicts, merge_lists, keep_a, keep_b)
             elif Utils.is_collection(lhs) and Utils.is_collection(rhs) and merge_lists:
-                result[key] = lhs + rhs
+                c[key] = lhs + rhs
             elif Utils.is_mapping(rhs):
                 # Mappings get turned into Dicts.
-                result[key] = Dict(rhs)
+                c[key] = Dict(rhs)
             else:
                 if lhs is None or rhs is not None:
                     if isinstance(rhs, list):
-                        result[key] = copy.deepcopy(rhs)
+                        c[key] = copy.deepcopy(rhs)
                     else:
-                        result[key] = rhs
+                        c[key] = rhs
 
-        return result
 
     # ----------------------------------------
     # Object
