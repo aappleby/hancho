@@ -1312,11 +1312,8 @@ class Dict(dict):
     def fill(self, *args, **kwargs):
         result = None
         for i, rhs in enumerate((*args, kwargs)):
-            a = self if i == 0 else result
-            b = rhs
-            c = result
             result = Dict.generic_merge2(
-                a, b, c,
+                self if i == 0 else result, rhs, result,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=False)
         return result
