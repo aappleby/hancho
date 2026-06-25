@@ -24,7 +24,6 @@ import asyncio
 import colorsys
 import contextvars
 import copy
-import inspect
 import json
 import os
 import re
@@ -157,24 +156,8 @@ sys.modules[__name__].__class__ = ModuleWrapper
 # --------------------------------------------------------------------------------------------------
 # region Log
 
-class Timer:
-    def __init__(self, message):
-        self.message = message
-        #self.log_level = log_level
-        #self.color = color
-        self.time_a : float
-        self.time_b : float
-
-    def __enter__(self):
-        self.time_a = time.perf_counter()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.time_b = time.perf_counter()
-        return False
-
-    def elapsed(self):
-        return self.time_b - self.time_a
+#self.time_a = time.perf_counter()
+#self.time_b = time.perf_counter()
 
 # --------------------------------------------------------------------------------------------------
 
@@ -298,23 +281,31 @@ class Log:
     @staticmethod
     @contextmanager
     def color(new_color):
+        old_color = Log.current_color
         try:
-            old_color = Log.current_color
             Log.current_color = new_color
             yield
         finally:
             Log.current_color = old_color
 
-    @staticmethod
-    @contextmanager
-    def indent(color):
-        # Not dead, used in test suites
-        try:
-            Log.indent_stack.append(Log.hex_to_ansi(color) + "│ ")
-            # + Log.reset_color(color)
-            yield
-        finally:
-            Log.indent_stack.pop()
+#    @staticmethod
+#    @contextmanager
+#    def indent(color):
+#        # Not dead, used in test suites
+#        try:
+#            Log.indent_stack.append(Log.hex_to_ansi(color) + "│ ")
+#            # + Log.reset_color(color)
+#            yield
+#        finally:
+#            Log.indent_stack.pop()
+
+    @classmethod
+    def indent2(cls, color):
+        cls.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color())
+
+    @classmethod
+    def dedent2(cls):
+        cls.indent_stack.pop()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -463,22 +454,22 @@ class Log:
 
         return result
 
-    @classmethod
-    def log_indent(cls, color, message):
-        if message:
-            with Log.color(color):
-                Log.log(message)
-        Log.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color())
-
-    @classmethod
-    def log_dedent(cls, color, message):
-        Log.indent_stack.pop()
-        if message:
-            with Log.color(color):
-                if message[-1] == '\n':
-                    Log.log("└ " + message[:-1] + cls.reset_color() + '\n')
-                else:
-                    Log.log("└ " + message + cls.reset_color())
+#    @classmethod
+#    def log_indent(cls, color, message):
+#        if message:
+#            with Log.color(color):
+#                Log.log(message)
+#        Log.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color())
+#
+#    @classmethod
+#    def log_dedent(cls, color, message):
+#        Log.indent_stack.pop()
+#        if message:
+#            with Log.color(color):
+#                if message[-1] == '\n':
+#                    Log.log("└ " + message[:-1] + cls.reset_color() + '\n')
+#                else:
+#                    Log.log("└ " + message + cls.reset_color())
 
 
 #endregion
@@ -486,7 +477,7 @@ class Log:
 # region Utils
 
 def task(*args, **kwargs):
-    if callable(args[0]):
+    if len(args) and callable(args[0]):
         return args[0](**Dict(hancho.config, args[1:], kwargs))
     else:
         return Task(*args, **kwargs)
@@ -814,8 +805,8 @@ class Utils:
         Works like "with open(...) as f:", except we first write to filename.temp and then
         atomically swap it with the original filename once the user is done with it.
         """
+        temp_filename = filename + ".temp"
         try:
-            temp_filename = filename + ".temp"
             with open(temp_filename, "w") as temp_file:
                 yield temp_file
                 temp_file.flush()
@@ -920,29 +911,45 @@ class Repo:
                 str_command = BuildDB.commands_to_string(task.config.command)
                 build_db.update_stat_db(stat_db, file, str_command)
 
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log(f"┌ Repo {self.name} post-build\n")
+            Log.indent2(Colors.BLUE)
+
         # Dump the stats as JSON.
         if stat_db_path is not None:
-            with Timer("save_stat_db") as timer:
-                Utils.save_json(stat_db, stat_db_path)
+            time_a = time.perf_counter()
+            Utils.save_json(stat_db, stat_db_path)
+            time_b = time.perf_counter()
             with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Saving stat_db took {timer.elapsed():8.6f} seconds\n")
                 Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
+                Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
 
         if comp_db_path is not None:
-            with Timer("save_comp_db") as timer:
-                Utils.save_json(list(comp_db.values()), comp_db_path)
+            time_a = time.perf_counter()
+            Utils.save_json(list(comp_db.values()), comp_db_path)
+            time_b = time.perf_counter()
             with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Saving comp_db took {timer.elapsed():8.6f} seconds\n")
                 Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
+                Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.dedent2()
+            Log.log(f"└ Repo {self.name} done\n")
 
 
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region Script
 
 class Script:
+    """
+    This just holds per-script info
+    """
+
     def __init__(self, name : str, config : Dict, module : types.ModuleType, repo : Repo, globals):
         self.name : str = name
-        self._repo : Repo = repo
+        self.parent_repo : Repo = repo
         self.module : types.ModuleType = module
-        #self.config : Dict = config
         self.globals : Dict = Dict(globals, config = config)
         self.tasks = []
         self.scripts : list[Script] = []
@@ -984,15 +991,17 @@ class BuildDB:
     def load_stat_db(stat_db_path) -> Dict:
         result = {}
 
-        with LogLevel.VERBOSE:
-            Log.log_indent(Colors.ORANGE, f"Loading stat db '{stat_db_path}'\n")
+        with LogLevel.VERBOSE, Colors.ORANGE:
+            Log.log(f"Loading stat db '{stat_db_path}'\n")
             if not os.path.isfile(stat_db_path):
-                Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
+                #Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
                 return Dict()
-            with Timer("load_stat_db") as timer:
-                result = Utils.load_json(cast(str, stat_db_path))
-            Log.log_dedent(Colors.ORANGE, f"Loading {len(result)} entries took {timer.elapsed():8.6f} seconds\n")
 
+            time_a = time.perf_counter()
+            result = Utils.load_json(cast(str, stat_db_path))
+            time_b = time.perf_counter()
+            with LogLevel.VERBOSE, Colors.ORANGE:
+                Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
 
         # Turn the serialized stats back into a Dict.
         for k, v in list(result.items()):
@@ -1309,6 +1318,37 @@ class Dict(dict):
 
                 if lval is None or rval is not None:
                     dict.__setitem__(self, key, rval)
+
+    def fill(self, *args, **kwargs):
+        """
+        Like merge, but does not update self - instead, it returns a new merged dict and only
+        merges keys that were already in self, also concatenating pairs of lists instead of
+        overwriting them like merge. So it's like a fill-in-the-blank that also overwrites exiting
+        values. If you can write a better explanation than this please do.
+        """
+        result = {}
+        for arg in filter(None, (*args, kwargs)):
+            for key, rval in arg.items():
+                if key not in self:
+                    continue
+                lval = self[key]
+
+                if Utils.is_mapping(rval):
+                    if Utils.is_mapping(lval):
+                        rval = lval.fill(rval)
+                    elif lval is None:
+                        rval = Dict(rval)
+                    else:
+                        raise AssertionError(f"Called Dict.fill() but value types don't match for {key}")
+
+                if Utils.is_collection(rval):
+                    if Utils.is_collection(lval):
+                        rval = lval + rval
+                    elif lval is None:
+                        rval = list(rval)
+                    else:
+                        raise AssertionError(f"Called Dict.fill() but value types don't match for {key}")
+                result[key] = rval
 
     # ----------------------------------------
     # Object
@@ -1632,6 +1672,8 @@ class Task:
     async def task_main(self):
         config = self.config
 
+        time_a = time.perf_counter()
+
         Task.id_counter += 1
         self._task_id = Task.id_counter
 
@@ -1686,7 +1728,7 @@ class Task:
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
 
-        build_db = cv_script.get()._repo.build_db
+        build_db = cv_script.get().parent_repo.build_db
         build_db.pre_task(self)
 
         self._reason = build_db.rebuild_reason(self)
@@ -1737,11 +1779,17 @@ class Task:
         # ----------------------------------------
         # Done!
 
+        time_b = time.perf_counter()
+
         build_db.post_task(self)
 
         dry_run = " (DRY RUN)" if self.config.dry_run else ""
         with LogLevel.VERBOSE, Log.color(0x606060):
-            self.log(f"Task done{dry_run}: '{self.config.name}' - '{self.config.desc}'\n")
+            message  = f"Task took {time_b-time_a:8.6f} sec: "
+            if self.config.name:
+                message += f"'{self.config.name}' - "
+            message += f"'{self.config.desc}'\n"
+            self.log(message)
 
 
     # ----------------------------------------------------------------------------------------------
@@ -2396,8 +2444,9 @@ class Tracer:
 
         self.color = Utils.obj_to_hex(self.context)
 
-        with LogLevel.TRACE:
-            Log.log_indent(self.color, f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
+        with LogLevel.TRACE, Log.color(self.color):
+            Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
+            Log.indent2(self.color)
 
         return self
 
@@ -2405,7 +2454,7 @@ class Tracer:
         if not self.trace:
             return False
 
-        with LogLevel.TRACE:
+        with LogLevel.TRACE, Log.color(self.color):
             if exc_type:
                 Log.log(f"exc_type  : {exc_type}\n")
             if exc_value:
@@ -2428,7 +2477,9 @@ class Tracer:
                     message = "<Empty>\n"
                 else:
                     message = f"{self.name!r} : {type} = {self.result!r}\n"
-            Log.log_dedent(self.color, message)
+
+            Log.dedent2()
+            Log.log(message)
 
         return False
 
@@ -2512,42 +2563,37 @@ class Loader:
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        try:
-            with LogLevel.VERBOSE:
-                Log.log_indent(Colors.ORANGE, f"Loading {"repo" if new_config.is_repo else "script"} {script_path}\n")
+        with LogLevel.VERBOSE, Colors.ORANGE:
+            Log.log(f"Loading {"repo" if new_config.is_repo else "script"} {script_path}\n")
 
-            new_name = cast(str, Path.stem(script_path))
+        new_name = cast(str, Path.stem(script_path))
 
-            if new_config.is_repo:
-                new_repo = Repo(script_path, new_config)
-                Loader.all_repos.append(new_repo)
-            else:
-                new_repo = cv_script.get()._repo
+        if new_config.is_repo:
+            new_repo = Repo(script_path, new_config)
+            Loader.all_repos.append(new_repo)
+        else:
+            new_repo = cv_script.get().parent_repo
 
-            new_module = types.ModuleType(cast(str, Path.stem(script_path)))
-            new_module.__dict__.update(
-                # this _has_ to be abs script path, otherwise we break contextlib.
-                __file__ = script_path,
-                hancho   = hancho,
-            )
+        new_module = types.ModuleType(cast(str, Path.stem(script_path)))
+        new_module.__dict__.update(
+            # this _has_ to be abs script path, otherwise we break contextlib.
+            __file__ = script_path,
+            hancho   = hancho,
+        )
 
-            old_script = cv_script.get()
-            new_script = Script(new_name, new_config, new_module, new_repo, old_script.globals)
-            new_repo.add_script(new_script)
+        old_script = cv_script.get()
+        new_script = Script(new_name, new_config, new_module, new_repo, old_script.globals)
+        new_repo.add_script(new_script)
 
-            script_dir = cast(str, Path.dirname(script_path))
+        script_dir = cast(str, Path.dirname(script_path))
 
-            with chdir(script_dir):
-                try:
-                    token = cv_script.set(new_script)
-                    code = compile(source, script_path, "exec", dont_inherit=True)
-                    exec(code, new_module.__dict__)
-                finally:
-                    cv_script.reset(token)
-        finally:
-            Log.indent_stack.pop()
-            #with LogLevel.VERBOSE:
-            #    Log.log_dedent(Colors.ORANGE, "Done\n")
+        with chdir(script_dir):
+            token = cv_script.set(new_script)
+            try:
+                code = compile(source, script_path, "exec", dont_inherit=True)
+                exec(code, new_module.__dict__)
+            finally:
+                cv_script.reset(token)
 
         # ----------------------------------------
         # Script created, save to dedupe dict.
@@ -2663,59 +2709,67 @@ class Runner:
     async def async_run_tasks(cls):
         """Run all tasks until we run out."""
 
+        # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
-        with LogLevel.VERBOSE:
-            Log.log_indent(Colors.BLUE, "Starting tasks...\n")
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log("Starting tasks...\n")
+            Log.indent2(Colors.BLUE)
 
         count = 0
-        with Timer("Starting tasks") as timer:
-            for repo in Loader.all_repos:
-                for script in repo.scripts:
-                    for task in script.tasks:
-                        if task.config.enabled:
-                            task.create_aio_task()
-                            count += 1
-        with LogLevel.VERBOSE:
-            Log.log_dedent(Colors.BLUE, f"Starting {count} tasks took {timer.elapsed():8.6f} seconds\n")
+        time_a = time.perf_counter()
+        for repo in Loader.all_repos:
+            for script in repo.scripts:
+                for task in script.tasks:
+                    if task.config.enabled:
+                        task.create_aio_task()
+                        count += 1
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.dedent2()
+            Log.log(f"Starting {count} tasks took {time_b - time_a:8.6f} seconds\n")
+
+        # ------------------------------------
 
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("Running tasks...\n")
 
-        with Timer("Running Tasks") as timer:
-            while cls.live_aio_tasks and cls.count_failures() <= Options.max_errors:
-                finished_aio_task = None
+        #with Timer("Running Tasks") as timer:
+        while cls.live_aio_tasks and cls.count_failures() <= Options.max_errors:
+            finished_aio_task = None
 
-                try:
-                    finished_aio_task = cast(asyncio.Task, await cls.aio_done_queue.get())
-                    _ = finished_aio_task.result()
-                    cls.tasks_finished += 1
-                except asyncio.CancelledError:
-                    cls.tasks_cancelled += 1
-                except Task.CANCELLED:
-                    cls.tasks_cancelled += 1
-                except Task.BROKEN:
-                    cls.tasks_broken += 1
-                except Task.FAILED:
-                    cls.tasks_failed += 1
-                except Task.SKIPPED:
-                    finished_aio_task.hancho_task._complete = True #type:ignore
-                    cls.tasks_skipped += 1
-                except BaseException as ex:
-                    with LogLevel.DEBUG:
-                        Log.log(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
-                        Log.log_exception(ex)
-                    cls.tasks_failed += 1
-                else:
-                    # If _none_ of the above exceptions fired, we mark the task as complete.
-                    finished_aio_task.hancho_task._complete = True #type:ignore
-                finally:
-                    if finished_aio_task is not None:
-                        cls.live_aio_tasks.discard(finished_aio_task)
-                    cls.tasks_awaited += 1
+            try:
+                finished_aio_task = cast(asyncio.Task, await cls.aio_done_queue.get())
+                _ = finished_aio_task.result()
+                cls.tasks_finished += 1
+            except asyncio.CancelledError:
+                cls.tasks_cancelled += 1
+            except Task.CANCELLED:
+                cls.tasks_cancelled += 1
+            except Task.BROKEN:
+                cls.tasks_broken += 1
+            except Task.FAILED:
+                cls.tasks_failed += 1
+            except Task.SKIPPED:
+                finished_aio_task.hancho_task._complete = True #type:ignore
+                cls.tasks_skipped += 1
+            except BaseException as ex:
+                with LogLevel.DEBUG:
+                    Log.log(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
+                    Log.log_exception(ex)
+                cls.tasks_failed += 1
+            else:
+                # If _none_ of the above exceptions fired, we mark the task as complete.
+                finished_aio_task.hancho_task._complete = True #type:ignore
+            finally:
+                if finished_aio_task is not None:
+                    cls.live_aio_tasks.discard(finished_aio_task)
+                cls.tasks_awaited += 1
 
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log(f"Running {cls.tasks_awaited} tasks took {timer.elapsed():8.6f} seconds\n")
+        #with LogLevel.VERBOSE, Colors.BLUE:
+        #    Log.log(f"Running {cls.tasks_awaited} tasks took {timer.elapsed():8.6f} seconds\n")
 
         if cls.count_failures() > Options.max_errors:
             with LogLevel.ERROR:
@@ -2829,24 +2883,27 @@ class Main:
                 old_script_count += len(repo.scripts)
 
             new_script_count = 0
-            try:
-                with LogLevel.VERBOSE:
-                    Log.log_indent(Colors.BLUE, "Loading Hancho files...\n")
 
-                with Timer("Loading Hancho files") as timer:
-                    if not Path.exists(script_path):
-                        with LogLevel.FATAL, Log.color(0xFF0000):
-                            Log.log(f"Could not load build script {script_path}\n")
-                        raise FileNotFoundError(script_path)
-                    first_script = Loader.load_file(first_config)
-                    Loader.first_repo = first_script._repo
+            #with Timer("Loading Hancho files") as timer:
 
-                for repo in Loader.all_repos:
-                    new_script_count += len(repo.scripts)
+            time_a = time.perf_counter()
+            if not Path.exists(script_path):
+                with LogLevel.FATAL, Log.color(0xFF0000):
+                    Log.log(f"Could not load build script {script_path}\n")
+                raise FileNotFoundError(script_path)
+            first_script = Loader.load_file(first_config)
+            Loader.first_repo = first_script.parent_repo
 
-            finally:
-                with LogLevel.VERBOSE:
-                    Log.log_dedent(Colors.BLUE, f"Loading {new_script_count - old_script_count} Hancho files took {timer.elapsed():8.6f} seconds\n")
+            time_b = time.perf_counter()
+            with LogLevel.VERBOSE, Colors.ORANGE:
+                Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
+
+            for repo in Loader.all_repos:
+                new_script_count += len(repo.scripts)
+
+#            finally:
+#                with LogLevel.VERBOSE:
+#                    Log.log_dedent(Colors.BLUE, f"Loading {new_script_count - old_script_count} Hancho files took {timer.elapsed():8.6f} seconds\n")
 
             result = Main.build()
 
@@ -2882,15 +2939,20 @@ class Main:
         # ------------------------------------
         # Save the new versions of the file stat and task info DBs.
 
+        time_a = 0
+        time_b = 0
         try:
-            with LogLevel.VERBOSE:
-                Log.log_indent(Colors.BLUE, "Saving stats...\n")
-            with Timer("") as timer:
-                for repo in Loader.all_repos:
-                    repo.post_build()
+            with LogLevel.VERBOSE, Colors.BLUE:
+                Log.log("┌ Saving stats...\n")
+                Log.indent2(Colors.BLUE)
+            time_a = time.perf_counter()
+            for repo in Loader.all_repos:
+                repo.post_build()
+            time_b = time.perf_counter()
         finally:
-            with LogLevel.VERBOSE:
-                Log.log_dedent(Colors.BLUE, f"Saving stats took {timer.elapsed():8.6f} seconds\n")
+            with LogLevel.VERBOSE, Colors.BLUE:
+                Log.dedent2()
+                Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
 
@@ -2955,9 +3017,10 @@ class Main:
         with LogLevel.VERBOSE, Colors.BLUE:
             for repo in Loader.all_repos:
                 Log.log(f"Repo stats for {repo.name}\n")
-                with Log.indent(Colors.BLUE):
-                    for k, v in repo.build_db.reasons.items():
-                        Log.log(f"Rebuild reasons {k:13} = {v}\n")
+                Log.indent2(Colors.BLUE)
+                for k, v in repo.build_db.reasons.items():
+                    Log.log(f"Rebuild reasons {k:13} = {v}\n")
+                Log.dedent2()
 
 # endregion
 # --------------------------------------------------------------------------------------------------

@@ -10,7 +10,6 @@ import subprocess
 import sys
 import textwrap
 import unittest
-from contextlib import redirect_stdout
 from io import StringIO
 
 import hancho
@@ -40,9 +39,11 @@ def load_tests(loader, tests, ignore):
 
 class TestApp(unittest.TestCase):
     def setUp(self):
-        sys.stdout.flush()
+        self.old_stdout = sys.stdout
+        sys.stdout = StringIO()
 
     def tearDown(self):
+        sys.stdout = self.old_stdout
         sys.stdout.flush()
 
     def test_foo(self):
@@ -66,81 +67,72 @@ class TestApp(unittest.TestCase):
         self.assertEqual(hancho.LogLevel.WARNING, hancho.Log.verbosity_out)
 
     def test_verbosities(self):
-        f = StringIO()
-        with redirect_stdout(f):
-            hancho.init(trace = True)
-            self.assertEqual(hancho.LogLevel.TRACE, hancho.Log.verbosity_out)
-            hancho.init(verbose = True)
-            self.assertEqual(hancho.LogLevel.VERBOSE, hancho.Log.verbosity_out)
-            hancho.init(debug = True)
-            self.assertEqual(hancho.LogLevel.DEBUG, hancho.Log.verbosity_out)
-            hancho.init(quiet = True)
-            self.assertEqual(hancho.LogLevel.QUIET, hancho.Log.verbosity_out)
+        hancho.init(trace = True)
+        self.assertEqual(hancho.LogLevel.TRACE, hancho.Log.verbosity_out)
+        hancho.init(verbose = True)
+        self.assertEqual(hancho.LogLevel.VERBOSE, hancho.Log.verbosity_out)
+        hancho.init(debug = True)
+        self.assertEqual(hancho.LogLevel.DEBUG, hancho.Log.verbosity_out)
+        hancho.init(quiet = True)
+        self.assertEqual(hancho.LogLevel.QUIET, hancho.Log.verbosity_out)
 
-            with self.assertRaises(ValueError):
-                hancho.init(verbosity = ["boo"])
+        with self.assertRaises(ValueError):
+            hancho.init(verbosity = ["boo"])
 
     def test_indentation(self):
-        f = StringIO()
-        hancho.init(no_color = True)
-        with redirect_stdout(f):
-            hancho.Log.log("line1\n")
-            with hancho.Log.indent(0):
-                hancho.Log.log("line2\n")
+        hancho.init(log_color = False, log_timestamp = False)
+        hancho.Log.log("line1\n")
+        hancho.Log.indent2(0xFFFFFFFF)
+        hancho.Log.log("line2\n")
+        hancho.Log.dedent2()
+        hancho.Log.log("line3\n")
 
-        self.assertIn("line1", f.getvalue())
-        self.assertIn("│ line2", f.getvalue())
+        self.assertEqual('line1\n│ line2\nline3\n', sys.stdout.getvalue())
 
     def test_no_color(self):
-        f = StringIO()
         hancho.init(log_color = False, log_timestamp = False)
-        with redirect_stdout(f):
-            hancho.Log.log("this should _not_ be blue\n")
-        self.assertEqual("this should _not_ be blue\n", f.getvalue())
-        self.assertNotIn("\x1B", f.getvalue())
+        hancho.Log.log("this should _not_ be blue\n")
+        self.assertEqual("this should _not_ be blue\n", sys.stdout.getvalue())
+        self.assertNotIn("\x1B", sys.stdout.getvalue())
 
     def test_newlines(self):
-        f = StringIO()
         hancho.init(log_color = False, log_timestamp = False)
-        with redirect_stdout(f):
-            hancho.Log.log("one")
-            hancho.Log.log("two")
-            hancho.Log.log("three")
-            hancho.Log.log("four\n")
-        self.assertEqual('onetwothreefour\n', f.getvalue())
+        hancho.Log.log("one")
+        hancho.Log.log("two")
+        hancho.Log.log("three")
+        hancho.Log.log("four\n")
+        self.assertEqual('onetwothreefour\n', sys.stdout.getvalue())
 
     def test_flush(self):
-        f = StringIO()
         hancho.init(log_color = False, log_timestamp = False)
-        with redirect_stdout(f):
-            hancho.Log.log("one")
-            hancho.Log.log("two")
-            hancho.Log.log("three")
-            hancho.Log.flush()
-        self.assertEqual('onetwothree\n', f.getvalue())
+        hancho.Log.log("one")
+        hancho.Log.log("two")
+        hancho.Log.log("three")
+        hancho.Log.flush()
+        self.assertEqual('onetwothree\n', sys.stdout.getvalue())
 
     def test_indent_dedent(self):
         hancho.init(log_color = False, log_timestamp = False)
 
-        f = StringIO()
-        with redirect_stdout(f):
-            hancho.Log.log_indent(0xFFFFFF, "one\n")
-            hancho.log("boop\n")
-            hancho.Log.log_dedent(0xFFFFFF, "two\n")
-            hancho.log("soop\n")
+        hancho.Log.log("┌ one\n")
+        hancho.Log.indent2(0xFFFFFFFF)
+        hancho.log("boop\n")
+        hancho.Log.dedent2()
+        hancho.Log.log("└ two\n")
+        hancho.log("soop\n")
 
-        text = 'one\n│ boop\n└ two\nsoop\n'
-        self.assertEqual(text, f.getvalue())
+        text = '┌ one\n│ boop\n└ two\nsoop\n'
+        self.assertEqual(text, sys.stdout.getvalue())
 
-        f = StringIO()
-        with redirect_stdout(f):
-            hancho.Log.log_indent(0xFFFFFF, "one")
-            hancho.log("boop\n")
-            hancho.Log.log_dedent(0xFFFFFF, "two")
-            hancho.log("soop\n")
-
-        text = 'oneboop\n└ twosoop\n'
-        self.assertEqual(text, f.getvalue())
+#        f = StringIO()
+#        with redirect_stdout(f):
+#            hancho.Log.log_indent(0xFFFFFF, "one")
+#            hancho.log("boop\n")
+#            hancho.Log.log_dedent(0xFFFFFF, "two")
+#            hancho.log("soop\n")
+#
+#        text = 'oneboop\n└ twosoop\n'
+#        self.assertEqual(text, f.getvalue())
 
     def test_hash(self):
         # The hash values themselves are meaningless, but we do want to check that they change when
