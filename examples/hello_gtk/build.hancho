@@ -17,6 +17,6 @@ main = hancho.Task(
     base_rules.link_cpp_bin,
     in_objs = main_o,
     out_bin = "hello_gtk",
-    flags = [base_rules.link_cpp_bin.flags],
+    flags = [base_rules.link_cpp_bin.link_flags],
     sys_libs = gtk_libs,
 )

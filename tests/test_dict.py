@@ -86,8 +86,8 @@ class TestDict(unittest.TestCase):
         Dict = {bar = None}
         >>> Dict(dict(), dict(bar = 3))
         Dict = {bar = 3}
-        >>> Dict(foo = 1, bar = 2)
-        Dict = {foo = 1, bar = 2}
+        >>> sorted(Dict(bar = 2, foo = 1).items())
+        [('bar', 2), ('foo', 1)]
         >>> Dict(dict(bar = None), dict())
         Dict = {bar = None}
         >>> Dict(dict(bar = None), dict(bar = None))
@@ -101,8 +101,8 @@ class TestDict(unittest.TestCase):
         Dict = {bar = 2}
         >>> Dict({'a': 1}, a = None)
         Dict = {a = 1}
-        >>> Dict({'a': 1}, b = 2, c = 3)
-        Dict = {a = 1, b = 2, c = 3}
+        >>> sorted(Dict({'a': 1}, b = 2, c = 3).items())
+        [('a', 1), ('b', 2), ('c', 3)]
         """
 
     def doctest_empty_dict_doesnt_override(self):

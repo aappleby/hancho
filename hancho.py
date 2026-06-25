@@ -1298,57 +1298,60 @@ class Dict(dict):
         object.__setattr__(self, "_expander", Expander(self))
         self.merge(*args, **kwargs)
 
+
     # ----------------------------------------
 
     def merge(self, *args, **kwargs):
-        # Ignore Nones and empty dicts.
-        for arg in filter(None, (*args, kwargs)):
-            assert Utils.is_mapping(arg)
-            for key, rval in arg.items():
-                lval = dict.get(self, key, None)
+        for rhs in (*args, kwargs):
+            Dict.generic_merge(
+                self, rhs,
+                merge_dicts=True, merge_lists=True,
+                into_a=True, into_b=False,
+                keep_a=True, keep_b=True)
 
-                # Mappings get turned into Dicts. If they're already Dicts, this just makes a copy
-                # of them. Pairs of mappings get merged together.
-                if Utils.is_mapping(rval):
-                    rval = Dict(lval, rval) if Utils.is_mapping(lval) else Dict(rval)
-
-                # Collections get turned into lists. Same as above.
-                if Utils.is_collection(rval):
-                    rval = copy.deepcopy(rval)
-
-                if lval is None or rval is not None:
-                    dict.__setitem__(self, key, rval)
-
+    # Merges self and args into a new dict, keeping only keys that were already in self.
     def fill(self, *args, **kwargs):
-        """
-        Like merge, but does not update self - instead, it returns a new merged dict and only
-        merges keys that were already in self, also concatenating pairs of lists instead of
-        overwriting them like merge. So it's like a fill-in-the-blank that also overwrites exiting
-        values. If you can write a better explanation than this please do.
-        """
-        result = {}
-        for arg in filter(None, (*args, kwargs)):
-            for key, rval in arg.items():
-                if key not in self:
-                    continue
-                lval = self[key]
+        result = None
+        for rhs in (*args, kwargs):
+            result = Dict.generic_merge(
+                result or self, rhs,
+                merge_dicts=True, merge_lists=True,
+                into_a=result is not None, into_b=False,
+                keep_a=True, keep_b=False)
+        return result
 
-                if Utils.is_mapping(rval):
-                    if Utils.is_mapping(lval):
-                        rval = lval.fill(rval)
-                    elif lval is None:
-                        rval = Dict(rval)
-                    else:
-                        raise AssertionError(f"Called Dict.fill() but value types don't match for {key}")
+    @classmethod
+    def generic_merge(cls, a, b, merge_dicts, merge_lists, into_a, into_b, keep_a, keep_b):
+        if a is None: return b
+        if b is None: return a
 
-                if Utils.is_collection(rval):
-                    if Utils.is_collection(lval):
-                        rval = lval + rval
-                    elif lval is None:
-                        rval = list(rval)
+        if   into_a: result = a
+        elif into_b: result = b
+        else:        result = {}
+
+        keys = a.keys() | b.keys()
+        for key in keys:
+            if key in a and key not in b and not keep_a: continue
+            if key not in a and key in b and not keep_b: continue
+
+            lhs = a.get(key, None)
+            rhs = b.get(key, None)
+
+            if Utils.is_mapping(lhs) and Utils.is_mapping(rhs) and merge_dicts:
+                result[key] = cls.generic_merge(lhs, rhs, merge_dicts, merge_lists, into_a, into_b, keep_a, keep_b)
+            elif Utils.is_collection(lhs) and Utils.is_collection(rhs) and merge_lists:
+                result[key] = lhs + rhs
+            elif Utils.is_mapping(rhs):
+                # Mappings get turned into Dicts.
+                result[key] = Dict(rhs)
+            else:
+                if lhs is None or rhs is not None:
+                    if isinstance(rhs, list):
+                        result[key] = copy.deepcopy(rhs)
                     else:
-                        raise AssertionError(f"Called Dict.fill() but value types don't match for {key}")
-                result[key] = rval
+                        result[key] = rhs
+
+        return result
 
     # ----------------------------------------
     # Object
@@ -1783,7 +1786,6 @@ class Task:
 
         build_db.post_task(self)
 
-        dry_run = " (DRY RUN)" if self.config.dry_run else ""
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
             if self.config.name:
@@ -1856,7 +1858,21 @@ class Task:
         for key, files in list(config.items()):
             if Task.is_io_field(key):
                 temp[key] = Path.norm(self.config.expand(files))
-        config.merge(temp)
+
+        # We can't use merge here because the types of our values may have changed after expansion
+        config.update(temp)
+        #Dict.merge2(
+        #    config,
+        #    temp,
+        #    merge_dicts = False,
+        #    merge_lists = False,
+        #    into_a = True,
+        #    into_b = False,
+        #    keep_a = True,
+        #    keep_b = True
+        #)
+        #for key, val in temp.items():
+        #    config[key] = val
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
