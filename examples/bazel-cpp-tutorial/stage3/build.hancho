@@ -1,8 +1,9 @@
 import hancho
+import os
 
 config.tools = hancho.load("tools_stage3.hancho")
 
-config.tools.includes.append("-I" + hancho.dirname(__file__))
+config.tools.compile_cpp.includes.append("-I" + config.script_dir)
 
 config.lib   = hancho.load("lib/build.hancho")
 

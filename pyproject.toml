@@ -17,4 +17,4 @@ reportUnknownArgumentType = "none"
 reportUnknownParameterType = "none"
 reportUnknownLambdaType = "none"
 reportMissingTypeArgument = "none"
-
+ignore = ["**/*.hancho"]

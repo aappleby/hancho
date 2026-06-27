@@ -60,9 +60,9 @@ def get_defaults() -> dict[str, Any]:
         "hancho_dir"   : os.path.dirname(__file__),
         "root_dir"     : os.getcwd(),
         "repo_dir"     : "{root_dir}",
-        "script_path"  : "{repo_dir}/<root_config>",
-        "script_dir"   : "{dirname(script_path)}",
-        "script_name"  : "{basename(script_path)}",
+        "script_path"  : None,
+        "script_dir"   : None,
+        "script_name"  : None,
         "is_repo"      : False,
 
         "task_cwd"     : "{repo_dir}",
@@ -867,6 +867,10 @@ class Dict(dict):
         return self
 
     # Merges self and args into a new dict, keeping only keys that were already in self.
+    # For example, if you have a config that contains "out_bin" and you merge it with "compile_cpp",
+    # Hancho will complain that "out_bin" is missing - it sees both "out_obj" and "out_bin" and
+    # assumes the task produces both. If you do compile_cpp.fill(...), "out_bin" does not get added
+    # to compile_cpp.
     def fill(self, *args, **kwargs):
         result = Dict()
         for i, rhs in enumerate((*args, kwargs)):
@@ -1842,7 +1846,7 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def call_callback(self, command):
-        script_dir = cast(str, Path.dirname(self.config.script_path))
+        script_dir = os.path.dirname(self.config.script_path)
         callback_dir = Path.rel(script_dir, self.config.repo_dir)
 
         with LogLevel.VERBOSE, Colors.BLUE:
@@ -2283,13 +2287,16 @@ class Loader:
         # "{hancho_dir}/tools/tools_base.hancho"
         script_path = old_config.expand(script_path, str)
         script_path = cast(str, Path.abs(script_path))
+        script_dir, script_name = os.path.split(script_path)
 
         new_config = Dict(
             old_config,
             *args, **kwargs,
             script_path = script_path,
+            script_dir = script_dir,
+            script_name = script_name,
             is_repo = is_repo,
-            repo_dir = Path.dirname(script_path) if is_repo else old_config.repo_dir
+            repo_dir = script_dir if is_repo else old_config.repo_dir
         )
 
         with open(script_path, encoding="utf-8") as file:
@@ -2324,9 +2331,9 @@ class Loader:
         with LogLevel.VERBOSE, Colors.ORANGE:
             Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
 
-        new_name = cast(str, Path.stem(script_path))
+        script_dir, script_name = os.path.split(script_path)
 
-        new_module = types.ModuleType(cast(str, Path.stem(script_path)))
+        new_module = types.ModuleType(script_name)
         new_module.__file__ = script_path
         new_module.hancho = hancho     # type: ignore
         new_module.config = new_config # type: ignore
@@ -2337,14 +2344,13 @@ class Loader:
         else:
             new_repo = cv_script.get().repo
 
-        new_script = Script(new_name, new_module, new_repo, new_config)
+        new_script = Script(script_name, new_module, new_repo, new_config)
 
         new_repo.scripts.append(new_script)
 
         # ----------------------------------------
         # Exec the module while in script_dir with cv_script pointed at the new script.
 
-        script_dir = cast(str, Path.dirname(script_path))
         with chdir(script_dir):
             token = cv_script.set(new_script)
             try:
@@ -2637,7 +2643,15 @@ class Main:
         hancho.init(verbosity = "debug", myoption=1234)
         """
 
-        default_config = Dict(get_defaults(), *args, **kwargs, is_repo = True)
+        default_config = Dict(
+            get_defaults(),
+            is_repo = True,
+            script_path = __file__,
+            script_dir = os.path.dirname(__file__),
+            script_name = os.path.basename(__file__)
+        )
+        default_config.merge(*args, **kwargs)
+
         default_repo   = Repo(__file__, default_config)
         default_module = sys.modules[__name__]
         default_script = Script(__file__, default_module, default_repo, default_config)

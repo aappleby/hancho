@@ -60,6 +60,10 @@ def force_touch(filename, append_text = None):
 
 
 class TestTasks(unittest.TestCase):
+
+    def reinit(self, *args, **kwargs):
+        hancho.init(*args, kwargs, script_path = __file__)
+
     def setUp(self):
         self.startTime = time.time()
         # Always wipe the build dir before a test, but make sure we're in the right dir.
@@ -69,7 +73,7 @@ class TestTasks(unittest.TestCase):
 
         # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
         # failure to see the cancellation.
-        hancho.init(verbosity = VERBOSITY, max_errors=999)
+        self.reinit(verbosity = VERBOSITY, max_errors=999)
         sys.stdout.flush()
 
     def tearDown(self):
@@ -319,7 +323,7 @@ class TestTasks(unittest.TestCase):
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
         def run():
-            hancho.init(verbosity = VERBOSITY)
+            self.reinit(verbosity = VERBOSITY)
             hancho.Task(
                 command=[
                     lambda task : time.sleep(0.1),
@@ -340,7 +344,7 @@ class TestTasks(unittest.TestCase):
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild
         def run():
-            hancho.init(verbosity = VERBOSITY)
+            self.reinit(verbosity = VERBOSITY)
             time.sleep(0.01)
             compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
@@ -370,7 +374,7 @@ class TestTasks(unittest.TestCase):
         dummy = "data/dummy.txt"
 
         def run():
-            hancho.init(verbosity = VERBOSITY)
+            self.reinit(verbosity = VERBOSITY)
             hancho.Task(
                 desc="test_dep_changed {in_src}",
                 #command="sleep 0.1 && touch {out_obj}",
@@ -490,7 +494,7 @@ class TestTasks(unittest.TestCase):
             raise AssertionError("Don't know this platform")
 
         def run():
-            hancho.init(verbosity = VERBOSITY) #type:ignore
+            self.reinit(verbosity = VERBOSITY) #type:ignore
             time.sleep(0.01)
             compile = hancho.Tool(
                 desc="test_header_changed {in_src}",
@@ -541,7 +545,7 @@ class TestTasks(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
-        hancho.init(verbosity = VERBOSITY, flarpy="flarp.txt")
+        self.reinit(verbosity = VERBOSITY, flarpy="flarp.txt")
         script = hancho.cv_script.get()
         self.assertEqual("flarp.txt", script.config.flarpy)
 
@@ -734,7 +738,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/slow_result.txt").exists())
 
     def test_dry_run(self):
-        hancho.init(verbosity = VERBOSITY, max_errors=999, dry_run = True)
+        self.reinit(verbosity = VERBOSITY, max_errors=999, dry_run = True)
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
@@ -750,7 +754,7 @@ class TestTasks(unittest.TestCase):
 
     def test_dependency_skipped(self):
         def run():
-            hancho.init(verbosity = VERBOSITY, core_max=1)
+            self.reinit(verbosity = VERBOSITY, core_max=1)
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",

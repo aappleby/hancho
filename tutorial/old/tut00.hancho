@@ -123,8 +123,8 @@ link_cpp = hancho.Tool(
 )
 
 def c_binary(*, in_srcs, out_bin, **kwargs):
-    objs = [hancho.Task(compile_cpp, in_src = file, **kwargs) for file in in_srcs]
-    return hancho.Task(link_cpp, in_objs = objs, out_bin = out_bin, **kwargs)
+    objs = [hancho.Task(compile_cpp, kwargs, in_src = file) for file in in_srcs]
+    return hancho.Task(link_cpp, kwargs, in_objs = objs, out_bin = out_bin)
 
 ####################################################################################################
 # Async/await and custom commands
