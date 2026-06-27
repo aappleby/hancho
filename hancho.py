@@ -95,16 +95,6 @@ class LogLevel(int, Enum):
     DEBUG    = 70
     TRACE    = 80
 
-    # WARNING - This __bool__ conversion does not do what you think. It's here because it's what
-    # lets us say "if _LogLevel.VERBOSE: <print stuff>".
-    #
-    # It's comparing the enum in the 'if' with the global verbosity setting in 'Log.verbosity',
-    # which is _not_ what you might expect by default. It's a really useful bit of syntactic sugar
-    # though, so it'll stay for now.
-
-    def __bool__(self):
-        return self.value <= Log.verbosity_out
-
     def __enter__(self):
         self.old_verbosity_in = Log.verbosity_in
         Log.verbosity_in = self
@@ -1436,8 +1426,8 @@ class Task:
             self._error = ex
         except Exception as ex:
             self.log_task_exception("Task threw an exception!", ex)
-            if LogLevel.ERROR:
-                traceback.print_exc()
+            with LogLevel.ERROR:
+                Log.log(traceback.format_exc() + "\n")
             self._error = ex
         finally:
             if self._core_count:
@@ -1975,8 +1965,8 @@ class Expander(abc.MutableMapping[str, Any]):
         try:
             return self._get(key)
         except KeyError as ex:
-            if LogLevel.ERROR:
-                traceback.print_exc()
+            with LogLevel.ERROR:
+                Log.log(traceback.format_exc() + "\n")
             raise AttributeError from ex
 
     def __setattr__(self, key, val):
