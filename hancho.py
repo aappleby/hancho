@@ -157,11 +157,11 @@ class Log:
     verbosity_out = LogLevel.NORMAL # verbosity level we want to appear in the log
 
     @classmethod
-    def reset(cls, root_config):
+    def reset(cls, config):
         cls.con_w = shutil.get_terminal_size().columns
-        cls.log_wrap      = root_config.pop("log_wrap", False)
-        cls.log_color     = root_config.pop("log_color", True)
-        cls.log_timestamp = root_config.pop("log_timestamp", True)
+        cls.log_wrap      = config.pop("log_wrap", False)
+        cls.log_color     = config.pop("log_color", True)
+        cls.log_timestamp = config.pop("log_timestamp", True)
 
         cls.time_origin   = time.perf_counter()
         cls.indent_stack  = []
@@ -172,11 +172,11 @@ class Log:
 
         # Handle all the verbosity-related flags
 
-        verbosity = root_config.pop("verbosity", None)
-        trace     = root_config.pop("trace", False)
-        debug     = root_config.pop("debug", False)
-        verbose   = root_config.pop("verbose", False)
-        quiet     = root_config.pop("quiet", False)
+        verbosity = config.pop("verbosity", None)
+        trace     = config.pop("trace", False)
+        debug     = config.pop("debug", False)
+        verbose   = config.pop("verbose", False)
+        quiet     = config.pop("quiet", False)
 
         if verbosity is not None:
             if isinstance(verbosity, str):
@@ -211,23 +211,12 @@ class Log:
         finally:
             Log.current_color = old_color
 
-#    @staticmethod
-#    @contextmanager
-#    def indent(color):
-#        # Not dead, used in test suites
-#        try:
-#            Log.indent_stack.append(Log.hex_to_ansi(color) + "│ ")
-#            # + Log.reset_color(color)
-#            yield
-#        finally:
-#            Log.indent_stack.pop()
-
     @classmethod
-    def indent2(cls, color):
+    def indent(cls, color):
         cls.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color())
 
     @classmethod
-    def dedent2(cls):
+    def dedent(cls):
         cls.indent_stack.pop()
 
     # ----------------------------------------------------------------------------------------------
@@ -376,24 +365,6 @@ class Log:
             result += '\n'
 
         return result
-
-#    @classmethod
-#    def log_indent(cls, color, message):
-#        if message:
-#            with Log.color(color):
-#                Log.log(message)
-#        Log.indent_stack.append(Log.hex_to_ansi(color) + "│ " + Log.reset_color())
-#
-#    @classmethod
-#    def log_dedent(cls, color, message):
-#        Log.indent_stack.pop()
-#        if message:
-#            with Log.color(color):
-#                if message[-1] == '\n':
-#                    Log.log("└ " + message[:-1] + cls.reset_color() + '\n')
-#                else:
-#                    Log.log("└ " + message + cls.reset_color())
-
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -994,14 +965,14 @@ class Tool(Dict):
 class Options:
 
     @classmethod
-    def reset(cls, root_config):
+    def reset(cls, config):
         # Pull options that aren't task-specific off the root config.
 
-        cls.max_errors  = root_config.pop("max_errors", 0)
-        cls.rebuild_all = root_config.pop("rebuild", False)
-        cls.strict      = root_config.pop("strict", True)
-        cls.target      = root_config.pop("target", None)
-        cls.tool        = root_config.pop("tool", None)
+        cls.max_errors  = config.pop("max_errors", 0)
+        cls.rebuild_all = config.pop("rebuild", False)
+        cls.strict      = config.pop("strict", True)
+        cls.target      = config.pop("target", None)
+        cls.tool        = config.pop("tool", None)
 
     @classmethod
     def parse_flags(cls, args : list[str]):
@@ -1084,6 +1055,7 @@ class Options:
 class Repo:
     def __init__(self, name : str, config : Dict):
         self.name : str = name
+        self.config = config
         self.build_db = BuildDB(config)
         self.scripts = []
 
@@ -1126,15 +1098,17 @@ class BuildDB:
 
         with LogLevel.VERBOSE, Colors.ORANGE:
             Log.log(f"Loading stat db '{stat_db_path}'\n")
-            if not os.path.isfile(stat_db_path):
-                #Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
-                return Dict()
 
-            time_a = time.perf_counter()
-            result = Utils.load_json(cast(str, stat_db_path))
-            time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
+        if not os.path.isfile(stat_db_path):
+            #Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
+            return Dict()
+
+        time_a = time.perf_counter()
+        result = Utils.load_json(cast(str, stat_db_path))
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.ORANGE:
+            Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
 
         # Turn the serialized stats back into a Dict.
         for k, v in list(result.items()):
@@ -1288,10 +1262,11 @@ class BuildDB:
 # region Script
 
 class Script:
-    def __init__(self, name : str, module : types.ModuleType, repo : Repo):
+    def __init__(self, name : str, module : types.ModuleType, repo : Repo, config : Dict):
         self.name : str = name
-        self.repo : Repo = repo
         self.module : types.ModuleType = module
+        self.repo : Repo = repo
+        self.config = config
         self.tasks = []
 
 # endregion
@@ -1302,7 +1277,7 @@ class Script:
 class Task:
 
     @classmethod
-    def reset(cls, root_config):
+    def reset(cls, config):
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
 
@@ -2239,7 +2214,7 @@ class Tracer:
 
         with LogLevel.TRACE, Log.color(self.color):
             Log.log(f"{Tracer.object_to_tag(self.context)}." + self.enter_message + "\n")
-            Log.indent2(self.color)
+            Log.indent(self.color)
 
         return self
 
@@ -2271,7 +2246,7 @@ class Tracer:
                 else:
                     message = f"{self.name!r} : {type} = {self.result!r}\n"
 
-            Log.dedent2()
+            Log.dedent()
             Log.log(message)
 
         return False
@@ -2298,13 +2273,6 @@ class Loader:
         cls.loaded_files : list[str] = []
         cls.all_repos : list[Repo] = []
 
-        # This is the "repo" associated with hancho.py itself - used if you're driving hancho
-        # directly instead of going through scripts.
-        cls.root_repo : Repo | None = None
-
-        # And this is the repo for the very first script .load()ed.
-        cls.first_repo : Repo | None = None
-
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
@@ -2327,14 +2295,12 @@ class Loader:
         script_path = cast(str, Path.abs(script_path))
 
         new_config = Dict(
-            old_script.module.config,
+            old_config,
             *args, **kwargs,
             script_path = script_path,
-            is_repo = is_repo
+            is_repo = is_repo,
+            repo_dir = Path.dirname(script_path) if is_repo else old_config.repo_dir
         )
-
-        if is_repo:
-            new_config.repo_dir = Path.dirname(script_path)
 
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
@@ -2381,7 +2347,7 @@ class Loader:
         else:
             new_repo = cv_script.get().repo
 
-        new_script = Script(new_name, new_module, new_repo)
+        new_script = Script(new_name, new_module, new_repo, new_config)
 
         new_repo.scripts.append(new_script)
 
@@ -2412,8 +2378,8 @@ class Loader:
 class Runner:
 
     @classmethod
-    def reset(cls, root_config):
-        cls.core_max  : int = root_config.pop("core_max", os.cpu_count() or 1)
+    def reset(cls, config):
+        cls.core_max  : int = config.pop("core_max", os.cpu_count() or 1)
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.core_max)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
@@ -2481,10 +2447,15 @@ class Runner:
 
         elif Options.rebuild_all:
             cls.enable_all_tasks()
+
         else:
-            # Enable all tasks that were generated by the first loaded repo.
+            # Enable all tasks that were generated by the root repo or the first loaded repo.
             for task in Loader.yield_tasks():
-                if task.script.repo in (Loader.root_repo, Loader.first_repo):
+
+                if Main.default_repo and task.script.repo == Main.default_repo:
+                    task.enable_task()
+
+                if Main.first_repo and task.script.repo == Main.first_repo:
                     task.enable_task()
 
     # ----------------------------------------------------------------------------------------------
@@ -2503,25 +2474,13 @@ class Runner:
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
 
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log("Starting tasks...\n")
-            Log.indent2(Colors.BLUE)
-
-        count = 0
-        time_a = time.perf_counter()
         for task in Loader.yield_tasks():
             if task.config.enabled:
                 task.create_aio_task()
-                count += 1
-        time_b = time.perf_counter()
-
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.dedent2()
-            Log.log(f"Starting {count} tasks took {time_b - time_a:8.6f} seconds\n")
 
         # ------------------------------------
-
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
+
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("Running tasks...\n")
 
@@ -2605,69 +2564,14 @@ class Runner:
 
 class Main:
 
-    root_config : Dict
+    # This is the "script" associated with hancho.py itself - used if you're driving hancho
+    # directly instead of going through .hancho scripts.
+    default_script = None
+    default_repo = None
 
-    @classmethod
-    def init(cls, *args, **kwargs):
-        """
-        (Re-)initializes all of Hancho.
-        If you are importing Hancho directly, you should call this as
-        hancho.init(verbosity = "debug", myoption=1234)
-        """
-
-        cls.root_config = Dict(get_defaults(), *args, is_repo = True, **kwargs)
-
-        # ----------------------------------------
-
-        root_repo   = Repo(__file__, cls.root_config)
-
-        root_module = sys.modules[__name__]
-        root_module.hancho = hancho # type: ignore
-        root_module.config = cls.root_config # type: ignore
-
-        root_script = Script(__file__, root_module, root_repo)
-        root_repo.scripts.append(root_script)
-        cv_script.set(root_script)
-
-        # ----------------------------------------
-
-        Log.reset(cls.root_config)
-        Utils.reset()
-
-        Loader.reset()
-        Loader.root_repo = root_repo
-        Loader.all_repos.append(root_repo)
-
-        Options.reset(cls.root_config)
-        Task.reset(cls.root_config)
-        Runner.reset(cls.root_config)
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def main2(cls):
-        flags = Options.parse_flags(sys.argv[1:])
-
-        script_dir  = flags.pop("script_dir")
-        script_file = flags.pop("script_file")
-        script_path = Path.join(script_dir, script_file)
-
-        Main.init(flags)
-
-        Main.banner_start()
-
-        time_a = time.perf_counter()
-        first_config = Dict(get_defaults(), flags)
-        first_script = Loader.load_file(script_path, True, first_config)
-        Loader.first_repo = first_script.repo
-        time_b = time.perf_counter()
-
-        with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
-
-        result = Main.build()
-        Main.banner_end()
-        return result
+    # And this is the very first script .load()ed.
+    first_script = None
+    first_repo = None
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2694,6 +2598,102 @@ class Main:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
+    def main2(cls):
+        # Actual main
+
+        flags = Options.parse_flags(sys.argv[1:])
+
+        script_dir  = flags.pop("script_dir")
+        script_file = flags.pop("script_file")
+        script_path = Path.join(script_dir, script_file)
+
+        Main.init(flags)
+
+        assert cls.default_repo is not None
+
+        root_dir = cls.default_repo.config.expand("{root_dir}", str)
+        repo_dir = cls.default_repo.config.expand("{repo_dir}", str)
+
+        Main.banner_start(root_dir, repo_dir)
+
+        first_config = Dict(get_defaults(), flags)
+
+        time_a = time.perf_counter()
+        cls.first_script = Loader.load_file(script_path, True, first_config)
+        cls.first_repo = cls.first_script.repo
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.ORANGE:
+            Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
+
+        time_a = time.perf_counter()
+        result = Main.build()
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.GREEN:
+            Log.log(f"Build took {time_b - time_a} seconds\n")
+
+        Main.banner_end()
+
+        return result
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def init(cls, *args, **kwargs):
+        """
+        (Re-)initializes all of Hancho.
+        If you are importing Hancho directly, you should call this as
+        hancho.init(verbosity = "debug", myoption=1234)
+        """
+
+        default_config = Dict(get_defaults(), *args, **kwargs, is_repo = True)
+        default_repo   = Repo(__file__, default_config)
+        default_module = sys.modules[__name__]
+        default_script = Script(__file__, default_module, default_repo, default_config)
+
+        default_module.hancho = hancho # type: ignore
+        default_module.config = default_config # type: ignore
+
+        cls.default_script = default_script
+        cls.default_repo = cls.default_script.repo
+        default_repo.scripts.append(default_script)
+        cv_script.set(default_script)
+
+        # ----------------------------------------
+
+        Log.reset(default_config)
+        Utils.reset()
+        Options.reset(default_config)
+        Task.reset(default_config)
+        Runner.reset(default_config)
+        Loader.reset()
+
+        Loader.all_repos.append(default_repo)
+
+    # ----------------------------------------------------------------------------------------------
+    # Startup banner
+
+    @classmethod
+    def banner_start(cls, root_dir, repo_dir):
+
+        with LogLevel.VERBOSE, Colors.LIME:
+            Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
+            Log.log(f"Verbosity is {Log.verbosity_out}\n")
+
+            if Log.verbosity_out >= LogLevel.TRACE:
+                Log.log("Trace mode on\n")
+            if Log.verbosity_out >= LogLevel.DEBUG:
+                Log.log("Debug mode on\n")
+            if Log.verbosity_out >= LogLevel.VERBOSE:
+                Log.log("Verbose mode on\n")
+
+            Log.log(f"Hancho root at {root_dir}\n")
+            Log.log(f"Hancho repo at {repo_dir}\n")
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
     def build(cls):
         # ------------------------------------
         # Run all tasks and tools
@@ -2709,7 +2709,7 @@ class Main:
 
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("┌ Saving stats...\n")
-            Log.indent2(Colors.BLUE)
+            Log.indent(Colors.BLUE)
 
         time_a = time.perf_counter()
         for repo in Loader.all_repos:
@@ -2717,7 +2717,7 @@ class Main:
         time_b = time.perf_counter()
 
         with LogLevel.VERBOSE, Colors.BLUE:
-            Log.dedent2()
+            Log.dedent()
             Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
@@ -2726,7 +2726,7 @@ class Main:
 
     @classmethod
     def post_build(cls, repo):
-        if Main.root_config.dry_run:
+        if repo.config.dry_run:
             return
 
         build_db = repo.build_db
@@ -2764,7 +2764,7 @@ class Main:
 
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log(f"┌ Repo {repo.name} post-build\n")
-            Log.indent2(Colors.BLUE)
+            Log.indent(Colors.BLUE)
 
         # Dump the stats as JSON.
         if stat_db_path is not None:
@@ -2784,32 +2784,8 @@ class Main:
                 Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
 
         with LogLevel.VERBOSE, Colors.BLUE:
-            Log.dedent2()
+            Log.dedent()
             Log.log(f"└ Repo {repo.name} done\n")
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def banner_start(cls):
-        # ------------------------------------
-        # Startup banner
-
-        root_dir = Main.root_config.expand("{root_dir}", str)
-        repo_dir = Main.root_config.expand("{repo_dir}", str)
-
-        with LogLevel.VERBOSE, Colors.LIME:
-            Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
-            Log.log(f"Verbosity is {Log.verbosity_out}\n")
-
-            if Log.verbosity_out >= LogLevel.TRACE:
-                Log.log("Trace mode on\n")
-            if Log.verbosity_out >= LogLevel.DEBUG:
-                Log.log("Debug mode on\n")
-            if Log.verbosity_out >= LogLevel.VERBOSE:
-                Log.log("Verbose mode on\n")
-
-            Log.log(f"Hancho root at {root_dir}\n")
-            Log.log(f"Hancho repo at {repo_dir}\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2843,10 +2819,10 @@ class Main:
         with LogLevel.VERBOSE, Colors.BLUE:
             for repo in Loader.all_repos:
                 Log.log(f"Repo stats for {repo.name}\n")
-                Log.indent2(Colors.BLUE)
+                Log.indent(Colors.BLUE)
                 for k, v in repo.build_db.reasons.items():
                     Log.log(f"Rebuild reasons {k:13} = {v}\n")
-                Log.dedent2()
+                Log.dedent()
 
 # endregion
 # --------------------------------------------------------------------------------------------------

@@ -83,9 +83,9 @@ class TestApp(unittest.TestCase):
     def test_indentation(self):
         hancho.init(log_color = False, log_timestamp = False)
         hancho.Log.log("line1\n")
-        hancho.Log.indent2(0xFFFFFFFF)
+        hancho.Log.indent(0xFFFFFFFF)
         hancho.Log.log("line2\n")
-        hancho.Log.dedent2()
+        hancho.Log.dedent()
         hancho.Log.log("line3\n")
 
         self.assertEqual('line1\n│ line2\nline3\n', sys.stdout.getvalue())
@@ -116,9 +116,9 @@ class TestApp(unittest.TestCase):
         hancho.init(log_color = False, log_timestamp = False)
 
         hancho.Log.log("┌ one\n")
-        hancho.Log.indent2(0xFFFFFFFF)
+        hancho.Log.indent(0xFFFFFFFF)
         hancho.log("boop\n")
-        hancho.Log.dedent2()
+        hancho.Log.dedent()
         hancho.Log.log("└ two\n")
         hancho.log("soop\n")
 
