@@ -10,6 +10,7 @@
 # FIXME Can we build examples/tutorial from examples/tutorial and also matcheroni/ and have it work somehow?
 # FIXME tests for the various rools in tools/*
 # FIXME need an example that drives Hancho through hancho.main()
+# FIXME why is text during the dirty run in go.py orange?
 
 It needs to be made VERY CLEAR that no matter where you are in the callstack or what file you have
 open on your screen, hancho.config _always_ points at the config owned by the script that is

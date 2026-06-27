@@ -44,17 +44,6 @@ from typing import Any, cast
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
-# Config fields often have arbitrarily nested lists of stuff due to things like
-#
-#     main_objs = [foo_o, bar_o]
-#     link(in_objs = [main_objs, lib_objs, ...])
-#
-# and so we define a 'Tree' type that is basically 'either a T, or arbitrarily nested list of T'
-# This is only used as a type annotation, but be aware when reading the functions below that
-# some of them look like they operate on Ts, but they've been 'recursified' to work on Tree[T]s.
-
-#type Tree[T] = T | list[Tree[T]]
-
 # We spell all these defaults out explicitly so that when this config gets merged with flags and
 # task configs the fields stay in the same order.
 
@@ -89,7 +78,7 @@ def get_defaults() -> dict[str, Any]:
 
 # fmt: on
 
-cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("_script")
+cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("script")
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -757,298 +746,6 @@ class Utils:
 
 # endregion
 # --------------------------------------------------------------------------------------------------
-# region Repo
-
-class Repo:
-    def __init__(self, name : str, config : Dict, is_root_repo = False):
-        self.name : str = name
-        self.is_root_repo = is_root_repo
-        self.build_db = BuildDB(config, is_root_repo)
-        self.root_script = None
-        self.scripts = []
-
-    def add_script(self, script):
-        if self.root_script is None:
-            self.root_script = script
-        self.scripts.append(script)
-
-    # ----------------------------------------------------------------------------------------------
-
-    def post_build(self):
-        if Main.root_config.dry_run:
-            return
-
-        build_db = self.build_db
-        stat_db_path = build_db.stat_db_path
-        comp_db_path = build_db.comp_db_path
-
-        # Gather stats from all completed tasks
-        stat_db = {}
-        comp_db = {}
-
-        tasks = [t for script in self.scripts for t in script.tasks]
-
-        for task in tasks:
-            if isinstance(task._error, (Task.CANCELLED, Task.BROKEN, Task.FAILED)) or not task._complete:
-                continue
-
-            for file in task.in_files:
-                build_db.update_stat_db(stat_db, file)
-
-                # Haven't tested this in an IDE, but I think it matches the spec.
-                comp_db[file] = {
-                    "directory" : task.config.task_cwd,
-                    "command"   : BuildDB.commands_to_string(task.config.command),
-                    "file"      : file,
-                }
-
-            if "in_depfile" in task.config:
-                deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
-                for file in deplines:
-                    build_db.update_stat_db(stat_db, file)
-
-            for file in task.out_files:
-                str_command = BuildDB.commands_to_string(task.config.command)
-                build_db.update_stat_db(stat_db, file, str_command)
-
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log(f"┌ Repo {self.name} post-build\n")
-            Log.indent2(Colors.BLUE)
-
-        # Dump the stats as JSON.
-        if stat_db_path is not None:
-            time_a = time.perf_counter()
-            Utils.save_json(stat_db, stat_db_path)
-            time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
-                Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
-
-        if comp_db_path is not None:
-            time_a = time.perf_counter()
-            Utils.save_json(list(comp_db.values()), comp_db_path)
-            time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
-                Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
-
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.dedent2()
-            Log.log(f"└ Repo {self.name} done\n")
-
-
-# endregion
-# --------------------------------------------------------------------------------------------------
-# region Script
-
-class Script:
-    """
-    This just holds per-script info
-    """
-
-    def __init__(self, name : str, module : types.ModuleType, repo : Repo):
-        self.name : str = name
-        self.repo : Repo = repo
-        self.module : types.ModuleType = module
-        self.tasks = []
-        self.scripts : list[Script] = []
-
-# endregion
-# --------------------------------------------------------------------------------------------------
-# region BuildDB
-
-class BuildDB:
-
-    def __init__(self, config, is_root_repo):
-
-        self.reasons = Counter()
-
-        # Hash, size, mtime, command for each file in the previous build.
-        # Command is only set for output files.
-        self.old_stat_db : dict[str, Dict] = {}
-
-        # Stats accumulated during the build after a task is initialized but before it has run.
-        # Compared with old_stat_db entries to determine if a task needs a rebuild.
-        self.mid_stat_db : dict[str, Dict] = {}
-
-        stat_db_path = config.stat_db_path
-        comp_db_path = config.comp_db_path
-
-        stat_db_path = config.expand(stat_db_path, str)
-        stat_db_path = cast(str, Path.abs(stat_db_path))
-        comp_db_path = config.expand(comp_db_path, str)
-        comp_db_path = cast(str, Path.abs(comp_db_path))
-
-        self.stat_db_path = stat_db_path
-        self.comp_db_path = comp_db_path
-
-        self.old_stat_db = BuildDB.load_stat_db(stat_db_path)
-
-    # ----------------------------------------------------------------------------------------------
-
-    @staticmethod
-    def load_stat_db(stat_db_path) -> Dict:
-        result = {}
-
-        with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading stat db '{stat_db_path}'\n")
-            if not os.path.isfile(stat_db_path):
-                #Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
-                return Dict()
-
-            time_a = time.perf_counter()
-            result = Utils.load_json(cast(str, stat_db_path))
-            time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
-
-        # Turn the serialized stats back into a Dict.
-        for k, v in list(result.items()):
-            result[k] = Dict(v)
-
-        return Dict(result)
-
-    # ----------------------------------------------------------------------------------------------
-
-    def update_stat_db(self, out_db, file, command = None):
-        Utils.stat_calls += 1
-
-        if file in out_db:
-            stat = out_db.get(file)
-        else:
-            stat = Dict()
-            out_db[file] = stat
-
-        _stat = os.stat(file)
-        stat.merge(
-            hash = Utils.hash_file(file),
-            st_size = _stat.st_size,
-            st_mtime_ns = _stat.st_mtime_ns,
-            command = command
-        )
-
-    @classmethod
-    def commands_to_string(cls, commands):
-        commands = Utils.flatten(commands)
-        if callable(commands[0]):
-            commands = [c.__name__ for c in commands]
-        return "; ".join(commands)
-
-    # ----------------------------------------------------------------------------------------------
-
-    def pre_task(self, task):
-        if task.config.dry_run:
-            return
-
-        # Tasks should have at most one depfile.
-        for key, files in list(task.config.items()):
-            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
-                # Why isn't this being hit by code coverage? We do have a test for it.
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
-
-        # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
-        if "in_depfile" in task.config:
-            task._old_deplines = Utils.load_depfile(
-                task.config.in_depfile, task.config.depformat, task.config.task_cwd
-            )
-            for file in task._old_deplines:
-                    assert os.path.exists(file)
-                    if os.path.exists(file):
-                        self.update_stat_db(self.mid_stat_db, file)
-
-        for file in task.in_files:
-            assert os.path.exists(file)
-            if os.path.exists(file):
-                self.update_stat_db(self.mid_stat_db, file)
-
-        for file in task.out_files:
-            if os.path.exists(file):
-                str_command = BuildDB.commands_to_string(task.config.command)
-                self.update_stat_db(self.mid_stat_db, file, str_command)
-
-    def post_task(self, task):
-        if "in_depfile" in task.config:
-            task.new_deplines = Utils.load_depfile(
-                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
-                )
-
-    # ----------------------------------------------------------------------------------------------
-
-    def rebuild_reason(self, task) -> str:
-        """
-        Figures out why we have to run a Task, or returns "" if we don't.
-        """
-        config = task.config
-
-        # ------------------------------------
-        # Check the trivial reasons to rebuild
-
-        if Options.rebuild_all or config.get("rebuild", False):
-            self.reasons["forced"] += 1
-            return "Target forced to rebuild"
-
-        if not task.in_files:
-            self.reasons["no inputs"] += 1
-            return "Always rebuild a target with no inputs"
-
-        if not task.out_files:
-            self.reasons["no outputs"] += 1
-            return "Always rebuild a target with no outputs"
-
-        # ------------------------------------
-
-        for filename in task.out_files:
-            if not Path.exists(filename):
-                self.reasons["output missing"] += 1
-                return f"Output file missing: {filename}"
-
-            if filename not in self.old_stat_db:
-                # I'm not sure we can test this, we probably get hit by other checks before we get
-                # here.
-                self.reasons["output stat missing"] += 1 # pragma: no cover
-                return f"Output stat missing: {filename}"
-
-            old_stat = self.old_stat_db[filename]
-            mid_stat = self.mid_stat_db[filename]
-
-            assert old_stat is not None
-            assert mid_stat is not None
-
-            if old_stat.command != mid_stat.command:
-                self.reasons["command changed"] += 1
-                return f"Command used to generate file has changed : {filename} : {old_stat.command} : {mid_stat.command}"
-
-        # ------------------------------------
-
-        all_files = task._old_deplines + task.in_files
-
-        for filename in all_files:
-            old_stat = self.old_stat_db[filename]
-            mid_stat = self.mid_stat_db[filename]
-
-            assert old_stat is not None
-            assert mid_stat is not None
-
-            if old_stat.st_mtime_ns != mid_stat.st_mtime_ns:
-                self.reasons["mtime mismatch"] += 1
-                return f"Mtime mismatch {old_stat.st_mtime_ns} != {mid_stat.st_mtime_ns} for : {filename}"
-
-            if old_stat.st_size != mid_stat.st_size:
-                self.reasons["size mismatch"] += 1
-                return f"Size mismatch {old_stat.st_size} != {mid_stat.st_size} for : {filename}"
-
-            if old_stat.hash != mid_stat.hash:
-                self.reasons["hash mismatch"] += 1
-                return f"Hash mismatch {old_stat.hash} -> {mid_stat.hash} for : {filename}"
-
-            # Does not need to rebuild based on file stats / hash
-            self.reasons["*hash match"] += 1
-
-        self.reasons["*task clean"] += 1
-        return ""
-
-# endregion
-# --------------------------------------------------------------------------------------------------
 # region Path
 # These functions wrap the os.path.* functions so that they work on Tree[str]
 
@@ -1382,6 +1079,223 @@ class Options:
 
 # endregion
 # --------------------------------------------------------------------------------------------------
+# region Repo
+
+class Repo:
+    def __init__(self, name : str, config : Dict):
+        self.name : str = name
+        self.build_db = BuildDB(config)
+        self.scripts = []
+
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region BuildDB
+
+class BuildDB:
+
+    def __init__(self, config):
+
+        self.reasons = Counter()
+
+        # Hash, size, mtime, command for each file in the previous build.
+        # Command is only set for output files.
+        self.old_stat_db : dict[str, Dict] = {}
+
+        # Stats accumulated during the build after a task is initialized but before it has run.
+        # Compared with old_stat_db entries to determine if a task needs a rebuild.
+        self.mid_stat_db : dict[str, Dict] = {}
+
+        stat_db_path = config.stat_db_path
+        comp_db_path = config.comp_db_path
+
+        stat_db_path = config.expand(stat_db_path, str)
+        stat_db_path = cast(str, Path.abs(stat_db_path))
+        comp_db_path = config.expand(comp_db_path, str)
+        comp_db_path = cast(str, Path.abs(comp_db_path))
+
+        self.stat_db_path = stat_db_path
+        self.comp_db_path = comp_db_path
+
+        self.old_stat_db = BuildDB.load_stat_db(stat_db_path)
+
+    # ----------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def load_stat_db(stat_db_path) -> Dict:
+        result = {}
+
+        with LogLevel.VERBOSE, Colors.ORANGE:
+            Log.log(f"Loading stat db '{stat_db_path}'\n")
+            if not os.path.isfile(stat_db_path):
+                #Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
+                return Dict()
+
+            time_a = time.perf_counter()
+            result = Utils.load_json(cast(str, stat_db_path))
+            time_b = time.perf_counter()
+            with LogLevel.VERBOSE, Colors.ORANGE:
+                Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
+
+        # Turn the serialized stats back into a Dict.
+        for k, v in list(result.items()):
+            result[k] = Dict(v)
+
+        return Dict(result)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def update_stat_db(self, out_db, file, command = None):
+        Utils.stat_calls += 1
+
+        if file in out_db:
+            stat = out_db.get(file)
+        else:
+            stat = Dict()
+            out_db[file] = stat
+
+        _stat = os.stat(file)
+        stat.merge(
+            hash = Utils.hash_file(file),
+            st_size = _stat.st_size,
+            st_mtime_ns = _stat.st_mtime_ns,
+            command = command
+        )
+
+    @classmethod
+    def commands_to_string(cls, commands):
+        commands = Utils.flatten(commands)
+        if callable(commands[0]):
+            commands = [c.__name__ for c in commands]
+        return "; ".join(commands)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def pre_task(self, task):
+        if task.config.dry_run:
+            return
+
+        # Tasks should have at most one depfile.
+        for key, files in list(task.config.items()):
+            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                # Why isn't this being hit by code coverage? We do have a test for it.
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
+
+        # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
+        if "in_depfile" in task.config:
+            task._old_deplines = Utils.load_depfile(
+                task.config.in_depfile, task.config.depformat, task.config.task_cwd
+            )
+            for file in task._old_deplines:
+                    assert os.path.exists(file)
+                    if os.path.exists(file):
+                        self.update_stat_db(self.mid_stat_db, file)
+
+        for file in task.in_files:
+            assert os.path.exists(file)
+            if os.path.exists(file):
+                self.update_stat_db(self.mid_stat_db, file)
+
+        for file in task.out_files:
+            if os.path.exists(file):
+                str_command = BuildDB.commands_to_string(task.config.command)
+                self.update_stat_db(self.mid_stat_db, file, str_command)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def post_task(self, task):
+        if "in_depfile" in task.config:
+            task.new_deplines = Utils.load_depfile(
+                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
+                )
+
+    # ----------------------------------------------------------------------------------------------
+
+    def rebuild_reason(self, task) -> str:
+        """
+        Figures out why we have to run a Task, or returns "" if we don't.
+        """
+        config = task.config
+
+        # ------------------------------------
+        # Check the trivial reasons to rebuild
+
+        if Options.rebuild_all or config.get("rebuild", False):
+            self.reasons["forced"] += 1
+            return "Target forced to rebuild"
+
+        if not task.in_files:
+            self.reasons["no inputs"] += 1
+            return "Always rebuild a target with no inputs"
+
+        if not task.out_files:
+            self.reasons["no outputs"] += 1
+            return "Always rebuild a target with no outputs"
+
+        # ------------------------------------
+
+        for filename in task.out_files:
+            if not Path.exists(filename):
+                self.reasons["output missing"] += 1
+                return f"Output file missing: {filename}"
+
+            if filename not in self.old_stat_db:
+                # I'm not sure we can test this, we probably get hit by other checks before we get
+                # here.
+                self.reasons["output stat missing"] += 1 # pragma: no cover
+                return f"Output stat missing: {filename}"
+
+            old_stat = self.old_stat_db[filename]
+            mid_stat = self.mid_stat_db[filename]
+
+            assert old_stat is not None
+            assert mid_stat is not None
+
+            if old_stat.command != mid_stat.command:
+                self.reasons["command changed"] += 1
+                return f"Command used to generate file has changed : {filename} : {old_stat.command} : {mid_stat.command}"
+
+        # ------------------------------------
+
+        all_files = task._old_deplines + task.in_files
+
+        for filename in all_files:
+            old_stat = self.old_stat_db[filename]
+            mid_stat = self.mid_stat_db[filename]
+
+            assert old_stat is not None
+            assert mid_stat is not None
+
+            if old_stat.st_mtime_ns != mid_stat.st_mtime_ns:
+                self.reasons["mtime mismatch"] += 1
+                return f"Mtime mismatch {old_stat.st_mtime_ns} != {mid_stat.st_mtime_ns} for : {filename}"
+
+            if old_stat.st_size != mid_stat.st_size:
+                self.reasons["size mismatch"] += 1
+                return f"Size mismatch {old_stat.st_size} != {mid_stat.st_size} for : {filename}"
+
+            if old_stat.hash != mid_stat.hash:
+                self.reasons["hash mismatch"] += 1
+                return f"Hash mismatch {old_stat.hash} -> {mid_stat.hash} for : {filename}"
+
+            # Does not need to rebuild based on file stats / hash
+            self.reasons["*hash match"] += 1
+
+        self.reasons["*task clean"] += 1
+        return ""
+
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region Script
+
+class Script:
+    def __init__(self, name : str, module : types.ModuleType, repo : Repo):
+        self.name : str = name
+        self.repo : Repo = repo
+        self.module : types.ModuleType = module
+        self.tasks = []
+
+# endregion
+# --------------------------------------------------------------------------------------------------
 # region Task
 # Task object + bookkeeping
 
@@ -1405,7 +1319,6 @@ class Task:
         # scripts will need to read task.config in order to implement task callbacks, so the field
         # is not underscore-prefixed like the later ones.
 
-        # must use cv_script.get()
         self.script  = cv_script.get()
         self.config  = Dict(self.script.module.config, *args, **kwargs)
 
@@ -1506,6 +1419,8 @@ class Task:
             if Utils.in_event_loop():
                 self.create_aio_task()
 
+    # ----------------------------------------------------------------------------------------------
+
     def create_aio_task(self):
         assert Utils.in_event_loop()
 
@@ -1563,9 +1478,7 @@ class Task:
 
     async def task_main(self):
         config = self.config
-        script = cv_script.get()
-        repo   = script.repo
-        build_db = repo.build_db
+        build_db = cv_script.get().repo.build_db
 
         time_a = time.perf_counter()
 
@@ -1684,7 +1597,6 @@ class Task:
             message += f"'{self.config.desc}'\n"
             self.log(message)
 
-
     # ----------------------------------------------------------------------------------------------
     # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
     # modifying tasks after they're created but before they're started. If you point task B's
@@ -1750,20 +1662,10 @@ class Task:
             if Task.is_io_field(key):
                 temp[key] = Path.norm(self.config.expand(files))
 
-        # We can't use merge here because the types of our values may have changed after expansion
+        # We can't use merge here because that'll give us things like [unexpanded_depfile,
+        # expanded_depfile] which we don't want - we just want to replace all the templates with
+        # their expanded version.
         config.update(temp)
-        #Dict.merge2(
-        #    config,
-        #    temp,
-        #    merge_dicts = False,
-        #    merge_lists = False,
-        #    into_a = True,
-        #    into_b = False,
-        #    keep_a = True,
-        #    keep_b = True
-        #)
-        #for key, val in temp.items():
-        #    config[key] = val
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1788,7 +1690,6 @@ class Task:
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
             self.log(str(config) + "\n")
-
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1856,8 +1757,6 @@ class Task:
         for key, files in list(self.config.items()):
             if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
-
-
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1975,6 +1874,23 @@ class Task:
             with LogLevel.VERBOSE, Log.color(0x666666):
                 self.log(self.dump_stdout())
 
+    # ----------------------------------------------------------------------------------------------
+
+    async def call_callback(self, command):
+        script_dir = cast(str, Path.dirname(self.config.script_path))
+        callback_dir = Path.rel(script_dir, self.config.repo_dir)
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            self.log(f"{callback_dir}$ {command}\n")
+
+        # Callbacks run from the script_dir where they were defined so that relative paths used
+        # in the callback will be correct.
+        with chdir(script_dir):
+            result = command(self)
+        if isawaitable(result):
+            result = await result
+
+        return result
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1991,24 +1907,6 @@ class Task:
 
         if self._stdout or self._stderr:
             result += "----------------------------------------\n"
-
-        return result
-
-    # ----------------------------------------------------------------------------------------------
-
-    async def call_callback(self, command):
-        script_dir = cast(str, Path.dirname(self.config.script_path))
-        callback_dir = Path.rel(script_dir, self.config.repo_dir)
-
-        with LogLevel.VERBOSE, Colors.BLUE:
-            self.log(f"{callback_dir}$ {command}\n")
-
-        # Callbacks run from the script_dir where they were defined so that relative paths used
-        # in the callback will be correct.
-        with chdir(script_dir):
-            result = command(self)
-        if isawaitable(result):
-            result = await result
 
         return result
 
@@ -2398,9 +2296,14 @@ class Loader:
         cls.real_filenames : set[str] = set()
         cls.dedupe : dict[tuple[str, str], Script] = {}
         cls.loaded_files : list[str] = []
-        cls.root_repo : Repo | None = None
-        cls.first_repo : Repo | None = None
         cls.all_repos : list[Repo] = []
+
+        # This is the "repo" associated with hancho.py itself - used if you're driving hancho
+        # directly instead of going through scripts.
+        cls.root_repo : Repo | None = None
+
+        # And this is the repo for the very first script .load()ed.
+        cls.first_repo : Repo | None = None
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2433,9 +2336,9 @@ class Loader:
 
         return cls.load_str(new_config, source)
 
+    # FIXME ditch this
     @classmethod
     def load_file2(cls, *args, **kwargs) -> types.ModuleType:
-        # must use cv_script.get()
         script = cv_script.get()
         old_config = script.module.config
         new_config = Dict(old_config, *args, **kwargs)
@@ -2449,7 +2352,6 @@ class Loader:
     def load_str(cls, new_config : Dict, source : str) -> Script:
         """This is split out from load_file for testing purposes."""
 
-        # must use cv_script.get()
         script = cv_script.get()
         script_path = new_config.script_path
 
@@ -2484,11 +2386,11 @@ class Loader:
 
         new_module = types.ModuleType(cast(str, Path.stem(script_path)))
         new_script = Script(new_name, new_module, new_repo)
-        new_repo.add_script(new_script)
+        new_repo.scripts.append(new_script)
 
         new_module.__file__ = script_path
-        new_module.hancho = hancho
-        new_module.config = new_config
+        new_module.hancho = hancho     # type: ignore
+        new_module.config = new_config # type: ignore
 
         script_dir = cast(str, Path.dirname(script_path))
 
@@ -2628,7 +2530,7 @@ class Runner:
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("Running tasks...\n")
 
-        #with Timer("Running Tasks") as timer:
+        time_a = time.perf_counter()
         while cls.live_aio_tasks and cls.count_failures() <= Options.max_errors:
             finished_aio_task = None
 
@@ -2659,9 +2561,10 @@ class Runner:
                 if finished_aio_task is not None:
                     cls.live_aio_tasks.discard(finished_aio_task)
                 cls.tasks_awaited += 1
+        time_b = time.perf_counter()
 
-        #with LogLevel.VERBOSE, Colors.BLUE:
-        #    Log.log(f"Running {cls.tasks_awaited} tasks took {timer.elapsed():8.6f} seconds\n")
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log(f"Running {cls.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
 
         if cls.count_failures() > Options.max_errors:
             with LogLevel.ERROR:
@@ -2685,7 +2588,7 @@ class Runner:
         return 1 if cls.tasks_failed or cls.tasks_broken else 0
 
     # ----------------------------------------------------------------------------------------------
-    # not worth coverage checking this when we only have one tool and it works.
+    # not worth coverage checking this when we only have one tool and we know it works.
 
     @classmethod
     def run_tool(cls, tool : str): # pragma: no cover
@@ -2729,12 +2632,12 @@ class Main:
         Utils.reset()
 
         root_module = sys.modules[__name__]
-        root_module.hancho = hancho
-        root_module.config = cls.root_config
+        root_module.hancho = hancho # type: ignore
+        root_module.config = cls.root_config # type: ignore
 
-        root_repo   = Repo(__file__, cls.root_config, is_root_repo = True)
+        root_repo   = Repo(__file__, cls.root_config)
         root_script = Script(__file__, root_module, root_repo)
-        root_repo.add_script(root_script)
+        root_repo.scripts.append(root_script)
         cv_script.set(root_script)
 
         Loader.reset()
@@ -2750,73 +2653,76 @@ class Main:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def main(cls):
-        # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD" message
-        # if we failed to catch an exception in run_tasks.
-        # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
-        # misinterpreted as a Hancho bug.
-        try:
-            flags = Options.parse_flags(sys.argv[1:])
+    def main2(cls):
+        flags = Options.parse_flags(sys.argv[1:])
 
-            script_dir  = flags.pop("script_dir")
-            script_file = flags.pop("script_file")
-            script_path = Path.join(script_dir, script_file)
+        script_dir  = flags.pop("script_dir")
+        script_file = flags.pop("script_file")
+        script_path = Path.join(script_dir, script_file)
 
-            Main.init(flags)
+        Main.init(flags)
 
-            Main.banner_start()
+        Main.banner_start()
 
-            first_config = Dict(
-                get_defaults(),
-                flags,
-                script_path = script_path,
-                is_repo = True
-            )
+        first_config = Dict(
+            get_defaults(),
+            flags,
+            script_path = script_path,
+            is_repo = True
+        )
 
-            old_script_count = 0
-            for repo in Loader.all_repos:
-                old_script_count += len(repo.scripts)
+        old_script_count = 0
+        for repo in Loader.all_repos:
+            old_script_count += len(repo.scripts)
 
-            new_script_count = 0
+        new_script_count = 0
 
-            #with Timer("Loading Hancho files") as timer:
+        #with Timer("Loading Hancho files") as timer:
 
-            time_a = time.perf_counter()
-            if not Path.exists(script_path):
-                with LogLevel.FATAL, Log.color(0xFF0000):
-                    Log.log(f"Could not load build script {script_path}\n")
-                raise FileNotFoundError(script_path)
-            first_script = Loader.load_file(first_config)
-            Loader.first_repo = first_script.repo
+        time_a = time.perf_counter()
+        if not Path.exists(script_path):
+            with LogLevel.FATAL, Log.color(0xFF0000):
+                Log.log(f"Could not load build script {script_path}\n")
+            raise FileNotFoundError(script_path)
+        first_script = Loader.load_file(first_config)
+        Loader.first_repo = first_script.repo
 
-            time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
-                Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
+        time_b = time.perf_counter()
+        with LogLevel.VERBOSE, Colors.ORANGE:
+            Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
 
-            for repo in Loader.all_repos:
-                new_script_count += len(repo.scripts)
+        for repo in Loader.all_repos:
+            new_script_count += len(repo.scripts)
 
 #            finally:
 #                with LogLevel.VERBOSE:
 #                    Log.log_dedent(Colors.BLUE, f"Loading {new_script_count - old_script_count} Hancho files took {timer.elapsed():8.6f} seconds\n")
 
-            result = Main.build()
+        result = Main.build()
 
-            Main.banner_end()
+        Main.banner_end()
 
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def main(cls):
+        # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
+        # message if we failed to catch an exception in run_tasks.
+        # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
+        # misinterpreted as a Hancho bug.
+        try:
+            return cls.main2()
         except Exception as ex:
             with LogLevel.ERROR, Colors.RED:
                 Log.log("Hancho hit an exception during startup:\n")
                 Log.log(f"os.getcwd = {os.getcwd()}\n")
                 Log.log_exception(ex)
                 Log.log("BUILD FAILED\n")
-                result = 1
             traceback.print_exc()
+            return 1
         finally:
             # Don't leave the last line of the log sitting in line_buffer!
             Log.flush()
-
-        return result
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2842,7 +2748,7 @@ class Main:
                 Log.indent2(Colors.BLUE)
             time_a = time.perf_counter()
             for repo in Loader.all_repos:
-                repo.post_build()
+                cls.post_build(repo)
             time_b = time.perf_counter()
         finally:
             with LogLevel.VERBOSE, Colors.BLUE:
@@ -2850,6 +2756,71 @@ class Main:
                 Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def post_build(cls, repo):
+        if Main.root_config.dry_run:
+            return
+
+        build_db = repo.build_db
+        stat_db_path = build_db.stat_db_path
+        comp_db_path = build_db.comp_db_path
+
+        # Gather stats from all completed tasks
+        stat_db = {}
+        comp_db = {}
+
+        tasks = [t for script in repo.scripts for t in script.tasks]
+
+        for task in tasks:
+            if isinstance(task._error, (Task.CANCELLED, Task.BROKEN, Task.FAILED)) or not task._complete:
+                continue
+
+            for file in task.in_files:
+                build_db.update_stat_db(stat_db, file)
+
+                # Haven't tested this in an IDE, but I think it matches the spec.
+                comp_db[file] = {
+                    "directory" : task.config.task_cwd,
+                    "command"   : BuildDB.commands_to_string(task.config.command),
+                    "file"      : file,
+                }
+
+            if "in_depfile" in task.config:
+                deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
+                for file in deplines:
+                    build_db.update_stat_db(stat_db, file)
+
+            for file in task.out_files:
+                str_command = BuildDB.commands_to_string(task.config.command)
+                build_db.update_stat_db(stat_db, file, str_command)
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log(f"┌ Repo {repo.name} post-build\n")
+            Log.indent2(Colors.BLUE)
+
+        # Dump the stats as JSON.
+        if stat_db_path is not None:
+            time_a = time.perf_counter()
+            Utils.save_json(stat_db, stat_db_path)
+            time_b = time.perf_counter()
+            with LogLevel.VERBOSE, Colors.ORANGE:
+                Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
+                Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
+
+        if comp_db_path is not None:
+            time_a = time.perf_counter()
+            Utils.save_json(list(comp_db.values()), comp_db_path)
+            time_b = time.perf_counter()
+            with LogLevel.VERBOSE, Colors.ORANGE:
+                Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
+                Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.dedent2()
+            Log.log(f"└ Repo {repo.name} done\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2945,12 +2916,12 @@ aliases = Dict(
 )
 
 for key, val in aliases.items():
-    setattr(hancho, key, val)
+    globals()[key] = val
 
 def task(*args, **kwargs):
     if len(args) and callable(args[0]):
-
-        # must use cv_script.get()
+        # Take hancho.task(callable, ...) and instead of creating a task, collect all the args into
+        # a dict and then splat it into the callback.
         script = cv_script.get()
         return args[0](**Dict(script.module.config, args[1:], kwargs))
     else:
