@@ -65,8 +65,11 @@ Almost everything in Hancho is a `Dict` - a `dict` subclass with three important
    readability/debugging. By convention `Tool` holds a reusable command template and `Task`
    instances specialize it with concrete inputs/outputs.
 
-NOOOOPE we're back to implicit script global config because making "hancho.config" track the top
-script is a pain in the butt
+
+# Every script context has its own config.
+
+Ignore the below - we're back to 'config' being a preset global variable in scripts because making
+"hancho.config" track the top script is a pain in the butt. Update this when you can.
 
 # Every script context has its own config. `hancho.config` (resolved via a module-level
 # `__getattr__` that reads a `contextvars.ContextVar`) returns the config for the currently
