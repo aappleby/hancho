@@ -2318,27 +2318,27 @@ class Loader:
     # FIXME ditch this
     @classmethod
     def load_file(cls, script_path, is_repo, *args, **kwargs):
-        script = cv_script.get()
-        old_config = script.module.config
-        new_config = Dict(old_config, *args, **kwargs)
-        new_config.script_path = script_path
-        new_config.is_repo = is_repo
+        old_script = cv_script.get()
+        old_config = old_script.module.config
 
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
-
-        script_path = new_config.expand(new_config.script_path, str)
+        script_path = old_config.expand(script_path, str)
         script_path = cast(str, Path.abs(script_path))
-        new_config.script_path = script_path
+
+        new_config = Dict(
+            old_script.module.config,
+            *args, **kwargs,
+            script_path = script_path,
+            is_repo = is_repo
+        )
 
         if is_repo:
             new_config.repo_dir = Path.dirname(script_path)
 
-        if not Path.isfile(script_path):
-            raise AssertionError(f"Could not find script {script_path}!")
-
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
+
         return Loader.load_str(script_path, is_repo, source, new_config)
 
 
@@ -2347,8 +2347,6 @@ class Loader:
     @classmethod
     def load_str(cls, script_path, is_repo, source : str, new_config : Dict) -> Script:
         """This is split out from load_file for testing purposes."""
-
-        old_script = cv_script.get()
 
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2372,22 +2370,23 @@ class Loader:
 
         new_name = cast(str, Path.stem(script_path))
 
+        new_module = types.ModuleType(cast(str, Path.stem(script_path)))
+        new_module.__file__ = script_path
+        new_module.hancho = hancho     # type: ignore
+        new_module.config = new_config # type: ignore
 
         if is_repo:
             new_repo = Repo(script_path, new_config)
             Loader.all_repos.append(new_repo)
         else:
-            new_repo = old_script.repo
+            new_repo = cv_script.get().repo
 
-        new_module = types.ModuleType(cast(str, Path.stem(script_path)))
         new_script = Script(new_name, new_module, new_repo)
+
         new_repo.scripts.append(new_script)
 
-        new_module.__file__ = script_path
-        new_module.hancho = hancho     # type: ignore
-        new_module.config = new_config # type: ignore
-
         # ----------------------------------------
+        # Exec the module while in script_dir with cv_script pointed at the new script.
 
         script_dir = cast(str, Path.dirname(script_path))
         with chdir(script_dir):
