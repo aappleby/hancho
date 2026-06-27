@@ -2699,8 +2699,8 @@ class Main:
 #                    Log.log_dedent(Colors.BLUE, f"Loading {new_script_count - old_script_count} Hancho files took {timer.elapsed():8.6f} seconds\n")
 
         result = Main.build()
-
         Main.banner_end()
+        return result
 
     # ----------------------------------------------------------------------------------------------
 
