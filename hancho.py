@@ -23,7 +23,6 @@ import argparse
 import asyncio
 import colorsys
 import contextvars
-import copy
 import json
 import os
 import re
@@ -112,28 +111,32 @@ cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("_script")
 #    return list(cv_script.get().globals.keys()) + list(Utils.aliases.keys()) + ["Dict", "Task", "Tool", "Util"]
 
 
-class ModuleWrapper(hancho.__class__):
-    def __getattr__(self, key):
-        script = cv_script.get()
+# OK, so why the weird stuff with ModuleWrapper and get/setattr?
+# Users need to be able to plumb config data through multiple scripts.
+# Users also need to be able to call functions in other scripts and, if those scripts create tasks,
+# the tasks should pickup the config blob from the _caller's_ script.
+# There's a tension between adding things to make ferrying config data around easier vs making
+# everything explicit.
 
-        if hasattr(script.globals, key):
-            result = getattr(script.globals, key)
 
-        elif key in Utils.aliases:
-            # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
-            # template/macro expansion. That's handled in Expander._expand_pass.
-            result = Utils.aliases[key]
+#class ModuleWrapper(types.ModuleType):
+#    def __getattr__(self, key):
+#
+#        if key == "config":
+#            print("config!")
+#            return cv_script.get().globals.config
+#
+#        raise AttributeError(key)
+#
+#    def __setattr__(self, key : str, val : Any):
+#        # Redirect sets to the current script's globals instead of the actual module.
+#        setattr(cv_script.get().globals, key, val)
+#
+#sys.modules[__name__].__class__ = ModuleWrapper
 
-        else:
-            raise AttributeError(key)
-
-        return result
-
-    def __setattr__(self, key : str, val : Any):
-        # Redirect sets to the current script's globals instead of the actual module.
-        setattr(cv_script.get().globals, key, val)
-
-sys.modules[__name__].__class__ = ModuleWrapper
+#blah = ModuleWrapper("hancho2")
+#sys.modules[__name__] = blah
+#print(dir(blah))
 
 
 #def __getattr__(key):
@@ -478,7 +481,8 @@ class Log:
 
 def task(*args, **kwargs):
     if len(args) and callable(args[0]):
-        return args[0](**Dict(hancho.config, args[1:], kwargs))
+
+        return args[0](**Dict(cv_script.get().globals.config, args[1:], kwargs))
     else:
         return Task(*args, **kwargs)
 
@@ -503,8 +507,8 @@ class Utils:
             rel  = Path.rel,
             stem = Path.stem,
             dirname = Path.dirname,
-            load = lambda file, *args, **kwargs : Loader.load_file(Dict(hancho.config, *args, kwargs, script_path = file, is_repo = False)).module,
-            repo = lambda file, *args, **kwargs : Loader.load_file(Dict(hancho.config, *args, kwargs, script_path = file, is_repo = True)).module,
+            load = lambda file, *args, **kwargs : Loader.load_file(Dict(cv_script.get().globals.config, *args, kwargs, script_path = file, is_repo = False)).module,
+            repo = lambda file, *args, **kwargs : Loader.load_file(Dict(cv_script.get().globals.config, *args, kwargs, script_path = file, is_repo = True)).module,
             Task = task,
 
             log = lambda *args, **kwargs : Log.log(*args, **kwargs),
@@ -875,7 +879,7 @@ class Repo:
     # ----------------------------------------------------------------------------------------------
 
     def post_build(self):
-        if hancho.config.dry_run:
+        if cv_script.get().globals.config.dry_run:
             return
 
         build_db = self.build_db
@@ -946,11 +950,13 @@ class Script:
     This just holds per-script info
     """
 
-    def __init__(self, name : str, config : Dict, module : types.ModuleType, repo : Repo, globals):
+    # FIXME we shouldn't be calling these "globals", they're only accessible through "hancho.<key>"
+
+    def __init__(self, name : str, config : Dict, module : types.ModuleType, repo : Repo, parent_globals):
         self.name : str = name
         self.parent_repo : Repo = repo
         self.module : types.ModuleType = module
-        self.globals : Dict = Dict(globals, config = config)
+        self.globals : Dict = Dict(parent_globals, config = config)
         self.tasks = []
         self.scripts : list[Script] = []
 
@@ -1295,67 +1301,52 @@ class Dict(dict):
 
     def __init__(self, *args, **kwargs):
         super().__init__()
-        object.__setattr__(self, "_expander", Expander(self))
         self.merge(*args, **kwargs)
+        object.__setattr__(self, "_expander", Expander(self))
 
 
     # ----------------------------------------
 
     def merge(self, *args, **kwargs):
         for rhs in (*args, kwargs):
-            Dict.generic_merge2(
+            Dict.generic_merge(
                 self, rhs, self,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=True)
+        return self
 
     # Merges self and args into a new dict, keeping only keys that were already in self.
     def fill(self, *args, **kwargs):
         result = None
         for i, rhs in enumerate((*args, kwargs)):
-            result = Dict.generic_merge2(
+            result = Dict.generic_merge(
                 self if i == 0 else result, rhs, result,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=False)
         return result
 
     @classmethod
-    def generic_merge(cls, a, b, merge_dicts, merge_lists, into_a, into_b, keep_a, keep_b):
-        if a is None: return b
-        if b is None: return a
-
-        if   into_a: c = a
-        elif into_b: c = b
-        else:        c = {}
-
-        cls.generic_merge2(a, b, c, merge_dicts, merge_lists, keep_a, keep_b)
-
-        return c
-
-    @classmethod
-    def generic_merge2(cls, a, b, c, merge_dicts, merge_lists, keep_a, keep_b):
-        keys = a.keys() | b.keys()
+    def generic_merge(cls, lhs, rhs, dst, merge_dicts, merge_lists, keep_a, keep_b):
+        keys = lhs.keys() | rhs.keys()
         for key in keys:
-            if key in a and key not in b and not keep_a: continue
-            if key not in a and key in b and not keep_b: continue
+            if key in lhs and key not in rhs and not keep_a: continue
+            if key not in lhs and key in rhs and not keep_b: continue
 
-            lhs = a.get(key, None)
-            rhs = b.get(key, None)
+            lhs2 = lhs.get(key, None)
+            rhs2 = rhs.get(key, None)
 
-            if Utils.is_mapping(lhs) and Utils.is_mapping(rhs) and merge_dicts:
-                dst = c.get(key, Dict())
-                cls.generic_merge2(lhs, rhs, dst, merge_dicts, merge_lists, keep_a, keep_b)
-            elif Utils.is_collection(lhs) and Utils.is_collection(rhs) and merge_lists:
-                c[key] = lhs + rhs
-            elif Utils.is_mapping(rhs):
-                # Mappings get turned into Dicts.
-                c[key] = Dict(rhs)
+            if Utils.is_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_dicts:
+                dst2 = dst.get(key, Dict())
+                cls.generic_merge(lhs2, rhs2, dst2, merge_dicts, merge_lists, keep_a, keep_b)
+            elif Utils.is_mapping(rhs2):
+                dst[key] = Dict(rhs2)
+            elif Utils.is_collection(lhs2) and Utils.is_collection(rhs2) and merge_lists:
+                dst[key] = lhs2 + rhs2
+            elif Utils.is_collection(rhs2):
+                dst[key] = list(rhs2)
             else:
-                if lhs is None or rhs is not None:
-                    if isinstance(rhs, list):
-                        c[key] = copy.deepcopy(rhs)
-                    else:
-                        c[key] = rhs
-
+                if lhs2 is None or rhs2 is not None:
+                    dst[key] = rhs2
 
     # ----------------------------------------
     # Object
@@ -1520,7 +1511,7 @@ class Task:
         # anything else needed to assemble and run the task's commands. It is expected that build
         # scripts will need to read task.config in order to implement task callbacks, so the field
         # is not underscore-prefixed like the later ones.
-        self.config  = Dict(hancho.config, *args, **kwargs)
+        self.config  = Dict(cv_script.get().globals.config, *args, **kwargs)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1530,8 +1521,6 @@ class Task:
         # ------------------------------------
         # Implementation details below this line
 
-        # The context field is what allows a Task to see its parent script's "hancho.config"
-        # even after it's been stuck on an asyncio queue and run from somewhere else entirely.
         self._aio_context = contextvars.copy_context()
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -2318,11 +2307,23 @@ class Expander(abc.MutableMapping[str, Any]):
                 try:
                     script = cv_script.get(None)
 
+                    # Ok, so... what should really go into the context when we eval a macro?
+                    # Mandatory -
+                    #   self - of course
+                    #   Utils.aliases - unless we want users to do "hancho.path.rel" everywhere, yes
+                    #   script.globals.config - actually no, that's already been merged into the task
+                    #   hancho.__dict__? - seems like maybe? idk.
+
+                    # if globals is None, it just uses this module's globals
+
+                    # ok, to pass the Hancho test suite it only needs self and aliases.
+
                     if script is not None:
                         blocks[i] = eval(
                             block[1:-1],
-                            hancho.__dict__,
-                            ChainMap(self, script.globals.config, Utils.aliases),
+                            #hancho.__dict__,
+                            {},
+                            ChainMap(self, Utils.aliases, {"script": script.module}),
                         )
                     else:
                         blocks[i] = eval(
@@ -2588,22 +2589,25 @@ class Loader:
 
         new_name = cast(str, Path.stem(script_path))
 
+        parent_script = cv_script.get()
+
         if new_config.is_repo:
             new_repo = Repo(script_path, new_config)
             Loader.all_repos.append(new_repo)
         else:
-            new_repo = cv_script.get().parent_repo
+            new_repo = parent_script.parent_repo
 
+        old_script = cv_script.get()
         new_module = types.ModuleType(cast(str, Path.stem(script_path)))
+        new_script = Script(new_name, new_config, new_module, new_repo, old_script.globals)
+        new_repo.add_script(new_script)
+
         new_module.__dict__.update(
             # this _has_ to be abs script path, otherwise we break contextlib.
             __file__ = script_path,
             hancho   = hancho,
+            config   = new_script.globals.config,
         )
-
-        old_script = cv_script.get()
-        new_script = Script(new_name, new_config, new_module, new_repo, old_script.globals)
-        new_repo.add_script(new_script)
 
         script_dir = cast(str, Path.dirname(script_path))
 
@@ -2837,28 +2841,30 @@ class Runner:
 
 class Main:
 
-    @staticmethod
-    def init(*args, **kwargs):
+    root_config : Dict
+
+    @classmethod
+    def init(cls, *args, **kwargs):
         """
         (Re-)initializes all of Hancho.
         If you are importing Hancho directly, you should call this as
         hancho.init(verbosity = "debug", myoption=1234)
         """
 
-        root_config : Dict = Dict(
+        cls.root_config : Dict = Dict(
             get_defaults(),
             *args,
             is_repo = True,
             **kwargs,
         )
 
-        Log.reset(root_config)
+        Log.reset(cls.root_config)
         # we need Log and Utils.aliases set before we can expand stuff
         Utils.reset()
 
         root_module = sys.modules[__name__]
-        root_repo   = Repo(__file__, root_config, is_root_repo = True)
-        root_script = Script(__file__, root_config, root_module, root_repo, Dict())
+        root_repo   = Repo(__file__, cls.root_config, is_root_repo = True)
+        root_script = Script(__file__, cls.root_config, root_module, root_repo, Dict())
         root_repo.add_script(root_script)
         cv_script.set(root_script)
 
@@ -2867,15 +2873,15 @@ class Main:
         Loader.all_repos.append(root_repo)
 
 
-        Options.reset(root_config)
+        Options.reset(cls.root_config)
 
-        Task.reset(root_config)
-        Runner.reset(root_config)
+        Task.reset(cls.root_config)
+        Runner.reset(cls.root_config)
 
     # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def main():
+    @classmethod
+    def main(cls):
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD" message
         # if we failed to catch an exception in run_tasks.
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
@@ -2945,8 +2951,8 @@ class Main:
 
     # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def build():
+    @classmethod
+    def build(cls):
         # ------------------------------------
         # Run all tasks and tools
 
@@ -2978,12 +2984,12 @@ class Main:
 
     # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def banner_start():
+    @classmethod
+    def banner_start(cls):
         # ------------------------------------
         # Startup banner
 
-        config = hancho.config
+        config = cv_script.get().globals.config
 
         root_dir    = config.expand("{root_dir}", str)
         repo_dir    = config.expand("{repo_dir}", str)
@@ -3004,8 +3010,8 @@ class Main:
 
     # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def banner_end():
+    @classmethod
+    def banner_end(cls):
         task_count = 0
         for repo in Loader.all_repos:
             for script in repo.scripts:
@@ -3041,6 +3047,34 @@ class Main:
                 for k, v in repo.build_db.reasons.items():
                     Log.log(f"Rebuild reasons {k:13} = {v}\n")
                 Log.dedent2()
+
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region aliases
+
+
+init = Main.init
+build = Main.build
+
+
+def load(file, *args, **kwargs):
+    script = cv_script.get()
+    config = script.globals.config
+    new_config = Dict(config, *args, kwargs, script_path = file, is_repo = False)
+    script = Loader.load_file(new_config)
+    return script.module
+
+def repo(file, *args, **kwargs):
+    script = cv_script.get()
+    config = script.globals.config
+    new_config = Dict(config, *args, kwargs, script_path = file, is_repo = True)
+    script = Loader.load_file(new_config)
+    return script.module
+
+flatten = Utils.flatten
+dirname = Path.dirname
+log = Log.log
+
 
 # endregion
 # --------------------------------------------------------------------------------------------------

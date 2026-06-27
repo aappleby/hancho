@@ -1,8 +1,17 @@
+import shutil
+
 import hancho
 
 tools_base = hancho.load("{hancho_dir}/tools/tools_base.hancho")
 
-def gen_ivparams(params):
+# FIXME there should be some check that the tools are installed when we load this script
+
+if not shutil.which("iverilog"):
+    hancho.Log.log("iverilog not found")
+
+def ivparams(params):
+    if not params:
+        return []
     result = []
     for key, val in params.items():
         if isinstance(val, str):
@@ -12,13 +21,22 @@ def gen_ivparams(params):
     return result
 
 iverilog = hancho.Tool(
-    desc = "Run iverilog on {base(in_sv)}",
-    command = "iverilog {gen_ivparams(params)} -s{top} -g2012 {defines} {cc_includes} {in_sv} -o {out_iv}",
-    gen_ivparams = gen_ivparams,
-    cc_includes = "{weave('-I', includes)}"
+    desc     = "Run iverilog on {base(in_sv)}",
+    command  = "iverilog {ivparams(params)} -s{top} -g2012 {defines} {weave('-I', includes)} {in_sv} -o {out_iv}",
+    ivparams = ivparams,
+
+    params   = None,
+    top      = None,
+    defines  = None,
+    includes = None,
+    in_sv    = None,
+
+    out_iv   = None,
 )
 
-def gen_vlparams(c):
+def vlparams(c):
+    if not c:
+        return []
     result = []
     for key, val in c.items():
         if isinstance(val, str):
@@ -27,19 +45,22 @@ def gen_vlparams(c):
     return result
 
 verilator_cmd = hancho.Tool(
-    desc = "Run Verilator on {base(in_top)}",
-    command = "verilator -Wno-width --public {gen_vlparams(params)} {cc_includes} --cc {in_top} -Mdir {path.dirname(out_makefile)}",
-    out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_top)}",
-    out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_top)}",
-    cc_includes = "{weave('-I', includes)}",
-    gen_vlparams = gen_vlparams,
-    params = {},
+    desc     = "Run Verilator on {base(in_sv)}",
+    command  = "verilator -Wno-width --public {vlparams(params)} {weave('-I', includes)} --cc {in_sv} -Mdir {path.dirname(out_makefile)}",
+    vlparams = vlparams,
+
+    in_sv    = None,
+    params   = None,
+    includes = None,
+
+    out_makefile = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.mk', in_sv)}",
+    out_header   = r"{re.sub(r'([^/\\]+)\.sv', r'V\1.h',  in_sv)}",
 )
 
 verilated_o = None
 verilated_threads_o = None
 
-def verilator(*, in_top, **kwargs):
+def verilator(*, in_sv, **kwargs):
     global verilated_o, verilated_threads_o
 
     if not verilated_o:
@@ -58,38 +79,45 @@ def verilator(*, in_top, **kwargs):
             build_dir = "{build_root}/verilator",
         )
 
+    # FIXME should be using tool.fill(kwargs) instead of passing kwargs in
+
     verilated = hancho.Task(
         verilator_cmd,
         kwargs,
-        in_top = in_top,
+        in_sv = in_sv,
     )
 
     compiled = hancho.Task(
         tools_base.make,
         kwargs,
-        in_makefile = verilated.promise("out_makefile"),
-        out_obj = "{ext(in_makefile, '__ALL.o')}",
+        # FIXME this is reading out_makefile from verilated, needs a test 'cause stuff has changed
+        verilated = verilated,
+        out_obj = "{ext(verilated.out_makefile, '__ALL.o')}",
         flags = [
             "-B",
         ],
     )
 
-    lib = hancho.Task(
+    verilated_lib = hancho.Task(
         tools_base.cpp_lib,
         kwargs,
-        in_top  = in_top,
+        in_sv   = in_sv,
         in_objs = [verilated_threads_o, verilated_o, compiled],
-        out_lib = "{ext(in_top, '.a')}",
+        out_lib = "{ext(in_sv, '.a')}",
     )
 
     return hancho.Task(
-        command    = None,
-        out_lib    = lib.promise("out_lib"),
-        out_header = verilated.promise("out_header"),
+        command      = None,
+        in_verilated = verilated,
+        in_lib       = verilated_lib,
+        out_lib      = "{in_lib.out_lib}",
+        out_header   = "{in_verilated.out_header}",
     )
 
 
-def gen_chparams(c):
+def chparams(c):
+    if not c:
+        return []
     result = []
     for key, val in c.items():
         if isinstance(val, str):
@@ -97,58 +125,69 @@ def gen_chparams(c):
         result.append(f"chparam -set {key} {val} {{top}};")
     return result
 
-
 yosys = hancho.Tool(
-    desc = "Run yosys on {base(in_sv)}",
-    command = "yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {gen_chparams(params)} synth_ice40 -top {top} -json {out_json};'",
+    desc     = "Run yosys on {base(in_sv)}",
+    command  = "yosys -q -p 'read_verilog -defer {weave('-I', includes)} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -top {top} -json {out_json};'",
+    chparams = chparams,
+    in_sv    = None,
+    includes = None,
+    params   = None,
+    top      = "{os.path.splitext(in_sv)[0]}",
     out_json = "{ext(in_sv, '.json')}",
-    params = {},
-    gen_chparams = gen_chparams,
-    top = "{os.path.splitext(in_sv)[0]}",
-    cc_includes = "{weave('-I', includes)}",
 )
 
 
 sv2v = hancho.Tool(
-    desc = "Run sv2v on {base(in_sv)}",
-    command = "sv2v {cc_includes} {in_sv} -w {out_v}",
-    cc_includes = "{weave('-I', includes)}",
-    out_v = "{ext(in_sv, '.v')}",
+    desc     = "Run sv2v on {base(in_sv)}",
+    command  = "sv2v {weave('-I', includes)} {in_sv} -w {out_v}",
+    includes = None,
+    in_sv    = None,
+    out_v    = "{ext(in_sv, '.v')}",
 )
 
 nextpnr = hancho.Tool(
     desc    = "Run nextpnr-ice40 on {base(in_json)}",
     command = "nextpnr-ice40 {flags} -q --json {in_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
-    out_asc = "{ext(in_json, '.asc')}",
     flags   = None,
+    in_json = None,
+    pcf     = None,
+    chip    = None,
+    package = None,
+    out_asc = "{ext(in_json, '.asc')}",
 )
 
 icepack = hancho.Tool(
     desc    = "Run icepack on {base(in_asc)}",
     command = "icepack {in_asc} {out_bin}",
+    in_asc  = None,
     out_bin = "{ext(in_asc, '.bin')}",
 )
 
 iceprog = hancho.Tool(
     desc    = "Run iceprog on {base(in_bin)}",
     command = "iceprog -S {in_bin}",
+    in_bin  = None
 )
 
 synth = hancho.Tool(
     desc    = "Synth {base(in_sv)}",
     command = [
-        "yosys -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
+        "yosys -p 'read_verilog -defer {weave('-I', includes)} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
         #"yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
         "nextpnr-ice40 {flags} -q --json {out_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
         "icepack {out_asc} {out_bin}",
     ],
+
+    in_sv    = None,
+    flags    = None,
+    pcf      = None,
+    chip     = None,
+    package  = None,
+    params   = None,
+    includes = None,
+
     out_json = "{ext(in_sv, '.json')}",
     out_asc  = "{ext(in_sv, '.asc')}",
     out_bin  = "{ext(in_sv, '.bin')}",
-    params   = {},
-    chparams = gen_chparams,
-    includes = None,
-    cc_includes = "{weave('-I', includes)}",
-    flags    = None,
 )
 

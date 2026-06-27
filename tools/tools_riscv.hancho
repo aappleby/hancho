@@ -1,58 +1,55 @@
 import hancho
 
-rv_toolchain = hancho.Dict(
+opt_mode = "-O0"
+
+toolchain = hancho.Dict(
     arch     = "riscv64",
-    compiler = "{arch}-unknown-elf-g++",
-    linker   = "{arch}-unknown-elf-g++",
+    compiler = "{arch}-unknown-elf-g++ {cc_flags}",
+    linker   = "{arch}-unknown-elf-g++ {ld_flags}",
+
+    cc_flags = [
+        opt_mode,
+        "-std=gnu++2a",
+        "-mabi=ilp32",
+        "-march=rv32i_zicsr", # _zicsr needed with newer GCC?
+        "-mstrict-align",
+        "-g",
+        "-MMD"
+        "{weave('-W', warnings)}",
+        "{weave('-D', defines)}",
+        "{weave('-I', includes)}",
+    ],
+
+    ld_flags = [
+        "-nostdlib",
+        "-nostartfiles",
+        "-Wl,-T {linkerscript}"
+    ],
 )
-
-rv_gcc_config = hancho.Dict(
-    opt_mode = "-O0",
-    warnings = None,
-    defines  = None,
-    includes = None,
-
-    cc_warnings = "{weave('-W', warnings)}",
-    cc_defines  = "{weave('-D', defines)}",
-    cc_includes = "{weave('-I', includes)}",
-)
-
-flags_c = [
-    "{opt_mode}",
-    "-std=gnu++2a",
-    "-mabi=ilp32",
-    "-march=rv32i_zicsr", # _zicsr needed with newer GCC?
-    "-mstrict-align",
-    "-g",
-    "-MMD"
-]
-
-flags_ld = [
-    *flags_c,
-    "-nostdlib",
-    "-nostartfiles",
-    "-Wl,-T {linkerscript}"
-]
 
 rv_compile = hancho.Tool(
-    rv_gcc_config,
-    #----------
-    toolchain  = rv_toolchain,
-    command    = "{toolchain.compiler} {flags} {cc_warnings} {cc_defines} {cc_includes} -c {in_src} -o {out_obj}",
-    flags      = flags_c,
-    #----------
+    desc       = "Compiling {out_obj}",
+    command    = "{toolchain.compiler} -c {in_src} -o {out_obj}",
+
+    toolchain  = toolchain,
+    warnings   = None,
+    defines    = None,
+    includes   = None,
+
     in_src     = None,
     in_depfile = "{ext(out_obj, '.d')}",
+
     out_obj    = "{ext(in_src, '.o')}",
 )
 
+#linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
+
 rv_link = hancho.Tool(
-    rv_gcc_config,
-    #----------
-    toolchain    = rv_toolchain,
-    command      = "{toolchain.linker} {flags} {in_objs} -o {out_bin} -lgcc",
-    flags        = flags_ld,
-    linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
-    #----------
+    desc         = "Linking {out_bin}",
+    command      = "{toolchain.linker} {in_objs} -o {out_bin} -lgcc",
+
+    toolchain    = toolchain,
+
     in_objs      = None,
+    linkerscript = None,
 )

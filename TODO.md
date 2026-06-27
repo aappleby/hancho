@@ -8,13 +8,22 @@
 # FIXME Do we want to keep _loaded_files now that we have better change detection?
 # FIXME Do we want to re-enable rel'ing all in_/out_ paths?
 # FIXME Can we build examples/tutorial from examples/tutorial and also matcheroni/ and have it work somehow?
+# FIXME tests for the various rools in tools/*
+# FIXME need an example that drives Hancho through hancho.main()
+
+It needs to be made VERY CLEAR that no matter where you are in the callstack or what file you have
+open on your screen, hancho.config _always_ points at the config owned by the script that is
+_currently_ _being_ _loaded_, or the script that created a task if we're in an async task.
+
+And something similar about sticking stuff on the hancho object -> they go into script.globals, so
+the same deal as config (except those aren't visible to templates)
 
 
 00 - How to download and run Hancho, Trivial .hancho example
 01 - Example with {in_src} and {out_obj}
 02 - Example with separate tasks for compile and link
 03 - compile_cpp and link_cpp commands
-04 - rules.hancho
+04 - tools.hancho
 05 -
 
 # FIXME Refactoring

@@ -1,0 +1,13 @@
+# This example demonstrates how to manage multiple build types (debug, release, profile...) in
+# Hancho.
+
+# We build "Hello World" for x64, Arm, and Risc-V in debug, fastbuild, and release builds.
+import hancho
+
+platform = ["rv64", ]
+
+tools = hancho.load("{hancho_dir}/tools/tools_base.hancho")
+
+main_o   = hancho.task(tools.compile_cpp,  in_src = "main.cpp")
+
+main_bin = hancho.task(tools.link_cpp_bin, in_obj = main_o)

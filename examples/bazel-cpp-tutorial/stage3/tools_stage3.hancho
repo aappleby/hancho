@@ -36,17 +36,21 @@ ld_libs = [
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
+includes   = []
+
 compile_cpp = hancho.Tool(
     desc       = "Compiling C++ {base(in_src)} -> {base(out_obj)}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
-    includes   = [],
     #----------
     in_src     = None,
     in_depfile = "{ext(out_obj, '.d')}",
     out_obj    = "{ext(in_src, '.o')}",
 )
+
+compile_cpp.includes = includes
+
 
 link_cpp_lib = hancho.Tool(
     desc     = "Bundling C++ library {base(out_lib)}",

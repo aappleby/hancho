@@ -146,6 +146,8 @@ class TestDict(unittest.TestCase):
         Dict = {bar = 3}
         """
 
+    # FIXME test that nested dicts and arrays get deep copied
+
 
 ####################################################################################################
 

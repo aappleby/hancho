@@ -65,12 +65,15 @@ Almost everything in Hancho is a `Dict` - a `dict` subclass with three important
    readability/debugging. By convention `Tool` holds a reusable command template and `Task`
    instances specialize it with concrete inputs/outputs.
 
-Every script context has its own config. `hancho.config` (resolved via a module-level
-`__getattr__` that reads a `contextvars.ContextVar`) returns the config for the currently
-executing script. When you call `hancho.Task(...)`, the new task's config is
-`Dict(current_script_config, *args, **kwargs)` - i.e. the script's config is automatically
-folded in. This is why fields like `gcc_flags` defined once in a script are visible to every
-Task in it.
+NOOOOPE we're back to implicit script global config because making "hancho.config" track the top
+script is a pain in the butt
+
+# Every script context has its own config. `hancho.config` (resolved via a module-level
+# `__getattr__` that reads a `contextvars.ContextVar`) returns the config for the currently
+# executing script. When you call `hancho.Task(...)`, the new task's config is
+# `Dict(current_script_config, *args, **kwargs)` - i.e. the script's config is automatically
+# folded in. This is why fields like `gcc_flags` defined once in a script are visible to every
+# Task in it.
 
 ### Fields with special prefixes (`in_` / `out_`)
 Field naming drives dependency tracking:

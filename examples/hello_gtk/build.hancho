@@ -7,16 +7,19 @@ gtk_flags = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
 gtk_incs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
 gtk_libs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --libs')
 
+gtk_incs = [name[2:] for name in gtk_incs.split()]
+gtk_libs = [name[2:] for name in gtk_libs.split()]
+
 main_o = hancho.Task(
     base_rules.compile_cpp,
-    in_src = "main.c",
-    flags = [base_rules.compile_cpp.flags, gtk_flags, gtk_incs],
+    in_src    = "main.c",
+    cpp_flags = [gtk_flags],
+    includes  = gtk_incs,
 )
 
 main = hancho.Task(
     base_rules.link_cpp_bin,
-    in_objs = main_o,
-    out_bin = "hello_gtk",
-    flags = [base_rules.link_cpp_bin.link_flags],
+    in_objs  = main_o,
+    out_bin  = "hello_gtk",
     sys_libs = gtk_libs,
 )
