@@ -35,7 +35,7 @@ import time
 import traceback
 import types
 import zlib  # for crc32, adler32
-from collections import ChainMap, Counter, abc
+from collections import Counter, abc
 from contextlib import chdir, contextmanager, suppress
 from enum import Enum
 from inspect import isawaitable
@@ -53,7 +53,7 @@ sys.modules["hancho"] = hancho
 # This is only used as a type annotation, but be aware when reading the functions below that
 # some of them look like they operate on Ts, but they've been 'recursified' to work on Tree[T]s.
 
-type Tree[T] = T | list[Tree[T]]
+#type Tree[T] = T | list[Tree[T]]
 
 # We spell all these defaults out explicitly so that when this config gets merged with flags and
 # task configs the fields stay in the same order.
@@ -410,15 +410,6 @@ class Log:
 # --------------------------------------------------------------------------------------------------
 # region Utils
 
-def task(*args, **kwargs):
-    if len(args) and callable(args[0]):
-
-        # must use cv_script.get()
-        script = cv_script.get()
-        return args[0](**Dict(script.module.config, args[1:], kwargs))
-    else:
-        return Task(*args, **kwargs)
-
 class Utils:
 
     @classmethod
@@ -678,7 +669,7 @@ class Utils:
         return result
 
     @staticmethod
-    def flatten(variant: Tree[Any], out : list | None = None):
+    def flatten(variant, out : list | None = None):
         if out is None:
             out = []
         if isinstance(variant, Utils.flat_types):
@@ -855,11 +846,9 @@ class Script:
     This just holds per-script info
     """
 
-    # FIXME we shouldn't be calling these "globals", they're only accessible through "hancho.<key>"
-
     def __init__(self, name : str, module : types.ModuleType, repo : Repo):
         self.name : str = name
-        self.parent_repo : Repo = repo
+        self.repo : Repo = repo
         self.module : types.ModuleType = module
         self.tasks = []
         self.scripts : list[Script] = []
@@ -1146,7 +1135,7 @@ class Path:
         return os.path.splitext(os.path.basename(path))[0]
 
     @staticmethod
-    def dirname(path) -> Tree[str]:
+    def dirname(path):
         if Utils.is_collection(path):
             return [Path.dirname(p) for p in path]
         return os.path.dirname(path)
@@ -1417,8 +1406,8 @@ class Task:
         # is not underscore-prefixed like the later ones.
 
         # must use cv_script.get()
-        script = cv_script.get()
-        self.config  = Dict(script.module.config, *args, **kwargs)
+        self.script  = cv_script.get()
+        self.config  = Dict(self.script.module.config, *args, **kwargs)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1461,7 +1450,7 @@ class Task:
         self._core_count = 0
         self._complete = False
 
-        script.tasks.append(self)
+        self.script.tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -1573,9 +1562,10 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
-        # must use cv_script.get()
-        script = cv_script.get()
         config = self.config
+        script = cv_script.get()
+        repo   = script.repo
+        build_db = repo.build_db
 
         time_a = time.perf_counter()
 
@@ -1633,7 +1623,6 @@ class Task:
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
 
-        build_db = script.parent_repo.build_db
         build_db.pre_task(self)
 
         self._reason = build_db.rebuild_reason(self)
@@ -2214,6 +2203,7 @@ class Expander(abc.MutableMapping[str, Any]):
             # This should be the _only_ try/except block in the expansion code.
             with Tracer(self, "eval", block) as tracer:
                 try:
+                    # None = use this module (hancho) as the global context
                     blocks[i] = eval(block[1:-1], None, self)
 
                 # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
@@ -2490,18 +2480,12 @@ class Loader:
             new_repo = Repo(script_path, new_config)
             Loader.all_repos.append(new_repo)
         else:
-            new_repo = script.parent_repo
+            new_repo = script.repo
 
         new_module = types.ModuleType(cast(str, Path.stem(script_path)))
         new_script = Script(new_name, new_module, new_repo)
         new_repo.add_script(new_script)
 
-        #new_module.__dict__.update(
-        #    # this _has_ to be abs script path, otherwise we break contextlib.
-        #    __file__ = script_path,
-        #    hancho   = hancho,
-        #    config   = new_script.module.config,
-        #)
         new_module.__file__ = script_path
         new_module.hancho = hancho
         new_module.config = new_config
@@ -2579,12 +2563,21 @@ class Runner:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def enable_all_tasks(cls):
-        # Enable _everything_
+    def task_walker(cls):
         for repo in Loader.all_repos:
             for script in repo.scripts:
-                for task in script.tasks:
-                    task.enable_task()
+                yield from script.tasks
+
+    @classmethod
+    def enable_all_tasks(cls):
+
+        # Enable _everything_
+        #for repo in Loader.all_repos:
+        #    for script in repo.scripts:
+        #        for task in script.tasks:
+        #            task.enable_task()
+        for task in cls.task_walker():
+            task.enable_task()
 
     @classmethod
     def select_root_tasks(cls):
@@ -2600,22 +2593,25 @@ class Runner:
 #                if target_regex.search(name):
 #                    task.enable_task()
 
-            for repo in Loader.all_repos:
-                for script in repo.scripts:
-                    for task in script.tasks:
-                        name = task.config.expand("{name}", str)
-                        if target_regex.search(name):
-                            task.enable_task()
+            #for repo in Loader.all_repos:
+            #    for script in repo.scripts:
+            #        for task in script.tasks:
+            for task in cls.task_walker():
+                name = task.config.expand("{name}", str)
+                if target_regex.search(name):
+                    task.enable_task()
 
         elif Options.rebuild_all:
             cls.enable_all_tasks()
         else:
             # Enable all tasks that were generated by the first loaded repo.
-            for repo in Loader.all_repos:
-                if repo in (Loader.root_repo, Loader.first_repo):
-                    for script in repo.scripts:
-                        for task in script.tasks:
-                            task.enable_task()
+#            for repo in Loader.all_repos:
+#                if repo in (Loader.root_repo, Loader.first_repo):
+#                    for script in repo.scripts:
+#                        for task in script.tasks:
+            for task in cls.task_walker():
+                if task.script.repo in (Loader.root_repo, Loader.first_repo):
+                    task.enable_task()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2755,16 +2751,14 @@ class Main:
             **kwargs,
         )
 
-        hancho.config = cls.root_config
-
-
         Log.reset(cls.root_config)
         # we need Log and Utils.aliases set before we can expand stuff
         Utils.reset()
 
         root_module = sys.modules[__name__]
-
+        root_module.hancho = hancho
         root_module.config = cls.root_config
+
         root_repo   = Repo(__file__, cls.root_config, is_root_repo = True)
         root_script = Script(__file__, root_module, root_repo)
         root_repo.add_script(root_script)
@@ -2820,7 +2814,7 @@ class Main:
                     Log.log(f"Could not load build script {script_path}\n")
                 raise FileNotFoundError(script_path)
             first_script = Loader.load_file(first_config)
-            Loader.first_repo = first_script.parent_repo
+            Loader.first_repo = first_script.repo
 
             time_b = time.perf_counter()
             with LogLevel.VERBOSE, Colors.ORANGE:
@@ -2982,6 +2976,15 @@ aliases = Dict(
 
 for key, val in aliases.items():
     setattr(hancho, key, val)
+
+def task(*args, **kwargs):
+    if len(args) and callable(args[0]):
+
+        # must use cv_script.get()
+        script = cv_script.get()
+        return args[0](**Dict(script.module.config, args[1:], kwargs))
+    else:
+        return Task(*args, **kwargs)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
