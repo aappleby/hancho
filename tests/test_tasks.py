@@ -542,7 +542,8 @@ class TestTasks(unittest.TestCase):
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
         hancho.init(verbosity = VERBOSITY, flarpy="flarp.txt")
-        self.assertEqual("flarp.txt", hancho.cv_script.get().globals.config.flarpy)
+        script = hancho.cv_script.get()
+        self.assertEqual("flarp.txt", script.module.config.flarpy)
 
         hancho.Task(
             command = lambda task : force_touch(task.config.out_file),

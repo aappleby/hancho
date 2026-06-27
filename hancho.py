@@ -89,80 +89,11 @@ def get_defaults() -> dict[str, Any]:
 
 # fmt: on
 
-# endregion
-# --------------------------------------------------------------------------------------------------
-# region __getattr__
-
-# The 'global' hancho.config visible to scripts is actually instantiated per script, otherwise
-# scripts can break each other by changing shared config fields. To ensure each script sees the
-# right config, we make the module-level __getattr__ redirect to the globals stored in
-# cv_script.globals.
-#
-# This will only fire if the name is not already in the module, so referring to hancho.Utils or
-# whatever does _not_ go through this path. Reads that _don't_ go through the 'hancho' object also
-# bypass this path.
-#
-# This is also where we look up command aliases so that scripts don't have to use fully-qualified
-# names like 'hancho.Path.norm'.
-
 cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("_script")
-
-#def __dir__():
-#    return list(cv_script.get().globals.keys()) + list(Utils.aliases.keys()) + ["Dict", "Task", "Tool", "Util"]
-
-
-# OK, so why the weird stuff with ModuleWrapper and get/setattr?
-# Users need to be able to plumb config data through multiple scripts.
-# Users also need to be able to call functions in other scripts and, if those scripts create tasks,
-# the tasks should pickup the config blob from the _caller's_ script.
-# There's a tension between adding things to make ferrying config data around easier vs making
-# everything explicit.
-
-
-#class ModuleWrapper(types.ModuleType):
-#    def __getattr__(self, key):
-#
-#        if key == "config":
-#            print("config!")
-#            return cv_script.get().globals.config
-#
-#        raise AttributeError(key)
-#
-#    def __setattr__(self, key : str, val : Any):
-#        # Redirect sets to the current script's globals instead of the actual module.
-#        setattr(cv_script.get().globals, key, val)
-#
-#sys.modules[__name__].__class__ = ModuleWrapper
-
-#blah = ModuleWrapper("hancho2")
-#sys.modules[__name__] = blah
-#print(dir(blah))
-
-
-#def __getattr__(key):
-#    script = cv_script.get()
-#
-#    if hasattr(script.globals, key):
-#        result = getattr(script.globals, key)
-#
-#    elif key in Utils.aliases:
-#        # Note this _only_ affects references like "hancho.flatten" in scripts, it does not affect
-#        # template/macro expansion. That's handled in Expander._expand_pass.
-#        result = Utils.aliases[key]
-#
-#    else:
-#        raise AttributeError(key)
-#
-#    return result
 
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region Log
-
-#self.time_a = time.perf_counter()
-#self.time_b = time.perf_counter()
-
-# --------------------------------------------------------------------------------------------------
 
 class LogLevel(int, Enum):
     QUIET    = 0
@@ -482,7 +413,9 @@ class Log:
 def task(*args, **kwargs):
     if len(args) and callable(args[0]):
 
-        return args[0](**Dict(cv_script.get().globals.config, args[1:], kwargs))
+        # must use cv_script.get()
+        script = cv_script.get()
+        return args[0](**Dict(script.module.config, args[1:], kwargs))
     else:
         return Task(*args, **kwargs)
 
@@ -490,34 +423,6 @@ class Utils:
 
     @classmethod
     def reset(cls):
-        # These are aliases for methods in Hancho that have been pulled out so they can be used by
-        # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
-        # It's also read by the module-level __getattr__ so you can use "hancho.flatten(x)" instead
-        # of "hancho.Utils.flatten(x)"
-        cls.aliases = Dict(
-            init  = Main.init,
-            build = Main.build,
-
-            path = os.path,
-            abs  = Path.abs,
-            base = Path.base,
-            ext  = Path.ext,
-            norm = Path.norm,
-            real = Path.real,
-            rel  = Path.rel,
-            stem = Path.stem,
-            dirname = Path.dirname,
-            load = lambda file, *args, **kwargs : Loader.load_file(Dict(cv_script.get().globals.config, *args, kwargs, script_path = file, is_repo = False)).module,
-            repo = lambda file, *args, **kwargs : Loader.load_file(Dict(cv_script.get().globals.config, *args, kwargs, script_path = file, is_repo = True)).module,
-            Task = task,
-
-            log = lambda *args, **kwargs : Log.log(*args, **kwargs),
-            cwd = os.getcwd,
-
-            flatten = Utils.flatten,
-            run_cmd = Utils.run_cmd,
-            weave   = Utils.weave,
-        )
         cls.stat_calls = 0
         cls.hash_calls = 0
         cls.hash_bytes = 0
@@ -879,7 +784,7 @@ class Repo:
     # ----------------------------------------------------------------------------------------------
 
     def post_build(self):
-        if cv_script.get().globals.config.dry_run:
+        if Main.root_config.dry_run:
             return
 
         build_db = self.build_db
@@ -952,11 +857,10 @@ class Script:
 
     # FIXME we shouldn't be calling these "globals", they're only accessible through "hancho.<key>"
 
-    def __init__(self, name : str, config : Dict, module : types.ModuleType, repo : Repo, parent_globals):
+    def __init__(self, name : str, module : types.ModuleType, repo : Repo):
         self.name : str = name
         self.parent_repo : Repo = repo
         self.module : types.ModuleType = module
-        self.globals : Dict = Dict(parent_globals, config = config)
         self.tasks = []
         self.scripts : list[Script] = []
 
@@ -1511,7 +1415,10 @@ class Task:
         # anything else needed to assemble and run the task's commands. It is expected that build
         # scripts will need to read task.config in order to implement task callbacks, so the field
         # is not underscore-prefixed like the later ones.
-        self.config  = Dict(cv_script.get().globals.config, *args, **kwargs)
+
+        # must use cv_script.get()
+        script = cv_script.get()
+        self.config  = Dict(script.module.config, *args, **kwargs)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1554,7 +1461,7 @@ class Task:
         self._core_count = 0
         self._complete = False
 
-        cv_script.get().tasks.append(self)
+        script.tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -1666,6 +1573,8 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
+        # must use cv_script.get()
+        script = cv_script.get()
         config = self.config
 
         time_a = time.perf_counter()
@@ -1724,7 +1633,7 @@ class Task:
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
 
-        build_db = cv_script.get().parent_repo.build_db
+        build_db = script.parent_repo.build_db
         build_db.pre_task(self)
 
         self._reason = build_db.rebuild_reason(self)
@@ -2305,32 +2214,7 @@ class Expander(abc.MutableMapping[str, Any]):
             # This should be the _only_ try/except block in the expansion code.
             with Tracer(self, "eval", block) as tracer:
                 try:
-                    script = cv_script.get(None)
-
-                    # Ok, so... what should really go into the context when we eval a macro?
-                    # Mandatory -
-                    #   self - of course
-                    #   Utils.aliases - unless we want users to do "hancho.path.rel" everywhere, yes
-                    #   script.globals.config - actually no, that's already been merged into the task
-                    #   hancho.__dict__? - seems like maybe? idk.
-
-                    # if globals is None, it just uses this module's globals
-
-                    # ok, to pass the Hancho test suite it only needs self and aliases.
-
-                    if script is not None:
-                        blocks[i] = eval(
-                            block[1:-1],
-                            #hancho.__dict__,
-                            {},
-                            ChainMap(self, Utils.aliases, {"script": script.module}),
-                        )
-                    else:
-                        blocks[i] = eval(
-                            block[1:-1],
-                            hancho.__dict__,
-                            ChainMap(self, Utils.aliases),
-                        )
+                    blocks[i] = eval(block[1:-1], None, self)
 
                 # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
                 # callers. As of Python 3.11, this includes asyncio.CancelledError.
@@ -2559,12 +2443,24 @@ class Loader:
 
         return cls.load_str(new_config, source)
 
+    @classmethod
+    def load_file2(cls, *args, **kwargs) -> types.ModuleType:
+        # must use cv_script.get()
+        script = cv_script.get()
+        old_config = script.module.config
+        new_config = Dict(old_config, *args, **kwargs)
+        script = Loader.load_file(new_config)
+        module = script.module
+        return module
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def load_str(cls, new_config : Dict, source : str) -> Script:
         """This is split out from load_file for testing purposes."""
 
+        # must use cv_script.get()
+        script = cv_script.get()
         script_path = new_config.script_path
 
         # ----------------------------------------
@@ -2589,25 +2485,26 @@ class Loader:
 
         new_name = cast(str, Path.stem(script_path))
 
-        parent_script = cv_script.get()
 
         if new_config.is_repo:
             new_repo = Repo(script_path, new_config)
             Loader.all_repos.append(new_repo)
         else:
-            new_repo = parent_script.parent_repo
+            new_repo = script.parent_repo
 
-        old_script = cv_script.get()
         new_module = types.ModuleType(cast(str, Path.stem(script_path)))
-        new_script = Script(new_name, new_config, new_module, new_repo, old_script.globals)
+        new_script = Script(new_name, new_module, new_repo)
         new_repo.add_script(new_script)
 
-        new_module.__dict__.update(
-            # this _has_ to be abs script path, otherwise we break contextlib.
-            __file__ = script_path,
-            hancho   = hancho,
-            config   = new_script.globals.config,
-        )
+        #new_module.__dict__.update(
+        #    # this _has_ to be abs script path, otherwise we break contextlib.
+        #    __file__ = script_path,
+        #    hancho   = hancho,
+        #    config   = new_script.module.config,
+        #)
+        new_module.__file__ = script_path
+        new_module.hancho = hancho
+        new_module.config = new_config
 
         script_dir = cast(str, Path.dirname(script_path))
 
@@ -2858,13 +2755,18 @@ class Main:
             **kwargs,
         )
 
+        hancho.config = cls.root_config
+
+
         Log.reset(cls.root_config)
         # we need Log and Utils.aliases set before we can expand stuff
         Utils.reset()
 
         root_module = sys.modules[__name__]
+
+        root_module.config = cls.root_config
         root_repo   = Repo(__file__, cls.root_config, is_root_repo = True)
-        root_script = Script(__file__, cls.root_config, root_module, root_repo, Dict())
+        root_script = Script(__file__, root_module, root_repo)
         root_repo.add_script(root_script)
         cv_script.set(root_script)
 
@@ -2989,10 +2891,8 @@ class Main:
         # ------------------------------------
         # Startup banner
 
-        config = cv_script.get().globals.config
-
-        root_dir    = config.expand("{root_dir}", str)
-        repo_dir    = config.expand("{repo_dir}", str)
+        root_dir    = Main.root_config.expand("{root_dir}", str)
+        repo_dir    = Main.root_config.expand("{repo_dir}", str)
 
         with LogLevel.VERBOSE, Colors.LIME:
             Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
@@ -3052,29 +2952,36 @@ class Main:
 # --------------------------------------------------------------------------------------------------
 # region aliases
 
+# These are aliases for methods in Hancho that have been pulled out so they can be used by
+# template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 
-init = Main.init
-build = Main.build
+aliases = Dict(
+    init  = Main.init,
+    build = Main.build,
 
+    path = os.path,
+    abs  = Path.abs,
+    base = Path.base,
+    ext  = Path.ext,
+    norm = Path.norm,
+    real = Path.real,
+    rel  = Path.rel,
+    stem = Path.stem,
+    dirname = Path.dirname,
+    load = lambda file, *args, **kwargs : Loader.load_file2(*args, script_path = file, is_repo = False, **kwargs),
+    repo = lambda file, *args, **kwargs : Loader.load_file2(*args, script_path = file, is_repo = True, **kwargs),
+    #Task = task,
 
-def load(file, *args, **kwargs):
-    script = cv_script.get()
-    config = script.globals.config
-    new_config = Dict(config, *args, kwargs, script_path = file, is_repo = False)
-    script = Loader.load_file(new_config)
-    return script.module
+    log = lambda *args, **kwargs : Log.log(*args, **kwargs),
+    cwd = os.getcwd,
 
-def repo(file, *args, **kwargs):
-    script = cv_script.get()
-    config = script.globals.config
-    new_config = Dict(config, *args, kwargs, script_path = file, is_repo = True)
-    script = Loader.load_file(new_config)
-    return script.module
+    flatten = Utils.flatten,
+    run_cmd = Utils.run_cmd,
+    weave   = Utils.weave,
+)
 
-flatten = Utils.flatten
-dirname = Path.dirname
-log = Log.log
-
+for key, val in aliases.items():
+    setattr(hancho, key, val)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
