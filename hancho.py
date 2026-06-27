@@ -2315,45 +2315,41 @@ class Loader:
 
     # ----------------------------------------------------------------------------------------------
 
+    # FIXME ditch this
     @classmethod
-    def load_file(cls, new_config : Dict) -> Script:
+    def load_file(cls, script_path, is_repo, *args, **kwargs) -> types.ModuleType:
+        script = cv_script.get()
+        old_config = script.module.config
+        new_config = Dict(old_config, *args, **kwargs)
+        new_config.script_path = script_path
+        new_config.is_repo = is_repo
+
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
 
         script_path = new_config.expand(new_config.script_path, str)
         script_path = cast(str, Path.abs(script_path))
-
         new_config.script_path = script_path
-        if new_config.is_repo:
+
+        if is_repo:
             new_config.repo_dir = Path.dirname(script_path)
-            pass
 
         if not Path.isfile(script_path):
             raise AssertionError(f"Could not find script {script_path}!")
 
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
+        script = Loader.load_str(script_path, is_repo, source, new_config)
+        return script.module
 
-        return cls.load_str(new_config, source)
-
-    # FIXME ditch this
-    @classmethod
-    def load_file2(cls, *args, **kwargs) -> types.ModuleType:
-        script = cv_script.get()
-        old_config = script.module.config
-        new_config = Dict(old_config, *args, **kwargs)
-        script = Loader.load_file(new_config)
-        module = script.module
-        return module
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def load_str(cls, new_config : Dict, source : str) -> Script:
+    def load_str(cls, script_path, is_repo, source : str, new_config : Dict) -> Script:
         """This is split out from load_file for testing purposes."""
 
-        script = cv_script.get()
-        script_path = new_config.script_path
+        old_script = cv_script.get()
 
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2373,16 +2369,16 @@ class Loader:
         # root of a new repo.
 
         with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading {"repo" if new_config.is_repo else "script"} {script_path}\n")
+            Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
 
         new_name = cast(str, Path.stem(script_path))
 
 
-        if new_config.is_repo:
+        if is_repo:
             new_repo = Repo(script_path, new_config)
             Loader.all_repos.append(new_repo)
         else:
-            new_repo = script.repo
+            new_repo = old_script.repo
 
         new_module = types.ModuleType(cast(str, Path.stem(script_path)))
         new_script = Script(new_name, new_module, new_repo)
@@ -2392,8 +2388,9 @@ class Loader:
         new_module.hancho = hancho     # type: ignore
         new_module.config = new_config # type: ignore
 
-        script_dir = cast(str, Path.dirname(script_path))
+        # ----------------------------------------
 
+        script_dir = cast(str, Path.dirname(script_path))
         with chdir(script_dir):
             token = cv_script.set(new_script)
             try:
@@ -2620,33 +2617,30 @@ class Main:
         hancho.init(verbosity = "debug", myoption=1234)
         """
 
-        cls.root_config : Dict = Dict(
-            get_defaults(),
-            *args,
-            is_repo = True,
-            **kwargs,
-        )
+        cls.root_config = Dict(get_defaults(), *args, is_repo = True, **kwargs)
 
-        Log.reset(cls.root_config)
-        # we need Log and Utils.aliases set before we can expand stuff
-        Utils.reset()
+        # ----------------------------------------
+
+        root_repo   = Repo(__file__, cls.root_config)
 
         root_module = sys.modules[__name__]
         root_module.hancho = hancho # type: ignore
         root_module.config = cls.root_config # type: ignore
 
-        root_repo   = Repo(__file__, cls.root_config)
         root_script = Script(__file__, root_module, root_repo)
         root_repo.scripts.append(root_script)
         cv_script.set(root_script)
+
+        # ----------------------------------------
+
+        Log.reset(cls.root_config)
+        Utils.reset()
 
         Loader.reset()
         Loader.root_repo = root_repo
         Loader.all_repos.append(root_repo)
 
-
         Options.reset(cls.root_config)
-
         Task.reset(cls.root_config)
         Runner.reset(cls.root_config)
 
@@ -2664,39 +2658,26 @@ class Main:
 
         Main.banner_start()
 
-        first_config = Dict(
-            get_defaults(),
-            flags,
-            script_path = script_path,
-            is_repo = True
-        )
-
-        old_script_count = 0
-        for repo in Loader.all_repos:
-            old_script_count += len(repo.scripts)
-
-        new_script_count = 0
-
-        #with Timer("Loading Hancho files") as timer:
+        first_config = Dict(get_defaults(), flags, script_path = script_path, is_repo = True)
 
         time_a = time.perf_counter()
-        if not Path.exists(script_path):
-            with LogLevel.FATAL, Log.color(0xFF0000):
-                Log.log(f"Could not load build script {script_path}\n")
-            raise FileNotFoundError(script_path)
-        first_script = Loader.load_file(first_config)
-        Loader.first_repo = first_script.repo
 
+        script_path = first_config.expand(first_config.script_path, str)
+        script_path = cast(str, Path.abs(script_path))
+        first_config.script_path = script_path
+        first_config.repo_dir = Path.dirname(script_path)
+
+        with open(script_path, encoding="utf-8") as file:
+            source = file.read()
+        first_script = Loader.load_str(script_path, first_config.is_repo, source, first_config)
+
+        #first_script = Loader.load_file3(script_path, True, first_config)
+
+        Loader.first_repo = first_script.repo
         time_b = time.perf_counter()
+
         with LogLevel.VERBOSE, Colors.ORANGE:
             Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
-
-        for repo in Loader.all_repos:
-            new_script_count += len(repo.scripts)
-
-#            finally:
-#                with LogLevel.VERBOSE:
-#                    Log.log_dedent(Colors.BLUE, f"Loading {new_script_count - old_script_count} Hancho files took {timer.elapsed():8.6f} seconds\n")
 
         result = Main.build()
         Main.banner_end()
@@ -2707,7 +2688,7 @@ class Main:
     @classmethod
     def main(cls):
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
-        # message if we failed to catch an exception in run_tasks.
+        # message if we failed to catch an exception in main2().
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
         # misinterpreted as a Hancho bug.
         try:
@@ -2740,20 +2721,18 @@ class Main:
         # ------------------------------------
         # Save the new versions of the file stat and task info DBs.
 
-        time_a = 0
-        time_b = 0
-        try:
-            with LogLevel.VERBOSE, Colors.BLUE:
-                Log.log("┌ Saving stats...\n")
-                Log.indent2(Colors.BLUE)
-            time_a = time.perf_counter()
-            for repo in Loader.all_repos:
-                cls.post_build(repo)
-            time_b = time.perf_counter()
-        finally:
-            with LogLevel.VERBOSE, Colors.BLUE:
-                Log.dedent2()
-                Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log("┌ Saving stats...\n")
+            Log.indent2(Colors.BLUE)
+
+        time_a = time.perf_counter()
+        for repo in Loader.all_repos:
+            cls.post_build(repo)
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.dedent2()
+            Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
 
@@ -2829,8 +2808,8 @@ class Main:
         # ------------------------------------
         # Startup banner
 
-        root_dir    = Main.root_config.expand("{root_dir}", str)
-        repo_dir    = Main.root_config.expand("{repo_dir}", str)
+        root_dir = Main.root_config.expand("{root_dir}", str)
+        repo_dir = Main.root_config.expand("{repo_dir}", str)
 
         with LogLevel.VERBOSE, Colors.LIME:
             Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
@@ -2903,8 +2882,8 @@ aliases = Dict(
     rel  = Path.rel,
     stem = Path.stem,
     dirname = Path.dirname,
-    load = lambda file, *args, **kwargs : Loader.load_file2(*args, script_path = file, is_repo = False, **kwargs),
-    repo = lambda file, *args, **kwargs : Loader.load_file2(*args, script_path = file, is_repo = True, **kwargs),
+    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs),
+    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs),
     #Task = task,
 
     log = lambda *args, **kwargs : Log.log(*args, **kwargs),
