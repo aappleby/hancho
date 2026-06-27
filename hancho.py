@@ -2317,7 +2317,7 @@ class Loader:
 
     # FIXME ditch this
     @classmethod
-    def load_file(cls, script_path, is_repo, *args, **kwargs) -> types.ModuleType:
+    def load_file(cls, script_path, is_repo, *args, **kwargs):
         script = cv_script.get()
         old_config = script.module.config
         new_config = Dict(old_config, *args, **kwargs)
@@ -2339,8 +2339,7 @@ class Loader:
 
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
-        script = Loader.load_str(script_path, is_repo, source, new_config)
-        return script.module
+        return Loader.load_str(script_path, is_repo, source, new_config)
 
 
     # ----------------------------------------------------------------------------------------------
@@ -2658,21 +2657,9 @@ class Main:
 
         Main.banner_start()
 
-        first_config = Dict(get_defaults(), flags, script_path = script_path, is_repo = True)
-
         time_a = time.perf_counter()
-
-        script_path = first_config.expand(first_config.script_path, str)
-        script_path = cast(str, Path.abs(script_path))
-        first_config.script_path = script_path
-        first_config.repo_dir = Path.dirname(script_path)
-
-        with open(script_path, encoding="utf-8") as file:
-            source = file.read()
-        first_script = Loader.load_str(script_path, first_config.is_repo, source, first_config)
-
-        #first_script = Loader.load_file3(script_path, True, first_config)
-
+        first_config = Dict(get_defaults(), flags)
+        first_script = Loader.load_file(script_path, True, first_config)
         Loader.first_repo = first_script.repo
         time_b = time.perf_counter()
 
@@ -2882,8 +2869,8 @@ aliases = Dict(
     rel  = Path.rel,
     stem = Path.stem,
     dirname = Path.dirname,
-    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs),
-    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs),
+    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs).module,
+    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs).module,
     #Task = task,
 
     log = lambda *args, **kwargs : Log.log(*args, **kwargs),
