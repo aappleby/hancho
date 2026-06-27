@@ -868,9 +868,9 @@ class Dict(dict):
 
     # Merges self and args into a new dict, keeping only keys that were already in self.
     def fill(self, *args, **kwargs):
-        result = None
+        result = Dict()
         for i, rhs in enumerate((*args, kwargs)):
-            result = Dict.generic_merge(
+            Dict.generic_merge(
                 self if i == 0 else result, rhs, result,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=False)
@@ -896,8 +896,8 @@ class Dict(dict):
             elif Utils.is_collection(rhs2):
                 dst[key] = list(rhs2)
             else:
-                if lhs2 is None or rhs2 is not None:
-                    dst[key] = rhs2
+                dst[key] = rhs2 if rhs2 is not None else lhs2
+        return dst
 
     # ----------------------------------------
     # Object
@@ -1285,7 +1285,7 @@ class Task:
         # is not underscore-prefixed like the later ones.
 
         self.script  = cv_script.get()
-        self.config  = Dict(self.script.module.config, *args, **kwargs)
+        self.config  = Dict(self.script.config, *args, **kwargs)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1606,8 +1606,8 @@ class Task:
     def task_init(self):
         config = self.config
 
-        if os.getcwd() != config.task_cwd:
-            raise AssertionError("Running task_init while we're not in task's cwd")  # pragma: no cover
+        if os.getcwd() != Path.real(config.task_cwd):
+            raise AssertionError(f"Running task_init while we're not in the realpath of task's cwd '{config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
@@ -2277,7 +2277,7 @@ class Loader:
     @classmethod
     def load_file(cls, script_path, is_repo, *args, **kwargs):
         old_script = cv_script.get()
-        old_config = old_script.module.config
+        old_config = old_script.config
 
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
@@ -2853,8 +2853,7 @@ def task(*args, **kwargs):
     if len(args) and callable(args[0]):
         # Take hancho.task(callable, ...) and instead of creating a task, collect all the args into
         # a dict and then splat it into the callback.
-        script = cv_script.get()
-        return args[0](**Dict(script.module.config, args[1:], kwargs))
+        return args[0](**Dict(cv_script.get().config, *args[1:], kwargs))
     else:
         return Task(*args, **kwargs)
 
