@@ -227,7 +227,7 @@ class TestApp(unittest.TestCase):
 
         n = argparse.Namespace(foo = 1, bar = 2)
         d = hancho.Utils.dump_to_str("name", n)
-        self.assertEqual("name: Namespace = {foo = 1, bar = 2}", d)
+        self.assertEqual("name: Namespace = {bar = 2, foo = 1}", d)
 
         class Blarp:
             pass

@@ -512,7 +512,7 @@ class Utils:
             rd = ",)" if len(items) == 1 else ")"
         elif Utils.is_mapping(val):
             val = cast(abc.Mapping, val)
-            items = val.items()
+            items = sorted(val.items())
             ld = "{"
             rd = "}"
         elif Utils.is_collection(val):
@@ -963,7 +963,8 @@ class Options:
         # Pull options that aren't task-specific off the root config.
 
         cls.max_errors  = config.pop("max_errors", 0)
-        cls.rebuild_all = config.pop("rebuild", False)
+        cls.build_all   = config.pop("build_all", False)
+        cls.force_rebuild = config.pop("force", False)
         cls.strict      = config.pop("strict", True)
         cls.target      = config.pop("target", None)
         cls.tool        = config.pop("tool", None)
@@ -1090,19 +1091,19 @@ class BuildDB:
     def load_stat_db(stat_db_path) -> Dict:
         result = {}
 
-        with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading stat db '{stat_db_path}'\n")
+        #with LogLevel.VERBOSE, Colors.ORANGE:
+        #    Log.log(f"Loading stat db '{stat_db_path}'\n")
 
         if not os.path.isfile(stat_db_path):
             #Log.log_dedent(Colors.ORANGE, f"Stat db '{stat_db_path}' not found\n")
             return Dict()
 
-        time_a = time.perf_counter()
+        #time_a = time.perf_counter()
         result = Utils.load_json(cast(str, stat_db_path))
-        time_b = time.perf_counter()
+        #time_b = time.perf_counter()
 
-        with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
+        #with LogLevel.VERBOSE, Colors.ORANGE:
+        #    Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
 
         # Turn the serialized stats back into a Dict.
         for k, v in list(result.items()):
@@ -1187,7 +1188,7 @@ class BuildDB:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if Options.rebuild_all or config.get("rebuild", False):
+        if Options.force_rebuild or config.get("rebuild", False):
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -2286,17 +2287,18 @@ class Loader:
         # We _do_ need to expand script_path because it might contain a path like
         # "{hancho_dir}/tools/tools_base.hancho"
         script_path = old_config.expand(script_path, str)
-        script_path = cast(str, Path.abs(script_path))
+        script_path = os.path.realpath(script_path)
+
         script_dir, script_name = os.path.split(script_path)
 
         new_config = Dict(
             old_config,
             *args, **kwargs,
             script_path = script_path,
-            script_dir = script_dir,
+            script_dir  = script_dir,
             script_name = script_name,
-            is_repo = is_repo,
-            repo_dir = script_dir if is_repo else old_config.repo_dir
+            is_repo     = is_repo,
+            repo_dir    = script_dir if is_repo else old_config.repo_dir
         )
 
         with open(script_path, encoding="utf-8") as file:
@@ -2304,12 +2306,13 @@ class Loader:
 
         return Loader.load_str(script_path, is_repo, source, new_config)
 
-
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def load_str(cls, script_path, is_repo, source : str, new_config : Dict) -> Script:
         """This is split out from load_file for testing purposes."""
+
+        assert os.path.realpath(script_path) == script_path
 
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2322,6 +2325,8 @@ class Loader:
         dedupe_key = (Path.real(script_path), config_dump)
         dedupe = cls.dedupe.get(dedupe_key, None) #type:ignore
         if dedupe is not None:
+            with LogLevel.VERBOSE, Colors.SKY:
+                Log.log(f"Deduped load of {script_path}\n")
             return dedupe
 
         # ----------------------------------------
@@ -2330,6 +2335,7 @@ class Loader:
 
         with LogLevel.VERBOSE, Colors.ORANGE:
             Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
+        Log.indent(Colors.ORANGE)
 
         script_dir, script_name = os.path.split(script_path)
 
@@ -2364,6 +2370,8 @@ class Loader:
 
         cls.dedupe[dedupe_key] = new_script #type:ignore
         cls.loaded_files.append(script_path)
+
+        Log.dedent()
 
         return new_script
 
@@ -2441,7 +2449,7 @@ class Runner:
                 if target_regex.search(name):
                     task.enable_task()
 
-        elif Options.rebuild_all:
+        elif Options.build_all:
             cls.enable_all_tasks()
 
         else:
@@ -2601,7 +2609,8 @@ class Main:
 
         script_dir  = flags.pop("script_dir")
         script_file = flags.pop("script_file")
-        script_path = Path.join(script_dir, script_file)
+        script_path = os.path.join(script_dir, script_file)
+        script_path = os.path.realpath(script_path)
 
         Main.init(flags)
 
@@ -2619,7 +2628,7 @@ class Main:
         cls.first_repo = cls.first_script.repo
         time_b = time.perf_counter()
 
-        with LogLevel.VERBOSE, Colors.ORANGE:
+        with LogLevel.VERBOSE, Colors.BLUE:
             Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
 
         time_a = time.perf_counter()
@@ -2711,7 +2720,7 @@ class Main:
         # ------------------------------------
         # Save the new versions of the file stat and task info DBs.
 
-        with LogLevel.VERBOSE, Colors.BLUE:
+        with LogLevel.DEBUG, Colors.BLUE:
             Log.log("┌ Saving stats...\n")
             Log.indent(Colors.BLUE)
 
@@ -2720,7 +2729,7 @@ class Main:
             cls.post_build(repo)
         time_b = time.perf_counter()
 
-        with LogLevel.VERBOSE, Colors.BLUE:
+        with LogLevel.DEBUG, Colors.BLUE:
             Log.dedent()
             Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
 
@@ -2766,28 +2775,30 @@ class Main:
                 str_command = BuildDB.commands_to_string(task.config.command)
                 build_db.update_stat_db(stat_db, file, str_command)
 
-        with LogLevel.VERBOSE, Colors.BLUE:
+        with LogLevel.DEBUG, Colors.ORANGE:
             Log.log(f"┌ Repo {repo.name} post-build\n")
-            Log.indent(Colors.BLUE)
+            Log.indent(Colors.ORANGE)
 
         # Dump the stats as JSON.
         if stat_db_path is not None:
             time_a = time.perf_counter()
             Utils.save_json(stat_db, stat_db_path)
             time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
+            with LogLevel.DEBUG, Colors.ORANGE:
                 Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
+            with LogLevel.DEBUG, Colors.BLUE:
                 Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
 
         if comp_db_path is not None:
             time_a = time.perf_counter()
             Utils.save_json(list(comp_db.values()), comp_db_path)
             time_b = time.perf_counter()
-            with LogLevel.VERBOSE, Colors.ORANGE:
+            with LogLevel.DEBUG, Colors.ORANGE:
                 Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
+            with LogLevel.DEBUG, Colors.BLUE:
                 Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
 
-        with LogLevel.VERBOSE, Colors.BLUE:
+        with LogLevel.DEBUG, Colors.ORANGE:
             Log.dedent()
             Log.log(f"└ Repo {repo.name} done\n")
 
@@ -2820,7 +2831,7 @@ class Main:
             with Colors.BLUE:
                 Log.log("BUILD CLEAN\n")
 
-        with LogLevel.VERBOSE, Colors.BLUE:
+        with LogLevel.DEBUG, Colors.BLUE:
             for repo in Loader.all_repos:
                 Log.log(f"Repo stats for {repo.name}\n")
                 Log.indent(Colors.BLUE)
@@ -2835,33 +2846,28 @@ class Main:
 # These are aliases for methods in Hancho that have been pulled out so they can be used by
 # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 
-aliases = Dict(
-    init  = Main.init,
-    build = Main.build,
+init  = Main.init
+build = Main.build
 
-    path = os.path,
-    abs  = Path.abs,
-    base = Path.base,
-    ext  = Path.ext,
-    norm = Path.norm,
-    real = Path.real,
-    rel  = Path.rel,
-    stem = Path.stem,
-    dirname = Path.dirname,
-    load = lambda file, *args, **kwargs : Loader.load_file(file, False, *args, **kwargs).module,
-    repo = lambda file, *args, **kwargs : Loader.load_file(file, True, *args, **kwargs).module,
-    #Task = task,
-
-    log = lambda *args, **kwargs : Log.log(*args, **kwargs),
-    cwd = os.getcwd,
-
-    flatten = Utils.flatten,
-    run_cmd = Utils.run_cmd,
-    weave   = Utils.weave,
-)
-
-for key, val in aliases.items():
-    globals()[key] = val
+path = os.path
+abs  = Path.abs
+base = Path.base
+ext  = Path.ext
+norm = Path.norm
+real = Path.real
+rel  = Path.rel
+stem = Path.stem
+dirname = Path.dirname
+def load(file, *args, **kwargs):
+    return Loader.load_file(file, False, *args, **kwargs).module
+def repo(file, *args, **kwargs):
+    return Loader.load_file(file, True, *args, **kwargs).module
+def log(*args, **kwargs):
+    return Log.log(*args, **kwargs)
+cwd = os.getcwd
+flatten = Utils.flatten
+run_cmd = Utils.run_cmd
+weave   = Utils.weave
 
 def task(*args, **kwargs):
     if len(args) and callable(args[0]):
