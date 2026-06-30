@@ -189,7 +189,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual("name: dict = {a = 1, b = [2, 'two'], c = (3, 3, 3)}", d)
 
         # Print IDs, but erase pointers before comparing
-        d = hancho.Utils.dump_to_str("name", thing1, print_id = True, max_width = 80)
+        d = hancho.Utils.dump_to_str("name", thing1, print_id = True, max_length = 80)
         match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]+")
         d = match_pointer.sub("0x?", d)
 

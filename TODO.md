@@ -11,8 +11,11 @@
 # FIXME tests for the various rools in tools/*
 # FIXME need an example that drives Hancho through hancho.main()
 # FIXME why is text during the dirty run in go.py orange?
+# FIXME add a test that we don't expand anything if our root script is a nop. That should help
+#       ensure that root scripts that change root_dir/repo_dir work correctly.
 
-Tasks always pick up the 'config' from the script that created them. 
+
+Tasks always pick up the 'config' from the script that created them.
 
 And something similar about sticking stuff on the hancho object -> they go into script.globals, so
 the same deal as config (except those aren't visible to templates)

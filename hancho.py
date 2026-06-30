@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+#!/usr/bin/python3
+# ruff: noqa: RUF012
 # region Header
 
 """
@@ -44,39 +46,45 @@ from typing import Any, cast
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
-# We spell all these defaults out explicitly so that when this config gets merged with flags and
-# task configs the fields stay in the same order.
 
-# fmt: off
-def get_defaults() -> dict[str, Any]:
-    hancho_defaults : dict[str, Any] = {
-        "name"         : None,
-        "desc"         : None,
-        "command"      : None,
-        "enabled"      : False,
-        "core_count"   : 1,
-        "dry_run"      : False,
+def get_defaults() -> Dict:
 
-        "hancho_dir"   : os.path.dirname(__file__),
-        "root_dir"     : os.getcwd(),
-        "repo_dir"     : "{root_dir}",
-        "script_path"  : None,
-        "script_dir"   : None,
-        "script_name"  : None,
-        "is_repo"      : False,
+    # This is the config of the "default" script associated with hancho.py itself.
 
-        "task_cwd"     : "{repo_dir}",
-        "build_root"   : "{repo_dir}/build",
-        "build_tag"    : "",
-        "build_dir"    : "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
+    # fmt: off
+    hancho_defaults = Dict(
 
-        "depformat"    : "gcc" if os.name == "posix" else "msvc",
-        "comp_db_path" : "{build_root}/compile_commands.json",
-        "stat_db_path" : "{build_root}/hancho.json",
-    }
+        # This stuff is generally per-repo
+
+        hancho_dir   = "<sentinel>", # Where hancho.py lives. Used for hancho.load("{hancho_dir}/tools/tools_base.hancho") etcetera
+        repo_dir     = "<sentinel>", # Directory for the repo we're currently building
+        script_name  = "<sentinel>", # Name of the current script. Starts at 'hancho'
+        script_path  = "<sentinel>", # Path to the current script. Starts at /abs/path/hancho.py
+        script_cwd   = "<sentinel>", # Working directory for the current script, may not be the same as dirname(script_path)
+        is_repo      = "<sentinel>",
+
+        build_root   = "{repo_dir}/build",
+        build_tag    = "",
+        build_dir    = "{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}",
+
+        comp_db_path = "{build_root}/compile_commands.json",
+        stat_db_path = "{build_root}/hancho.json",
+
+        # This stuff is generally per-task
+
+        name       = None,
+        desc       = None,
+        command    = None,
+        task_cwd   = "{repo_dir}",
+        enabled    = False,
+        core_count = 1,
+        dry_run    = False,
+        depformat  = "gcc" if os.name == "posix" else "msvc",
+    )
+    # fmt: on
+
     return hancho_defaults
 
-# fmt: on
 
 cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("script")
 
@@ -133,13 +141,14 @@ class Colors(int, Enum):
 
 # --------------------------------------------------------------------------------------------------
 
+
 class Log:
 
     # Log needs to be initialized immediately on startup so that if some other init step hits an
     # issue, we don't crash because we have no log.
 
     time_origin   = time.perf_counter()
-    indent_stack  = [] # noqa: RUF012
+    indent_stack  = []
     current_color = -1
     line_buffer   = ""
     match_escapes = re.compile(r"(\x1B.*?m)")
@@ -147,11 +156,11 @@ class Log:
     verbosity_out = LogLevel.NORMAL # verbosity level we want to appear in the log
 
     @classmethod
-    def reset(cls, config):
+    def reset(cls, flags):
         cls.con_w = shutil.get_terminal_size().columns
-        cls.log_wrap      = config.pop("log_wrap", False)
-        cls.log_color     = config.pop("log_color", True)
-        cls.log_timestamp = config.pop("log_timestamp", True)
+        cls.log_wrap      = flags.pop("log_wrap", False)
+        cls.log_color     = flags.pop("log_color", True)
+        cls.log_timestamp = flags.pop("log_timestamp", True)
 
         cls.time_origin   = time.perf_counter()
         cls.indent_stack  = []
@@ -162,11 +171,11 @@ class Log:
 
         # Handle all the verbosity-related flags
 
-        verbosity = config.pop("verbosity", None)
-        trace     = config.pop("trace", False)
-        debug     = config.pop("debug", False)
-        verbose   = config.pop("verbose", False)
-        quiet     = config.pop("quiet", False)
+        verbosity = flags.pop("verbosity", None)
+        trace     = flags.pop("trace", False)
+        debug     = flags.pop("debug", False)
+        verbose   = flags.pop("verbose", False)
+        quiet     = flags.pop("quiet", False)
 
         if verbosity is not None:
             if isinstance(verbosity, str):
@@ -282,10 +291,15 @@ class Log:
         tb = traceback.extract_tb(ex.__traceback__)
         if tb:
             frame = tb[-1]
-            Log.log(f"type      = {type(ex)}\n")
-            Log.log(f"message   = '{ex}'\n")
-            Log.log(f"location  = {frame.filename} {frame.name} @ {frame.lineno}\n")
-            Log.log(f"line      = '{frame.line}'\n")
+            #Log.log(f"type      = {type(ex)}\n")
+            Log.log("  text = ")
+            with Log.color(0xFFFF00):
+                Log.log(f"'{ex}'\n")
+            Log.log(f"  file = {frame.filename}\n")
+            Log.log(f"  func = {frame.name}\n")
+            Log.log(f"  line = {frame.lineno}\n")
+            # Printing the line isn't useful as it's always going to be "raise ..."
+            #Log.log(f"line      = '{frame.line}'\n")
         else: # pragma: no cover
             Log.log(f"Could not extract traceback from {ex}!")
 
@@ -363,7 +377,7 @@ class Log:
 class Utils:
 
     @classmethod
-    def reset(cls):
+    def reset(cls, flags):
         cls.stat_calls = 0
         cls.hash_calls = 0
         cls.hash_bytes = 0
@@ -458,7 +472,7 @@ class Utils:
                   *opaque_types.keys())
 
     @classmethod
-    def dump_to_str(cls, key, val, indent = 0, print_id = False, max_width = 80, tab = "    ", flat = False):
+    def dump_to_str1(cls, key, val, indent = 0, print_id = False, max_length = 80, tab = "    ", flat = False):
         """
         Hancho's pretty-printer for various types. Note that this is also used for script deduping:
         if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
@@ -481,21 +495,19 @@ class Utils:
         if prefix:
             prefix += " = "
 
-        # Don't recurse into a few types that need special handling
-        if isinstance(val, Task):
-            val = f"<Task {val.config.name}>" if indent > 0 else val.__dict__
-        elif isinstance(val, contextvars.Context):
-            val = "<Context>"
-        elif isinstance(val, types.ModuleType):
-            val = f"<Module {val.__name__}>"
-        elif isinstance(val, types.FunctionType):
-            val = f"<Function {val.__name__}>"
-
-        if isinstance(val, argparse.Namespace):
-            val = val.__dict__
 
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if not (Utils.is_collection(val) or Utils.is_mapping(val)):
+            if isinstance(val, Task):
+                val = f"<Task {val.config.name}>" if indent > 0 else val.__dict__
+            elif isinstance(val, contextvars.Context):
+                val = "<Context>"
+            elif isinstance(val, types.ModuleType):
+                val = f"<Module {val.__name__}>"
+            elif isinstance(val, types.FunctionType):
+                val = f"<Function {val.__name__}>"
+            elif isinstance(val, argparse.Namespace):
+                val = val.__dict__
             # Objects that don't have a custom repr (and a few built-in types) just get printed as
             # '<object>'
             if type(val) in Utils.opaque_types:
@@ -526,23 +538,131 @@ class Utils:
         # would be too wide and we're not trying to generate a flat string, fall back to multi-line.
         pad = (tab * indent)
         separator = ", "
-        chunks = []
         num_separators = len(items) - 1 if len(items) else 0
-        width = len(pad) + len(prefix) + len(ld) + (len(separator) * num_separators) + len(rd)
+        length = len(pad) + len(prefix) + len(ld) + (len(separator) * num_separators) + len(rd)
 
+        chunks = []
         for k, v in items:
-            chunk = Utils.dump_to_str(k, v, 0, print_id, max_width, tab, True)
-            if chunk is None or width + len(chunk) > max_width:
+            chunk = Utils.dump_to_str1(k, v, 0, print_id, max_length, tab, True)
+            if chunk is None or length + len(chunk) > max_length:
                 if flat:
                     return None
-                separator = ",\n"
-                chunks = (Utils.dump_to_str(k, v, indent + 1, print_id, max_width, tab, False) for k, v in items)
-                return pad + prefix + ld + "\n" + separator.join(chunks) + "\n" + pad + rd
-            width += len(chunk)
+                chunks = (Utils.dump_to_str1(k, v, indent + 1, print_id, max_length - 1, tab, False) for k, v in items)
+                return pad + prefix + ld + "\n" + ",\n".join(chunks) + "\n" + pad + rd
+            length += len(chunk)
             chunks.append(chunk)
 
         # Done, we can fit this dump on one line.
         return pad + prefix + ld + separator.join(chunks) + rd
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def _dump_prefix(cls, key, val, print_id):
+        prefix = ""
+        if key is not None:
+            prefix += str(key)
+        if not isinstance(val, Utils.base_types):
+            if key:
+                prefix += ": "
+            prefix += type(val).__name__
+        if print_id:
+            prefix += ": " + Utils.hex_id(val)
+        if prefix:
+            prefix += " = "
+        return prefix
+
+    @classmethod
+    def _dump_scalar(cls, val):
+        # Non-containers are always emitted on one line. If they overflow, they overflow.
+        if isinstance(val, Task):
+            val = f"<Task {val.config.name}>"
+        elif isinstance(val, contextvars.Context):
+            val = "<Context>"
+        elif isinstance(val, types.ModuleType):
+            val = f"<Module {val.__name__}>"
+        elif isinstance(val, types.FunctionType):
+            val = f"<Function {val.__name__}>"
+        elif isinstance(val, argparse.Namespace):
+            val = val.__dict__
+
+        if type(val) in Utils.opaque_types:
+            return Utils.opaque_types[type(val)] # type: ignore
+        elif type(val).__repr__ is object.__repr__:
+            # Objects that don't have a custom repr (and a few built-in types) just get printed
+            # as '<object>'
+            return "<object>"
+        else:
+            return repr(val)
+
+    @classmethod
+    def _unpack_container(cls, val):
+        if isinstance(val, tuple):
+            items = [(None, v) for v in val]
+            return '(', items, ",)" if len(items) == 1 else ')'
+        elif Utils.is_mapping(val):
+            val = cast(abc.Mapping, val)
+            return '{', sorted(val.items()), '}'
+        elif Utils.is_collection(val):
+            val = cast(abc.Collection, val)
+            items = [(None, v) for v in val]
+            return '[', items, ']'
+        else:
+            raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
+
+    @classmethod
+    def _dump_container_to_flat_str(cls, val, print_id, max_length, tab):
+        ld, items, rd = cls._unpack_container(val)
+        separator = ", "
+        num_separators = len(items) - 1 if len(items) else 0
+        length = len(ld) + (len(separator) * num_separators) + len(rd)
+
+        chunks = []
+        for k, v in items:
+            prefix = cls._dump_prefix(k, v, print_id)
+            chunk = prefix + cls._dump_variant_to_flat_str(v, print_id, max_length - length - len(prefix), tab)
+            length += len(chunk)
+            if length > max_length:
+                raise ValueError()
+            chunks.append(chunk)
+
+        return ld + ", ".join(chunks) + rd
+
+    @classmethod
+    def _dump_container_to_str(cls, val, indent, print_id, max_length, tab):
+        ld, items, rd = cls._unpack_container(val)
+        lines = [
+            cls.dump_to_str(k, v, indent + 1, print_id, max_length - 1, tab)
+            for k, v in items
+        ]
+        return ld + '\n' + ',\n'.join(lines) + '\n' + (tab * indent) + rd
+
+    @classmethod
+    def _dump_variant_to_flat_str(cls, val, print_id, max_length, tab):
+        if Utils.is_collection(val) or Utils.is_mapping(val):
+            return cls._dump_container_to_flat_str(val, print_id, max_length, tab)
+        else:
+            return cls._dump_scalar(val)
+
+    @classmethod
+    def _dump_variant_to_str(cls, key, val, indent, print_id, max_length, tab):
+        prefix = (tab * indent) + cls._dump_prefix(key, val, print_id)
+
+        if Utils.is_collection(val) or Utils.is_mapping(val):
+            try:
+                return prefix + cls._dump_container_to_flat_str(val, print_id, max_length - len(prefix), tab)
+            except ValueError:
+                return prefix + cls._dump_container_to_str(val, indent, print_id, max_length, tab)
+        else:
+            return prefix + cls._dump_scalar(val)
+
+    @classmethod
+    def dump_to_str(cls, key, val, indent = 0, print_id = False, max_length = 80, tab = "    "):
+        # Unwrap tasks only if they're at the bottom level of indentation.
+        if isinstance(val, Task) and indent == 0:
+            val = val.__dict__
+
+        return cls._dump_variant_to_str(key, val, indent, print_id, max_length, tab)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -555,7 +675,10 @@ class Utils:
             variant = [Utils.stringify(val) for val in variant]
             return " ".join(variant)
         else:
-            return str(variant)
+            result = str(variant)
+            if result == Expander.sentinel:
+                raise AssertionError("Tried to stringify a sentinel value")
+            return result
 
     @staticmethod
     def in_event_loop() -> bool:
@@ -578,6 +701,12 @@ class Utils:
     @staticmethod
     def is_mapping(variant : Any) -> bool:
         return isinstance(variant, abc.Mapping)
+
+    @staticmethod
+    def is_template(text) -> bool:
+        # inefficient way to check for templates, but it's reliable
+        blocks = Expander._split_template(text)
+        return len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{")
 
     @staticmethod
     def weave(lhs, rhs, *args) -> list[str]:
@@ -852,6 +981,11 @@ class Dict(dict):
 
     def __init__(self, *args, **kwargs):
         super().__init__()
+
+        for i, arg in enumerate(args):
+            if not Utils.is_mapping(arg):
+                raise ValueError(f"Argument #{i} was not a Mapping - {arg}")
+
         self.merge(*args, **kwargs)
         object.__setattr__(self, "_expander", Expander(self))
 
@@ -959,15 +1093,15 @@ class Tool(Dict):
 class Options:
 
     @classmethod
-    def reset(cls, config):
+    def reset(cls, flags):
         # Pull options that aren't task-specific off the root config.
 
-        cls.max_errors  = config.pop("max_errors", 0)
-        cls.build_all   = config.pop("build_all", False)
-        cls.force_rebuild = config.pop("force", False)
-        cls.strict      = config.pop("strict", True)
-        cls.target      = config.pop("target", None)
-        cls.tool        = config.pop("tool", None)
+        cls.max_errors  = flags.pop("max_errors", 0)
+        cls.build_all   = flags.pop("build_all", False)
+        cls.force_rebuild = flags.pop("force", False)
+        cls.strict      = flags.pop("strict", True)
+        cls.target      = flags.pop("target", None)
+        cls.tool        = flags.pop("tool", None)
 
     @classmethod
     def parse_flags(cls, args : list[str]):
@@ -984,8 +1118,11 @@ class Options:
         # pylint: disable=line-too-long
         # fmt: off
         parser.add_argument("target",  nargs="?",  default=argparse.SUPPRESS, type=str.strip,       help="A regex that selects the targets to build. Defaults to all targets in the root repo.")
-        parser.add_argument("-C", "--script-dir",  default=os.getcwd(),       type=str.strip,       help="Change directory before starting the build")
-        parser.add_argument("-f", "--script-file", default="build.hancho",    type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
+
+        # These two flags control where the root repo and root script are
+        parser.add_argument("-C", "--repo-dir",    default=os.getcwd(),       type=str.strip,       help="Change directory before starting the build")
+        parser.add_argument("-f", "--script-path", default="build.hancho",    type=str.strip,       help="Input .hancho file - defaults to 'build.hancho'")
+
         parser.add_argument("-t", "--tool",        default=argparse.SUPPRESS, type=str.strip,       help="Run a subtool.")
         parser.add_argument("--build-tag",         default=argparse.SUPPRESS, type=str.strip,       help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
         parser.add_argument("-j", "--core-max",    default=argparse.SUPPRESS, type=int,             help="Run jobs on N cores in parallel (default = cpu_count)")
@@ -1048,10 +1185,10 @@ class Options:
 # region Repo
 
 class Repo:
-    def __init__(self, name : str, config : Dict):
+    def __init__(self, *, name : str, config : Dict):
         self.name : str = name
         self.config = config
-        self.build_db = BuildDB(config)
+        self.build_db : BuildDB = BuildDB(config)
         self.scripts = []
 
 # endregion
@@ -1061,7 +1198,7 @@ class Repo:
 class BuildDB:
 
     def __init__(self, config):
-
+        self.config = config
         self.reasons = Counter()
 
         # Hash, size, mtime, command for each file in the previous build.
@@ -1072,24 +1209,17 @@ class BuildDB:
         # Compared with old_stat_db entries to determine if a task needs a rebuild.
         self.mid_stat_db : dict[str, Dict] = {}
 
-        stat_db_path = config.stat_db_path
-        comp_db_path = config.comp_db_path
-
-        stat_db_path = config.expand(stat_db_path, str)
-        stat_db_path = cast(str, Path.abs(stat_db_path))
-        comp_db_path = config.expand(comp_db_path, str)
-        comp_db_path = cast(str, Path.abs(comp_db_path))
-
-        self.stat_db_path = stat_db_path
-        self.comp_db_path = comp_db_path
-
-        self.old_stat_db = BuildDB.load_stat_db(stat_db_path)
+        self.stat_db_path2 = config.stat_db_path # these are unexpanded
+        self.comp_db_path2 = config.comp_db_path
+        #self.old_stat_db   = self.load_stat_db()
 
     # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def load_stat_db(stat_db_path) -> Dict:
+    def load_stat_db(self) -> Dict:
         result = {}
+
+        stat_db_path = self.config.expand(self.stat_db_path2, str)
+        stat_db_path = cast(str, Path.abs(stat_db_path))
 
         #with LogLevel.VERBOSE, Colors.ORANGE:
         #    Log.log(f"Loading stat db '{stat_db_path}'\n")
@@ -1133,7 +1263,7 @@ class BuildDB:
     @classmethod
     def commands_to_string(cls, commands):
         commands = Utils.flatten(commands)
-        if callable(commands[0]):
+        if len(commands) and callable(commands[0]):
             commands = [c.__name__ for c in commands]
         return "; ".join(commands)
 
@@ -1155,9 +1285,12 @@ class BuildDB:
                 task.config.in_depfile, task.config.depformat, task.config.task_cwd
             )
             for file in task._old_deplines:
+                if os.path.exists(file):
+                    self.update_stat_db(self.mid_stat_db, file)
+                else:
+                    raise AssertionError(f"Could not find {file}")
                     assert os.path.exists(file)
-                    if os.path.exists(file):
-                        self.update_stat_db(self.mid_stat_db, file)
+
 
         for file in task.in_files:
             assert os.path.exists(file)
@@ -1257,12 +1390,12 @@ class BuildDB:
 # region Script
 
 class Script:
-    def __init__(self, name : str, module : types.ModuleType, repo : Repo, config : Dict):
-        self.name : str = name
-        self.module : types.ModuleType = module
-        self.repo : Repo = repo
-        self.config = config
-        self.tasks = []
+    def __init__(self, *, name, config : Dict, module : types.ModuleType, repo : Repo):
+        self.script_name   = name
+        self.script_config = config
+        self.script_module = module
+        self.script_repo   = repo
+        self.script_tasks  = []
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1272,7 +1405,7 @@ class Script:
 class Task:
 
     @classmethod
-    def reset(cls, config):
+    def reset(cls, flags):
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
 
@@ -1290,7 +1423,7 @@ class Task:
         # is not underscore-prefixed like the later ones.
 
         self.script  = cv_script.get()
-        self.config  = Dict(self.script.config, *args, **kwargs)
+        self.config  = Dict(self.script.script_config, *args, **kwargs)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1333,7 +1466,7 @@ class Task:
         self._core_count = 0
         self._complete = False
 
-        self.script.tasks.append(self)
+        self.script.script_tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -1448,7 +1581,7 @@ class Task:
 
     async def task_main(self):
         config = self.config
-        build_db = cv_script.get().repo.build_db
+        build_db : BuildDB = cv_script.get().script_repo.build_db
 
         time_a = time.perf_counter()
 
@@ -1470,7 +1603,6 @@ class Task:
 
         path_fields  = [
             "hancho_dir",
-            "root_dir",
             "repo_dir",
             "script_path",
             "build_root",
@@ -1995,6 +2127,8 @@ class Expander(abc.MutableMapping[str, Any]):
     MAX_DEPTH = 30
     MAX_EVALS = 300
 
+    sentinel = "<sentinel>"
+
     # ----------------------------------------
 
     def expand(self, variant):
@@ -2002,6 +2136,12 @@ class Expander(abc.MutableMapping[str, Any]):
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
         """
+
+        if not Loader.load_started:
+            raise AssertionError("Tried to expand {variant} before we've even reached script loading state")
+
+        if variant == Expander.sentinel:
+            raise AssertionError("Tried to expand a sentinel value")
 
         # Recurse early if we're trying to expand a list of strings.
         # This ensures that every template gets its own independent depth and evals check.
@@ -2260,13 +2400,18 @@ class Tracer:
 
 class Loader:
 
+    class Abort(Exception):    pass # Raised by hancho scripts when they need to stop running due to some error.
+    class EarlyOut(Exception): pass # Raised by hancho scripts when they are successful but don't need to do anything else.
+    class Fail(Exception): pass     # Script has hit a fatal error
+
     @classmethod
-    def reset(cls):
+    def reset(cls, flags):
         cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
         cls.real_filenames : set[str] = set()
         cls.dedupe : dict[tuple[str, str], Script] = {}
         cls.loaded_files : list[str] = []
         cls.all_repos : list[Repo] = []
+        cls.load_started = False
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2278,55 +2423,44 @@ class Loader:
 
     # ----------------------------------------------------------------------------------------------
 
-    # FIXME ditch this
     @classmethod
-    def load_file(cls, script_path, is_repo, *args, **kwargs):
-        old_script = cv_script.get()
-        old_config = old_script.config
+    def load_script(cls, config):
 
-        # We _do_ need to expand script_path because it might contain a path like
-        # "{hancho_dir}/tools/tools_base.hancho"
-        script_path = old_config.expand(script_path, str)
-        script_path = os.path.realpath(script_path)
+        config.script_name = config.expand("{script_name}")
+        config.script_path = config.expand("{script_path}")
+        config.script_cwd  = config.expand("{script_cwd}")
+        config.is_repo     = config.expand("{is_repo}")
 
-        script_dir, script_name = os.path.split(script_path)
+        assert not Utils.is_template(config.script_path)
 
-        new_config = Dict(
-            old_config,
-            *args, **kwargs,
-            script_path = script_path,
-            script_dir  = script_dir,
-            script_name = script_name,
-            is_repo     = is_repo,
-            repo_dir    = script_dir if is_repo else old_config.repo_dir
-        )
+        config.script_path = os.path.realpath(config.script_path)
 
-        with open(script_path, encoding="utf-8") as file:
+        with open(config.script_path, encoding="utf-8") as file:
             source = file.read()
 
-        return Loader.load_str(script_path, is_repo, source, new_config)
+        return Loader.load_str(config = config, source = source)
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def load_str(cls, script_path, is_repo, source : str, new_config : Dict) -> Script:
+    def load_str(cls, *, config, source) -> Script:
         """This is split out from load_file for testing purposes."""
 
-        assert os.path.realpath(script_path) == script_path
+        assert os.path.realpath(config.script_path) == config.script_path
 
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
         # build, which they should be in practice.
 
-        config_dump = Utils.dump_to_str(key = "Config", val = new_config)
+        config_dump = Utils.dump_to_str(key = "Config", val = config)
         config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
-        dedupe_key = (Path.real(script_path), config_dump)
+        dedupe_key = (Path.real(config.script_path), config_dump)
         dedupe = cls.dedupe.get(dedupe_key, None) #type:ignore
         if dedupe is not None:
             with LogLevel.VERBOSE, Colors.SKY:
-                Log.log(f"Deduped load of {script_path}\n")
+                Log.log(f"Deduped load of {config.script_path}\n")
             return dedupe
 
         # ----------------------------------------
@@ -2334,23 +2468,31 @@ class Loader:
         # root of a new repo.
 
         with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading {"repo" if is_repo else "script"} {script_path}\n")
-        Log.indent(Colors.ORANGE)
+            Log.log(f"Loading {"repo" if config.is_repo else "script"} {config.script_path}\n")
 
-        script_dir, script_name = os.path.split(script_path)
+        script_dir, script_name = os.path.split(config.script_path)
 
         new_module = types.ModuleType(script_name)
-        new_module.__file__ = script_path
+        new_module.__file__ = config.script_path
         new_module.hancho = hancho     # type: ignore
-        new_module.config = new_config # type: ignore
+        new_module.config = config # type: ignore
 
-        if is_repo:
-            new_repo = Repo(script_path, new_config)
+        if config.is_repo:
+            #new_repo = Repo(script_path, new_config)
+            new_repo = Repo(
+                name   = config.script_name,
+                config = config,
+            )
             Loader.all_repos.append(new_repo)
         else:
-            new_repo = cv_script.get().repo
+            new_repo = cv_script.get().script_repo
 
-        new_script = Script(script_name, new_module, new_repo, new_config)
+        new_script = Script(
+            name   = config.script_name,
+            config = config,
+            module = new_module,
+            repo   = new_repo,
+        )
 
         new_repo.scripts.append(new_script)
 
@@ -2360,18 +2502,22 @@ class Loader:
         with chdir(script_dir):
             token = cv_script.set(new_script)
             try:
-                code = compile(source, script_path, "exec", dont_inherit=True)
+                Log.indent(Colors.ORANGE)
+                code = compile(source, config.script_path, "exec", dont_inherit=True)
                 exec(code, new_module.__dict__)
+            except (Loader.Abort, Loader.EarlyOut):
+                pass
+            except Loader.Fail as fail:
+                raise RuntimeError(f"Script failed : {config.script_path}") from fail
             finally:
+                Log.dedent()
                 cv_script.reset(token)
 
         # ----------------------------------------
         # Script created, save to dedupe dict.
 
         cls.dedupe[dedupe_key] = new_script #type:ignore
-        cls.loaded_files.append(script_path)
-
-        Log.dedent()
+        cls.loaded_files.append(config.script_path)
 
         return new_script
 
@@ -2382,8 +2528,8 @@ class Loader:
 class Runner:
 
     @classmethod
-    def reset(cls, config):
-        cls.core_max  : int = config.pop("core_max", os.cpu_count() or 1)
+    def reset(cls, flags):
+        cls.core_max  : int = flags.pop("core_max", os.cpu_count() or 1)
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.core_max)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
@@ -2456,10 +2602,10 @@ class Runner:
             # Enable all tasks that were generated by the root repo or the first loaded repo.
             for task in Loader.yield_tasks():
 
-                if Main.default_repo and task.script.repo == Main.default_repo:
+                if Main.hancho_repo and task.script.repo == Main.hancho_repo:
                     task.enable_task()
 
-                if Main.first_repo and task.script.repo == Main.first_repo:
+                if Main.root_repo and task.script.repo == Main.root_repo:
                     task.enable_task()
 
     # ----------------------------------------------------------------------------------------------
@@ -2570,77 +2716,95 @@ class Main:
 
     # This is the "script" associated with hancho.py itself - used if you're driving hancho
     # directly instead of going through .hancho scripts.
-    default_script = None
-    default_repo = None
+    hancho_repo   = None
+    hancho_script = None
 
     # And this is the very first script .load()ed.
-    first_script = None
-    first_repo = None
+    root_repo = None
+    root_script = None
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def main(cls):
+    def main(cls, flags):
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
-        # message if we failed to catch an exception in main2().
+        # message if we failed to catch an exception during load/build.
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
         # misinterpreted as a Hancho bug.
         try:
-            return cls.main2()
+
+            # ----------------------------------------
+            # INIT
+
+            root_repo_dir    = flags.pop("repo_dir")
+            root_script_path = flags.pop("script_path")
+
+            Main.init(flags)
+
+            assert cls.hancho_script
+            assert cls.root_script
+
+            Main.banner_start(
+                cls.hancho_script.script_config.script_path,
+                root_script_path
+            )
+
+            # ----------------------------------------
+            # LOAD
+
+            time_a = time.perf_counter()
+            #cls.load_top_script(root_script_dir, root_script_file, root_repo_dir)
+            #cls.load_top_script(root_script_path = root_script_path, root_repo_dir = root_repo_dir)
+            assert Main.hancho_script is not None
+
+            root_config = Dict(
+                repo_dir    = root_repo_dir,
+                script_name = os.path.basename(root_script_path),
+                script_path = root_script_path,
+                script_cwd  = root_repo_dir,
+                is_repo     = True
+            )
+
+            root_config.merge(flags)
+
+            Loader.load_started = True
+            cls.root_script = Loader.load_script(root_config)
+            cls.root_repo   = cls.root_script.script_repo
+
+            time_b = time.perf_counter()
+
+            with LogLevel.VERBOSE, Colors.BLUE:
+                Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
+
+            # ----------------------------------------
+            # BUILD
+
+            time_a = time.perf_counter()
+            result = Main.build()
+            time_b = time.perf_counter()
+
+            with LogLevel.VERBOSE, Colors.GREEN:
+                Log.log(f"Build took {time_b - time_a} seconds\n")
+
+            # ----------------------------------------
+            # DONE
+
+            Main.banner_end()
+            return result
+
         except Exception as ex:
-            with LogLevel.ERROR, Colors.RED:
-                Log.log("Hancho hit an exception during startup:\n")
-                Log.log(f"os.getcwd = {os.getcwd()}\n")
+            with LogLevel.ERROR:
+                Log.log("\n")
+                with Log.color(0xFFFF00):
+                    Log.log("Hancho hit an exception during startup:\n")
+                Log.log(f"  cwd  = {os.getcwd()}\n")
                 Log.log_exception(ex)
+                Log.log("\n")
                 Log.log("BUILD FAILED\n")
-            traceback.print_exc()
             return 1
         finally:
             # Don't leave the last line of the log sitting in line_buffer!
             Log.flush()
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def main2(cls):
-        # Actual main
-
-        flags = Options.parse_flags(sys.argv[1:])
-
-        script_dir  = flags.pop("script_dir")
-        script_file = flags.pop("script_file")
-        script_path = os.path.join(script_dir, script_file)
-        script_path = os.path.realpath(script_path)
-
-        Main.init(flags)
-
-        assert cls.default_repo is not None
-
-        root_dir = cls.default_repo.config.expand("{root_dir}", str)
-        repo_dir = cls.default_repo.config.expand("{repo_dir}", str)
-
-        Main.banner_start(root_dir, repo_dir)
-
-        first_config = Dict(get_defaults(), flags)
-
-        time_a = time.perf_counter()
-        cls.first_script = Loader.load_file(script_path, True, first_config)
-        cls.first_repo = cls.first_script.repo
-        time_b = time.perf_counter()
-
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
-
-        time_a = time.perf_counter()
-        result = Main.build()
-        time_b = time.perf_counter()
-
-        with LogLevel.VERBOSE, Colors.GREEN:
-            Log.log(f"Build took {time_b - time_a} seconds\n")
-
-        Main.banner_end()
-
-        return result
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2652,43 +2816,69 @@ class Main:
         hancho.init(verbosity = "debug", myoption=1234)
         """
 
-        default_config = Dict(
-            get_defaults(),
-            is_repo = True,
+        flags = Dict(*args, kwargs)
+
+        Log.reset(flags)
+        Utils.reset(flags)
+        Options.reset(flags)
+        Task.reset(flags)
+        Runner.reset(flags)
+        Loader.reset(flags)
+
+        # Whatever flags were not consumed by our classes go into root_config
+
+        hancho_config = get_defaults()
+
+        hancho_config.merge(
+            hancho_dir  = os.path.dirname(__file__),
+            repo_dir    = os.path.dirname(__file__),
+            script_name = "hancho",
             script_path = __file__,
-            script_dir = os.path.dirname(__file__),
-            script_name = os.path.basename(__file__)
+            script_cwd  = os.getcwd(),
+            is_repo     = True
         )
-        default_config.merge(*args, **kwargs)
 
-        default_repo   = Repo(__file__, default_config)
-        default_module = sys.modules[__name__]
-        default_script = Script(__file__, default_module, default_repo, default_config)
+        hancho_config.merge(flags)
 
-        default_module.hancho = hancho # type: ignore
-        default_module.config = default_config # type: ignore
+        # def __init__(self, *, name : str, config : Dict):
+        hancho_repo   = Repo(
+            name   = hancho_config.script_name,
+            config = hancho_config,
+        )
 
-        cls.default_script = default_script
-        cls.default_repo = cls.default_script.repo
-        default_repo.scripts.append(default_script)
-        cv_script.set(default_script)
+        hancho_module = sys.modules[__name__]
+
+        # def __init__(self, *, config : Dict, module : types.ModuleType, repo : Repo):
+        hancho_script = Script(
+            name   = hancho_config.script_name,
+            config = hancho_config,
+            module = hancho_module,
+            repo   = hancho_repo,
+        )
+        hancho_repo.scripts.append(hancho_script)
+
+        # A real script module has 'hancho' and 'config' pre-set. I don't know that we _need_ to do
+        # that here, but might as well.
+        hancho_module.hancho = hancho      # type: ignore
+        hancho_module.config = hancho_config # type: ignore
+
+        cls.hancho_script = hancho_script
+        cls.hancho_repo   = hancho_repo
+
+        cv_script.set(hancho_script)
 
         # ----------------------------------------
 
-        Log.reset(default_config)
-        Utils.reset()
-        Options.reset(default_config)
-        Task.reset(default_config)
-        Runner.reset(default_config)
-        Loader.reset()
+        Loader.all_repos.append(hancho_repo)
 
-        Loader.all_repos.append(default_repo)
+        assert not Utils.is_template(cls.hancho_repo.config.repo_dir)
+
 
     # ----------------------------------------------------------------------------------------------
     # Startup banner
 
     @classmethod
-    def banner_start(cls, root_dir, repo_dir):
+    def banner_start(cls, root_script_path, top_script_path):
 
         with LogLevel.VERBOSE, Colors.LIME:
             Log.log(f"Hancho started as '{" ".join(sys.argv)}'\n")
@@ -2701,39 +2891,65 @@ class Main:
             if Log.verbosity_out >= LogLevel.VERBOSE:
                 Log.log("Verbose mode on\n")
 
-            Log.log(f"Hancho root at {root_dir}\n")
-            Log.log(f"Hancho repo at {repo_dir}\n")
+            Log.log(f"Hancho root at {root_script_path}\n")
+            Log.log(f"Hancho repo at {top_script_path}\n")
+            Log.log(f"Hancho top script at {top_script_path}")
 
     # ----------------------------------------------------------------------------------------------
 
+    build_started = False
+
     @classmethod
     def build(cls):
-        # ------------------------------------
-        # Run all tasks and tools
 
+        # Do _not_ update stats after running a tool, just early out.
         if Options.tool:
             result = Runner.run_tool(Options.tool)
-        else:
-            Runner.select_root_tasks()
-            result = Runner.sync_run_tasks()
+            return
 
         # ------------------------------------
-        # Save the new versions of the file stat and task info DBs.
 
+        time_a = time.perf_counter()
+        for repo in Loader.all_repos:
+            cls.pre_build(repo)
+        time_b = time.perf_counter()
+
+        print("pre_build done")
         with LogLevel.DEBUG, Colors.BLUE:
-            Log.log("┌ Saving stats...\n")
-            Log.indent(Colors.BLUE)
+            Log.log(f"Loading stats took {time_b - time_a:8.6f} seconds\n")
+
+        # ------------------------------------
+
+        Runner.select_root_tasks()
+        cls.build_started = True
+        result = Runner.sync_run_tasks()
+        print("build done")
+
+        # ------------------------------------
 
         time_a = time.perf_counter()
         for repo in Loader.all_repos:
             cls.post_build(repo)
         time_b = time.perf_counter()
 
+        print("post_build done")
         with LogLevel.DEBUG, Colors.BLUE:
-            Log.dedent()
-            Log.log(f"└ Saving stats took {time_b - time_a:8.6f} seconds\n")
+            Log.log(f"Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
+
+    # ----------------------------------------------------------------------------------------------
+    # This must happen _after_ all repos are loaded (so that if they change repo_dir we don't get
+    # the old path), but _before_ we build any tasks.
+
+    @classmethod
+    def pre_build(cls, repo):
+        build_db = repo.build_db
+        build_db.old_stat_db = build_db.load_stat_db()
+        print("---------")
+        print(repo.config)
+
+        pass
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2742,9 +2958,12 @@ class Main:
         if repo.config.dry_run:
             return
 
-        build_db = repo.build_db
-        stat_db_path = build_db.stat_db_path
-        comp_db_path = build_db.comp_db_path
+        build_db : BuildDB = repo.build_db
+
+        stat_db_path = build_db.config.expand(build_db.stat_db_path2, str)
+        stat_db_path = cast(str, Path.abs(stat_db_path))
+        comp_db_path = build_db.config.expand(build_db.comp_db_path2, str)
+        comp_db_path = cast(str, Path.abs(comp_db_path))
 
         # Gather stats from all completed tasks
         stat_db = {}
@@ -2858,12 +3077,39 @@ real = Path.real
 rel  = Path.rel
 stem = Path.stem
 dirname = Path.dirname
-def load(file, *args, **kwargs):
-    return Loader.load_file(file, False, *args, **kwargs).module
-def repo(file, *args, **kwargs):
-    return Loader.load_file(file, True, *args, **kwargs).module
+def load(script_path, *args, **kwargs):
+    new_config = Dict(
+        cv_script.get().script_config,
+        script_name = "{base(script_path)}",
+        script_path = script_path,
+        script_cwd  = "{dir(script_path)}",
+        is_repo     = False,
+    )
+
+    new_config.merge(*args, kwargs)
+
+    result = Loader.load_script(new_config)
+
+    return result.script_module
+
+def repo(script_path, *args, **kwargs):
+    new_config = Dict(
+        cv_script.get().script_config,
+        script_name = "{base(script_path)}",
+        script_path = script_path,
+        script_cwd  = "{dir(script_path)}",
+        is_repo     = True,
+    )
+
+    new_config.merge(*args, kwargs)
+
+    result = Loader.load_script(new_config)
+
+    return result.script_module
+
 def log(*args, **kwargs):
     return Log.log(*args, **kwargs)
+
 cwd = os.getcwd
 flatten = Utils.flatten
 run_cmd = Utils.run_cmd
@@ -2873,17 +3119,53 @@ def task(*args, **kwargs):
     if len(args) and callable(args[0]):
         # Take hancho.task(callable, ...) and instead of creating a task, collect all the args into
         # a dict and then splat it into the callback.
-        return args[0](**Dict(cv_script.get().config, *args[1:], kwargs))
+        return args[0](**Dict(cv_script.get().script_config, *args[1:], kwargs))
     else:
         return Task(*args, **kwargs)
+
+def fail(message):
+    with LogLevel.ERROR, Colors.RED:
+        frame = sys._getframe(1)
+        Log.log("Script failed:\n")
+        Log.log(f"  text = '{message}'\n")
+        Log.log(f"  file = {frame.f_code.co_filename}\n")
+        Log.log(f"  func = {frame.f_code.co_name}\n")
+        Log.log(f"  line = {frame.f_lineno}\n")
+    raise Loader.Fail()
+
+def abort(message):
+    with LogLevel.WARNING, Colors.YELLOW:
+        frame = sys._getframe(1)
+        Log.log("Script aborted:\n")
+        Log.log(f"  text = '{message}'\n")
+        Log.log(f"  file = {frame.f_code.co_filename}\n")
+        Log.log(f"  func = {frame.f_code.co_name}\n")
+        Log.log(f"  line = {frame.f_lineno}\n")
+    raise Loader.Abort()
+
+def earlyout(message = ""):
+    with LogLevel.VERBOSE, Colors.LIME:
+        frame = sys._getframe(1)
+        Log.log("Script exited early:\n")
+        Log.log(f"  text = '{message}'\n")
+        Log.log(f"  file = {frame.f_code.co_filename}\n")
+        Log.log(f"  func = {frame.f_code.co_name}\n")
+        Log.log(f"  line = {frame.f_lineno}\n")
+    raise Loader.EarlyOut()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region __main__
 
-if __name__ == "__main__":
-    sys.exit(Main.main())
-else:
-    Main.init()
+def _start():
+    flags = Options.parse_flags(sys.argv[1:])
+    if __name__ == "__main__":
+        result = Main.main(flags)
+        sys.exit(result)
+    else:
+        Main.init(flags)
+        Loader.load_started = True
+
+_start()
 
 # endregion

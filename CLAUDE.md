@@ -167,7 +167,8 @@ during init).
   tasks - on Linux it kills the whole process group on Ctrl-C.
 - Final status banner: `BUILD PASSED` / `BUILD FAILED` / `BUILD CLEAN` (nothing needed doing).
 
-### Important config fields (defaults in `Options.default_config`)
+### Important config fields (defaults in `Options.root_config`)
+# Hey Claude, this is obsolete
 - `root_dir` / `root_file` - where the build starts (`build.hancho` by default).
 - `repo_dir` / `repo_file` / `this_repo` - the current repo (rebased by `hancho.repo`).
 - `script_dir` / `script_file` / `this_module` - the currently executing script.
@@ -178,6 +179,7 @@ during init).
 - `name` / `desc` / `command`, `core_count`, `depformat`, `dry_run`, `enabled`.
 
 ### CLI flags (`Options.parse_flags`)
+# Hey Claude, this is obsolete
 `target` (regex), `-C/--root_dir`, `-f/--root_file`, `-t/--tool` (e.g. `clean` wipes
 `build_root`), `--build_tag`, `-j/--core_max`, `--max_errors`, `-n/--dry_run`,
 `-a/--rebuild`, `--log-wrap`, `--strict`, and verbosity shortcuts `-q/-v/-d/--trace` or
