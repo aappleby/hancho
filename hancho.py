@@ -468,7 +468,7 @@ class Utils:
     })
 
     # These types don't need a type annotation when dumped.
-    base_types = (str, bool, int, float, list, tuple, set, bytes, bytearray, range, type(None),
+    base_types = (str, bool, int, float, list, tuple, set, dict, bytes, bytearray, range, type(None),
                   *opaque_types.keys())
 
     @classmethod
@@ -562,9 +562,9 @@ class Utils:
         prefix = ""
         if key is not None:
             prefix += str(key)
-        if not isinstance(val, Utils.base_types):
+        if type(val) not in Utils.base_types:
             if key:
-                prefix += ": "
+                prefix += ":"
             prefix += type(val).__name__
         if print_id:
             prefix += ": " + Utils.hex_id(val)
