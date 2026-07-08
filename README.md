@@ -49,7 +49,7 @@ compile_cpp = hancho.Tool(
 # It merges all dicts, expands templates, and queues an asynchronous task to run the command.
 
 # The hancho.Task() function creates a Task object, which is like a promise that
-# resolves to a list of output files when the task is complete.
+# resolves to a dict of (out_*, abspath(*)) items when the task is complete.
 
 main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
 util_o = hancho.Task(compile_cpp, in_src = "util.cpp")

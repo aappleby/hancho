@@ -14,6 +14,11 @@
 # FIXME add a test that we don't expand anything if our root script is a nop. That should help
 #       ensure that root scripts that change root_dir/repo_dir work correctly.
 
+# FIXME We should probably migrate path manipulation to pathlib.Path, even if we convert to/from
+#       strings. It'll save us string concat debugging.
+
+# FIXME merging lists concats, merging tuples replaces
+# FIXME dicts stringify into lists of keys, tasks resolve to dicts of their outputs
 
 Tasks always pick up the 'config' from the script that created them.
 

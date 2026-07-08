@@ -92,7 +92,7 @@ def verilator(*, in_sv, **kwargs):
         kwargs,
         # FIXME this is reading out_makefile from verilated, needs a test 'cause stuff has changed
         verilated = verilated,
-        out_obj = "{ext(verilated.out_makefile, '__ALL.o')}",
+        out_obj = "{ext(verilated['out_makefile'], '__ALL.o')}",
         flags = [
             "-B",
         ],
