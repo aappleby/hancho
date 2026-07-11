@@ -201,7 +201,7 @@ class Dict(dict):
 
 #    def expand[T](self, text : Any, as_type : type[T] = object) -> T:
 #        # Nested-auto-expansion-mode _must_ be the default, otherwise things like
-#        # config.expand("{rel(task.cwd, repo.root)}", str)
+#        # config.expand("{rel(task.task_cwd, repo.root)}", str)
 #        # doesn't work because we try and call rel using {macros}, and macros are not paths.
 #
 #        result = Expander.expand(text, self)
@@ -314,25 +314,22 @@ class Onion(abc.Mapping):
         return cursor[key]
 
     def _get(self, key, default = sentinel) -> Any:
-        if key == 'cwd':
-            pass
-
         # Pull out non-None layer[key]s for all layers containing the key.
-#        values = [
-#            (layer_name + "." + key, layer[key])
-#            for layer_name, layer in self._layers.items()
-#            if isinstance(layer, abc.Mapping) and key in layer and layer[key] is not None
-#        ]
-        values = []
-        for layer_name, layer in self._layers.items():
-            if not isinstance(layer, abc.Mapping):
-                continue
-            if key not in layer:
-                continue
-            val = layer[key]
-            if val is None:
-                continue
-            values.append((layer_name + "." + key, layer[key]))
+        values = [
+            (layer_name + "." + key, layer[key])
+            for layer_name, layer in self._layers.items()
+            if isinstance(layer, abc.Mapping) and key in layer and layer[key] is not None
+        ]
+#        values = []
+#        for layer_name, layer in self._layers.items():
+#            if not isinstance(layer, abc.Mapping):
+#                continue
+#            if key not in layer:
+#                continue
+#            val = layer[key]
+#            if val is None:
+#                continue
+#            values.append((layer_name + "." + key, layer[key]))
 
 
         # No values? Bad key.
@@ -1485,7 +1482,7 @@ class Script:
         # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
         if "in_depfile" in task.config:
             task._old_deplines = Utils.load_depfile(
-                task.config.in_depfile, task.config.depformat, task.config.cwd
+                task.config.in_depfile, task.config.depformat, task.config.task_cwd
             )
             for file in task._old_deplines:
                 if os.path.exists(file):
@@ -1508,7 +1505,7 @@ class Script:
     def post_task(self, task):
         if "in_depfile" in task.config:
             task.new_deplines = Utils.load_depfile(
-                    task.config.in_depfile, task.config.depformat, task.config.cwd
+                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
                 )
 
     # ----------------------------------------------------------------------------------------------
@@ -1800,7 +1797,7 @@ class Task:
         # you'll find it in task_init below.
 
         expanded = Dict()
-        expanded.cwd        = Path.normpath(Expander.expand(variant = "{cwd}", context = task.config))
+        expanded.task_cwd   = Path.normpath(Expander.expand(variant = "{task_cwd}", context = task.config))
         expanded.build_dir  = Path.normpath(Expander.expand(variant = "{build_dir}", context = task.config))
 
         expanded.build_tag  = Expander.expand(variant = "{build_tag}", context = task.config)
@@ -1821,7 +1818,7 @@ class Task:
         # so there can be no await'ed points that could interrupt us - os.getcwd() should be stable
         # while we're doing this.
 
-        with chdir(task.config.cwd):
+        with chdir(task.config.task_cwd):
             task.task_init()
 
         task.sanity_check()
@@ -1872,7 +1869,7 @@ class Task:
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         if "in_depfile" in task.config:
-            deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.cwd)
+            deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
             for file in deplines:
                 task.script.update_stat_db(task.script.mid_stat_db, file)
 
@@ -1934,8 +1931,8 @@ class Task:
     def task_init(self):
         task = self
 
-        if os.getcwd() != Path.resolve(task.config.cwd):
-            raise AssertionError(f"Running task_init while we're not in the realpath of task's cwd '{task.config.cwd}' - we are in {os.getcwd()}")  # pragma: no cover
+        if os.getcwd() != Path.resolve(task.config.task_cwd):
+            raise AssertionError(f"Running task_init while we're not in the realpath of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
@@ -1994,8 +1991,8 @@ class Task:
         script = cv_script.get()
         assert task.script is script
 
-        if not Path.exists(task.config.cwd):
-            raise Task.BROKEN(f"Task working directory '{task.config.cwd}' does not exist")
+        if not Path.exists(task.config.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{task.config.task_cwd}' does not exist")
 
         if not Path.startswith(task.config.build_dir, script.config.repo.root):
             raise Task.BROKEN(f"The build.dir {task.config.build_dir} is not under repo.root {script.config.repo.root}")
@@ -2089,9 +2086,9 @@ class Task:
             for i, file in enumerate(files):
                 # Note that this conditional and the one below are _NOT_ an if/elif pair!
                 if not Path.startswith(file, task.config.build_dir):  # noqa: SIM102
-                    if Path.startswith(file, script.config.script.cwd):
-                        #file = file.removeprefix(script.config.script.cwd)
-                        file = Path.rel(file, script.config.script.cwd)
+                    if Path.startswith(file, script.config.script.script_cwd):
+                        #file = file.removeprefix(script.config.script.script_cwd)
+                        file = Path.rel(file, script.config.script.script_cwd)
                         file = Path.join(task.config.build_dir, file)
                         files[i] = file
 
@@ -2116,7 +2113,7 @@ class Task:
 
         # actually this may not be worth it...
 
-        #rel_dir = task.config.cwd if isinstance(config.command[0], str) else script.config.cwd
+        #rel_dir = task.config.task_cwd if isinstance(config.command[0], str) else script.config.script.script_cwd
         #for i in range(len(files)):
         #    files[i] = Path.rel(files[i], rel_dir)
 
@@ -2129,14 +2126,14 @@ class Task:
 
         task = self
         with LogLevel.VERBOSE, Colors.BLUE:
-            task.log(f"{Path.rel(task.config.cwd, script.config.repo.root)}$ {command}\n")
+            task.log(f"{Path.rel(task.config.task_cwd, script.config.repo.root)}$ {command}\n")
 
         proc = None
         try:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd    = task.config.cwd,
+                cwd    = task.config.task_cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2222,7 +2219,7 @@ class Task:
             Log.log(f"Script    = {script.config.script.path}:\n")
             Log.log(f"Task      = '{task.config.name}' : '{task.config.desc}'\n")
             Log.log(f"os.getcwd = {os.getcwd()}\n")
-            Log.log(f"task cwd  = {task.config.cwd}\n")
+            Log.log(f"task cwd  = {task.config.task_cwd}\n")
             Log.log(f"command   = {task.config.command}\n")
             if ex:
                 Log.log_exception(ex)
@@ -2670,7 +2667,7 @@ class Main:
             name   = None,
             dir    = None,
             path   = None,
-            cwd    = None
+            script_cwd = None
         ),
         module = Dict(
         ),
@@ -2678,8 +2675,8 @@ class Main:
             name       = None,
             desc       = None,
             command    = None,
-            cwd        = "{repo.root}",
-            build_dir  = "{build.root}/{build_tag}/{rel(cwd, repo.root)}",
+            task_cwd   = "{repo.root}",
+            build_dir  = "{build.root}/{build_tag}/{rel(task_cwd, repo.root)}",
             core_count = 1,
             build_tag  = "{main.build_tag}",
             depformat  = "gcc" if os.name == "posix" else "msvc",
@@ -2748,7 +2745,7 @@ class Main:
                     name   = "hancho",
                     dir    = Path.dirname(__file__),
                     path   = __file__,
-                    cwd    = os.getcwd()
+                    script_cwd    = os.getcwd()
                 ),
             )
 
@@ -2987,13 +2984,13 @@ class Main:
 
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
-                    "directory" : task.config.cwd,
+                    "directory" : task.config.task_cwd,
                     "command"   : script.commands_to_string(task.config.command),
                     "file"      : file,
                 }
 
             if "in_depfile" in task.config:
-                deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.cwd)
+                deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
                 for file in deplines:
                     script.update_stat_db(stat_db, file)
 
@@ -3108,14 +3105,14 @@ def load2(script_path, is_repo, *args, **kwargs):
         path = script_path,
         name = Path.basename(script_path),
         dir  = Path.dirname(script_path),
-        cwd  = Path.dirname(script_path),
+        script_cwd  = Path.dirname(script_path),
     )
 
     Dict.merge(child_config, *args, kwargs)
     child_script = Loader.load_script(child_options, child_config)
     parent_script.children.append(child_script)
 
-    with chdir(child_script.config.script.cwd):
+    with chdir(child_script.config.script.script_cwd):
         token = cv_script.set(child_script)
         try:
             Log.indent(Colors.ORANGE)
