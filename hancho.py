@@ -1,5 +1,3 @@
-#!/usr/bin/python3xip
-#!/usr/bin/python3
 #!/usr/bin/python3
 # ruff: noqa: RUF012
 # region Header
@@ -130,13 +128,10 @@ class Dict(dict):
                 cls.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
             elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
                 dst[key] = list(lhs2) + list(rhs2)
-            elif isinstance(rhs2, Dict):
-                # We can't use copy.copy for this as we need Dict() to set the new dict's expander
+            elif isinstance(rhs2, abc.Mapping):
                 dst[key] = Dict(rhs2)
-            elif isinstance(rhs2, (dict, list, tuple, set)):
-                dst[key] = copy.copy(rhs2)
             else:
-                dst[key] = lhs2 if rhs2 is None else rhs2
+                dst[key] = lhs2 if rhs2 is None else copy.copy(rhs2)
 
         return dst
 
@@ -2602,9 +2597,54 @@ class Main:
 
 
     # ----------------------------------------------------------------------------------------------
+    # INIT
 
     @classmethod
-    def main(cls):
+    def init(cls, *args, **kwargs):
+
+        flags = Dict(*args, kwargs)
+
+        # --------------------------------------------------------------------------------------
+
+        Log.reset     (flags)
+        Expander.reset(flags)
+        Utils.reset   (flags)
+        Log.reset     (flags)
+        Script.reset  (flags)
+        Task.reset    (flags)
+        Tracer.reset  (flags)
+        Loader.reset  (flags)
+        Runner.reset  (flags)
+        Main.reset    (flags)
+
+        onion = Onion(hancho = hancho.__dict__, flags = flags)
+
+        flags.hancho_dir  = Expander.expand("{hancho_dir}",  onion, None)
+        flags.script_path = Expander.expand("{script_path}", onion, None)
+        flags.script_cwd  = Expander.expand("{script_cwd}",  onion, None)
+        flags.repo_root   = Expander.expand("{repo_root}",   onion, None)
+
+        flags.hancho_dir  = Path.normpath(flags.hancho_dir)
+        flags.script_path = Path.normpath(flags.script_path)
+        flags.script_cwd  = Path.normpath(flags.script_cwd)
+        flags.repo_root   = Path.normpath(flags.repo_root)
+
+        # ------------------------------------
+
+        hancho_script = Script(
+            Dict(flags, script_path =__file__),
+            hancho,
+            sys._getframe().f_code,
+        )
+
+        cv_script.set(hancho_script)
+        Loader.all_scripts.append(hancho_script)
+        cls.hancho_script = hancho_script
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def main(cls, flags):
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
         # message if we failed to catch an exception during load/build.
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
@@ -2613,56 +2653,12 @@ class Main:
         cv_token = None
 
         try:
-
-            # --------------------------------------------------------------------------------------
-            # INIT
-
-            flags = Main.parse_flags(sys.argv[1:])
-
-            Log.reset     (flags)
-            Expander.reset(flags)
-            Utils.reset   (flags)
-            Log.reset     (flags)
-            Script.reset  (flags)
-            Task.reset    (flags)
-            Tracer.reset  (flags)
-            Loader.reset  (flags)
-            Runner.reset  (flags)
-            Main.reset    (flags)
-
-            onion = Onion(hancho = hancho.__dict__, flags = flags)
-
-            flags.hancho_dir  = Expander.expand("{hancho_dir}",  onion, None)
-            flags.script_path = Expander.expand("{script_path}", onion, None)
-            flags.script_cwd  = Expander.expand("{script_cwd}",  onion, None)
-            flags.repo_root   = Expander.expand("{repo_root}",   onion, None)
-
-            flags.hancho_dir  = Path.resolve(flags.hancho_dir)
-            flags.script_path = Path.resolve(flags.script_path)
-            flags.script_cwd  = Path.resolve(flags.script_cwd)
-            flags.repo_root   = Path.resolve(flags.repo_root)
-
-            # ------------------------------------
-
-            hancho_script = Script(
-                Dict(flags, script_path =__file__),
-                hancho,
-                sys._getframe().f_code,
-            )
-
-            cv_script.set(hancho_script)
-            Loader.all_scripts.append(hancho_script)
-            cls.hancho_script = hancho_script
-
-            # ----------------------------------------
-
             Main.banner_start(
                 flags.script_path,
                 flags.repo_root,
                 flags.opt_file,
             )
 
-            # ----------------------------------------
             # LOAD
 
             Loader.load_started = True
@@ -2675,7 +2671,6 @@ class Main:
             with LogLevel.VERBOSE, Colors.BLUE:
                 Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
 
-            # ----------------------------------------
             # BUILD
 
             time_a = time.perf_counter()
@@ -2685,7 +2680,6 @@ class Main:
             with LogLevel.VERBOSE, Colors.GREEN:
                 Log.log(f"Build took {time_b - time_a} seconds\n")
 
-            # ----------------------------------------
             # DONE
 
             Main.banner_end()
@@ -3098,31 +3092,25 @@ def earlyout(message = ""):
         Log.log(f"  line = {frame.f_lineno}\n")
     raise Loader.EarlyOut()
 
+# ----------------------------------------
+
+def init(*args, **kwargs):
+    flags = Main.parse_flags([])
+    Dict.merge(flags, *args, kwargs)
+    Main.init(flags)
+
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region __main__
 
 def _start():
     if __name__ == "__main__":
-        result = Main.main()
+        flags = Main.parse_flags(sys.argv[1:])
+        Main.init(flags)
+        result = Main.main(flags)
         sys.exit(result)
-    else:
-        Main.main()
-        Loader.load_started = True
 
 _start()
-
-#a = Dict(foo = 1, bar = 2)
-#b = Dict(bar = 3, baz = 4)
-#
-#o = Onion(a, b)
-#
-#c = Dict(foo = 7, baz = 12)
-#o = Onion(o, c)
-#
-#print(o.foo)
-#print(o.bar)
-#print(o.baz)
 
 # endregion
 # --------------------------------------------------------------------------------------------------

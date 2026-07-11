@@ -10,7 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_input_changed", "-vvv"],
+      "args"    : ["tests.test_dict.TestDict.test_right_overrides_left", "-vvv"],
       "preLaunchTask": "Wipe build",
     },
 

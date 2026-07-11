@@ -1,34 +1,16 @@
 #!/usr/bin/python3
 """Test cases for Hancho's Dict class"""
 
-import doctest
-import os
-import sys
 import unittest
 
-import hancho
 from hancho import Dict
 
-####################################################################################################
+# FIXME test that nested dicts and arrays get deep copied
+# FIXME test fill()
 
-
-def setUpModule():
-    os.chdir(os.path.dirname(__file__))
-
-
-def load_tests(loader, tests, ignore):
-    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    tests.addTests(doctests)
-    return tests
-
-
-####################################################################################################
-
+# --------------------------------------------------------------------------------------------------
 
 class TestDict(unittest.TestCase):
-    def setUp(self):
-        hancho.init(verbosity = "quiet")
-        sys.stdout.flush()
 
     def test_basic_access(self):
         d = Dict({"a": 1, "b": 2})
@@ -39,24 +21,13 @@ class TestDict(unittest.TestCase):
         with self.assertRaises(KeyError):
             _ = d["missing"]
 
-    def doctest_dict_upgrades(self):
+    def test_dict_upgrades(self):
         # Internal dicts should be upgraded to hancho.Dict
-        """
-        >>> d = Dict(a = {'b' : {'c' : 1}})
-        >>> type(d)
-        <class 'hancho.Dict'>
-        >>> type(d.a)
-        <class 'hancho.Dict'>
-        >>> type(d.a.b)
-        <class 'hancho.Dict'>
-        >>> type(d.a.b.c)
-        <class 'int'>
-        """
-
-    def test_init_upgrades_dict(self):
-        d = Dict(child={"x": 1})
-        self.assertIsInstance(d.child, Dict)
-        self.assertEqual(d.child.x, 1)
+        d = Dict(a = {'b' : {'c' : 1}})
+        self.assertIs(Dict, type(d))
+        self.assertIs(Dict, type(d.a))
+        self.assertIs(Dict, type(d.a.b))
+        self.assertIs(int,  type(d.a.b.c))
 
     def test_merge_rightmost_wins(self):
         d1 = Dict({"a": 1, "b": 2})
@@ -75,81 +46,45 @@ class TestDict(unittest.TestCase):
         self.assertEqual(merged.a.y, 3)
         self.assertEqual(merged.a.z, 4)
 
-    def doctest_basic_merging(self):
+    def test_basic_merging(self):
         # Basic merging should work
-        r"""
-        >>> Dict()
-        Dict = {}
-        >>> Dict(Dict(), dict(), dict())
-        Dict = {}
-        >>> Dict(dict(), dict(bar = None))
-        Dict = {bar = None}
-        >>> Dict(dict(), dict(bar = 3))
-        Dict = {bar = 3}
-        >>> sorted(Dict(bar = 2, foo = 1).items())
-        [('bar', 2), ('foo', 1)]
-        >>> Dict(dict(bar = None), dict())
-        Dict = {bar = None}
-        >>> Dict(dict(bar = None), dict(bar = None))
-        Dict = {bar = None}
-        """
+        r = Dict()
+        self.assertEqual(0, len(r))
+        r = Dict(Dict(), {}, {})
+        self.assertEqual(0, len(r))
+        r = Dict({}, {"bar": None})
+        self.assertEqual(1, len(r))
+        self.assertEqual(None, r.bar)
 
-    def doctest_none_doesnt_override(self):
-        # Right side should _not_ override left side if its val is None
-        r"""
-        >>> Dict(dict(bar = 2), dict(bar = None))
-        Dict = {bar = 2}
-        >>> Dict({'a': 1}, a = None)
-        Dict = {a = 1}
-        >>> sorted(Dict({'a': 1}, b = 2, c = 3).items())
-        [('a', 1), ('b', 2), ('c', 3)]
-        """
+        r = Dict({}, {"bar" : 3})
+        self.assertEqual(1, len(r))
+        self.assertEqual(3, r.bar)
 
-    def doctest_empty_dict_doesnt_override(self):
-        # Empty right side should not clobber left side
-        r"""
-        >>> Dict(dict(bar = 2), dict())
-        Dict = {bar = 2}
-        """
-
-    def doctest_attribute_and_item(self):
-        # Both dict['foo'] and dict.foo should work
-        r"""
-        >>> d = Dict({'a': 1, 'b': 2})
-        >>> (d.a, d['b'])
-        (1, 2)
-        """
-
-    # Immutability disabled for now, going to revisit with MappingProxyType later
-
-    #def doctest_immutable_dicts(self):
-    #    # hancho.Dicts should be (as) immutable (as possible)
-    #    r"""
-    #    >>> d = Dict(a = 1)
-    #    >>> d.a = 2
-    #    Traceback (most recent call last):
-    #    ...
-    #    TypeError: ('Hancho.Dict is immutable', 'a', 2)
-    #
-    #    >>> d['a'] = 2
-    #    Traceback (most recent call last):
-    #    ...
-    #    TypeError: ('Hancho.Dict is immutable', 'a', 2)
-    #    """
-
-    def doctest_right_overrides_left(self):
+    def test_right_overrides_left(self):
         # Right side should always override left side if right val is not None
-        r"""
-        >>> Dict(dict(bar = None), dict(bar = 3))
-        Dict = {bar = 3}
-        >>> Dict(dict(bar = 2), dict(bar = 3))
-        Dict = {bar = 3}
-        """
+        a = Dict({"bar": None}, {"bar": 3})
+        self.assertEqual(3, a.bar)
+        b = Dict({"bar": 2}, {"bar": 3})
+        self.assertEqual(3, b.bar)
+        c = Dict({"bar": 4}, {"bar": None})
+        self.assertEqual(4, c.bar)
 
-    # FIXME test that nested dicts and arrays get deep copied
+    def test_none_doesnt_override(self):
+        # Right side should _not_ override left side if its val is None
+        r = Dict({"bar": 2}, {"bar": None})
+        self.assertEqual(2, r.bar)
+        r = Dict({'a': 1}, a = None)
+        self.assertEqual(1, r.a)
+        r = sorted(Dict({'a': 1}, b = 2, c = 3).items())
+        self.assertEqual([('a', 1), ('b', 2), ('c', 3)], r)
 
+    def test_empty_dict_doesnt_override(self):
+        # Empty right side should not clobber left side
+        d = Dict({"bar": 2}, {})
+        self.assertEqual(1, len(d))
+        self.assertEqual(2, d.bar)
 
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     unittest.main(verbosity=999)
