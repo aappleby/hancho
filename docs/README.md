@@ -37,7 +37,7 @@ Dict @ 0x788c818610e0 {
 |```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
 |```ext```        | Replaces a filename's extension.|
 |```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
-|```hancho_dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho_dir}/base_rules.hancho")```|
+|```hancho.dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho.dir}/base_rules.hancho")```|
 |```glob```       | Python's ```glob.glob```|
 |```re```         | Python's ```re``` regular expression module|
 |```path```       | Python's ```os.path``` module|
@@ -138,7 +138,7 @@ Special fields and methods in ```hancho```
 'Task',
 '__call__',
 'context',
-'hancho_dir',
+'hancho.dir',
 'load',
 'load_module',
 'repo',
@@ -243,9 +243,11 @@ Expanding templates based on configs inside configs also works:
 
 Any function attached to a ```Dict``` can be used in a template, along with a set of built-in utility methods.
 
+# FIXME this is so obsolete
+
 ```py
 >>> dir(foo)
-[<snip...> 'abspath', 'clear', 'color', 'copy', 'expand', 'ext', 'flatten', 'fromkeys', 'get', 'glob', 'hancho_dir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'relpath', 'run_cmd', 'setdefault', 'stem', 'update', 'values']
+[<snip...> 'abspath', 'clear', 'color', 'copy', 'expand', 'ext', 'flatten', 'fromkeys', 'get', 'glob', 'hanchodir', 'items', 'join', 'join_path', 'keys', 'len', 'log', 'merge', 'path', 'pop', 'popitem',  'print', 're', 'rel', 'relpath', 'run_cmd', 'setdefault', 'stem', 'update', 'values']
 ```
 
 Any of these methods can be used in a template. For example, ```color(r,g,b)``` produces escape codes to change the terminal color. Printing the expanded template should change your Python repl prompt to red:

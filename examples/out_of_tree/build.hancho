@@ -1,0 +1,9 @@
+import hancho
+import os
+
+print(f"hancho config at {id(hancho.config):x}")
+print(f"script config at {id(config):x}")
+
+config.repo_dir = os.path.join(os.getcwd(), "repo")
+
+hancho.task(command = "touch {out_file}", out_file = "stuff.txt")

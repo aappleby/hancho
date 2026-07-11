@@ -28,7 +28,7 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["--verbose", "--flooper", "=", "asdf"],
+      "args"    : ["--log.verbosity=trace", "--flooper=asdf"],
       //"args"    : ["--trace"],
       "preLaunchTask": "Wipe build",
     },
@@ -61,7 +61,7 @@
       "module"  : "hancho",
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
-      "args"    : ["--debug", "-j1", "--verbosity=debug"],
+      "args"    : ["-v", "verbose"],
       //"preLaunchTask": "Wipe build",
     },
 

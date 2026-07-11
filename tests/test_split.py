@@ -5,7 +5,7 @@ import sys
 import unittest
 
 import hancho
-from hancho import Expander
+from hancho import Onion
 
 ####################################################################################################
 
@@ -104,76 +104,76 @@ class TestSplitTemplate(unittest.TestCase):
 
     def test_basic(self):
         # Sanity check - Single braces should produce a block
-        self.assertEqual(Expander._split_template("a {b} c"), ["a ", "{b}", " c"])
+        self.assertEqual(Onion._split_template("a {b} c"), ["a ", "{b}", " c"])
 
         # Degenerate cases should produce single blocks
-        self.assertEqual(Expander._split_template(""), [])
-        self.assertEqual(Expander._split_template("{"), ["{"])
-        self.assertEqual(Expander._split_template("}"), ["}"])
-        self.assertEqual(Expander._split_template("a"), ["a"])
+        self.assertEqual(Onion._split_template(""), [])
+        self.assertEqual(Onion._split_template("{"), ["{"])
+        self.assertEqual(Onion._split_template("}"), ["}"])
+        self.assertEqual(Onion._split_template("a"), ["a"])
 
         # Multiple single-braced blocks should not produce empty text between them if they touch
-        self.assertEqual(Expander._split_template("{a}{b}{c}"), ["{a}", "{b}", "{c}"])
+        self.assertEqual(Onion._split_template("{a}{b}{c}"), ["{a}", "{b}", "{c}"])
 
         # But if there's whitespace between them, it should be preserved
         self.assertEqual(
-            Expander._split_template(" {a} {b} {c} "), [" ", "{a}", " ", "{b}", " ", "{c}", " "]
+            Onion._split_template(" {a} {b} {c} "), [" ", "{a}", " ", "{b}", " ", "{c}", " "]
         )
 
         # Whitespace inside a block should not split the block
-        self.assertEqual(Expander._split_template("{ a }{ b }{ c }"), ["{ a }", "{ b }", "{ c }"])
+        self.assertEqual(Onion._split_template("{ a }{ b }{ c }"), ["{ a }", "{ b }", "{ c }"])
 
         # Unmatched braces
-        self.assertEqual(Expander._split_template("{"), ["{"])
-        self.assertEqual(Expander._split_template("}"), ["}"])
+        self.assertEqual(Onion._split_template("{"), ["{"])
+        self.assertEqual(Onion._split_template("}"), ["}"])
 
-        self.assertEqual(Expander._split_template("{}"), ["{}"])
-        self.assertEqual(Expander._split_template("}{"), ["}{"])
-        self.assertEqual(Expander._split_template("{a"), ["{a"])
-        self.assertEqual(Expander._split_template("a}"), ["a}"])
+        self.assertEqual(Onion._split_template("{}"), ["{}"])
+        self.assertEqual(Onion._split_template("}{"), ["}{"])
+        self.assertEqual(Onion._split_template("{a"), ["{a"])
+        self.assertEqual(Onion._split_template("a}"), ["a}"])
 
-        self.assertEqual(Expander._split_template("a{b"), ["a{b"])
-        self.assertEqual(Expander._split_template("a}b"), ["a}b"])
-        self.assertEqual(Expander._split_template("}}{"), ["}}{"])
-        self.assertEqual(Expander._split_template("}{{"), ["}{{"])
-        self.assertEqual(Expander._split_template("{{}"), ["{", "{}"])
-        self.assertEqual(Expander._split_template("{}}"), ["{}", "}"])
+        self.assertEqual(Onion._split_template("a{b"), ["a{b"])
+        self.assertEqual(Onion._split_template("a}b"), ["a}b"])
+        self.assertEqual(Onion._split_template("}}{"), ["}}{"])
+        self.assertEqual(Onion._split_template("}{{"), ["}{{"])
+        self.assertEqual(Onion._split_template("{{}"), ["{", "{}"])
+        self.assertEqual(Onion._split_template("{}}"), ["{}", "}"])
 
         # Nesting
-        self.assertEqual(Expander._split_template("a{{b}}c"), ["a{", "{b}", "}c"])
-        self.assertEqual(Expander._split_template("{a{b}c}"), ["{a", "{b}", "c}"])
-        self.assertEqual(Expander._split_template("x{a{b}{c}d}y"), ["x{a", "{b}", "{c}", "d}y"])
-        self.assertEqual(Expander._split_template("{{{{a}}}}"), ["{{{", "{a}", "}}}"])
+        self.assertEqual(Onion._split_template("a{{b}}c"), ["a{", "{b}", "}c"])
+        self.assertEqual(Onion._split_template("{a{b}c}"), ["{a", "{b}", "c}"])
+        self.assertEqual(Onion._split_template("x{a{b}{c}d}y"), ["x{a", "{b}", "{c}", "d}y"])
+        self.assertEqual(Onion._split_template("{{{{a}}}}"), ["{{{", "{a}", "}}}"])
 
         # Adjacent blocks with different brace counts
         self.assertEqual(
-            Expander._split_template("{a}{{b}}{c}"), ["{a}", "{", "{b}", "}", "{c}"]
+            Onion._split_template("{a}{{b}}{c}"), ["{a}", "{", "{b}", "}", "{c}"]
         )
         self.assertEqual(
-            Expander._split_template("{{a}}{b}{{c}}"),
+            Onion._split_template("{{a}}{b}{{c}}"),
             ["{", "{a}", "}", "{b}", "{", "{c}", "}"],
         )
-        self.assertEqual(Expander._split_template("{{a}}"), ["{", "{a}", "}"])
-        self.assertEqual(Expander._split_template("{{a}{b}}"), ["{", "{a}", "{b}", "}"])
-        self.assertEqual(Expander._split_template("{{{a}}}"), ["{{", "{a}", "}}"])
+        self.assertEqual(Onion._split_template("{{a}}"), ["{", "{a}", "}"])
+        self.assertEqual(Onion._split_template("{{a}{b}}"), ["{", "{a}", "{b}", "}"])
+        self.assertEqual(Onion._split_template("{{{a}}}"), ["{{", "{a}", "}}"])
 
         # Escaped braces should be ignored.
-        self.assertEqual(Expander._split_template(r"a\{b\}c"), [r"a\{b\}c"])
-        self.assertEqual(Expander._split_template(r"a{\}}b"), ["a", r"{\}}", "b"])
-        self.assertEqual(Expander._split_template(r"a{\{}b"), ["a", r"{\{}", "b"])
+        self.assertEqual(Onion._split_template(r"a\{b\}c"), [r"a\{b\}c"])
+        self.assertEqual(Onion._split_template(r"a{\}}b"), ["a", r"{\}}", "b"])
+        self.assertEqual(Onion._split_template(r"a{\{}b"), ["a", r"{\{}", "b"])
 
-        self.assertEqual(Expander._split_template("\\"), ["\\"])
-        self.assertEqual(Expander._split_template(r"{\n}"), [r"{\n}"])
-        self.assertEqual(Expander._split_template(r"a\{b}"), [r"a\{b}"])
-        self.assertEqual(Expander._split_template(r"a{b\}"), [r"a{b\}"])
+        self.assertEqual(Onion._split_template("\\"), ["\\"])
+        self.assertEqual(Onion._split_template(r"{\n}"), [r"{\n}"])
+        self.assertEqual(Onion._split_template(r"a\{b}"), [r"a\{b}"])
+        self.assertEqual(Onion._split_template(r"a{b\}"), [r"a{b\}"])
 
         # Escaped backslashes should _not_ cause a following brace to be ignored.
-        self.assertEqual(Expander._split_template(r"a\\{b}"), [r"a\\", r"{b}"])
-        self.assertEqual(Expander._split_template(r"a{b\\}"), [r"a", r"{b\\}"])
+        self.assertEqual(Onion._split_template(r"a\\{b}"), [r"a\\", r"{b}"])
+        self.assertEqual(Onion._split_template(r"a{b\\}"), [r"a", r"{b\\}"])
 
-        self.assertEqual(Expander._split_template(r"a \{a\} a"), [r"a \{a\} a"])
-        self.assertEqual(Expander._split_template(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
-        self.assertEqual(Expander._split_template(r"a \\\{a\\\} a"), [r"a \\\{a\\\} a"])
+        self.assertEqual(Onion._split_template(r"a \{a\} a"), [r"a \{a\} a"])
+        self.assertEqual(Onion._split_template(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
+        self.assertEqual(Onion._split_template(r"a \\\{a\\\} a"), [r"a \\\{a\\\} a"])
 
 
 ####################################################################################################

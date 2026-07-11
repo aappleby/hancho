@@ -10,7 +10,7 @@ from typing import cast
 sys.path.append("..")
 
 import hancho
-from hancho import Dict, Expander
+from hancho import Dict, Onion
 
 ####################################################################################################
 
@@ -50,23 +50,23 @@ class TestTemplates(unittest.TestCase):
         # only macros
         d = Dict(a="{b}", b="{a}")
         with self.assertRaises(RecursionError):
-            _ = Expander(d).a
+            _ = Onion(d).a
 
         # inside a template
         d = Dict(foo="foo", x="{y}", y="{x}")
         with self.assertRaises(RecursionError):
-            _ = Expander(d).expand("echo {foo} {x} {foo}")
+            _ = Onion(d).expand("echo {foo} {x} {foo}")
 
     def test_self_cycle(self):
         # only macro
         d = Dict(a = "{a}")
         with self.assertRaises(RecursionError):
-            _ = Expander(d).a
+            _ = Onion(d).a
 
         # inside a template
         d = Dict(a = "x{a}")
         with self.assertRaises(RecursionError):
-            _ = Expander(d).a
+            _ = Onion(d).a
 
     def test_expand_big_array(self):
         d = Dict(name = "prefix")
@@ -77,7 +77,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(count, len(expanded))
         self.assertEqual("prefix_0123", expanded[123])
 
-        expanded = cast(list, Expander(d).expand(templates))
+        expanded = cast(list, Onion(d).expand(templates))
         self.assertEqual(count, len(expanded))
         self.assertEqual("prefix_0123", expanded[123])
 
@@ -94,14 +94,14 @@ class TestTemplates(unittest.TestCase):
         # Expanding a chain of macros or templates uses the recursion budget.
         # FIXME why is our budget off by one here?
 
-        chain = make_dict(Expander.MAX_DEPTH - 1)
+        chain = make_dict(Onion.MAX_DEPTH - 1)
         self.assertEqual("sentinel", chain.expand("{k0}"))
 
-        chain = make_dict(Expander.MAX_DEPTH)
+        chain = make_dict(Onion.MAX_DEPTH)
         with self.assertRaises(RecursionError):
             self.assertEqual("sentinel", chain.expand("{k0}"))
 
-        chain = make_dict(Expander.MAX_DEPTH + 1)
+        chain = make_dict(Onion.MAX_DEPTH + 1)
         with self.assertRaises(RecursionError):
             self.assertEqual("sentinel", chain.expand("{k0}"))
 
@@ -110,14 +110,14 @@ class TestTemplates(unittest.TestCase):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
-            return Expander(d).expand(giant_string)
+            return Onion(d).expand(giant_string)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
-        result = test(Expander.MAX_EVALS)
-        self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) #type:ignore
+        result = test(Onion.MAX_EVALS)
+        self.assertTrue(f">foo_{Onion.MAX_EVALS // 2:02d}<" in result) #type:ignore
 
         with self.assertRaises(RecursionError):
-            result = test(Expander.MAX_EVALS + 1)
+            result = test(Onion.MAX_EVALS + 1)
 
     def test_user_recursion(self):
         # A user function that generates a RecursionError that's used inside a template should
@@ -156,7 +156,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(_text,   _tuple2[1])
         self.assertEqual(_func,   _tuple2[2])
 
-        _map2 = cast(Expander, d.expand("{_map}"))
+        _map2 = cast(Onion, d.expand("{_map}"))
         self.assertEqual(_number, _map2["1"])
         self.assertEqual(_text,   _map2["2"])
         self.assertEqual(_func,   _map2["3"])
