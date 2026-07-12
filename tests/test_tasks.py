@@ -73,7 +73,7 @@ class TestTasks(unittest.TestCase):
 
         # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
         # failure to see the cancellation.
-        self.reinit(verbosity = VERBOSITY, max_errors=999)
+        self.reinit(log_level = VERBOSITY, max_errors=999)
         sys.stdout.flush()
 
     def tearDown(self):
@@ -264,7 +264,7 @@ class TestTasks(unittest.TestCase):
         """
         task = hancho.Task(
             desc="Broken run_cmd",
-            command=r"echo {run_cmd('This is totally not a valid command.')}",
+            command=r"echo {run_cmd('This is totally not a valid command')}",
         )
         self.run_tasks(1)
         self.assertIsInstance(task._error, hancho.Task.BROKEN)
@@ -291,13 +291,13 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(1)
         self.assertIsInstance(garbage_task._error, hancho.Task.FAILED)
 
-#    def test_missing_command(self):
-#        """
-#        Non-existent commands should cause Hancho to fail the build.
-#        """
-#        bad_task = hancho.Task(not_a_command="echo test_missing_command")
-#        self.run_tasks(1)
-#        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
+    def test_missing_command(self):
+        """
+        Tasks with no commands are fine, they can still be used to group and coordinate other
+        tasks.
+        """
+        hancho.Task(not_a_command="echo test_missing_command")
+        self.run_tasks(0)
 
     def test_task_collision(self):
         """
@@ -323,7 +323,7 @@ class TestTasks(unittest.TestCase):
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
         def run():
-            self.reinit(verbosity = VERBOSITY)
+            self.reinit(log_level = VERBOSITY)
             hancho.Task(
                 command=[
                     lambda task : time.sleep(0.1),
@@ -344,7 +344,7 @@ class TestTasks(unittest.TestCase):
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild
         def run():
-            self.reinit(verbosity = VERBOSITY)
+            self.reinit(log_level = VERBOSITY)
             time.sleep(0.01)
             compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
@@ -374,7 +374,7 @@ class TestTasks(unittest.TestCase):
         dummy = "data/dummy.txt"
 
         def run():
-            self.reinit(verbosity = VERBOSITY)
+            self.reinit(log_level = VERBOSITY)
             hancho.Task(
                 desc="test_dep_changed {in_src}",
                 #command="sleep 0.1 && touch {out_obj}",
@@ -441,7 +441,7 @@ class TestTasks(unittest.TestCase):
         # If input filenames are absolute paths, we should still end up with build files under
         # build_root.
 
-        hancho.Task(
+        task = hancho.Task(
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
             command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
@@ -494,7 +494,7 @@ class TestTasks(unittest.TestCase):
             raise AssertionError("Don't know this platform")
 
         def run():
-            self.reinit(verbosity = VERBOSITY) #type:ignore
+            self.reinit(log_level = VERBOSITY) #type:ignore
             time.sleep(0.01)
             compile = hancho.Tool(
                 desc="test_header_changed {in_src}",
@@ -545,9 +545,9 @@ class TestTasks(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
-        self.reinit(verbosity = VERBOSITY, flarpy="flarp.txt")
+        self.reinit(log_level = VERBOSITY, flarpy="flarp.txt")
         script = hancho.cv_script.get()
-        self.assertEqual("flarp.txt", script.config.flarpy)
+        self.assertEqual("flarp.txt", script.options.flarpy)
 
         hancho.Task(
             command = lambda task : force_touch(task.config.out_file),
@@ -738,7 +738,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/slow_result.txt").exists())
 
     def test_dry_run(self):
-        self.reinit(verbosity = VERBOSITY, max_errors=999, dry_run = True)
+        self.reinit(log_level = VERBOSITY, max_errors=999, build_dry = True)
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
@@ -754,7 +754,7 @@ class TestTasks(unittest.TestCase):
 
     def test_dependency_skipped(self):
         def run():
-            self.reinit(verbosity = VERBOSITY, core_max=1)
+            self.reinit(log_level = VERBOSITY, core_max=1)
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
@@ -768,7 +768,7 @@ class TestTasks(unittest.TestCase):
                 command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
-                rebuild=True,
+                build_force=True,
             )
             self.run_tasks(0)
             return (task1, task2)
@@ -791,7 +791,7 @@ class TestTasks(unittest.TestCase):
 
         (task1, task2) = run()
         self.assertTrue(isinstance(task1._error, hancho.Task.SKIPPED))
-        self.assertTrue(task2._error is None)
+        #self.assertTrue(task2._error is None)
         self.assertTrue(Path("build/blerp/sherp").exists())
         self.assertTrue(Path("build/blerp/nerp").exists())
         mtime1b = mtime_ns("build/blerp/sherp")

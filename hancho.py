@@ -51,7 +51,7 @@ from typing import Any, cast
 
 sys.modules["hancho"] = sys.modules[__name__]
 
-cv_script : contextvars.ContextVar[Script] = contextvars.ContextVar("script")
+cv_script : contextvars.ContextVar[Any] = contextvars.ContextVar("script", default = None)
 
 sentinel = "<sentinel>"
 
@@ -171,6 +171,9 @@ class Dict(dict):
         #return self.set_by_path(key, val)
         dict.__setitem__(self, key, val)
 
+    def expand(self, template, onion = None):
+        return Expander.expand(template, onion, self)
+
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
     pass
@@ -199,6 +202,8 @@ class Onion(abc.Mapping):
     def __init__(self, *args, **kwargs):
         self._layers = {}
         for val in args:
+            if val is None:
+                continue
             if isinstance(val, Onion):
                 self._layers.update(val._layers)
             else:
@@ -248,7 +253,7 @@ class Onion(abc.Mapping):
         values = [
             (layer_name + "." + key, layer[key])
             for layer_name, layer in self._layers.items()
-            if isinstance(layer, abc.Mapping) and key in layer and layer[key] is not None
+            if isinstance(layer, abc.Mapping) and key in layer
         ]
 
         # No values? Bad key.
@@ -266,7 +271,7 @@ class Onion(abc.Mapping):
 
         # The last value _is_ a mapping. Is it the only value? Then it's our result.
         if len(values) == 1:
-            return values[-1][1]
+            return Onion(layer = values[-1][1])
 
         # Otherwise we split off the mappings at the _end_ of the list. This is easier to do if we
         # reverse the list first.
@@ -278,10 +283,13 @@ class Onion(abc.Mapping):
 
         # If there was only one mapping, it's our result.
         if len(new_layers) == 1:
-            return new_layers[0][1]
+            return Onion(layer = new_layers[0][1])
 
         # Otherwise we make a new onion out of the new (un-reversed) mappings.
         return Onion(**dict(reversed(new_layers)))
+
+    def expand(self, template, overrides = None):
+        return Expander.expand(template, self, overrides)
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -336,7 +344,7 @@ class Expander:
     # ----------------------------------------
 
     @classmethod
-    def expand(cls, variant : Any, onion : Onion, overrides : abc.Mapping | None):
+    def expand(cls, variant : Any, onion : Onion | None, overrides : abc.Mapping | None):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
@@ -590,11 +598,16 @@ class Utils:
             if key:
                 prefix += ":"
             prefix += type(val).__name__
-        if print_id:
-            prefix += " 0x" + Utils.hex_id(val).upper()[-4:]
         if prefix:
             prefix += " = "
         return prefix
+
+    @classmethod
+    def _dump_suffix(cls, val, print_id):
+        if isinstance(val, (str, bool, int, float)) or not print_id:
+            return ""
+        suffix = " @ 0x" + Utils.hex_id(val).upper()[-4:]
+        return suffix
 
     @classmethod
     def _dump_scalar(cls, val, color_code):
@@ -647,11 +660,9 @@ class Utils:
         chunks = []
         for k, v in items:
             prefix = cls._dump_prefix(k, v, print_id, color_code)
+            suffix = cls._dump_suffix(v, print_id)
 
-            if k == "__builtins__":
-                chunk = "<alksdjflk>"
-            else:
-                chunk = prefix + cls._dump_variant_to_flat_str(v, print_id, color_code, max_length - length - len(prefix), tab, memo)
+            chunk = prefix + cls._dump_variant_to_flat_str(v, print_id, color_code, max_length - length - len(prefix), tab, memo) + suffix
 
             length += len(chunk)
             if length > max_length:
@@ -681,6 +692,7 @@ class Utils:
     @classmethod
     def _dump_variant_to_str(cls, key, val, indent, print_id, color_code, max_length, tab, memo):
         prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
+        suffix = cls._dump_suffix(val, print_id)
 
         # FIXME duplication
 
@@ -692,18 +704,18 @@ class Utils:
 
         if isinstance(val, (dict, list, tuple, set, Onion)):
             try:
-                return prefix + cls._dump_container_to_flat_str(val, print_id, color_code, max_length - len(prefix), tab, memo)
+                return prefix + cls._dump_container_to_flat_str(val, print_id, color_code, max_length - len(prefix), tab, memo) + suffix
             except ValueError:
-                return prefix + cls._dump_container_to_str(val, indent, print_id, color_code, max_length, tab, memo)
+                return prefix + cls._dump_container_to_str(val, indent, print_id, color_code, max_length, tab, memo) + suffix
         elif isinstance(val, Script):
             if indent > 1:
                 return prefix + f"'{val.options.script_path}'"
             try:
-                return prefix + cls._dump_container_to_flat_str(val.__dict__, print_id, color_code, max_length - len(prefix), tab, memo)
+                return prefix + cls._dump_container_to_flat_str(val.__dict__, print_id, color_code, max_length - len(prefix), tab, memo) + suffix
             except ValueError:
-                return prefix + cls._dump_container_to_str(val.__dict__, indent, print_id, color_code, max_length, tab, memo)
+                return prefix + cls._dump_container_to_str(val.__dict__, indent, print_id, color_code, max_length, tab, memo) + suffix
         else:
-            return prefix + cls._dump_scalar(val, color_code)
+            return prefix + cls._dump_scalar(val, color_code) + suffix
 
     @classmethod
     def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max_length = 80, tab = "    "):
@@ -746,7 +758,7 @@ class Utils:
     @staticmethod
     def stringify(variant) -> str:
         """Converts any type into a template-compatible string."""
-        result = " ".join(str(v) for v in Utils.yield_values(variant))
+        result = " ".join(str(v) for v in Utils.yield_values(variant) if v is not None)
         if Expander.sentinel in result:
             raise AssertionError("Tried to stringify a sentinel value")
         return result
@@ -1531,6 +1543,7 @@ class Task:
             Task.default_config,
             *args, **kwargs
         )
+        self.onion = Onion(script.onion, task_config = self.config)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1794,7 +1807,9 @@ class Task:
             task.log(f"Task rebuilding because: {task._reason}\n")
 
         for command in cast(list, task.config.command):
-            if callable(command):
+            if command is None:
+                continue
+            elif callable(command):
                 await task.call_callback(command)
             else:
                 await task.run_command(command)
@@ -1978,7 +1993,7 @@ class Task:
 
         # Check that task's commands are either strings or callables.
         for command in cast(list, task.config.command):
-            if not isinstance(command, str) and not callable(command):
+            if not isinstance(command, str) and not callable(command) and command is not None:
                 raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # Tasks should have at most one depfile.
@@ -2050,7 +2065,7 @@ class Task:
 
         # actually this may not be worth it...
 
-        #rel_dir = task.config.task_cwd if isinstance(config.command[0], str) else script.config.script.script_cwd
+        #rel_dir = task.config.task_cwd if isinstance(config.command[0], str) else script.options.script_cwd
         #for i in range(len(files)):
         #    files[i] = Path.rel(files[i], rel_dir)
 
@@ -2101,7 +2116,9 @@ class Task:
         task._stdout = stdout_data.decode(errors="replace")
         task._stderr = stderr_data.decode(errors="replace")
 
-        if proc.returncode:
+        if proc.returncode == 2:
+            raise Task.BROKEN("Command return code was 2 : bash error")
+        elif proc.returncode:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
         if task._stdout or task._stderr:
@@ -2111,14 +2128,16 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def call_callback(self, command):
-        callback_dir = Path.rel(self.config.script.dir, self.config.repo_dir)
+        script_dir = Path.dirname(self.script.options.script_path)
+
+        callback_dir = Path.rel(script_dir, self.script.options.repo_root)
 
         with LogLevel.VERBOSE, Colors.BLUE:
             self.log(f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script_dir where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(self.config.script.dir):
+        with chdir(script_dir):
             result = command(self)
         if isawaitable(result):
             result = await result
@@ -2575,7 +2594,7 @@ class Main:
         build_force  = False,
         build_all    = False,
         build_dry    = False,
-        build_strict = False,
+        build_strict = True,
 
         log_level    = LogLevel.NORMAL,
         log_quiet    = False,
@@ -2811,7 +2830,7 @@ class Main:
 
 
     # ----------------------------------------------------------------------------------------------
-    # This must happen _after_ all repos are loaded (so that if they change repo_dir we don't get
+    # This must happen _after_ all repos are loaded (so that if they change repo_root we don't get
     # the old path), but _before_ we build any tasks.
 
     @classmethod

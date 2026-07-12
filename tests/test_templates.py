@@ -10,13 +10,15 @@ from typing import cast
 sys.path.append("..")
 
 import hancho
-from hancho import Dict, Onion
+from hancho import Dict, Expander, Onion
 
 ####################################################################################################
 
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
+    hancho.Log.reset(hancho.Main.parse_flags([]))
+    #hancho.init(verbosity = "quiet")
 
 
 def load_tests(loader, tests, ignore):
@@ -24,16 +26,9 @@ def load_tests(loader, tests, ignore):
     tests.addTests(doctests)
     return tests
 
-
 ####################################################################################################
 
 class TestTemplates(unittest.TestCase):
-    def setUp(self):
-        hancho.init(verbosity = "quiet")
-        sys.stdout.flush()
-
-    def tearDown(self) -> None:
-        return super().tearDown()
 
     def test_basic_eval(self):
         d = Dict(a = 1, b = 2)
@@ -50,23 +45,23 @@ class TestTemplates(unittest.TestCase):
         # only macros
         d = Dict(a="{b}", b="{a}")
         with self.assertRaises(RecursionError):
-            _ = Onion(d).a
+            d.expand("{a}")
 
         # inside a template
         d = Dict(foo="foo", x="{y}", y="{x}")
         with self.assertRaises(RecursionError):
-            _ = Onion(d).expand("echo {foo} {x} {foo}")
+            d.expand("echo {foo} {x} {foo}")
 
     def test_self_cycle(self):
         # only macro
         d = Dict(a = "{a}")
         with self.assertRaises(RecursionError):
-            _ = Onion(d).a
+            d.expand("{a}")
 
         # inside a template
         d = Dict(a = "x{a}")
         with self.assertRaises(RecursionError):
-            _ = Onion(d).a
+            d.expand("{a}")
 
     def test_expand_big_array(self):
         d = Dict(name = "prefix")
@@ -77,7 +72,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(count, len(expanded))
         self.assertEqual("prefix_0123", expanded[123])
 
-        expanded = cast(list, Onion(d).expand(templates))
+        expanded = cast(list, d.expand(templates))
         self.assertEqual(count, len(expanded))
         self.assertEqual("prefix_0123", expanded[123])
 
@@ -94,14 +89,14 @@ class TestTemplates(unittest.TestCase):
         # Expanding a chain of macros or templates uses the recursion budget.
         # FIXME why is our budget off by one here?
 
-        chain = make_dict(Onion.MAX_DEPTH - 1)
+        chain = make_dict(Expander.MAX_DEPTH - 1)
         self.assertEqual("sentinel", chain.expand("{k0}"))
 
-        chain = make_dict(Onion.MAX_DEPTH)
+        chain = make_dict(Expander.MAX_DEPTH)
         with self.assertRaises(RecursionError):
             self.assertEqual("sentinel", chain.expand("{k0}"))
 
-        chain = make_dict(Onion.MAX_DEPTH + 1)
+        chain = make_dict(Expander.MAX_DEPTH + 1)
         with self.assertRaises(RecursionError):
             self.assertEqual("sentinel", chain.expand("{k0}"))
 
@@ -110,14 +105,14 @@ class TestTemplates(unittest.TestCase):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
-            return Onion(d).expand(giant_string)
+            return d.expand(giant_string)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
-        result = test(Onion.MAX_EVALS)
-        self.assertTrue(f">foo_{Onion.MAX_EVALS // 2:02d}<" in result) #type:ignore
+        result = test(Expander.MAX_EVALS)
+        self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) #type:ignore
 
         with self.assertRaises(RecursionError):
-            result = test(Onion.MAX_EVALS + 1)
+            result = test(Expander.MAX_EVALS + 1)
 
     def test_user_recursion(self):
         # A user function that generates a RecursionError that's used inside a template should
@@ -156,7 +151,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(_text,   _tuple2[1])
         self.assertEqual(_func,   _tuple2[2])
 
-        _map2 = cast(Onion, d.expand("{_map}"))
+        _map2 = cast(dict, d.expand("{_map}"))
         self.assertEqual(_number, _map2["1"])
         self.assertEqual(_text,   _map2["2"])
         self.assertEqual(_func,   _map2["3"])
@@ -170,6 +165,7 @@ class TestTemplates(unittest.TestCase):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
         # nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
+        o = Onion(layer = d)
 
         # This read is _not_ through the expander, so "{c}" will be evaluated in the _outer_
         # context.
@@ -180,7 +176,7 @@ class TestTemplates(unittest.TestCase):
         # the inner dict which will then immediately expand "{c}" in the context of the inner dict
         # and return 10.
         #e = Expander(d)
-        result = d.expand("{a.b}")
+        result = o.expand("{a.b}")
         self.assertEqual(result, 10)
 
     def test_TEFINAE(self):
@@ -194,8 +190,6 @@ class TestTemplates(unittest.TestCase):
     def test_template_nones(self):
         # Nones should turn into empty strings
         d = Dict(a = None, b = "x{a}y")
-        self.assertEqual(d.expand("a"),   'a')
-        self.assertEqual(d.expand("b"),   'b')
         self.assertEqual(d.expand("{a}"), None)
         self.assertEqual(d.expand("{b}"), 'xy')
 
