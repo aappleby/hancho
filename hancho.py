@@ -1358,20 +1358,18 @@ class Script:
     def update_stat_db(self, out_db, file, command = None):
         Utils.stat_calls += 1
 
-        if file in out_db:
-            stat = out_db.get(file)
-        else:
-            stat = Dict()
-            out_db[file] = stat
-
+        _hash = Utils.hash_file(file)
         _stat = os.stat(file)
-        Dict.merge(
-            stat,
-            hash = Utils.hash_file(file),
-            st_size = _stat.st_size,
-            st_mtime_ns = _stat.st_mtime_ns,
-            command = command
-        )
+
+        stat = out_db.get(file, Dict(command = None))
+        stat.hash = _hash
+        stat.st_size = _stat.st_size
+        stat.st_mtime_ns = _stat.st_mtime_ns
+
+        if command:
+            stat.command = command
+
+        out_db[file] = stat
 
     @classmethod
     def commands_to_string(cls, commands):

@@ -6,7 +6,7 @@ import hancho
 
 platform = ["rv64", ]
 
-tools = hancho.load("{hancho.dir}/tools/tools_base.hancho")
+tools = hancho.load("{build_force}/tools/tools_base.hancho")
 
 main_o   = hancho.task(tools.compile_cpp,  in_src = "main.cpp")
 

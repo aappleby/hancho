@@ -138,7 +138,7 @@ Special fields and methods in ```hancho```
 'Task',
 '__call__',
 'context',
-'hancho.dir',
+'hancho_dir',
 'load',
 'load_module',
 'repo',

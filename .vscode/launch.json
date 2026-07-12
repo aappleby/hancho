@@ -44,7 +44,7 @@
     },
 
     {
-      "name"    : "Debug example",
+      "name"    : "Debug example hello_world",
       "type"    : "debugpy",
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
