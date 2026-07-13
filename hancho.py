@@ -1853,22 +1853,27 @@ class Task:
         task.config.command = Utils.flatten(task.config.command)
 
         # ----------------------------------------
-        # Expand all in_ and out_ filenames and do all the file path remapping so our commands will
-        # work
+        # Expand the io field's file list (in 'val') before we remap it, as a template
+        # string can turn into a list of multiple filenames.
+
         for key, val in task.config.items():
             if Task.is_io_field(key):
-                # Expand all filenames before joining paths or the paths will be incorrect.
-                files = Expander.expand(val, task.onion)
+                task.config[key] = Expander.expand(val, task.onion)
 
-                new_files = [
-                    task.remap_io_field_paths2(key, file)
-                    for file in Utils.yield_values(files)
+        # ----------------------------------------
+        # Do all the file path remapping so our commands will work.
+
+        for key, val in task.config.items():
+            if Task.is_io_field(key):
+                # Remap all files to either the build dir (if an output) or their abspath.
+                files = [
+                    task.remap_io_field_path(key, file) for file in Utils.yield_values(val)
                 ]
 
                 # Unwrap filenames if they're an array of one element so that scripts expecting
                 # join(str, str) to return a str will be happy.
 
-                task.config[key] = new_files[0] if len(new_files) == 1 else new_files
+                task.config[key] = files[0] if len(files) == 1 else files
 
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
@@ -1880,6 +1885,57 @@ class Task:
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
             task.log(str(task.config) + "\n")
+
+    # ----------------------------------------------------------------------------------------------
+
+    def remap_io_field_path(self, name, file) -> str:
+        """
+        Input and output file paths in .hancho scripts are declared relative to the directory the
+        script is in (stored in the config under 'script_path').
+        In general we want to run commands from the root of the repo and store output files in
+        repo/build.
+        This function takes care of all of that and a few other things, and tries to do so in a
+        robust way. Whether this actually turns out to be robust or not is yet to be determined.
+        """
+        task = self
+        script = cv_script.get()
+
+        # Join script_cwd with the filename to produce absolute paths.
+        file = Path.join(script.options.script_cwd, file)
+
+        # File paths _must_ be normed after joining, otherwise they might look like they're under
+        # script_dir, but they're not because the paths could have "../../../../.." in them.
+        file = Path.normpath(file)
+
+        # Move all outputs under build.dir and ensure their directories exist.
+
+        if Task.is_output_field(name):
+            # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
+            # it's an _output_ from the compiler.
+            if not Path.startswith(file, task.config.build_dir):
+                file = Path.relpath(file, script.options.script_cwd)
+                file = Path.join(task.config.build_dir, file)
+
+            if not script.options.build_dry:
+                os.makedirs(Path.dirname(file), exist_ok=True)
+
+            # Depfiles do _not_ go in the output file list, as they are never consumed by a
+            # downstream task.
+            if not Task.is_depfile_field(name):
+                task.out_files[name] = file
+
+        else:
+            task.in_files[name] = file
+
+        # Convert the fixed paths back to relative so our command lines aren't enormous.
+        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+        # relative to script_dir if we're calling a callback.
+
+        # actually this may not be worth it, and it currently breaks some tests
+        #rel_dir = task.config.task_cwd if isinstance(task.config.command[0], str) else script.options.script_cwd
+        #file = Path.relpath(file, rel_dir)
+
+        return file
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1950,72 +2006,6 @@ class Task:
         for key, files in list(task.config.items()):
             if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
-
-    # ----------------------------------------------------------------------------------------------
-
-    def remap_io_field_paths(self, name, files) -> list[str] | str:
-        """
-        Input and output file paths in .hancho scripts are declared relative to the directory the
-        script is in (stored in the config under 'script_path').
-        In general we want to run commands from the root of the repo and store output files in
-        repo/build.
-        This function takes care of all of that and a few other things, and tries to do so in a
-        robust way. Whether this actually turns out to be robust or not is yet to be determined.
-        """
-        task = self
-        script = cv_script.get()
-        assert task.script is script
-
-        new_files = []
-        for file in Utils.yield_values(files):
-            new_files.append(task.remap_io_field_paths2(name, file))
-
-        # Unwrap filenames if they're an array of one element so that scripts expecting
-        # join(str, str) to return a str will be happy.
-        return new_files[0] if len(new_files) == 1 else new_files
-
-
-    def remap_io_field_paths2(self, name, file) -> str:
-        task = self
-        script = cv_script.get()
-
-        # Join script_cwd with the filenames to produce absolute paths.
-        file = Path.join(script.options.script_cwd, file)
-
-        # File paths _must_ be normed after joining, otherwise they might look like they're under
-        # script_dir, but they're not because the paths could have "../../../../.." in them.
-        file = Path.normpath(file)
-
-        # Move all outputs under build.dir and ensure their directories exist.
-        # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as it's
-        # an _output_ from the compiler.
-        if Task.is_output_field(name) and not Path.startswith(file, task.config.build_dir) and Path.startswith(file, script.options.script_cwd):
-            file = Path.relpath(file, script.options.script_cwd)
-            file = Path.join(task.config.build_dir, file)
-
-        if Task.is_output_field(name) and not script.options.build_dry and Path.startswith(file, task.config.build_dir):
-            dirname = Path.dirname(file)
-            os.makedirs(dirname, exist_ok=True) #type:ignore
-
-        # Gather all absolute file paths to in_files/out_files.
-        # The check for is_depfile_field must come first, as it's a special case of a file that
-        # is technically _both_ an input and an output file, even though its name starts with "in".
-        if Task.is_depfile_field(name):
-            pass
-        elif Task.is_output_field(name):
-            task.out_files[name] = file
-        elif Task.is_input_field(name):
-            task.in_files[name] = file
-
-        # Convert the fixed paths back to relative so our command lines aren't enormous.
-        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-        # relative to script_dir if we're calling a callback.
-
-        # actually this may not be worth it, and it currently breaks some tests
-        #rel_dir = task.config.task_cwd if isinstance(task.config.command[0], str) else script.options.script_cwd
-        #file = Path.relpath(file, rel_dir)
-
-        return file
 
     # ----------------------------------------------------------------------------------------------
 
