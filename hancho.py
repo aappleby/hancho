@@ -1731,7 +1731,30 @@ class Task:
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
 
-        await task.await_inputs()
+        for val in Utils.yield_values(self.config):
+            if isinstance(val, Task):
+                if val._aio_task is None:
+                    raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
+                try:
+                    await val._aio_task
+                except asyncio.CancelledError:
+                    # _This_ task was cancelled while waiting for inputs. We need to ensure
+                    # the exception makes it back to asyncio.
+                    raise
+                except Task.SKIPPED:
+                    # This input was clean and didn't need to rebuild.
+                    pass
+                except Exception as ex:
+                    raise Task.CANCELLED(f"Task is cancelled: '{self.config.name}' : '{self.config.desc}'") from ex
+
+        # Replace all Tasks in all input fields with their output file lists.
+        for key, val in self.config.items():
+            if Task.is_input_field(key):
+                result = [
+                    v.out_files if isinstance(v, Task) else v
+                    for v in Utils.yield_values(val)
+                ]
+                self.config[key] = Utils.flatten(result)
 
         # ----------------------------------------
         # Do all our task setup while chdir'd into the task's cwd so that relative paths will be
@@ -1815,40 +1838,6 @@ class Task:
     # modifying tasks after they're created but before they're started. If you point task B's
     # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-    async def await_inputs(self):
-
-        # Copy the dict key-values, as it's generally a bad idea to modify a container you're
-        # iterating over - _especially_ if it has an await in the middle of it.
-
-        for key, files in list(self.config.items()):
-            if not Task.is_input_field(key):
-                continue
-
-            # Our file list has never been flattened, so do it now.
-            files = Utils.flatten(files)
-
-            for i, file in enumerate(files):
-                if isinstance(file, Task):
-                    task = cast(Task, file)
-                    if task._aio_task is None:
-                        raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
-                    try:
-                        await task._aio_task
-                    except asyncio.CancelledError:
-                        # _This_ task was cancelled while waiting for inputs. We need to ensure
-                        # the exception makes it back to asyncio.
-                        raise
-                    except Task.SKIPPED:
-                        # This input was clean and didn't need to rebuild.
-                        pass
-                    except BaseException as ex:
-                        raise Task.CANCELLED(f"Task is cancelled: '{self.config.name}' : '{self.config.desc}'") from ex
-
-                    files[i] = task.out_files
-
-            # Awaiting inputs has probably un-flattened our input fields. Re-flatten them.
-            self.config[key] = Utils.flatten(files)
-
     # ----------------------------------------------------------------------------------------------
 
     def task_init(self):
@@ -1864,37 +1853,11 @@ class Task:
         task.config.command = Utils.flatten(task.config.command)
 
         # ----------------------------------------
-        # Expand all in_ and out_ filenames.
-
-        # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != normpath(prefix + swap(path)).
-
-        # FIXME can we merge these two loops now?
-        # FIXME we need to move this loop into remap_io_fields or something.
-
-        for key, val in list(task.config.items()):
-            if not Task.is_io_field(key):
-                continue
-
-            temp = val
-            temp = Expander.expand(temp, task.onion)
-            temp = Path.join(task.script.options.script_cwd, temp)
-            temp = Path.normpath(temp)
-
-            task.config[key] = temp
-
-        # ----------------------------------------
-        # Do all the file path remapping so our commands will work
-
-        for key, files in list(task.config.items()):
-            if not Task.is_io_field(key):
-                continue
-
-            files = task.remap_io_field_paths(key, files)
-
-            # and unwrap filenames if they're an array of one element so that scripts expecting
-            # join(str, str) to return a str will be happy.
-            task.config[key] = files[0] if len(files) == 1 else files
+        # Expand all in_ and out_ filenames and do all the file path remapping so our commands will
+        # work
+        for key, val in task.config.items():
+            if Task.is_io_field(key):
+                task.config[key] = task.remap_io_field_paths(key, val)
 
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
@@ -1979,7 +1942,7 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    def remap_io_field_paths(self, name, files) -> list[str]:
+    def remap_io_field_paths(self, name, files) -> list[str] | str:
         """
         Input and output file paths in .hancho scripts are declared relative to the directory the
         script is in (stored in the config under 'script_path').
@@ -1992,6 +1955,13 @@ class Task:
         script = cv_script.get()
         assert task.script is script
         script_dir = Path.dirname(script.options.script_path)
+
+        # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
+        # prefix + swap(abs_path) != normpath(prefix + swap(path)).
+
+        files = Expander.expand(files, task.onion)
+        files = Path.join(task.script.options.script_cwd, files)
+        #files = Path.normpath(files)
 
         # Initially, all our file paths are relative to the script that created this task.
         # Join script_dir with the filenames to produce absolute paths.
@@ -2045,7 +2015,11 @@ class Task:
         #for i in range(len(files)):
         #    files[i] = Path.relpath(files[i], rel_dir)
 
-        return files
+        # Unwrap filenames if they're an array of one element so that scripts expecting
+        # join(str, str) to return a str will be happy.
+        temp = files
+        return temp[0] if len(temp) == 1 else temp
+
 
     # ----------------------------------------------------------------------------------------------
 
