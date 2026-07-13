@@ -1857,7 +1857,18 @@ class Task:
         # work
         for key, val in task.config.items():
             if Task.is_io_field(key):
-                task.config[key] = task.remap_io_field_paths(key, val)
+                # Expand all filenames before joining paths or the paths will be incorrect.
+                files = Expander.expand(val, task.onion)
+
+                new_files = [
+                    task.remap_io_field_paths2(key, file)
+                    for file in Utils.yield_values(files)
+                ]
+
+                # Unwrap filenames if they're an array of one element so that scripts expecting
+                # join(str, str) to return a str will be happy.
+
+                task.config[key] = new_files[0] if len(new_files) == 1 else new_files
 
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
@@ -1954,72 +1965,57 @@ class Task:
         task = self
         script = cv_script.get()
         assert task.script is script
-        script_dir = Path.dirname(script.options.script_path)
 
-        # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != normpath(prefix + swap(path)).
+        new_files = []
+        for file in Utils.yield_values(files):
+            new_files.append(task.remap_io_field_paths2(name, file))
 
-        files = Expander.expand(files, task.onion)
-        files = Path.join(task.script.options.script_cwd, files)
-        #files = Path.normpath(files)
+        # Unwrap filenames if they're an array of one element so that scripts expecting
+        # join(str, str) to return a str will be happy.
+        return new_files[0] if len(new_files) == 1 else new_files
 
-        # Initially, all our file paths are relative to the script that created this task.
-        # Join script_dir with the filenames to produce absolute paths.
-        files = Path.join(script_dir, files)
 
-        # Expanding may have made our files array non-flat, but all of its contents should be
-        # absolute paths now.
-        files = Utils.flatten(files)
+    def remap_io_field_paths2(self, name, file) -> str:
+        task = self
+        script = cv_script.get()
+
+        # Join script_cwd with the filenames to produce absolute paths.
+        file = Path.join(script.options.script_cwd, file)
 
         # File paths _must_ be normed after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
-        files = cast(list[str], Path.normpath(files))
-
-        assert Path.isabs(files)
+        file = Path.normpath(file)
 
         # Move all outputs under build.dir and ensure their directories exist.
         # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as it's
         # an _output_ from the compiler.
-        if Task.is_output_field(name):
-            for i, file in enumerate(files):
-                # Note that this conditional and the one below are _NOT_ an if/elif pair!
-                if not Path.startswith(file, task.config.build_dir):  # noqa: SIM102
-                    if Path.startswith(file, script.options.script_cwd):
-                        #file = file.removeprefix(script.options.script_cwd)
-                        file = Path.relpath(file, script.options.script_cwd)
-                        file = Path.join(task.config.build_dir, file)
-                        files[i] = file
+        if Task.is_output_field(name) and not Path.startswith(file, task.config.build_dir) and Path.startswith(file, script.options.script_cwd):
+            file = Path.relpath(file, script.options.script_cwd)
+            file = Path.join(task.config.build_dir, file)
 
-                if not script.options.build_dry and Path.startswith(file, task.config.build_dir):
-                    dirname = Path.dirname(file)
-                    os.makedirs(dirname, exist_ok=True) #type:ignore
+        if Task.is_output_field(name) and not script.options.build_dry and Path.startswith(file, task.config.build_dir):
+            dirname = Path.dirname(file)
+            os.makedirs(dirname, exist_ok=True) #type:ignore
 
         # Gather all absolute file paths to in_files/out_files.
         # The check for is_depfile_field must come first, as it's a special case of a file that
         # is technically _both_ an input and an output file, even though its name starts with "in".
-        for i in range(len(files)):
-            if Task.is_depfile_field(name):
-                pass
-            elif Task.is_output_field(name):
-                task.out_files[name] = files[i]
-            elif Task.is_input_field(name):
-                task.in_files[name] = files[i]
+        if Task.is_depfile_field(name):
+            pass
+        elif Task.is_output_field(name):
+            task.out_files[name] = file
+        elif Task.is_input_field(name):
+            task.in_files[name] = file
 
         # Convert the fixed paths back to relative so our command lines aren't enormous.
         # Relative paths are relative to task_cwd if we're running a command, otherwise they're
         # relative to script_dir if we're calling a callback.
 
-        # actually this may not be worth it...
+        # actually this may not be worth it, and it currently breaks some tests
+        #rel_dir = task.config.task_cwd if isinstance(task.config.command[0], str) else script.options.script_cwd
+        #file = Path.relpath(file, rel_dir)
 
-        #rel_dir = task.config.task_cwd if isinstance(config.command[0], str) else script.options.script_cwd
-        #for i in range(len(files)):
-        #    files[i] = Path.relpath(files[i], rel_dir)
-
-        # Unwrap filenames if they're an array of one element so that scripts expecting
-        # join(str, str) to return a str will be happy.
-        temp = files
-        return temp[0] if len(temp) == 1 else temp
-
+        return file
 
     # ----------------------------------------------------------------------------------------------
 
