@@ -26,7 +26,7 @@ def run(*cmd):
 def main():
     args = sys.argv[1:]
     clean()
-    os.system("cls" if os.name == "nt" else "clear")
+    subprocess.run("cls" if os.name == "nt" else "clear")
 
     print("\nClean run")
     run(sys.executable, "hancho.py", *args)

@@ -162,26 +162,15 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(r"!!!! \{inside_esc!!!!aped_braces\} !!!!", d.expand(template))
 
     def test_read_nested_c_first(self):
-        # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in the
-        # nested context.
+        # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in
+        # the nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
         o = Onion(layer = d)
-
-        # This read is _not_ through the expander, so "{c}" will be evaluated in the _outer_
-        # context.
-        #result = d.expand("{a.b}")
-        #self.assertEqual(result, 20)
-
-        # This read _is_ through the expander - reading a.b will produce an Expander wrapped around
-        # the inner dict which will then immediately expand "{c}" in the context of the inner dict
-        # and return 10.
-        #e = Expander(d)
         result = o.expand("{a.b}")
         self.assertEqual(result, 10)
 
     def test_TEFINAE(self):
         # TEFINAE - Text Expansion Failure Is Not An Error
-
         d = Dict(a = 1)
         self.assertEqual("{missing}", d.expand("{missing}"))
         self.assertEqual("1 {missing}", d.expand("{a} {missing}"))
@@ -192,7 +181,6 @@ class TestTemplates(unittest.TestCase):
         d = Dict(a = None, b = "x{a}y")
         self.assertEqual(d.expand("{a}"), None)
         self.assertEqual(d.expand("{b}"), 'xy')
-
 
     def test_flatten_lists(self):
         # Lists should be flattened before joining with spaces
@@ -249,22 +237,31 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(d.expand("{{{{c}}}}"), "{it works!}")
 
 
-    def doctest_embedded_eval(self):
-        """
-        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
-        >>> d.expand("{foo}")
-        '1 + 1'
-        >>> d.expand("{foo} {bar}")
-        '1 + 1 2 + 2'
+#    def doctest_embedded_eval(self):
+#        """
+#        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
+#        >>> d.expand("{foo}")
+#        '1 + 1'
+#        >>> d.expand("{foo} {bar}")
+#        '1 + 1 2 + 2'
+#
+#        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\\"2 + 2\\"")
+#        >>> d.expand("{foo}")
+#        '1 + 1'
+#        >>> d.expand("{bar}")
+#        '\"2 + 2\"'
+#        >>> d.expand("{foo} {bar}")
+#        '1 + 1 \"2 + 2\"'
+#        """
 
-        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\\"2 + 2\\"")
-        >>> d.expand("{foo}")
-        '1 + 1'
-        >>> d.expand("{bar}")
-        '\"2 + 2\"'
-        >>> d.expand("{foo} {bar}")
-        '1 + 1 \"2 + 2\"'
-        """
+    def Test_embedded_eval(self):
+        d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
+        self.assertEqual('1 + 1', d.expand("{foo}"))
+        self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}"))
+        d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\"2 + 2\"")
+        self.assertEqual('1 + 1', d.expand("{foo}"))
+        self.assertEqual('\"2 + 2\"', d.expand("{bar}"))
+        self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}"))
 
 
 ####################################################################################################

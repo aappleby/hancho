@@ -121,15 +121,8 @@ class Dict(dict):
 
     @classmethod
     def generic_merge(cls, dst, lhs, rhs, merge_dicts, merge_lists, keep_a, keep_b):
-        try:
-            keys = list(lhs) + [r for r in rhs if r not in lhs]
-        except TypeError as err:
-            print("-----------------------------------")
-            print(lhs)
-            print(rhs)
-            print("-----------------------------------")
-            sys.exit(0)
-            raise
+        keys = list(lhs) + [r for r in rhs if r not in lhs]
+
         for key in keys:
             if key in lhs and key not in rhs and not keep_a: continue
             if key not in lhs and key in rhs and not keep_b: continue
@@ -176,7 +169,7 @@ class Dict(dict):
         return Dict(self, other)
 
     def __repr__(self):
-        return Utils.dump_to_str(key = None, val = self)
+        return Dumper.dump_to_str(key = None, val = self)
 
     # ----------------------------------------
 
@@ -271,8 +264,7 @@ class Onion(abc.Mapping):
         return len(set().union(*self._layers.values()))
 
     def __repr__(self):
-        #return repr(self._layers) #Utils.dump_to_str("Onion", self._layers)
-        return Utils.dump_to_str(key = None, val = self)
+        return Dumper.dump_to_str(key = None, val = self)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers.values())
@@ -514,89 +506,9 @@ class Expander:
 
 # endregion
 # --------------------------------------------------------------------------------------------------
-# region Utils
+# region Dumper
 
-class Utils:
-
-    @classmethod
-    def reset(cls, config):
-        cls.stat_calls = 0
-        cls.hash_calls = 0
-        cls.hash_bytes = 0
-        cls.hash_time  = 0
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def hash(cls, key, h):
-        # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
-        # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
-        # as a real 64-bit hash, but it'll do.
-
-        def split(h):
-            return (h & 0xFFFFFFFF, (h >> 32) & 0xFFFFFFFF)
-
-        def join(h0, h1):
-            return (h1 << 32) | h0
-
-        # Feistel-ish mix to tangle up the two 32-bit hashes.
-        def mix(h0, h1):
-            assert isinstance(h0, int) and h0 <= 0xFFFFFFFF
-            assert isinstance(h1, int) and h1 <= 0xFFFFFFFF
-
-            c = 0x58949537 # meaningless odd constant
-            j = 0x90678F0D # another meaningless constant
-            k = 0x48728717 # another meaningless constant
-
-            h0 = j ^ h1 ^ ((h0 * c) & 0xFFFFFFFF)
-            h1 = k ^ h0 ^ (h0 >> 16)
-            return (h0, h1)
-
-        if isinstance(key, bytes):
-            h0, h1 = split(h)
-            h0 = zlib.crc32(key, h0)
-            h1 = zlib.adler32(key, h1)
-            h0, h1 = mix(h0, h1)
-            h0, h1 = mix(h0, h1)
-            h0, h1 = mix(h0, h1)
-            h = join(h0, h1)
-        elif isinstance(key, int):
-            h0, h1 = mix(*split(h))
-            k0, k1 = mix(*split(key))
-            h0, h1 = mix(k0 ^ h0, k1 ^ h1)
-            h = join(h0, h1)
-        elif isinstance(key, str):
-            h = cls.hash(key.encode(), h)
-        elif callable(key):
-            h = cls.hash(key.__name__, h)
-            h = cls.hash(key.__defaults__, h)
-            h = cls.hash(key.__code__.co_code, h)
-            h = cls.hash(key.__code__.co_consts, h)
-        elif isinstance(key, dict):
-            for k, v, in sorted(key.items()):
-                h = cls.hash(k, h)
-                h = cls.hash(v, h)
-        elif isinstance(key, (list, tuple, set)):
-            for k in key:
-                h = cls.hash(k, h)
-        elif key is None:
-            h = join(*mix(*split(h)))
-        else:
-            raise TypeError(f"Don't know how to hash a {type(key)} = {key}")
-        return h
-
-    @classmethod
-    def hash_file(cls, abs_path, h = 0):
-        cls.hash_calls += 1
-        time_a = time.perf_counter()
-        with open(abs_path, "rb") as f:
-            blob = f.read()
-            cls.hash_bytes += len(blob)
-        result = cls.hash(blob, h)
-        time_b = time.perf_counter()
-        cls.hash_time += time_b - time_a
-        return result
-
+class Dumper:
     # ----------------------------------------------------------------------------------------------
 
     # These types don't get dumped because they're not really dumpable.
@@ -617,7 +529,7 @@ class Utils:
         prefix = ""
         if key is not None:
             prefix += str(key)
-        if type(val) not in Utils.base_types:
+        if type(val) not in Dumper.base_types:
             if key:
                 prefix += ":"
             prefix += type(val).__name__
@@ -646,8 +558,8 @@ class Utils:
         elif isinstance(val, argparse.Namespace):
             val = val.__dict__
 
-        if type(val) in Utils.opaque_types:
-            return Utils.opaque_types[type(val)] # type: ignore
+        if type(val) in Dumper.opaque_types:
+            return Dumper.opaque_types[type(val)] # type: ignore
         elif type(val).__repr__ is object.__repr__:
             # Objects that don't have a custom repr (and a few built-in types) just get printed
             # as '<object>'
@@ -776,7 +688,88 @@ class Utils:
 
         return cls._dump_variant_to_str(key, val, indent, print_id, color_code, max_length, tab, memo = {})
 
-    # ----------------------------------------------------------------------------------------------
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region Utils
+
+class Utils:
+
+    @classmethod
+    def reset(cls, config):
+        cls.stat_calls = 0
+        cls.hash_calls = 0
+        cls.hash_bytes = 0
+        cls.hash_time  = 0
+
+    @classmethod
+    def hash(cls, key, h):
+        # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
+        # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
+        # as a real 64-bit hash, but it'll do.
+
+        def split(h):
+            return (h & 0xFFFFFFFF, (h >> 32) & 0xFFFFFFFF)
+
+        def join(h0, h1):
+            return (h1 << 32) | h0
+
+        # Feistel-ish mix to tangle up the two 32-bit hashes.
+        def mix(h0, h1):
+            assert isinstance(h0, int) and h0 <= 0xFFFFFFFF
+            assert isinstance(h1, int) and h1 <= 0xFFFFFFFF
+
+            c = 0x58949537 # meaningless odd constant
+            j = 0x90678F0D # another meaningless constant
+            k = 0x48728717 # another meaningless constant
+
+            h0 = j ^ h1 ^ ((h0 * c) & 0xFFFFFFFF)
+            h1 = k ^ h0 ^ (h0 >> 16)
+            return (h0, h1)
+
+        if isinstance(key, bytes):
+            h0, h1 = split(h)
+            h0 = zlib.crc32(key, h0)
+            h1 = zlib.adler32(key, h1)
+            h0, h1 = mix(h0, h1)
+            h0, h1 = mix(h0, h1)
+            h0, h1 = mix(h0, h1)
+            h = join(h0, h1)
+        elif isinstance(key, int):
+            h0, h1 = mix(*split(h))
+            k0, k1 = mix(*split(key))
+            h0, h1 = mix(k0 ^ h0, k1 ^ h1)
+            h = join(h0, h1)
+        elif isinstance(key, str):
+            h = cls.hash(key.encode(), h)
+        elif callable(key):
+            h = cls.hash(key.__name__, h)
+            h = cls.hash(key.__defaults__, h)
+            h = cls.hash(key.__code__.co_code, h)
+            h = cls.hash(key.__code__.co_consts, h)
+        elif isinstance(key, dict):
+            for k, v, in sorted(key.items()):
+                h = cls.hash(k, h)
+                h = cls.hash(v, h)
+        elif isinstance(key, (list, tuple, set)):
+            for k in key:
+                h = cls.hash(k, h)
+        elif key is None:
+            h = join(*mix(*split(h)))
+        else:
+            raise TypeError(f"Don't know how to hash a {type(key)} = {key}")
+        return h
+
+    @classmethod
+    def hash_file(cls, abs_path, h = 0):
+        cls.hash_calls += 1
+        time_a = time.perf_counter()
+        with open(abs_path, "rb") as f:
+            blob = f.read()
+            cls.hash_bytes += len(blob)
+        result = cls.hash(blob, h)
+        time_b = time.perf_counter()
+        cls.hash_time += time_b - time_a
+        return result
 
     @staticmethod
     def stringify(variant) -> str:
@@ -819,12 +812,7 @@ class Utils:
         """
         Generates a 'random' float in the range [0.0,1.0) by hashing the object's ID.
         """
-        temp = id(obj)
-        temp *= 0x4F9B2A1D # doesn't matter what this constant is as long as it's odd.
-        temp ^= temp >> 17
-        temp *= 0x4F9B2A1D
-        temp ^= temp >> 17
-
+        temp = Utils.hash(id(obj), 0)
         return (temp & 0xFFFFFFFF) / 0x100000000
 
     @staticmethod
@@ -844,6 +832,7 @@ class Utils:
     def flatten(variant):
         return list(Utils.yield_values(variant))
 
+    # FIXME can we use this in more places? It seems quite useful.
     @staticmethod
     def yield_values(variant) -> Any:
         if variant is None:
@@ -860,8 +849,6 @@ class Utils:
     @staticmethod
     def hex_id(obj):
         return f"0x{id(obj):016x}"
-
-    # ----------------------------------------------------------------------------------------------
 
     @staticmethod
     @contextmanager
@@ -977,13 +964,6 @@ class Colors(int, Enum):
 # --------------------------------------------------------------------------------------------------
 
 class Log:
-
-#    options : Dict = Dict(
-#        wrap   = False,
-#        color  = True,
-#        time   = True,
-#    )
-
     con_w         = 80
     time_origin   = time.perf_counter()
     indent_stack  = []
@@ -1120,7 +1100,6 @@ class Log:
         tb = traceback.extract_tb(ex.__traceback__)
         if tb:
             frame = tb[-1]
-            #Log.log(f"type      = {type(ex)}\n")
             cls.log("  text = ")
             with cls.color(0xFFFF00):
                 cls.log(f"'{ex}'\n")
@@ -1128,8 +1107,6 @@ class Log:
             cls.log(f"  func = {frame.name}\n")
             cls.log(f"  line = {frame.lineno}\n")
             cls.log(traceback.format_exc() + "\n")
-            # Printing the line isn't useful as it's always going to be "raise ..."
-            #cls.log(f"line      = '{frame.line}'\n")
         else: # pragma: no cover
             cls.log(f"Could not extract traceback from {ex}!")
 
@@ -1233,26 +1210,17 @@ class Path:
 
     @staticmethod
     def resolve_path(path, strict):
+        """
+        This tries to convert a path containing potential env variable references and stuff into a
+        real path.
+        """
         path = os.path.expandvars(path)
         path = pathlib.Path(path).expanduser()
         path = path.resolve(strict = strict)
         return str(path)
 
-    @staticmethod
-    def new_resolve(path):
-        path = os.path.expandvars(path)
-        path = pathlib.Path(path).expanduser()
-        path = path.resolve(strict = True)
-        return str(path)
-
-
     resolve  = tree_map(lambda path : Path.resolve_path(path, strict = True))
-
-    # This doesn't work, abs'ing a path
-    #normpath = tree_map(lambda path : Path.resolve_path(path, strict = False))
-
     normpath = tree_map(os.path.normpath)
-
     basename = tree_map(os.path.basename)
     dirname  = tree_map(os.path.dirname)
     swapext  = tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
@@ -1262,10 +1230,10 @@ class Path:
     isdir    = tree_all(os.path.isdir)
     exists   = tree_all(os.path.exists)
 
-    # WARNING - Both 'startswith' and 'rel' below can throw ValueError if there's a mix of abs/rel
-    # paths, or if the paths are on different volumes in Windows. We don't handle this yet, but we
-    # will need to eventually. If this occurs inside a macro you'll see the exception in the macro
-    # expansion trace and the macro will be returned unexpanded. Using 'commonpath' here is
+    # WARNING - Both 'startswith' and 'relpath' below can throw ValueError if there's a mix of
+    # abs/rel paths, or if the paths are on different volumes in Windows. We don't handle this yet,
+    # but we will need to eventually. If this occurs inside a macro you'll see the exception in the
+    # macro expansion trace and the macro will be returned unexpanded. Using 'commonpath' here is
     # probably worth it though, as it handles some annoying edge cases.
 
     startswith = tree_all(lambda p, parent : os.path.commonpath([p, parent]) == parent)
@@ -1346,7 +1314,7 @@ class Script:
 
 
     def __repr__(self):
-        return Utils.dump_to_str("Script", self.__dict__, print_id = True, color_code = True)
+        return Dumper.dump_to_str("Script", self.__dict__, print_id = True, color_code = True)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1625,7 +1593,7 @@ class Task:
         return self
 
     def __repr__(self):
-        return Utils.dump_to_str(key = "Task", val = self)
+        return Dumper.dump_to_str(key = "Task", val = self)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1750,13 +1718,13 @@ class Task:
         # FIXME yeah we should expand almost everything
 
         expanded = Dict()
-        expanded.task_cwd   = Path.normpath(Expander.expand("{task_cwd}", task.onion))
-        expanded.build_dir  = Path.normpath(Expander.expand("{build_dir}", task.onion))
+        expanded.task_cwd   = Path.normpath(task.onion.expand("{task_cwd}"))
+        expanded.build_dir  = Path.normpath(task.onion.expand("{build_dir}"))
 
-        expanded.build_tag  = Expander.expand("{build_tag}", task.onion)
-        expanded.core_count = Expander.expand("{cpu_cores}", task.onion)
-        expanded.depformat  = Expander.expand("{depformat}", task.onion)
-        expanded.enabled    = Expander.expand("{enabled}",   task.onion)
+        expanded.build_tag  = task.onion.expand("{build_tag}")
+        expanded.core_count = task.onion.expand("{cpu_cores}")
+        expanded.depformat  = task.onion.expand("{depformat}")
+        expanded.enabled    = task.onion.expand("{enabled}")
 
         Dict.merge(task.config, expanded)
 
@@ -2351,7 +2319,7 @@ class Loader:
         # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
         # build, which they should be in practice.
 
-        config_dump = Utils.dump_to_str(key = "options", val = options)
+        config_dump = Dumper.dump_to_str(key = "options", val = options)
         config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
         dedupe_key = (options.script_path, config_dump)
