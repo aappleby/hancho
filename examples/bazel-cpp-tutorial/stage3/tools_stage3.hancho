@@ -39,14 +39,14 @@ ld_libs = [
 #includes   = []
 
 compile_cpp = hancho.Tool(
-    desc       = "Compiling C++ {base(in_src)} -> {base(out_obj)}",
+    desc       = "Compiling C++ {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
     #----------
     in_src     = None,
-    in_depfile = "{ext(out_obj, '.d')}",
-    out_obj    = "{ext(in_src, '.o')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
     includes   = []
 )
 
@@ -54,7 +54,7 @@ compile_cpp = hancho.Tool(
 
 
 link_cpp_lib = hancho.Tool(
-    desc     = "Bundling C++ library {base(out_lib)}",
+    desc     = "Bundling C++ library {basename(out_lib)}",
     command  = "ar rcs {out_lib} {in_objs}",
     #----------
     in_objs  = None,
@@ -62,7 +62,7 @@ link_cpp_lib = hancho.Tool(
 )
 
 link_cpp_bin = hancho.Tool(
-    desc     = "Linking {base(out_bin)}",
+    desc     = "Linking {basename(out_bin)}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_deps} {ld_libs}",
     #----------
     ld_flags = ld_flags,
@@ -75,16 +75,16 @@ link_cpp_bin = hancho.Tool(
 
 def cc_library(*, in_srcs = None, **kwargs):
     objs = [
-        hancho.Task(compile_cpp.fill(kwargs), in_src = src)
-        for src in hancho.flatten(in_srcs)
+        hancho.Task(compile_cpp.fill2(kwargs), in_src = src)
+        for src in hancho.Utils.flatten(in_srcs)
     ]
-    bin  = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
+    bin  = hancho.Task(link_cpp_lib.fill2(kwargs), in_objs=objs)
     return bin
 
 def cc_binary(*, in_srcs = None, **kwargs):
     objs = [
-        hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.flatten(in_srcs)
+        hancho.Task(compile_cpp.fill2(kwargs), in_src=src)
+        for src in hancho.Utils.flatten(in_srcs)
     ]
-    bin = hancho.Task(link_cpp_bin.fill(kwargs), in_objs=objs)
+    bin = hancho.Task(link_cpp_lib.fill2(kwargs), in_objs=objs)
     return bin

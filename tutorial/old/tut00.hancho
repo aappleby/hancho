@@ -64,8 +64,8 @@ main_bin = hancho.Task(
 compile_cpp = hancho.Tool(
     desc       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
-    in_depfile = "{ext(out_obj, '.d')}",
-    out_obj    = "{ext(in_src, '.o')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
 )
 
 link_cpp = hancho.Tool(
@@ -91,8 +91,8 @@ app    = hancho.Task(tools.link_cpp, in_objs = [main_o, util_o], out_bin = "app"
 compile_cpp = hancho.Tool(
     desc       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
-    in_depfile = "{ext(out_obj, '.d')}",
-    out_obj    = "{ext(in_src, '.o')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
 )
 
 link_cpp = hancho.Tool(
@@ -113,8 +113,8 @@ app   = hancho.Task(tools.c_binary, in_src = glob("src/*.cpp"), out_bin = "app")
 compile_cpp = hancho.Tool(
     desc       = "Compile {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
-    in_depfile = "{ext(out_obj, '.d')}",
-    out_obj    = "{ext(in_src, '.o')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
 )
 
 link_cpp = hancho.Tool(
@@ -123,8 +123,11 @@ link_cpp = hancho.Tool(
 )
 
 def c_binary(*, in_srcs, out_bin, **kwargs):
-    objs = [hancho.Task(compile_cpp, kwargs, in_src = file) for file in in_srcs]
-    return hancho.Task(link_cpp, kwargs, in_objs = objs, out_bin = out_bin)
+    objs = [
+        hancho.Task(compile_cpp.fill2(kwargs), in_src = file)
+        for file in in_srcs
+    ]
+    return hancho.Task(link_cpp.fill2(kwargs), in_objs = objs, out_bin = out_bin)
 
 ####################################################################################################
 # Async/await and custom commands

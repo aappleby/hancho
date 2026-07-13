@@ -101,9 +101,9 @@ region):
   (e.g. it references a field that doesn't exist *in this context yet*), it is returned
   **unchanged** rather than throwing. This is deliberate: nested Dicts can carry templates
   that only resolve once merged into an outer context.
-- Aliases available inside `{...}` (and as `hancho.<name>`): path helpers `abs`, `base`,
-  `ext`, `norm`, `real`, `rel`, `stem`, plus `path` (= `os.path`), `flatten`, `weave`,
-  `run_cmd`, and the loaders `load` / `repo`. Example: `out_obj = "{ext(in_src, '.o')}"`.
+- Aliases available inside `{...}` (and as `hancho.<name>`): path helpers `basename`,
+  `swapext`, `normpath`, `resolve`, `relpath`, plus `path` (= `os.path`), `flatten`, `weave`,
+  `run_cmd`, and the loaders `load` / `repo`. Example: `out_obj = "{swapext(in_src, '.o')}"`.
 - `Tree[T]` (`T | list[Tree[T]]`): many fields accept arbitrarily nested lists. Most
   Path/Utils helpers are "recursified" to map over these, and `Utils.flatten` collapses
   them. `weave` does a cross-join (e.g. prefix/suffix every item in a list).
@@ -174,7 +174,7 @@ during init).
 - `script_dir` / `script_file` / `this_module` - the currently executing script.
 - `task_cwd` - where shell commands run (defaults to `repo_dir`).
 - `build_root` (`{repo_dir}/build`), `build_tag`, `build_dir`
-  (`{build_root}/{build_tag}/{rel(task_cwd, repo_dir)}`) - where outputs go. `--build_tag`
+  (`{build_root}/{build_tag}/{relpath(task_cwd, repo_dir)}`) - where outputs go. `--build_tag`
   gives a build its own subtree (e.g. debug vs. release).
 - `name` / `desc` / `command`, `core_count`, `depformat`, `dry_run`, `enabled`.
 

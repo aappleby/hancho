@@ -37,18 +37,18 @@ ld_libs = [
 ]
 
 compile_cpp = hancho.Tool(
-    desc       = "Compiling {base(in_src)} -> {base(out_obj)}",
+    desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
     #----------
     in_src     = None,
-    in_depfile = "{ext(out_obj, '.d')}",
-    out_obj    = "{ext(in_src, '.o')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
 )
 
 link_cpp_bin = hancho.Tool(
-    desc     = "Linking {base(in_objs)} -> {base(out_bin)}",
+    desc     = "Linking {basename(in_objs)} -> {basename(out_bin)}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {ld_libs}",
     #----------
     ld_flags = ld_flags,
@@ -59,6 +59,6 @@ link_cpp_bin = hancho.Tool(
 )
 
 def cc_binary(*, out_bin, in_srcs):
-    objs = [hancho.Task(compile_cpp, in_src = src) for src in hancho.flatten(in_srcs)]
+    objs = [hancho.Task(compile_cpp, in_src = src) for src in hancho.Utils.flatten(in_srcs)]
     bin = hancho.Task(link_cpp_bin, out_bin = out_bin, in_objs = objs)
     return bin

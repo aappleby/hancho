@@ -37,9 +37,9 @@ rv_compile = hancho.Tool(
     includes   = None,
 
     in_src     = None,
-    in_depfile = "{ext(out_obj, '.d')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
 
-    out_obj    = "{ext(in_src, '.o')}",
+    out_obj    = "{swapext(in_src, '.o')}",
 )
 
 #linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",

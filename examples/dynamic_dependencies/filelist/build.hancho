@@ -7,36 +7,37 @@ from glob import glob
 
 import hancho
 
+dirname = hancho.Path.dirname
 original_cwd = os.getcwd()
 
 src_files = glob("src/*")
 
 random_touch = hancho.Task(
-    desc = "Touch 3 random files in src/ - {base(in_src)}",
+    desc = "Touch 3 random files in src/ - {basename(in_src)}",
     command = lambda task : (os.utime(src, None) for src in task.config.in_src),
     in_src = random.sample(src_files, 3),
 )
 
 def generate_filelist(task):
     c = task.config
-    with chdir(hancho.dirname(__file__)), open(c.out_list, "w", encoding="utf-8") as file:
+    with chdir(dirname(__file__)), open(c.out_list, "w", encoding="utf-8") as file:
         for f in random.sample(c.in_src, 3):
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
-    desc     = "Write the names of 3 random files in src/ to {base(out_list)}",
+    desc     = "Write the names of 3 random files in src/ to {basename(out_list)}",
     command  = generate_filelist,
     in_src   = src_files,
     out_list = "filelist.txt",
 )
 
 def generate_result(task):
-    """Read build/filelist.txt and create a new task to cat those files together into {base(out_files)}"""
+    """Read build/filelist.txt and create a new task to cat those files together into {basename(out_files)}"""
     c = task.config
-    with chdir(hancho.dirname(__file__)), open(c.in_filelist, encoding="utf-8") as file:
+    with chdir(dirname(__file__)), open(c.in_filelist, encoding="utf-8") as file:
         from_filelist = [f.strip() for f in file.readlines()]
         new_task = hancho.Task(
-            desc      = "Concatenate {base(in_files)} into {base(out_files)}",
+            desc      = "Concatenate {basename(in_files)} into {basename(out_files)}",
             command   = "cat {in_files} > {out_files}",
             in_files  = from_filelist,
             in_deps   = [random_touch, filelist_txt],
@@ -44,14 +45,14 @@ def generate_result(task):
         )
 
     hancho.Task(
-        desc    = "Copy {base(in_text)} -> {base(out_cat)}",
+        desc    = "Copy {basename(in_text)} -> {basename(out_cat)}",
         command = "cat {in_text} >> {out_cat}",
         in_text = new_task,
         out_cat = "result2.txt"
     )
 
 result_txt = hancho.Task(
-    desc        = "Generate a new task from {base(in_filelist)}",
+    desc        = "Generate a new task from {basename(in_filelist)}",
     command     = generate_result,
     in_filelist = filelist_txt,
 )

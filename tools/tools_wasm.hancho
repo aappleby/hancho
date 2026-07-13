@@ -3,7 +3,7 @@ import sys
 import hancho
 
 emcc = hancho.Tool(
-    desc    = "Compile Emscripten'd {base(in_src)}",
+    desc    = "Compile Emscripten'd {basename(in_src)}",
     command = "emcc {flags} {weave('-I', includes)} -c {in_src} -o {out_obj}",
     flags   = [
         "-std=c++20",
@@ -16,11 +16,11 @@ emcc = hancho.Tool(
     ],
     includes = None,
     in_src   = None,
-    out_obj  = "{ext(in_src, '.o')}",
+    out_obj  = "{swapext(in_src, '.o')}",
 )
 
 emld = hancho.Tool(
-    desc    = "Link Emscripten'd {base(out_js)}",
+    desc    = "Link Emscripten'd {basename(out_js)}",
     command = "emcc {flags} {in_objs} -o {out_js}",
     flags   = [
         "-sEXPORT_ES6",
@@ -37,7 +37,7 @@ emld = hancho.Tool(
 )
 
 ems_package = hancho.Tool(
-    desc    = "Package {base(out_data)}",
+    desc    = "Package {basename(out_data)}",
     command = [
         "rm -f {out_data}",
         "rm -f {out_js}",

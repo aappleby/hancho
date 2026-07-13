@@ -105,17 +105,31 @@ class Dict(dict):
     # assumes the task produces both. If you do compile_cpp.fill(...), "out_bin" does not get added
     # to compile_cpp.
 
+    def fill2(self, *args, **kwargs):
+        dest = Dict(self)
+        Dict.fill(dest, *args, **kwargs)
+        return dest
+
     @classmethod
     def fill(cls, dest, *args, **kwargs):
-        for rhs in enumerate((*args, kwargs)):
+        for rhs in (*args, kwargs):
             Dict.generic_merge(
                 dest, dest, rhs,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=False)
+            pass
 
     @classmethod
     def generic_merge(cls, dst, lhs, rhs, merge_dicts, merge_lists, keep_a, keep_b):
-        keys = list(lhs) + [r for r in rhs if r not in lhs]
+        try:
+            keys = list(lhs) + [r for r in rhs if r not in lhs]
+        except TypeError as err:
+            print("-----------------------------------")
+            print(lhs)
+            print(rhs)
+            print("-----------------------------------")
+            sys.exit(0)
+            raise
         for key in keys:
             if key in lhs and key not in rhs and not keep_a: continue
             if key not in lhs and key in rhs and not keep_b: continue
@@ -124,14 +138,17 @@ class Dict(dict):
             rhs2 = rhs.get(key, None)
 
             if isinstance(lhs2, dict) and isinstance(rhs2, dict) and merge_dicts:
-                dst2 = dst.get(key, Dict())
+                dst2 = Dict()
                 cls.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
+                dst[key] = dst2
             elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
                 dst[key] = list(lhs2) + list(rhs2)
             elif isinstance(rhs2, abc.Mapping):
                 dst[key] = Dict(rhs2)
-            else:
+            elif isinstance(rhs2, (list, set, tuple)):
                 dst[key] = lhs2 if rhs2 is None else copy.copy(rhs2)
+            else:
+                dst[key] = lhs2 if rhs2 is None else rhs2
 
         return dst
 
@@ -172,7 +189,16 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template, onion = None):
-        return Expander.expand(template, onion, self)
+        if onion is None:
+            script = cv_script.get()
+            onion = Onion()
+            onion._layers['hancho_module'] = hancho.__dict__
+            onion._layers['aliases'] = Aliases.__dict__
+            if script is not None:
+                onion._layers['script_module'] = script.module.__dict__
+                onion._layers['script_options'] = script.options
+            onion._layers['self'] = self
+        return Expander.expand(template, onion)
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -200,6 +226,9 @@ class Onion(abc.Mapping):
     __slots__ = ("_layers",)
 
     def __init__(self, *args, **kwargs):
+        #print(args)
+        #print(kwargs)
+
         self._layers = {}
         for val in args:
             if val is None:
@@ -233,10 +262,10 @@ class Onion(abc.Mapping):
     def __iter__(self):
         seen = set()
         for layer in reversed(self._layers.items()):
-            for key, value in layer:
+            for key, _ in layer[1].items():
                 if key not in seen:
                     seen.add(key)
-                    yield value
+                    yield key
 
     def __len__(self):
         return len(set().union(*self._layers.values()))
@@ -267,7 +296,7 @@ class Onion(abc.Mapping):
         # onion's context before we give it back.
         if not isinstance(values[-1][1], abc.Mapping):
             result = values[-1][1]
-            return Expander.expand(result, onion = self, overrides = None)
+            return Expander.expand(result, onion = self)
 
         # The last value _is_ a mapping. Is it the only value? Then it's our result.
         if len(values) == 1:
@@ -288,8 +317,8 @@ class Onion(abc.Mapping):
         # Otherwise we make a new onion out of the new (un-reversed) mappings.
         return Onion(**dict(reversed(new_layers)))
 
-    def expand(self, template, overrides = None):
-        return Expander.expand(template, self, overrides)
+    def expand(self, template):
+        return Expander.expand(template, self)
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -344,15 +373,11 @@ class Expander:
     # ----------------------------------------
 
     @classmethod
-    def expand(cls, variant : Any, onion : Onion | None, overrides : abc.Mapping | None):
+    def expand(cls, variant : Any, onion : Onion):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
         """
-
-        # FIXME do we really need this check?
-        #if not Loader.load_started:
-        #    raise AssertionError(f"Tried to expand {variant} before we've even reached script loading state")
 
         if variant == sentinel:
             raise AssertionError("Tried to expand a sentinel value")
@@ -365,7 +390,7 @@ class Expander:
                 # Remember how much budget was spent.
                 saved = Expander.cv_evals.get()
                 # Expand the list element.
-                result.append(Expander.expand(v, onion, overrides))
+                result.append(Expander.expand(v, onion))
                 # Restore the budget so the next string in the list gets it.
                 Expander.cv_evals.set(saved)
             return result
@@ -385,14 +410,12 @@ class Expander:
         # OK, we have a string that could be a template. Keep expanding it until it stops changing
         # or it's not a template.
 
-        onion = Onion(onion, overrides = overrides)
-
         Log.indent()
         try:
             old_template = None
             while old_template != template and isinstance(template, str) and '{' in template:
                 old_template = template
-                #Log.log(f"Expand {template!r} with onion 0x{hex(id(onion))[-4:]} {len(onion._layers)}\n")
+                #Log.log(f"Expand {template!r} with merged_onion 0x{hex(id(merged_onion))[-4:]} {len(merged_onion._layers)}\n")
 
                 template = Expander._expand_pass(template, onion)
                 #Log.log(f" = {template}\n")
@@ -823,11 +846,13 @@ class Utils:
 
     @staticmethod
     def yield_values(variant) -> Any:
-        if isinstance(variant, (list, tuple, set)):
-            for v in variant:
-                yield from Utils.yield_values(v)
-        elif isinstance(variant, dict):
+        if variant is None:
+            return
+        elif isinstance(variant, abc.Mapping):
             for v in variant.values():
+                yield from Utils.yield_values(v)
+        elif isinstance(variant, (list, tuple, set)):
+            for v in variant:
                 yield from Utils.yield_values(v)
         else:
             yield variant
@@ -1220,17 +1245,17 @@ class Path:
         path = path.resolve(strict = True)
         return str(path)
 
-    #abspath  = tree_map(os.path.abspath)
-    #realpath = tree_map(os.path.realpath)
+
     resolve  = tree_map(lambda path : Path.resolve_path(path, strict = True))
-    normpath = tree_map(lambda path : Path.resolve_path(path, strict = False))
+
+    # This doesn't work, abs'ing a path
+    #normpath = tree_map(lambda path : Path.resolve_path(path, strict = False))
+
+    normpath = tree_map(os.path.normpath)
+
     basename = tree_map(os.path.basename)
     dirname  = tree_map(os.path.dirname)
-    split    = tree_map(os.path.split)
-    splitext = tree_map(os.path.splitext)
-
-    ext      = tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
-    stem     = tree_map(lambda p : os.path.splitext(os.path.basename(p))[0] )
+    swapext  = tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
 
     isabs    = tree_all(os.path.isabs)
     isfile   = tree_all(os.path.isfile)
@@ -1252,11 +1277,11 @@ class Path:
     # path, which we can do with 'commonpath' and 'removeprefix'.
 
     @staticmethod
-    def rel(lhs, rhs):
+    def relpath(lhs, rhs):
         if isinstance(lhs, (list, tuple, set)):
-            return [Path.rel(lh, rhs) for lh in lhs]
+            return [Path.relpath(lh, rhs) for lh in lhs]
         if isinstance(rhs, (list, tuple, set)):
-            return [Path.rel(lhs, rh) for rh in rhs]
+            return [Path.relpath(lhs, rh) for rh in rhs]
 
         prefix = os.path.commonpath([lhs, rhs])
 
@@ -1292,6 +1317,7 @@ class Script:
 
         self.onion = Onion(
             hancho_module  = hancho.__dict__,
+            aliases        = hancho.Aliases.__dict__,
             script_module  = module.__dict__,
             script_options = options,
             task_config    = None,
@@ -1328,10 +1354,10 @@ class Script:
         script = self
         result = {}
 
-        stat_db = Expander.expand(self.stat_db_path, script.onion, None)
+        stat_db = Expander.expand(self.stat_db_path, script.onion)
         stat_db = cast(str, Path.normpath(stat_db))
 
-        comp_db = Expander.expand(script.comp_db_path, script.onion, None)
+        comp_db = Expander.expand(script.comp_db_path, script.onion)
         comp_db = cast(str, Path.normpath(comp_db))
 
         with LogLevel.VERBOSE, Colors.ORANGE:
@@ -1428,16 +1454,13 @@ class Script:
         Figures out why we have to run a Task, or returns "" if we don't.
         """
 
-        script = cv_script.get()
-        onion = Onion(options = script.options, config = task.config)
-
         # FIXME we should be expanding force_build etc. so we pick up either the task value or the
         # script value
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if onion.build_force:
+        if task.onion.build_force:
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -1726,35 +1749,16 @@ class Task:
 
         # FIXME yeah we should expand almost everything
 
-        #name         = None,
-        #desc         = None,
-        #command      = None,
-        #cwd          = "{repo_root}",
-        #enabled      = False,
-        #cpu_cores    = 1,
-        #trace        = None,
-        #debug        = None,
-        #hancho_dir   = os.path.dirname(__file__),
-        #script_path  = None,
-        #script_cwd   = "{dirname(script_path)}",
-        #repo_root    = None,
-        #build_tag    = "",
-        #build_root   = "{repo_root}/build",
-        #build_dir    = "{build_root}/{build_tag}/{rel(task_cwd, repo_root)}",
-        #comp_db_path = "{build_root}/compile_commands.json",
-        #stat_db_path = "{build_root}/hancho.json",
-
-
         expanded = Dict()
-        expanded.task_cwd   = Path.normpath(Expander.expand("{task_cwd}", script.onion, task.config))
-        expanded.build_dir  = Path.normpath(Expander.expand("{build_dir}", script.onion, task.config))
+        expanded.task_cwd   = Path.normpath(Expander.expand("{task_cwd}", task.onion))
+        expanded.build_dir  = Path.normpath(Expander.expand("{build_dir}", task.onion))
 
-        expanded.build_tag  = Expander.expand("{build_tag}", script.onion, task.config)
-        expanded.core_count = Expander.expand("{cpu_cores}", script.onion, task.config)
-        expanded.depformat  = Expander.expand("{depformat}", script.onion, task.config)
-        expanded.enabled    = Expander.expand("{enabled}",   script.onion, task.config)
+        expanded.build_tag  = Expander.expand("{build_tag}", task.onion)
+        expanded.core_count = Expander.expand("{cpu_cores}", task.onion)
+        expanded.depformat  = Expander.expand("{depformat}", task.onion)
+        expanded.enabled    = Expander.expand("{enabled}",   task.onion)
 
-        Dict.merge(task.config, task.config, expanded)
+        Dict.merge(task.config, expanded)
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -1881,10 +1885,10 @@ class Task:
 
     def task_init(self):
         task = self
-        script = cv_script.get()
+        #script = cv_script.get()
 
         if os.getcwd() != Path.resolve(task.config.task_cwd):
-            raise AssertionError(f"Running task_init while we're not in the realpath of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
+            raise AssertionError(f"Running task_init while we're not in the real path of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
 
         # ----------------------------------------
         # Flatten the commands and check that they're valid
@@ -1895,15 +1899,21 @@ class Task:
         # Expand all in_ and out_ filenames.
 
         # We _must_ expand _all_ of these first before joining paths or the paths will be incorrect:
-        # prefix + swap(abs_path) != abs(prefix + swap(path)).
+        # prefix + swap(abs_path) != normpath(prefix + swap(path)).
 
         # FIXME can we merge these two loops now?
+        # FIXME we need to move this loop into remap_io_fields or something.
 
         for key, val in list(task.config.items()):
             if not Task.is_io_field(key):
                 continue
 
-            task.config[key] = Path.normpath(Expander.expand(val, script.onion, task.config))
+            temp = val
+            temp = Expander.expand(temp, task.onion)
+            temp = Path.join(task.script.options.script_cwd, temp)
+            temp = Path.normpath(temp)
+
+            task.config[key] = temp
 
         # ----------------------------------------
         # Do all the file path remapping so our commands will work
@@ -1921,9 +1931,9 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can expand name/desc/command
 
-        task.config.name    = Expander.expand(task.config.name, script.onion, task.config)
-        task.config.desc    = Expander.expand(task.config.desc, script.onion, task.config)
-        task.config.command = Expander.expand(task.config.command, script.onion, task.config)
+        task.config.name    = Expander.expand(task.config.name, task.onion)
+        task.config.desc    = Expander.expand(task.config.desc, task.onion)
+        task.config.command = Expander.expand(task.config.command, task.onion)
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
@@ -2038,7 +2048,7 @@ class Task:
                 if not Path.startswith(file, task.config.build_dir):  # noqa: SIM102
                     if Path.startswith(file, script.options.script_cwd):
                         #file = file.removeprefix(script.options.script_cwd)
-                        file = Path.rel(file, script.options.script_cwd)
+                        file = Path.relpath(file, script.options.script_cwd)
                         file = Path.join(task.config.build_dir, file)
                         files[i] = file
 
@@ -2065,7 +2075,7 @@ class Task:
 
         #rel_dir = task.config.task_cwd if isinstance(config.command[0], str) else script.options.script_cwd
         #for i in range(len(files)):
-        #    files[i] = Path.rel(files[i], rel_dir)
+        #    files[i] = Path.relpath(files[i], rel_dir)
 
         return files
 
@@ -2076,7 +2086,7 @@ class Task:
 
         task = self
         with LogLevel.VERBOSE, Colors.BLUE:
-            task.log(f"{Path.rel(task.config.task_cwd, script.options.repo_root)}$ {command}\n")
+            task.log(f"{Path.relpath(task.config.task_cwd, script.options.repo_root)}$ {command}\n")
 
         proc = None
         try:
@@ -2099,9 +2109,9 @@ class Task:
             # up all cancelled processes, so we do it the hard way here and kill the whole process
             # group.
             #
-            # Note - this only works on Linux. We will need a slightly different implementation for
-            # Windows, which is out of scope until Hancho is shippable.
-            if proc is not None:
+            # Note - this only works on Linux. We may need a slightly different implementation for
+            # Windows.
+            if os.name == "posix" and proc is not None:
                 with suppress(ProcessLookupError):
                     os.killpg(proc.pid, signal.SIGKILL) #type:ignore
                 await proc.wait()
@@ -2128,7 +2138,7 @@ class Task:
     async def call_callback(self, command):
         script_dir = Path.dirname(self.script.options.script_path)
 
-        callback_dir = Path.rel(script_dir, self.script.options.repo_root)
+        callback_dir = Path.relpath(script_dir, self.script.options.repo_root)
 
         with LogLevel.VERBOSE, Colors.BLUE:
             self.log(f"{callback_dir}$ {command}\n")
@@ -2314,8 +2324,10 @@ class Loader:
 
         # ----------------------------------------
 
+        onion = Onion(parent_script.onion, options = options)
+
         path = options.script_path
-        path = Expander.expand(path, parent_script.onion, options)
+        path = Expander.expand(path, onion)
         assert not Utils.is_template(path)
         path = Path.resolve(path)
 
@@ -2444,7 +2456,7 @@ class Runner:
             target_regex = re.compile(script.options.target)
 
             for task in Loader.yield_tasks():
-                name = Expander.expand("{name}", script.onion, task.config)
+                name = Expander.expand("{name}", task.onion)
                 if target_regex.search(name):
                     task.enable_task()
 
@@ -2454,8 +2466,8 @@ class Runner:
         else:
             # Enable all tasks that were generated by the top script
             for task in Loader.yield_tasks():
-                #if task.script.repo_config.root == script.repo_config.root:
-                if task.script is script:
+                if task.script.options.repo_root == script.options.repo_root:
+                #if task.script is script:
                     task.enable_task()
 
     # ----------------------------------------------------------------------------------------------
@@ -2550,8 +2562,8 @@ class Runner:
     def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
             for task in Loader.yield_tasks():
-                root = Path.normpath(Expander.expand("{build.root}", cv_script.get().onion, task.config))
-                root = Path.rel(root, os.getcwd())
+                root = Path.normpath(Expander.expand("{build.root}", task.onion))
+                root = Path.relpath(root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
                     shutil.rmtree(root, ignore_errors=True)
@@ -2587,7 +2599,7 @@ class Main:
 
         build_tag    = "",
         build_root   = "{repo_root}/build",
-        build_dir    = "{build_root}/{build_tag}/{rel(task_cwd, repo_root)}",
+        build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
         build_target = None,
         build_force  = False,
         build_all    = False,
@@ -2634,12 +2646,12 @@ class Main:
         Runner.reset  (flags)
         Main.reset    (flags)
 
-        onion = Onion(hancho = hancho.__dict__, flags = flags)
+        onion = Onion(aliases = Aliases.__dict__, hancho = hancho.__dict__, flags = flags)
 
-        flags.hancho_dir  = Expander.expand("{hancho_dir}",  onion, None)
-        flags.script_path = Expander.expand("{script_path}", onion, None)
-        flags.script_cwd  = Expander.expand("{script_cwd}",  onion, None)
-        flags.repo_root   = Expander.expand("{repo_root}",   onion, None)
+        flags.hancho_dir  = Expander.expand("{hancho_dir}",  onion)
+        flags.script_path = Expander.expand("{script_path}", onion)
+        flags.script_cwd  = Expander.expand("{script_cwd}",  onion)
+        flags.repo_root   = Expander.expand("{repo_root}",   onion)
 
         flags.hancho_dir  = Path.normpath(flags.hancho_dir)
         flags.script_path = Path.normpath(flags.script_path)
@@ -2884,9 +2896,9 @@ class Main:
         if script.options.build_dry:
             return
 
-        stat_db_path = Expander.expand(script.stat_db_path, script.onion, None)
+        stat_db_path = Expander.expand(script.stat_db_path, script.onion)
         stat_db_path = cast(str, Path.normpath(stat_db_path))
-        comp_db_path = Expander.expand(script.comp_db_path, script.onion, None)
+        comp_db_path = Expander.expand(script.comp_db_path, script.onion)
         comp_db_path = cast(str, Path.normpath(comp_db_path))
 
         # Gather stats from all completed tasks
@@ -2988,27 +3000,25 @@ class Main:
 # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 # FIXME - maybe just put these in the top level globals? type checking might work better idk.
 
-#aliases = Dict(
-build    = Main.build            #,
-path     = Path            #,
-#abspath  = Path.abspath            #,
-basename = Path.basename            #,
-ext      = Path.ext            #,
-normpath = Path.normpath            #,
-#realpath = Path.realpath            #,
-rel      = Path.rel            #,
-stem     = Path.stem            #,
-dirname  = Path.dirname            #,
-cwd      = os.getcwd            #,
-flatten  = Utils.flatten            #,
-run_cmd  = Utils.run_cmd            #,
-weave    = Utils.weave            #,
-#)
+class Aliases:
+    path     = Path
+    basename = Path.basename
+    swapext  = Path.swapext
+    resolve  = Path.resolve
+    normpath = Path.normpath
+    relpath  = Path.relpath
+    dirname  = Path.dirname
+    cwd      = os.getcwd
+    flatten  = Utils.flatten
+    run_cmd  = Utils.run_cmd
+    weave    = Utils.weave
+
+# ----------------------------------------
 
 def load2(script_path, is_repo, *args, **kwargs):
     parent_script = cv_script.get()
 
-    script_path = Expander.expand(script_path, parent_script.onion, None)
+    script_path = Expander.expand(script_path, parent_script.onion)
     script_path = Path.resolve(script_path)
 
     child_options = Dict(
@@ -3046,6 +3056,8 @@ def load2(script_path, is_repo, *args, **kwargs):
 
     return child_script
 
+def build():
+    return Main.build()
 
 def load(script_path, *args, **kwargs):
     return load2(script_path, False, *args, **kwargs).module

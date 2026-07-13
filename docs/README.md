@@ -30,11 +30,8 @@ Dict @ 0x788c818610e0 {
 | Built-in       | Description |
 | --------       | ----------- |
 |```log```        | Logs messages to the console and to Hancho's internal log. Also plays nicer with console output from parallel tasks than ```print()```|
-|```abspath```    | Converts a relative path to an absolute, physical path.|
 |```relpath```    | Removes a common prefix from an absolute path to make a relative path. ```relpath('/foo/bar/baz', '/foo')``` -> ```'bar/baz'```
-|```join```       | Joins arbitrary arrays of strings together, combinatorially. ```join(['a','b'],['c','d'])``` -> ```['ac', 'ad', 'bc', 'bd']```|
-|```join_path```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
-|```stem```       | Returns the 'stem' of a path - ```/home/foo/bar.txt``` -> ```bar```|
+|```weave```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
 |```ext```        | Replaces a filename's extension.|
 |```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
 |```hancho.dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho.dir}/base_rules.hancho")```|
@@ -42,8 +39,8 @@ Dict @ 0x788c818610e0 {
 |```re```         | Python's ```re``` regular expression module|
 |```path```       | Python's ```os.path``` module|
 |```run_cmd```    | Runs a CLI command and returns the command's ```stdout```.|
-|```rel```        | Only usable by ```Dict```s. Removes ```task_cwd``` from a file path if present. Makes descriptions and commands a bit more readable.|
-|```expand```     | Only usable by ```Dict```s. Expands a text template.|
+|```relpath```    | os.path.relpath |
+|```expand```     | this documentation is so obsolete... |
 
 ## Splitting your build into multiple ```.hancho``` files
 

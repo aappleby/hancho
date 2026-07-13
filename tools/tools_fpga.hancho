@@ -21,7 +21,7 @@ def ivparams(params):
     return result
 
 iverilog = hancho.Tool(
-    desc     = "Run iverilog on {base(in_sv)}",
+    desc     = "Run iverilog on {basename(in_sv)}",
     command  = "iverilog {ivparams(params)} -s{top} -g2012 {defines} {weave('-I', includes)} {in_sv} -o {out_iv}",
     ivparams = ivparams,
 
@@ -45,8 +45,8 @@ def vlparams(c):
     return result
 
 verilator_cmd = hancho.Tool(
-    desc     = "Run Verilator on {base(in_sv)}",
-    command  = "verilator -Wno-width --public {vlparams(params)} {weave('-I', includes)} --cc {in_sv} -Mdir {path.dirname(out_makefile)}",
+    desc     = "Run Verilator on {basename(in_sv)}",
+    command  = "verilator -Wno-width --public {vlparams(params)} {weave('-I', includes)} --cc {in_sv} -Mdir {dirname(out_makefile)}",
     vlparams = vlparams,
 
     in_sv    = None,
@@ -79,31 +79,26 @@ def verilator(*, in_sv, **kwargs):
             build_dir = "{build_root}/verilator",
         )
 
-    # FIXME should be using tool.fill(kwargs) instead of passing kwargs in
-
     verilated = hancho.Task(
-        verilator_cmd,
-        kwargs,
+        verilator_cmd.fill(kwargs),
         in_sv = in_sv,
     )
 
     compiled = hancho.Task(
-        tools_base.make,
-        kwargs,
+        tools_base.make.fill(kwargs),
         # FIXME this is reading out_makefile from verilated, needs a test 'cause stuff has changed
         verilated = verilated,
-        out_obj = "{ext(verilated['out_makefile'], '__ALL.o')}",
+        out_obj = "{swapext(verilated['out_makefile'], '__ALL.o')}",
         flags = [
             "-B",
         ],
     )
 
     verilated_lib = hancho.Task(
-        tools_base.cpp_lib,
-        kwargs,
+        tools_base.cpp_lib.fill(kwargs),
         in_sv   = in_sv,
         in_objs = [verilated_threads_o, verilated_o, compiled],
-        out_lib = "{ext(in_sv, '.a')}",
+        out_lib = "{swapext(in_sv, '.a')}",
     )
 
     return hancho.Task(
@@ -126,51 +121,51 @@ def chparams(c):
     return result
 
 yosys = hancho.Tool(
-    desc     = "Run yosys on {base(in_sv)}",
+    desc     = "Run yosys on {basename(in_sv)}",
     command  = "yosys -q -p 'read_verilog -defer {weave('-I', includes)} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -top {top} -json {out_json};'",
     chparams = chparams,
     in_sv    = None,
     includes = None,
     params   = None,
-    top      = "{os.path.splitext(in_sv)[0]}",
-    out_json = "{ext(in_sv, '.json')}",
+    top      = "{swapext(basename(in_sv), '')}",
+    out_json = "{swapext(in_sv, '.json')}",
 )
 
 
 sv2v = hancho.Tool(
-    desc     = "Run sv2v on {base(in_sv)}",
+    desc     = "Run sv2v on {basename(in_sv)}",
     command  = "sv2v {weave('-I', includes)} {in_sv} -w {out_v}",
     includes = None,
     in_sv    = None,
-    out_v    = "{ext(in_sv, '.v')}",
+    out_v    = "{swapext(in_sv, '.v')}",
 )
 
 nextpnr = hancho.Tool(
-    desc    = "Run nextpnr-ice40 on {base(in_json)}",
+    desc    = "Run nextpnr-ice40 on {basename(in_json)}",
     command = "nextpnr-ice40 {flags} -q --json {in_json} --pcf {pcf} --{chip} --package {package}  --asc {out_asc}",
     flags   = None,
     in_json = None,
     pcf     = None,
     chip    = None,
     package = None,
-    out_asc = "{ext(in_json, '.asc')}",
+    out_asc = "{swapext(in_json, '.asc')}",
 )
 
 icepack = hancho.Tool(
-    desc    = "Run icepack on {base(in_asc)}",
+    desc    = "Run icepack on {basename(in_asc)}",
     command = "icepack {in_asc} {out_bin}",
     in_asc  = None,
-    out_bin = "{ext(in_asc, '.bin')}",
+    out_bin = "{swapext(in_asc, '.bin')}",
 )
 
 iceprog = hancho.Tool(
-    desc    = "Run iceprog on {base(in_bin)}",
+    desc    = "Run iceprog on {basename(in_bin)}",
     command = "iceprog -S {in_bin}",
     in_bin  = None
 )
 
 synth = hancho.Tool(
-    desc    = "Synth {base(in_sv)}",
+    desc    = "Synth {basename(in_sv)}",
     command = [
         "yosys -p 'read_verilog -defer {weave('-I', includes)} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
         #"yosys -q -p 'read_verilog -defer {cc_includes} -sv {in_sv}; dump; {chparams(params)} synth_ice40 -json {out_json};'",
@@ -186,8 +181,8 @@ synth = hancho.Tool(
     params   = None,
     includes = None,
 
-    out_json = "{ext(in_sv, '.json')}",
-    out_asc  = "{ext(in_sv, '.asc')}",
-    out_bin  = "{ext(in_sv, '.bin')}",
+    out_json = "{swapext(in_sv, '.json')}",
+    out_asc  = "{swapext(in_sv, '.asc')}",
+    out_bin  = "{swapext(in_sv, '.bin')}",
 )
 

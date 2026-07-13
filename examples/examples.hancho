@@ -5,11 +5,11 @@ import os
 import hancho
 
 if os.name == "posix":
-    hancho.load("hello_world/build.hancho")
+    #hancho.load("hello_world/build.hancho")
     #hancho.load("hello_gtk/build.hancho")
     #hancho.load("subrepos/build.hancho")
     #hancho.load("dynamic_dependencies/build.hancho")
-    #hancho.load("bazel-cpp-tutorial/build.hancho")
+    hancho.load("bazel-cpp-tutorial/build.hancho")
     pass
 elif os.name == "nt":
     #hancho.load("windows/build.hancho")

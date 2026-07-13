@@ -1,16 +1,16 @@
 import hancho
 
-tools = config.tools
-lib = config.lib
+tools = options.tools
+lib = options.lib
 
-hello_greet = tools.cc_library(
-    in_srcs = ["hello-greet.cc"],
-    in_hdrs = ["hello-greet.h"],
-    out_lib = "hello-greet",
-)
-
-hello_world = tools.cc_binary(
-    in_srcs = ["hello-world.cc"],
-    in_deps = [hello_greet, lib.hello_time],
-    out_bin = "hello-world",
-)
+#hello_greet = tools.cc_library(
+#    in_srcs = ["hello-greet.cc"],
+#    in_hdrs = ["hello-greet.h"],
+#    out_lib = "hello-greet",
+#)
+#
+#hello_world = tools.cc_binary(
+#    in_srcs = ["hello-world.cc"],
+#    in_deps = [hello_greet, lib.hello_time],
+#    out_bin = "hello-world",
+#)

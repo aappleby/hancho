@@ -37,19 +37,19 @@ ld_libs = [
 ]
 
 compile_cpp = hancho.Tool(
-    desc       = "Compiling C++ {base(in_src)} -> {base(out_obj)}",
+    desc       = "Compiling C++ {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
     includes   = None,
     #----------
     in_src     = None,
-    in_depfile = "{ext(out_obj, '.d')}",
-    out_obj    = "{ext(in_src, '.o')}",
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
 )
 
 link_cpp_lib = hancho.Tool(
-    desc     = "Bundling C++ library {base(out_lib)}",
+    desc     = "Bundling C++ library {basename(out_lib)}",
     command  = "ar rcs {out_lib} {in_objs}",
     #----------
     in_objs  = None,
@@ -57,7 +57,7 @@ link_cpp_lib = hancho.Tool(
 )
 
 link_cpp_bin = hancho.Tool(
-    desc     = "Linking {base(out_bin)}",
+    desc     = "Linking {basename(out_bin)}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_deps} {ld_libs}",
     #----------
     ld_flags = ld_flags,
@@ -71,7 +71,7 @@ link_cpp_bin = hancho.Tool(
 def cc_library(*, out_lib, in_deps = None, in_srcs = None, in_data = None, in_hdrs = None):
     objs = [
         hancho.Task(compile_cpp, in_src = src)
-        for src in hancho.flatten(in_srcs)
+        for src in hancho.Utils.flatten(in_srcs)
     ]
     bin  = hancho.Task(link_cpp_lib, out_lib = out_lib, in_objs=objs)
     return bin
@@ -79,7 +79,7 @@ def cc_library(*, out_lib, in_deps = None, in_srcs = None, in_data = None, in_hd
 def cc_binary(*, out_bin, in_deps = None, in_srcs = None, in_data = None):
     objs = [
         hancho.Task(compile_cpp, in_src=src)
-        for src in hancho.flatten(in_srcs)
+        for src in hancho.Utils.flatten(in_srcs)
     ]
     bin = hancho.Task(link_cpp_bin, out_bin = out_bin, in_objs=objs, in_deps=in_deps)
     return bin

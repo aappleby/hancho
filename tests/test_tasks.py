@@ -173,7 +173,7 @@ class TestTasks(unittest.TestCase):
     #          command = "cat {rel_source_files} > {rel_build_files}",
     #          source_files = "stuff.txt",
     #          build_files = "repo.txt",
-    #          b*ase_path = os.path.abspath("subrepo")
+    #          b*ase_path = os.path.normpath("subrepo")
     #      )
     #      self.run_tasks(0)
 
@@ -350,8 +350,8 @@ class TestTasks(unittest.TestCase):
                 desc="test_input_changed {in_src}",
                 command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
                 in_src=None,
-                in_depfile="{ext(out_obj, '.d')}",
-                out_obj="{ext(in_src, '.o')}",
+                in_depfile="{swapext(out_obj, '.d')}",
+                out_obj="{swapext(in_src, '.o')}",
             )
             hancho.Task(compile, in_src="src/test.cpp")
             self.run_tasks(0)
@@ -445,8 +445,8 @@ class TestTasks(unittest.TestCase):
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
             command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
-            in_src=os.path.abspath("src/foo.c"),
-            out_obj="{ext(in_src, '.o')}",
+            in_src=os.path.normpath("src/foo.c"),
+            out_obj="{swapext(in_src, '.o')}",
         )
 
         self.assertFalse(Path("build/src/foo.o").exists())
@@ -499,8 +499,8 @@ class TestTasks(unittest.TestCase):
             compile = hancho.Tool(
                 desc="test_header_changed {in_src}",
                 command=command,
-                in_depfile="{ext(out_obj, '.d')}",
-                out_obj="{ext(in_src, '.o')}",
+                in_depfile="{swapext(out_obj, '.d')}",
+                out_obj="{swapext(in_src, '.o')}",
                 depformat=depformat,
             )
             hancho.Task(compile, in_src="src/test.cpp")

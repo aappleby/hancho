@@ -14,7 +14,7 @@ default_toolchain = hancho.Dict(
 # ----------------------------------------
 
 check_cpp = hancho.Tool(
-    desc = "Checking C++ syntax of {base(in_src)}",
+    desc = "Checking C++ syntax of {basename(in_src)}",
     command = "{toolchain.compiler} {all_flags} -c {in_src} && touch {out_ok}",
     all_flags = [
         "-fsyntax-only",
@@ -37,7 +37,7 @@ check_cpp = hancho.Tool(
 
 if os.name == "posix":
     compile_cpp = hancho.Tool(
-        desc       = "Compiling {base(in_src)} -> {base(out_obj)}",
+        desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
         command    = "{toolchain.compiler} {all_flags}  -c {in_src} -o {out_obj}",
         all_flags  = [
             "-fdiagnostics-color=always",
@@ -55,24 +55,24 @@ if os.name == "posix":
         cpp_std    ="gnu++2a",
         opt_mode   = "-O0",
         debug      = True,
-        warnings   = None,
-        defines    = None,
-        includes   = None,
-        cpp_flags  = None,
+        warnings   = [],
+        defines    = [],
+        includes   = [],
+        cpp_flags  = [],
         in_src     = None,
-        in_depfile = "{ext(out_obj, '.d')}", # Note - this swaps out_obj and not in_src in case the user redirects out_obj
-        out_obj    = "{ext(in_src, '.o')}",
+        in_depfile = "{swapext(out_obj, '.d')}", # Note - this swaps out_obj and not in_src in case the user redirects out_obj
+        out_obj    = "{swapext(in_src, '.o')}",
     )
 
     link_cpp_lib = hancho.Tool(
-        desc    = "Bundling C++ lib {base(out_lib)}",
+        desc    = "Bundling C++ lib {basename(out_lib)}",
         command = "ar rcs {out_lib} {in_objs}",
         in_objs = None,
         out_lib = None,
     )
 
     link_cpp_bin = hancho.Tool(
-        desc       = "Linking C++ bin {base(out_bin)}",
+        desc       = "Linking C++ bin {basename(out_bin)}",
         toolchain  = default_toolchain,
         command    = "{toolchain.linker} {all_flags} -o {out_bin}",
         all_flags  = [
@@ -91,16 +91,16 @@ if os.name == "posix":
     )
 elif os.name == "nt":
     compile_cpp = hancho.Tool(
-        desc="Compiling {base(in_src)} -> {base(out_obj)} ({build_tag})",
+        desc="Compiling {basename(in_src)} -> {basename(out_obj)} ({build_tag})",
         command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
         depformat = "msvc",
         in_src  = None,
-        in_depfile = "{ext(out_obj, '.d')}",
-        out_obj = "{ext(in_src, '.o')}",
+        in_depfile = "{swapext(out_obj, '.d')}",
+        out_obj = "{swapext(in_src, '.o')}",
     )
 
     link_cpp_lib = hancho.Tool(
-        desc      = "Link {base(in_objs)} -> {base(out_bin)}",
+        desc      = "Link {basename(in_objs)} -> {basename(out_bin)}",
         command   = "link.exe {libs} {in_objs} {out_lib}",
         libs      = None,
         in_objs   = None,
@@ -108,7 +108,7 @@ elif os.name == "nt":
     )
 
     link_cpp_bin = hancho.Tool(
-        desc      = "Link {base(in_objs)} -> {base(out_bin)}",
+        desc      = "Link {basename(in_objs)} -> {basename(out_bin)}",
         command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin}",
         libs      = "user32.lib"
     )
@@ -119,22 +119,22 @@ else:
 
 def cpp_lib(*, in_srcs=None, in_objs=None, **kwargs):
     new_objs = [
-        hancho.task(compile_cpp.fill(kwargs), in_src=f)
-        for f in hancho.flatten(in_srcs)
+        hancho.task(compile_cpp.fill2(kwargs), in_src=f)
+        for f in hancho.Utils.flatten(in_srcs)
     ]
 
-    return hancho.task(link_cpp_lib.fill(kwargs), in_objs = [new_objs, in_objs])
+    return hancho.task(link_cpp_lib.fill2(kwargs), in_objs = [new_objs, in_objs])
 
 # ----------------------------------------
 
 def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
     new_objs = [
-        hancho.task(compile_cpp.fill(kwargs), in_src=file)
-        for file in hancho.flatten(in_srcs)
+        hancho.task(compile_cpp.fill2(kwargs), in_src=file)
+        for file in hancho.Utils.flatten(in_srcs)
     ]
 
-    return hancho.task(link_cpp_bin.fill(kwargs), in_objs = [new_objs, in_objs, in_libs])
+    return hancho.task(link_cpp_bin.fill2(kwargs), in_objs = [new_objs, in_objs, in_libs])
 
 
 ####################################################################################################
@@ -142,10 +142,10 @@ def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
 def make(*, in_makefile, **kwargs):
     cmd = hancho.Tool(
-        desc      = "Run makefile {base(in_makefile)}",
+        desc      = "Run makefile {basename(in_makefile)}",
         command   = "make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
-        make_dir  = "{path.dirname(in_makefile)}",
-        make_file = "{path.basename(in_makefile)}",
+        make_dir  = "{dirname(in_makefile)}",
+        make_file = "{basename(in_makefile)}",
         verbosity = "QUIET",
 
         in_makefile = None,
@@ -157,7 +157,7 @@ def make(*, in_makefile, **kwargs):
 # Testsz
 
 run_test = hancho.Tool(
-    desc     = "Running test {base(in_test)}",
+    desc     = "Running test {basename(in_test)}",
     command  = "{in_test} {args} && touch {out_pass}",
     in_test  = None,
     args     = None,
@@ -168,14 +168,14 @@ run_test = hancho.Tool(
 def cpp_test(*, in_srcs=None, in_objs=None, **kwargs):
 
     new_objs = [
-        hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.flatten(in_srcs)
+        hancho.Task(compile_cpp.fill2(kwargs), in_src=src)
+        for src in hancho.Utils.flatten(in_srcs)
     ]
 
     test_bin = hancho.Task(
-        link_cpp_bin.fill(kwargs),
+        link_cpp_bin.fill2(kwargs),
         in_objs=[new_objs, in_objs],
         test_dir = "{script_dir}",
     )
 
-    return hancho.Task(run_test.fill(kwargs), in_test=test_bin)
+    return hancho.Task(run_test.fill2(kwargs), in_test=test_bin)

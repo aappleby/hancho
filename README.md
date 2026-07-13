@@ -32,7 +32,7 @@ usage: hancho.py [-h] [-v] [-q] [-C ROOT_DIR] [-f ROOT_FILE] .....<snip>
 # Hancho templates use {brackets} like Python f-strings with a few differences:
 #   - Templates are lazily-evaluated
 #   - Templates look up fields from a Dict
-#   - Templates can use built-in functions like ext() for common filename
+#   - Templates can use built-in functions like swapext() for common filename
 #     operations
 
 # Task fields named 'in_*' and 'out_*' are special - they define the input
@@ -42,14 +42,14 @@ usage: hancho.py [-h] [-v] [-q] [-C ROOT_DIR] [-f ROOT_FILE] .....<snip>
 compile_cpp = hancho.Tool(
     desc    = "Compiling C++ {in_src} -> {out_obj}",
     command = "g++ -c {in_src} -o {out_obj}",
-    out_obj = "{ext(in_src, '.o')}",
+    out_obj = "{swapext(in_src, '.o')}",
 )
 
 # To make Hancho do some work, we pass tools, dicts, and key-value pairs to hancho.Task().
 # It merges all dicts, expands templates, and queues an asynchronous task to run the command.
 
 # The hancho.Task() function creates a Task object, which is like a promise that
-# resolves to a dict of (out_*, abspath(*)) items when the task is complete.
+# resolves to a dict of (out_*, normpath(*)) items when the task is complete.
 
 main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
 util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
