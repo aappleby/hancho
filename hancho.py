@@ -181,14 +181,8 @@ class Dict(dict):
         #return self.set_by_path(key, val)
         dict.__setitem__(self, key, val)
 
-    def expand(self, template, onion = None):
-        if onion is None:
-            script = cv_script.get()
-            onion = Onion()
-            onion._layers['script_module'] = script.module.__dict__
-            onion._layers['script_options'] = script.options
-            onion._layers['self'] = self
-        return Expander.expand(template, onion)
+    def expand(self, template):
+        return Expander.expand(template, self)
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -337,11 +331,14 @@ class Expander:
         pass
 
     @classmethod
-    def expand(cls, variant : Any, onion : Onion):
+    def expand(cls, variant : Any, onion : Onion | Dict):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
         """
+
+        if isinstance(onion, Dict):
+            onion = Onion(task_config = onion)
 
         if variant == sentinel:
             raise AssertionError("Tried to expand a sentinel value")
@@ -410,9 +407,8 @@ class Expander:
 
 
         onion2 = Onion()
-        onion2._layers["hancho_module"] = hancho.__dict__
-
-        onion2._layers["script_module"] = script.module.__dict__
+        onion2._layers["hancho_module"]  = hancho.__dict__
+        onion2._layers["script_module"]  = script.module.__dict__
         onion2._layers["script_options"] = script.options
 
         onion2._layers.update(onion._layers)
@@ -1270,11 +1266,6 @@ class Script:
     def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
         self.options = options
 
-        #self.onion = Onion(
-        #    script_module  = module.__dict__,
-        #    script_options = options,
-        #)
-
         self.module  = module
         self.code    = code
 
@@ -1535,7 +1526,7 @@ class Task:
             self.enable_task()
 
     def expand(self, variant):
-        return Expander.expand(variant, self.onion)
+        return Expander.expand(variant, self.config)
 
     # ----------------------------------------------------------------------------------------------
     # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -2494,19 +2485,20 @@ class Main:
 
     # fmt: on
 
-    hancho_script : Script
     hancho_flags : Dict
 
     @classmethod
     def reset(cls, config):
         pass
 
-
     # ----------------------------------------------------------------------------------------------
     # INIT
 
     @classmethod
     def init(cls, flags):
+
+        null_script = Script(Dict(), hancho, sys._getframe().f_code)
+        cv_script.set(null_script)
 
         # --------------------------------------------------------------------------------------
 
@@ -2522,24 +2514,18 @@ class Main:
         Main.reset    (flags)
 
         onion = Onion(hancho_flags = flags)
-        hancho_script = Script(Dict(), hancho, sys._getframe().f_code)
-        cv_script.set(hancho_script)
 
-        flags.hancho_dir  = Path.normpath(onion.hancho_dir)
-        flags.script_path = Path.normpath(onion.script_path)
+        #flags.hancho_dir  = Path.normpath(onion.hancho_dir)
+        #flags.script_path = Path.normpath(onion.script_path)
         flags.script_cwd  = Path.normpath(onion.script_cwd)
         flags.repo_root   = Path.normpath(onion.repo_root)
+        cls.hancho_flags = flags
 
+        hancho_script = Script(Dict(), hancho, sys._getframe().f_code)
         hancho_script.options = Dict(flags, script_path =__file__)
-
-        # ------------------------------------
-
-
+        cv_script.set(hancho_script)
 
         Loader.all_scripts.append(hancho_script)
-
-        cls.hancho_flags = flags
-        cls.hancho_script = hancho_script
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2894,24 +2880,19 @@ weave    = Utils.weave
 def load2(script_path, is_repo, *args, **kwargs):
     parent_script = cv_script.get()
 
-    parent_script_onion = Onion(
-        script_module  = parent_script.module.__dict__,
-        script_options = parent_script.options,
-    )
-
-    script_path = Expander.expand(script_path, parent_script_onion)
+    script_path = Expander.expand(script_path, Onion())
     script_path = Path.resolve(script_path)
 
     child_options = Dict(
         parent_script.options,
         *args,
         kwargs,
-        Dict(
-            repo_root = Path.dirname(script_path) if is_repo else parent_script.options.repo_root,
-            script_path = script_path,
-            script_cwd  = Path.dirname(script_path),
-        )
+        script_path = script_path,
+        script_cwd  = Path.dirname(script_path),
     )
+
+    if is_repo:
+        child_options.repo_root = Path.dirname(script_path)
 
     with LogLevel.VERBOSE, Colors.ORANGE:
         type = "repo" if is_repo else "script"
