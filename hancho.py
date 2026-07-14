@@ -2491,12 +2491,6 @@ class Main:
         log_time     = True,
     )
 
-    default_options = Dict(
-        default_hancho_options,
-        default_script_options,
-        default_log_options
-    )
-
     # fmt: on
 
     hancho_flags : Dict
@@ -2612,7 +2606,6 @@ class Main:
         )
         verbosities = [v.lower() for v in LogLevel.__members__]
 
-        d = Main.default_options
         bool_opt = argparse.BooleanOptionalAction
 
         # Flags
@@ -2653,7 +2646,12 @@ class Main:
 
         raw_flags = {k:v for k, v in raw_flags.items() if v is not None}
 
-        flags = Dict(Main.default_options, raw_flags)
+        flags = Dict(
+            Main.default_hancho_options,
+            Main.default_script_options,
+            Main.default_log_options,
+            raw_flags
+        )
 
         opt_file = Path.normpath(flags.opt_file)
 
@@ -3004,7 +3002,17 @@ def init(*args, **kwargs):
 
 # Our expander expects there to always be a script context, but when we start up there isnt' one.
 # Create a dummy one so that the "there is always a script context" invariant is true.
-cv_script.set(Script(Main.default_options, hancho, sys._getframe().f_code))
+cv_script.set(
+    Script(
+        Dict(
+            Main.default_hancho_options,
+            Main.default_script_options,
+            Main.default_log_options
+        ),
+        hancho,
+        sys._getframe().f_code
+    )
+)
 
 def _start():
     if __name__ == "__main__":
