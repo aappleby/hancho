@@ -13,7 +13,7 @@ gtk_libs = [name[2:] for name in gtk_libs.split()]
 main_o = hancho.Task(
     tools_base.compile_cpp,
     in_src    = "main.c",
-    cpp_flags = [gtk_flags],
+    cpp_flags = gtk_flags,
     includes  = gtk_incs,
 )
 

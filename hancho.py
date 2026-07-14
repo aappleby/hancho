@@ -448,7 +448,15 @@ class Expander:
             # This should be the _only_ try/except block in the expansion code.
 
             try:
-                blocks[i] = eval(block[1:-1], {}, onion)
+                result = eval(block[1:-1], {}, onion)
+
+                # If there was only one block in the list, we're done early.
+                if len(blocks) == 1:
+                    if isinstance(result, Task):
+                        raise TypeError("expand should not be producing tasks")
+                    return result
+
+                blocks[i] = Utils.stringify(result)
 
             # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
             # callers. As of Python 3.11, this includes asyncio.CancelledError.
@@ -459,12 +467,8 @@ class Expander:
                 #traceback.print_exc()
                 pass
 
-        # If there was only one block in the list, unwrap it.
-        if len(blocks) == 1:
-            return blocks[0]
-
         # Otherwise we stringify everything and join the blocks back together.
-        return "".join(Utils.stringify(b) for b in blocks)
+        return "".join(blocks)
 
     @classmethod
     def _split_template(cls, text : str, out : list[str]):
@@ -766,9 +770,13 @@ class Utils:
     @staticmethod
     def stringify(variant) -> str:
         """Converts any type into a template-compatible string."""
-        result = " ".join(str(v) for v in Utils.yield_values(variant) if v is not None)
-        if Expander.sentinel in result:
-            raise AssertionError("Tried to stringify a sentinel value")
+        result = ""
+        for v in Utils.yield_values(variant):
+            if isinstance(v, Task):
+                raise AssertionError("We should never be stringifying tasks, something is broken")
+            if result:
+                result += " "
+            result += str(v) if v is not None else ""
         return result
 
     @staticmethod
@@ -1680,6 +1688,10 @@ class Task:
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
 
+        # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
+        # modifying tasks after they're created but before they're started. If you point task B's
+        # inputs at task A and task A's inputs at task B and it blows up, that's on you.
+
         for val in Utils.yield_values(self.config):
             if isinstance(val, Task):
                 if val._aio_task is None:
@@ -1705,6 +1717,16 @@ class Task:
                 ]
                 self.config[key] = Utils.flatten(result)
 
+#        for key, val in task.config.items():
+#            if key == "command":
+#                print("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
+#                print(val)
+#            result = Expander.expand(val, task.onion)
+#            if key == "command":
+#                print(result)
+#                print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+#            task.config[key] = result
+
         # ----------------------------------------
         # Do all our task setup while chdir'd into the task's cwd so that relative paths will be
         # correct while we're checking input file existence. The task_init function is synchronous,
@@ -1712,9 +1734,52 @@ class Task:
         # while we're doing this.
 
         with chdir(task.config.task_cwd):
-            task.task_init()
+            task = self
+            #script = cv_script.get()
+
+            if os.getcwd() != Path.resolve(task.config.task_cwd):
+                raise AssertionError(f"Running task_init while we're not in the real path of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
+
+            # ----------------------------------------
+            # Flatten the commands so that we always have a command list and not a bare string.
+
+
+            # ----------------------------------------
+            # Expand the io field's file list (in 'val') before we remap it, as a template
+            # string can turn into a list of multiple filenames.
+
+            for key, val in task.config.items():
+                if Task.is_io_field(key):
+                    task.config[key] = Utils.flatten(Expander.expand(val, task.onion))
+
+            # ----------------------------------------
+            # Turn all relative paths in io fields into absolute paths (and move them under build_dir
+            # if needed) so that we can access them from any working directory.
+
+            for key, val in task.config.items():
+                if Task.is_io_field(key):
+                    files = [task.remap_io_field_path(key, file) for file in val]
+
+                    # Unwrap filenames if they're an array of one element so that scripts expecting
+                    # join(str, str) to return a str will be happy.
+                    task.config[key] = files[0] if len(files) == 1 else files
+
+
+            # ----------------------------------------
+            # Paths are cleaned up, we can now expand everything else.
+
+            for key, val in task.config.items():
+                task.config[key] = Expander.expand(val, task.onion)
+
+            with LogLevel.DEBUG:
+                task.log("Task config after expand:\n")
+                task.log(str(task.config) + "\n")
+
+        task.config.command = Utils.flatten(task.config.command)
 
         task.sanity_check()
+
+
 
         # ----------------------------------------
         # Dry runs early out after the task is initialized but before we do .exists() checks or
@@ -1809,55 +1874,6 @@ class Task:
                 message += f"'{task.config.name}' - "
             message += f"'{task.config.desc}'\n"
             task.log(message)
-
-    # ----------------------------------------------------------------------------------------------
-    # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
-    # modifying tasks after they're created but before they're started. If you point task B's
-    # inputs at task A and task A's inputs at task B and it blows up, that's on you.
-
-    # ----------------------------------------------------------------------------------------------
-
-    def task_init(self):
-        task = self
-        #script = cv_script.get()
-
-        if os.getcwd() != Path.resolve(task.config.task_cwd):
-            raise AssertionError(f"Running task_init while we're not in the real path of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
-
-        # ----------------------------------------
-        # Flatten the commands so that we always have a command list and not a bare string.
-
-        task.config.command = Utils.flatten(task.config.command)
-
-        # ----------------------------------------
-        # Expand the io field's file list (in 'val') before we remap it, as a template
-        # string can turn into a list of multiple filenames.
-
-        for key, val in task.config.items():
-            if Task.is_io_field(key):
-                task.config[key] = Utils.flatten(Expander.expand(val, task.onion))
-
-        # ----------------------------------------
-        # Turn all relative paths in io fields into absolute paths (and move them under build_dir
-        # if needed) so that we can access them from any working directory.
-
-        for key, val in task.config.items():
-            if Task.is_io_field(key):
-                files = [task.remap_io_field_path(key, file) for file in val]
-
-                # Unwrap filenames if they're an array of one element so that scripts expecting
-                # join(str, str) to return a str will be happy.
-                task.config[key] = files[0] if len(files) == 1 else files
-
-        # ----------------------------------------
-        # Paths are cleaned up, we can now expand everything else.
-
-        for key, val in task.config.items():
-            task.config[key] = Expander.expand(val, task.onion)
-
-        with LogLevel.DEBUG:
-            task.log("Task config after expand:\n")
-            task.log(str(task.config) + "\n")
 
     # ----------------------------------------------------------------------------------------------
 

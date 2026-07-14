@@ -485,7 +485,7 @@ class TestTasks(unittest.TestCase):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
 
         if os.name == 'posix':
-            command="gcc -MMD -c {in_src} -o {out_obj}",
+            command="gcc -MMD -c {in_src} -o {out_obj}"
             depformat="gcc"
         elif os.name == 'nt':
             command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
