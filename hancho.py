@@ -2437,29 +2437,50 @@ class Main:
     build_started = False
 
     # fmt: off
-    default_options = Dict(
-        hancho_dir   = os.path.dirname(__file__),
-        opt_file     = "hancho.opts",
-        script_path  = "build.hancho",
-        script_cwd   = "{dirname(script_path)}",
-        task_cwd     = "{repo_root}",
-        repo_root    = "{dirname(script_path)}",
 
-        run_tool     = None,
-        max_errors   = 0,
-        cpu_count    = os.cpu_count() or 1,
-        cpu_cores    = 1,
-        depformat    = "gcc" if os.name == "posix" else "msvc",
+    hancho_path = __file__
+    hancho_dir  = os.path.dirname(hancho_path)
+    hancho_cwd  = os.getcwd()
+    build_root  = Path.join(hancho_cwd, "build")
+
+    default_hancho_options = Dict(
+        hancho_path  = hancho_path,
+        hancho_dir   = hancho_dir,
+        opt_file     = "hancho.opts",
+
+        script_path  = Path.join(hancho_cwd, "hancho.py"),
+        script_cwd   = hancho_cwd,
+        task_cwd     = hancho_cwd,
+        repo_root    = hancho_cwd,
 
         build_tag    = "",
-        build_root   = "{repo_root}/build",
-        build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
+        build_root   = build_root,
+        build_dir    = build_root,
         build_target = None,
         build_force  = False,
         build_all    = False,
         build_dry    = False,
         build_strict = True,
 
+        run_tool     = None,
+        max_errors   = 0,
+        cpu_count    = os.cpu_count() or 1,
+        cpu_cores    = 1,
+        depformat    = "gcc" if os.name == "posix" else "msvc",
+    )
+
+    default_script_options = Dict(
+        script_path  = "build.hancho",
+        script_cwd   = "{dirname(script_path)}",
+        task_cwd     = "{repo_root}",
+        repo_root    = "{dirname(script_path)}",
+
+        build_tag    = "",
+        build_root   = "{repo_root}/build",
+        build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
+    )
+
+    default_log_options = Dict(
         log_level    = LogLevel.NORMAL,
         log_quiet    = False,
         log_verbose  = False,
@@ -2468,6 +2489,12 @@ class Main:
         log_wrap     = False,
         log_color    = True,
         log_time     = True,
+    )
+
+    default_options = Dict(
+        default_hancho_options,
+        default_script_options,
+        default_log_options
     )
 
     # fmt: on
