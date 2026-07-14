@@ -261,7 +261,7 @@ class Onion(abc.Mapping):
             if isinstance(layer, abc.Mapping) and key in layer:
                 val = layer[key]
                 if not isinstance(val, abc.Mapping):
-                    return self.expand(val)
+                    return Expander.expand(val, self)
 
         # Nope, all mappings. Pull out the ones containing the key.
         new_layers = {
@@ -276,9 +276,6 @@ class Onion(abc.Mapping):
 
         # Otherwise we make a new onion out of the mappings.
         return Onion(**new_layers)
-
-    def expand(self, template):
-        return Expander.expand(template, self)
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -2316,7 +2313,7 @@ class Runner:
             target_regex = re.compile(script.options.target)
 
             for task in Loader.yield_tasks():
-                name = Expander.expand("{name}", task.onion)
+                name = Expander.expand("{name}", task.config)
                 if target_regex.search(name):
                     task.enable_task()
 

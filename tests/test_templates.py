@@ -165,8 +165,7 @@ class TestTemplates(unittest.TestCase):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in
         # the nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-        o = Onion(layer = d)
-        result = o.expand("{a.b}")
+        result = hancho.Expander.expand("{a.b}", d)
         self.assertEqual(result, 10)
 
     def test_TEFINAE(self):
