@@ -412,10 +412,8 @@ class Expander:
         onion2 = Onion()
         onion2._layers["hancho_module"] = hancho.__dict__
 
-        if script and script.module:
-            onion2._layers["script_module"] = script.module.__dict__
-        if script and script.options:
-            onion2._layers["script_options"] = script.options
+        onion2._layers["script_module"] = script.module.__dict__
+        onion2._layers["script_options"] = script.options
 
         onion2._layers.update(onion._layers)
 
@@ -2524,19 +2522,20 @@ class Main:
         Main.reset    (flags)
 
         onion = Onion(hancho_flags = flags)
+        hancho_script = Script(Dict(), hancho, sys._getframe().f_code)
+        cv_script.set(hancho_script)
 
         flags.hancho_dir  = Path.normpath(onion.hancho_dir)
         flags.script_path = Path.normpath(onion.script_path)
         flags.script_cwd  = Path.normpath(onion.script_cwd)
         flags.repo_root   = Path.normpath(onion.repo_root)
 
-        # ------------------------------------
-
-        hancho_script = Script(Dict(), hancho, sys._getframe().f_code)
-
         hancho_script.options = Dict(flags, script_path =__file__)
 
-        cv_script.set(hancho_script)
+        # ------------------------------------
+
+
+
         Loader.all_scripts.append(hancho_script)
 
         cls.hancho_flags = flags
