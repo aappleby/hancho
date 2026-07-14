@@ -1358,17 +1358,10 @@ class Script:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        script = cv_script.get()
-
-        task_onion = Onion(
-            hancho_module = hancho.__dict__,
-            script_module  = script.module.__dict__,
-            script_options = script.options,
-            task_config = task.config
-        )
+        build_force = Expander.expand("{build_force}", task.config)
 
 
-        if task_onion.build_force:
+        if build_force:
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -1699,13 +1692,16 @@ class Task:
             task_config = task.config
         )
 
-        task.config.task_cwd   = Path.normpath(task_onion.task_cwd)
-        task.config.build_dir  = Path.normpath(task_onion.build_dir)
+        task.config.task_cwd   = Expander.expand("{task_cwd}", task.config)
+        task.config.build_dir  = Expander.expand("{build_dir}", task.config)
 
-        task.config.build_tag  = task_onion.build_tag
-        task.config.core_count = task_onion.cpu_cores
-        task.config.depformat  = task_onion.depformat
-        task.config.enabled    = task_onion.enabled
+        task.config.task_cwd   = Path.normpath(task.config.task_cwd)
+        task.config.build_dir  = Path.normpath(task.config.build_dir)
+
+        task.config.build_tag  = Expander.expand("{build_tag}", task.config)
+        task.config.core_count = Expander.expand("{cpu_cores}", task.config)
+        task.config.depformat  = Expander.expand("{depformat}", task.config)
+        task.config.enabled    = Expander.expand("{enabled}", task.config)
 
         # ----------------------------------------
         # Flatten the commands so that we always have a command list and not a bare string.
