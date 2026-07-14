@@ -1366,47 +1366,6 @@ class Script:
 
     # ----------------------------------------------------------------------------------------------
 
-    def pre_task(self, task):
-        script = self
-
-        # Tasks should have at most one depfile.
-        for key, files in list(task.config.items()):
-            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
-                # Why isn't this being hit by code coverage? We do have a test for it.
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
-
-        # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
-        if "in_depfile" in task.config:
-            task._old_deplines = Utils.load_depfile(
-                task.config.in_depfile, task.config.depformat, task.config.task_cwd
-            )
-            for file in task._old_deplines:
-                if os.path.exists(file):
-                    self.update_stat_db(self.mid_stat_db, file)
-                else:
-                    raise AssertionError(f"Could not find {file}")
-
-        if not script.options.build_dry:
-            for file in Utils.yield_values(task.in_files):
-                assert os.path.exists(file)
-                if os.path.exists(file):
-                    self.update_stat_db(self.mid_stat_db, file)
-
-            for file in Utils.yield_values(task.out_files):
-                if os.path.exists(file):
-                    str_command = Script.commands_to_string(task.config.command)
-                    self.update_stat_db(self.mid_stat_db, file, str_command)
-
-    # ----------------------------------------------------------------------------------------------
-
-    def post_task(self, task):
-        if "in_depfile" in task.config:
-            task.new_deplines = Utils.load_depfile(
-                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
-                )
-
-    # ----------------------------------------------------------------------------------------------
-
     def rebuild_reason(self, task) -> str:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
@@ -1773,27 +1732,26 @@ class Task:
                 # Why isn't this being hit by code coverage? We do have a test for it.
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
-        if not script.options.build_dry:
-            # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
-            if "in_depfile" in task.config:
-                task._old_deplines = Utils.load_depfile(
-                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
-                )
-                for file in task._old_deplines:
-                    if os.path.exists(file):
-                        script.update_stat_db(script.mid_stat_db, file)
-                    else:
-                        raise AssertionError(f"Could not find {file}")
-
-            for file in Utils.yield_values(task.in_files):
-                assert os.path.exists(file)
+        # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
+        if "in_depfile" in task.config:
+            task._old_deplines = Utils.load_depfile(
+                task.config.in_depfile, task.config.depformat, task.config.task_cwd
+            )
+            for file in task._old_deplines:
                 if os.path.exists(file):
                     script.update_stat_db(script.mid_stat_db, file)
+                else:
+                    raise AssertionError(f"Could not find {file}")
 
-            for file in Utils.yield_values(task.out_files):
-                if os.path.exists(file):
-                    str_command = Script.commands_to_string(task.config.command)
-                    script.update_stat_db(script.mid_stat_db, file, str_command)
+        for file in Utils.yield_values(task.in_files):
+            assert os.path.exists(file)
+            if os.path.exists(file):
+                script.update_stat_db(script.mid_stat_db, file)
+
+        for file in Utils.yield_values(task.out_files):
+            if os.path.exists(file):
+                str_command = Script.commands_to_string(task.config.command)
+                script.update_stat_db(script.mid_stat_db, file, str_command)
 
         task._reason = script.rebuild_reason(task)
         if not task._reason:
@@ -1840,7 +1798,10 @@ class Task:
 
         time_b = time.perf_counter()
 
-        script.post_task(task)
+        if "in_depfile" in task.config:
+            task._new_deplines = Utils.load_depfile(
+                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
+                )
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
