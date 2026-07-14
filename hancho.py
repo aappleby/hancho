@@ -325,10 +325,6 @@ class Expander:
     sentinel = sentinel
 
     @classmethod
-    def reset(cls, config):
-        pass
-
-    @classmethod
     def expand(cls, variant : Any, config : Dict):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
@@ -665,7 +661,7 @@ class Dumper:
 class Utils:
 
     @classmethod
-    def reset(cls, config):
+    def reset(cls):
         cls.stat_calls = 0
         cls.hash_calls = 0
         cls.hash_bytes = 0
@@ -947,7 +943,7 @@ class Log:
     log_level_in  = LogLevel.NORMAL
     log_level_out = LogLevel.NORMAL # log level we want to appear in the log
 
-    options = Dict(
+    log_options = Dict(
         log_level    = LogLevel.NORMAL,
         log_quiet    = False,
         log_verbose  = False,
@@ -959,8 +955,8 @@ class Log:
     )
 
     @classmethod
-    def reset(cls, options : Dict):
-        cls.options = options
+    def reset(cls, log_options : Dict):
+        cls.log_options = log_options
 
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
@@ -969,27 +965,27 @@ class Log:
         cls.line_buffer   = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if options.log_level is not None:
-            if isinstance(options.log_level, str):
-                options.log_level = LogLevel[options.log_level.upper()]
-            elif isinstance(options.log_level, int):
-                options.log_level = LogLevel(options.log_level)
+        if log_options.log_level is not None:
+            if isinstance(log_options.log_level, str):
+                log_options.log_level = LogLevel[log_options.log_level.upper()]
+            elif isinstance(log_options.log_level, int):
+                log_options.log_level = LogLevel(log_options.log_level)
             else:
-                raise ValueError(f"Got an unknown log_level '{type(options.log_level)} = {options.log_level}'")
+                raise ValueError(f"Got an unknown log_level '{type(log_options.log_level)} = {log_options.log_level}'")
 
         # The individual -T/-D/-V/-Q flags override --log_level, with the 'loudest' flag winning.
 
-        if options.log_trace:
-            options.log_level = LogLevel.TRACE
-        elif options.log_debug:
-            options.log_level = LogLevel.DEBUG
-        elif options.log_verbose:
-            options.log_level = LogLevel.VERBOSE
-        elif options.log_quiet:
-            options.log_level = LogLevel.QUIET
+        if log_options.log_trace:
+            log_options.log_level = LogLevel.TRACE
+        elif log_options.log_debug:
+            log_options.log_level = LogLevel.DEBUG
+        elif log_options.log_verbose:
+            log_options.log_level = LogLevel.VERBOSE
+        elif log_options.log_quiet:
+            log_options.log_level = LogLevel.QUIET
 
-        cls.log_level_in  = options.log_level
-        cls.log_level_out = options.log_level
+        cls.log_level_in  = log_options.log_level
+        cls.log_level_out = log_options.log_level
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1005,7 +1001,7 @@ class Log:
 
     @classmethod
     def indent(cls, color = 0):
-        ansi = cls.hex_to_ansi(color) if cls.options.log_color else ""
+        ansi = cls.hex_to_ansi(color) if cls.log_options.log_color else ""
         cls.indent_stack.append(ansi + "│ " + cls.reset_color())
 
     @classmethod
@@ -1024,7 +1020,7 @@ class Log:
 
     @classmethod
     def reset_color(cls):
-        if cls.current_color != 0 and cls.options.log_color:
+        if cls.current_color != 0 and cls.log_options.log_color:
             return "\x1B[0m"
         else:
             return ""
@@ -1037,9 +1033,9 @@ class Log:
         if cls.log_level_in > cls.log_level_out:
             return
 
-        if cls.current_color >= 0 and cls.options.log_color:
+        if cls.current_color >= 0 and cls.log_options.log_color:
             hex = cls.current_color
-            color_prefix = cls.hex_to_ansi(hex) if cls.options.log_color else ""
+            color_prefix = cls.hex_to_ansi(hex) if cls.log_options.log_color else ""
             color_suffix = cls.reset_color()
         else:
             color_prefix = ""
@@ -1070,7 +1066,7 @@ class Log:
             if cls.line_buffer[-1] != '\n':
                 cls.line_buffer += '\n'
 
-            if not cls.options.log_wrap:
+            if not cls.log_options.log_wrap:
                 cls.line_buffer = cls.clip_printable(cls.line_buffer, cls.con_w)
 
             assert cls.log_level_in is not None
@@ -1098,7 +1094,7 @@ class Log:
     @classmethod
     def get_timestamp(cls):
         """Returns the timestamp string that is placed at the left of log entries."""
-        return f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.options.log_time else ""
+        return f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.log_options.log_time else ""
 
     @classmethod
     def get_indentation(cls):
@@ -1260,10 +1256,6 @@ class Path:
 # region Script
 
 class Script:
-
-    @classmethod
-    def reset(cls, config):
-        pass
 
     def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
 
@@ -1443,7 +1435,7 @@ class Script:
 class Task:
 
     @classmethod
-    def reset(cls, config):
+    def reset(cls):
         cls.id_counter : int = 0
         cls.tasks_enabled : int = 0
 
@@ -2085,11 +2077,6 @@ class Task:
 
 class Tracer:
 
-    @classmethod
-    def reset(cls, config):
-        cls.config = config
-        pass
-
     def __init__(self, onion : Onion, enter_message, name):
         self.enter_message = f"{enter_message}({name!r})"
         self.name = name
@@ -2159,8 +2146,7 @@ class Loader:
     class Fail(Exception): pass     # Script has hit a fatal error
 
     @classmethod
-    def reset(cls, config : Dict):
-        cls.config : Dict= config
+    def reset(cls):
         cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
         cls.real_filenames : set[str] = set()
         cls.dedupe : dict[tuple[str, str], Script] = {}
@@ -2245,9 +2231,9 @@ class Loader:
 class Runner:
 
     @classmethod
-    def reset(cls, options):
-        cls.options = options
-        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(options.cpu_count)
+    def reset(cls, runner_options):
+        cls.runner_options = runner_options
+        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(runner_options.cpu_count)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
@@ -2271,8 +2257,8 @@ class Runner:
         # A task that requires a lot of cores can block tasks behind it in the queue. This is
         # intended behavior.
 
-        if count > cls.options.cpu_count: # pragma: no cover
-            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.options.cpu_count}")
+        if count > cls.runner_options.cpu_count: # pragma: no cover
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.runner_options.cpu_count}")
         async with cls.core_lock:
             acquired = 0
             try:
@@ -2353,7 +2339,7 @@ class Runner:
             Log.log("Running tasks...\n")
 
         time_a = time.perf_counter()
-        while cls.live_aio_tasks and cls.count_failures() <= Runner.options.max_errors:
+        while cls.live_aio_tasks and cls.count_failures() <= Runner.runner_options.max_errors:
             finished_aio_task = None
 
             try:
@@ -2463,10 +2449,13 @@ class Main:
         build_strict = True,
 
         run_tool     = None,
-        max_errors   = 0,
-        cpu_count    = os.cpu_count() or 1,
         cpu_cores    = 1,
         depformat    = "gcc" if os.name == "posix" else "msvc",
+    )
+
+    default_runner_options = Dict(
+        cpu_count    = os.cpu_count() or 1,
+        max_errors   = 0,
     )
 
     default_script_options = Dict(
@@ -2495,10 +2484,6 @@ class Main:
 
     hancho_flags : Dict
 
-    @classmethod
-    def reset(cls, config):
-        pass
-
     # ----------------------------------------------------------------------------------------------
     # INIT
 
@@ -2508,16 +2493,11 @@ class Main:
         flags.script_cwd = Path.normpath(Expander.expand("{script_cwd}", flags))
         flags.repo_root  = Path.normpath(Expander.expand("{repo_root}", flags))
 
-        Log.reset     (flags)
-        Expander.reset(flags)
-        Utils.reset   (flags)
-        Log.reset     (flags)
-        Script.reset  (flags)
-        Task.reset    (flags)
-        Tracer.reset  (flags)
-        Loader.reset  (flags)
-        Runner.reset  (flags)
-        Main.reset    (flags)
+        Log.reset(Main.default_log_options.fill2(flags))
+        Utils.reset()
+        Task.reset()
+        Loader.reset()
+        Runner.reset(flags)
 
         cls.hancho_flags = flags
 
@@ -2648,6 +2628,7 @@ class Main:
 
         flags = Dict(
             Main.default_hancho_options,
+            Main.default_runner_options,
             Main.default_script_options,
             Main.default_log_options,
             raw_flags
@@ -3006,6 +2987,7 @@ cv_script.set(
     Script(
         Dict(
             Main.default_hancho_options,
+            Main.default_runner_options,
             Main.default_script_options,
             Main.default_log_options
         ),
