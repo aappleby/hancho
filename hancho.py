@@ -219,9 +219,6 @@ class Onion(abc.Mapping):
     __slots__ = ("_layers",)
 
     def __init__(self, *args, **kwargs):
-        #print(args)
-        #print(kwargs)
-
         self._layers = {}
         for val in args:
             if isinstance(val, Onion):
@@ -2176,7 +2173,7 @@ class Loader:
 
         # ----------------------------------------
 
-        onion = Onion(parent_script.onion, options = options)
+        onion = Onion(parent_script.onion, script_options = options)
 
         path = options.script_path
         path = Expander.expand(path, onion)
