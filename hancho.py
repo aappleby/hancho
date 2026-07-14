@@ -1466,6 +1466,16 @@ class Task:
             *args, **kwargs
         )
 
+        #default_script_options = Dict(
+        #    script_path  = "build.hancho",
+        #    script_cwd   = "{dirname(script_path)}",
+        #    repo_root    = "{dirname(script_path)}",
+        #    task_cwd     = "{repo_root}",
+        #     #    build_tag    = "",
+        #    build_root   = "{repo_root}/build",
+        #    build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
+        #)
+
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
         self.in_files  = {}
@@ -2450,10 +2460,6 @@ class Main:
         depformat    = "gcc" if os.name == "posix" else "msvc",
     )
 
-    default_task_options = Dict(
-        task_cwd     = "{repo_root}",
-    )
-
     default_runner_options = Dict(
         cpu_count    = os.cpu_count() or 1,
         max_errors   = 0,
@@ -2463,6 +2469,7 @@ class Main:
         script_path  = "build.hancho",
         script_cwd   = "{dirname(script_path)}",
         repo_root    = "{dirname(script_path)}",
+        task_cwd     = "{repo_root}",
 
         build_tag    = "",
         build_root   = "{repo_root}/build",
@@ -2867,10 +2874,12 @@ def load2(script_path, is_repo, overrides):
 
     child_options = Dict(
         parent_script.options,
+        #Main.default_script_options,
         overrides,
         script_path = script_path,
         script_cwd  = Path.dirname(script_path),
     )
+
 
     if is_repo:
         child_options.repo_root = Path.dirname(script_path)
