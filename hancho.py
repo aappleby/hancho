@@ -331,14 +331,11 @@ class Expander:
         pass
 
     @classmethod
-    def expand(cls, variant : Any, onion : Onion | Dict):
+    def expand(cls, variant : Any, config : Dict):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
         """
-
-        if isinstance(onion, Dict):
-            onion = Onion(task_config = onion)
 
         if variant == sentinel:
             raise AssertionError("Tried to expand a sentinel value")
@@ -351,7 +348,7 @@ class Expander:
                 # Remember how much budget was spent.
                 saved = Expander.cv_evals.get()
                 # Expand the list element.
-                result.append(Expander.expand(v, onion))
+                result.append(Expander.expand(v, config))
                 # Restore the budget so the next string in the list gets it.
                 Expander.cv_evals.set(saved)
             return result
@@ -378,7 +375,7 @@ class Expander:
                 old_template = template
                 #Log.log(f"Expand {template!r} with merged_onion 0x{hex(id(merged_onion))[-4:]} {len(merged_onion._layers)}\n")
 
-                template = Expander._expand_pass(template, onion)
+                template = Expander._expand_pass(template, config)
                 #Log.log(f" = {template}\n")
 
         finally:
@@ -396,8 +393,10 @@ class Expander:
     # fail on expansion failure so we can retry somewhere/somewhen else.
 
     @classmethod
-    def _expand_pass(cls, template : str, onion : Onion):
+    def _expand_pass(cls, template : str, config : Dict):
         """The inner expand function does one split-expand-rejoin pass on the template string."""
+
+        onion = Onion(task_config = config)
 
         script = cv_script.get()
 
@@ -1297,16 +1296,10 @@ class Script:
         script = self
         result = {}
 
-        script_onion = Onion(
-            script_module  = script.module.__dict__,
-            script_options = script.options,
-        )
-
-
-        stat_db = Expander.expand(self.stat_db_path, script_onion)
+        stat_db = Expander.expand(self.stat_db_path, Dict())
         stat_db = cast(str, Path.normpath(stat_db))
 
-        comp_db = Expander.expand(script.comp_db_path, script_onion)
+        comp_db = Expander.expand(script.comp_db_path, Dict())
         comp_db = cast(str, Path.normpath(comp_db))
 
         with LogLevel.VERBOSE, Colors.ORANGE:
@@ -1716,7 +1709,7 @@ class Task:
 
         for key, val in task.config.items():
             if Task.is_io_field(key):
-                task.config[key] = Utils.flatten(Expander.expand(val, task.onion))
+                task.config[key] = Utils.flatten(Expander.expand(val, task.config))
 
         # ----------------------------------------
         # Turn all relative paths in io fields into absolute paths (and move them under build_dir
@@ -1782,7 +1775,7 @@ class Task:
         # Paths are cleaned up, we can now expand everything else.
 
         for key, val in task.config.items():
-            task.config[key] = Expander.expand(val, task.onion)
+            task.config[key] = Expander.expand(val, task.config)
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
@@ -2194,7 +2187,7 @@ class Loader:
         onion = Onion(parent_script_onion, script_options = options)
 
         path = options.script_path
-        path = Expander.expand(path, onion)
+        path = Expander.expand(path, options)
         assert not Utils.is_template(path)
         path = Path.resolve(path)
 
