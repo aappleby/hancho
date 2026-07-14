@@ -341,10 +341,6 @@ class Expander:
     (using `expander.key`), making it versatile for accessing template variables and methods.
     """
 
-    @classmethod
-    def reset(cls, config):
-        pass
-
     # ----------------------------------------------------------------------------------------------
     # Hancho's template expansions can cause infinite loops, so we need some simple complexity
     # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
@@ -362,7 +358,9 @@ class Expander:
 
     sentinel = sentinel
 
-    # ----------------------------------------
+    @classmethod
+    def reset(cls, config):
+        pass
 
     @classmethod
     def expand(cls, variant : Any, onion : Onion):
@@ -421,7 +419,6 @@ class Expander:
 
         return template
 
-    # ----------------------------------------
     # IMPORTANT IMPORTANT IMPORTANT
     # If you can't eval a macro, you return it unchanged.
     # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++ - we don't
@@ -469,8 +466,6 @@ class Expander:
         # Otherwise we stringify everything and join the blocks back together.
         return "".join(Utils.stringify(b) for b in blocks)
 
-    # ----------------------------------------------------------------------------------------------
-
     @classmethod
     def _split_template(cls, text : str, out : list[str]):
         """
@@ -509,7 +504,6 @@ class Expander:
 # region Dumper
 
 class Dumper:
-    # ----------------------------------------------------------------------------------------------
 
     # These types don't get dumped because they're not really dumpable.
     opaque_types = types.MappingProxyType({
@@ -521,8 +515,6 @@ class Dumper:
     # These types don't need a type annotation when dumped.
     base_types = (str, bool, int, float, list, tuple, set, dict, bytes, bytearray, range, type(None),
                   *opaque_types.keys())
-
-    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     def _dump_prefix(cls, key, val, print_id, color_code):
@@ -1377,9 +1369,6 @@ class Script:
     def pre_task(self, task):
         script = self
 
-        if script.options.build_dry:
-            return
-
         # Tasks should have at most one depfile.
         for key, files in list(task.config.items()):
             if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
@@ -1397,15 +1386,16 @@ class Script:
                 else:
                     raise AssertionError(f"Could not find {file}")
 
-        for file in Utils.yield_values(task.in_files):
-            assert os.path.exists(file)
-            if os.path.exists(file):
-                self.update_stat_db(self.mid_stat_db, file)
+        if not script.options.build_dry:
+            for file in Utils.yield_values(task.in_files):
+                assert os.path.exists(file)
+                if os.path.exists(file):
+                    self.update_stat_db(self.mid_stat_db, file)
 
-        for file in Utils.yield_values(task.out_files):
-            if os.path.exists(file):
-                str_command = Script.commands_to_string(task.config.command)
-                self.update_stat_db(self.mid_stat_db, file, str_command)
+            for file in Utils.yield_values(task.out_files):
+                if os.path.exists(file):
+                    str_command = Script.commands_to_string(task.config.command)
+                    self.update_stat_db(self.mid_stat_db, file, str_command)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1768,20 +1758,46 @@ class Task:
         task.sanity_check()
 
         # ----------------------------------------
+        # Dry runs early out after the task is initialized but before we do .exists() checks or
+        # run any commands.
+
+        if script.options.build_dry:
+            return
+
+        # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
 
-        script.pre_task(task)
+        # Tasks should have at most one depfile.
+        for key, files in list(task.config.items()):
+            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                # Why isn't this being hit by code coverage? We do have a test for it.
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
+
+        if not script.options.build_dry:
+            # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
+            if "in_depfile" in task.config:
+                task._old_deplines = Utils.load_depfile(
+                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
+                )
+                for file in task._old_deplines:
+                    if os.path.exists(file):
+                        script.update_stat_db(script.mid_stat_db, file)
+                    else:
+                        raise AssertionError(f"Could not find {file}")
+
+            for file in Utils.yield_values(task.in_files):
+                assert os.path.exists(file)
+                if os.path.exists(file):
+                    script.update_stat_db(script.mid_stat_db, file)
+
+            for file in Utils.yield_values(task.out_files):
+                if os.path.exists(file):
+                    str_command = Script.commands_to_string(task.config.command)
+                    script.update_stat_db(script.mid_stat_db, file, str_command)
 
         task._reason = script.rebuild_reason(task)
         if not task._reason:
             raise Task.SKIPPED(f"Task is up-to-date: '{task.config.name}' : '{task.config.desc}'")
-
-        # ----------------------------------------
-        # Dry runs early out after all the task checks but before we allocate cores and run
-        # commands.
-
-        if script.options.build_dry:
-            return
 
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
@@ -1824,7 +1840,7 @@ class Task:
 
         time_b = time.perf_counter()
 
-        task.script.post_task(task)
+        script.post_task(task)
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
