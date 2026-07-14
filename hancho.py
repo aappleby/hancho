@@ -1523,9 +1523,6 @@ class Task:
         if Utils.in_event_loop():
             self.enable_task()
 
-    def expand(self, variant):
-        return Expander.expand(variant, self.config)
-
     # ----------------------------------------------------------------------------------------------
     # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
     # Dicts make deep copies and we want dicts to store Tasks, so we work around it by making
@@ -2534,7 +2531,9 @@ class Main:
             cls.hancho_flags.script_path = Expander.expand(cls.hancho_flags.script_path, Dict())
             cls.hancho_flags.script_path = Path.resolve(cls.hancho_flags.script_path)
 
-            top_script = load2(cls.hancho_flags.script_path, True)
+            overrides = Dict()
+
+            top_script = load2(cls.hancho_flags.script_path, True, overrides)
             time_b = time.perf_counter()
 
             cv_token = cv_script.set(top_script)
@@ -2855,15 +2854,14 @@ weave    = Utils.weave
 
 # ----------------------------------------
 
-def load2(script_path, is_repo, *args, **kwargs):
+def load2(script_path, is_repo, overrides):
     assert Path.isabs(script_path) and not Utils.is_template(script_path)
 
     parent_script = cv_script.get()
 
     child_options = Dict(
         parent_script.options,
-        *args,
-        kwargs,
+        overrides,
         script_path = script_path,
         script_cwd  = Path.dirname(script_path),
     )
@@ -2901,12 +2899,14 @@ def build():
 def load(script_path, *args, **kwargs):
     script_path = Expander.expand(script_path, Dict())
     script_path = Path.resolve(script_path)
-    return load2(script_path, False, *args, **kwargs).module
+    overrides = Dict(*args, **kwargs)
+    return load2(script_path, False, overrides).module
 
 def repo(script_path, *args, **kwargs):
     script_path = Expander.expand(script_path, Dict())
     script_path = Path.resolve(script_path)
-    return load2(script_path, True, *args, **kwargs).module
+    overrides = Dict(*args, **kwargs)
+    return load2(script_path, True, overrides).module
 
 # ----------------------------------------
 
