@@ -232,6 +232,7 @@ class Onion(abc.Mapping):
                 self._layers[key] = val
             else:
                 raise TypeError(f"Onion layers must be mappings, not this: {val}")
+        pass
 
     def __getattr__(self, key : str):
         try:
@@ -407,16 +408,18 @@ class Expander:
         blocks = []
         Expander._split_template(template, blocks)
 
-        onion2 = Onion()
-        onion._layers["hancho_module"] = hancho.__dict__
-        if script and script.module:
-            onion._layers["script_module"] = script.module.__dict__
-        #if script and script.options:
-        #    onion._layers["script_options"] = script.options
 
-        #print(onion._layers.keys())
+        onion2 = Onion()
+        onion2._layers["hancho_module"] = hancho.__dict__
+
+        if script and script.module:
+            onion2._layers["script_module"] = script.module.__dict__
+        if script and script.options:
+            onion2._layers["script_options"] = script.options
 
         onion2._layers.update(onion._layers)
+
+        #print(onion2._layers.keys())
 
         # Expand all macro blocks.
         for i, block in enumerate(blocks):
@@ -1269,10 +1272,10 @@ class Script:
     def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
         self.options = options
 
-        self.onion = Onion(
-            script_module  = module.__dict__,
-            script_options = options,
-        )
+        #self.onion = Onion(
+        #    script_module  = module.__dict__,
+        #    script_options = options,
+        #)
 
         self.module  = module
         self.code    = code
@@ -1305,10 +1308,16 @@ class Script:
         script = self
         result = {}
 
-        stat_db = Expander.expand(self.stat_db_path, script.onion)
+        script_onion = Onion(
+            script_module  = script.module.__dict__,
+            script_options = script.options,
+        )
+
+
+        stat_db = Expander.expand(self.stat_db_path, script_onion)
         stat_db = cast(str, Path.normpath(stat_db))
 
-        comp_db = Expander.expand(script.comp_db_path, script.onion)
+        comp_db = Expander.expand(script.comp_db_path, script_onion)
         comp_db = cast(str, Path.normpath(comp_db))
 
         with LogLevel.VERBOSE, Colors.ORANGE:
@@ -1472,7 +1481,13 @@ class Task:
             Task.default_config,
             *args, **kwargs
         )
-        self.onion = Onion(script.onion, task_config = self.config)
+
+        script_onion = Onion(
+            script_module  = script.module.__dict__,
+            script_options = script.options,
+        )
+
+        self.onion = Onion(script_onion, task_config = self.config)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -2182,7 +2197,12 @@ class Loader:
 
         # ----------------------------------------
 
-        onion = Onion(parent_script.onion, script_options = options)
+        parent_script_onion = Onion(
+            script_module  = parent_script.module.__dict__,
+            script_options = parent_script.options,
+        )
+
+        onion = Onion(parent_script_onion, script_options = options)
 
         path = options.script_path
         path = Expander.expand(path, onion)
@@ -2489,7 +2509,6 @@ class Main:
 
     @classmethod
     def init(cls, flags):
-        cls.hancho_flags = flags
 
         # --------------------------------------------------------------------------------------
 
@@ -2504,7 +2523,7 @@ class Main:
         Runner.reset  (flags)
         Main.reset    (flags)
 
-        onion = Onion(hancho_module = hancho.__dict__, hancho_flags = flags)
+        onion = Onion(hancho_flags = flags)
 
         flags.hancho_dir  = Path.normpath(onion.hancho_dir)
         flags.script_path = Path.normpath(onion.script_path)
@@ -2513,14 +2532,14 @@ class Main:
 
         # ------------------------------------
 
-        hancho_script = Script(
-            Dict(flags, script_path =__file__),
-            hancho,
-            sys._getframe().f_code,
-        )
+        hancho_script = Script(Dict(), hancho, sys._getframe().f_code)
+
+        hancho_script.options = Dict(flags, script_path =__file__)
 
         cv_script.set(hancho_script)
         Loader.all_scripts.append(hancho_script)
+
+        cls.hancho_flags = flags
         cls.hancho_script = hancho_script
 
     # ----------------------------------------------------------------------------------------------
@@ -2750,9 +2769,14 @@ class Main:
         if script.options.build_dry:
             return
 
-        stat_db_path = Expander.expand(script.stat_db_path, script.onion)
+        script_onion = Onion(
+            script_module  = script.module.__dict__,
+            script_options = script.options,
+        )
+
+        stat_db_path = Expander.expand(script.stat_db_path, script_onion)
         stat_db_path = cast(str, Path.normpath(stat_db_path))
-        comp_db_path = Expander.expand(script.comp_db_path, script.onion)
+        comp_db_path = Expander.expand(script.comp_db_path, script_onion)
         comp_db_path = cast(str, Path.normpath(comp_db_path))
 
         # Gather stats from all completed tasks
@@ -2871,7 +2895,12 @@ weave    = Utils.weave
 def load2(script_path, is_repo, *args, **kwargs):
     parent_script = cv_script.get()
 
-    script_path = Expander.expand(script_path, parent_script.onion)
+    parent_script_onion = Onion(
+        script_module  = parent_script.module.__dict__,
+        script_options = parent_script.options,
+    )
+
+    script_path = Expander.expand(script_path, parent_script_onion)
     script_path = Path.resolve(script_path)
 
     child_options = Dict(
