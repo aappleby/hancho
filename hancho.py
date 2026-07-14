@@ -182,7 +182,14 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        return Expander.expand(template, self)
+        script = cv_script.get()
+        onion = Onion(
+            hancho_module  = hancho.__dict__,
+            script_module  = script.module.__dict__,
+            script_options = script.options,
+            task_config    = self,
+        )
+        return Expander._expand(template, onion)
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -261,8 +268,7 @@ class Onion(abc.Mapping):
             if isinstance(layer, abc.Mapping) and key in layer:
                 val = layer[key]
                 if not isinstance(val, abc.Mapping):
-                    #print(self._layers.keys())
-                    return Expander.expand(val, self)
+                    return Expander._expand(val, self)
 
         # Nope, all mappings. Pull out the ones containing the key.
         new_layers = {
@@ -325,7 +331,7 @@ class Expander:
     sentinel = sentinel
 
     @classmethod
-    def expand(cls, variant : Any, config : Dict):
+    def _expand(cls, variant : Any, onion : Onion):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
@@ -342,7 +348,7 @@ class Expander:
                 # Remember how much budget was spent.
                 saved = Expander.cv_evals.get()
                 # Expand the list element.
-                result.append(Expander.expand(v, config))
+                result.append(Expander._expand(v, onion))
                 # Restore the budget so the next string in the list gets it.
                 Expander.cv_evals.set(saved)
             return result
@@ -361,14 +367,6 @@ class Expander:
 
         # OK, we have a string that could be a template. Keep expanding it until it stops changing
         # or it's not a template.
-
-        script = cv_script.get()
-        onion = Onion(
-            hancho_module  = hancho.__dict__,
-            script_module  = script.module.__dict__,
-            script_options = script.options,
-            task_config    = config,
-        )
 
         Log.indent()
         try:
@@ -1297,10 +1295,10 @@ class Script:
         script = self
         result = {}
 
-        stat_db = Expander.expand(self.stat_db_path, Dict())
+        stat_db = Dict().expand(self.stat_db_path)
         stat_db = cast(str, Path.normpath(stat_db))
 
-        comp_db = Expander.expand(script.comp_db_path, Dict())
+        comp_db = Dict().expand(script.comp_db_path)
         comp_db = cast(str, Path.normpath(comp_db))
 
         with LogLevel.VERBOSE, Colors.ORANGE:
@@ -1360,7 +1358,7 @@ class Script:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        build_force = Expander.expand("{build_force}", task.config)
+        build_force = task.config.expand("{build_force}")
 
 
         if build_force:
@@ -1684,16 +1682,16 @@ class Task:
 
         # FIXME yeah we should expand almost everything
 
-        task.config.task_cwd   = Expander.expand("{task_cwd}", task.config)
-        task.config.build_dir  = Expander.expand("{build_dir}", task.config)
-
+        task.config.task_cwd   = task.config.expand("{task_cwd}")
         task.config.task_cwd   = Path.normpath(task.config.task_cwd)
+
+        task.config.build_dir  = task.config.expand("{build_dir}")
         task.config.build_dir  = Path.normpath(task.config.build_dir)
 
-        task.config.build_tag  = Expander.expand("{build_tag}", task.config)
-        task.config.core_count = Expander.expand("{cpu_cores}", task.config)
-        task.config.depformat  = Expander.expand("{depformat}", task.config)
-        task.config.enabled    = Expander.expand("{enabled}", task.config)
+        task.config.build_tag  = task.config.expand("{build_tag}")
+        task.config.core_count = task.config.expand("{cpu_cores}")
+        task.config.depformat  = task.config.expand("{depformat}")
+        task.config.enabled    = task.config.expand("{enabled}")
 
         # ----------------------------------------
         # Flatten the commands so that we always have a command list and not a bare string.
@@ -1706,7 +1704,7 @@ class Task:
 
         for key, val in task.config.items():
             if Task.is_io_field(key):
-                task.config[key] = Utils.flatten(Expander.expand(val, task.config))
+                task.config[key] = Utils.flatten(task.config.expand(val))
 
         # ----------------------------------------
         # Turn all relative paths in io fields into absolute paths (and move them under build_dir
@@ -1772,7 +1770,7 @@ class Task:
         # Paths are cleaned up, we can now expand everything else.
 
         for key, val in task.config.items():
-            task.config[key] = Expander.expand(val, task.config)
+            task.config[key] = task.config.expand(val)
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
@@ -2166,8 +2164,7 @@ class Loader:
     @classmethod
     def load_script(cls, options) -> Script:
 
-        path = options.script_path
-        path = Expander.expand(path, options)
+        path = options.expand(options.script_path)
         assert not Utils.is_template(path)
         path = Path.resolve(path)
 
@@ -2296,7 +2293,7 @@ class Runner:
             target_regex = re.compile(script.options.target)
 
             for task in Loader.yield_tasks():
-                name = Expander.expand("{name}", task.config)
+                name = task.config.expand("{name}")
                 if target_regex.search(name):
                     task.enable_task()
 
@@ -2402,7 +2399,7 @@ class Runner:
     def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
             for task in Loader.yield_tasks():
-                root = Path.normpath(Expander.expand("{build.root}", task.config))
+                root = Path.normpath(task.config.expand("{build_root}"))
                 root = Path.relpath(root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
@@ -2453,6 +2450,10 @@ class Main:
         depformat    = "gcc" if os.name == "posix" else "msvc",
     )
 
+    default_task_options = Dict(
+        task_cwd     = "{repo_root}",
+    )
+
     default_runner_options = Dict(
         cpu_count    = os.cpu_count() or 1,
         max_errors   = 0,
@@ -2461,7 +2462,6 @@ class Main:
     default_script_options = Dict(
         script_path  = "build.hancho",
         script_cwd   = "{dirname(script_path)}",
-        task_cwd     = "{repo_root}",
         repo_root    = "{dirname(script_path)}",
 
         build_tag    = "",
@@ -2490,8 +2490,8 @@ class Main:
     @classmethod
     def init(cls, flags):
 
-        flags.script_cwd = Path.normpath(Expander.expand("{script_cwd}", flags))
-        flags.repo_root  = Path.normpath(Expander.expand("{repo_root}", flags))
+        flags.script_cwd = Path.normpath(flags.expand("{script_cwd}"))
+        flags.repo_root  = Path.normpath(flags.expand("{repo_root}"))
 
         Log.reset(Main.default_log_options.fill2(flags))
         Utils.reset()
@@ -2529,7 +2529,7 @@ class Main:
             Loader.load_started = True
             time_a = time.perf_counter()
 
-            cls.hancho_flags.script_path = Expander.expand(cls.hancho_flags.script_path, Dict())
+            cls.hancho_flags.script_path = Dict().expand(cls.hancho_flags.script_path)
             cls.hancho_flags.script_path = Path.resolve(cls.hancho_flags.script_path)
 
             overrides = Dict()
@@ -2742,9 +2742,9 @@ class Main:
         if script.options.build_dry:
             return
 
-        stat_db_path = Expander.expand(script.stat_db_path, script.options)
+        stat_db_path = script.options.expand(script.stat_db_path)
         stat_db_path = cast(str, Path.normpath(stat_db_path))
-        comp_db_path = Expander.expand(script.comp_db_path, script.options)
+        comp_db_path = script.options.expand(script.comp_db_path)
         comp_db_path = cast(str, Path.normpath(comp_db_path))
 
         # Gather stats from all completed tasks
@@ -2903,15 +2903,15 @@ def build():
     return Main.build()
 
 def load(script_path, *args, **kwargs):
-    script_path = Expander.expand(script_path, Dict())
-    script_path = Path.resolve(script_path)
     overrides = Dict(*args, **kwargs)
+    script_path = overrides.expand(script_path)
+    script_path = Path.resolve(script_path)
     return load2(script_path, False, overrides).module
 
 def repo(script_path, *args, **kwargs):
-    script_path = Expander.expand(script_path, Dict())
-    script_path = Path.resolve(script_path)
     overrides = Dict(*args, **kwargs)
+    script_path = overrides.expand(script_path)
+    script_path = Path.resolve(script_path)
     return load2(script_path, True, overrides).module
 
 # ----------------------------------------
