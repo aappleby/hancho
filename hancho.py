@@ -185,11 +185,8 @@ class Dict(dict):
         if onion is None:
             script = cv_script.get()
             onion = Onion()
-            onion._layers['hancho_module'] = hancho.__dict__
-            onion._layers['aliases'] = Aliases.__dict__
-            if script is not None:
-                onion._layers['script_module'] = script.module.__dict__
-                onion._layers['script_options'] = script.options
+            onion._layers['script_module'] = script.module.__dict__
+            onion._layers['script_options'] = script.options
             onion._layers['self'] = self
         return Expander.expand(template, onion)
 
@@ -404,9 +401,22 @@ class Expander:
     def _expand_pass(cls, template : str, onion : Onion):
         """The inner expand function does one split-expand-rejoin pass on the template string."""
 
+        script = cv_script.get()
+
         # Split the string into literal and macro blocks.
         blocks = []
         Expander._split_template(template, blocks)
+
+        onion2 = Onion()
+        onion._layers["hancho_module"] = hancho.__dict__
+        if script and script.module:
+            onion._layers["script_module"] = script.module.__dict__
+        #if script and script.options:
+        #    onion._layers["script_options"] = script.options
+
+        #print(onion._layers.keys())
+
+        onion2._layers.update(onion._layers)
 
         # Expand all macro blocks.
         for i, block in enumerate(blocks):
@@ -424,7 +434,7 @@ class Expander:
             # This should be the _only_ try/except block in the expansion code.
 
             try:
-                result = eval(block[1:-1], {}, onion)
+                result = eval(block[1:-1], {}, onion2)
 
                 # If there was only one block in the list, we're done early.
                 if len(blocks) == 1:
@@ -1260,8 +1270,6 @@ class Script:
         self.options = options
 
         self.onion = Onion(
-            hancho_module  = hancho.__dict__,
-            aliases        = hancho.Aliases.__dict__,
             script_module  = module.__dict__,
             script_options = options,
         )
@@ -2469,6 +2477,7 @@ class Main:
     # fmt: on
 
     hancho_script : Script
+    hancho_flags : Dict
 
     @classmethod
     def reset(cls, config):
@@ -2480,6 +2489,7 @@ class Main:
 
     @classmethod
     def init(cls, flags):
+        cls.hancho_flags = flags
 
         # --------------------------------------------------------------------------------------
 
@@ -2494,7 +2504,7 @@ class Main:
         Runner.reset  (flags)
         Main.reset    (flags)
 
-        onion = Onion(aliases = Aliases.__dict__, hancho = hancho.__dict__, flags = flags)
+        onion = Onion(hancho_module = hancho.__dict__, hancho_flags = flags)
 
         flags.hancho_dir  = Path.normpath(onion.hancho_dir)
         flags.script_path = Path.normpath(onion.script_path)
@@ -2516,12 +2526,13 @@ class Main:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def main(cls, flags):
+    def main(cls):
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
         # message if we failed to catch an exception during load/build.
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
         # misinterpreted as a Hancho bug.
 
+        flags = cls.hancho_flags
         cv_token = None
 
         try:
@@ -2843,18 +2854,17 @@ class Main:
 # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 # FIXME - maybe just put these in the top level globals? type checking might work better idk.
 
-class Aliases:
-    path     = Path
-    basename = Path.basename
-    swapext  = Path.swapext
-    resolve  = Path.resolve
-    normpath = Path.normpath
-    relpath  = Path.relpath
-    dirname  = Path.dirname
-    cwd      = os.getcwd
-    flatten  = Utils.flatten
-    run_cmd  = Utils.run_cmd
-    weave    = Utils.weave
+path     = Path
+basename = Path.basename
+swapext  = Path.swapext
+resolve  = Path.resolve
+normpath = Path.normpath
+relpath  = Path.relpath
+dirname  = Path.dirname
+cwd      = os.getcwd
+flatten  = Utils.flatten
+run_cmd  = Utils.run_cmd
+weave    = Utils.weave
 
 # ----------------------------------------
 
@@ -2979,7 +2989,7 @@ def _start():
     if __name__ == "__main__":
         flags = Main.parse_flags(sys.argv[1:])
         Main.init(flags)
-        result = Main.main(flags)
+        result = Main.main()
         sys.exit(result)
 
 _start()
