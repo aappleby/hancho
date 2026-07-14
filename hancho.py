@@ -261,6 +261,7 @@ class Onion(abc.Mapping):
             if isinstance(layer, abc.Mapping) and key in layer:
                 val = layer[key]
                 if not isinstance(val, abc.Mapping):
+                    #print(self._layers.keys())
                     return Expander.expand(val, self)
 
         # Nope, all mappings. Pull out the ones containing the key.
@@ -393,7 +394,7 @@ class Expander:
     def _expand_pass(cls, template : str, config : Dict):
         """The inner expand function does one split-expand-rejoin pass on the template string."""
 
-        onion = Onion(task_config = config)
+        #onion = Onion(task_config = config)
 
         script = cv_script.get()
 
@@ -406,8 +407,9 @@ class Expander:
         onion2._layers["hancho_module"]  = hancho.__dict__
         onion2._layers["script_module"]  = script.module.__dict__
         onion2._layers["script_options"] = script.options
+        onion2._layers["task_config"]    = config
 
-        onion2._layers.update(onion._layers)
+        #onion2._layers.update(onion._layers)
 
         #print(onion2._layers.keys())
 
@@ -1356,7 +1358,17 @@ class Script:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if task.onion.build_force:
+        script = cv_script.get()
+
+        task_onion = Onion(
+            hancho_module = hancho.__dict__,
+            script_module  = script.module.__dict__,
+            script_options = script.options,
+            task_config = task.config
+        )
+
+
+        if task_onion.build_force:
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -1460,13 +1472,6 @@ class Task:
             Task.default_config,
             *args, **kwargs
         )
-
-        script_onion = Onion(
-            script_module  = script.module.__dict__,
-            script_options = script.options,
-        )
-
-        self.onion = Onion(script_onion, task_config = self.config)
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1687,13 +1692,20 @@ class Task:
 
         # FIXME yeah we should expand almost everything
 
-        task.config.task_cwd   = Path.normpath(task.onion.task_cwd)
-        task.config.build_dir  = Path.normpath(task.onion.build_dir)
+        task_onion = Onion(
+            hancho_module = hancho.__dict__,
+            script_module  = script.module.__dict__,
+            script_options = script.options,
+            task_config = task.config
+        )
 
-        task.config.build_tag  = task.onion.build_tag
-        task.config.core_count = task.onion.cpu_cores
-        task.config.depformat  = task.onion.depformat
-        task.config.enabled    = task.onion.enabled
+        task.config.task_cwd   = Path.normpath(task_onion.task_cwd)
+        task.config.build_dir  = Path.normpath(task_onion.build_dir)
+
+        task.config.build_tag  = task_onion.build_tag
+        task.config.core_count = task_onion.cpu_cores
+        task.config.depformat  = task_onion.depformat
+        task.config.enabled    = task_onion.enabled
 
         # ----------------------------------------
         # Flatten the commands so that we always have a command list and not a bare string.
@@ -2419,7 +2431,7 @@ class Runner:
     def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
             for task in Loader.yield_tasks():
-                root = Path.normpath(Expander.expand("{build.root}", task.onion))
+                root = Path.normpath(Expander.expand("{build.root}", task.config))
                 root = Path.relpath(root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
