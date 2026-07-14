@@ -182,14 +182,7 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        script = cv_script.get()
-        onion = Onion(
-            hancho_module  = hancho.__dict__,
-            script_module  = script.module.__dict__,
-            script_options = script.options,
-            task_config    = self,
-        )
-        return Expander._expand(template, onion)
+        return Expander._expand(template, self)
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -331,7 +324,7 @@ class Expander:
     sentinel = sentinel
 
     @classmethod
-    def _expand(cls, variant : Any, onion : Onion):
+    def _expand(cls, variant : Any, dict_or_onion : Dict | Onion):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
@@ -348,7 +341,7 @@ class Expander:
                 # Remember how much budget was spent.
                 saved = Expander.cv_evals.get()
                 # Expand the list element.
-                result.append(Expander._expand(v, onion))
+                result.append(Expander._expand(v, dict_or_onion))
                 # Restore the budget so the next string in the list gets it.
                 Expander.cv_evals.set(saved)
             return result
@@ -367,6 +360,17 @@ class Expander:
 
         # OK, we have a string that could be a template. Keep expanding it until it stops changing
         # or it's not a template.
+
+        if isinstance(dict_or_onion, Onion):
+            onion = cast(Onion, dict_or_onion)
+        else:
+            script = cv_script.get()
+            onion = Onion(
+                hancho_module  = hancho.__dict__,
+                script_module  = script.module.__dict__ if script else {},
+                script_options = script.options if script else {},
+                task_config    = dict_or_onion,
+            )
 
         Log.indent()
         try:
@@ -1260,10 +1264,7 @@ class Script:
         if "script_cwd" not in options:
             pass
 
-        #assert not Utils.is_template(options.script_cwd)
-
         self.options = options
-
         self.module  = module
         self.code    = code
 
@@ -1466,16 +1467,6 @@ class Task:
             *args, **kwargs
         )
 
-        #default_script_options = Dict(
-        #    script_path  = "build.hancho",
-        #    script_cwd   = "{dirname(script_path)}",
-        #    repo_root    = "{dirname(script_path)}",
-        #    task_cwd     = "{repo_root}",
-        #     #    build_tag    = "",
-        #    build_root   = "{repo_root}/build",
-        #    build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
-        #)
-
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
         self.in_files  = {}
@@ -1636,6 +1627,7 @@ class Task:
     async def task_main(self):
         task = self
         script = cv_script.get()
+        config = task.config
 
         assert task.script is script
 
@@ -1647,6 +1639,21 @@ class Task:
         with LogLevel.DEBUG:
             task.log("Task config before expand:\n")
             task.log(str(task.config) + "\n")
+
+        config.script_path = config.expand("script_path")
+        #config.script_cwd  = config.expand("script_cwd")
+        #config.repo_root   = config.expand("repo_root")
+
+        config.task_cwd   = config.expand("{task_cwd}")
+        config.build_root = config.expand("{build_root}")
+        config.build_dir  = config.expand("{build_dir}")
+        config.build_tag  = config.expand("{build_tag}")
+        config.core_count = config.expand("{cpu_cores}")
+        config.depformat  = config.expand("{depformat}")
+        config.enabled    = config.expand("{enabled}")
+
+        config.task_cwd   = Path.normpath(task.config.task_cwd)
+        config.build_dir  = Path.normpath(task.config.build_dir)
 
         # ----------------------------------------
         #region await
@@ -1688,20 +1695,9 @@ class Task:
 
         # We _can't_ expand input/output paths here as they may refer to output paths for tasks
         # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
-        # you'll find it in task_init below.
+        # you'll find it below.
 
         # FIXME yeah we should expand almost everything
-
-        task.config.task_cwd   = task.config.expand("{task_cwd}")
-        task.config.task_cwd   = Path.normpath(task.config.task_cwd)
-
-        task.config.build_dir  = task.config.expand("{build_dir}")
-        task.config.build_dir  = Path.normpath(task.config.build_dir)
-
-        task.config.build_tag  = task.config.expand("{build_tag}")
-        task.config.core_count = task.config.expand("{cpu_cores}")
-        task.config.depformat  = task.config.expand("{depformat}")
-        task.config.enabled    = task.config.expand("{enabled}")
 
         # ----------------------------------------
         # Flatten the commands so that we always have a command list and not a bare string.
