@@ -1848,7 +1848,7 @@ class Task:
             raise AssertionError(f"Running task_init while we're not in the real path of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
 
         # ----------------------------------------
-        # Flatten the commands and check that they're valid
+        # Flatten the commands so that we always have a command list and not a bare string.
 
         task.config.command = Utils.flatten(task.config.command)
 
@@ -1858,29 +1858,25 @@ class Task:
 
         for key, val in task.config.items():
             if Task.is_io_field(key):
-                task.config[key] = Expander.expand(val, task.onion)
+                task.config[key] = Utils.flatten(Expander.expand(val, task.onion))
 
         # ----------------------------------------
-        # Do all the file path remapping so our commands will work.
+        # Turn all relative paths in io fields into absolute paths (and move them under build_dir
+        # if needed) so that we can access them from any working directory.
 
         for key, val in task.config.items():
             if Task.is_io_field(key):
-                # Remap all files to either the build dir (if an output) or their abspath.
-                files = [
-                    task.remap_io_field_path(key, file) for file in Utils.yield_values(val)
-                ]
+                files = [task.remap_io_field_path(key, file) for file in val]
 
                 # Unwrap filenames if they're an array of one element so that scripts expecting
                 # join(str, str) to return a str will be happy.
-
                 task.config[key] = files[0] if len(files) == 1 else files
 
         # ----------------------------------------
-        # Paths are cleaned up, we can expand name/desc/command
+        # Paths are cleaned up, we can now expand everything else.
 
-        task.config.name    = Expander.expand(task.config.name, task.onion)
-        task.config.desc    = Expander.expand(task.config.desc, task.onion)
-        task.config.command = Expander.expand(task.config.command, task.onion)
+        for key, val in task.config.items():
+            task.config[key] = Expander.expand(val, task.onion)
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
