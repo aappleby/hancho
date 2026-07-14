@@ -212,11 +212,12 @@ class Onion(abc.Mapping):
     because if you try to read both c['foo']['a'] and c['foo']['b'] it won't work - 'foo' always
     resolves to the first dict and never sees the second.
 
-    Onion fixes this by looking up the key in all 'layers' and returns a value only if there was a
-    single match. If there are multiple Mapping-type matches, they form a new Onion.
-    """
+    Onion fixes this by looking up the key in all 'layers' and returns a value only if it was the
+    first non-Mapping match. If there are multiple Mapping matches, they form a new Onion.
 
-    __slots__ = ("_layers",)
+    Onion layers are searched in right-to-left (i.e. reverse) order, to match the "right overrides
+    left" behavior of Dict.
+    """
 
     def __init__(self, *args, **kwargs):
         self._layers = {}
@@ -229,7 +230,7 @@ class Onion(abc.Mapping):
         for key, val in kwargs.items():
             if isinstance(val, Onion):
                 for key2, val2 in val._layers.items():
-                    self._layers[key + "." + key2] = val2
+                    self._layers[key2] = val2
             elif isinstance(val, abc.Mapping):
                 self._layers[key] = val
             else:
@@ -263,29 +264,26 @@ class Onion(abc.Mapping):
         return any(key in layer for layer in self._layers.values())
 
     def _get(self, key) -> Any:
+        # See if we have a non-mapping for the given key.
         for layer in reversed(self._layers.values()):
             if isinstance(layer, abc.Mapping) and key in layer:
                 val = layer[key]
                 if not isinstance(val, abc.Mapping):
-                    return Expander.expand(val, onion = self)
+                    return self.expand(val)
 
-        # Pull out non-None layer[key]s for all layers containing the key.
-        values = {
+        # Nope, all mappings. Pull out the ones containing the key.
+        new_layers = {
             name + "." + key: layer[key]
             for name, layer in self._layers.items()
             if key in layer
         }
 
-        # No values? Bad key.
-        if not values:
+        # No matches? Bad key.
+        if not new_layers:
             raise KeyError(key)
 
-        # The last value _is_ a mapping. Is it the only value? Then it's our result.
-        #if len(values) == 1:
-        #    return Onion(layer = values[-1][1])
-
-        # Otherwise we make a new onion out of the new (un-reversed) mappings.
-        return Onion(**values)
+        # Otherwise we make a new onion out of the mappings.
+        return Onion(**new_layers)
 
     def expand(self, template):
         return Expander.expand(template, self)
@@ -1515,6 +1513,9 @@ class Task:
         if Utils.in_event_loop():
             self.enable_task()
 
+    def expand(self, variant):
+        return Expander.expand(variant, self.onion)
+
     # ----------------------------------------------------------------------------------------------
     # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
     # Dicts make deep copies and we want dicts to store Tasks, so we work around it by making
@@ -2478,9 +2479,7 @@ class Main:
     # INIT
 
     @classmethod
-    def init(cls, *args, **kwargs):
-
-        flags = Dict(*args, kwargs)
+    def init(cls, flags):
 
         # --------------------------------------------------------------------------------------
 
@@ -2497,15 +2496,10 @@ class Main:
 
         onion = Onion(aliases = Aliases.__dict__, hancho = hancho.__dict__, flags = flags)
 
-        flags.hancho_dir  = Expander.expand("{hancho_dir}",  onion)
-        flags.script_path = Expander.expand("{script_path}", onion)
-        flags.script_cwd  = Expander.expand("{script_cwd}",  onion)
-        flags.repo_root   = Expander.expand("{repo_root}",   onion)
-
-        flags.hancho_dir  = Path.normpath(flags.hancho_dir)
-        flags.script_path = Path.normpath(flags.script_path)
-        flags.script_cwd  = Path.normpath(flags.script_cwd)
-        flags.repo_root   = Path.normpath(flags.repo_root)
+        flags.hancho_dir  = Path.normpath(onion.hancho_dir)
+        flags.script_path = Path.normpath(onion.script_path)
+        flags.script_cwd  = Path.normpath(onion.script_cwd)
+        flags.repo_root   = Path.normpath(onion.repo_root)
 
         # ------------------------------------
 
