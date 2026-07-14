@@ -224,17 +224,13 @@ class Onion(abc.Mapping):
 
         self._layers = {}
         for val in args:
-            if val is None:
-                continue
             if isinstance(val, Onion):
                 self._layers.update(val._layers)
             else:
                 raise TypeError(f"You can only merge onions, not this: {val}")
 
         for key, val in kwargs.items():
-            if val is None:
-                continue
-            elif isinstance(val, Onion):
+            if isinstance(val, Onion):
                 for key2, val2 in val._layers.items():
                     self._layers[key + "." + key2] = val2
             elif isinstance(val, abc.Mapping):
@@ -269,45 +265,30 @@ class Onion(abc.Mapping):
     def __contains__(self, key):
         return any(key in layer for layer in self._layers.values())
 
-    def _get(self, key, default = sentinel) -> Any:
+    def _get(self, key) -> Any:
+        for layer in reversed(self._layers.values()):
+            if isinstance(layer, abc.Mapping) and key in layer:
+                val = layer[key]
+                if not isinstance(val, abc.Mapping):
+                    return Expander.expand(val, onion = self)
+
         # Pull out non-None layer[key]s for all layers containing the key.
-        values = [
-            (layer_name + "." + key, layer[key])
-            for layer_name, layer in self._layers.items()
-            if isinstance(layer, abc.Mapping) and key in layer
-        ]
+        values = {
+            name + "." + key: layer[key]
+            for name, layer in self._layers.items()
+            if key in layer
+        }
 
         # No values? Bad key.
         if not values:
-            if default is sentinel:
-                raise KeyError(key)
-            else:
-                return default
-
-        # Is the last value _not_ a mapping? Then it's our result - attempt to expand it in this
-        # onion's context before we give it back.
-        if not isinstance(values[-1][1], abc.Mapping):
-            result = values[-1][1]
-            return Expander.expand(result, onion = self)
+            raise KeyError(key)
 
         # The last value _is_ a mapping. Is it the only value? Then it's our result.
-        if len(values) == 1:
-            return Onion(layer = values[-1][1])
-
-        # Otherwise we split off the mappings at the _end_ of the list. This is easier to do if we
-        # reverse the list first.
-        new_layers : list[tuple[str, abc.Mapping]] = []
-        for layer_name, layer in reversed(values):
-            if not isinstance(layer, abc.Mapping):
-                break
-            new_layers.append((layer_name, layer))
-
-        # If there was only one mapping, it's our result.
-        if len(new_layers) == 1:
-            return Onion(layer = new_layers[0][1])
+        #if len(values) == 1:
+        #    return Onion(layer = values[-1][1])
 
         # Otherwise we make a new onion out of the new (un-reversed) mappings.
-        return Onion(**dict(reversed(new_layers)))
+        return Onion(**values)
 
     def expand(self, template):
         return Expander.expand(template, self)
@@ -1288,7 +1269,6 @@ class Script:
             aliases        = hancho.Aliases.__dict__,
             script_module  = module.__dict__,
             script_options = options,
-            task_config    = None,
         )
 
         self.module  = module
@@ -1664,30 +1644,9 @@ class Task:
             task.log(str(task.config) + "\n")
 
         # ----------------------------------------
-        # Expand all fields that don't depend on input/output filenames (basically everything
-        # except name/desc/command). To prevent expansion-order issues, we expand to a temp Dict
-        # and then copy them back into config.
+        #region await
 
-        # We _can't_ expand input/output paths here as they may refer to output paths for tasks
-        # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
-        # you'll find it in task_init below.
-
-        # FIXME yeah we should expand almost everything
-
-        expanded = Dict()
-        expanded.task_cwd   = Path.normpath(task.onion.expand("{task_cwd}"))
-        expanded.build_dir  = Path.normpath(task.onion.expand("{build_dir}"))
-
-        expanded.build_tag  = task.onion.expand("{build_tag}")
-        expanded.core_count = task.onion.expand("{cpu_cores}")
-        expanded.depformat  = task.onion.expand("{depformat}")
-        expanded.enabled    = task.onion.expand("{enabled}")
-
-        Dict.merge(task.config, expanded)
-
-        # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
-
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
@@ -1717,69 +1676,172 @@ class Task:
                 ]
                 self.config[key] = Utils.flatten(result)
 
-#        for key, val in task.config.items():
-#            if key == "command":
-#                print("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv")
-#                print(val)
-#            result = Expander.expand(val, task.onion)
-#            if key == "command":
-#                print(result)
-#                print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
-#            task.config[key] = result
+        #endregion
+        # ----------------------------------------
+        # Expand all fields that don't depend on input/output filenames (basically everything
+        # except name/desc/command).
+
+        # We _can't_ expand input/output paths here as they may refer to output paths for tasks
+        # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
+        # you'll find it in task_init below.
+
+        # FIXME yeah we should expand almost everything
+
+        task.config.task_cwd   = Path.normpath(task.onion.task_cwd)
+        task.config.build_dir  = Path.normpath(task.onion.build_dir)
+
+        task.config.build_tag  = task.onion.build_tag
+        task.config.core_count = task.onion.cpu_cores
+        task.config.depformat  = task.onion.depformat
+        task.config.enabled    = task.onion.enabled
 
         # ----------------------------------------
-        # Do all our task setup while chdir'd into the task's cwd so that relative paths will be
-        # correct while we're checking input file existence. The task_init function is synchronous,
-        # so there can be no await'ed points that could interrupt us - os.getcwd() should be stable
-        # while we're doing this.
-
-        with chdir(task.config.task_cwd):
-            task = self
-            #script = cv_script.get()
-
-            if os.getcwd() != Path.resolve(task.config.task_cwd):
-                raise AssertionError(f"Running task_init while we're not in the real path of task's cwd '{task.config.task_cwd}' - we are in {os.getcwd()}")  # pragma: no cover
-
-            # ----------------------------------------
-            # Flatten the commands so that we always have a command list and not a bare string.
-
-
-            # ----------------------------------------
-            # Expand the io field's file list (in 'val') before we remap it, as a template
-            # string can turn into a list of multiple filenames.
-
-            for key, val in task.config.items():
-                if Task.is_io_field(key):
-                    task.config[key] = Utils.flatten(Expander.expand(val, task.onion))
-
-            # ----------------------------------------
-            # Turn all relative paths in io fields into absolute paths (and move them under build_dir
-            # if needed) so that we can access them from any working directory.
-
-            for key, val in task.config.items():
-                if Task.is_io_field(key):
-                    files = [task.remap_io_field_path(key, file) for file in val]
-
-                    # Unwrap filenames if they're an array of one element so that scripts expecting
-                    # join(str, str) to return a str will be happy.
-                    task.config[key] = files[0] if len(files) == 1 else files
-
-
-            # ----------------------------------------
-            # Paths are cleaned up, we can now expand everything else.
-
-            for key, val in task.config.items():
-                task.config[key] = Expander.expand(val, task.onion)
-
-            with LogLevel.DEBUG:
-                task.log("Task config after expand:\n")
-                task.log(str(task.config) + "\n")
+        # Flatten the commands so that we always have a command list and not a bare string.
 
         task.config.command = Utils.flatten(task.config.command)
 
-        task.sanity_check()
+        # ----------------------------------------
+        # Expand the io field's file list (in 'val') before we remap it, as a template
+        # string can turn into a list of multiple filenames.
 
+        for key, val in task.config.items():
+            if Task.is_io_field(key):
+                task.config[key] = Utils.flatten(Expander.expand(val, task.onion))
 
+        # ----------------------------------------
+        # Turn all relative paths in io fields into absolute paths (and move them under build_dir
+        # if needed) so that we can access them from any working directory.
+
+        """
+        Input and output file paths in .hancho scripts are declared relative to the directory the
+        script is in (stored in the config under 'script_path').
+        In general we want to run commands from the root of the repo and store output files in
+        repo/build.
+        This function takes care of all of that and a few other things, and tries to do so in a
+        robust way. Whether this actually turns out to be robust or not is yet to be determined.
+        """
+
+        for name, val in task.config.items():
+            if Task.is_io_field(name):
+                files = []
+                for file in val:
+                    #remapped = task.remap_io_field_path(key, file)
+
+                    # Join script_cwd with the filename to produce absolute paths.
+                    file = Path.join(script.options.script_cwd, file)
+
+                    # File paths _must_ be normed after joining, otherwise they might look like they're under
+                    # script_dir, but they're not because the paths could have "../../../../.." in them.
+                    file = Path.normpath(file)
+
+                    # Move all outputs under build.dir and ensure their directories exist.
+
+                    if Task.is_output_field(name):
+                        # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
+                        # it's an _output_ from the compiler.
+                        if not Path.startswith(file, task.config.build_dir):
+                            file = Path.relpath(file, script.options.script_cwd)
+                            file = Path.join(task.config.build_dir, file)
+
+                        if not script.options.build_dry:
+                            os.makedirs(Path.dirname(file), exist_ok=True)
+
+                        # Depfiles do _not_ go in the output file list, as they are never consumed by a
+                        # downstream task.
+                        if not Task.is_depfile_field(name):
+                            task.out_files[name] = file
+
+                    else:
+                        task.in_files[name] = file
+
+                    files.append(file)
+
+                # Convert the fixed paths back to relative so our command lines aren't enormous.
+                # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+                # relative to script_dir if we're calling a callback.
+
+                # actually this may not be worth it, and it currently breaks some tests
+                #rel_dir = task.config.task_cwd if isinstance(task.config.command[0], str) else script.options.script_cwd
+                #file = Path.relpath(file, rel_dir)
+
+                # Unwrap filenames if they're an array of one element so that scripts expecting
+                # join(str, str) to return a str will be happy.
+                task.config[name] = files[0] if len(files) == 1 else files
+
+        # ----------------------------------------
+        # Paths are cleaned up, we can now expand everything else.
+
+        for key, val in task.config.items():
+            task.config[key] = Expander.expand(val, task.onion)
+
+        with LogLevel.DEBUG:
+            task.log("Task config after expand:\n")
+            task.log(str(task.config) + "\n")
+
+        if not Path.exists(task.config.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{task.config.task_cwd}' does not exist")
+
+        if not Path.startswith(task.config.build_dir, script.options.repo_root):
+            raise Task.BROKEN(f"The build.dir {task.config.build_dir} is not under repo.root {task.config.repo_root}")
+
+        # In order to provide the least amount of bafflement to users, CLI commands execute
+        # from task_cwd (which is usually the root of the repo, the most common cwd)
+        # and callbacks execute from dir(script_path) (because you expect to be in the same
+        # directory as the script when the callback is firing).
+
+        # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
+        # And that means we disallow mixed cli/callback command lists.
+
+        if isinstance(task.config.command, list):
+            for command in task.config.command:
+                if type(command) is not type(task.config.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {task.config.command}")
+
+                # Check that task's commands are either strings or callables.
+                if not isinstance(command, str) and not callable(command) and command is not None:
+                    raise Task.BROKEN(f"Command {command} is not a string or a callable?")
+
+        # In strict mode, we mark a task broken if its command still has curly braces.
+        if script.options.build_strict:
+            for command in cast(list, task.config.command):
+                if not isinstance(command, str):
+                    continue
+                blocks = []
+                Expander._split_template(command, blocks)
+                if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
+                    raise Task.BROKEN("STRICT: Command has curly braces in it")
+
+        # Check that all build files would end up under build.dir
+        for file in Utils.yield_values(task.out_files):
+            assert Path.isabs(file)
+            if not Path.startswith(file, task.config.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {task.config.build_dir}")
+
+        # Check for task collisions
+        for file in Utils.yield_values(task.out_files):
+            real_file = cast(str, Path.normpath(file))
+            if real_file in Loader.real_filenames:
+                raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
+            Loader.real_filenames.add(real_file)
+
+        # Check for missing inputs. We have to check build_dry, as the input files may only exist if
+        # we're really running tasks.
+        for file in Utils.yield_values(task.in_files):
+            if not Path.isabs(file):
+                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
+            if not Path.exists(file) and not script.options.build_dry:
+                raise Task.BROKEN(f"Input file missing - {file}")
+
+        # Tasks should have at most one depfile.
+        for key, files in list(task.config.items()):
+            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
+
+        # Tasks should have at most one depfile.
+        for key, files in list(task.config.items()):
+            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
+                # Why isn't this being hit by code coverage? We do have a test for it.
+                raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
         # ----------------------------------------
         # Dry runs early out after the task is initialized but before we do .exists() checks or
@@ -1790,12 +1852,6 @@ class Task:
 
         # ----------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
-
-        # Tasks should have at most one depfile.
-        for key, files in list(task.config.items()):
-            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
-                # Why isn't this being hit by code coverage? We do have a test for it.
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
         # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
         if "in_depfile" in task.config:
@@ -1865,8 +1921,8 @@ class Task:
 
         if "in_depfile" in task.config:
             task._new_deplines = Utils.load_depfile(
-                    task.config.in_depfile, task.config.depformat, task.config.task_cwd
-                )
+                task.config.in_depfile, task.config.depformat, task.config.task_cwd
+            )
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
@@ -1874,127 +1930,6 @@ class Task:
                 message += f"'{task.config.name}' - "
             message += f"'{task.config.desc}'\n"
             task.log(message)
-
-    # ----------------------------------------------------------------------------------------------
-
-    def remap_io_field_path(self, name, file) -> str:
-        """
-        Input and output file paths in .hancho scripts are declared relative to the directory the
-        script is in (stored in the config under 'script_path').
-        In general we want to run commands from the root of the repo and store output files in
-        repo/build.
-        This function takes care of all of that and a few other things, and tries to do so in a
-        robust way. Whether this actually turns out to be robust or not is yet to be determined.
-        """
-        task = self
-        script = cv_script.get()
-
-        # Join script_cwd with the filename to produce absolute paths.
-        file = Path.join(script.options.script_cwd, file)
-
-        # File paths _must_ be normed after joining, otherwise they might look like they're under
-        # script_dir, but they're not because the paths could have "../../../../.." in them.
-        file = Path.normpath(file)
-
-        # Move all outputs under build.dir and ensure their directories exist.
-
-        if Task.is_output_field(name):
-            # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
-            # it's an _output_ from the compiler.
-            if not Path.startswith(file, task.config.build_dir):
-                file = Path.relpath(file, script.options.script_cwd)
-                file = Path.join(task.config.build_dir, file)
-
-            if not script.options.build_dry:
-                os.makedirs(Path.dirname(file), exist_ok=True)
-
-            # Depfiles do _not_ go in the output file list, as they are never consumed by a
-            # downstream task.
-            if not Task.is_depfile_field(name):
-                task.out_files[name] = file
-
-        else:
-            task.in_files[name] = file
-
-        # Convert the fixed paths back to relative so our command lines aren't enormous.
-        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-        # relative to script_dir if we're calling a callback.
-
-        # actually this may not be worth it, and it currently breaks some tests
-        #rel_dir = task.config.task_cwd if isinstance(task.config.command[0], str) else script.options.script_cwd
-        #file = Path.relpath(file, rel_dir)
-
-        return file
-
-    # ----------------------------------------------------------------------------------------------
-
-    def sanity_check(self):
-        """
-        Checks for various ways that a task can be broken and raises exceptions for them.
-        All of our 'raise Task.BROKEN's should be here (except for 'Invalid depfile format' above)
-        """
-        task = self
-        script = cv_script.get()
-        assert task.script is script
-
-        if not Path.exists(task.config.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{task.config.task_cwd}' does not exist")
-
-        if not Path.startswith(task.config.build_dir, script.options.repo_root):
-            raise Task.BROKEN(f"The build.dir {task.config.build_dir} is not under repo.root {task.config.repo_root}")
-
-        # In order to provide the least amount of bafflement to users, CLI commands execute
-        # from task_cwd (which is usually the root of the repo, the most common cwd)
-        # and callbacks execute from dir(script_path) (because you expect to be in the same
-        # directory as the script when the callback is firing).
-
-        # This means that rel-ified paths can only be rel'd to one of the two cwds, not both.
-        # And that means we disallow mixed cli/callback command lists.
-
-        for command in task.config.command:
-            if type(command) is not type(task.config.command[0]):
-                raise Task.BROKEN(f"Commands aren't the same type: {task.config.command}")
-
-        # In strict mode, we mark a task broken if its command still has curly braces.
-        if script.options.build_strict:
-            for command in cast(list, task.config.command):
-                if not isinstance(command, str):
-                    continue
-                blocks = []
-                Expander._split_template(command, blocks)
-                if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
-                    raise Task.BROKEN("STRICT: Command has curly braces in it")
-
-        # Check that all build files would end up under build.dir
-        for file in Utils.yield_values(task.out_files):
-            assert Path.isabs(file)
-            if not Path.startswith(file, task.config.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {task.config.build_dir}")
-
-        # Check for task collisions
-        for file in Utils.yield_values(task.out_files):
-            real_file = cast(str, Path.normpath(file))
-            if real_file in Loader.real_filenames:
-                raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            Loader.real_filenames.add(real_file)
-
-        # Check for missing inputs. We have to check build_dry, as the input files may only exist if
-        # we're really running tasks.
-        for file in Utils.yield_values(task.in_files):
-            if not Path.isabs(file):
-                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-            if not Path.exists(file) and not script.options.build_dry:
-                raise Task.BROKEN(f"Input file missing - {file}")
-
-        # Check that task's commands are either strings or callables.
-        for command in cast(list, task.config.command):
-            if not isinstance(command, str) and not callable(command) and command is not None:
-                raise Task.BROKEN(f"Command {command} is not a string or a callable?")
-
-        # Tasks should have at most one depfile.
-        for key, files in list(task.config.items()):
-            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
     # ----------------------------------------------------------------------------------------------
 

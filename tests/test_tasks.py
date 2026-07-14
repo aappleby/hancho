@@ -441,7 +441,7 @@ class TestTasks(unittest.TestCase):
         # If input filenames are absolute paths, we should still end up with build files under
         # build_root.
 
-        task = hancho.Task(
+        hancho.Task(
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
             command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
