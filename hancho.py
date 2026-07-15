@@ -1477,6 +1477,10 @@ class Task:
 
         self._aio_context = contextvars.copy_context()
 
+        self.input_tasks : list[Task] = [v for v in Utils.yield_values(self.config_blah) if isinstance(v, Task)]
+
+        self.io_fields : list[str] = [k for k in self.config_blah if Task.is_io_field(k)]
+
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         self._aio_task : asyncio.Task | None = None
@@ -1574,9 +1578,8 @@ class Task:
             self._aio_task = t
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
-        for v in Utils.yield_values(self.config_blah):
-            if isinstance(v, Task):
-                v.enable_task()
+        for v in self.input_tasks:
+            v.enable_task()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1669,30 +1672,35 @@ class Task:
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for val in Utils.yield_values(task.config_blah):
-            if isinstance(val, Task):
-                if val._aio_task is None:
-                    raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
-                try:
-                    await val._aio_task
-                except asyncio.CancelledError:
-                    # _This_ task was cancelled while waiting for inputs. We need to ensure
-                    # the exception makes it back to asyncio.
-                    raise
-                except Task.SKIPPED:
-                    # This input was clean and didn't need to rebuild.
-                    pass
-                except Exception as ex:
-                    raise Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'") from ex
+        for val in task.input_tasks:
+            if val._aio_task is None:
+                raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
+            try:
+                await val._aio_task
+            except asyncio.CancelledError:
+                # _This_ task was cancelled while waiting for inputs. We need to ensure
+                # the exception makes it back to asyncio.
+                raise
+            except Task.SKIPPED:
+                # This input was clean and didn't need to rebuild.
+                pass
+            except Exception as ex:
+                raise Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'") from ex
 
         # Replace all Tasks in all input fields with their output file lists.
-        for key, val in self.config_blah.items():
-            if Task.is_input_field(key):
+        for key in task.io_fields:
+            val = task.config_blah[key]
+            if Task.is_depfile_field(key):
+                self.expanded[key] = Utils.flatten(task.config_blah.expand(val))
+            elif Task.is_input_field(key):
                 result = [
                     v.out_files if isinstance(v, Task) else v
                     for v in Utils.yield_values(val)
                 ]
                 self.config_blah[key] = Utils.flatten(result)
+                self.expanded[key] = Utils.flatten(task.config_blah.expand(result))
+            elif Task.is_output_field(key):
+                self.expanded[key] = Utils.flatten(task.config_blah.expand(val))
 
         #endregion
         # ----------------------------------------
@@ -1709,13 +1717,13 @@ class Task:
         # Expand the io field's file list (in 'val') before we remap it, as a template
         # string can turn into a list of multiple filenames.
 
-        for key, val in task.config_blah.items():
-            if Task.is_io_field(key):
-                task.config_blah[key] = Utils.flatten(task.config_blah.expand(val))
+        for key in self.io_fields:
+            val = task.config_blah[key]
+            task.config_blah[key] = Utils.flatten(task.config_blah.expand(val))
 
-        for key, val in task.config_blah.items():
-            if Task.is_io_field(key):
-                task.expanded[key] = Utils.flatten(task.config_blah.expand(val))
+        for key in self.io_fields:
+            val = task.config_blah[key]
+            task.expanded[key] = Utils.flatten(task.config_blah.expand(val))
 
         # ----------------------------------------
         # Turn all relative paths in io fields into absolute paths (and move them under build_dir
