@@ -104,7 +104,7 @@ region):
   **unchanged** rather than throwing. This is deliberate: nested Dicts can carry templates
   that only resolve once merged into an outer context.
 - Aliases available inside `{...}` (and as `hancho.<name>`): path helpers `basename`,
-  `swapext`, `normpath`, `resolve`, `relpath`, plus `path` (= `os.path`), `flatten`, `weave`,
+  `swapext`, `abspath`, `resolve`, `relpath`, plus `path` (= `os.path`), `flatten`, `weave`,
   `run_cmd`, and the loaders `load` / `repo`. Example: `out_obj = "{swapext(in_src, '.o')}"`.
 - `Tree[T]` (`T | list[Tree[T]]`): many fields accept arbitrarily nested lists. Most
   Path/Utils helpers are "recursified" to map over these, and `Utils.flatten` collapses

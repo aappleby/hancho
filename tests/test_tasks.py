@@ -173,7 +173,7 @@ class TestTasks(unittest.TestCase):
     #          command = "cat {rel_source_files} > {rel_build_files}",
     #          source_files = "stuff.txt",
     #          build_files = "repo.txt",
-    #          b*ase_path = os.path.normpath("subrepo")
+    #          b*ase_path = os.path.abspath("subrepo")
     #      )
     #      self.run_tasks(0)
 
@@ -445,7 +445,7 @@ class TestTasks(unittest.TestCase):
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
             command = lambda task : shutil.copy(task.config_blah.in_src, task.config_blah.out_obj),
-            in_src=os.path.normpath("src/foo.c"),
+            in_src=os.path.abspath("src/foo.c"),
             out_obj="{swapext(in_src, '.o')}",
         )
 

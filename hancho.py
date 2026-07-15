@@ -1199,7 +1199,7 @@ class Path:
         return str(path)
 
     resolve  = tree_map(lambda path : Path.resolve_path(path, strict = True))
-    normpath = tree_map(os.path.normpath)
+    abspath  = tree_map(os.path.abspath)
     basename = tree_map(os.path.basename)
     dirname  = tree_map(os.path.dirname)
     swapext  = tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
@@ -1293,10 +1293,10 @@ class Script:
         result = {}
 
         stat_db = Dict().expand(self.stat_db_path)
-        stat_db = cast(str, Path.normpath(stat_db))
+        stat_db = cast(str, Path.abspath(stat_db))
 
         comp_db = Dict().expand(script.comp_db_path)
-        comp_db = cast(str, Path.normpath(comp_db))
+        comp_db = cast(str, Path.abspath(comp_db))
 
         with LogLevel.VERBOSE, Colors.ORANGE:
             Log.log(f"Loading stat db '{stat_db}'\n")
@@ -1355,9 +1355,7 @@ class Script:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        build_force = task.config_blah.expand("{build_force}")
-
-        if build_force:
+        if task.expanded.build_force:
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -1463,7 +1461,10 @@ class Task:
         )
         self.expanded = Dict()
 
-        self.expanded.enabled = self.config_blah.expand("{enabled}")
+        self.expanded.enabled     = self.config_blah.expand("{enabled}")
+        self.expanded.build_force = self.config_blah.expand("{build_force}")
+        self.expanded.depformat   = self.config_blah.expand("{depformat}")
+        self.expanded.cpu_cores   = self.config_blah.expand("{cpu_cores}")
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1500,7 +1501,7 @@ class Task:
         self._task_id : int = 0
         self._stdout : str = ""
         self._stderr : str = ""
-        self._core_count = 0
+        self._cpu_cores = 0
         self._complete = False
 
         script.tasks.append(self)
@@ -1608,9 +1609,9 @@ class Task:
                 Log.log(traceback.format_exc() + "\n")
             task._error = ex
         finally:
-            if task._core_count:
-                Runner.release(task._core_count)
-                task._core_count = 0
+            if task._cpu_cores:
+                Runner.release(task._cpu_cores)
+                task._cpu_cores = 0
 
         if task._error:
             raise task._error
@@ -1639,26 +1640,19 @@ class Task:
         #config.repo_root   = config.expand("repo_root")
 
         task.config_blah.task_cwd    = task.config_blah.expand("{task_cwd}")
-        task.config_blah.build_root  = task.config_blah.expand("{build_root}")
         task.config_blah.build_dir   = task.config_blah.expand("{build_dir}")
-        task.config_blah.build_tag   = task.config_blah.expand("{build_tag}")
-        task.config_blah.core_count  = task.config_blah.expand("{cpu_cores}")
-        task.config_blah.depformat   = task.config_blah.expand("{depformat}")
-        task.config_blah.build_force = task.config_blah.expand("{build_force}")
 
-        task.config_blah.task_cwd   = Path.normpath(task.config_blah.task_cwd)
-        task.config_blah.build_dir  = Path.normpath(task.config_blah.build_dir)
+        task.config_blah.task_cwd   = Path.abspath(task.config_blah.task_cwd)
+        task.config_blah.build_dir  = Path.abspath(task.config_blah.build_dir)
 
         task.expanded.task_cwd   = task.config_blah.expand("{task_cwd}")
-        task.expanded.build_root = task.config_blah.expand("{build_root}")
-        task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
-        task.expanded.build_tag  = task.config_blah.expand("{build_tag}")
-        task.expanded.core_count = task.config_blah.expand("{cpu_cores}")
-        task.expanded.depformat  = task.config_blah.expand("{depformat}")
-        task.expanded.build_force = task.config_blah.expand("{build_force}")
+        task.expanded.task_cwd   = Path.abspath(task.expanded.task_cwd)
 
-        task.expanded.task_cwd   = Path.normpath(task.expanded.task_cwd)
-        task.expanded.build_dir  = Path.normpath(task.expanded.build_dir)
+        task.expanded.build_root = task.config_blah.expand("{build_root}")
+        task.expanded.build_root = Path.abspath(task.expanded.build_root)
+
+        task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
+        task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
 
         # ----------------------------------------
         #region await
@@ -1746,7 +1740,7 @@ class Task:
 
                     # File paths _must_ be normed after joining, otherwise they might look like they're under
                     # script_dir, but they're not because the paths could have "../../../../.." in them.
-                    file = Path.normpath(file)
+                    file = Path.abspath(file)
 
                     # Move all outputs under build.dir and ensure their directories exist.
 
@@ -1834,7 +1828,7 @@ class Task:
 
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
-            real_file = cast(str, Path.normpath(file))
+            real_file = cast(str, Path.abspath(file))
             if real_file in Loader.real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
             Loader.real_filenames.add(real_file)
@@ -1896,7 +1890,7 @@ class Task:
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
 
-        task._core_count = await Runner.acquire(task.expanded.core_count)
+        task._cpu_cores = await Runner.acquire(task.expanded.cpu_cores)
 
         # ----------------------------------------
         # Run all the task's commands
@@ -2417,9 +2411,7 @@ class Runner:
     def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
             for task in Loader.yield_tasks():
-                task.expanded.build_root = task.config_blah.expand("{build_root}")
-                root = Path.normpath(task.expanded.build_root)
-                root = Path.relpath(root, os.getcwd())
+                root = Path.relpath(task.expanded.build_root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
                     shutil.rmtree(root, ignore_errors=True)
@@ -2506,8 +2498,8 @@ class Main:
     @classmethod
     def init(cls, flags):
 
-        flags.script_cwd = Path.normpath(flags.expand("{script_cwd}"))
-        flags.repo_root  = Path.normpath(flags.expand("{repo_root}"))
+        flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
+        flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
 
         Log.reset(Main.default_log_options.fill2(flags))
         Utils.reset()
@@ -2650,7 +2642,7 @@ class Main:
             raw_flags
         )
 
-        opt_file = Path.normpath(flags.opt_file)
+        opt_file = Path.abspath(flags.opt_file)
 
         if os.path.exists(opt_file):
             with open(opt_file) as f:
@@ -2759,9 +2751,9 @@ class Main:
             return
 
         stat_db_path = script.options.expand(script.stat_db_path)
-        stat_db_path = cast(str, Path.normpath(stat_db_path))
+        stat_db_path = cast(str, Path.abspath(stat_db_path))
         comp_db_path = script.options.expand(script.comp_db_path)
-        comp_db_path = cast(str, Path.normpath(comp_db_path))
+        comp_db_path = cast(str, Path.abspath(comp_db_path))
 
         # Gather stats from all completed tasks
         stat_db = {}
@@ -2866,7 +2858,6 @@ path     = Path
 basename = Path.basename
 swapext  = Path.swapext
 resolve  = Path.resolve
-normpath = Path.normpath
 relpath  = Path.relpath
 dirname  = Path.dirname
 cwd      = os.getcwd
