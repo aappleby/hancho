@@ -1591,8 +1591,6 @@ class Task:
         task = self
 
         # ----------------------------------------
-        #region await
-
         # Await all tasks in our input fields and then flatten them.
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
         # modifying tasks after they're created but before they're started. If you point task B's
@@ -1607,29 +1605,27 @@ class Task:
                 # This input was clean and didn't need to rebuild.
                 pass
             except Exception as ex:
+                with LogLevel.VERBOSE:
+                    task.log(str(ex) + "\n")
                 task._error = Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'")
                 raise task._error from ex
 
-        #endregion
         # ----------------------------------------
+        # Inputs are ready, run the task.
 
         try:
             await task.task_main()
             task._error = None
+            return task.out_files
         except asyncio.CancelledError as ex:
             with LogLevel.VERBOSE:
                 task.log(f"<asyncio.CancelledError {ex}>\n")
             task._error = ex
-            raise
         except Task.BROKEN as ex:
             task.log_exception("Task broken!", ex)
             task._error = ex
         except Task.FAILED as ex:
             task.log_exception("Task failed!", ex)
-            task._error = ex
-        except Task.CANCELLED as ex:
-            with LogLevel.VERBOSE:
-                task.log(str(ex) + "\n")
             task._error = ex
         except Task.SKIPPED as ex:
             with LogLevel.VERBOSE:
@@ -1643,10 +1639,7 @@ class Task:
         finally:
             Runner.release(task._job_size)
 
-        if task._error:
-            raise task._error
-
-        return task.out_files
+        raise task._error
 
     # ----------------------------------------------------------------------------------------------
 
