@@ -1446,7 +1446,7 @@ class Task:
 
         # The task's config contains all the commands, paths, options, inputs, dependent Tasks, and
         # anything else needed to assemble and run the task's commands. It is expected that build
-        # scripts will need to read task.config_blah/task.expanded in order to implement task callbacks,
+        # scripts will need to read task.expanded in order to implement task callbacks,
         # so the field is not underscore-prefixed like the later ones.
 
         script = cv_script.get()
@@ -1589,6 +1589,30 @@ class Task:
 
     async def task_top(self):
         task = self
+
+        # ----------------------------------------
+        #region await
+
+        # Await all tasks in our input fields and then flatten them.
+        # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
+        # modifying tasks after they're created but before they're started. If you point task B's
+        # inputs at task A and task A's inputs at task B and it blows up, that's on you.
+
+        for val in task.input_tasks:
+            if val._aio_task is None:
+                raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
+            try:
+                await val._aio_task
+            except Task.SKIPPED:
+                # This input was clean and didn't need to rebuild.
+                pass
+            except Exception as ex:
+                task._error = Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'")
+                raise task._error from ex
+
+        #endregion
+        # ----------------------------------------
+
         try:
             await task.task_main()
             task._error = None
@@ -1628,6 +1652,7 @@ class Task:
 
     async def task_main(self):
         task = self
+
         script = cv_script.get()
 
         assert task.script is script
@@ -1659,33 +1684,6 @@ class Task:
 
         task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
         task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
-
-        # ----------------------------------------
-        #region await
-
-        # Await all tasks in our input fields and then flatten them.
-        # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
-        # modifying tasks after they're created but before they're started. If you point task B's
-        # inputs at task A and task A's inputs at task B and it blows up, that's on you.
-
-        for val in task.input_tasks:
-            if val._aio_task is None:
-                raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
-            try:
-                await val._aio_task
-            except asyncio.CancelledError:
-                # _This_ task was cancelled while waiting for inputs. We need to ensure
-                # the exception makes it back to asyncio.
-                raise
-            except Task.SKIPPED:
-                # This input was clean and didn't need to rebuild.
-                pass
-            except Exception as ex:
-                raise Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'") from ex
-
-        #endregion
-        # ----------------------------------------
-
 
        # Replace all Tasks in all input fields with their output file lists.
        # Expand and flatten all io field's values, as a template string can turn into a list of
