@@ -1459,7 +1459,7 @@ class Task:
         self.expanded = Dict()
 
         self.expanded.name        = self.config_blah.expand("{name}")
-        self.expanded.desc        = self.config_blah.expand("{name}")
+        self.expanded.desc        = self.config_blah.expand("{desc}")
 
         self.expanded.build_force = self.config_blah.expand("{build_force}")
         self.expanded.depformat   = self.config_blah.expand("{depformat}")
@@ -1660,9 +1660,6 @@ class Task:
         task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
         task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
 
-        task.config_blah.command   = Utils.flatten(task.config_blah.command)
-        task.expanded.command = Utils.flatten(task.config_blah.command)
-
         # ----------------------------------------
         #region await
 
@@ -1686,6 +1683,12 @@ class Task:
             except Exception as ex:
                 raise Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'") from ex
 
+        #endregion
+        # ----------------------------------------
+
+        task.config_blah.command = Utils.flatten(task.config_blah.command)
+        task.expanded.command    = Utils.flatten(task.config_blah.command)
+
 
        # Replace all Tasks in all input fields with their output file lists.
        # Expand and flatten all io field's values, as a template string can turn into a list of
@@ -1701,7 +1704,6 @@ class Task:
             task.config_blah[key] = Utils.flatten(task.config_blah.expand(val))
             task.expanded[key] = Utils.flatten(task.config_blah.expand(val))
 
-        #endregion
         # ----------------------------------------
         # Expand all fields that don't depend on input/output filenames (basically everything
         # except name/desc/command).
@@ -1778,20 +1780,15 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can now expand everything else.
 
-        task.expanded.name    = task.config_blah.expand("{name}")
-        task.expanded.desc    = task.config_blah.expand("{desc}")
-        task.expanded.command = task.config_blah.expand("{command}")
+#        task.expanded.name    = task.config_blah.expand("{name}")
+#        task.expanded.desc    = task.config_blah.expand("{desc}")
+#        task.expanded.command = task.config_blah.expand("{command}")
 
-        for key, val in task.config_blah.items():
-            old_val = task.expanded.get(key, None)
-            new_val = task.config_blah.expand(val)
-
-            if old_val != new_val:
-                pass
-
-            if key == "job_size" and not isinstance(new_val, int):
-                pass
-
+        for key in task.expanded:
+            #old_val = task.expanded[key]
+            new_val = task.config_blah.expand(f"{{{key}}}")
+            #if old_val != new_val:
+            #    print(f"{key}: {old_val} -> {new_val}")
             task.expanded[key] = new_val
 
         with LogLevel.DEBUG:
@@ -2628,7 +2625,7 @@ class Main:
         parser.add_argument('-r', "--repo_root",    metavar = "(path)",    type=str.strip, help="The location of the repo we're building.")
         parser.add_argument(      "--run_tool",     metavar = "(tool)",    type=str.strip, help="Run a subtool.")
         parser.add_argument(      "--max_errors",   metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument(      "--max_jobs",     metavar = "(count)",   type=int,       help="Run jobs on N cores in parallel.")
+        parser.add_argument('-j', "--max_jobs",     metavar = "(count)",   type=int,       help="Run a maximum of N jobs in parallel.")
         parser.add_argument(      "--depformat",    metavar = "(format)",  type=str.strip, help="Dependency file format (gcc or msvc)")
         parser.add_argument(      "--build_tag",    metavar = "(name)",    type=str.strip, help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
         parser.add_argument(      "--build_root",   metavar = "(path)",    type=str.strip, help="Directory to put build artifacts in.")

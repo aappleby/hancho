@@ -14,12 +14,12 @@ src_files = glob("src/*")
 
 random_touch = hancho.Task(
     desc = "Touch 3 random files in src/ - {basename(in_src)}",
-    command = lambda task : (os.utime(src, None) for src in task.config_blah.in_src),
+    command = lambda task : (os.utime(src, None) for src in task.expanded.in_src),
     in_src = random.sample(src_files, 3),
 )
 
 def generate_filelist(task):
-    c = task.config_blah
+    c = task.expanded
     with chdir(dirname(__file__)), open(c.out_list, "w", encoding="utf-8") as file:
         for f in random.sample(c.in_src, 3):
             file.write(str(f) + "\n")
@@ -33,7 +33,7 @@ filelist_txt = hancho.Task(
 
 def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into {basename(out_files)}"""
-    c = task.config_blah
+    c = task.expanded
     with chdir(dirname(__file__)), open(c.in_filelist, encoding="utf-8") as file:
         from_filelist = [f.strip() for f in file.readlines()]
         new_task = hancho.Task(
