@@ -114,7 +114,7 @@ class TestTasks(unittest.TestCase):
     #    def _test_manual_queue1(self):
     #        # If a task is _not_ queued, it should _not_ run.
     #        t = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
+    #            command = lambda task : force_touch(task.config_blah.out_file),
     #            out_file = "test_manual_queue.txt",
     #        )
     #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
@@ -124,7 +124,7 @@ class TestTasks(unittest.TestCase):
     #    def _test_manual_queue2(self):
     #        # If a task _is_ manually queued, it _should_ run.
     #        t = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
+    #            command = lambda task : force_touch(task.config_blah.out_file),
     #            out_file = "test_manual_queue.txt",
     #        )
     #        t.start2()
@@ -137,19 +137,19 @@ class TestTasks(unittest.TestCase):
     #
     #        # t0 is _not_ queued
     #        t0 = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
+    #            command = lambda task : force_touch(task.config_blah.out_file),
     #            out_file = "test_manual_queue3a.txt",
     #        )
     #
     #        # t1 is _not_ queued
     #        t1 = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
+    #            command = lambda task : force_touch(task.config_blah.out_file),
     #            out_file = "test_manual_queue3b.txt",
     #        )
     #
     #        # t2 depends on t0 but not t1, t0 should be transitively queued
     #        t2 = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
+    #            command = lambda task : force_touch(task.config_blah.out_file),
     #            in_file  = t0,
     #            out_file = "test_manual_queue3c.txt",
     #        )
@@ -304,12 +304,12 @@ class TestTasks(unittest.TestCase):
         If multiple distinct commands generate the same output file, that's an error.
         """
         hancho.Task(
-            command = lambda task : (os.utime(src, None) for src in task.config.out_obj),
+            command = lambda task : (os.utime(src, None) for src in task.config_blah.out_obj),
             in_src=__file__,
             out_obj="colliding_output.txt",
         )
         task2 = hancho.Task(
-            command = lambda task : force_touch(task.config.out_obj),
+            command = lambda task : force_touch(task.config_blah.out_obj),
             in_src=__file__,
             out_obj="colliding_output.txt",
         )
@@ -327,7 +327,7 @@ class TestTasks(unittest.TestCase):
             hancho.Task(
                 command=[
                     lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task.config.out_obj),
+                    lambda task : force_touch(task.config_blah.out_obj),
                 ],
                 in_src=[],
                 out_obj="result.txt",
@@ -348,7 +348,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.01)
             compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
-                command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
+                command = lambda task : shutil.copy(task.config_blah.in_src, task.config_blah.out_obj),
                 in_src=None,
                 in_depfile="{swapext(out_obj, '.d')}",
                 out_obj="{swapext(in_src, '.o')}",
@@ -380,7 +380,7 @@ class TestTasks(unittest.TestCase):
                 #command="sleep 0.1 && touch {out_obj}",
                 command = [
                     lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task.config.out_obj),
+                    lambda task : force_touch(task.config_blah.out_obj),
                 ],
                 in_temp=dummy,
                 in_src="src/test.cpp",
@@ -416,7 +416,7 @@ class TestTasks(unittest.TestCase):
         # We should fail if an input is missing
         task = hancho.Task(
             desc="Should fail due to missing input",
-            command = lambda task : force_touch(task.config.out_obj),
+            command = lambda task : force_touch(task.config_blah.out_obj),
             in_src="src/does_not_exist.txt",
             out_obj="missing_src.txt",
         )
@@ -427,7 +427,7 @@ class TestTasks(unittest.TestCase):
         # We should fail if a dependency is missing even if it's not used by the command.
         task = hancho.Task(
             desc="Missing dep should fail",
-            command = lambda task : force_touch(task.config.out_obj),
+            command = lambda task : force_touch(task.config_blah.out_obj),
             in_src="src/test.cpp",
             in_dep=["missing_dep.txt"],
             out_obj="result.txt",
@@ -444,7 +444,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
-            command = lambda task : shutil.copy(task.config.in_src, task.config.out_obj),
+            command = lambda task : shutil.copy(task.config_blah.in_src, task.config_blah.out_obj),
             in_src=os.path.normpath("src/foo.c"),
             out_obj="{swapext(in_src, '.o')}",
         )
@@ -458,7 +458,7 @@ class TestTasks(unittest.TestCase):
     def test_does_create_output(self):
         # Output files should appear in build/ by default
         hancho.Task(
-            command = lambda task : force_touch(task.config.out_obj),
+            command = lambda task : force_touch(task.config_blah.out_obj),
             in_src=[],
             out_obj="result.txt",
         )
@@ -550,7 +550,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual("flarp.txt", script.options.flarpy)
 
         hancho.Task(
-            command = lambda task : force_touch(task.config.out_file),
+            command = lambda task : force_touch(task.config_blah.out_file),
             source_files=[],
             out_file="{flarpy}",
         )
@@ -560,7 +560,7 @@ class TestTasks(unittest.TestCase):
 
     def test_sync_command(self):
         def sync_command(task):
-            force_touch(task.config.out_obj)
+            force_touch(task.config_blah.out_obj)
 
         hancho.Task(
             name="result.txt",
@@ -577,7 +577,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a lambda",
-            command=lambda task: force_touch(task.config.out_obj),
+            command=lambda task: force_touch(task.config_blah.out_obj),
             in_src=[],
             out_obj="{name}",
         )
@@ -588,7 +588,7 @@ class TestTasks(unittest.TestCase):
     def test_sync_callback(self):
         def sync_callback(task):
             time.sleep(0.1)
-            force_touch(task.config.out_file)
+            force_touch(task.config_blah.out_file)
 
         hancho.Task(command=sync_callback, out_file="test_sync_callback.txt")
         self.assertFalse(Path("build/test_sync_callback.txt").exists())
@@ -608,7 +608,7 @@ class TestTasks(unittest.TestCase):
     def test_async_callback(self):
         async def async_callback(task):
             await asyncio.sleep(0.1)
-            force_touch(task.config.out_file)
+            force_touch(task.config_blah.out_file)
 
         hancho.Task(command=async_callback, out_file="test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
@@ -635,13 +635,13 @@ class TestTasks(unittest.TestCase):
         )
         task_that_passes = hancho.Task(
             desc="task that passes",
-            command = lambda task : force_touch(task.config.out_obj),
+            command = lambda task : force_touch(task.config_blah.out_obj),
             in_src=[],
             out_obj="pass_result.txt",
         )
         should_be_cancelled = hancho.Task(
             desc="should be cancelled",
-            command = lambda task : force_touch(task.config.out_obj),
+            command = lambda task : force_touch(task.config_blah.out_obj),
             in_src=[task_that_fails, task_that_passes],
             out_obj="should_not_be_created.txt",
         )
@@ -671,7 +671,7 @@ class TestTasks(unittest.TestCase):
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
-            hancho.Task(command = lambda task : force_touch(task.config.out_obj), in_src=[], out_obj="dummy.txt")
+            hancho.Task(command = lambda task : force_touch(task.config_blah.out_obj), in_src=[], out_obj="dummy.txt")
             return []
 
         hancho.Task(command=callback, in_src=[], out_obj=[])
@@ -715,7 +715,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             desc="********** I am the slow task, I eat all the cores **********",
             command=[
-                lambda task : force_touch(task.config.out_obj),
+                lambda task : force_touch(task.config_blah.out_obj),
                 lambda task : time.sleep(0.3)
             ],
             job_count=os.cpu_count(),
@@ -758,14 +758,14 @@ class TestTasks(unittest.TestCase):
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
+                command = lambda task : shutil.copy(task.config_blah.in_file, task.config_blah.out_file),
                 in_file="data/dummy.txt",
                 out_file="blerp/sherp",
             )
             task2 = hancho.Task(
                 name="task2",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
+                command = lambda task : shutil.copy(task.config_blah.in_file, task.config_blah.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
                 build_force=True,

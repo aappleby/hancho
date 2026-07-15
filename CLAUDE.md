@@ -71,6 +71,8 @@ Almost everything in Hancho is a `Dict` - a `dict` subclass with three important
 Ignore the below - we're back to 'config' being a preset global variable in scripts because making
 "hancho.config" track the top script is a pain in the butt. Update this when you can.
 
+Ugh ignore everything this is all busted
+
 # Every script context has its own config. `hancho.config` (resolved via a module-level
 # `__getattr__` that reads a `contextvars.ContextVar`) returns the config for the currently
 # executing script. When you call `hancho.Task(...)`, the new task's config is
