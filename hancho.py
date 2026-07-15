@@ -420,8 +420,6 @@ class Expander:
 
                 # If there was only one block in the list, we're done early.
                 if len(blocks) == 1:
-                    if isinstance(result, Task):
-                        raise TypeError("expand should not be producing tasks")
                     return result
 
                 blocks[i] = Utils.stringify(result)
@@ -1657,8 +1655,8 @@ class Task:
         task.expanded.build_dir  = blah.expand("{build_dir}")
         task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
 
-        task.config_blah.command   = Utils.flatten(task.config_blah.command)
-        task.expanded.command = Utils.flatten(task.config_blah.command)
+        blah.command   = Utils.flatten(blah.command)
+        task.expanded.command = Utils.flatten(blah.command)
 
         task.expanded.name = blah.expand("{name}")
         task.expanded.desc = blah.expand("{desc}")
@@ -1671,7 +1669,7 @@ class Task:
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for val in Utils.yield_values(task.config_blah):
+        for val in Utils.yield_values(blah):
             if isinstance(val, Task):
                 if val._aio_task is None:
                     raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
@@ -1782,6 +1780,8 @@ class Task:
 
         # ----------------------------------------
         # Paths are cleaned up, we can now expand everything else.
+
+        #print(task.config_blah.keys())
 
         for key, val in task.config_blah.items():
             task.expanded[key] = task.config_blah.expand(val)
@@ -2157,6 +2157,13 @@ class Loader:
     class EarlyOut(Exception): pass # Raised by hancho scripts when they are successful but don't need to do anything else.
     class Fail(Exception): pass     # Script has hit a fatal error
 
+#    match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
+#    real_filenames : set[str] = set()
+#    dedupe : dict[tuple[str, str], Script] = {}
+#    loaded_files : list[str] = []
+#    all_scripts : list[Script] = []
+#    load_started = False
+
     @classmethod
     def reset(cls):
         cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
@@ -2235,6 +2242,8 @@ class Loader:
 
     # ----------------------------------------------------------------------------------------------
 
+Loader.reset()
+
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region Runner
@@ -2307,8 +2316,7 @@ class Runner:
             target_regex = re.compile(script.options.target)
 
             for task in Loader.yield_tasks():
-                name = task.config_blah.expand("{name}")
-                if target_regex.search(name):
+                if target_regex.search(task.expanded.name):
                     task.enable_task()
 
         elif script.options.build_all:
