@@ -1686,9 +1686,6 @@ class Task:
         #endregion
         # ----------------------------------------
 
-        task.config_blah.command = Utils.flatten(task.config_blah.command)
-        task.expanded.command    = Utils.flatten(task.config_blah.command)
-
 
        # Replace all Tasks in all input fields with their output file lists.
        # Expand and flatten all io field's values, as a template string can turn into a list of
@@ -1780,16 +1777,11 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can now expand everything else.
 
-#        task.expanded.name    = task.config_blah.expand("{name}")
-#        task.expanded.desc    = task.config_blah.expand("{desc}")
-#        task.expanded.command = task.config_blah.expand("{command}")
+        task.expanded.name    = task.config_blah.expand("{name}")
+        task.expanded.desc    = task.config_blah.expand("{desc}")
+        task.expanded.command = task.config_blah.expand("{command}")
 
-        for key in task.expanded:
-            #old_val = task.expanded[key]
-            new_val = task.config_blah.expand(f"{{{key}}}")
-            #if old_val != new_val:
-            #    print(f"{key}: {old_val} -> {new_val}")
-            task.expanded[key] = new_val
+        task.expanded.command = Utils.flatten(task.expanded.command)
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
