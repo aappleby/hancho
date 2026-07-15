@@ -1461,10 +1461,12 @@ class Task:
         )
         self.expanded = Dict()
 
-        self.expanded.enabled     = self.config_blah.expand("{enabled}")
-        self.expanded.build_force = self.config_blah.expand("{build_force}")
-        self.expanded.depformat   = self.config_blah.expand("{depformat}")
-        self.expanded.cpu_cores   = self.config_blah.expand("{cpu_cores}")
+        blah = self.config_blah
+
+        self.expanded.enabled     = blah.expand("{enabled}")
+        self.expanded.build_force = blah.expand("{build_force}")
+        self.expanded.depformat   = blah.expand("{depformat}")
+        self.expanded.cpu_cores   = blah.expand("{cpu_cores}")
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1622,6 +1624,7 @@ class Task:
 
     async def task_main(self):
         task = self
+        blah = task.config_blah
         script = cv_script.get()
 
         assert task.script is script
@@ -1633,26 +1636,32 @@ class Task:
 
         with LogLevel.DEBUG:
             task.log("Task config before expand:\n")
-            task.log(str(task.config_blah) + "\n")
+            task.log(str(blah) + "\n")
 
         #config.script_path = config.expand("script_path")
         #config.script_cwd  = config.expand("script_cwd")
         #config.repo_root   = config.expand("repo_root")
 
-        task.config_blah.task_cwd    = task.config_blah.expand("{task_cwd}")
-        task.config_blah.build_dir   = task.config_blah.expand("{build_dir}")
+        blah.task_cwd    = blah.expand("{task_cwd}")
+        blah.build_dir   = blah.expand("{build_dir}")
 
-        task.config_blah.task_cwd   = Path.abspath(task.config_blah.task_cwd)
-        task.config_blah.build_dir  = Path.abspath(task.config_blah.build_dir)
+        blah.task_cwd   = Path.abspath(blah.task_cwd)
+        blah.build_dir  = Path.abspath(blah.build_dir)
 
-        task.expanded.task_cwd   = task.config_blah.expand("{task_cwd}")
+        task.expanded.task_cwd   = blah.expand("{task_cwd}")
         task.expanded.task_cwd   = Path.abspath(task.expanded.task_cwd)
 
-        task.expanded.build_root = task.config_blah.expand("{build_root}")
+        task.expanded.build_root = blah.expand("{build_root}")
         task.expanded.build_root = Path.abspath(task.expanded.build_root)
 
-        task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
+        task.expanded.build_dir  = blah.expand("{build_dir}")
         task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
+
+        task.config_blah.command   = Utils.flatten(task.config_blah.command)
+        task.expanded.command = Utils.flatten(task.config_blah.command)
+
+        task.expanded.name = blah.expand("{name}")
+        task.expanded.desc = blah.expand("{desc}")
 
         # ----------------------------------------
         #region await
@@ -1676,7 +1685,7 @@ class Task:
                     # This input was clean and didn't need to rebuild.
                     pass
                 except Exception as ex:
-                    raise Task.CANCELLED(f"Task is cancelled: '{task.config_blah.name}' : '{task.config_blah.desc}'") from ex
+                    raise Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'") from ex
 
         # Replace all Tasks in all input fields with their output file lists.
         for key, val in self.config_blah.items():
@@ -1697,12 +1706,6 @@ class Task:
         # you'll find it below.
 
         # FIXME yeah we should expand almost everything
-
-        # ----------------------------------------
-        # Flatten the commands so that we always have a command list and not a bare string.
-
-        task.config_blah.command   = Utils.flatten(task.config_blah.command)
-        task.expanded.command = Utils.flatten(task.config_blah.command)
 
         # ----------------------------------------
         # Expand the io field's file list (in 'val') before we remap it, as a template
