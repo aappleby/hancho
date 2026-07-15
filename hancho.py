@@ -1438,7 +1438,6 @@ class Task:
         name         = None,
         desc         = None,
         command      = None,
-        enabled      = False,
     )
 
     # ----------------------------------------------------------------------------------------------
@@ -1462,10 +1461,15 @@ class Task:
         self.expanded.name        = self.config_blah.expand("{name}")
         self.expanded.desc        = self.config_blah.expand("{name}")
 
-        self.expanded.enabled     = self.config_blah.expand("{enabled}")
         self.expanded.build_force = self.config_blah.expand("{build_force}")
         self.expanded.depformat   = self.config_blah.expand("{depformat}")
-        self.expanded.cpu_cores   = self.config_blah.expand("{cpu_cores}")
+        self.expanded.job_size    = self.config_blah.expand("{job_size}")
+
+        if not isinstance(self.expanded.job_size, int):
+            self.expanded.job_size    = self.config_blah.expand("{job_size}")
+            pass
+
+        self.enabled = False
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1506,7 +1510,7 @@ class Task:
         self._task_id : int = 0
         self._stdout : str = ""
         self._stderr : str = ""
-        self._cpu_cores = 0
+        self._job_size = 0
         self._complete = False
 
         script.tasks.append(self)
@@ -1559,8 +1563,8 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def enable_task(self):
-        if not self.expanded.enabled:
-            self.expanded.enabled = True
+        if not self.enabled:
+            self.enabled = True
             Task.tasks_enabled += 1
             if Utils.in_event_loop():
                 self.create_aio_task()
@@ -1613,9 +1617,7 @@ class Task:
                 Log.log(traceback.format_exc() + "\n")
             task._error = ex
         finally:
-            if task._cpu_cores:
-                Runner.release(task._cpu_cores)
-                task._cpu_cores = 0
+            Runner.release(task._job_size)
 
         if task._error:
             raise task._error
@@ -1780,6 +1782,18 @@ class Task:
         task.expanded.desc    = task.config_blah.expand("{desc}")
         task.expanded.command = task.config_blah.expand("{command}")
 
+        for key, val in task.config_blah.items():
+            old_val = task.expanded.get(key, None)
+            new_val = task.config_blah.expand(val)
+
+            if old_val != new_val:
+                pass
+
+            if key == "job_size" and not isinstance(new_val, int):
+                pass
+
+            task.expanded[key] = new_val
+
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
             task.log(str(task.expanded) + "\n")
@@ -1887,7 +1901,7 @@ class Task:
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
 
-        task._cpu_cores = await Runner.acquire(task.expanded.cpu_cores)
+        task._job_size = await Runner.acquire(task.expanded.job_size)
 
         # ----------------------------------------
         # Run all the task's commands
@@ -2247,7 +2261,7 @@ class Runner:
     @classmethod
     def reset(cls, runner_options):
         cls.runner_options = runner_options
-        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(runner_options.cpu_count)
+        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(runner_options.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
@@ -2271,8 +2285,11 @@ class Runner:
         # A task that requires a lot of cores can block tasks behind it in the queue. This is
         # intended behavior.
 
-        if count > cls.runner_options.cpu_count: # pragma: no cover
-            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.runner_options.cpu_count}")
+        if not isinstance(count, int):
+            pass
+
+        if count > cls.runner_options.max_jobs: # pragma: no cover
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.runner_options.max_jobs}")
         async with cls.core_lock:
             acquired = 0
             try:
@@ -2343,7 +2360,7 @@ class Runner:
         # Create asyncio tasks for all enabled Hancho tasks.
 
         for task in Loader.yield_tasks():
-            if task.expanded.enabled:
+            if task.enabled:
                 task.create_aio_task()
 
         # ------------------------------------
@@ -2462,12 +2479,12 @@ class Main:
         build_strict = True,
 
         run_tool     = None,
-        cpu_cores    = 1,
+        job_size     = 1,
         depformat    = "gcc" if os.name == "posix" else "msvc",
     )
 
     default_runner_options = Dict(
-        cpu_count    = os.cpu_count() or 1,
+        max_jobs     = os.cpu_count() or 1,
         max_errors   = 0,
     )
 
@@ -2611,8 +2628,7 @@ class Main:
         parser.add_argument('-r', "--repo_root",    metavar = "(path)",    type=str.strip, help="The location of the repo we're building.")
         parser.add_argument(      "--run_tool",     metavar = "(tool)",    type=str.strip, help="Run a subtool.")
         parser.add_argument(      "--max_errors",   metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument(      "--cpu_count",    metavar = "(count)",   type=int,       help="Run jobs on N cores in parallel.")
-        parser.add_argument(      "--cpu_cores",    metavar = "(count)",   type=int,       help="How many CPU cores to reserve per task.")
+        parser.add_argument(      "--max_jobs",     metavar = "(count)",   type=int,       help="Run jobs on N cores in parallel.")
         parser.add_argument(      "--depformat",    metavar = "(format)",  type=str.strip, help="Dependency file format (gcc or msvc)")
         parser.add_argument(      "--build_tag",    metavar = "(name)",    type=str.strip, help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
         parser.add_argument(      "--build_root",   metavar = "(path)",    type=str.strip, help="Directory to put build artifacts in.")

@@ -551,7 +551,7 @@ class TestTasks(unittest.TestCase):
 
         hancho.Task(
             command = lambda task : force_touch(task.config_blah.out_file),
-            source_files=[],
+            in_files=[],
             out_file="{flarpy}",
         )
         self.assertFalse(os.path.exists("build/flarp.txt"))
@@ -697,18 +697,18 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(1000, len(glob.glob("build/dummy*.txt")))
 
     # This one takes about a second on Windows
-    def test_cpu_count(self):
+    def test_jobs(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
         # another batch of 100 tasks that use random numbers of cores.
 
         for i in range(100):
             hancho.Task(
-                desc="I am task {index}, I use {cpu_count} cores",
+                desc="I am task {index}, I use {job_size} cores",
                 command="(exit 0)",
                 in_src=[],
                 out_obj=[],
-                cpu_count=random.randrange(1, cast(int, os.cpu_count()) + 1),
+                job_size=random.randrange(1, cast(int, os.cpu_count()) + 1),
                 index=i,
             )
 
@@ -718,18 +718,18 @@ class TestTasks(unittest.TestCase):
                 lambda task : force_touch(task.config_blah.out_obj),
                 lambda task : time.sleep(0.3)
             ],
-            cpu_count=os.cpu_count(),
+            job_size=os.cpu_count(),
             in_src=[],
             out_obj="slow_result.txt",
         )
 
         for i in range(100):
             hancho.Task(
-                desc="I am task {index}, I use {cpu_count} cores",
+                desc="I am task {index}, I use {job_size} cores",
                 command="(exit 0)",
                 in_src=[],
                 out_obj=[],
-                cpu_count=random.randrange(1, cast(int, os.cpu_count()) + 1),
+                job_size=random.randrange(1, cast(int, os.cpu_count()) + 1),
                 index=100 + i,
             )
 

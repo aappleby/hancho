@@ -160,8 +160,8 @@ aborted), `FAILED` (command/exception at runtime), `BROKEN` (misconfigured task,
 during init).
 
 ### The job pool / Runner
-- `Runner` owns all tasks and an asyncio `Semaphore` sized to `core_max`
-  (`-j`, default `os.cpu_count()`). A task acquires `core_count` cores before running, so a
+- `Runner` owns all tasks and an asyncio `Semaphore` sized to `max_jobs`
+  (`-j, --max_jobs`, default `os.cpu_count()`). A task acquires `job_size` cores before running, so a
   heavy task can intentionally block lighter ones behind it.
 - Tasks are created eagerly but only turned into `asyncio.Task`s when enabled; dependencies
   are enabled transitively so the graph can't deadlock.
@@ -178,12 +178,12 @@ during init).
 - `build_root` (`{repo_dir}/build`), `build_tag`, `build_dir`
   (`{build_root}/{build_tag}/{relpath(task_cwd, repo_dir)}`) - where outputs go. `--build_tag`
   gives a build its own subtree (e.g. debug vs. release).
-- `name` / `desc` / `command`, `core_count`, `depformat`, `dry_run`, `enabled`.
+- `name` / `desc` / `command`, `job_size`, `depformat`, `dry_run`, `enabled`.
 
 ### CLI flags (`Options.parse_flags`)
 # Hey Claude, this is obsolete
 `target` (regex), `-C/--root_dir`, `-f/--root_file`, `-t/--tool` (e.g. `clean` wipes
-`build_root`), `--build_tag`, `-j/--core_max`, `--max_errors`, `-n/--dry_run`,
+`build_root`), `--build_tag`, `-j/--max_jobs`, `--max_errors`, `-n/--dry_run`,
 `-a/--rebuild`, `--log-wrap`, `--strict`, and verbosity shortcuts `-q/-v/-d/--trace` or
 `--verbosity=LEVEL` (QUIET..TRACE). **Unrecognized `--flags` become config fields**
 (`--foo` -> `foo=True`, `--foo=3` -> `foo=3`), so scripts can read arbitrary CLI options.
