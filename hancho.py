@@ -510,7 +510,7 @@ class Dumper:
     def _dump_scalar(cls, val, color_code):
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if isinstance(val, Task):
-            val = f"<Task {val.config_blah.name}>"
+            val = f"<Task '{val.expanded.name}'>"
         elif isinstance(val, contextvars.Context):
             val = "<Context>"
         elif isinstance(val, types.ModuleType):
@@ -1460,6 +1460,9 @@ class Task:
         self.expanded = Dict()
 
         blah = self.config_blah
+
+        self.expanded.name        = blah.expand("{name}")
+        self.expanded.desc        = blah.expand("{desc}")
 
         self.expanded.enabled     = blah.expand("{enabled}")
         self.expanded.build_force = blah.expand("{build_force}")
