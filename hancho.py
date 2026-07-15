@@ -1687,20 +1687,20 @@ class Task:
             except Exception as ex:
                 raise Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'") from ex
 
-        # Replace all Tasks in all input fields with their output file lists.
+
+       # Replace all Tasks in all input fields with their output file lists.
+       # Expand and flatten all io field's values, as a template string can turn into a list of
+       # multiple filenames.
+
         for key in task.io_fields:
             val = task.config_blah[key]
-            if Task.is_depfile_field(key):
-                self.expanded[key] = Utils.flatten(task.config_blah.expand(val))
-            elif Task.is_input_field(key):
-                result = [
+            if Task.is_input_field(key):
+                val = [
                     v.out_files if isinstance(v, Task) else v
                     for v in Utils.yield_values(val)
                 ]
-                self.config_blah[key] = Utils.flatten(result)
-                self.expanded[key] = Utils.flatten(task.config_blah.expand(result))
-            elif Task.is_output_field(key):
-                self.expanded[key] = Utils.flatten(task.config_blah.expand(val))
+            task.config_blah[key] = Utils.flatten(task.config_blah.expand(val))
+            task.expanded[key] = Utils.flatten(task.config_blah.expand(val))
 
         #endregion
         # ----------------------------------------
@@ -1714,16 +1714,6 @@ class Task:
         # FIXME yeah we should expand almost everything
 
         # ----------------------------------------
-        # Expand the io field's file list (in 'val') before we remap it, as a template
-        # string can turn into a list of multiple filenames.
-
-        for key in self.io_fields:
-            val = task.config_blah[key]
-            task.config_blah[key] = Utils.flatten(task.config_blah.expand(val))
-
-        for key in self.io_fields:
-            val = task.config_blah[key]
-            task.expanded[key] = Utils.flatten(task.config_blah.expand(val))
 
         # ----------------------------------------
         # Turn all relative paths in io fields into absolute paths (and move them under build_dir
@@ -1738,7 +1728,8 @@ class Task:
         robust way. Whether this actually turns out to be robust or not is yet to be determined.
         """
 
-        for name, val in task.config_blah.items():
+        for name in task.io_fields:
+            val = task.config_blah[name]
             if Task.is_io_field(name):
                 files = []
                 for file in val:
@@ -1789,10 +1780,9 @@ class Task:
         # ----------------------------------------
         # Paths are cleaned up, we can now expand everything else.
 
-        #print(task.config_blah.keys())
-
-        for key, val in task.config_blah.items():
-            task.expanded[key] = task.config_blah.expand(val)
+        task.expanded["name"]    = task.config_blah.expand("{name}")
+        task.expanded["desc"]    = task.config_blah.expand("{desc}")
+        task.expanded["command"] = task.config_blah.expand("{command}")
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
