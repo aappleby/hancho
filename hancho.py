@@ -1661,9 +1661,6 @@ class Task:
         task.config_blah.command   = Utils.flatten(task.config_blah.command)
         task.expanded.command = Utils.flatten(task.config_blah.command)
 
-        task.expanded.name = task.config_blah.expand("{name}")
-        task.expanded.desc = task.config_blah.expand("{desc}")
-
         # ----------------------------------------
         #region await
 
@@ -1730,59 +1727,58 @@ class Task:
 
         for name in task.io_fields:
             val = task.config_blah[name]
-            if Task.is_io_field(name):
-                files = []
-                for file in val:
-                    #remapped = task.remap_io_field_path(key, file)
+            files = []
+            for file in val:
+                #remapped = task.remap_io_field_path(key, file)
 
-                    # Join script_cwd with the filename to produce absolute paths.
-                    file = Path.join(script.options.script_cwd, file)
+                # Join script_cwd with the filename to produce absolute paths.
+                file = Path.join(script.options.script_cwd, file)
 
-                    # File paths _must_ be normed after joining, otherwise they might look like they're under
-                    # script_dir, but they're not because the paths could have "../../../../.." in them.
-                    file = Path.abspath(file)
+                # File paths _must_ be normed after joining, otherwise they might look like they're under
+                # script_dir, but they're not because the paths could have "../../../../.." in them.
+                file = Path.abspath(file)
 
-                    # Move all outputs under build.dir and ensure their directories exist.
+                # Move all outputs under build.dir and ensure their directories exist.
 
-                    if Task.is_output_field(name):
-                        # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
-                        # it's an _output_ from the compiler.
-                        if not Path.startswith(file, task.expanded.build_dir):
-                            file = Path.relpath(file, script.options.script_cwd)
-                            file = Path.join(task.expanded.build_dir, file)
+                if Task.is_output_field(name):
+                    # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
+                    # it's an _output_ from the compiler.
+                    if not Path.startswith(file, task.expanded.build_dir):
+                        file = Path.relpath(file, script.options.script_cwd)
+                        file = Path.join(task.expanded.build_dir, file)
 
-                        if not script.options.build_dry:
-                            os.makedirs(Path.dirname(file), exist_ok=True)
+                    if not script.options.build_dry:
+                        os.makedirs(Path.dirname(file), exist_ok=True)
 
-                        # Depfiles do _not_ go in the output file list, as they are never consumed by a
-                        # downstream task.
-                        if not Task.is_depfile_field(name):
-                            task.out_files[name] = file
+                    # Depfiles do _not_ go in the output file list, as they are never consumed by a
+                    # downstream task.
+                    if not Task.is_depfile_field(name):
+                        task.out_files[name] = file
 
-                    else:
-                        task.in_files[name] = file
+                else:
+                    task.in_files[name] = file
 
-                    files.append(file)
+                files.append(file)
 
-                # Convert the fixed paths back to relative so our command lines aren't enormous.
-                # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-                # relative to script_dir if we're calling a callback.
+            # Convert the fixed paths back to relative so our command lines aren't enormous.
+            # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+            # relative to script_dir if we're calling a callback.
 
-                # actually this may not be worth it, and it currently breaks some tests
-                #rel_dir = task.expanded.task_cwd if isinstance(task.expanded.command[0], str) else script.options.script_cwd
-                #file = Path.relpath(file, rel_dir)
+            # actually this may not be worth it, and it currently breaks some tests
+            #rel_dir = task.expanded.task_cwd if isinstance(task.expanded.command[0], str) else script.options.script_cwd
+            #file = Path.relpath(file, rel_dir)
 
-                # Unwrap filenames if they're an array of one element so that scripts expecting
-                # join(str, str) to return a str will be happy.
-                task.config_blah[name] = files[0] if len(files) == 1 else files
-                task.expanded[name] = files[0] if len(files) == 1 else files
+            # Unwrap filenames if they're an array of one element so that scripts expecting
+            # join(str, str) to return a str will be happy.
+            task.config_blah[name] = files[0] if len(files) == 1 else files
+            task.expanded[name] = files[0] if len(files) == 1 else files
 
         # ----------------------------------------
         # Paths are cleaned up, we can now expand everything else.
 
-        task.expanded["name"]    = task.config_blah.expand("{name}")
-        task.expanded["desc"]    = task.config_blah.expand("{desc}")
-        task.expanded["command"] = task.config_blah.expand("{command}")
+        task.expanded.name    = task.config_blah.expand("{name}")
+        task.expanded.desc    = task.config_blah.expand("{desc}")
+        task.expanded.command = task.config_blah.expand("{command}")
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
