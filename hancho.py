@@ -1459,15 +1459,13 @@ class Task:
         )
         self.expanded = Dict()
 
-        blah = self.config_blah
+        self.expanded.name        = self.config_blah.expand("{name}")
+        self.expanded.desc        = self.config_blah.expand("{name}")
 
-        self.expanded.name        = blah.expand("{name}")
-        self.expanded.desc        = blah.expand("{desc}")
-
-        self.expanded.enabled     = blah.expand("{enabled}")
-        self.expanded.build_force = blah.expand("{build_force}")
-        self.expanded.depformat   = blah.expand("{depformat}")
-        self.expanded.cpu_cores   = blah.expand("{cpu_cores}")
+        self.expanded.enabled     = self.config_blah.expand("{enabled}")
+        self.expanded.build_force = self.config_blah.expand("{build_force}")
+        self.expanded.depformat   = self.config_blah.expand("{depformat}")
+        self.expanded.cpu_cores   = self.config_blah.expand("{cpu_cores}")
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
@@ -1625,7 +1623,6 @@ class Task:
 
     async def task_main(self):
         task = self
-        blah = task.config_blah
         script = cv_script.get()
 
         assert task.script is script
@@ -1637,32 +1634,32 @@ class Task:
 
         with LogLevel.DEBUG:
             task.log("Task config before expand:\n")
-            task.log(str(blah) + "\n")
+            task.log(str(task.config_blah) + "\n")
 
         #config.script_path = config.expand("script_path")
         #config.script_cwd  = config.expand("script_cwd")
         #config.repo_root   = config.expand("repo_root")
 
-        blah.task_cwd    = blah.expand("{task_cwd}")
-        blah.build_dir   = blah.expand("{build_dir}")
+        task.config_blah.task_cwd    = task.config_blah.expand("{task_cwd}")
+        task.config_blah.build_dir   = task.config_blah.expand("{build_dir}")
 
-        blah.task_cwd   = Path.abspath(blah.task_cwd)
-        blah.build_dir  = Path.abspath(blah.build_dir)
+        task.config_blah.task_cwd   = Path.abspath(task.config_blah.task_cwd)
+        task.config_blah.build_dir  = Path.abspath(task.config_blah.build_dir)
 
-        task.expanded.task_cwd   = blah.expand("{task_cwd}")
+        task.expanded.task_cwd   = task.config_blah.expand("{task_cwd}")
         task.expanded.task_cwd   = Path.abspath(task.expanded.task_cwd)
 
-        task.expanded.build_root = blah.expand("{build_root}")
+        task.expanded.build_root = task.config_blah.expand("{build_root}")
         task.expanded.build_root = Path.abspath(task.expanded.build_root)
 
-        task.expanded.build_dir  = blah.expand("{build_dir}")
+        task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
         task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
 
-        blah.command   = Utils.flatten(blah.command)
-        task.expanded.command = Utils.flatten(blah.command)
+        task.config_blah.command   = Utils.flatten(task.config_blah.command)
+        task.expanded.command = Utils.flatten(task.config_blah.command)
 
-        task.expanded.name = blah.expand("{name}")
-        task.expanded.desc = blah.expand("{desc}")
+        task.expanded.name = task.config_blah.expand("{name}")
+        task.expanded.desc = task.config_blah.expand("{desc}")
 
         # ----------------------------------------
         #region await
@@ -1672,7 +1669,7 @@ class Task:
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for val in Utils.yield_values(blah):
+        for val in Utils.yield_values(task.config_blah):
             if isinstance(val, Task):
                 if val._aio_task is None:
                     raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
