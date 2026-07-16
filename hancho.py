@@ -1456,18 +1456,11 @@ class Task:
             Task.default_config,
             *args, **kwargs
         )
+
+
         self.expanded = Dict()
 
-        self.expanded.name        = self.config_blah.expand("{name}")
-        self.expanded.desc        = self.config_blah.expand("{desc}")
-
-        self.expanded.build_force = self.config_blah.expand("{build_force}")
-        self.expanded.depformat   = self.config_blah.expand("{depformat}")
-        self.expanded.job_size    = self.config_blah.expand("{job_size}")
-
-        if not isinstance(self.expanded.job_size, int):
-            self.expanded.job_size    = self.config_blah.expand("{job_size}")
-            pass
+        blah = self.config_blah
 
         self.enabled = False
 
@@ -1481,9 +1474,8 @@ class Task:
 
         self._aio_context = contextvars.copy_context()
 
-        self.input_tasks : list[Task] = [v for v in Utils.yield_values(self.config_blah) if isinstance(v, Task)]
-
-        self.io_fields : list[str] = [k for k in self.config_blah if Task.is_io_field(k)]
+        self.input_tasks : list[Task] = [v for v in Utils.yield_values(blah) if isinstance(v, Task)]
+        self.io_fields : list[str] = [k for k in blah if Task.is_io_field(k)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1589,6 +1581,12 @@ class Task:
 
     async def task_top(self):
         task = self
+        blah = self.config_blah
+        script = task.script
+        expanded = self.expanded
+
+        Task.id_counter += 1
+        task._task_id = Task.id_counter
 
         # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -1607,8 +1605,91 @@ class Task:
             except Exception as ex:
                 with LogLevel.VERBOSE:
                     task.log(str(ex) + "\n")
-                task._error = Task.CANCELLED(f"Task is cancelled: '{task.expanded.name}' : '{task.expanded.desc}'")
+                task._error = Task.CANCELLED(f"Task is cancelled: '{blah.name}' : '{blah.desc}'")
                 raise task._error from ex
+
+        # ----------------------------------------
+
+        onion = Onion(
+            hancho_module  = hancho.__dict__,
+            script_module  = script.module.__dict__ if script else {},
+            script_options = script.options if script else {},
+            task_config    = blah,
+        )
+
+        expanded.name        = blah.expand("{name}")
+        expanded.desc        = blah.expand("{desc}")
+        expanded.build_force = blah.expand("{build_force}")
+        expanded.depformat   = blah.expand("{depformat}")
+        expanded.job_size    = blah.expand("{job_size}")
+        expanded.job_size    = blah.expand("{job_size}")
+
+        with LogLevel.DEBUG:
+            task.log("Task config before expand:\n")
+            task.log(str(blah) + "\n")
+
+        #config.script_path = config.expand("script_path")
+        #config.script_cwd  = config.expand("script_cwd")
+        #config.repo_root   = config.expand("repo_root")
+
+        blah.task_cwd    = blah.expand("{task_cwd}")
+        blah.build_dir   = blah.expand("{build_dir}")
+
+        blah.task_cwd   = Path.abspath(blah.task_cwd)
+        blah.build_dir  = Path.abspath(blah.build_dir)
+
+        expanded.task_cwd   = blah.expand("{task_cwd}")
+        expanded.task_cwd   = Path.abspath(expanded.task_cwd)
+
+        expanded.build_root = blah.expand("{build_root}")
+        expanded.build_root = Path.abspath(expanded.build_root)
+
+        expanded.build_dir  = blah.expand("{build_dir}")
+        expanded.build_dir  = Path.abspath(expanded.build_dir)
+
+        expanded.name    = blah.expand("{name}")
+        expanded.desc    = blah.expand("{desc}")
+
+        for key in task.io_fields:
+            val = blah[key]
+            if Task.is_input_field(key):
+                val = [
+                    v.out_files if isinstance(v, Task) else v
+                    for v in Utils.yield_values(val)
+                ]
+            blah[key] = Utils.flatten(blah.expand(val))
+            expanded[key] = Utils.flatten(blah.expand(val))
+
+
+       # Replace all Tasks in all input fields with their output file lists.
+       # Expand and flatten all io field's values, as a template string can turn into a list of
+       # multiple filenames.
+
+        # ----------------------------------------
+        # Expand all fields that don't depend on input/output filenames (basically everything
+        # except name/desc/command).
+
+        # We _can't_ expand input/output paths here as they may refer to output paths for tasks
+        # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
+        # you'll find it below.
+
+        # FIXME yeah we should expand almost everything
+
+        # ----------------------------------------
+
+        # ----------------------------------------
+        # Turn all relative paths in io fields into absolute paths (and move them under build_dir
+        # if needed) so that we can access them from any working directory.
+
+        self.fix_paths()
+
+
+        # ----------------------------------------
+        # Paths are cleaned up, we can now expand everything else.
+
+        expanded.command = blah.expand("{command}")
+        expanded.command = Utils.flatten(expanded.command)
+
 
         # ----------------------------------------
         # Inputs are ready, run the task.
@@ -1643,71 +1724,7 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    async def task_main(self):
-        task = self
-
-        script = cv_script.get()
-
-        assert task.script is script
-
-        time_a = time.perf_counter()
-
-        Task.id_counter += 1
-        task._task_id = Task.id_counter
-
-        with LogLevel.DEBUG:
-            task.log("Task config before expand:\n")
-            task.log(str(task.config_blah) + "\n")
-
-        #config.script_path = config.expand("script_path")
-        #config.script_cwd  = config.expand("script_cwd")
-        #config.repo_root   = config.expand("repo_root")
-
-        task.config_blah.task_cwd    = task.config_blah.expand("{task_cwd}")
-        task.config_blah.build_dir   = task.config_blah.expand("{build_dir}")
-
-        task.config_blah.task_cwd   = Path.abspath(task.config_blah.task_cwd)
-        task.config_blah.build_dir  = Path.abspath(task.config_blah.build_dir)
-
-        task.expanded.task_cwd   = task.config_blah.expand("{task_cwd}")
-        task.expanded.task_cwd   = Path.abspath(task.expanded.task_cwd)
-
-        task.expanded.build_root = task.config_blah.expand("{build_root}")
-        task.expanded.build_root = Path.abspath(task.expanded.build_root)
-
-        task.expanded.build_dir  = task.config_blah.expand("{build_dir}")
-        task.expanded.build_dir  = Path.abspath(task.expanded.build_dir)
-
-       # Replace all Tasks in all input fields with their output file lists.
-       # Expand and flatten all io field's values, as a template string can turn into a list of
-       # multiple filenames.
-
-        for key in task.io_fields:
-            val = task.config_blah[key]
-            if Task.is_input_field(key):
-                val = [
-                    v.out_files if isinstance(v, Task) else v
-                    for v in Utils.yield_values(val)
-                ]
-            task.config_blah[key] = Utils.flatten(task.config_blah.expand(val))
-            task.expanded[key] = Utils.flatten(task.config_blah.expand(val))
-
-        # ----------------------------------------
-        # Expand all fields that don't depend on input/output filenames (basically everything
-        # except name/desc/command).
-
-        # We _can't_ expand input/output paths here as they may refer to output paths for tasks
-        # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
-        # you'll find it below.
-
-        # FIXME yeah we should expand almost everything
-
-        # ----------------------------------------
-
-        # ----------------------------------------
-        # Turn all relative paths in io fields into absolute paths (and move them under build_dir
-        # if needed) so that we can access them from any working directory.
-
+    def fix_paths(self):
         """
         Input and output file paths in .hancho scripts are declared relative to the directory the
         script is in (stored in the config under 'script_path').
@@ -1717,8 +1734,11 @@ class Task:
         robust way. Whether this actually turns out to be robust or not is yet to be determined.
         """
 
-        for name in task.io_fields:
-            val = task.config_blah[name]
+        task = self
+        script = cv_script.get()
+
+        for field in task.io_fields:
+            val = task.config_blah[field]
             files = []
             for file in val:
                 #remapped = task.remap_io_field_path(key, file)
@@ -1732,7 +1752,7 @@ class Task:
 
                 # Move all outputs under build.dir and ensure their directories exist.
 
-                if Task.is_output_field(name):
+                if Task.is_output_field(field):
                     # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
                     # it's an _output_ from the compiler.
                     if not Path.startswith(file, task.expanded.build_dir):
@@ -1744,11 +1764,11 @@ class Task:
 
                     # Depfiles do _not_ go in the output file list, as they are never consumed by a
                     # downstream task.
-                    if not Task.is_depfile_field(name):
-                        task.out_files[name] = file
+                    if not Task.is_depfile_field(field):
+                        task.out_files[field] = file
 
                 else:
-                    task.in_files[name] = file
+                    task.in_files[field] = file
 
                 files.append(file)
 
@@ -1762,27 +1782,26 @@ class Task:
 
             # Unwrap filenames if they're an array of one element so that scripts expecting
             # join(str, str) to return a str will be happy.
-            task.config_blah[name] = files[0] if len(files) == 1 else files
-            task.expanded[name] = files[0] if len(files) == 1 else files
+            task.config_blah[field] = files[0] if len(files) == 1 else files
+            task.expanded[field] = files[0] if len(files) == 1 else files
 
-        # ----------------------------------------
-        # Paths are cleaned up, we can now expand everything else.
+    # ----------------------------------------------------------------------------------------------
 
-        task.expanded.name    = task.config_blah.expand("{name}")
-        task.expanded.desc    = task.config_blah.expand("{desc}")
-        task.expanded.command = task.config_blah.expand("{command}")
-
-        task.expanded.command = Utils.flatten(task.expanded.command)
+    async def task_main(self):
+        task = self
+        script = cv_script.get()
+        time_a = time.perf_counter()
+        expanded = task.expanded
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
-            task.log(str(task.expanded) + "\n")
+            task.log(str(expanded) + "\n")
 
-        if not Path.exists(task.expanded.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{task.expanded.task_cwd}' does not exist")
+        if not Path.exists(expanded.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{expanded.task_cwd}' does not exist")
 
         if not Path.startswith(task.expanded.build_dir, script.options.repo_root):
-            raise Task.BROKEN(f"The build.dir {task.expanded.build_dir} is not under repo.root {task.expanded.repo_root}")
+            raise Task.BROKEN(f"The build.dir {expanded.build_dir} is not under repo.root {expanded.repo_root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1792,10 +1811,10 @@ class Task:
         # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(task.expanded.command, list):
-            for command in task.expanded.command:
-                if type(command) is not type(task.expanded.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {task.expanded.command}")
+        if isinstance(expanded.command, list):
+            for command in expanded.command:
+                if type(command) is not type(expanded.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {expanded.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
@@ -1803,7 +1822,7 @@ class Task:
 
         # In strict mode, we mark a task broken if its command still has curly braces.
         if script.options.build_strict:
-            for command in cast(list, task.expanded.command):
+            for command in cast(list, expanded.command):
                 if not isinstance(command, str):
                     continue
                 blocks = []
@@ -1814,8 +1833,8 @@ class Task:
         # Check that all build files would end up under build.dir
         for file in Utils.yield_values(task.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, task.expanded.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {task.expanded.build_dir}")
+            if not Path.startswith(file, expanded.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {expanded.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
@@ -2172,14 +2191,9 @@ class Loader:
 
     @classmethod
     def load_script(cls, options) -> Script:
+        assert Path.isabs(options.script_path) and not Utils.is_template(options.script_path)
 
-        path = options.expand(options.script_path)
-        assert not Utils.is_template(path)
-        path = Path.resolve(path)
-
-        options.script_path = path
-
-        with open(path, encoding="utf-8") as file:
+        with open(options.script_path, encoding="utf-8") as file:
             source = file.read()
 
         return Loader.load_str(options, source)
@@ -2914,14 +2928,12 @@ def build():
 
 def load(script_path, *args, **kwargs):
     overrides = Dict(*args, **kwargs)
-    script_path = overrides.expand(script_path)
-    script_path = Path.resolve(script_path)
+    script_path = Path.resolve(overrides.expand(script_path))
     return load2(script_path, False, overrides).module
 
 def repo(script_path, *args, **kwargs):
     overrides = Dict(*args, **kwargs)
-    script_path = overrides.expand(script_path)
-    script_path = Path.resolve(script_path)
+    script_path = Path.resolve(overrides.expand(script_path))
     return load2(script_path, True, overrides).module
 
 # ----------------------------------------
