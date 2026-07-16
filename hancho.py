@@ -277,6 +277,9 @@ class Onion(abc.Mapping):
         # Otherwise we make a new onion out of the mappings.
         return Onion(**new_layers)
 
+    def expand(self, template):
+        return Expander._expand(template, self)
+
 #endregion
 # --------------------------------------------------------------------------------------------------
 # region Expander
@@ -1460,8 +1463,6 @@ class Task:
 
         self.expanded = Dict()
 
-        blah = self.config_blah
-
         self.enabled = False
 
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
@@ -1474,8 +1475,8 @@ class Task:
 
         self._aio_context = contextvars.copy_context()
 
-        self.input_tasks : list[Task] = [v for v in Utils.yield_values(blah) if isinstance(v, Task)]
-        self.io_fields : list[str] = [k for k in blah if Task.is_io_field(k)]
+        self.input_tasks : list[Task] = [v for v in Utils.yield_values(self.config_blah) if isinstance(v, Task)]
+        self.io_fields : list[str] = [k for k in self.config_blah if Task.is_io_field(k)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1610,45 +1611,15 @@ class Task:
 
         # ----------------------------------------
 
+        #print(blah)
+
         onion = Onion(
             hancho_module  = hancho.__dict__,
             script_module  = script.module.__dict__ if script else {},
             script_options = script.options if script else {},
             task_config    = blah,
+            expanded       = expanded,
         )
-
-        expanded.name        = blah.expand("{name}")
-        expanded.desc        = blah.expand("{desc}")
-        expanded.build_force = blah.expand("{build_force}")
-        expanded.depformat   = blah.expand("{depformat}")
-        expanded.job_size    = blah.expand("{job_size}")
-        expanded.job_size    = blah.expand("{job_size}")
-
-        with LogLevel.DEBUG:
-            task.log("Task config before expand:\n")
-            task.log(str(blah) + "\n")
-
-        #config.script_path = config.expand("script_path")
-        #config.script_cwd  = config.expand("script_cwd")
-        #config.repo_root   = config.expand("repo_root")
-
-        blah.task_cwd    = blah.expand("{task_cwd}")
-        blah.build_dir   = blah.expand("{build_dir}")
-
-        blah.task_cwd   = Path.abspath(blah.task_cwd)
-        blah.build_dir  = Path.abspath(blah.build_dir)
-
-        expanded.task_cwd   = blah.expand("{task_cwd}")
-        expanded.task_cwd   = Path.abspath(expanded.task_cwd)
-
-        expanded.build_root = blah.expand("{build_root}")
-        expanded.build_root = Path.abspath(expanded.build_root)
-
-        expanded.build_dir  = blah.expand("{build_dir}")
-        expanded.build_dir  = Path.abspath(expanded.build_dir)
-
-        expanded.name    = blah.expand("{name}")
-        expanded.desc    = blah.expand("{desc}")
 
         for key in task.io_fields:
             val = blah[key]
@@ -1657,39 +1628,28 @@ class Task:
                     v.out_files if isinstance(v, Task) else v
                     for v in Utils.yield_values(val)
                 ]
-            blah[key] = Utils.flatten(blah.expand(val))
-            expanded[key] = Utils.flatten(blah.expand(val))
+            blah[key] = Utils.flatten(onion.expand(val))
+            expanded[key] = Utils.flatten(onion.expand(val))
 
+        expanded.name        = onion.expand("{name}")        # mostly mandatory just because we print it
+        expanded.desc        = onion.expand("{desc}")        # mostly mandatory just because we print it
+        expanded.build_force = onion.expand("{build_force}") # mandatory
+        expanded.depformat   = onion.expand("{depformat}")   # mandatory for c++
+        expanded.job_size    = onion.expand("{job_size}")    # mandatory
+        expanded.task_cwd    = onion.expand("{task_cwd}")    # mandatory
 
-       # Replace all Tasks in all input fields with their output file lists.
-       # Expand and flatten all io field's values, as a template string can turn into a list of
-       # multiple filenames.
+        # Build_dir must be expanded _before_ fix_paths
+        expanded.build_dir   = Path.abspath(onion.expand("{build_dir}"))
 
-        # ----------------------------------------
-        # Expand all fields that don't depend on input/output filenames (basically everything
-        # except name/desc/command).
+        # Fix_paths must come before expand(command)
+        #self.fix_paths()
+        for field in task.io_fields:
+            path = self.fix_path(field, task.config_blah[field])
+            task.config_blah[field] = path
+            task.expanded[field] = path
 
-        # We _can't_ expand input/output paths here as they may refer to output paths for tasks
-        # that haven't executed yet - that has to happen _after_ awaiting our dependencies, so
-        # you'll find it below.
-
-        # FIXME yeah we should expand almost everything
-
-        # ----------------------------------------
-
-        # ----------------------------------------
-        # Turn all relative paths in io fields into absolute paths (and move them under build_dir
-        # if needed) so that we can access them from any working directory.
-
-        self.fix_paths()
-
-
-        # ----------------------------------------
-        # Paths are cleaned up, we can now expand everything else.
-
-        expanded.command = blah.expand("{command}")
-        expanded.command = Utils.flatten(expanded.command)
-
+        # And command should be expanded last.
+        expanded.command  = Utils.flatten(onion.expand("{command}")) # mandatory
 
         # ----------------------------------------
         # Inputs are ready, run the task.
@@ -1724,7 +1684,8 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    def fix_paths(self):
+
+    def fix_path(self, field, val):
         """
         Input and output file paths in .hancho scripts are declared relative to the directory the
         script is in (stored in the config under 'script_path').
@@ -1737,53 +1698,50 @@ class Task:
         task = self
         script = cv_script.get()
 
-        for field in task.io_fields:
-            val = task.config_blah[field]
-            files = []
-            for file in val:
-                #remapped = task.remap_io_field_path(key, file)
+        files = []
+        for file in val:
+            #remapped = task.remap_io_field_path(key, file)
 
-                # Join script_cwd with the filename to produce absolute paths.
-                file = Path.join(script.options.script_cwd, file)
+            # Join script_cwd with the filename to produce absolute paths.
+            file = Path.join(script.options.script_cwd, file)
 
-                # File paths _must_ be normed after joining, otherwise they might look like they're under
-                # script_dir, but they're not because the paths could have "../../../../.." in them.
-                file = Path.abspath(file)
+            # File paths _must_ be normed after joining, otherwise they might look like they're under
+            # script_dir, but they're not because the paths could have "../../../../.." in them.
+            file = Path.abspath(file)
 
-                # Move all outputs under build.dir and ensure their directories exist.
+            # Move all outputs under build.dir and ensure their directories exist.
 
-                if Task.is_output_field(field):
-                    # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
-                    # it's an _output_ from the compiler.
-                    if not Path.startswith(file, task.expanded.build_dir):
-                        file = Path.relpath(file, script.options.script_cwd)
-                        file = Path.join(task.expanded.build_dir, file)
+            if Task.is_output_field(field):
+                # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
+                # it's an _output_ from the compiler.
+                if not Path.startswith(file, task.expanded.build_dir):
+                    file = Path.relpath(file, script.options.script_cwd)
+                    file = Path.join(task.expanded.build_dir, file)
 
-                    if not script.options.build_dry:
-                        os.makedirs(Path.dirname(file), exist_ok=True)
+                if not script.options.build_dry:
+                    os.makedirs(Path.dirname(file), exist_ok=True)
 
-                    # Depfiles do _not_ go in the output file list, as they are never consumed by a
-                    # downstream task.
-                    if not Task.is_depfile_field(field):
-                        task.out_files[field] = file
+                # Depfiles do _not_ go in the output file list, as they are never consumed by a
+                # downstream task.
+                if not Task.is_depfile_field(field):
+                    task.out_files[field] = file
 
-                else:
-                    task.in_files[field] = file
+            else:
+                task.in_files[field] = file
 
-                files.append(file)
+            files.append(file)
 
-            # Convert the fixed paths back to relative so our command lines aren't enormous.
-            # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-            # relative to script_dir if we're calling a callback.
+        # Convert the fixed paths back to relative so our command lines aren't enormous.
+        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
+        # relative to script_dir if we're calling a callback.
 
-            # actually this may not be worth it, and it currently breaks some tests
-            #rel_dir = task.expanded.task_cwd if isinstance(task.expanded.command[0], str) else script.options.script_cwd
-            #file = Path.relpath(file, rel_dir)
+        # actually this may not be worth it, and it currently breaks some tests
+        #rel_dir = task.expanded.task_cwd if isinstance(task.expanded.command[0], str) else script.options.script_cwd
+        #file = Path.relpath(file, rel_dir)
 
-            # Unwrap filenames if they're an array of one element so that scripts expecting
-            # join(str, str) to return a str will be happy.
-            task.config_blah[field] = files[0] if len(files) == 1 else files
-            task.expanded[field] = files[0] if len(files) == 1 else files
+        # Unwrap filenames if they're an array of one element so that scripts expecting
+        # join(str, str) to return a str will be happy.
+        return files[0] if len(files) == 1 else files
 
     # ----------------------------------------------------------------------------------------------
 
