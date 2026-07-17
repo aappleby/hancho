@@ -296,7 +296,11 @@ class Onion(abc.Mapping):
         return Onion(**new_layers)
 
     def expand(self, template):
-        return Expander._expand(template, self)
+        with Tracer(self, "onion.expand", template) as trace:
+            result = Expander._expand(template, self)
+            trace.save_result(result)
+            return result
+
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -380,14 +384,14 @@ class Expander:
         # OK, we have a string that could be a template. Keep expanding it until it stops changing
         # or it's not a template.
 
-        Log.indent()
         try:
             old_template = None
             while old_template != template and isinstance(template, str) and '{' in template:
                 old_template = template
-                template = Expander._expand_pass(template, onion)
+                with Tracer(onion, "_expand_pass", template) as trace:
+                    template = Expander._expand_pass(template, onion)
+                    trace.save_result(template)
         finally:
-            Log.dedent()
             # And then reset the depth/evals check vars when we're done.
             if depth == 0:
                 Expander.cv_evals.set(0)
@@ -424,7 +428,9 @@ class Expander:
             # This should be the _only_ try/except block in the expansion code.
 
             try:
-                result = eval(block[1:-1], {}, onion)
+                with Tracer(onion, "eval", block) as trace:
+                    result = eval(block[1:-1], {}, onion)
+                    trace.save_result(result)
 
                 # If there was only one block in the list, we're done early.
                 if len(blocks) == 1:
@@ -2116,7 +2122,7 @@ class Tracer:
         self.color = Utils.obj_to_hex(self.onion)
 
         with LogLevel.TRACE, Log.color(self.color):
-            Log.log(f"{self.get_tag(self.onion)}." + self.enter_message + "\n")
+            Log.log(f"┌ {self.get_tag(self.onion)}." + self.enter_message + "\n")
             Log.indent(self.color)
 
         return self
@@ -2138,9 +2144,9 @@ class Tracer:
             message = ""
             with Log.color(color):
                 if isinstance(self.result, (Dict, Onion)):
-                    message = f"{self.name!r} : {type} = {self.get_tag(self.result)}\n"
+                    message = f"└ {self.name!r} : {type} = {self.get_tag(self.result)}\n"
                 else:
-                    message = f"{self.name!r} : {type} = {self.result!r}\n"
+                    message = f"└ {self.name!r} : {type} = {self.result!r}\n"
 
             Log.dedent()
             Log.log(message)
@@ -2501,10 +2507,11 @@ class Main:
     @classmethod
     def init(cls, flags):
 
+        Log.reset(Main.default_log_options.fill2(flags))
+
         flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
         flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
 
-        Log.reset(Main.default_log_options.fill2(flags))
         Utils.reset()
         Task.reset()
         Loader.reset()

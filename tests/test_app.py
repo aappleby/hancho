@@ -25,7 +25,7 @@ import hancho
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init(log_trace = True)
+    hancho.init(log_trace = False)
 
 
 def load_tests(loader, tests, ignore):
