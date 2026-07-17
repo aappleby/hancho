@@ -174,9 +174,10 @@ class Dict(dict):
     def __setitem__(self, key : str, val : Any):
         dict.__setitem__(self, key, val)
 
-    def expand(self, template, onion = None):
-        if onion is None:
-            onion = Onion.wrap(self)
+    def expand(self, template):
+        ldelims = self.get("ldelims", Expander.ldelims)
+        rdelims = self.get("rdelims", Expander.rdelims)
+        onion = Onion.wrap(self, ldelims = ldelims, rdelims = rdelims)
 
         with Tracer(self, "dict.expand", template) as trace:
             result = Expander._expand(template, onion)
@@ -214,9 +215,6 @@ class Onion(abc.Mapping):
     """
 
     def __init__(self, *args, **kwargs):
-        self.ldelims = kwargs.pop("ldelims", Expander.ldelims)
-        self.rdelims = kwargs.pop("rdelims", Expander.rdelims)
-        self.pairs   = {self.ldelims[i]:self.rdelims[i] for i in range(len(self.ldelims))}
 
         self._layers : list[dict] = []
         for val in args:
@@ -233,8 +231,15 @@ class Onion(abc.Mapping):
         if len(kwargs):
             self._layers.append(Dict(kwargs))
 
+        self.ldelims = self._get2("ldelims", Expander.ldelims)
+        self.rdelims = self._get2("rdelims", Expander.rdelims)
+
+        #self.ldelims = kwargs.pop("ldelims", Expander.ldelims)
+        #self.rdelims = kwargs.pop("rdelims", Expander.rdelims)
+        #self.pairs   = {self.ldelims[i]:self.rdelims[i] for i in range(len(self.ldelims))}
+
     @classmethod
-    def wrap(cls, d : Dict):
+    def wrap(cls, d : Dict, **kwargs):
         """
         Wrap the given dict so that when we expand things in it the macros can refer to stuff in
         hancho or the script module that created it.
@@ -246,6 +251,7 @@ class Onion(abc.Mapping):
             script.module.__dict__ if script else {},
             script.options if script else {},
             d,
+            **kwargs
         )
         return onion
 
@@ -275,7 +281,7 @@ class Onion(abc.Mapping):
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
 
-    def _get(self, key) -> Any:
+    def _get(self, key, default = sentinel) -> Any:
         with Tracer(self, "get", key) as trace:
             # Return the rightmost non-None non-Mapping if present.
             saw_a_none = False
@@ -290,7 +296,7 @@ class Onion(abc.Mapping):
                         return result
 
             # If the key was present but there was no value associated with it, return None.
-            if saw_a_none:
+            if saw_a_none and default == sentinel:
                 trace.save_result(None)
                 return None
 
@@ -298,13 +304,31 @@ class Onion(abc.Mapping):
             new_layers = [layer[key] for layer in self._layers if key in layer]
 
             # No matches? Bad key.
-            if not new_layers:
+            if not new_layers and default == sentinel:
                 raise KeyError(key)
+
+            if default != sentinel:
+                return default
 
             # Otherwise we make a new onion out of the mappings.
             result = Onion(*new_layers)
             trace.save_result(result)
             return result
+
+    def _get2(self, key, default = sentinel) -> Any:
+        with Tracer(self, "get", key) as trace:
+            # Return the rightmost non-None non-Mapping if present.
+            for layer in reversed(self._layers):
+                if key in layer:
+                    result = layer[key]
+                    trace.save_result(result)
+                    return result
+
+            if default == sentinel:
+                raise KeyError(key)
+            else:
+                trace.save_result(default)
+                return default
 
     def expand(self, template):
         with Tracer(self, "expand", template) as trace:
@@ -393,7 +417,11 @@ class Expander:
         # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
         # something) or if it's a string with no macros in it.
         #if not (isinstance(variant, str) and '{' in variant):
-        if not Utils.is_template2(variant, onion.ldelims, onion.rdelims):
+
+        ldelims = onion.ldelims
+        rdelims = onion.rdelims
+
+        if not Utils.is_template2(variant, ldelims, rdelims):
             return variant
         template = cast(str, variant)
 
@@ -408,10 +436,10 @@ class Expander:
 
         try:
             old_template = None
-            while old_template != template and Utils.is_template2(template, onion.ldelims, onion.rdelims):
+            while old_template != template and Utils.is_template2(template, ldelims, rdelims):
                 old_template = template
                 with Tracer(onion, "expand", template) as trace:
-                    template = Expander._expand_pass(template, onion)
+                    template = Expander._expand_pass(template, onion, ldelims, rdelims)
                     trace.save_result(template)
         finally:
             # And then reset the depth/evals check vars when we're done.
@@ -427,8 +455,10 @@ class Expander:
     # fail on expansion failure so we can retry somewhere/somewhen else.
 
     @classmethod
-    def _expand_pass(cls, template : str, onion : Onion):
+    def _expand_pass(cls, template : str, onion : Onion, ldelims, rdelims):
         """The inner expand function does one split-expand-rejoin pass on the template string."""
+
+        pairs = {ldelims[i]:rdelims[i] for i in range(len(ldelims))}
 
         # Split the string into literal and macro blocks.
         blocks = []
@@ -438,7 +468,7 @@ class Expander:
         for i, block in enumerate(blocks):
 
             # Skip literal blocks.
-            if len(block) < 2 or block[0] not in onion.ldelims or block[-1] not in onion.pairs[block[0]]:
+            if len(block) < 2 or block[0] not in ldelims or block[-1] not in pairs[block[0]]:
                 continue
 
             # Bail out if we've taken too many expansion steps already.
@@ -767,13 +797,6 @@ class Utils:
             return True
         except RuntimeError:
             return False
-
-    @staticmethod
-    def is_template(text) -> bool:
-        # inefficient way to check for templates, but it's reliable
-        blocks = []
-        Expander._split_template(text, blocks)
-        return len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{")
 
     @staticmethod
     def is_template2(text, ldelims, rdelims) -> bool:
@@ -2235,7 +2258,7 @@ class Loader:
 
     @classmethod
     def load_from_source(cls, script_path, source, is_repo, overrides = None):
-        assert Path.isabs(script_path) and not Utils.is_template(script_path)
+        assert Path.isabs(script_path) and not Utils.is_template2(script_path, ldelims="{", rdelims = "}")
 
         parent_script = cv_script.get()
 
