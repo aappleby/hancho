@@ -173,11 +173,9 @@ class Dict(dict):
     # ----------------------------------------
 
     def __getitem__(self, key : str):
-        #return self._get_by_path(key)
         return dict.__getitem__(self, key)
 
     def __setitem__(self, key : str, val : Any):
-        #return self.set_by_path(key, val)
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
@@ -237,9 +235,6 @@ class Onion(abc.Mapping):
         hancho or the script module that created it.
         """
         script = cv_script.get()
-
-        if not hasattr(script, "module"):
-            pass
 
         onion = Onion(
             hancho_module  = hancho.__dict__,
@@ -1349,6 +1344,73 @@ class Script:
 
     # ----------------------------------------------------------------------------------------------
 
+    def save_stat_db(self):
+        script = self
+
+        if script.options.build_dry:
+            return
+
+        stat_db_path = script.options.expand(script.stat_db_path)
+        stat_db_path = cast(str, Path.abspath(stat_db_path))
+        comp_db_path = script.options.expand(script.comp_db_path)
+        comp_db_path = cast(str, Path.abspath(comp_db_path))
+
+        # Gather stats from all completed tasks
+        stat_db = {}
+        comp_db = {}
+
+        for task in script.tasks:
+            if not task._complete:
+                continue
+
+            for file in Utils.yield_values(task.in_files):
+                script.update_stat_db(stat_db, file)
+
+                # Haven't tested this in an IDE, but I think it matches the spec.
+                comp_db[file] = {
+                    "directory" : task.config.task_cwd,
+                    "command"   : Utils.commands_to_string(task.config.command),
+                    "file"      : file,
+                }
+
+            if task.in_depfiles:
+                deplines = Utils.load_depfile(task.in_depfiles[0], task.config.depformat, task.config.task_cwd)
+                for file in deplines:
+                    script.update_stat_db(stat_db, file)
+
+            for file in Utils.yield_values(task.out_files):
+                str_command = Utils.commands_to_string(task.config.command)
+                script.update_stat_db(stat_db, file, str_command)
+
+        with LogLevel.DEBUG, Colors.ORANGE:
+            Log.log(f"┌ Repo {script.options.repo_root} post-build\n")
+            Log.indent(Colors.ORANGE)
+
+        # Dump the stats as JSON.
+        if stat_db_path is not None:
+            time_a = time.perf_counter()
+            Utils.save_json(stat_db, stat_db_path)
+            time_b = time.perf_counter()
+            with LogLevel.DEBUG, Colors.ORANGE:
+                Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
+            with LogLevel.DEBUG, Colors.BLUE:
+                Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
+
+        if comp_db_path is not None:
+            time_a = time.perf_counter()
+            Utils.save_json(list(comp_db.values()), comp_db_path)
+            time_b = time.perf_counter()
+            with LogLevel.DEBUG, Colors.ORANGE:
+                Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
+            with LogLevel.DEBUG, Colors.BLUE:
+                Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
+
+        with LogLevel.DEBUG, Colors.ORANGE:
+            Log.dedent()
+            Log.log(f"└ Repo {script.options.repo_root} done\n")
+
+    # ----------------------------------------------------------------------------------------------
+
     def rebuild_reason(self, task) -> str:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
@@ -1359,9 +1421,9 @@ class Script:
         # script value
 
         # If there's a depfile from a previous build, load it so we can use it below.
-        if "in_depfile" in task.config:
+        if task.in_depfiles:
             task._old_deplines = Utils.load_depfile(
-                task.config.in_depfile, cast(str, task.config.depformat), task.config.task_cwd
+                task.in_depfiles[0], cast(str, task.config.depformat), task.config.task_cwd
             )
             for file in task._old_deplines:
                 if os.path.exists(file):
@@ -1498,7 +1560,7 @@ class Task:
 
         self.in_files  = {}
         self.out_files = {}
-        self.in_depfile = []
+        self.in_depfiles = []
 
         # ------------------------------------
         # Implementation details below this line
@@ -1656,19 +1718,19 @@ class Task:
 
             raw_files = Utils.yield_values(self.raw_config[field])
 
-            input_task = [val.out_files if isinstance(val, Task) else val for val in raw_files]
-            input_task = Utils.flatten(input_task)
-            input_task = onion.expand(input_task)
-            input_task = self.fix_paths(field, input_task)
+            files = [val.out_files if isinstance(val, Task) else val for val in raw_files]
+            files = Utils.flatten(files)
+            files = onion.expand(files)
+            files = self.fix_paths(field, files)
 
             if field == "in_depfile":
-                task.in_depfile = input_task
+                task.in_depfiles = files
             elif field.startswith("in_"):
-                task.in_files[field] = input_task
+                task.in_files[field] = files
             elif field.startswith("out_"):
-                task.out_files[field] = input_task
+                task.out_files[field] = files
 
-            self.config[field] = input_task[0] if len(input_task) == 1 else input_task
+            self.config[field] = files[0] if len(files) == 1 else files
 
         # And finally we expand name/desc/command, which can contain file paths.
         self.config.command = Utils.flatten(onion.command)
@@ -1774,8 +1836,8 @@ class Task:
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
-        if "in_depfile" in task.config:
-            deplines = Utils.load_depfile(task.config.in_depfile, cast(str, task.config.depformat), task.config.task_cwd)
+        if task.in_depfiles:
+            deplines = Utils.load_depfile(task.in_depfiles[0], cast(str, task.config.depformat), task.config.task_cwd)
             for file in deplines:
                 script.update_stat_db(script.mid_stat_db, file)
 
@@ -1784,7 +1846,7 @@ class Task:
 
         if "in_depfile" in task.config:
             task._new_deplines = Utils.load_depfile(
-                task.config.in_depfile, cast(str, task.config.depformat), task.config.task_cwd
+                task.in_depfiles[0], cast(str, task.config.depformat), task.config.task_cwd
             )
 
     # ----------------------------------------------------------------------------------------------
@@ -1890,7 +1952,7 @@ class Task:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        if len(task.in_depfile) > 1:
+        if len(task.in_depfiles) > 1:
             raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
     # ----------------------------------------------------------------------------------------------
@@ -2120,23 +2182,16 @@ class Loader:
     # ----------------------------------------------------------------------------------------------
 
     @staticmethod
-    def yield_tasks():
-        for script in Loader.all_scripts:
-            yield from script.tasks
-
-    # ----------------------------------------
-
-    @staticmethod
     def load_from_file(script_path : str, is_repo : bool, overrides : Dict):
         script_path = Path.resolve(overrides.expand(script_path))
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
             return Loader.load_from_source(script_path, source, is_repo, overrides)
 
-    # ----------------------------------------
+    # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def load_from_source(script_path, source, is_repo, overrides = None):
+    @classmethod
+    def load_from_source(cls, script_path, source, is_repo, overrides = None):
         assert Path.isabs(script_path) and not Utils.is_template(script_path)
 
         parent_script = cv_script.get()
@@ -2155,68 +2210,61 @@ class Loader:
             type = "repo" if is_repo else "script"
             Log.log(f"Loading {type} {script_path}\n")
 
-        child_script = Loader.load_from_source2(child_options, source)
-        parent_script.children.append(child_script)
-
-        Loader.all_scripts.append(child_script)
-
-        return child_script
-
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def load_from_source2(cls, options, source : str) -> Script:
-        """This is split out from load_file for testing purposes."""
-
-        assert Path.resolve(options.script_path) == options.script_path
-
         # ----------------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
         # build, which they should be in practice.
 
-        config_dump = Dumper.dump_to_str(key = "options", val = options)
+        config_dump = Dumper.dump_to_str(key = "options", val = child_options)
         config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
-        dedupe_key = (options.script_path, config_dump)
+        dedupe_key = (child_options.script_path, config_dump)
         dedupe = cls.dedupe.get(dedupe_key, None) #type:ignore
         if dedupe is not None:
             with LogLevel.VERBOSE, Colors.SKY:
-                Log.log(f"Deduped load of {options.script_path}\n")
+                Log.log(f"Deduped load of {child_options.script_path}\n")
             return dedupe
 
         # ----------------------------------------
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        module = types.ModuleType(os.path.basename(options.script_path))
-        module.__file__ = options.script_path
+        module = types.ModuleType(os.path.basename(child_options.script_path))
+        module.__file__ = child_options.script_path
         module.hancho  = hancho  # type: ignore
-        module.options = options # type: ignore
+        module.options = child_options # type: ignore
 
-        if options.script_path in cls.all_code:
-            code = cls.all_code[options.script_path]
+        if child_options.script_path in cls.all_code:
+            code = cls.all_code[child_options.script_path]
         else:
-            code = compile(source, options.script_path, "exec", dont_inherit=True)
-            cls.all_code[options.script_path] = code
+            code = compile(source, child_options.script_path, "exec", dont_inherit=True)
+            cls.all_code[child_options.script_path] = code
 
-        new_script = Script(options, module, code)
+        new_script = Script(child_options, module, code)
 
         # ----------------------------------------
         # Script created, save to dedupe dict.
 
         cls.dedupe[dedupe_key] = new_script #type:ignore
-        cls.loaded_files.append(options.script_path)
+        cls.loaded_files.append(child_options.script_path)
 
         # ----------------------------------------
         # And run the actual script code
 
         new_script.exec()
 
+        parent_script.children.append(new_script)
+        Loader.all_scripts.append(new_script)
+
         return new_script
 
     # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def yield_tasks(cls):
+        for script in cls.all_scripts:
+            yield from script.tasks
+
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2239,10 +2287,6 @@ class Runner:
         cls.tasks_failed : int = 0
         cls.tasks_cancelled : int = 0
         cls.tasks_skipped : int = 0
-
-    @classmethod
-    def count_failures(cls):
-        return cls.tasks_broken + cls.tasks_failed
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2276,28 +2320,22 @@ class Runner:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def enable_all_tasks(cls):
-        # Enable _everything_
-        for task in Loader.yield_tasks():
-            task.enable_task()
-
-    @classmethod
     def select_root_tasks(cls):
         script  = cv_script.get()
 
         if script.options.build_target:
             # Enable all tasks whose name matches the target regex
-            # NOTE - We have to expand "name" _before_ the task has initialized, which means some
-            # of its input fields may be Task references and the resulting name may be wonky if it
-            # includes those names via template. Maybe don't do that.
+            # NOTE - We match task.raw_config.name, _not_ the expanded task.config.name.
+            # This is because the task _has not initialized yet_, so we have no config.name.
             target_regex = re.compile(script.options.target)
 
             for task in Loader.yield_tasks():
-                if target_regex.search(task.config.name):
+                if target_regex.search(task.raw_config.name):
                     task.enable_task()
 
         elif script.options.build_all:
-            cls.enable_all_tasks()
+            for task in Loader.yield_tasks():
+                task.enable_task()
 
         else:
             # Enable all tasks that were generated by the top script
@@ -2333,8 +2371,7 @@ class Runner:
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("Running tasks...\n")
 
-        time_a = time.perf_counter()
-        while cls.live_aio_tasks and cls.count_failures() <= Runner.runner_options.max_errors:
+        while cls.live_aio_tasks and (cls.tasks_broken + cls.tasks_failed) <= Runner.runner_options.max_errors:
             finished_aio_task = None
 
             try:
@@ -2364,12 +2401,8 @@ class Runner:
                 if finished_aio_task is not None:
                     cls.live_aio_tasks.discard(finished_aio_task)
                 cls.tasks_awaited += 1
-        time_b = time.perf_counter()
 
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log(f"Running {cls.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
-
-        if cls.count_failures() > script.options.max_errors:
+        if cls.tasks_broken + cls.tasks_failed > script.options.max_errors:
             with LogLevel.ERROR:
                 Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
@@ -2411,10 +2444,6 @@ class Runner:
 # region Main
 
 class Main:
-
-    root_repo = None
-    root_script = None
-    build_started = False
 
     # fmt: off
 
@@ -2611,11 +2640,8 @@ class Main:
         parser.add_argument(      "--log_time",     action = bool_opt,                     help="Timestamp each log line")
         # fmt: on
 
-
         (raw_flags, unrecognized) = parser.parse_known_args(argv)
-
         raw_flags = vars(raw_flags)
-
         raw_flags = {k:v for k, v in raw_flags.items() if v is not None}
 
         flags = Dict(
@@ -2655,12 +2681,9 @@ class Main:
         return flags
 
     # ----------------------------------------------------------------------------------------------
-    # Startup banner
 
     @classmethod
     def banner_start(cls, script_path, repo_root, opt_file):
-
-
         with LogLevel.VERBOSE, Colors.LIME:
             Log.log(f"Command line : {" ".join(sys.argv)}\n")
             Log.log(f"Script path  : {script_path}\n")
@@ -2676,15 +2699,6 @@ class Main:
             if Log.log_level_out >= LogLevel.VERBOSE:
                 Log.log("Verbose mode on\n")
 
-
-    # ----------------------------------------------------------------------------------------------
-    # This must happen _after_ all repos are loaded (so that if they change repo_root we don't get
-    # the old path), but _before_ we build any tasks.
-
-    @classmethod
-    def pre_build(cls, build_db):
-        build_db.old_stat_db = build_db.load_stat_db()
-
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -2697,10 +2711,12 @@ class Main:
             return
 
         # ------------------------------------
+        # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
+        # get the old path), but _before_ we build any tasks.
 
         time_a = time.perf_counter()
         for script in Loader.all_scripts:
-            cls.pre_build(script)
+            script.old_stat_db = script.load_stat_db()
         time_b = time.perf_counter()
 
         #print("pre_build done")
@@ -2710,15 +2726,19 @@ class Main:
         # ------------------------------------
 
         Runner.select_root_tasks()
-        cls.build_started = True
+
+        time_a = time.perf_counter()
         result = Runner.sync_run_tasks()
-        #print("build done")
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log(f"Running {Runner.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
 
         # ------------------------------------
 
         time_a = time.perf_counter()
         for script in Loader.all_scripts:
-            cls.post_build(script)
+            script.save_stat_db()
         time_b = time.perf_counter()
 
         #print("post_build done")
@@ -2726,72 +2746,6 @@ class Main:
             Log.log(f"Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def post_build(cls, script : Script):
-        if script.options.build_dry:
-            return
-
-        stat_db_path = script.options.expand(script.stat_db_path)
-        stat_db_path = cast(str, Path.abspath(stat_db_path))
-        comp_db_path = script.options.expand(script.comp_db_path)
-        comp_db_path = cast(str, Path.abspath(comp_db_path))
-
-        # Gather stats from all completed tasks
-        stat_db = {}
-        comp_db = {}
-
-        for task in script.tasks:
-            if isinstance(task._error, (Task.CANCELLED, Task.BROKEN, Task.FAILED)) or not task._complete:
-                continue
-
-            for file in Utils.yield_values(task.in_files):
-                script.update_stat_db(stat_db, file)
-
-                # Haven't tested this in an IDE, but I think it matches the spec.
-                comp_db[file] = {
-                    "directory" : task.config.task_cwd,
-                    "command"   : Utils.commands_to_string(task.config.command),
-                    "file"      : file,
-                }
-
-            if "in_depfile" in task.config:
-                deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
-                for file in deplines:
-                    script.update_stat_db(stat_db, file)
-
-            for file in Utils.yield_values(task.out_files):
-                str_command = Utils.commands_to_string(task.config.command)
-                script.update_stat_db(stat_db, file, str_command)
-
-        with LogLevel.DEBUG, Colors.ORANGE:
-            Log.log(f"┌ Repo {script.options.repo_root} post-build\n")
-            Log.indent(Colors.ORANGE)
-
-        # Dump the stats as JSON.
-        if stat_db_path is not None:
-            time_a = time.perf_counter()
-            Utils.save_json(stat_db, stat_db_path)
-            time_b = time.perf_counter()
-            with LogLevel.DEBUG, Colors.ORANGE:
-                Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
-            with LogLevel.DEBUG, Colors.BLUE:
-                Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
-
-        if comp_db_path is not None:
-            time_a = time.perf_counter()
-            Utils.save_json(list(comp_db.values()), comp_db_path)
-            time_b = time.perf_counter()
-            with LogLevel.DEBUG, Colors.ORANGE:
-                Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
-            with LogLevel.DEBUG, Colors.BLUE:
-                Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
-
-        with LogLevel.DEBUG, Colors.ORANGE:
-            Log.dedent()
-            Log.log(f"└ Repo {script.options.repo_root} done\n")
 
     # ----------------------------------------------------------------------------------------------
 

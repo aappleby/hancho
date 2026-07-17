@@ -80,7 +80,6 @@ class TestTasks(unittest.TestCase):
         sys.stdout.flush()
 
     def run_tasks(self, expected):
-        hancho.Runner.enable_all_tasks()
         result = hancho.build()
         self.assertEqual(result, expected)
 
