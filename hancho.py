@@ -865,6 +865,13 @@ class Utils:
 
         return deplines
 
+    @classmethod
+    def commands_to_string(cls, commands):
+        commands = Utils.flatten(commands)
+        if len(commands) and callable(commands[0]):
+            commands = [c.__name__ for c in commands]
+        return "; ".join(commands)
+
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region Log
@@ -1266,6 +1273,8 @@ class Script:
         self.children = []     # child scripts (not repos)
         self.tasks    = []     # all tasks created by this script
 
+    # ----------------------------------------------------------------------------------------------
+
     def exec(self):
         with chdir(self.options.script_cwd):
             token = cv_script.set(self)
@@ -1280,6 +1289,7 @@ class Script:
                 Log.dedent()
                 cv_script.reset(token)
 
+    # ----------------------------------------------------------------------------------------------
 
     def __repr__(self):
         return Dumper.dump_to_str("Script", self.__dict__, print_id = True, color_code = True)
@@ -1332,13 +1342,6 @@ class Script:
             stat.command = command
 
         out_db[file] = stat
-
-    @classmethod
-    def commands_to_string(cls, commands):
-        commands = Utils.flatten(commands)
-        if len(commands) and callable(commands[0]):
-            commands = [c.__name__ for c in commands]
-        return "; ".join(commands)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1436,11 +1439,6 @@ class Task:
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    default_config = Dict(
-        name         = None,
-        desc         = None,
-        command      = None,
-    )
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1449,15 +1447,9 @@ class Task:
         script = cv_script.get()
         self.script = script
 
-        # The task's raw config contains all the commands, paths, options, inputs, dependent Tasks,
-        # and anything else needed to assemble and run the task's commands. It is expected that
-        # build scripts will need to read task.(raw_)config in order to implement task callbacks,
-        # so the field is not underscore-prefixed like the later ones.
-
-        self.raw_config = Dict(Task.default_config, *args, **kwargs)
-
         # The task's 'cooked' config contains only the fields needed to run the command, all fully
-        # expanded.
+        # expanded. It is expected that build scripts will need to read task.(raw_)config in order
+        # to implement task callbacks, so the field is not underscore-prefixed like the later ones.
 
         self.config = Dict(
             name=None,
@@ -1470,8 +1462,14 @@ class Task:
             depformat=None,
         )
 
+        # The task's 'raw' config contains everything passed in to hancho.Task(), but no templates
+        # are expanded.
+
+        self.raw_config = Dict(self.config, *args, **kwargs)
+
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
+
         self.in_files  = {}
         self.out_files = {}
 
@@ -1535,32 +1533,6 @@ class Task:
 
     def __repr__(self):
         return Dumper.dump_to_str(key = "Task", val = self)
-
-    # ----------------------------------------------------------------------------------------------
-
-    @staticmethod
-    def is_depfile_field(key : str) -> bool:
-        return key == "in_depfile"
-
-    @staticmethod
-    def is_output_field(key : str):
-        return (key != "") and (Task.is_depfile_field(key) or key.startswith("out_"))
-
-    @staticmethod
-    def is_input_field(key : str):
-        return (key != "") and key.startswith("in_")
-
-    @staticmethod
-    def is_io_field(key : str):
-        return Task.is_input_field(key) or Task.is_output_field(key)
-
-    @staticmethod
-    def is_output_field2(key : str):
-        return (key != "") and key.startswith("out_")
-
-    @staticmethod
-    def is_input_field2(key : str):
-        return (key != "") and key.startswith("in_") and key != "in_depfile"
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1648,7 +1620,7 @@ class Task:
 
         # Then we expand all file paths, which can contain build_dir.
         for field in self.raw_config:
-            if not Task.is_io_field(field):
+            if not field.startswith("in_") and not field.startswith("out_"):
                 continue
 
             raw_files = Utils.yield_values(self.raw_config[field])
@@ -1658,9 +1630,11 @@ class Task:
             files = onion.expand(files)
             files = self.fix_paths(field, files)
 
-            if Task.is_input_field2(field):
+            if field == "in_depfile":
+                pass
+            elif field.startswith("in_"):
                 task.in_files[field] = files
-            elif Task.is_output_field2(field):
+            elif field.startswith("out_"):
                 task.out_files[field] = files
 
             self.config[field] = files[0] if len(files) == 1 else files
@@ -1725,7 +1699,7 @@ class Task:
         file = Path.abspath(file)
 
         # Move all outputs under build.dir and ensure their directories exist.
-        if Task.is_output_field(field):
+        if field.startswith("out_") or field == "in_depfile":
             # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
             # it's an _output_ from the compiler and is not checked in to the source tree.
             if not Path.startswith(file, self.config.build_dir):
@@ -1804,13 +1778,7 @@ class Task:
 
         # Tasks should have at most one depfile.
         for key, files in list(task.config.items()):
-            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
-                raise Task.BROKEN("Tasks can't have more than one dependency file!")
-
-        # Tasks should have at most one depfile.
-        for key, files in list(task.config.items()):
-            if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
-                # Why isn't this being hit by code coverage? We do have a test for it.
+            if key == "in_depfile" and len(Utils.flatten(files)) > 1:
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
         # ----------------------------------------
@@ -1841,7 +1809,7 @@ class Task:
 
         for file in Utils.yield_values(task.out_files):
             if os.path.exists(file):
-                str_command = Script.commands_to_string(task.config.command)
+                str_command = Utils.commands_to_string(task.config.command)
                 script.update_stat_db(script.mid_stat_db, file, str_command)
 
         task._reason = script.rebuild_reason(task)
@@ -2726,7 +2694,7 @@ class Main:
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
                     "directory" : task.config.task_cwd,
-                    "command"   : script.commands_to_string(task.config.command),
+                    "command"   : Utils.commands_to_string(task.config.command),
                     "file"      : file,
                 }
 
@@ -2736,7 +2704,7 @@ class Main:
                     script.update_stat_db(stat_db, file)
 
             for file in Utils.yield_values(task.out_files):
-                str_command = script.commands_to_string(task.config.command)
+                str_command = Utils.commands_to_string(task.config.command)
                 script.update_stat_db(stat_db, file, str_command)
 
         with LogLevel.DEBUG, Colors.ORANGE:
@@ -2882,11 +2850,7 @@ def task(*args, **kwargs):
     if len(args) and callable(args[0]):
         # Take hancho.task(callable, ...) and instead of creating a task, collect all the args into
         # a dict and then splat it into the callback.
-        merged_config = Dict(
-            Task.default_config,
-            *args[1:],
-            kwargs
-        )
+        merged_config = Dict(*args[1:], kwargs)
         return args[0](**merged_config)
     else:
         return Task(*args, **kwargs)

@@ -89,8 +89,6 @@ Field naming drives dependency tracking:
   treated as *both* an output (it's written under `build_dir`) and an input (its listed
   headers are checked for the rebuild decision). Supports `gcc` (`-MMD`) and `msvc`
   (`/sourceDependencies`) formats via the `depformat` field.
-- Helper predicates in `Task`: `is_input_field`, `is_output_field`, `is_depfile_field`,
-  `is_io_field`.
 
 ### Text expansion (the `{macro}` system)
 Templates look like Python f-strings but are lazier and more powerful (see the `Expander`
