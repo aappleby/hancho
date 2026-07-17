@@ -58,9 +58,7 @@ sentinel = "<sentinel>"
 # We treat the Hancho module itself as a repo, so that we have a place to put everything added to
 # the build by tests or other code that doesn't load a .hancho script.
 hancho : Any = sys.modules["hancho"]
-
 options : Dict
-
 config : Dict
 
 # And when we _do_ have a root .hancho script, its components go here.
@@ -86,7 +84,7 @@ class Dict(dict):
         super().__init__()
 
         for i, arg in enumerate(args):
-            if not isinstance(arg, dict):
+            if not isinstance(arg, dict) and arg is not None:
                 raise ValueError(f"Argument #{i} was not a dict - {arg}")
 
         Dict.merge(self, *args, kwargs)
@@ -94,6 +92,8 @@ class Dict(dict):
     @classmethod
     def merge(cls, dest, *args, **kwargs):
         for rhs in (*args, kwargs):
+            if rhs is None:
+                continue
             Dict.generic_merge(
                 dest, dest, rhs,
                 merge_dicts=True, merge_lists=True,
@@ -117,7 +117,6 @@ class Dict(dict):
                 dest, dest, rhs,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=False)
-            pass
 
     @classmethod
     def generic_merge(cls, dst, lhs, rhs, merge_dicts, merge_lists, keep_a, keep_b):
@@ -182,8 +181,7 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        onion = Onion.wrap(self)
-        return Expander._expand(template, onion)
+        return Expander._expand(template, Onion.wrap(self))
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -246,7 +244,6 @@ class Onion(abc.Mapping):
             wrapped        = d,
         )
         return onion
-
 
     def __getattr__(self, key : str):
         try:
@@ -350,8 +347,6 @@ class Expander:
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH = 30
     MAX_EVALS = 300
-
-    sentinel = sentinel
 
     @classmethod
     def _expand(cls, variant : Any, onion : Onion):
@@ -506,6 +501,23 @@ class Dumper:
                   *opaque_types.keys())
 
     @classmethod
+    def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max_length = 80, tab = "    "):
+        """
+        Hancho's pretty-printer for various types. Note that this is also used for script deduping:
+        if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
+        were identical, you should get one copy of the "stuff" script instead of two.
+
+        As long as you're not doing something bizarre with configs or changing the dumper in the
+        middle of a build, the resulting strings should be stable enough to use for deduping.
+        """
+
+        # Unwrap tasks only if they're at the bottom level of indentation.
+        if isinstance(val, Task) and indent == 0:
+            val = val.__dict__
+
+        return cls._dump_variant_to_str(key, val, indent, print_id, color_code, max_length, tab, memo = {})
+
+    @classmethod
     def _dump_prefix(cls, key, val, print_id, color_code):
         prefix = ""
         if key is not None:
@@ -612,12 +624,6 @@ class Dumper:
 
         # FIXME duplication
 
-        #if isinstance(val, dict):
-        #    return prefix + "<dict>"
-
-        #if key == "__builtins__":
-        #    return prefix + "<builtins>"
-
         if isinstance(val, (dict, list, tuple, set, Onion)):
             try:
                 return prefix + cls._dump_container_to_flat_str(val, print_id, color_code, max_length - len(prefix), tab, memo) + suffix
@@ -632,42 +638,6 @@ class Dumper:
                 return prefix + cls._dump_container_to_str(val.__dict__, indent, print_id, color_code, max_length, tab, memo) + suffix
         else:
             return prefix + cls._dump_scalar(val, color_code) + suffix
-
-    @classmethod
-    def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max_length = 80, tab = "    "):
-        """
-        Hancho's pretty-printer for various types. Note that this is also used for script deduping:
-        if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
-        were identical, you should get one copy of the "stuff" script instead of two.
-
-        As long as you're not doing something bizarre with configs or changing the dumper in the
-        middle of a build, the resulting strings should be stable enough to use for deduping.
-        """
-
-#        if key == "__builtins__":
-#            prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
-#            return prefix + "<builtins>"
-
-#        if val is hancho.__dict__:
-#            prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
-#            return prefix + "<hancho.__dict__>"
-
-#        if val is cv_script.get().module.__dict__:
-#            prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
-#            return prefix + "<script.__dict__>"
-
-        #if key == "__builtins__":
-        #    return "<builtins>"
-        #if val.__class__ is dict:
-        #    prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
-        #    return prefix + "<dict>"
-
-
-        # Unwrap tasks only if they're at the bottom level of indentation.
-        if isinstance(val, Task) and indent == 0:
-            val = val.__dict__
-
-        return cls._dump_variant_to_str(key, val, indent, print_id, color_code, max_length, tab, memo = {})
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1274,9 +1244,6 @@ class Script:
 
     def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
 
-        if "script_cwd" not in options:
-            pass
-
         self.options = options
         self.module  = module
         self.code    = code
@@ -1298,6 +1265,20 @@ class Script:
         self.loaded   = False  # true once the script has finished its exec()
         self.children = []     # child scripts (not repos)
         self.tasks    = []     # all tasks created by this script
+
+    def exec(self):
+        with chdir(self.options.script_cwd):
+            token = cv_script.set(self)
+            try:
+                Log.indent(Colors.ORANGE)
+                exec(self.code, self.module.__dict__)
+            except (Loader.Abort, Loader.EarlyOut):
+                pass
+            except Loader.Fail as fail:
+                raise RuntimeError(f"Script failed : {self.options.script_path}") from fail
+            finally:
+                Log.dedent()
+                cv_script.reset(token)
 
 
     def __repr__(self):
@@ -2160,17 +2141,6 @@ class Loader:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def load_script(cls, options) -> Script:
-        assert Path.isabs(options.script_path) and not Utils.is_template(options.script_path)
-
-        with open(options.script_path, encoding="utf-8") as file:
-            source = file.read()
-
-        return Loader.load_str(options, source)
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
     def load_str(cls, options, source : str) -> Script:
         """This is split out from load_file for testing purposes."""
 
@@ -2527,7 +2497,10 @@ class Main:
 
             overrides = Dict()
 
-            top_script = load2(cls.hancho_flags.script_path, True, overrides)
+            with open(cls.hancho_flags.script_path, encoding="utf-8") as file:
+                source = file.read()
+                top_script = load_str2(cls.hancho_flags.script_path, source, True, overrides)
+
             time_b = time.perf_counter()
 
             cv_token = cv_script.set(top_script)
@@ -2851,7 +2824,7 @@ weave    = Utils.weave
 
 # ----------------------------------------
 
-def load2(script_path, is_repo, overrides):
+def load_str2(script_path, source, is_repo, overrides = None):
     assert Path.isabs(script_path) and not Utils.is_template(script_path)
 
     parent_script = cv_script.get()
@@ -2872,21 +2845,10 @@ def load2(script_path, is_repo, overrides):
         type = "repo" if is_repo else "script"
         Log.log(f"Loading {type} {script_path}\n")
 
-    child_script = Loader.load_script(child_options)
+    child_script = Loader.load_str(child_options, source)
     parent_script.children.append(child_script)
 
-    with chdir(child_script.options.script_cwd):
-        token = cv_script.set(child_script)
-        try:
-            Log.indent(Colors.ORANGE)
-            exec(child_script.code, child_script.module.__dict__)
-        except (Loader.Abort, Loader.EarlyOut):
-            pass
-        except Loader.Fail as fail:
-            raise RuntimeError(f"Script failed : {script_path}") from fail
-        finally:
-            Log.dedent()
-            cv_script.reset(token)
+    child_script.exec()
 
     Loader.all_scripts.append(child_script)
 
@@ -2898,12 +2860,16 @@ def build():
 def load(script_path, *args, **kwargs):
     overrides = Dict(*args, **kwargs)
     script_path = Path.resolve(overrides.expand(script_path))
-    return load2(script_path, False, overrides).module
+    with open(script_path, encoding="utf-8") as file:
+        source = file.read()
+        return load_str2(script_path, source, False, overrides).module
 
 def repo(script_path, *args, **kwargs):
     overrides = Dict(*args, **kwargs)
     script_path = Path.resolve(overrides.expand(script_path))
-    return load2(script_path, True, overrides).module
+    with open(script_path, encoding="utf-8") as file:
+        source = file.read()
+        return load_str2(script_path, source, True, overrides).module
 
 # ----------------------------------------
 

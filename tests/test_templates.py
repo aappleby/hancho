@@ -4,16 +4,16 @@
 import doctest
 import os
 import sys
+import textwrap
 import unittest
 from typing import cast
 
 sys.path.append("..")
 
 import hancho
-from hancho import Dict, Expander, Onion
+from hancho import Dict, Expander
 
 ####################################################################################################
-
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
@@ -124,12 +124,8 @@ class TestTemplates(unittest.TestCase):
             d.expand("{func()}")
 
     def test_macro_evals_to_list_of_macros(self):
-        # If a macro evals to a list of macros and we're expanding it in a Dict context,
-        # the list should _not_ be expanded as a non-template or non-string terminates expansion.
+        # If a macro evals to a list of macros, the nested macros _shoud_ be auto-expanded
         d = Dict(a=["{b}","{b}"], b="x")
-        #self.assertEqual(["{b}","{b}"], d.expand("{a}"))
-
-        # But, if we're in an Expander context, the list _should_ be auto-expanded.
         self.assertEqual(["x","x"], d.expand("{a}"))
 
     def test_macro_passthrough(self):
@@ -235,25 +231,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(d.expand("{{{c}}}"),   "it works!")
         self.assertEqual(d.expand("{{{{c}}}}"), "{it works!}")
 
-
-#    def doctest_embedded_eval(self):
-#        """
-#        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
-#        >>> d.expand("{foo}")
-#        '1 + 1'
-#        >>> d.expand("{foo} {bar}")
-#        '1 + 1 2 + 2'
-#
-#        >>> d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\\"2 + 2\\"")
-#        >>> d.expand("{foo}")
-#        '1 + 1'
-#        >>> d.expand("{bar}")
-#        '\"2 + 2\"'
-#        >>> d.expand("{foo} {bar}")
-#        '1 + 1 \"2 + 2\"'
-#        """
-
-    def Test_embedded_eval(self):
+    def test_embedded_eval(self):
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
         self.assertEqual('1 + 1', d.expand("{foo}"))
         self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}"))
@@ -262,6 +240,28 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual('\"2 + 2\"', d.expand("{bar}"))
         self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}"))
 
+    def test_inline_script(self):
+        # Load a tiny test script.
+        source = textwrap.dedent("""
+        import hancho
+        foo_in_script = [1, 2, 3]
+        """)
+        script = hancho.load_str2(__file__, source, False, Dict(blarp = 1234))
+        token = hancho.cv_script.set(script)
+
+        # Expanding 'Task' should read from hancho.py
+        self.assertEqual(hancho.Task, Dict().expand("{Task}"))
+
+        # Expanding 'blarp' should read from the options passed into the script
+        self.assertEqual(1234, Dict().expand("{blarp}"))
+
+        # Expanding 'foo_in_script' should read from the script module...
+        self.assertEqual([1, 2, 3], Dict().expand("{foo_in_script}"))
+
+        # but not after we've left the script context.
+        hancho.cv_script.reset(token)
+        self.assertEqual("{foo_in_script}", Dict().expand("{foo_in_script}"))
+        self.assertEqual("{blarp}", Dict().expand("{blarp}"))
 
 ####################################################################################################
 
