@@ -18,7 +18,7 @@ from hancho import Dict, Expander
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
     hancho.Log.reset(hancho.Main.parse_flags([]))
-    #hancho.init(verbosity = "quiet")
+    hancho.init(verbosity = "quiet")
 
 
 def load_tests(loader, tests, ignore):
@@ -262,6 +262,17 @@ class TestTemplates(unittest.TestCase):
         hancho.cv_script.reset(token)
         self.assertEqual("{foo_in_script}", Dict().expand("{foo_in_script}"))
         self.assertEqual("{blarp}", Dict().expand("{blarp}"))
+
+    def test_alternate_delims(self):
+        d = hancho.Dict(foo = "bar")
+        o1 = hancho.Onion(d, ldelims='{', rdelims ='}')
+        o2 = hancho.Onion(d, ldelims='«', rdelims ='»')
+
+        self.assertEqual("bar",   o1.expand("{foo}"))
+        self.assertEqual("«foo»", o1.expand("«foo»"))
+
+        self.assertEqual("{foo}", o2.expand("{foo}"))
+        self.assertEqual("bar",   o2.expand("«foo»"))
 
 ####################################################################################################
 

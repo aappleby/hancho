@@ -218,25 +218,20 @@ class Onion(abc.Mapping):
         self.rdelims = kwargs.pop("rdelims", Expander.rdelims)
         self.pairs   = {self.ldelims[i]:self.rdelims[i] for i in range(len(self.ldelims))}
 
-        self._layers = {}
+        self._layers : list[dict] = []
         for val in args:
             if isinstance(val, Onion):
-                self._layers.update(val._layers)
+                self._layers.extend(val._layers)
                 self.ldelims = val.ldelims
                 self.rdelims = val.rdelims
                 self.pairs   = val.pairs
+            elif isinstance(val, dict):
+                self._layers.append(val)
             else:
-                raise TypeError(f"You can only merge onions, not this: {val}")
+                raise TypeError(f"Only dicts and onions can be passed to Onion(), not this: {val}")
 
-        for key, val in kwargs.items():
-            if isinstance(val, Onion):
-                for key2, val2 in val._layers.items():
-                    self._layers[key2] = val2
-            elif isinstance(val, abc.Mapping):
-                self._layers[key] = val
-            else:
-                raise TypeError(f"Onion layers must be mappings, not this: {val}")
-        pass
+        if len(kwargs):
+            self._layers.append(Dict(kwargs))
 
     @classmethod
     def wrap(cls, d : Dict):
@@ -247,10 +242,10 @@ class Onion(abc.Mapping):
         script = cv_script.get()
 
         onion = Onion(
-            hancho_module  = hancho.__dict__,
-            script_module  = script.module.__dict__ if script else {},
-            script_options = script.options if script else {},
-            wrapped        = d,
+            hancho.__dict__,
+            script.module.__dict__ if script else {},
+            script.options if script else {},
+            d,
         )
         return onion
 
@@ -265,26 +260,26 @@ class Onion(abc.Mapping):
 
     def __iter__(self):
         seen = set()
-        for layer in reversed(self._layers.items()):
-            for key, _ in layer[1].items():
+        for layer in reversed(self._layers):
+            for key in layer:
                 if key not in seen:
                     seen.add(key)
                     yield key
 
     def __len__(self):
-        return len(set().union(*self._layers.values()))
+        return len(set().union(*self._layers))
 
     def __repr__(self):
         return Dumper.dump_to_str(key = None, val = self)
 
     def __contains__(self, key):
-        return any(key in layer for layer in self._layers.values())
+        return any(key in layer for layer in self._layers)
 
     def _get(self, key) -> Any:
         with Tracer(self, "get", key) as trace:
             # Return the rightmost non-None non-Mapping if present.
             saw_a_none = False
-            for layer in reversed(self._layers.values()):
+            for layer in reversed(self._layers):
                 if key in layer:
                     val = layer[key]
                     if val is None:
@@ -300,18 +295,14 @@ class Onion(abc.Mapping):
                 return None
 
             # Nope, all mappings. Pull out the ones containing the key.
-            new_layers = {
-                name + "." + key: layer[key]
-                for name, layer in self._layers.items()
-                if key in layer
-            }
+            new_layers = [layer[key] for layer in self._layers if key in layer]
 
             # No matches? Bad key.
             if not new_layers:
                 raise KeyError(key)
 
             # Otherwise we make a new onion out of the mappings.
-            result = Onion(**new_layers)
+            result = Onion(*new_layers)
             trace.save_result(result)
             return result
 
@@ -608,7 +599,7 @@ class Dumper:
             items = [(None, v) for v in val]
             return '[', items, ']'
         elif isinstance(val, Onion):
-            items = [(f"layer {k}", v) for k, v in reversed(val._layers.items())]
+            items = [(None, v) for v in reversed(val._layers)]
             return '[', items, ']'
         else:
             raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
@@ -1806,7 +1797,7 @@ class Task:
         # expansion check 'expanded' first to see if it contains an already-expanded copy of the
         # field.
         onion = Onion.wrap(self.raw_config)
-        onion._layers["expanded"] = self.config
+        onion._layers.append(self.config)
 
         self.config.task_cwd    = onion.task_cwd
         self.config.build_force = onion.build_force
