@@ -182,7 +182,8 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        return Expander._expand(template, self)
+        onion = Onion.wrap(self)
+        return Expander._expand(template, onion)
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -228,6 +229,22 @@ class Onion(abc.Mapping):
                 raise TypeError(f"Onion layers must be mappings, not this: {val}")
         pass
 
+    @classmethod
+    def wrap(cls, d : Dict):
+        """
+        Wrap the given dict so that when we expand things in it the macros can refer to stuff in
+        hancho or the script module that created it.
+        """
+        script = cv_script.get()
+        onion = Onion(
+            hancho_module  = hancho.__dict__,
+            script_module  = script.module.__dict__ if script else {},
+            script_options = script.options if script else {},
+            wrapped        = d,
+        )
+        return onion
+
+
     def __getattr__(self, key : str):
         try:
             return self._get(key)
@@ -256,12 +273,19 @@ class Onion(abc.Mapping):
         return any(key in layer for layer in self._layers.values())
 
     def _get(self, key) -> Any:
-        # See if we have a non-mapping for the given key.
+        # Return the rightmost non-None non-Mapping if present.
+        saw_a_none = False
         for layer in reversed(self._layers.values()):
-            if isinstance(layer, abc.Mapping) and key in layer:
+            if key in layer:
                 val = layer[key]
-                if not isinstance(val, abc.Mapping):
+                if val is None:
+                    saw_a_none = True
+                elif not isinstance(val, abc.Mapping):
                     return Expander._expand(val, self)
+
+        # If the key was present but there was no value associated with it, return None.
+        if saw_a_none:
+            return None
 
         # Nope, all mappings. Pull out the ones containing the key.
         new_layers = {
@@ -327,7 +351,7 @@ class Expander:
     sentinel = sentinel
 
     @classmethod
-    def _expand(cls, variant : Any, dict_or_onion : Dict | Onion):
+    def _expand(cls, variant : Any, onion : Onion):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
@@ -344,7 +368,7 @@ class Expander:
                 # Remember how much budget was spent.
                 saved = Expander.cv_evals.get()
                 # Expand the list element.
-                result.append(Expander._expand(v, dict_or_onion))
+                result.append(Expander._expand(v, onion))
                 # Restore the budget so the next string in the list gets it.
                 Expander.cv_evals.set(saved)
             return result
@@ -363,17 +387,6 @@ class Expander:
 
         # OK, we have a string that could be a template. Keep expanding it until it stops changing
         # or it's not a template.
-
-        if isinstance(dict_or_onion, Onion):
-            onion = cast(Onion, dict_or_onion)
-        else:
-            script = cv_script.get()
-            onion = Onion(
-                hancho_module  = hancho.__dict__,
-                script_module  = script.module.__dict__ if script else {},
-                script_options = script.options if script else {},
-                task_config    = dict_or_onion,
-            )
 
         Log.indent()
         try:
@@ -1360,11 +1373,13 @@ class Script:
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
-        if not task.in_files:
+        has_input = any(Utils.yield_values(task.in_files))
+        if not has_input:
             self.reasons["no inputs"] += 1
             return "Always rebuild a target with no inputs"
 
-        if not task.out_files:
+        has_output = any(Utils.yield_values(task.out_files))
+        if not has_output:
             self.reasons["no outputs"] += 1
             return "Always rebuild a target with no outputs"
 
@@ -1460,8 +1475,16 @@ class Task:
             *args, **kwargs
         )
 
-
-        self.expanded = Dict()
+        self.expanded = Dict(
+            name=None,
+            desc=None,
+            command=None,
+            task_cwd=None,
+            build_dir=None,
+            build_force=None,
+            job_size=None,
+            depformat=None,
+        )
 
         self.enabled = False
 
@@ -1475,8 +1498,11 @@ class Task:
 
         self._aio_context = contextvars.copy_context()
 
-        self.input_tasks : list[Task] = [v for v in Utils.yield_values(self.config_blah) if isinstance(v, Task)]
-        self.io_fields : list[str] = [k for k in self.config_blah if Task.is_io_field(k)]
+        self.input_tasks : list[Task] = []
+
+        # This must be populated -before- the task starts, as we need it to queue up the task's
+        # dependencies
+        self.input_tasks = [v for v in Utils.yield_values(self.config_blah) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1544,6 +1570,14 @@ class Task:
     def is_io_field(key : str):
         return Task.is_input_field(key) or Task.is_output_field(key)
 
+    @staticmethod
+    def is_output_field2(key : str):
+        return (key != "") and key.startswith("out_")
+
+    @staticmethod
+    def is_input_field2(key : str):
+        return (key != "") and key.startswith("in_") and key != "in_depfile"
+
     # ----------------------------------------------------------------------------------------------
 
     def log(self, message : str):
@@ -1583,7 +1617,6 @@ class Task:
     async def task_top(self):
         task = self
         blah = self.config_blah
-        script = task.script
         expanded = self.expanded
 
         Task.id_counter += 1
@@ -1595,11 +1628,11 @@ class Task:
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for val in task.input_tasks:
-            if val._aio_task is None:
+        for files in task.input_tasks:
+            if files._aio_task is None:
                 raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
             try:
-                await val._aio_task
+                await files._aio_task
             except Task.SKIPPED:
                 # This input was clean and didn't need to rebuild.
                 pass
@@ -1611,45 +1644,44 @@ class Task:
 
         # ----------------------------------------
 
-        #print(blah)
+        with LogLevel.DEBUG:
+            task.log("Task config before expand:\n")
+            task.log(str(self.config_blah) + "\n")
 
-        onion = Onion(
-            hancho_module  = hancho.__dict__,
-            script_module  = script.module.__dict__ if script else {},
-            script_options = script.options if script else {},
-            task_config    = blah,
-            expanded       = expanded,
-        )
-
-        for key in task.io_fields:
-            val = blah[key]
-            if Task.is_input_field(key):
-                val = [
-                    v.out_files if isinstance(v, Task) else v
-                    for v in Utils.yield_values(val)
-                ]
-            blah[key] = Utils.flatten(onion.expand(val))
-            expanded[key] = Utils.flatten(onion.expand(val))
-
-        expanded.name        = onion.expand("{name}")        # mostly mandatory just because we print it
-        expanded.desc        = onion.expand("{desc}")        # mostly mandatory just because we print it
-        expanded.build_force = onion.expand("{build_force}") # mandatory
-        expanded.depformat   = onion.expand("{depformat}")   # mandatory for c++
-        expanded.job_size    = onion.expand("{job_size}")    # mandatory
-        expanded.task_cwd    = onion.expand("{task_cwd}")    # mandatory
+        onion = Onion.wrap(blah)
+        onion._layers["expanded"] = expanded
 
         # Build_dir must be expanded _before_ fix_paths
-        expanded.build_dir   = Path.abspath(onion.expand("{build_dir}"))
+        expanded.build_dir   = onion.build_dir
+        expanded.task_cwd    = onion.task_cwd
+        expanded.build_force = onion.build_force
+        expanded.depformat   = onion.depformat
+        expanded.job_size    = onion.job_size
 
-        # Fix_paths must come before expand(command)
-        #self.fix_paths()
-        for field in task.io_fields:
-            path = self.fix_path(field, task.config_blah[field])
-            task.config_blah[field] = path
-            task.expanded[field] = path
+        expanded.build_dir   = Path.abspath(expanded.build_dir)
+
+        for field in blah:
+            if not Task.is_io_field(field):
+                continue
+
+            raw_files = Utils.yield_values(blah[field])
+
+            files = [val.out_files if isinstance(val, Task) else val for val in raw_files]
+            files = Utils.flatten(files)
+            files = onion.expand(files)
+            files = self.fix_paths(field, files)
+
+            if Task.is_input_field2(field):
+                task.in_files[field] = files
+            elif Task.is_output_field2(field):
+                task.out_files[field] = files
+
+            expanded[field] = files[0] if len(files) == 1 else files
 
         # And command should be expanded last.
-        expanded.command  = Utils.flatten(onion.expand("{command}")) # mandatory
+        expanded.command  = Utils.flatten(onion.command)
+        expanded.desc     = onion.desc
+        expanded.name     = onion.name
 
         # ----------------------------------------
         # Inputs are ready, run the task.
@@ -1684,64 +1716,39 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-
-    def fix_path(self, field, val):
+    def fix_paths(self, field, file):
         """
         Input and output file paths in .hancho scripts are declared relative to the directory the
-        script is in (stored in the config under 'script_path').
+        script is in (stored in the config under 'script_cwd').
         In general we want to run commands from the root of the repo and store output files in
-        repo/build.
-        This function takes care of all of that and a few other things, and tries to do so in a
-        robust way. Whether this actually turns out to be robust or not is yet to be determined.
+        repo/build, so we need to fix up the paths to match.
         """
+        if isinstance(file, (list, set, tuple)):
+            return [self.fix_paths(field, f) for f in file]
+        if isinstance(file, abc.Mapping):
+            return {k:self.fix_paths(field, f) for k, f in file}
 
-        task = self
         script = cv_script.get()
 
-        files = []
-        for file in val:
-            #remapped = task.remap_io_field_path(key, file)
+        # Join script_cwd with the filename to produce absolute paths.
+        file = Path.join(script.options.script_cwd, file)
 
-            # Join script_cwd with the filename to produce absolute paths.
-            file = Path.join(script.options.script_cwd, file)
+        # File paths _must_ be normed after joining, otherwise they might look like they're under
+        # script_dir, but they're not because the paths could have "../../../../.." in them.
+        file = Path.abspath(file)
 
-            # File paths _must_ be normed after joining, otherwise they might look like they're under
-            # script_dir, but they're not because the paths could have "../../../../.." in them.
-            file = Path.abspath(file)
+        # Move all outputs under build.dir and ensure their directories exist.
+        if Task.is_output_field(field):
+            # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
+            # it's an _output_ from the compiler and is not checked in to the source tree.
+            if not Path.startswith(file, self.expanded.build_dir):
+                file = Path.relpath(file, script.options.script_cwd)
+                file = Path.join(self.expanded.build_dir, file)
 
-            # Move all outputs under build.dir and ensure their directories exist.
+            if not script.options.build_dry:
+                os.makedirs(Path.dirname(file), exist_ok=True)
 
-            if Task.is_output_field(field):
-                # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
-                # it's an _output_ from the compiler.
-                if not Path.startswith(file, task.expanded.build_dir):
-                    file = Path.relpath(file, script.options.script_cwd)
-                    file = Path.join(task.expanded.build_dir, file)
-
-                if not script.options.build_dry:
-                    os.makedirs(Path.dirname(file), exist_ok=True)
-
-                # Depfiles do _not_ go in the output file list, as they are never consumed by a
-                # downstream task.
-                if not Task.is_depfile_field(field):
-                    task.out_files[field] = file
-
-            else:
-                task.in_files[field] = file
-
-            files.append(file)
-
-        # Convert the fixed paths back to relative so our command lines aren't enormous.
-        # Relative paths are relative to task_cwd if we're running a command, otherwise they're
-        # relative to script_dir if we're calling a callback.
-
-        # actually this may not be worth it, and it currently breaks some tests
-        #rel_dir = task.expanded.task_cwd if isinstance(task.expanded.command[0], str) else script.options.script_cwd
-        #file = Path.relpath(file, rel_dir)
-
-        # Unwrap filenames if they're an array of one element so that scripts expecting
-        # join(str, str) to return a str will be happy.
-        return files[0] if len(files) == 1 else files
+        return file
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1749,17 +1756,16 @@ class Task:
         task = self
         script = cv_script.get()
         time_a = time.perf_counter()
-        expanded = task.expanded
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
-            task.log(str(expanded) + "\n")
+            task.log(str(task.expanded) + "\n")
 
-        if not Path.exists(expanded.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{expanded.task_cwd}' does not exist")
+        if not Path.exists(task.expanded.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{task.expanded.task_cwd}' does not exist")
 
         if not Path.startswith(task.expanded.build_dir, script.options.repo_root):
-            raise Task.BROKEN(f"The build.dir {expanded.build_dir} is not under repo.root {expanded.repo_root}")
+            raise Task.BROKEN(f"The build.dir {task.expanded.build_dir} is not under repo.root {task.expanded.repo_root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1769,10 +1775,10 @@ class Task:
         # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(expanded.command, list):
-            for command in expanded.command:
-                if type(command) is not type(expanded.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {expanded.command}")
+        if isinstance(task.expanded.command, list):
+            for command in task.expanded.command:
+                if type(command) is not type(task.expanded.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {task.expanded.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
@@ -1780,7 +1786,7 @@ class Task:
 
         # In strict mode, we mark a task broken if its command still has curly braces.
         if script.options.build_strict:
-            for command in cast(list, expanded.command):
+            for command in cast(list, task.expanded.command):
                 if not isinstance(command, str):
                     continue
                 blocks = []
@@ -1791,8 +1797,8 @@ class Task:
         # Check that all build files would end up under build.dir
         for file in Utils.yield_values(task.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, expanded.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {expanded.build_dir}")
+            if not Path.startswith(file, task.expanded.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {task.expanded.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
