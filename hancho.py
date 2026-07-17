@@ -61,10 +61,6 @@ hancho : Any = sys.modules["hancho"]
 options : Dict
 config : Dict
 
-# And when we _do_ have a root .hancho script, its components go here.
-# I suppose this could be a dict but would require reshuffling.
-#root : Any = object()
-
 # --------------------------------------------------------------------------------------------------
 # region Dict
 
@@ -253,7 +249,6 @@ class Onion(abc.Mapping):
     def __getitem__(self, key):
         return self._get(key)
 
-    # FIXME - Do we really need these iter/len impls? Do they make onions more debuggable?
     def __iter__(self):
         seen = set()
         for layer in reversed(self._layers.items()):
@@ -621,22 +616,22 @@ class Dumper:
         prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
         suffix = cls._dump_suffix(val, print_id)
 
-        # FIXME duplication
-
         if isinstance(val, (dict, list, tuple, set, Onion)):
-            try:
-                return prefix + cls._dump_container_to_flat_str(val, print_id, color_code, max_length - len(prefix), tab, memo) + suffix
-            except ValueError:
-                return prefix + cls._dump_container_to_str(val, indent, print_id, color_code, max_length, tab, memo) + suffix
+            val = val
         elif isinstance(val, Script):
+            # Don't print scripts if they're not at the top of the dump, otherwise our dumps get
+            # massive
             if indent > 1:
                 return prefix + f"'{val.options.script_path}'"
-            try:
-                return prefix + cls._dump_container_to_flat_str(val.__dict__, print_id, color_code, max_length - len(prefix), tab, memo) + suffix
-            except ValueError:
-                return prefix + cls._dump_container_to_str(val.__dict__, indent, print_id, color_code, max_length, tab, memo) + suffix
+            else:
+                val = val.__dict__
         else:
             return prefix + cls._dump_scalar(val, color_code) + suffix
+
+        try:
+            return prefix + cls._dump_container_to_flat_str(val, print_id, color_code, max_length - (len(prefix) + len(suffix)), tab, memo) + suffix
+        except ValueError:
+            return prefix + cls._dump_container_to_str(val, indent, print_id, color_code, max_length, tab, memo) + suffix
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -786,7 +781,6 @@ class Utils:
     def flatten(variant):
         return list(Utils.yield_values(variant))
 
-    # FIXME can we use this in more places? It seems quite useful.
     @staticmethod
     def yield_values(variant) -> Any:
         if variant is None:
@@ -1417,9 +1411,6 @@ class Script:
         """
         script = self
 
-        # FIXME we should be expanding force_build etc. so we pick up either the task value or the
-        # script value
-
         # If there's a depfile from a previous build, load it so we can use it below.
         if task.in_depfile:
             task._old_deplines = Utils.load_depfile(
@@ -1870,18 +1861,15 @@ class Task:
         script = cv_script.get()
 
         # Join script_cwd with the filename to produce absolute paths.
-
         file = Path.join(script.options.script_cwd, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
-
         file = Path.abspath(file)
 
         # Move all outputs under build.dir and ensure their directories exist.
         # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
-
         if field.startswith("out_") or field == "in_depfile":
             if not Path.startswith(file, self.config.build_dir):
                 file = Path.relpath(file, script.options.script_cwd)
@@ -2790,7 +2778,6 @@ class Main:
 
 # These are aliases for methods in Hancho that have been pulled out so they can be used by
 # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
-# FIXME - maybe just put these in the top level globals? type checking might work better idk.
 
 path     = Path
 basename = Path.basename
