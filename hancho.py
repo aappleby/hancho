@@ -209,6 +209,8 @@ class Onion(abc.Mapping):
 
     Onion layers are searched in right-to-left (i.e. reverse) order, to match the "right overrides
     left" behavior of Dict.
+
+    Why 'Onion'? Well, 'stack' and 'deck' are overloaded and 'onion' at least implies nested layers.
     """
 
     def __init__(self, *args, **kwargs):
