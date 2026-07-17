@@ -210,7 +210,8 @@ class Onion(abc.Mapping):
     Onion layers are searched in right-to-left (i.e. reverse) order, to match the "right overrides
     left" behavior of Dict.
 
-    Why 'Onion'? Well, 'stack' and 'deck' are overloaded and 'onion' at least implies nested layers.
+    Why the name 'Onion'?
+    Well, 'stack' and 'deck' are overloaded and 'Onion' at least implies nested layers.
     """
 
     def __init__(self, *args, **kwargs):
@@ -528,7 +529,7 @@ class Dumper:
     def _dump_scalar(cls, val, color_code):
         # Non-containers are always emitted on one line. If they overflow, they overflow.
         if isinstance(val, Task):
-            val = f"<Task '{val.expanded.name}'>"
+            val = f"<Task '{val.config.name}'>"
         elif isinstance(val, contextvars.Context):
             val = "<Context>"
         elif isinstance(val, types.ModuleType):
@@ -1371,7 +1372,7 @@ class Script:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if task.expanded.build_force:
+        if task.config.build_force:
             self.reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -1464,20 +1465,20 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        # The task's config contains all the commands, paths, options, inputs, dependent Tasks, and
-        # anything else needed to assemble and run the task's commands. It is expected that build
-        # scripts will need to read task.expanded in order to implement task callbacks,
+        script = cv_script.get()
+        self.script = script
+
+        # The task's raw config contains all the commands, paths, options, inputs, dependent Tasks,
+        # and anything else needed to assemble and run the task's commands. It is expected that
+        # build scripts will need to read task.(raw_)config in order to implement task callbacks,
         # so the field is not underscore-prefixed like the later ones.
 
-        script = cv_script.get()
+        self.raw_config = Dict(Task.default_config, *args, **kwargs)
 
-        self.script = script
-        self.config_blah = Dict(
-            Task.default_config,
-            *args, **kwargs
-        )
+        # The task's 'cooked' config contains only the fields needed to run the command, all fully
+        # expanded.
 
-        self.expanded = Dict(
+        self.config = Dict(
             name=None,
             desc=None,
             command=None,
@@ -1488,8 +1489,6 @@ class Task:
             depformat=None,
         )
 
-        self.enabled = False
-
         # Similarly, build scripts may need to see the complete list of inputs/outputs to a task
         # in addition to the individual in_/out_ fields, so these are public.
         self.in_files  = {}
@@ -1498,13 +1497,15 @@ class Task:
         # ------------------------------------
         # Implementation details below this line
 
+        self._enabled = False
+
         self._aio_context = contextvars.copy_context()
 
         self.input_tasks : list[Task] = []
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self.config_blah) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self.raw_config) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1592,8 +1593,8 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def enable_task(self):
-        if not self.enabled:
-            self.enabled = True
+        if not self._enabled:
+            self._enabled = True
             Task.tasks_enabled += 1
             if Utils.in_event_loop():
                 self.create_aio_task()
@@ -1618,8 +1619,6 @@ class Task:
 
     async def task_top(self):
         task = self
-        blah = self.config_blah
-        expanded = self.expanded
 
         Task.id_counter += 1
         task._task_id = Task.id_counter
@@ -1641,32 +1640,37 @@ class Task:
             except Exception as ex:
                 with LogLevel.VERBOSE:
                     task.log(str(ex) + "\n")
-                task._error = Task.CANCELLED(f"Task is cancelled: '{blah.name}' : '{blah.desc}'")
+                task._error = Task.CANCELLED(f"Task is cancelled: '{self.raw_config.name}' : '{self.raw_config.desc}'")
                 raise task._error from ex
 
         # ----------------------------------------
+        # Expand everything we need from the raw config and fix raw file paths.
 
         with LogLevel.DEBUG:
             task.log("Task config before expand:\n")
-            task.log(str(self.config_blah) + "\n")
+            task.log(str(self.raw_config) + "\n")
 
-        onion = Onion.wrap(blah)
-        onion._layers["expanded"] = expanded
+        # We wrap the task config in an onion and then tack the 'expanded' dict onto it. Then we
+        # expand fields into 'expanded', which makes onion lookups during expansion check 'expanded'
+        # first to see if it contains an already-expanded copy of the field.
+        onion = Onion.wrap(self.raw_config)
+        onion._layers["expanded"] = self.config
 
-        # Build_dir must be expanded _before_ fix_paths
-        expanded.build_dir   = onion.build_dir
-        expanded.task_cwd    = onion.task_cwd
-        expanded.build_force = onion.build_force
-        expanded.depformat   = onion.depformat
-        expanded.job_size    = onion.job_size
+        self.config.task_cwd    = onion.task_cwd
+        self.config.build_force = onion.build_force
+        self.config.depformat   = onion.depformat
+        self.config.job_size    = onion.job_size
 
-        expanded.build_dir   = Path.abspath(expanded.build_dir)
+        # Build_dir must be expanded _before_ any file paths.
+        self.config.build_dir   = onion.build_dir
+        self.config.build_dir   = Path.abspath(self.config.build_dir)
 
-        for field in blah:
+        # Then we expand all file paths, which can contain build_dir.
+        for field in self.raw_config:
             if not Task.is_io_field(field):
                 continue
 
-            raw_files = Utils.yield_values(blah[field])
+            raw_files = Utils.yield_values(self.raw_config[field])
 
             files = [val.out_files if isinstance(val, Task) else val for val in raw_files]
             files = Utils.flatten(files)
@@ -1678,12 +1682,12 @@ class Task:
             elif Task.is_output_field2(field):
                 task.out_files[field] = files
 
-            expanded[field] = files[0] if len(files) == 1 else files
+            self.config[field] = files[0] if len(files) == 1 else files
 
-        # And command should be expanded last.
-        expanded.command  = Utils.flatten(onion.command)
-        expanded.desc     = onion.desc
-        expanded.name     = onion.name
+        # And finally we expand name/desc/command, which can contain file paths.
+        self.config.command  = Utils.flatten(onion.command)
+        self.config.desc     = onion.desc
+        self.config.name     = onion.name
 
         # ----------------------------------------
         # Inputs are ready, run the task.
@@ -1743,9 +1747,9 @@ class Task:
         if Task.is_output_field(field):
             # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
             # it's an _output_ from the compiler and is not checked in to the source tree.
-            if not Path.startswith(file, self.expanded.build_dir):
+            if not Path.startswith(file, self.config.build_dir):
                 file = Path.relpath(file, script.options.script_cwd)
-                file = Path.join(self.expanded.build_dir, file)
+                file = Path.join(self.config.build_dir, file)
 
             if not script.options.build_dry:
                 os.makedirs(Path.dirname(file), exist_ok=True)
@@ -1761,13 +1765,13 @@ class Task:
 
         with LogLevel.DEBUG:
             task.log("Task config after expand:\n")
-            task.log(str(task.expanded) + "\n")
+            task.log(str(task.config) + "\n")
 
-        if not Path.exists(task.expanded.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{task.expanded.task_cwd}' does not exist")
+        if not Path.exists(task.config.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{task.config.task_cwd}' does not exist")
 
-        if not Path.startswith(task.expanded.build_dir, script.options.repo_root):
-            raise Task.BROKEN(f"The build.dir {task.expanded.build_dir} is not under repo.root {task.expanded.repo_root}")
+        if not Path.startswith(task.config.build_dir, script.options.repo_root):
+            raise Task.BROKEN(f"The build.dir {task.config.build_dir} is not under repo.root {task.config.repo_root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1777,10 +1781,10 @@ class Task:
         # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(task.expanded.command, list):
-            for command in task.expanded.command:
-                if type(command) is not type(task.expanded.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {task.expanded.command}")
+        if isinstance(task.config.command, list):
+            for command in task.config.command:
+                if type(command) is not type(task.config.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {task.config.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
@@ -1788,7 +1792,7 @@ class Task:
 
         # In strict mode, we mark a task broken if its command still has curly braces.
         if script.options.build_strict:
-            for command in cast(list, task.expanded.command):
+            for command in cast(list, task.config.command):
                 if not isinstance(command, str):
                     continue
                 blocks = []
@@ -1799,8 +1803,8 @@ class Task:
         # Check that all build files would end up under build.dir
         for file in Utils.yield_values(task.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, task.expanded.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {task.expanded.build_dir}")
+            if not Path.startswith(file, task.config.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {task.config.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
@@ -1818,12 +1822,12 @@ class Task:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        for key, files in list(task.expanded.items()):
+        for key, files in list(task.config.items()):
             if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
         # Tasks should have at most one depfile.
-        for key, files in list(task.expanded.items()):
+        for key, files in list(task.config.items()):
             if Task.is_depfile_field(key) and len(Utils.flatten(files)) > 1:
                 # Why isn't this being hit by code coverage? We do have a test for it.
                 raise Task.BROKEN("Tasks can't have more than one dependency file!")
@@ -1839,9 +1843,9 @@ class Task:
         # Paths updated. See if we need to rebuild our outputs.
 
         # If there's a depfile from a previous build, load it so we can use it in rebuild_reason.
-        if "in_depfile" in task.expanded:
+        if "in_depfile" in task.config:
             task._old_deplines = Utils.load_depfile(
-                task.expanded.in_depfile, cast(str, task.expanded.depformat), task.expanded.task_cwd
+                task.config.in_depfile, cast(str, task.config.depformat), task.config.task_cwd
             )
             for file in task._old_deplines:
                 if os.path.exists(file):
@@ -1856,30 +1860,30 @@ class Task:
 
         for file in Utils.yield_values(task.out_files):
             if os.path.exists(file):
-                str_command = Script.commands_to_string(task.expanded.command)
+                str_command = Script.commands_to_string(task.config.command)
                 script.update_stat_db(script.mid_stat_db, file, str_command)
 
         task._reason = script.rebuild_reason(task)
         if not task._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{task.expanded.name}' : '{task.expanded.desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{task.config.name}' : '{task.config.desc}'")
 
         # ----------------------------------------
         # Wait for enough jobs to free up to run this task.
 
-        task._job_size = await Runner.acquire(task.expanded.job_size)
+        task._job_size = await Runner.acquire(task.config.job_size)
 
         # ----------------------------------------
         # Run all the task's commands
 
         with LogLevel.NORMAL:
-            if task.expanded.name:
-                task.log(f"{task.expanded.name}: ")
-            task.log(f"{task.expanded.desc}\n")
+            if task.config.name:
+                task.log(f"{task.config.name}: ")
+            task.log(f"{task.config.desc}\n")
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             task.log(f"Task rebuilding because: {task._reason}\n")
 
-        for command in cast(list, task.expanded.command):
+        for command in cast(list, task.config.command):
             if command is None:
                 continue
             elif callable(command):
@@ -1894,8 +1898,8 @@ class Task:
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
-        if "in_depfile" in task.expanded:
-            deplines = Utils.load_depfile(task.expanded.in_depfile, cast(str, task.expanded.depformat), task.expanded.task_cwd)
+        if "in_depfile" in task.config:
+            deplines = Utils.load_depfile(task.config.in_depfile, cast(str, task.config.depformat), task.config.task_cwd)
             for file in deplines:
                 script.update_stat_db(script.mid_stat_db, file)
 
@@ -1904,16 +1908,16 @@ class Task:
 
         time_b = time.perf_counter()
 
-        if "in_depfile" in task.expanded:
+        if "in_depfile" in task.config:
             task._new_deplines = Utils.load_depfile(
-                task.expanded.in_depfile, cast(str, task.expanded.depformat), task.expanded.task_cwd
+                task.config.in_depfile, cast(str, task.config.depformat), task.config.task_cwd
             )
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
-            if task.expanded.name:
-                message += f"'{task.expanded.name}' - "
-            message += f"'{task.expanded.desc}'\n"
+            if task.config.name:
+                message += f"'{task.config.name}' - "
+            message += f"'{task.config.desc}'\n"
             task.log(message)
 
     # ----------------------------------------------------------------------------------------------
@@ -1923,14 +1927,14 @@ class Task:
 
         task = self
         with LogLevel.VERBOSE, Colors.BLUE:
-            task.log(f"{Path.relpath(task.expanded.task_cwd, script.options.repo_root)}$ {command}\n")
+            task.log(f"{Path.relpath(task.config.task_cwd, script.options.repo_root)}$ {command}\n")
 
         proc = None
         try:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd    = task.expanded.task_cwd,
+                cwd    = task.config.task_cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2018,10 +2022,10 @@ class Task:
             Log.log("========================================\n")
 
             Log.log(f"Script    = {script.options.script_path}:\n")
-            Log.log(f"Task      = '{task.expanded.name}' : '{task.expanded.desc}'\n")
+            Log.log(f"Task      = '{task.config.name}' : '{task.config.desc}'\n")
             Log.log(f"os.getcwd = {os.getcwd()}\n")
-            Log.log(f"task cwd  = {task.expanded.task_cwd}\n")
-            Log.log(f"command   = {task.expanded.command}\n")
+            Log.log(f"task cwd  = {task.config.task_cwd}\n")
+            Log.log(f"command   = {task.config.command}\n")
             if ex:
                 Log.log_exception(ex)
             Log.log(task.dump_stdout())
@@ -2287,7 +2291,7 @@ class Runner:
             target_regex = re.compile(script.options.target)
 
             for task in Loader.yield_tasks():
-                if target_regex.search(task.expanded.name):
+                if target_regex.search(task.config.name):
                     task.enable_task()
 
         elif script.options.build_all:
@@ -2315,12 +2319,11 @@ class Runner:
 
         script = cv_script.get()
 
-
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
 
         for task in Loader.yield_tasks():
-            if task.enabled:
+            if task._enabled:
                 task.create_aio_task()
 
         # ------------------------------------
@@ -2393,7 +2396,7 @@ class Runner:
     def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
             for task in Loader.yield_tasks():
-                root = Path.relpath(task.expanded.build_root, os.getcwd())
+                root = Path.relpath(task.config.build_root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
                     shutil.rmtree(root, ignore_errors=True)
@@ -2749,18 +2752,18 @@ class Main:
 
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
-                    "directory" : task.expanded.task_cwd,
-                    "command"   : script.commands_to_string(task.expanded.command),
+                    "directory" : task.config.task_cwd,
+                    "command"   : script.commands_to_string(task.config.command),
                     "file"      : file,
                 }
 
-            if "in_depfile" in task.expanded:
-                deplines = Utils.load_depfile(task.expanded.in_depfile, task.expanded.depformat, task.expanded.task_cwd)
+            if "in_depfile" in task.config:
+                deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.task_cwd)
                 for file in deplines:
                     script.update_stat_db(stat_db, file)
 
             for file in Utils.yield_values(task.out_files):
-                str_command = script.commands_to_string(task.expanded.command)
+                str_command = script.commands_to_string(task.config.command)
                 script.update_stat_db(stat_db, file, str_command)
 
         with LogLevel.DEBUG, Colors.ORANGE:
