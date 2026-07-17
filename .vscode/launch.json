@@ -34,6 +34,18 @@
     },
 
     {
+      "name"    : "Debug tricks/trick4_codegen_pipeline.hancho",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/tricks",
+      "args"    : ["-s=trick4_codegen_pipeline.hancho"],
+      //"args"    : ["--trace"],
+      "preLaunchTask": "Wipe build",
+    },
+
+
+    {
       "name"    : "Debug scratch/build.py",
       "type"    : "debugpy",
       "request" : "launch",

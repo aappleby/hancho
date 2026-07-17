@@ -174,9 +174,12 @@ class Dict(dict):
     def __setitem__(self, key : str, val : Any):
         dict.__setitem__(self, key, val)
 
-    def expand(self, template):
+    def expand(self, template, onion = None):
+        if onion is None:
+            onion = Onion.wrap(self)
+
         with Tracer(self, "dict.expand", template) as trace:
-            result = Expander._expand(template, Onion.wrap(self))
+            result = Expander._expand(template, onion)
             trace.save_result(result)
             return result
 
@@ -211,10 +214,17 @@ class Onion(abc.Mapping):
     """
 
     def __init__(self, *args, **kwargs):
+        self.ldelims = kwargs.pop("ldelims", Expander.ldelims)
+        self.rdelims = kwargs.pop("rdelims", Expander.rdelims)
+        self.pairs   = {self.ldelims[i]:self.rdelims[i] for i in range(len(self.ldelims))}
+
         self._layers = {}
         for val in args:
             if isinstance(val, Onion):
                 self._layers.update(val._layers)
+                self.ldelims = val.ldelims
+                self.rdelims = val.rdelims
+                self.pairs   = val.pairs
             else:
                 raise TypeError(f"You can only merge onions, not this: {val}")
 
@@ -357,6 +367,16 @@ class Expander:
     MAX_EVALS = 300
 
     @classmethod
+    def reset(cls, flags):
+        # Normally you'd use '{' and '}' as delimiters, but you can also use '«' and '»'
+        # On Linux, you can type those using control-shift-u a b <enter> and control-shift-u b b <enter>
+        # On Windows, use alt-0171 and alt-0187 with the numbers being typed on the numpad while numlock
+        # is on.
+        cls.ldelims = "{«"
+        cls.rdelims = "}»"
+        cls.pairs = {cls.ldelims[i]:cls.rdelims[i] for i in range(len(cls.ldelims))}
+
+    @classmethod
     def _expand(cls, variant : Any, onion : Onion):
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
@@ -381,7 +401,8 @@ class Expander:
 
         # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
         # something) or if it's a string with no macros in it.
-        if not (isinstance(variant, str) and '{' in variant):
+        #if not (isinstance(variant, str) and '{' in variant):
+        if not Utils.is_template2(variant, onion.ldelims, onion.rdelims):
             return variant
         template = cast(str, variant)
 
@@ -396,7 +417,7 @@ class Expander:
 
         try:
             old_template = None
-            while old_template != template and isinstance(template, str) and '{' in template:
+            while old_template != template and Utils.is_template2(template, onion.ldelims, onion.rdelims):
                 old_template = template
                 with Tracer(onion, "expand", template) as trace:
                     template = Expander._expand_pass(template, onion)
@@ -426,7 +447,7 @@ class Expander:
         for i, block in enumerate(blocks):
 
             # Skip literal blocks.
-            if len(block) < 2 or block[0] != "{" or block[-1] != "}":
+            if len(block) < 2 or block[0] not in onion.ldelims or block[-1] not in onion.pairs[block[0]]:
                 continue
 
             # Bail out if we've taken too many expansion steps already.
@@ -468,6 +489,9 @@ class Expander:
         """
         assert isinstance(text, str)
 
+        ldelims = Expander.ldelims
+        rdelims = ""
+
         cursor = 0
         lbrace = -1
         escaped = False
@@ -477,9 +501,10 @@ class Expander:
                 escaped = False
             elif c == '\\':
                 escaped = True
-            elif c == '{':
+            elif c in ldelims:
                 lbrace = i
-            elif c == '}' and lbrace >= 0:
+                rdelims = Expander.pairs[c]
+            elif c in rdelims and lbrace >= 0:
                 if cursor < lbrace:
                     out.append(text[cursor:lbrace])
                     chunk_count += 1
@@ -487,6 +512,7 @@ class Expander:
                 chunk_count += 1
                 cursor = i + 1
                 lbrace = -1
+                rdelims = ""
 
         if cursor < len(text):
             out.append(text[cursor:])
@@ -578,7 +604,6 @@ class Dumper:
             return '(', items, ",)" if len(items) == 1 else ')'
         elif isinstance(val, (dict, types.MappingProxyType)):
             return '{', val.items(), '}'
-            #return '{', sorted(val.items()), '}'
         elif isinstance(val, (list, tuple, set)):
             items = [(None, v) for v in val]
             return '[', items, ']'
@@ -758,6 +783,13 @@ class Utils:
         blocks = []
         Expander._split_template(text, blocks)
         return len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{")
+
+    @staticmethod
+    def is_template2(text, ldelims, rdelims) -> bool:
+        pairs = {ldelims[i]:rdelims[i] for i in range(len(ldelims))}
+        if not isinstance(text, str):
+            return False
+        return any(c in text and pairs[c] in text for c in pairs)
 
     @staticmethod
     def weave(lhs, rhs, *args) -> list[str]:
@@ -2382,8 +2414,6 @@ class Runner:
     async def async_run_tasks(cls):
         """Run all tasks until we run out."""
 
-        script = cv_script.get()
-
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
 
@@ -2512,6 +2542,7 @@ class Main:
     @classmethod
     def init(cls, flags):
         Log.reset(flags)
+        Expander.reset(flags)
 
         flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
         flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
