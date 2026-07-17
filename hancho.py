@@ -1258,7 +1258,23 @@ class Path:
 
 class Script:
 
+    # FIXME why can't we do dirname(abspath(script_path)) here?
+
+    default_script_options = Dict(
+        script_path  = "build.hancho",
+        script_cwd   = "{dirname(script_path)}",
+        repo_root    = "{dirname(script_path)}",
+        task_cwd     = "{repo_root}",
+
+        build_tag    = "",
+        build_root   = "{repo_root}/build",
+        build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
+    )
+
     def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
+
+        # FIXME this doesn't work
+        #self.options = Dict(options)
 
         self.options = options
         self.module  = module
@@ -2131,7 +2147,7 @@ class Tracer:
 
         self.color = Utils.obj_to_hex(self.context)
 
-        with LogLevel.DEBUG, Log.color(self.color):
+        with Log.color(self.color):
             Log.log(f"┌ {self.get_tag(self.context)}." + self.enter_message + "\n")
             Log.indent(self.color)
 
@@ -2141,7 +2157,7 @@ class Tracer:
         if not self.trace:
             return False
 
-        with LogLevel.DEBUG, Log.color(self.color):
+        with Log.color(self.color):
             if exc_type:
                 Log.log(f"{exc_type.__name__}\n")
                 Log.log(f"{exc_value}\n")
@@ -2276,10 +2292,16 @@ class Loader:
 
 class Runner:
 
+    default_runner_options = Dict(
+        max_jobs     = os.cpu_count() or 1,
+        max_errors   = 0,
+    )
+
     @classmethod
     def reset(cls, runner_options):
-        cls.runner_options = runner_options
-        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(runner_options.max_jobs)
+        cls.runner_options = cls.default_runner_options.fill2(runner_options)
+
+        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.runner_options.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
@@ -2406,7 +2428,7 @@ class Runner:
                     cls.live_aio_tasks.discard(finished_aio_task)
                 cls.tasks_awaited += 1
 
-        if cls.tasks_broken + cls.tasks_failed > script.options.max_errors:
+        if cls.tasks_broken + cls.tasks_failed > Runner.runner_options.max_errors:
             with LogLevel.ERROR:
                 Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
@@ -2480,43 +2502,27 @@ class Main:
         depformat    = "gcc" if os.name == "posix" else "msvc",
     )
 
-    default_runner_options = Dict(
-        max_jobs     = os.cpu_count() or 1,
-        max_errors   = 0,
-    )
-
-    default_script_options = Dict(
-        script_path  = "build.hancho",
-        script_cwd   = "{dirname(script_path)}",
-        repo_root    = "{dirname(script_path)}",
-        task_cwd     = "{repo_root}",
-
-        build_tag    = "",
-        build_root   = "{repo_root}/build",
-        build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
-    )
-
     # fmt: on
 
-    hancho_flags : Dict
+    main_options : Dict
 
     # ----------------------------------------------------------------------------------------------
     # INIT
 
     @classmethod
     def init(cls, flags):
-
         Log.reset(flags)
 
         flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
         flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
+
+        cls.main_options = cls.default_hancho_options.fill2(flags)
 
         Utils.reset()
         Task.reset()
         Loader.reset()
         Runner.reset(flags)
 
-        cls.hancho_flags = flags
 
         hancho_script = Script(Dict(flags, script_path =__file__), hancho, sys._getframe().f_code)
         cv_script.set(hancho_script)
@@ -2536,9 +2542,9 @@ class Main:
 
         try:
             Main.banner_start(
-                cls.hancho_flags.script_path,
-                cls.hancho_flags.repo_root,
-                cls.hancho_flags.opt_file,
+                cls.main_options.script_path,
+                cls.main_options.repo_root,
+                cls.main_options.opt_file,
             )
 
             # LOAD
@@ -2546,10 +2552,10 @@ class Main:
             Loader.load_started = True
             time_a = time.perf_counter()
 
-            cls.hancho_flags.script_path = Dict().expand(cls.hancho_flags.script_path)
-            cls.hancho_flags.script_path = Path.resolve(cls.hancho_flags.script_path)
+            cls.main_options.script_path = Dict().expand(cls.main_options.script_path)
+            cls.main_options.script_path = Path.resolve(cls.main_options.script_path)
 
-            top_script = Loader.load_from_file(cls.hancho_flags.script_path, True, Dict())
+            top_script = Loader.load_from_file(cls.main_options.script_path, True, Dict())
 
             time_b = time.perf_counter()
 
@@ -2640,8 +2646,7 @@ class Main:
 
         flags = Dict(
             Main.default_hancho_options,
-            Main.default_runner_options,
-            Main.default_script_options,
+            Script.default_script_options,
             Log.default_log_options,
             raw_flags
         )
@@ -2881,8 +2886,8 @@ cv_script.set(
     Script(
         options = Dict(
             Main.default_hancho_options,
-            Main.default_runner_options,
-            Main.default_script_options,
+            Runner.default_runner_options,
+            Script.default_script_options,
             Log.default_log_options
         ),
         module = hancho,
