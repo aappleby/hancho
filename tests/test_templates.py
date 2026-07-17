@@ -246,7 +246,7 @@ class TestTemplates(unittest.TestCase):
         import hancho
         foo_in_script = [1, 2, 3]
         """)
-        script = hancho.load_str2(__file__, source, False, Dict(blarp = 1234))
+        script = hancho.Loader.load_from_source(__file__, source, False, Dict(blarp = 1234))
         token = hancho.cv_script.set(script)
 
         # Expanding 'Task' should read from hancho.py
