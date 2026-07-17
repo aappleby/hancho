@@ -175,7 +175,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        return Expander._expand(template, Onion.wrap(self))
+        with Tracer(self, "dict.expand", template) as trace:
+            result = Expander._expand(template, Onion.wrap(self))
+            trace.save_result(result)
+            return result
+
 
 # Tool is just an alias for Dict to make build scripts more readable.
 class Tool(Dict):
@@ -267,36 +271,42 @@ class Onion(abc.Mapping):
         return any(key in layer for layer in self._layers.values())
 
     def _get(self, key) -> Any:
-        # Return the rightmost non-None non-Mapping if present.
-        saw_a_none = False
-        for layer in reversed(self._layers.values()):
-            if key in layer:
-                val = layer[key]
-                if val is None:
-                    saw_a_none = True
-                elif not isinstance(val, abc.Mapping):
-                    return Expander._expand(val, self)
+        with Tracer(self, "get", key) as trace:
+            # Return the rightmost non-None non-Mapping if present.
+            saw_a_none = False
+            for layer in reversed(self._layers.values()):
+                if key in layer:
+                    val = layer[key]
+                    if val is None:
+                        saw_a_none = True
+                    elif not isinstance(val, abc.Mapping):
+                        result = Expander._expand(val, self)
+                        trace.save_result(result)
+                        return result
 
-        # If the key was present but there was no value associated with it, return None.
-        if saw_a_none:
-            return None
+            # If the key was present but there was no value associated with it, return None.
+            if saw_a_none:
+                trace.save_result(None)
+                return None
 
-        # Nope, all mappings. Pull out the ones containing the key.
-        new_layers = {
-            name + "." + key: layer[key]
-            for name, layer in self._layers.items()
-            if key in layer
-        }
+            # Nope, all mappings. Pull out the ones containing the key.
+            new_layers = {
+                name + "." + key: layer[key]
+                for name, layer in self._layers.items()
+                if key in layer
+            }
 
-        # No matches? Bad key.
-        if not new_layers:
-            raise KeyError(key)
+            # No matches? Bad key.
+            if not new_layers:
+                raise KeyError(key)
 
-        # Otherwise we make a new onion out of the mappings.
-        return Onion(**new_layers)
+            # Otherwise we make a new onion out of the mappings.
+            result = Onion(**new_layers)
+            trace.save_result(result)
+            return result
 
     def expand(self, template):
-        with Tracer(self, "onion.expand", template) as trace:
+        with Tracer(self, "expand", template) as trace:
             result = Expander._expand(template, self)
             trace.save_result(result)
             return result
@@ -388,7 +398,7 @@ class Expander:
             old_template = None
             while old_template != template and isinstance(template, str) and '{' in template:
                 old_template = template
-                with Tracer(onion, "_expand_pass", template) as trace:
+                with Tracer(onion, "expand", template) as trace:
                     template = Expander._expand_pass(template, onion)
                     trace.save_result(template)
         finally:
@@ -884,7 +894,6 @@ class LogLevel(int, Enum):
     NORMAL   = 50
     VERBOSE  = 60
     DEBUG    = 70
-    TRACE    = 80
 
     def __enter__(self):
         self.old_log_level = Log.log_level_in
@@ -925,6 +934,7 @@ class Colors(int, Enum):
 # --------------------------------------------------------------------------------------------------
 
 class Log:
+    log_options : Dict
     con_w         = 80
     time_origin   = time.perf_counter()
     indent_stack  = []
@@ -933,8 +943,9 @@ class Log:
     match_escapes = re.compile(r"(\x1B.*?m)")
     log_level_in  = LogLevel.NORMAL
     log_level_out = LogLevel.NORMAL # log level we want to appear in the log
+    log_options : Dict
 
-    log_options = Dict(
+    default_log_options = Dict(
         log_level    = LogLevel.NORMAL,
         log_quiet    = False,
         log_verbose  = False,
@@ -946,8 +957,9 @@ class Log:
     )
 
     @classmethod
-    def reset(cls, log_options : Dict):
-        cls.log_options = log_options
+    def reset(cls, flags : Dict):
+
+        cls.log_options = Log.default_log_options.fill2(flags)
 
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
@@ -956,27 +968,25 @@ class Log:
         cls.line_buffer   = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if log_options.log_level is not None:
-            if isinstance(log_options.log_level, str):
-                log_options.log_level = LogLevel[log_options.log_level.upper()]
-            elif isinstance(log_options.log_level, int):
-                log_options.log_level = LogLevel(log_options.log_level)
+        if cls.log_options.log_level is not None:
+            if isinstance(cls.log_options.log_level, str):
+                cls.log_options.log_level = LogLevel[cls.log_options.log_level.upper()]
+            elif isinstance(cls.log_options.log_level, int):
+                cls.log_options.log_level = LogLevel(cls.log_options.log_level)
             else:
-                raise ValueError(f"Got an unknown log_level '{type(log_options.log_level)} = {log_options.log_level}'")
+                raise ValueError(f"Got an unknown log_level '{type(cls.log_options.log_level)} = {cls.log_options.log_level}'")
 
         # The individual -T/-D/-V/-Q flags override --log_level, with the 'loudest' flag winning.
 
-        if log_options.log_trace:
-            log_options.log_level = LogLevel.TRACE
-        elif log_options.log_debug:
-            log_options.log_level = LogLevel.DEBUG
-        elif log_options.log_verbose:
-            log_options.log_level = LogLevel.VERBOSE
-        elif log_options.log_quiet:
-            log_options.log_level = LogLevel.QUIET
+        if cls.log_options.log_debug:
+            cls.log_options.log_level = LogLevel.DEBUG
+        elif cls.log_options.log_verbose:
+            cls.log_options.log_level = LogLevel.VERBOSE
+        elif cls.log_options.log_quiet:
+            cls.log_options.log_level = LogLevel.QUIET
 
-        cls.log_level_in  = log_options.log_level
-        cls.log_level_out = log_options.log_level
+        cls.log_level_in  = cls.log_options.log_level
+        cls.log_level_out = cls.log_options.log_level
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1778,7 +1788,7 @@ class Task:
                     self.log_exception("Task broken!", ex)
                     self._error = ex
                     raise ex
-                self.in_depfile = files[0]
+                self.in_depfile = cast(str, files[0])
             elif field.startswith("in_"):
                 self.in_files[field] = files
             elif field.startswith("out_"):
@@ -2097,13 +2107,13 @@ class Task:
 
 class Tracer:
 
-    def __init__(self, onion : Onion, enter_message, name):
+    def __init__(self, context : Dict | Onion, enter_message, name):
         self.enter_message = f"{enter_message}({name!r})"
         self.name = name
         self.color = None
-        self.onion = onion
+        self.context = context
         self.result = None
-        self.trace = True
+        self.trace = Log.log_options.log_trace
 
         #if len(self.name) > 40:
         #    self.name = self.name[:34] + "<snip>"
@@ -2119,10 +2129,10 @@ class Tracer:
         if not self.trace:
             return self
 
-        self.color = Utils.obj_to_hex(self.onion)
+        self.color = Utils.obj_to_hex(self.context)
 
-        with LogLevel.TRACE, Log.color(self.color):
-            Log.log(f"┌ {self.get_tag(self.onion)}." + self.enter_message + "\n")
+        with LogLevel.DEBUG, Log.color(self.color):
+            Log.log(f"┌ {self.get_tag(self.context)}." + self.enter_message + "\n")
             Log.indent(self.color)
 
         return self
@@ -2131,7 +2141,7 @@ class Tracer:
         if not self.trace:
             return False
 
-        with LogLevel.TRACE, Log.color(self.color):
+        with LogLevel.DEBUG, Log.color(self.color):
             if exc_type:
                 Log.log(f"{exc_type.__name__}\n")
                 Log.log(f"{exc_value}\n")
@@ -2486,17 +2496,6 @@ class Main:
         build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
     )
 
-    default_log_options = Dict(
-        log_level    = LogLevel.NORMAL,
-        log_quiet    = False,
-        log_verbose  = False,
-        log_debug    = False,
-        log_trace    = False,
-        log_wrap     = False,
-        log_color    = True,
-        log_time     = True,
-    )
-
     # fmt: on
 
     hancho_flags : Dict
@@ -2507,7 +2506,7 @@ class Main:
     @classmethod
     def init(cls, flags):
 
-        Log.reset(Main.default_log_options.fill2(flags))
+        Log.reset(flags)
 
         flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
         flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
@@ -2643,7 +2642,7 @@ class Main:
             Main.default_hancho_options,
             Main.default_runner_options,
             Main.default_script_options,
-            Main.default_log_options,
+            Log.default_log_options,
             raw_flags
         )
 
@@ -2687,7 +2686,7 @@ class Main:
             if not os.path.exists(opt_file):
                 Log.log("Opt file not found!\n")
 
-            if Log.log_level_out >= LogLevel.TRACE:
+            if Log.log_options.log_trace:
                 Log.log("Trace mode on\n")
             if Log.log_level_out >= LogLevel.DEBUG:
                 Log.log("Debug mode on\n")
@@ -2884,7 +2883,7 @@ cv_script.set(
             Main.default_hancho_options,
             Main.default_runner_options,
             Main.default_script_options,
-            Main.default_log_options
+            Log.default_log_options
         ),
         module = hancho,
         code = sys._getframe().f_code

@@ -25,7 +25,7 @@ import hancho
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init(log_trace = False)
+    hancho.init()
 
 
 def load_tests(loader, tests, ignore):
@@ -68,8 +68,6 @@ class TestApp(unittest.TestCase):
         self.assertEqual(hancho.LogLevel.WARNING, hancho.Log.log_level_out)
 
     def test_verbosities(self):
-        hancho.init(log_trace = True)
-        self.assertEqual(hancho.LogLevel.TRACE, hancho.Log.log_level_out)
         hancho.init(log_verbose = True)
         self.assertEqual(hancho.LogLevel.VERBOSE, hancho.Log.log_level_out)
         hancho.init(log_debug = True)
