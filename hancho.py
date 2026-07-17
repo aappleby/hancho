@@ -1373,8 +1373,8 @@ class Script:
                     "file"      : file,
                 }
 
-            if task.in_depfiles:
-                deplines = Utils.load_depfile(task.in_depfiles[0], task.config.depformat, task.config.task_cwd)
+            if task.in_depfile:
+                deplines = Utils.load_depfile(task.in_depfile, task.config.depformat, task.config.task_cwd)
                 for file in deplines:
                     script.update_stat_db(stat_db, file)
 
@@ -1421,9 +1421,9 @@ class Script:
         # script value
 
         # If there's a depfile from a previous build, load it so we can use it below.
-        if task.in_depfiles:
+        if task.in_depfile:
             task._old_deplines = Utils.load_depfile(
-                task.in_depfiles[0], cast(str, task.config.depformat), task.config.task_cwd
+                task.in_depfile, cast(str, task.config.depformat), task.config.task_cwd
             )
             for file in task._old_deplines:
                 if os.path.exists(file):
@@ -1560,7 +1560,7 @@ class Task:
 
         self.in_files  = {}
         self.out_files = {}
-        self.in_depfiles = []
+        self.in_depfile : str = ""
 
         # ------------------------------------
         # Implementation details below this line
@@ -1664,19 +1664,69 @@ class Task:
     # Async task entry point
 
     async def task_top(self):
-        task = self
-
         Task.id_counter += 1
-        task._task_id = Task.id_counter
+        self._task_id = Task.id_counter
 
-        # ----------------------------------------
         # Await all tasks in our input fields and then flatten them.
+        await self.await_inputs()
 
+        # Expand all mandatory fields in the raw config and fix raw file paths.
+        self.expand_task()
+
+        # Inputs are ready, templates are expanded, time to run the task.
+        try:
+            self.sanity_check()
+
+            # Dry runs early out after the task is initialized but before we do .exists() checks or
+            # run any commands.
+            if self.script.options.build_dry:
+                return
+
+            # Paths updated. See if we need to rebuild our outputs.
+            self._reason = self.script.rebuild_reason(self)
+            if not self._reason:
+                raise Task.SKIPPED(f"Task is up-to-date: '{self.config.name}' : '{self.config.desc}'")
+
+            # Wait for enough jobs to free up to run this task.
+            self._job_size = await Runner.acquire(self.config.job_size)
+
+            # OK, let's go!
+            await self.task_main()
+
+            return self.out_files
+
+        except asyncio.CancelledError as ex:
+            with LogLevel.VERBOSE:
+                self.log(f"<asyncio.CancelledError {ex}>\n")
+            self._error = ex
+        except Task.BROKEN as ex:
+            self.log_exception("Task broken!", ex)
+            self._error = ex
+        except Task.FAILED as ex:
+            self.log_exception("Task failed!", ex)
+            self._error = ex
+        except Task.SKIPPED as ex:
+            with LogLevel.VERBOSE:
+                self.log(str(ex) + "\n")
+            self._error = ex
+        except Exception as ex:
+            self.log_exception("Task threw an exception!", ex)
+            with LogLevel.ERROR:
+                Log.log(traceback.format_exc() + "\n")
+            self._error = ex
+        finally:
+            Runner.release(self._job_size)
+
+        raise self._error
+
+    # ----------------------------------------------------------------------------------------------
+
+    async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for input_task in task.input_tasks:
+        for input_task in self.input_tasks:
             if input_task._aio_task is None:
                 raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
             try:
@@ -1685,15 +1735,16 @@ class Task:
                 # This input task didn't need to rebuild.
                 pass
             except Exception as ex:
-                task._error = Task.CANCELLED(f"Task is cancelled: '{self.raw_config.name}' : '{self.raw_config.desc}'")
-                raise task._error from ex
+                self._error = Task.CANCELLED(f"Task is cancelled: '{self.raw_config.name}' : '{self.raw_config.desc}'")
+                raise self._error from ex
 
-        # ----------------------------------------
-        # Expand all mandatory fields in the raw config and fix raw file paths.
 
+    # ----------------------------------------------------------------------------------------------
+
+    def expand_task(self):
         with LogLevel.DEBUG:
-            task.log("Task config before expand:\n")
-            task.log(str(self.raw_config) + "\n")
+            self.log("Task config before expand:\n")
+            self.log(str(self.raw_config) + "\n")
 
         # We wrap the task config in an onion and then tack the 'expanded' dict onto it. Then we
         # expand all the mandatory fields into 'expanded', which makes onion lookups during
@@ -1724,11 +1775,17 @@ class Task:
             files = self.fix_paths(field, files)
 
             if field == "in_depfile":
-                task.in_depfiles = files
+                # Tasks should have at most one depfile.
+                if len(files) > 1:
+                    ex = Task.BROKEN(f"Tasks can't have more than one dependency file! - {files}")
+                    self.log_exception("Task broken!", ex)
+                    self._error = ex
+                    raise ex
+                self.in_depfile = files[0]
             elif field.startswith("in_"):
-                task.in_files[field] = files
+                self.in_files[field] = files
             elif field.startswith("out_"):
-                task.out_files[field] = files
+                self.out_files[field] = files
 
             self.config[field] = files[0] if len(files) == 1 else files
 
@@ -1738,115 +1795,62 @@ class Task:
         self.config.name    = onion.name
 
         with LogLevel.DEBUG:
-            task.log("Task config after expand:\n")
-            task.log(str(task.config) + "\n")
-
-        # ----------------------------------------
-        # Inputs are ready, templates are expanded, time to run the task.
-
-        try:
-            await task.task_main()
-            task._error = None
-            return task.out_files
-        except asyncio.CancelledError as ex:
-            with LogLevel.VERBOSE:
-                task.log(f"<asyncio.CancelledError {ex}>\n")
-            task._error = ex
-        except Task.BROKEN as ex:
-            task.log_exception("Task broken!", ex)
-            task._error = ex
-        except Task.FAILED as ex:
-            task.log_exception("Task failed!", ex)
-            task._error = ex
-        except Task.SKIPPED as ex:
-            with LogLevel.VERBOSE:
-                task.log(str(ex) + "\n")
-            task._error = ex
-        except Exception as ex:
-            task.log_exception("Task threw an exception!", ex)
-            with LogLevel.ERROR:
-                Log.log(traceback.format_exc() + "\n")
-            task._error = ex
-        finally:
-            Runner.release(task._job_size)
-
-        raise task._error
+            self.log("Task config after expand:\n")
+            self.log(str(self.config) + "\n")
 
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
-        task = self
         script = cv_script.get()
-
-        self.sanity_check()
-
-        # ----------------------------------------
-        # Dry runs early out after the task is initialized but before we do .exists() checks or
-        # run any commands.
-
-        if script.options.build_dry:
-            return
-
-        # ----------------------------------------
-        # Paths updated. See if we need to rebuild our outputs.
-
-        task._reason = script.rebuild_reason(task)
-        if not task._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{task.config.name}' : '{task.config.desc}'")
-
-        # ----------------------------------------
-        # Wait for enough jobs to free up to run this task.
-
-        task._job_size = await Runner.acquire(task.config.job_size)
 
         # ----------------------------------------
         # Run all the task's commands
 
         with LogLevel.NORMAL:
-            if task.config.name:
-                task.log(f"{task.config.name}: ")
-            task.log(f"{task.config.desc}\n")
+            if self.config.name:
+                self.log(f"{self.config.name}: ")
+            self.log(f"{self.config.desc}\n")
 
         with LogLevel.VERBOSE, Log.color(0x606060):
-            task.log(f"Task rebuilding because: {task._reason}\n")
+            self.log(f"Task rebuilding because: {self._reason}\n")
 
         time_a = time.perf_counter()
 
-        for command in cast(list, task.config.command):
+        for command in cast(list, self.config.command):
             if command is None:
                 continue
             elif callable(command):
-                await task.call_callback(command)
+                await self.call_callback(command)
             else:
-                await task.run_command(command)
+                await self.run_command(command)
 
         time_b = time.perf_counter()
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
-            if task.config.name:
-                message += f"'{task.config.name}' - "
-            message += f"'{task.config.desc}'\n"
-            task.log(message)
+            if self.config.name:
+                message += f"'{self.config.name}' - "
+            message += f"'{self.config.desc}'\n"
+            self.log(message)
 
         # ----------------------------------------
         # See if the task wrote all its output files
 
-        for file in Utils.yield_values(task.out_files):
+        for file in Utils.yield_values(self.out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
-        if task.in_depfiles:
-            deplines = Utils.load_depfile(task.in_depfiles[0], cast(str, task.config.depformat), task.config.task_cwd)
+        if self.in_depfile:
+            deplines = Utils.load_depfile(self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd)
             for file in deplines:
                 script.update_stat_db(script.mid_stat_db, file)
 
         # ----------------------------------------
         # Done!
 
-        if "in_depfile" in task.config:
-            task._new_deplines = Utils.load_depfile(
-                task.in_depfiles[0], cast(str, task.config.depformat), task.config.task_cwd
+        if self.in_depfile:
+            self._new_deplines = Utils.load_depfile(
+                self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd
             )
 
     # ----------------------------------------------------------------------------------------------
@@ -1950,10 +1954,6 @@ class Task:
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
             if not Path.exists(file) and not options.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
-
-        # Tasks should have at most one depfile.
-        if len(task.in_depfiles) > 1:
-            raise Task.BROKEN("Tasks can't have more than one dependency file!")
 
     # ----------------------------------------------------------------------------------------------
 
