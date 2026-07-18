@@ -50,6 +50,7 @@ from typing import Any, cast
 
 hancho : Any = sys.modules[__name__]
 options : Dict
+flags : Dict
 sys.modules["hancho"] = hancho
 sentinel = "<sentinel>"
 cv_script : contextvars.ContextVar[Any] = contextvars.ContextVar("script", default = None)
@@ -163,7 +164,7 @@ class Dict(dict):
     def __setitem__(self, key : str, val : Any):
         dict.__setitem__(self, key, val)
 
-    def expand(self, template):
+    def expand2(self, template):
         onion = Onion.wrap(
             self,
             ldelims = self.get("ldelims", None),
@@ -423,7 +424,7 @@ class Onion(abc.Mapping):
             self._layers.append(Dict(kwargs))
 
     @classmethod
-    def wrap(cls, d : Dict, ldelims : str | None = None, rdelims : str | None = "", **kwargs):
+    def wrap(cls, *args, ldelims : str | None = None, rdelims : str | None = "", **kwargs):
         """
         Wrap the given dict so that when we expand things in it the macros can refer to stuff in
         hancho or the script module that created it.
@@ -432,9 +433,10 @@ class Onion(abc.Mapping):
 
         onion = Onion(
             hancho.__dict__,
-            script.module.__dict__ if script else {},
-            script.options if script else {},
-            d,
+            hancho.options,
+            script.module.__dict__,
+            script.options,
+            *args,
             ldelims = ldelims or Expander.ldelims,
             rdelims = rdelims or Expander.rdelims,
             **kwargs
@@ -443,12 +445,12 @@ class Onion(abc.Mapping):
 
     def __getattr__(self, key : str):
         try:
-            return self._get(key)
+            return self.get(key)
         except KeyError as err:
             raise AttributeError from err
 
     def __getitem__(self, key):
-        return self._get(key)
+        return self.get(key)
 
     def __iter__(self):
         seen = set()
@@ -467,7 +469,7 @@ class Onion(abc.Mapping):
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
 
-    def _get(self, key, default = sentinel) -> Any:
+    def get(self, key, default = sentinel) -> Any:
         with Tracer(self, "get", key) as trace:
             # Return the rightmost non-None non-Mapping if present.
             saw_a_none = False
@@ -516,6 +518,18 @@ class Onion(abc.Mapping):
             result = Expander._expand(template, self)
             trace.save_result(result)
             return result
+
+#    def expand(self, template):
+#        onion = Onion.wrap(
+#            self,
+#            ldelims = self.get("ldelims", None),
+#            rdelims = self.get("rdelims", None),
+#        )
+#
+#        with Tracer(self, "dict.expand", template) as trace:
+#            result = Expander._expand(template, onion)
+#            trace.save_result(result)
+#            return result
 
 
 #endregion
@@ -1297,9 +1311,6 @@ class Script:
 
     def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
 
-        # FIXME this doesn't work
-        #self.options = Dict(options)
-
         self.options = options
         self.module  = module
         self.code    = code
@@ -1346,13 +1357,14 @@ class Script:
     # ----------------------------------------------------------------------------------------------
 
     def load_stat_db(self) -> Dict:
-        script = self
         result = {}
 
-        stat_db = Dict().expand(self.stat_db_path)
+        onion = Onion.wrap(self.options)
+
+        stat_db = onion.expand(self.stat_db_path)
         stat_db = cast(str, Path.abspath(stat_db))
 
-        comp_db = Dict().expand(script.comp_db_path)
+        comp_db = onion.expand(self.comp_db_path)
         comp_db = cast(str, Path.abspath(comp_db))
 
         with LogLevel.VERBOSE, Colors.ORANGE:
@@ -1400,9 +1412,11 @@ class Script:
         if script.options.build_dry:
             return
 
-        stat_db_path = script.options.expand(script.stat_db_path)
+        onion = Onion.wrap(script.options)
+
+        stat_db_path = onion.expand(script.stat_db_path)
         stat_db_path = cast(str, Path.abspath(stat_db_path))
-        comp_db_path = script.options.expand(script.comp_db_path)
+        comp_db_path = onion.expand(script.comp_db_path)
         comp_db_path = cast(str, Path.abspath(comp_db_path))
 
         # Gather stats from all completed tasks
@@ -1797,16 +1811,15 @@ class Task:
         # expand all the mandatory fields into 'expanded', which makes onion lookups during
         # expansion check 'expanded' first to see if it contains an already-expanded copy of the
         # field.
-        onion = Onion.wrap(self.raw_config)
-        onion._layers.append(self.config)
+        onion = Onion.wrap(self.raw_config, self.config)
 
-        self.config.task_cwd    = onion.task_cwd
-        self.config.build_force = onion.build_force
-        self.config.depformat   = onion.depformat
-        self.config.job_size    = onion.job_size
+        self.config.task_cwd    = onion.get("task_cwd")
+        self.config.build_force = onion.get("build_force")
+        self.config.depformat   = onion.get("depformat")
+        self.config.job_size    = onion.get("job_size")
 
         # Build_dir must be expanded _before_ any file paths.
-        self.config.build_dir   = onion.build_dir
+        self.config.build_dir   = onion.get("build_dir")
         self.config.build_dir   = Path.abspath(self.config.build_dir)
 
         # Then we expand all io fields (which could contain build_dir) and fix their paths.
@@ -1838,8 +1851,8 @@ class Task:
 
         # And finally we expand name/desc/command, which can contain file paths.
         self.config.command = Utils.flatten(onion.command)
-        self.config.desc    = onion.desc
-        self.config.name    = onion.name
+        self.config.desc    = onion.get("desc")
+        self.config.name    = onion.get("name")
 
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
@@ -2227,7 +2240,7 @@ class Loader:
 
     @staticmethod
     def load_from_file(script_path : str, is_repo : bool, overrides : Dict):
-        script_path = Path.resolve(overrides.expand(script_path))
+        script_path = Path.resolve(Onion.wrap(overrides).expand(script_path))
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
             return Loader.load_from_source(script_path, source, is_repo, overrides)
@@ -2526,8 +2539,6 @@ class Main:
 
     # fmt: on
 
-    main_options : Dict
-
     # ----------------------------------------------------------------------------------------------
     # INIT
 
@@ -2536,10 +2547,15 @@ class Main:
         Log.reset(flags)
         Expander.reset(flags)
 
-        flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
-        flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
+        hancho.options = Dict(Main.default_hancho_options)
 
-        cls.main_options = cls.default_hancho_options.fill(flags)
+        onion = Onion.wrap(flags)
+
+        flags.script_cwd = Path.abspath(onion.get("script_cwd"))
+        flags.repo_root  = Path.abspath(onion.get("repo_root"))
+
+        hancho.options = cls.default_hancho_options.fill(flags)
+        hancho.flags = flags
 
         Utils.reset()
         Task.reset()
@@ -2565,9 +2581,9 @@ class Main:
 
         try:
             Main.banner_start(
-                cls.main_options.script_path,
-                cls.main_options.repo_root,
-                cls.main_options.opt_file,
+                hancho.options.script_path,
+                hancho.options.repo_root,
+                hancho.options.opt_file,
             )
 
             # LOAD
@@ -2575,10 +2591,10 @@ class Main:
             Loader.load_started = True
             time_a = time.perf_counter()
 
-            cls.main_options.script_path = Dict().expand(cls.main_options.script_path)
-            cls.main_options.script_path = Path.resolve(cls.main_options.script_path)
+            hancho.options.script_path = Dict().expand2(hancho.options.script_path)
+            hancho.options.script_path = Path.resolve(hancho.options.script_path)
 
-            top_script = Loader.load_from_file(cls.main_options.script_path, True, Dict())
+            top_script = Loader.load_from_file(hancho.options.script_path, True, Dict())
 
             time_b = time.perf_counter()
 
