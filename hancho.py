@@ -15,7 +15,6 @@ the Hancho repo.
 
 WARNING - Hancho is NOT A SANDBOX, your build scripts can evaluate arbitrary Python code which
 could format your hard drive and email spam to your grandparents. Use responsibly.
-
 """
 
 from __future__ import annotations
@@ -46,21 +45,16 @@ from functools import wraps
 from inspect import isawaitable
 from typing import Any, cast
 
-# endregion
-# --------------------------------------------------------------------------------------------------
-
-sys.modules["hancho"] = sys.modules[__name__]
-
-cv_script : contextvars.ContextVar[Any] = contextvars.ContextVar("script", default = None)
-
-sentinel = "<sentinel>"
-
 # We treat the Hancho module itself as a repo, so that we have a place to put everything added to
 # the build by tests or other code that doesn't load a .hancho script.
-hancho : Any = sys.modules["hancho"]
-options : Dict
-config : Dict
 
+hancho : Any = sys.modules[__name__]
+options : Dict
+sys.modules["hancho"] = hancho
+sentinel = "<sentinel>"
+cv_script : contextvars.ContextVar[Any] = contextvars.ContextVar("script", default = None)
+
+# endregion
 # --------------------------------------------------------------------------------------------------
 # region Dict
 
@@ -101,18 +95,14 @@ class Dict(dict):
     # assumes the task produces both. If you do compile_cpp.fill(...), "out_bin" does not get added
     # to compile_cpp.
 
-    def fill2(self, *args, **kwargs):
+    def fill(self, *args, **kwargs):
         dest = Dict(self)
-        Dict.fill(dest, *args, **kwargs)
-        return dest
-
-    @classmethod
-    def fill(cls, dest, *args, **kwargs):
         for rhs in (*args, kwargs):
             Dict.generic_merge(
                 dest, dest, rhs,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=False)
+        return dest
 
     @classmethod
     def generic_merge(cls, dst, lhs, rhs, merge_dicts, merge_lists, keep_a, keep_b):
@@ -220,9 +210,6 @@ class Onion(abc.Mapping):
         for val in args:
             if isinstance(val, Onion):
                 self._layers.extend(val._layers)
-                self.ldelims = val.ldelims
-                self.rdelims = val.rdelims
-                self.pairs   = val.pairs
             elif isinstance(val, dict):
                 self._layers.append(val)
             else:
@@ -230,13 +217,6 @@ class Onion(abc.Mapping):
 
         if len(kwargs):
             self._layers.append(Dict(kwargs))
-
-        self.ldelims = self._get2("ldelims", Expander.ldelims)
-        self.rdelims = self._get2("rdelims", Expander.rdelims)
-
-        #self.ldelims = kwargs.pop("ldelims", Expander.ldelims)
-        #self.rdelims = kwargs.pop("rdelims", Expander.rdelims)
-        #self.pairs   = {self.ldelims[i]:self.rdelims[i] for i in range(len(self.ldelims))}
 
     @classmethod
     def wrap(cls, d : Dict, **kwargs):
@@ -315,20 +295,15 @@ class Onion(abc.Mapping):
             trace.save_result(result)
             return result
 
-    def _get2(self, key, default = sentinel) -> Any:
-        with Tracer(self, "get", key) as trace:
-            # Return the rightmost non-None non-Mapping if present.
+    def raw_get(self, key, default = sentinel) -> Any:
             for layer in reversed(self._layers):
                 if key in layer:
-                    result = layer[key]
-                    trace.save_result(result)
-                    return result
+                    return layer[key]
 
             if default == sentinel:
                 raise KeyError(key)
-            else:
-                trace.save_result(default)
-                return default
+
+            return default
 
     def expand(self, template):
         with Tracer(self, "expand", template) as trace:
@@ -418,8 +393,8 @@ class Expander:
         # something) or if it's a string with no macros in it.
         #if not (isinstance(variant, str) and '{' in variant):
 
-        ldelims = onion.ldelims
-        rdelims = onion.rdelims
+        ldelims = onion.raw_get("ldelims", Expander.ldelims)
+        rdelims = onion.raw_get("rdelims", Expander.rdelims)
 
         if not Utils.is_template2(variant, ldelims, rdelims):
             return variant
@@ -1005,7 +980,7 @@ class Log:
     @classmethod
     def reset(cls, flags : Dict):
 
-        cls.log_options = Log.default_log_options.fill2(flags)
+        cls.log_options = Log.default_log_options.fill(flags)
 
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
@@ -2345,7 +2320,7 @@ class Runner:
 
     @classmethod
     def reset(cls, runner_options):
-        cls.runner_options = cls.default_runner_options.fill2(runner_options)
+        cls.runner_options = cls.default_runner_options.fill(runner_options)
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.runner_options.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
@@ -2561,7 +2536,7 @@ class Main:
         flags.script_cwd = Path.abspath(flags.expand("{script_cwd}"))
         flags.repo_root  = Path.abspath(flags.expand("{repo_root}"))
 
-        cls.main_options = cls.default_hancho_options.fill2(flags)
+        cls.main_options = cls.default_hancho_options.fill(flags)
 
         Utils.reset()
         Task.reset()

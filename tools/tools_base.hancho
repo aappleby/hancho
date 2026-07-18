@@ -119,22 +119,22 @@ else:
 
 def cpp_lib(*, in_srcs=None, in_objs=None, **kwargs):
     new_objs = [
-        hancho.task(compile_cpp.fill2(kwargs), in_src=f)
+        hancho.task(compile_cpp.fill(kwargs), in_src=f)
         for f in hancho.Utils.flatten(in_srcs)
     ]
 
-    return hancho.task(link_cpp_lib.fill2(kwargs), in_objs = [new_objs, in_objs])
+    return hancho.task(link_cpp_lib.fill(kwargs), in_objs = [new_objs, in_objs])
 
 # ----------------------------------------
 
 def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
     new_objs = [
-        hancho.task(compile_cpp.fill2(kwargs), in_src=file)
+        hancho.task(compile_cpp.fill(kwargs), in_src=file)
         for file in hancho.Utils.flatten(in_srcs)
     ]
 
-    return hancho.task(link_cpp_bin.fill2(kwargs), in_objs = [new_objs, in_objs, in_libs])
+    return hancho.task(link_cpp_bin.fill(kwargs), in_objs = [new_objs, in_objs, in_libs])
 
 
 ####################################################################################################
@@ -168,14 +168,14 @@ run_test = hancho.Tool(
 def cpp_test(*, in_srcs=None, in_objs=None, **kwargs):
 
     new_objs = [
-        hancho.Task(compile_cpp.fill2(kwargs), in_src=src)
+        hancho.Task(compile_cpp.fill(kwargs), in_src=src)
         for src in hancho.Utils.flatten(in_srcs)
     ]
 
     test_bin = hancho.Task(
-        link_cpp_bin.fill2(kwargs),
+        link_cpp_bin.fill(kwargs),
         in_objs=[new_objs, in_objs],
         test_dir = "{script_dir}",
     )
 
-    return hancho.Task(run_test.fill2(kwargs), in_test=test_bin)
+    return hancho.Task(run_test.fill(kwargs), in_test=test_bin)
