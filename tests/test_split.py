@@ -21,7 +21,8 @@ def load_tests(loader, tests, ignore):
 
 def split(template):
     out = []
-    Expander._split_template(template, out)
+    delims = {'{':'}'}
+    Expander._split_template(template, out, delims)
     return out
 
 ####################################################################################################

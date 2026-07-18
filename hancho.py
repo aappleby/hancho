@@ -165,12 +165,7 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand2(self, template):
-        onion = Onion.wrap(
-            self,
-            ldelims = self.get("ldelims", None),
-            rdelims = self.get("rdelims", None),
-        )
-
+        onion = Onion.wrap(self, delims = self.get("delims", Expander.delims))
         with Tracer(self, "dict.expand", template) as trace:
             result = Expander._expand(template, onion)
             trace.save_result(result)
@@ -225,15 +220,17 @@ class Expander:
     MAX_DEPTH = 30
     MAX_EVALS = 300
 
+    delims : dict[str,str]
+
     @classmethod
     def reset(cls, flags):
         # Normally you'd use '{' and '}' as delimiters, but you can also use '«' and '»'
         # On Linux, you can type those using control-shift-u a b <enter> and control-shift-u b b <enter>
         # On Windows, use alt-0171 and alt-0187 with the numbers being typed on the numpad while numlock
         # is on.
-        cls.ldelims = "{«"
-        cls.rdelims = "}»"
-        cls.pairs = {cls.ldelims[i]:cls.rdelims[i] for i in range(len(cls.ldelims))}
+        ldelims = "{«"
+        rdelims = "}»"
+        cls.delims = {ldelims[i]:rdelims[i] for i in range(len(ldelims))}
 
     @classmethod
     def _expand(cls, variant : Any, onion : Onion):
@@ -259,13 +256,11 @@ class Expander:
             return result
 
         # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
-        # something) or if it's a string with no macros in it.
-        #if not (isinstance(variant, str) and '{' in variant):
+        # something) or if it's a string that can't possibly have macros in it.
 
-        ldelims = onion.raw_get("ldelims", Expander.ldelims)
-        rdelims = onion.raw_get("rdelims", Expander.rdelims)
+        delims = onion.raw_get("delims", Expander.delims)
 
-        if not Utils.is_template2(variant, ldelims, rdelims):
+        if not Utils.is_template2(variant, delims):
             return variant
         template = cast(str, variant)
 
@@ -276,14 +271,13 @@ class Expander:
         Expander.cv_depth.set(depth + 1)
 
         # OK, we have a string that could be a template. Keep expanding it until it stops changing
-        # or it's not a template.
-
+        # or it's no longer a template.
         try:
             old_template = None
-            while old_template != template and Utils.is_template2(template, ldelims, rdelims):
+            while old_template != template and Utils.is_template2(template, delims):
                 old_template = template
                 with Tracer(onion, "expand", template) as trace:
-                    template = Expander._expand_pass(template, onion, ldelims, rdelims)
+                    template = Expander._expand_pass(template, onion, delims)
                     trace.save_result(template)
         finally:
             # And then reset the depth/evals check vars when we're done.
@@ -293,26 +287,25 @@ class Expander:
 
         return template
 
+    # ----------------------------------------------------------------------------------------------
     # IMPORTANT IMPORTANT IMPORTANT
     # If you can't eval a macro, you return it unchanged.
     # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++ - we don't
     # fail on expansion failure so we can retry somewhere/somewhen else.
 
     @classmethod
-    def _expand_pass(cls, template : str, onion : Onion, ldelims, rdelims):
-        """The inner expand function does one split-expand-rejoin pass on the template string."""
-
-        pairs = {ldelims[i]:rdelims[i] for i in range(len(ldelims))}
+    def _expand_pass(cls, template : str, onion : Onion, delims : dict[str, str]):
+        """This inner expand function does one split-expand-rejoin pass on the template string."""
 
         # Split the string into literal and macro blocks.
         blocks = []
-        Expander._split_template(template, blocks)
+        Expander._split_template(template, blocks, delims)
 
         # Expand all macro blocks.
         for i, block in enumerate(blocks):
 
             # Skip literal blocks.
-            if len(block) < 2 or block[0] not in ldelims or block[-1] not in pairs[block[0]]:
+            if len(block) < 2 or block[0] not in delims or block[-1] not in delims[block[0]]:
                 continue
 
             # Bail out if we've taken too many expansion steps already.
@@ -346,17 +339,17 @@ class Expander:
         # Otherwise we stringify everything and join the blocks back together.
         return "".join(blocks)
 
+    # ----------------------------------------------------------------------------------------------
+
     @classmethod
-    def _split_template(cls, text : str, out : list[str]):
+    def _split_template(cls, text : str, out : list[str], delims):
         """
         Extracts all innermost single-brace-delimited spans from a block of text and produces a
         list of string literals and macros. Escaped braces don't count as delimiters.
         """
         assert isinstance(text, str)
 
-        ldelims = Expander.ldelims
-        rdelims = ""
-
+        rdelim = ""
         cursor = 0
         lbrace = -1
         escaped = False
@@ -366,10 +359,10 @@ class Expander:
                 escaped = False
             elif c == '\\':
                 escaped = True
-            elif c in ldelims:
+            elif c in delims:
                 lbrace = i
-                rdelims = Expander.pairs[c]
-            elif c in rdelims and lbrace >= 0:
+                rdelim = delims[c]
+            elif c in rdelim and lbrace >= 0:
                 if cursor < lbrace:
                     out.append(text[cursor:lbrace])
                     chunk_count += 1
@@ -377,7 +370,7 @@ class Expander:
                 chunk_count += 1
                 cursor = i + 1
                 lbrace = -1
-                rdelims = ""
+                rdelim = ""
 
         if cursor < len(text):
             out.append(text[cursor:])
@@ -424,7 +417,7 @@ class Onion(abc.Mapping):
             self._layers.append(Dict(kwargs))
 
     @classmethod
-    def wrap(cls, *args, ldelims : str | None = None, rdelims : str | None = "", **kwargs):
+    def wrap(cls, *args, delims : dict[str, str] | None = None, **kwargs):
         """
         Wrap the given dict so that when we expand things in it the macros can refer to stuff in
         hancho or the script module that created it.
@@ -437,8 +430,7 @@ class Onion(abc.Mapping):
             script.module.__dict__,
             script.options,
             *args,
-            ldelims = ldelims or Expander.ldelims,
-            rdelims = rdelims or Expander.rdelims,
+            delims = delims or Expander.delims,
             **kwargs
         )
         return onion
@@ -469,7 +461,12 @@ class Onion(abc.Mapping):
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
 
-    def get(self, key, default = sentinel) -> Any:
+    def get(self, key, default : Any = sentinel) -> Any: # type: ignore
+        """
+        Searches through layers in reverse order (because we obey rightmost-not-None wins) for a
+        key match. If we find it, we expand it before returning it. If we only found Mappings, we
+        return a new Onion containing those mappings.
+        """
         with Tracer(self, "get", key) as trace:
             # Return the rightmost non-None non-Mapping if present.
             saw_a_none = False
@@ -484,17 +481,19 @@ class Onion(abc.Mapping):
                         return result
 
             # If the key was present but there was no value associated with it, return None.
-            if saw_a_none and default == sentinel:
-                trace.save_result(None)
-                return None
+            if saw_a_none:
+                result = None if default == sentinel else default
+                trace.save_result(result)
+                return result
 
             # Nope, all mappings. Pull out the ones containing the key.
             new_layers = [layer[key] for layer in self._layers if key in layer]
 
-            # No matches? Bad key.
+            # No matches and no default? Bad key.
             if not new_layers and default == sentinel:
                 raise KeyError(key)
 
+            # No matches but we have a default? Return it.
             if default != sentinel:
                 return default
 
@@ -503,34 +502,24 @@ class Onion(abc.Mapping):
             trace.save_result(result)
             return result
 
-    def raw_get(self, key, default = sentinel) -> Any:
-            for layer in reversed(self._layers):
-                if key in layer:
-                    return layer[key]
+    def raw_get(self, key, default : Any = sentinel) -> Any:
+        """
+        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
+        """
+        for layer in reversed(self._layers):
+            if key in layer:
+                return layer[key]
 
-            if default == sentinel:
-                raise KeyError(key)
+        if default == sentinel:
+            raise KeyError(key)
 
-            return default
+        return default
 
     def expand(self, template):
         with Tracer(self, "expand", template) as trace:
             result = Expander._expand(template, self)
             trace.save_result(result)
             return result
-
-#    def expand(self, template):
-#        onion = Onion.wrap(
-#            self,
-#            ldelims = self.get("ldelims", None),
-#            rdelims = self.get("rdelims", None),
-#        )
-#
-#        with Tracer(self, "dict.expand", template) as trace:
-#            result = Expander._expand(template, onion)
-#            trace.save_result(result)
-#            return result
-
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -791,11 +780,10 @@ class Utils:
             return False
 
     @staticmethod
-    def is_template2(text, ldelims, rdelims) -> bool:
-        pairs = {ldelims[i]:rdelims[i] for i in range(len(ldelims))}
+    def is_template2(text, delims) -> bool:
         if not isinstance(text, str):
             return False
-        return any(c in text and pairs[c] in text for c in pairs)
+        return any(c in text and delims[c] in text for c in delims)
 
     @staticmethod
     def weave(lhs, rhs, *args) -> list[str]:
@@ -1728,14 +1716,14 @@ class Task:
         Task.id_counter += 1
         self._task_id = Task.id_counter
 
-        # Await all tasks in our input fields and then flatten them.
-        await self.await_inputs()
-
-        # Expand all mandatory fields in the raw config and fix raw file paths.
-        self.expand_task()
-
-        # Inputs are ready, templates are expanded, time to run the task.
         try:
+            # Await all tasks in our input fields and then flatten them.
+            await self.await_inputs()
+
+            # Expand all mandatory fields in the raw config and fix raw file paths.
+            self.expand_task()
+
+            # Inputs are ready, templates are expanded, time to run the task.
             self.sanity_check()
 
             # Dry runs early out after the task is initialized but before we do .exists() checks or
@@ -1754,6 +1742,7 @@ class Task:
             # OK, let's go!
             await self.task_main()
 
+            # And
             return self.out_files
 
         except asyncio.CancelledError as ex:
@@ -1799,7 +1788,6 @@ class Task:
                 self._error = Task.CANCELLED(f"Task is cancelled: '{self.raw_config.name}' : '{self.raw_config.desc}'")
                 raise self._error from ex
 
-
     # ----------------------------------------------------------------------------------------------
 
     def expand_task(self):
@@ -1818,7 +1806,7 @@ class Task:
         self.config.depformat   = onion.get("depformat")
         self.config.job_size    = onion.get("job_size")
 
-        # Build_dir must be expanded _before_ any file paths.
+        # Build_dir must be expanded _before_ any io fields.
         self.config.build_dir   = onion.get("build_dir")
         self.config.build_dir   = Path.abspath(self.config.build_dir)
 
@@ -1827,9 +1815,14 @@ class Task:
             if not field.startswith("in_") and not field.startswith("out_"):
                 continue
 
-            raw_files = Utils.yield_values(self.raw_config[field])
+            files = [
+                val.out_files
+                  if isinstance(val, Task)
+                    else val
+                for val in
+                  Utils.yield_values(self.raw_config[field])
+            ]
 
-            files = [val.out_files if isinstance(val, Task) else val for val in raw_files]
             files = Utils.flatten(files)
             files = onion.expand(files)
             files = self.fix_paths(field, files)
@@ -1900,15 +1893,15 @@ class Task:
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
-        if self.in_depfile:
-            deplines = Utils.load_depfile(self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd)
-            for file in deplines:
-                script.update_stat_db(script.mid_stat_db, file)
-
         # ----------------------------------------
         # Done!
 
         if self.in_depfile:
+            # FIXME why are there two of these now?
+            deplines = Utils.load_depfile(self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd)
+            for file in deplines:
+                script.update_stat_db(script.mid_stat_db, file)
+
             self._new_deplines = Utils.load_depfile(
                 self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd
             )
@@ -1929,15 +1922,15 @@ class Task:
 
         script = cv_script.get()
 
-        # Join script_cwd with the filename to produce absolute paths.
+        # Join script_cwd with the filename to produce an absolute path.
         file = Path.join(script.options.script_cwd, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
         file = Path.abspath(file)
 
-        # Move all outputs under build.dir and ensure their directories exist.
-        # Note - This will also move "in_depfile" under build.dir - this is _intentional_ as
+        # Move all outputs under build_dir and ensure their directories exist.
+        # Note - This will also move "in_depfile" under build_dir - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if field.startswith("out_") or field == "in_depfile":
             if not Path.startswith(file, self.config.build_dir):
@@ -1962,7 +1955,7 @@ class Task:
             raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
 
         if not Path.startswith(config.build_dir, options.repo_root):
-            raise Task.BROKEN(f"The build.dir {config.build_dir} is not under repo.root {config.repo_root}")
+            raise Task.BROKEN(f"The build dir {config.build_dir} is not under repo.root {config.repo_root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1987,15 +1980,17 @@ class Task:
                 if not isinstance(command, str):
                     continue
                 blocks = []
-                Expander._split_template(command, blocks)
+                onion = Onion.wrap(config)
+                delims = onion.get("delims", Expander.delims)
+                Expander._split_template(command, blocks, delims)
                 if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
-        # Check that all build files would end up under build.dir
+        # Check that all build files would end up under build_dir
         for file in Utils.yield_values(task.out_files):
             assert Path.isabs(file)
             if not Path.startswith(file, config.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build.dir {config.build_dir}")
+                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {config.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
@@ -2017,16 +2012,15 @@ class Task:
     async def run_command(self, command):
         script = cv_script.get()
 
-        task = self
         with LogLevel.VERBOSE, Colors.BLUE:
-            task.log(f"{Path.relpath(task.config.task_cwd, script.options.repo_root)}$ {command}\n")
+            self.log(f"{Path.relpath(self.config.task_cwd, script.options.repo_root)}$ {command}\n")
 
         proc = None
         try:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd    = task.config.task_cwd,
+                cwd    = self.config.task_cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2054,17 +2048,17 @@ class Task:
             # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
-        task._stdout = stdout_data.decode(errors="replace")
-        task._stderr = stderr_data.decode(errors="replace")
+        self._stdout = stdout_data.decode(errors="replace")
+        self._stderr = stderr_data.decode(errors="replace")
 
         if proc.returncode == 2:
             raise Task.BROKEN("Command return code was 2 : bash error")
         elif proc.returncode:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
-        if task._stdout or task._stderr:
+        if self._stdout or self._stderr:
             with LogLevel.VERBOSE, Log.color(0x666666):
-                task.log(task.dump_stdout())
+                self.log(self.dump_stdout())
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2080,6 +2074,9 @@ class Task:
         # in the callback will be correct.
         with chdir(script_dir):
             result = command(self)
+
+        # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
+        # but apparently that's just how Python waitables work.
         if isawaitable(result):
             result = await result
 
@@ -2224,7 +2221,7 @@ class Loader:
 
     class Abort(Exception):    pass # Raised by hancho scripts when they need to stop running due to some error.
     class EarlyOut(Exception): pass # Raised by hancho scripts when they are successful but don't need to do anything else.
-    class Fail(Exception): pass     # Script has hit a fatal error
+    class Fail(Exception):     pass # Script has hit a fatal error
 
     @classmethod
     def reset(cls):
@@ -2249,7 +2246,7 @@ class Loader:
 
     @classmethod
     def load_from_source(cls, script_path, source, is_repo, overrides = None):
-        assert Path.isabs(script_path) and not Utils.is_template2(script_path, ldelims="{", rdelims = "}")
+        assert Path.isabs(script_path) and not Utils.is_template2(script_path, Expander.delims)
 
         parent_script = cv_script.get()
 
@@ -2591,7 +2588,9 @@ class Main:
             Loader.load_started = True
             time_a = time.perf_counter()
 
-            hancho.options.script_path = Dict().expand2(hancho.options.script_path)
+            onion = Onion.wrap(hancho.options)
+
+            hancho.options.script_path = onion.expand(hancho.options.script_path)
             hancho.options.script_path = Path.resolve(hancho.options.script_path)
 
             top_script = Loader.load_from_file(hancho.options.script_path, True, Dict())

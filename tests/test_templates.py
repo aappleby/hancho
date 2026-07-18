@@ -265,8 +265,8 @@ class TestTemplates(unittest.TestCase):
 
     def test_alternate_delims(self):
         d = hancho.Dict(foo = "bar")
-        o1 = hancho.Onion(d, ldelims='{', rdelims ='}')
-        o2 = hancho.Onion(d, ldelims='«', rdelims ='»')
+        o1 = hancho.Onion(d, delims={'{':'}'})
+        o2 = hancho.Onion(d, delims={'«':'»'})
 
         self.assertEqual("bar",   o1.expand("{foo}"))
         self.assertEqual("«foo»", o1.expand("«foo»"))
