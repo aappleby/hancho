@@ -2603,9 +2603,13 @@ class Main:
                 Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
 
             # BUILD
-
             time_a = time.perf_counter()
-            result = Main.build()
+
+            if top_script.options.run_tool:
+                result = Runner.run_tool(top_script.options.run_tool)
+            else:
+                result = Main.build()
+
             time_b = time.perf_counter()
 
             with LogLevel.VERBOSE, Colors.GREEN:
@@ -2684,6 +2688,7 @@ class Main:
 
         flags = Dict(
             Main.default_hancho_options,
+            Runner.default_runner_options,
             Script.default_script_options,
             Log.default_log_options,
             raw_flags
@@ -2740,12 +2745,6 @@ class Main:
 
     @classmethod
     def build(cls):
-        top_script = cv_script.get()
-
-        # Do _not_ update stats after running a tool, just early out.
-        if top_script.options.run_tool:
-            result = Runner.run_tool(top_script.options.run_tool)
-            return
 
         # ------------------------------------
         # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
