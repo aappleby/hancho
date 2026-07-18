@@ -77,23 +77,22 @@ class Dict(dict):
             if not isinstance(arg, dict) and arg is not None:
                 raise ValueError(f"Argument #{i} was not a dict - {arg}")
 
-        Dict.merge(self, *args, kwargs)
+        self.merge(*args, kwargs)
 
-    @classmethod
-    def merge(cls, dest, *args, **kwargs):
+    def merge(self, *args, **kwargs):
         for rhs in (*args, kwargs):
             if rhs is None:
                 continue
             Dict.generic_merge(
-                dest, dest, rhs,
+                self, self, rhs,
                 merge_dicts=True, merge_lists=True,
                 keep_a=True, keep_b=True)
 
-    # Merges self and args into a new dict, keeping only keys that were already in self.
-    # For example, if you have a config that contains "out_bin" and you merge it with "compile_cpp",
-    # Hancho will complain that "out_bin" is missing - it sees both "out_obj" and "out_bin" and
-    # assumes the task produces both. If you do compile_cpp.fill(...), "out_bin" does not get added
-    # to compile_cpp.
+    # Fill-in-the-blank (or override what's there): Merges self and args into a new dict, keeping
+    # only keys that were already in self. For example, if you have a config that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
 
     def fill(self, *args, **kwargs):
         dest = Dict(self)
@@ -165,9 +164,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        ldelims = self.get("ldelims", Expander.ldelims)
-        rdelims = self.get("rdelims", Expander.rdelims)
-        onion = Onion.wrap(self, ldelims = ldelims, rdelims = rdelims)
+        onion = Onion.wrap(
+            self,
+            ldelims = self.get("ldelims", None),
+            rdelims = self.get("rdelims", None),
+        )
 
         with Tracer(self, "dict.expand", template) as trace:
             result = Expander._expand(template, onion)
@@ -180,139 +181,6 @@ class Tool(Dict):
     pass
 
 # endregion
-# --------------------------------------------------------------------------------------------------
-#region Onion
-
-class Onion(abc.Mapping):
-    """
-    An Onion is like a ChainMap, except that it behaves as if you'd merged all the ChainMap maps
-    together. This matters when you have something like
-    c = ChainMap(
-        dict(foo = dict(a = 1)),
-        dict(foo = dict(b = 2))
-    )
-    because if you try to read both c['foo']['a'] and c['foo']['b'] it won't work - 'foo' always
-    resolves to the first dict and never sees the second.
-
-    Onion fixes this by looking up the key in all 'layers' and returns a value only if it was the
-    first non-Mapping match. If there are multiple Mapping matches, they form a new Onion.
-
-    Onion layers are searched in right-to-left (i.e. reverse) order, to match the "right overrides
-    left" behavior of Dict.
-
-    Why the name 'Onion'?
-    Well, 'stack' and 'deck' are overloaded and 'Onion' at least implies nested layers.
-    """
-
-    def __init__(self, *args, **kwargs):
-
-        self._layers : list[dict] = []
-        for val in args:
-            if isinstance(val, Onion):
-                self._layers.extend(val._layers)
-            elif isinstance(val, dict):
-                self._layers.append(val)
-            else:
-                raise TypeError(f"Only dicts and onions can be passed to Onion(), not this: {val}")
-
-        if len(kwargs):
-            self._layers.append(Dict(kwargs))
-
-    @classmethod
-    def wrap(cls, d : Dict, **kwargs):
-        """
-        Wrap the given dict so that when we expand things in it the macros can refer to stuff in
-        hancho or the script module that created it.
-        """
-        script = cv_script.get()
-
-        onion = Onion(
-            hancho.__dict__,
-            script.module.__dict__ if script else {},
-            script.options if script else {},
-            d,
-            **kwargs
-        )
-        return onion
-
-    def __getattr__(self, key : str):
-        try:
-            return self._get(key)
-        except KeyError as err:
-            raise AttributeError from err
-
-    def __getitem__(self, key):
-        return self._get(key)
-
-    def __iter__(self):
-        seen = set()
-        for layer in reversed(self._layers):
-            for key in layer:
-                if key not in seen:
-                    seen.add(key)
-                    yield key
-
-    def __len__(self):
-        return len(set().union(*self._layers))
-
-    def __repr__(self):
-        return Dumper.dump_to_str(key = None, val = self)
-
-    def __contains__(self, key):
-        return any(key in layer for layer in self._layers)
-
-    def _get(self, key, default = sentinel) -> Any:
-        with Tracer(self, "get", key) as trace:
-            # Return the rightmost non-None non-Mapping if present.
-            saw_a_none = False
-            for layer in reversed(self._layers):
-                if key in layer:
-                    val = layer[key]
-                    if val is None:
-                        saw_a_none = True
-                    elif not isinstance(val, abc.Mapping):
-                        result = Expander._expand(val, self)
-                        trace.save_result(result)
-                        return result
-
-            # If the key was present but there was no value associated with it, return None.
-            if saw_a_none and default == sentinel:
-                trace.save_result(None)
-                return None
-
-            # Nope, all mappings. Pull out the ones containing the key.
-            new_layers = [layer[key] for layer in self._layers if key in layer]
-
-            # No matches? Bad key.
-            if not new_layers and default == sentinel:
-                raise KeyError(key)
-
-            if default != sentinel:
-                return default
-
-            # Otherwise we make a new onion out of the mappings.
-            result = Onion(*new_layers)
-            trace.save_result(result)
-            return result
-
-    def raw_get(self, key, default = sentinel) -> Any:
-            for layer in reversed(self._layers):
-                if key in layer:
-                    return layer[key]
-
-            if default == sentinel:
-                raise KeyError(key)
-
-            return default
-
-    def expand(self, template):
-        with Tracer(self, "expand", template) as trace:
-            result = Expander._expand(template, self)
-            trace.save_result(result)
-            return result
-
-
-#endregion
 # --------------------------------------------------------------------------------------------------
 # region Expander
 # Hancho's text expansion system.
@@ -516,6 +384,141 @@ class Expander:
         return chunk_count
 
 # endregion
+# --------------------------------------------------------------------------------------------------
+#region Onion
+
+class Onion(abc.Mapping):
+    """
+    An Onion is like a ChainMap, except that it behaves as if you'd merged all the ChainMap maps
+    together. This matters when you have something like
+    c = ChainMap(
+        dict(foo = dict(a = 1)),
+        dict(foo = dict(b = 2))
+    )
+    because if you try to read both c['foo']['a'] and c['foo']['b'] it won't work - 'foo' always
+    resolves to the first dict and never sees the second.
+
+    Onion fixes this by looking up the key in all 'layers' and returns a value only if it was the
+    first non-Mapping match. If there are multiple Mapping matches, they form a new Onion.
+
+    Onion layers are searched in right-to-left (i.e. reverse) order, to match the "right overrides
+    left" behavior of Dict.
+
+    Why the name 'Onion'?
+    Well, 'stack' and 'deck' are overloaded and 'Onion' at least implies nested layers.
+    """
+
+    def __init__(self, *args, **kwargs):
+
+        self._layers : list[dict] = []
+        for val in args:
+            if isinstance(val, Onion):
+                self._layers.extend(val._layers)
+            elif isinstance(val, dict):
+                self._layers.append(val)
+            else:
+                raise TypeError(f"Only dicts and onions can be passed to Onion(), not this: {val}")
+
+        if len(kwargs):
+            self._layers.append(Dict(kwargs))
+
+    @classmethod
+    def wrap(cls, d : Dict, ldelims : str | None = None, rdelims : str | None = "", **kwargs):
+        """
+        Wrap the given dict so that when we expand things in it the macros can refer to stuff in
+        hancho or the script module that created it.
+        """
+        script = cv_script.get()
+
+        onion = Onion(
+            hancho.__dict__,
+            script.module.__dict__ if script else {},
+            script.options if script else {},
+            d,
+            ldelims = ldelims or Expander.ldelims,
+            rdelims = rdelims or Expander.rdelims,
+            **kwargs
+        )
+        return onion
+
+    def __getattr__(self, key : str):
+        try:
+            return self._get(key)
+        except KeyError as err:
+            raise AttributeError from err
+
+    def __getitem__(self, key):
+        return self._get(key)
+
+    def __iter__(self):
+        seen = set()
+        for layer in reversed(self._layers):
+            for key in layer:
+                if key not in seen:
+                    seen.add(key)
+                    yield key
+
+    def __len__(self):
+        return len(set().union(*self._layers))
+
+    def __repr__(self):
+        return Dumper.dump_to_str(key = None, val = self)
+
+    def __contains__(self, key):
+        return any(key in layer for layer in self._layers)
+
+    def _get(self, key, default = sentinel) -> Any:
+        with Tracer(self, "get", key) as trace:
+            # Return the rightmost non-None non-Mapping if present.
+            saw_a_none = False
+            for layer in reversed(self._layers):
+                if key in layer:
+                    val = layer[key]
+                    if val is None:
+                        saw_a_none = True
+                    elif not isinstance(val, abc.Mapping):
+                        result = Expander._expand(val, self)
+                        trace.save_result(result)
+                        return result
+
+            # If the key was present but there was no value associated with it, return None.
+            if saw_a_none and default == sentinel:
+                trace.save_result(None)
+                return None
+
+            # Nope, all mappings. Pull out the ones containing the key.
+            new_layers = [layer[key] for layer in self._layers if key in layer]
+
+            # No matches? Bad key.
+            if not new_layers and default == sentinel:
+                raise KeyError(key)
+
+            if default != sentinel:
+                return default
+
+            # Otherwise we make a new onion out of the mappings.
+            result = Onion(*new_layers)
+            trace.save_result(result)
+            return result
+
+    def raw_get(self, key, default = sentinel) -> Any:
+            for layer in reversed(self._layers):
+                if key in layer:
+                    return layer[key]
+
+            if default == sentinel:
+                raise KeyError(key)
+
+            return default
+
+    def expand(self, template):
+        with Tracer(self, "expand", template) as trace:
+            result = Expander._expand(template, self)
+            trace.save_result(result)
+            return result
+
+
+#endregion
 # --------------------------------------------------------------------------------------------------
 # region Dumper
 
@@ -2676,7 +2679,7 @@ class Main:
         if os.path.exists(opt_file):
             with open(opt_file) as f:
                 opts = json.load(f)
-                Dict.merge(flags, flags, opts)
+                flags.merge(opts)
 
         # Unrecognized command line parameters also become config fields if they are flag-like.
         # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
@@ -2892,7 +2895,7 @@ def earlyout(message = ""):
 
 def init(*args, **kwargs):
     flags = Main.parse_flags([])
-    Dict.merge(flags, *args, kwargs)
+    flags.merge(*args, kwargs)
     Main.init(flags)
 
 # endregion
