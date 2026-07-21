@@ -48,11 +48,40 @@ from typing import Any, cast
 # We treat the Hancho module itself as a repo, so that we have a place to put everything added to
 # the build by tests or other code that doesn't load a .hancho script.
 
-hancho : Any = sys.modules[__name__]
-options : Dict
-flags : Dict
-sys.modules["hancho"] = hancho
 sentinel = "<sentinel>"
+
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region CVProxy
+
+class CVProxy:
+    def __init__(self, name : str):
+        # Use object.__setattr__ to avoid triggering custom __setattr__ during init
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_cv", contextvars.ContextVar(name, default = None))
+
+    def get(self):
+        if obj := self._cv.get() is None:
+            raise RuntimeError(f"ContextVar {self._name} is not set in this context.")
+        return obj
+
+    def set(self, val):
+        return self._cv.set(val)
+
+    def __getattr__(self, item):
+        return getattr(self.get(), item)
+
+    def __setattr__(self, item, value):
+        setattr(self.get(), item, value)
+
+    def __delattr__(self, item):
+        delattr(self.get(), item)
+
+    def __repr__(self):
+        return repr(self.get())
+
+cv_batch  : contextvars.ContextVar[Any] = contextvars.ContextVar("batch",  default = None)
+cv_repo   : contextvars.ContextVar[Any] = contextvars.ContextVar("repo",   default = None)
 cv_script : contextvars.ContextVar[Any] = contextvars.ContextVar("script", default = None)
 
 # endregion
@@ -75,7 +104,7 @@ class Dict(dict):
         super().__init__()
 
         for i, arg in enumerate(args):
-            if not isinstance(arg, dict) and arg is not None:
+            if not isinstance(arg, abc.Mapping) and arg is not None:
                 raise ValueError(f"Argument #{i} was not a dict - {arg}")
 
         self.merge(*args, kwargs)
@@ -131,6 +160,14 @@ class Dict(dict):
         return dst
 
     # ----------------------------------------
+    # If a key is in both the lhs and rhs, set the key+val in lhs and remove it from rhs.
+
+    def pluck(self, src: Dict):
+        for key, lhs in list(self.items()):
+            self[key] = src.pop(key, lhs)
+        return self
+
+    # ----------------------------------------
 
     def __getattr__(self, key : str):
         try:
@@ -164,12 +201,14 @@ class Dict(dict):
     def __setitem__(self, key : str, val : Any):
         dict.__setitem__(self, key, val)
 
-    def expand2(self, template):
-        onion = Onion.wrap(self, delims = self.get("delims", Expander.delims))
+    def expand(self, template):
         with Tracer(self, "dict.expand", template) as trace:
-            result = Expander._expand(template, onion)
+            result = Expander._expand(template, self)
             trace.save_result(result)
             return result
+
+    def eval(self, expr):
+        return self.expand("{" + expr + "}")
 
 
 # Tool is just an alias for Dict to make build scripts more readable.
@@ -220,20 +259,16 @@ class Expander:
     MAX_DEPTH = 30
     MAX_EVALS = 300
 
-    delims : dict[str,str]
-
     @classmethod
     def reset(cls, flags):
-        # Normally you'd use '{' and '}' as delimiters, but you can also use '«' and '»'
-        # On Linux, you can type those using control-shift-u a b <enter> and control-shift-u b b <enter>
-        # On Windows, use alt-0171 and alt-0187 with the numbers being typed on the numpad while numlock
-        # is on.
-        ldelims = "{«"
-        rdelims = "}»"
-        cls.delims = {ldelims[i]:rdelims[i] for i in range(len(ldelims))}
+        pass
 
     @classmethod
-    def _expand(cls, variant : Any, onion : Onion):
+    def get(cls, context : abc.Mapping, key : str) -> Any:
+        return cls._expand("{" + key + "}", context)
+
+    @classmethod
+    def _expand(cls, variant : Any, context : abc.Mapping) -> Any:
         """
         The outer expand function handles setting/resetting the depth/evals-check vars and repeats
         expansion until we reach a non-string or the string stops changing.
@@ -250,19 +285,34 @@ class Expander:
                 # Remember how much budget was spent.
                 saved = Expander.cv_evals.get()
                 # Expand the list element.
-                result.append(Expander._expand(v, onion))
+                result.append(Expander._expand(v, context))
                 # Restore the budget so the next string in the list gets it.
                 Expander.cv_evals.set(saved)
             return result
 
-        # Bail out early if our variant isn't a string (a common case if we're expanding {debug} or
-        # something) or if it's a string that can't possibly have macros in it.
+        if isinstance(variant, dict):
+            result = {}
+            for k, v in variant.items():
+                # Remember how much budget was spent.
+                saved = Expander.cv_evals.get()
+                # Expand the list element.
+                result[k] = Expander._expand(v, context)
+                # Restore the budget so the next string in the list gets it.
+                Expander.cv_evals.set(saved)
+            return result
 
-        delims = onion.raw_get("delims", Expander.delims)
-
-        if not Utils.is_template2(variant, delims):
+        # Bail out early if our variant isn't a string.
+        if not isinstance(variant, str):
             return variant
+
+        script : Script = cv_script.get()
+        if script:
+            onion = Onion(hancho.__dict__, script.flags, script.module.__dict__, context)
+        else:
+            onion = Onion(hancho.__dict__, context)
+
         template = cast(str, variant)
+        delims = onion.raw_get("delims")
 
         # Bail out if we've gone through too many levels of recursion.
         depth = Expander.cv_depth.get()
@@ -404,36 +454,39 @@ class Onion(abc.Mapping):
 
     def __init__(self, *args, **kwargs):
 
-        self._layers : list[dict] = []
+        self._layers : list[types.MappingProxyType] = []
         for val in args:
             if isinstance(val, Onion):
                 self._layers.extend(val._layers)
-            elif isinstance(val, dict):
+            elif isinstance(val, types.MappingProxyType):
                 self._layers.append(val)
+            elif isinstance(val, abc.Mapping):
+                self._layers.append(types.MappingProxyType(val))
             else:
-                raise TypeError(f"Only dicts and onions can be passed to Onion(), not this: {val}")
+                raise TypeError(f"Can't use this as an onion layer: {type(val)} = {val}")
 
         if len(kwargs):
-            self._layers.append(Dict(kwargs))
+            self._layers.append(types.MappingProxyType(kwargs))
 
-    @classmethod
-    def wrap(cls, *args, delims : dict[str, str] | None = None, **kwargs):
-        """
-        Wrap the given dict so that when we expand things in it the macros can refer to stuff in
-        hancho or the script module that created it.
-        """
-        script = cv_script.get()
-
-        onion = Onion(
-            hancho.__dict__,
-            hancho.options,
-            script.module.__dict__,
-            script.options,
-            *args,
-            delims = delims or Expander.delims,
-            **kwargs
-        )
-        return onion
+#    @classmethod
+#    def _wrap(cls, *args, **kwargs):
+#        """
+#        Wrap the given dict so that when we expand things in it the macros can refer to stuff in
+#        hancho or the script module that created it.
+#        """
+#        script = cv_script.get()
+#
+#        onion = Onion(
+#            hancho.__dict__,
+#            Main.flags,
+#            cv_batch.get().flags,
+#            cv_repo.get().flags,
+#            cv_script.get().flags,
+#            cv_script.get().module.__dict__,
+#            *args,
+#            **kwargs
+#        )
+#        return onion
 
     def __getattr__(self, key : str):
         try:
@@ -665,7 +718,7 @@ class Dumper:
             # Don't print scripts if they're not at the top of the dump, otherwise our dumps get
             # massive
             if indent > 1:
-                return prefix + f"'{val.options.script_path}'"
+                return prefix + f"'{val.script_path}'"
             else:
                 val = val.__dict__
         else:
@@ -895,8 +948,8 @@ class Utils:
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines = [Path.join(task_cwd, d) for d in deplines]
 
-        with LogLevel.DEBUG:
-            Log.log(f"Depfile {filename} contained {len(deplines)} deplines.\n")
+        #with LogLevel.DEBUG:
+        #    Log.log(f"Depfile {filename} contained {len(deplines)} deplines.\n")
 
         return deplines
 
@@ -960,7 +1013,16 @@ class Colors(int, Enum):
 # --------------------------------------------------------------------------------------------------
 
 class Log:
-    log_options : Dict
+
+    log_level   : int  = LogLevel.NORMAL
+    log_quiet   : bool = False
+    log_verbose : bool = False
+    log_debug   : bool = False
+    log_trace   : bool = False
+    log_wrap    : bool = False
+    log_color   : bool = True
+    log_time    : bool = True
+
     con_w         = 80
     time_origin   = time.perf_counter()
     indent_stack  = []
@@ -969,23 +1031,17 @@ class Log:
     match_escapes = re.compile(r"(\x1B.*?m)")
     log_level_in  = LogLevel.NORMAL
     log_level_out = LogLevel.NORMAL # log level we want to appear in the log
-    log_options : Dict
-
-    default_log_options = Dict(
-        log_level    = LogLevel.NORMAL,
-        log_quiet    = False,
-        log_verbose  = False,
-        log_debug    = False,
-        log_trace    = False,
-        log_wrap     = False,
-        log_color    = True,
-        log_time     = True,
-    )
 
     @classmethod
     def reset(cls, flags : Dict):
-
-        cls.log_options = Log.default_log_options.fill(flags)
+        cls.log_level   = Expander.get(flags, "log_level")
+        cls.log_quiet   = Expander.get(flags, "log_quiet")
+        cls.log_verbose = Expander.get(flags, "log_verbose")
+        cls.log_debug   = Expander.get(flags, "log_debug")
+        cls.log_trace   = Expander.get(flags, "log_trace")
+        cls.log_wrap    = Expander.get(flags, "log_wrap")
+        cls.log_color   = Expander.get(flags, "log_color")
+        cls.log_time    = Expander.get(flags, "log_time")
 
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
@@ -994,25 +1050,26 @@ class Log:
         cls.line_buffer   = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if cls.log_options.log_level is not None:
-            if isinstance(cls.log_options.log_level, str):
-                cls.log_options.log_level = LogLevel[cls.log_options.log_level.upper()]
-            elif isinstance(cls.log_options.log_level, int):
-                cls.log_options.log_level = LogLevel(cls.log_options.log_level)
+
+        if cls.log_level is not None:
+            if isinstance(cls.log_level, str):
+                cls.log_level = LogLevel[cls.log_level.upper()]
+            elif isinstance(cls.log_level, int):
+                cls.log_level = LogLevel(cls.log_level)
             else:
-                raise ValueError(f"Got an unknown log_level '{type(cls.log_options.log_level)} = {cls.log_options.log_level}'")
+                raise ValueError(f"Got an unknown log_level '{type(cls.log_level)} = {cls.log_level}'")
 
         # The individual -T/-D/-V/-Q flags override --log_level, with the 'loudest' flag winning.
 
-        if cls.log_options.log_debug:
-            cls.log_options.log_level = LogLevel.DEBUG
-        elif cls.log_options.log_verbose:
-            cls.log_options.log_level = LogLevel.VERBOSE
-        elif cls.log_options.log_quiet:
-            cls.log_options.log_level = LogLevel.QUIET
+        if cls.log_debug:
+            cls.log_level = LogLevel.DEBUG
+        elif cls.log_verbose:
+            cls.log_level = LogLevel.VERBOSE
+        elif cls.log_quiet:
+            cls.log_level = LogLevel.QUIET
 
-        cls.log_level_in  = cls.log_options.log_level
-        cls.log_level_out = cls.log_options.log_level
+        cls.log_level_in  = cls.log_level
+        cls.log_level_out = cls.log_level
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1028,7 +1085,7 @@ class Log:
 
     @classmethod
     def indent(cls, color = 0):
-        ansi = cls.hex_to_ansi(color) if cls.log_options.log_color else ""
+        ansi = cls.hex_to_ansi(color) if cls.log_color else ""
         cls.indent_stack.append(ansi + "│ " + cls.reset_color())
 
     @classmethod
@@ -1047,7 +1104,7 @@ class Log:
 
     @classmethod
     def reset_color(cls):
-        if cls.current_color != 0 and cls.log_options.log_color:
+        if cls.current_color != 0 and cls.log_color:
             return "\x1B[0m"
         else:
             return ""
@@ -1060,9 +1117,9 @@ class Log:
         if cls.log_level_in > cls.log_level_out:
             return
 
-        if cls.current_color >= 0 and cls.log_options.log_color:
+        if cls.current_color >= 0 and cls.log_color:
             hex = cls.current_color
-            color_prefix = cls.hex_to_ansi(hex) if cls.log_options.log_color else ""
+            color_prefix = cls.hex_to_ansi(hex) if cls.log_color else ""
             color_suffix = cls.reset_color()
         else:
             color_prefix = ""
@@ -1093,7 +1150,7 @@ class Log:
             if cls.line_buffer[-1] != '\n':
                 cls.line_buffer += '\n'
 
-            if not cls.log_options.log_wrap:
+            if not cls.log_wrap:
                 cls.line_buffer = cls.clip_printable(cls.line_buffer, cls.con_w)
 
             assert cls.log_level_in is not None
@@ -1121,7 +1178,7 @@ class Log:
     @classmethod
     def get_timestamp(cls):
         """Returns the timestamp string that is placed at the left of log entries."""
-        return f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.log_options.log_time else ""
+        return f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.log_time else ""
 
     @classmethod
     def get_indentation(cls):
@@ -1259,7 +1316,13 @@ class Path:
         if isinstance(rhs, (list, tuple, set)):
             return [Path.relpath(lhs, rh) for rh in rhs]
 
-        prefix = os.path.commonpath([lhs, rhs])
+        prefix = ""
+        try:
+            prefix = os.path.commonpath([lhs, rhs])
+        except Exception:
+            with LogLevel.ERROR, Colors.RED:
+                Log.log("Commonpath failed for '{lhs}' and '{rhs}'\n")
+            raise
 
         if lhs == rhs:
             result = "."
@@ -1280,31 +1343,39 @@ class Path:
 
 # endregion
 # --------------------------------------------------------------------------------------------------
-# region Script
+# region Batch
 
-class Script:
+class Batch:
 
-    # FIXME why can't we do dirname(abspath(script_path)) here?
+    def __init__(self, flags, top_repo : Repo):
+        self.flags        = flags
+        self.top_repo     = top_repo
+        self.build_tag    = Expander.get(flags, "build_tag")
+        self.build_target = Expander.get(flags, "build_target")
+        self.build_force  = Expander.get(flags, "build_force")
+        self.build_all    = Expander.get(flags, "build_all")
+        self.build_dry    = Expander.get(flags, "build_dry")
+        self.build_strict = Expander.get(flags, "build_strict")
 
-    default_script_options = Dict(
-        script_path  = "build.hancho",
-        script_cwd   = "{dirname(script_path)}",
-        repo_root    = "{dirname(script_path)}",
-        task_cwd     = "{repo_root}",
+        self.repos : dict[str, Repo]  = {top_repo.repo_root : top_repo}
 
-        build_tag    = "",
-        build_root   = "{repo_root}/build",
-        build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
-    )
+    def yield_tasks(self):
+        for r in self.repos.values():
+            yield from r.yield_tasks()
 
-    def __init__(self, options : Dict, module : types.ModuleType, code : types.CodeType):
 
-        self.options = options
-        self.module  = module
-        self.code    = code
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region Repo
 
-        self.comp_db_path = "{build_root}/compile_commands.json"
-        self.stat_db_path = "{build_root}/hancho.json"
+class Repo:
+
+    def __init__(self, flags : abc.Mapping, top_script : Script):
+        self.top_script   = top_script
+        self.repo_root    = Expander.get(flags, "repo_root")
+        self.build_root   = Expander.get(flags, "build_root")
+        self.comp_db_path = Expander.get(flags, "comp_db_path")
+        self.stat_db_path = Expander.get(flags, "stat_db_path")
 
         # Tally up the rebuild reasons for debugging
         self.reasons = Counter()
@@ -1317,53 +1388,28 @@ class Script:
         # Compared with old_stat_db entries to determine if a task needs a rebuild.
         self.mid_stat_db : dict[str, Dict] = {}
 
-        self.loaded   = False  # true once the script has finished its exec()
-        self.children = []     # child scripts (not repos)
-        self.tasks    = []     # all tasks created by this script
+        self.scripts : dict[str, Script]  = {top_script.script_path : top_script}
 
     # ----------------------------------------------------------------------------------------------
 
-    def exec(self):
-        with chdir(self.options.script_cwd):
-            token = cv_script.set(self)
-            try:
-                Log.indent(Colors.ORANGE)
-                exec(self.code, self.module.__dict__)
-            except (Loader.Abort, Loader.EarlyOut):
-                pass
-            except Loader.Fail as fail:
-                raise RuntimeError(f"Script failed : {self.options.script_path}") from fail
-            finally:
-                Log.dedent()
-                cv_script.reset(token)
-
-    # ----------------------------------------------------------------------------------------------
-
-    def __repr__(self):
-        return Dumper.dump_to_str("Script", self.__dict__, print_id = True, color_code = True)
+    def yield_tasks(self):
+        for s in self.scripts.values():
+            yield from s.yield_tasks()
 
     # ----------------------------------------------------------------------------------------------
 
     def load_stat_db(self) -> Dict:
         result = {}
 
-        onion = Onion.wrap(self.options)
-
-        stat_db = onion.expand(self.stat_db_path)
-        stat_db = cast(str, Path.abspath(stat_db))
-
-        comp_db = onion.expand(self.comp_db_path)
-        comp_db = cast(str, Path.abspath(comp_db))
-
         with LogLevel.VERBOSE, Colors.ORANGE:
-            Log.log(f"Loading stat db '{stat_db}'\n")
+            Log.log(f"Loading stat db '{self.stat_db_path}'\n")
 
-            if not os.path.isfile(stat_db):
-                Log.log(f"Stat db '{stat_db}' not found\n")
+            if not os.path.isfile(self.stat_db_path):
+                Log.log(f"Stat db '{self.stat_db_path}' not found\n")
                 return Dict()
 
             time_a = time.perf_counter()
-            result = Utils.load_json(cast(str, stat_db))
+            result = Utils.load_json(cast(str, self.stat_db_path))
             time_b = time.perf_counter()
 
             Log.log(f"Loading {len(result)} stat db entries took {time_b - time_a:8.6f} seconds\n")
@@ -1395,71 +1441,64 @@ class Script:
     # ----------------------------------------------------------------------------------------------
 
     def save_stat_db(self):
-        script = self
-
-        if script.options.build_dry:
+        if cv_batch.get().build_dry:
             return
-
-        onion = Onion.wrap(script.options)
-
-        stat_db_path = onion.expand(script.stat_db_path)
-        stat_db_path = cast(str, Path.abspath(stat_db_path))
-        comp_db_path = onion.expand(script.comp_db_path)
-        comp_db_path = cast(str, Path.abspath(comp_db_path))
 
         # Gather stats from all completed tasks
         stat_db = {}
         comp_db = {}
 
-        for task in script.tasks:
+        for task in self.top_script.yield_tasks():
             if not task._complete:
                 continue
 
+            config = task.config
+
             for file in Utils.yield_values(task.in_files):
-                script.update_stat_db(stat_db, file)
+                self.update_stat_db(stat_db, file)
 
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
-                    "directory" : task.config.task_cwd,
-                    "command"   : Utils.commands_to_string(task.config.command),
+                    "directory" : config.task_cwd,
+                    "command"   : Utils.commands_to_string(config.command),
                     "file"      : file,
                 }
 
             if task.in_depfile:
-                deplines = Utils.load_depfile(task.in_depfile, task.config.depformat, task.config.task_cwd)
+                deplines = Utils.load_depfile(task.in_depfile, config.depformat, config.task_cwd)
                 for file in deplines:
-                    script.update_stat_db(stat_db, file)
+                    self.update_stat_db(stat_db, file)
 
             for file in Utils.yield_values(task.out_files):
-                str_command = Utils.commands_to_string(task.config.command)
-                script.update_stat_db(stat_db, file, str_command)
+                str_command = Utils.commands_to_string(config.command)
+                self.update_stat_db(stat_db, file, str_command)
+
+        # ------------------------------------
 
         with LogLevel.DEBUG, Colors.ORANGE:
-            Log.log(f"┌ Repo {script.options.repo_root} post-build\n")
+            Log.log(f"┌ Repo {self.repo_root} post-build\n")
             Log.indent(Colors.ORANGE)
 
         # Dump the stats as JSON.
-        if stat_db_path is not None:
-            time_a = time.perf_counter()
-            Utils.save_json(stat_db, stat_db_path)
-            time_b = time.perf_counter()
-            with LogLevel.DEBUG, Colors.ORANGE:
-                Log.log(f"Saved {len(stat_db)} stats to {stat_db_path}\n")
-            with LogLevel.DEBUG, Colors.BLUE:
-                Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
+        time_a = time.perf_counter()
+        Utils.save_json(stat_db, self.stat_db_path)
+        time_b = time.perf_counter()
+        with LogLevel.DEBUG, Colors.ORANGE:
+            Log.log(f"Saved {len(stat_db)} stats to {self.stat_db_path}\n")
+        with LogLevel.DEBUG, Colors.BLUE:
+            Log.log(f"Saving stat db took {time_b - time_a:8.6f} seconds\n")
 
-        if comp_db_path is not None:
-            time_a = time.perf_counter()
-            Utils.save_json(list(comp_db.values()), comp_db_path)
-            time_b = time.perf_counter()
-            with LogLevel.DEBUG, Colors.ORANGE:
-                Log.log(f"Saved {len(comp_db)} stats to {comp_db_path}\n")
-            with LogLevel.DEBUG, Colors.BLUE:
-                Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
+        time_a = time.perf_counter()
+        Utils.save_json(list(comp_db.values()), self.comp_db_path)
+        time_b = time.perf_counter()
+        with LogLevel.DEBUG, Colors.ORANGE:
+            Log.log(f"Saved {len(comp_db)} stats to {self.comp_db_path}\n")
+        with LogLevel.DEBUG, Colors.BLUE:
+            Log.log(f"Saving comp_db took {time_b - time_a:8.6f} seconds\n")
 
         with LogLevel.DEBUG, Colors.ORANGE:
             Log.dedent()
-            Log.log(f"└ Repo {script.options.repo_root} done\n")
+            Log.log(f"└ Repo {self.repo_root} done\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1467,67 +1506,50 @@ class Script:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
         """
-        script = self
 
-        # If there's a depfile from a previous build, load it so we can use it below.
-        if task.in_depfile:
-            task._old_deplines = Utils.load_depfile(
-                task.in_depfile, cast(str, task.config.depformat), task.config.task_cwd
-            )
-            for file in task._old_deplines:
-                if os.path.exists(file):
-                    script.update_stat_db(script.mid_stat_db, file)
-                else:
-                    raise AssertionError(f"Could not find {file}")
-
-        for file in Utils.yield_values(task.in_files):
-            assert os.path.exists(file)
-            if os.path.exists(file):
-                script.update_stat_db(script.mid_stat_db, file)
-
-        for file in Utils.yield_values(task.out_files):
-            if os.path.exists(file):
-                str_command = Utils.commands_to_string(task.config.command)
-                script.update_stat_db(script.mid_stat_db, file, str_command)
+        config      = task.confiog
+        reasons     = self.reasons
+        old_stat_db = self.old_stat_db
+        mid_stat_db = self.mid_stat_db
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if task.config.build_force:
-            script.reasons["forced"] += 1
+        if config.build_force:
+            reasons["forced"] += 1
             return "Target forced to rebuild"
 
         has_input = any(Utils.yield_values(task.in_files))
         if not has_input:
-            script.reasons["no inputs"] += 1
+            reasons["no inputs"] += 1
             return "Always rebuild a target with no inputs"
 
         has_output = any(Utils.yield_values(task.out_files))
         if not has_output:
-            script.reasons["no outputs"] += 1
+            reasons["no outputs"] += 1
             return "Always rebuild a target with no outputs"
 
         # ------------------------------------
 
         for filename in Utils.yield_values(task.out_files):
             if not Path.exists(filename):
-                script.reasons["output missing"] += 1
+                reasons["output missing"] += 1
                 return f"Output file missing: {filename}"
 
-            if filename not in script.old_stat_db:
+            if filename not in old_stat_db:
                 # I'm not sure we can test this, we probably get hit by other checks before we get
                 # here.
-                script.reasons["output stat missing"] += 1 # pragma: no cover
+                reasons["output stat missing"] += 1 # pragma: no cover
                 return f"Output stat missing: {filename}"
 
-            old_stat = script.old_stat_db[filename]
-            mid_stat = script.mid_stat_db[filename]
+            old_stat = old_stat_db[filename]
+            mid_stat = mid_stat_db[filename]
 
             assert old_stat is not None
             assert mid_stat is not None
 
             if old_stat.command != mid_stat.command:
-                script.reasons["command changed"] += 1
+                reasons["command changed"] += 1
                 return f"Command used to generate file has changed : {filename} : {old_stat.command} : {mid_stat.command}"
 
         # ------------------------------------
@@ -1535,29 +1557,88 @@ class Script:
         all_files = task._old_deplines + list(Utils.yield_values(task.in_files))
 
         for filename in all_files:
-            old_stat = script.old_stat_db[filename]
-            mid_stat = script.mid_stat_db[filename]
+            old_stat = old_stat_db[filename]
+            mid_stat = mid_stat_db[filename]
 
             assert old_stat is not None
             assert mid_stat is not None
 
             if old_stat.st_mtime_ns != mid_stat.st_mtime_ns:
-                script.reasons["mtime mismatch"] += 1
+                reasons["mtime mismatch"] += 1
                 return f"Mtime mismatch {old_stat.st_mtime_ns} != {mid_stat.st_mtime_ns} for : {filename}"
 
             if old_stat.st_size != mid_stat.st_size:
-                script.reasons["size mismatch"] += 1
+                reasons["size mismatch"] += 1
                 return f"Size mismatch {old_stat.st_size} != {mid_stat.st_size} for : {filename}"
 
             if old_stat.hash != mid_stat.hash:
-                script.reasons["hash mismatch"] += 1
+                reasons["hash mismatch"] += 1
                 return f"Hash mismatch {old_stat.hash} -> {mid_stat.hash} for : {filename}"
 
             # Does not need to rebuild based on file stats / hash
-            script.reasons["*hash match"] += 1
+            reasons["*hash match"] += 1
 
-        script.reasons["*task clean"] += 1
+        reasons["*task clean"] += 1
         return ""
+
+
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region Script
+
+class Script:
+
+    def __init__(self, flags : Dict, code : types.CodeType | None):
+        self.flags       = flags
+        self.code        = code
+        self.script_path = Expander.get(flags, "script_path")
+        self.script_cwd  = Expander.get(flags, "script_cwd")
+        self.task_cwd    = Expander.get(flags, "task_cwd")
+        self.build_dir   = Expander.get(flags, "build_dir")
+
+        self.script_path = Path.resolve(self.script_path)
+        self.script_cwd  = Path.resolve(self.script_cwd)
+
+        self.module = types.ModuleType(os.path.basename(self.script_path))
+        self.module.__file__ = self.script_path
+        self.module.hancho   = hancho  # type: ignore
+        self.module.flags    = flags # type: ignore
+
+        self.loaded   = False  # true once the script has finished its exec()
+        self.tasks    = []     # all tasks created by this script
+
+    # ------------------------------------
+
+    def yield_tasks(self):
+        yield from self.tasks
+
+    # ------------------------------------
+
+    def exec(self, repo, build):
+        if self.loaded or self.code is None:
+            return
+        with chdir(self.script_cwd):
+            token_build  = cv_batch.set(build)
+            token_repo   = cv_repo.set(repo)
+            token_script = cv_script.set(self)
+            try:
+                Log.indent(Colors.ORANGE)
+                exec(self.code, self.module.__dict__)
+                self.loaded = True
+            except (Loader.Abort, Loader.EarlyOut):
+                pass
+            except Loader.Fail as fail:
+                raise RuntimeError(f"Script failed : {self.script_path}") from fail
+            finally:
+                Log.dedent()
+                cv_batch.reset(token_build)
+                cv_repo.reset(token_repo)
+                cv_script.reset(token_script)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def __repr__(self):
+        return Dumper.dump_to_str("Script", self.__dict__, print_id = True, color_code = True)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1580,29 +1661,26 @@ class Task:
 
     def __init__(self, *args, **kwargs):
 
-        script = cv_script.get()
-        self.script = script
+        self.batch  = cv_batch.get()
+        self.repo   = cv_repo.get()
+        self.script = cv_script.get()
 
-        # The task's 'cooked' config contains the mandatory fields needed to run the command, all
-        # fully expanded. It is expected that build scripts will need to read task.(raw_)config in
-        # order to implement task callbacks, so this field is not underscore-prefixed.
+        self.script.tasks.append(self)
+
+        # The task's 'raw' config contains everything passed in to hancho.Task(), but no templates
+        # are expanded.
+
+        self.raw_config = types.MappingProxyType(Dict(*args, **kwargs))
+
+        # The task's 'cooked' config contains only the mandatory fields needed to run the command,
+        # all fully expanded. It is expected that build scripts will need to read task.(raw_)config
+        # in order to implement task callbacks, so this field is not underscore-prefixed.
 
         self.config = Dict(
             name=None,
             desc=None,
             command=None,
-            task_cwd=None,
-            build_dir=None,
-            build_force=None,
-            job_size=None,
-            depformat=None,
         )
-
-        # The task's 'raw' config contains everything passed in to hancho.Task(), but no templates
-        # are expanded. We add self.config in so that we know for sure that all mandatory fields
-        # are declared, even if they're None.
-
-        self.raw_config = Dict(self.config, *args, **kwargs)
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -1640,19 +1718,12 @@ class Task:
         # The "return value" for the task as a whole, or "None" if the task was successful.
         self._error : BaseException | None = None
 
-        # Tasks depend on all .hancho files that were loaded when the task was created.
-        # This is probably too wide a net, but tracking dependencies between .hancho files is not
-        # really possible.
-        self._loaded_files : list[str] = list(Loader.loaded_files)
-
         # Bookkeeping stuff
         self._task_id : int = 0
         self._stdout : str = ""
         self._stderr : str = ""
         self._job_size = 0
         self._complete = False
-
-        script.tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -1710,64 +1781,100 @@ class Task:
             v.enable_task()
 
     # ----------------------------------------------------------------------------------------------
+
+    def update_stats(self):
+        script = cv_script.get()
+        repo   = script.repo
+        config = self.config
+
+        # If there's a depfile from a previous build, load it so we can use it below.
+        if self.in_depfile:
+            self._old_deplines = Utils.load_depfile(
+                self.in_depfile, config.depformat, config.task_cwd
+            )
+            for file in self._old_deplines:
+                if os.path.exists(file):
+                    repo.update_stat_db(file)
+                else:
+                    raise AssertionError(f"Could not find {file}")
+
+        for file in Utils.yield_values(self.in_files):
+            assert os.path.exists(file)
+            if os.path.exists(file):
+                repo.update_stat_db(file)
+
+        for file in Utils.yield_values(self.out_files):
+            if os.path.exists(file):
+                str_command = Utils.commands_to_string(config.command)
+                repo.update_stat_db(file, str_command)
+
+    # ----------------------------------------------------------------------------------------------
     # Async task entry point
 
     async def task_top(self):
         Task.id_counter += 1
         self._task_id = Task.id_counter
 
+        task   = self
+        config = task.config
+        repo   = cv_repo.get()
+        batch  = cv_batch.get()
+
         try:
             # Await all tasks in our input fields and then flatten them.
-            await self.await_inputs()
+            await task.await_inputs()
+
+            # Update mtime/hash for all input and output files in this task if they exist.
+            task.update_stats()
 
             # Expand all mandatory fields in the raw config and fix raw file paths.
-            self.expand_task()
+            task.expand_task()
 
             # Inputs are ready, templates are expanded, time to run the task.
-            self.sanity_check()
+            task.sanity_check()
 
             # Dry runs early out after the task is initialized but before we do .exists() checks or
             # run any commands.
-            if self.script.options.build_dry:
+            if batch.build_dry:
                 return
 
             # Paths updated. See if we need to rebuild our outputs.
-            self._reason = self.script.rebuild_reason(self)
-            if not self._reason:
-                raise Task.SKIPPED(f"Task is up-to-date: '{self.config.name}' : '{self.config.desc}'")
+            task._reason = repo.rebuild_reason(task)
+            if not task._reason:
+                raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
 
             # Wait for enough jobs to free up to run this task.
-            self._job_size = await Runner.acquire(self.config.job_size)
+            task._job_size = await Runner.acquire(config.job_size)
 
             # OK, let's go!
-            await self.task_main()
+            await task.task_main()
 
             # And
-            return self.out_files
+            return task.out_files
 
         except asyncio.CancelledError as ex:
             with LogLevel.VERBOSE:
-                self.log(f"<asyncio.CancelledError {ex}>\n")
-            self._error = ex
+                task.log(f"<asyncio.CancelledError {ex}>\n")
+            task._error = ex
         except Task.BROKEN as ex:
-            self.log_exception("Task broken!", ex)
-            self._error = ex
+            task.log_exception("Task broken!", ex)
+            task._error = ex
         except Task.FAILED as ex:
-            self.log_exception("Task failed!", ex)
-            self._error = ex
+            task.log_exception("Task failed!", ex)
+            task._error = ex
         except Task.SKIPPED as ex:
             with LogLevel.VERBOSE:
-                self.log(str(ex) + "\n")
-            self._error = ex
+                task.log(str(ex) + "\n")
+            task._error = ex
         except Exception as ex:
-            self.log_exception("Task threw an exception!", ex)
+            task.log_exception("Task threw an exception!", ex)
             with LogLevel.ERROR:
                 Log.log(traceback.format_exc() + "\n")
-            self._error = ex
+            task._error = ex
         finally:
-            Runner.release(self._job_size)
+            Runner.release(task._job_size)
 
-        raise self._error
+        raise task._error
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1785,30 +1892,31 @@ class Task:
                 # This input task didn't need to rebuild.
                 pass
             except Exception as ex:
-                self._error = Task.CANCELLED(f"Task is cancelled: '{self.raw_config.name}' : '{self.raw_config.desc}'")
+                self._error = Task.CANCELLED(f"Task is cancelled: '{self.raw_config['name']}' : '{self.raw_config['desc']}'")
                 raise self._error from ex
 
     # ----------------------------------------------------------------------------------------------
 
     def expand_task(self):
+        config = self.config
         with LogLevel.DEBUG:
             self.log("Task config before expand:\n")
             self.log(str(self.raw_config) + "\n")
+
 
         # We wrap the task config in an onion and then tack the 'expanded' dict onto it. Then we
         # expand all the mandatory fields into 'expanded', which makes onion lookups during
         # expansion check 'expanded' first to see if it contains an already-expanded copy of the
         # field.
-        onion = Onion.wrap(self.raw_config, self.config)
 
-        self.config.task_cwd    = onion.get("task_cwd")
-        self.config.build_force = onion.get("build_force")
-        self.config.depformat   = onion.get("depformat")
-        self.config.job_size    = onion.get("job_size")
+        config.task_cwd    = Expander.get(self.raw_config, "task_cwd")
+        config.build_force = Expander.get(self.raw_config, "build_force")
+        config.depformat   = Expander.get(self.raw_config, "depformat")
+        config.job_size    = Expander.get(self.raw_config, "job_size")
+        config.build_dir   = Expander.get(self.raw_config, "build_dir")
+        config.build_dir   = Path.abspath(config.build_dir)
 
         # Build_dir must be expanded _before_ any io fields.
-        self.config.build_dir   = onion.get("build_dir")
-        self.config.build_dir   = Path.abspath(self.config.build_dir)
 
         # Then we expand all io fields (which could contain build_dir) and fix their paths.
         for field in self.raw_config:
@@ -1824,7 +1932,7 @@ class Task:
             ]
 
             files = Utils.flatten(files)
-            files = onion.expand(files)
+            files = Expander._expand(files, self.raw_config)
             files = self.fix_paths(field, files)
 
             if field == "in_depfile":
@@ -1843,9 +1951,9 @@ class Task:
             self.config[field] = files[0] if len(files) == 1 else files
 
         # And finally we expand name/desc/command, which can contain file paths.
-        self.config.command = Utils.flatten(onion.command)
-        self.config.desc    = onion.get("desc")
-        self.config.name    = onion.get("name")
+        config.command = Utils.flatten(Expander.get(self.raw_config, "command"))
+        config.desc    = Expander.get(self.raw_config, "desc")
+        config.name    = Expander.get(self.raw_config, "name")
 
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
@@ -1854,56 +1962,58 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     async def task_main(self):
-        script = cv_script.get()
+        task   = self
+        config = task.config
 
         # ----------------------------------------
         # Run all the task's commands
 
         with LogLevel.NORMAL:
-            if self.config.name:
-                self.log(f"{self.config.name}: ")
-            self.log(f"{self.config.desc}\n")
+            if config.name:
+                task.log(f"{config.name}: ")
+            task.log(f"{config.desc}\n")
 
         with LogLevel.VERBOSE, Log.color(0x606060):
-            self.log(f"Task rebuilding because: {self._reason}\n")
+            task.log(f"Task rebuilding because: {task._reason}\n")
 
         time_a = time.perf_counter()
 
-        for command in cast(list, self.config.command):
+        for command in cast(list, config.command):
             if command is None:
                 continue
             elif callable(command):
-                await self.call_callback(command)
+                await task.call_callback(command)
             else:
-                await self.run_command(command)
+                await task.run_command(command)
 
         time_b = time.perf_counter()
 
         with LogLevel.VERBOSE, Log.color(0x606060):
             message  = f"Task took {time_b-time_a:8.6f} sec: "
-            if self.config.name:
-                message += f"'{self.config.name}' - "
-            message += f"'{self.config.desc}'\n"
-            self.log(message)
+            if config.name:
+                message += f"'{config.name}' - "
+            message += f"'{config.desc}'\n"
+            task.log(message)
 
         # ----------------------------------------
         # See if the task wrote all its output files
 
-        for file in Utils.yield_values(self.out_files):
+        for file in Utils.yield_values(task.out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         # ----------------------------------------
         # Done!
 
-        if self.in_depfile:
+        if task.in_depfile:
             # FIXME why are there two of these now?
-            deplines = Utils.load_depfile(self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd)
+            deplines = Utils.load_depfile(task.in_depfile, cast(str, config.depformat), config.task_cwd)
+            script = cv_script.get()
             for file in deplines:
                 script.update_stat_db(script.mid_stat_db, file)
 
-            self._new_deplines = Utils.load_depfile(
-                self.in_depfile, cast(str, self.config.depformat), self.config.task_cwd
+            task._new_deplines = Utils.load_depfile(
+                task.in_depfile, cast(str, config.depformat), config.task_cwd
             )
 
     # ----------------------------------------------------------------------------------------------
@@ -1923,7 +2033,7 @@ class Task:
         script = cv_script.get()
 
         # Join script_cwd with the filename to produce an absolute path.
-        file = Path.join(script.options.script_cwd, file)
+        file = Path.join(script.script_cwd, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -1934,10 +2044,10 @@ class Task:
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if field.startswith("out_") or field == "in_depfile":
             if not Path.startswith(file, self.config.build_dir):
-                file = Path.relpath(file, script.options.script_cwd)
+                file = Path.relpath(file, script.script_cwd)
                 file = Path.join(self.config.build_dir, file)
 
-            if not script.options.build_dry:
+            if not script.repo.build.build_dry:
                 os.makedirs(Path.dirname(file), exist_ok=True)
 
         return file
@@ -1946,15 +2056,15 @@ class Task:
     # Check for all task issues that break the build
 
     def sanity_check(self):
-        task = self
+        task   = self
         script = cv_script.get()
         config = task.config
-        options = script.options
+        batch  = cv_batch.get()
 
         if not Path.exists(config.task_cwd):
             raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
 
-        if not Path.startswith(config.build_dir, options.repo_root):
+        if not Path.startswith(config.build_dir, script.repo.repo_root):
             raise Task.BROKEN(f"The build dir {config.build_dir} is not under repo.root {config.repo_root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
@@ -1975,13 +2085,12 @@ class Task:
                     raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # In strict mode, we mark a task broken if its command still has curly braces.
-        if options.build_strict:
+        if script.repo.build.build_strict:
             for command in cast(list, config.command):
                 if not isinstance(command, str):
                     continue
                 blocks = []
-                onion = Onion.wrap(config)
-                delims = onion.get("delims", Expander.delims)
+                delims = Main.flags['delims']
                 Expander._split_template(command, blocks, delims)
                 if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
@@ -2004,23 +2113,25 @@ class Task:
         for file in Utils.yield_values(task.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-            if not Path.exists(file) and not options.build_dry:
+            if not Path.exists(file) and not batch.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
     # ----------------------------------------------------------------------------------------------
 
     async def run_command(self, command):
-        script = cv_script.get()
+        task   = self
+        repo   = cv_repo.get()
+        config = task.config
 
         with LogLevel.VERBOSE, Colors.BLUE:
-            self.log(f"{Path.relpath(self.config.task_cwd, script.options.repo_root)}$ {command}\n")
+            task.log(f"{Path.relpath(config.task_cwd, repo.repo_root)}$ {command}\n")
 
         proc = None
         try:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd    = self.config.task_cwd,
+                cwd    = config.task_cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2048,24 +2159,25 @@ class Task:
             # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
-        self._stdout = stdout_data.decode(errors="replace")
-        self._stderr = stderr_data.decode(errors="replace")
+        task._stdout = stdout_data.decode(errors="replace")
+        task._stderr = stderr_data.decode(errors="replace")
 
         if proc.returncode == 2:
             raise Task.BROKEN("Command return code was 2 : bash error")
         elif proc.returncode:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
-        if self._stdout or self._stderr:
+        if task._stdout or task._stderr:
             with LogLevel.VERBOSE, Log.color(0x666666):
-                self.log(self.dump_stdout())
+                task.log(task.dump_stdout())
 
     # ----------------------------------------------------------------------------------------------
 
     async def call_callback(self, command):
-        script_dir = Path.dirname(self.script.options.script_path)
+        script = cv_script.get()
+        script_dir = Path.dirname(script.script_path)
 
-        callback_dir = Path.relpath(script_dir, self.script.options.repo_root)
+        callback_dir = Path.relpath(script_dir, script.repo_root)
 
         with LogLevel.VERBOSE, Colors.BLUE:
             self.log(f"{callback_dir}$ {command}\n")
@@ -2105,16 +2217,18 @@ class Task:
     def log_exception(self, message, ex = None):
         script = cv_script.get()
         task = self
+        config = task.config
+
         with LogLevel.ERROR, Colors.RED:
             Log.log("========================================\n")
             Log.log(message + "\n")
             Log.log("========================================\n")
 
-            Log.log(f"Script    = {script.options.script_path}:\n")
-            Log.log(f"Task      = '{task.config.name}' : '{task.config.desc}'\n")
+            Log.log(f"Script    = {script.script_path}:\n")
+            Log.log(f"Task      = '{config.name}' : '{config.desc}'\n")
             Log.log(f"os.getcwd = {os.getcwd()}\n")
-            Log.log(f"task cwd  = {task.config.task_cwd}\n")
-            Log.log(f"command   = {task.config.command}\n")
+            Log.log(f"task cwd  = {config.task_cwd}\n")
+            Log.log(f"command   = {config.command}\n")
             if ex:
                 Log.log_exception(ex)
             Log.log(task.dump_stdout())
@@ -2163,7 +2277,7 @@ class Tracer:
         self.color = None
         self.context = context
         self.result = None
-        self.trace = Log.log_options.log_trace
+        self.trace = Log.log_trace
 
         #if len(self.name) > 40:
         #    self.name = self.name[:34] + "<snip>"
@@ -2228,97 +2342,88 @@ class Loader:
         cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
         cls.real_filenames : set[str] = set()
         cls.dedupe : dict[tuple[str, str], Script] = {}
-        cls.loaded_files : list[str] = []
-        cls.all_scripts : list[Script] = []
+        cls.batches : list[Batch] = []
+        #cls.all_repos : dict[str, Repo] = {}
         cls.all_code : dict[str, types.CodeType] = {}
         cls.load_started = False
 
     # ----------------------------------------------------------------------------------------------
 
-    @staticmethod
-    def load_from_file(script_path : str, is_repo : bool, overrides : Dict):
-        script_path = Path.resolve(Onion.wrap(overrides).expand(script_path))
-        with open(script_path, encoding="utf-8") as file:
-            source = file.read()
-            return Loader.load_from_source(script_path, source, is_repo, overrides)
-
-    # ----------------------------------------------------------------------------------------------
-
     @classmethod
-    def load_from_source(cls, script_path, source, is_repo, overrides = None):
-        assert Path.isabs(script_path) and not Utils.is_template2(script_path, Expander.delims)
+    def load(cls, flags : Dict, source = None, code = None):
 
-        parent_script = cv_script.get()
+        is_repo     = Expander.get(flags, "is_repo")
+        script_path = Expander.get(flags, "script_path")
+        script_path = Path.resolve(script_path)
 
-        child_options = Dict(
-            parent_script.options,
-            overrides,
-            script_path = script_path,
-            script_cwd  = Path.dirname(script_path),
-        )
-
-        if is_repo:
-            child_options.repo_root = Path.dirname(script_path)
-
-        with LogLevel.VERBOSE, Colors.ORANGE:
-            type = "repo" if is_repo else "script"
-            Log.log(f"Loading {type} {script_path}\n")
-
-        # ----------------------------------------
+        # --------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
         # build, which they should be in practice.
 
-        config_dump = Dumper.dump_to_str(key = "options", val = child_options)
+        config_dump = Dumper.dump_to_str(key = "flags", val = flags)
         config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
 
-        dedupe_key = (child_options.script_path, config_dump)
-        dedupe = cls.dedupe.get(dedupe_key, None) #type:ignore
-        if dedupe is not None:
-            with LogLevel.VERBOSE, Colors.SKY:
-                Log.log(f"Deduped load of {child_options.script_path}\n")
-            return dedupe
+        dedupe_key = (script_path, config_dump)
+        deduped_script = cls.dedupe.get(dedupe_key, None) #type:ignore
 
-        # ----------------------------------------
+        with LogLevel.VERBOSE:
+            if deduped_script:
+                with Colors.SKY:
+                    Log.log(f"Deduped load of {script_path}\n")
+                return deduped_script
+            elif is_repo:
+                with Colors.TEAL:
+                    Log.log(f"REPO : Loading {script_path}\n")
+            else:
+                with Colors.AQUA:
+                    Log.log(f"SCRIPT : Loading {script_path}\n")
+
+        # --------------------------------
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        module = types.ModuleType(os.path.basename(child_options.script_path))
-        module.__file__ = child_options.script_path
-        module.hancho  = hancho  # type: ignore
-        module.options = child_options # type: ignore
+        parent_repo   = cv_repo.get()
+        parent_build  = cv_batch.get()
 
-        if child_options.script_path in cls.all_code:
-            code = cls.all_code[child_options.script_path]
-        else:
-            code = compile(source, child_options.script_path, "exec", dont_inherit=True)
-            cls.all_code[child_options.script_path] = code
+        delims = Expander.get(flags, "delims")
+        assert Path.isabs(script_path) and not Utils.is_template2(script_path, delims)
 
-        new_script = Script(child_options, module, code)
+        if source is None:
+            with open(script_path, encoding="utf-8") as file:
+                source = file.read()
 
-        # ----------------------------------------
+        if code is None:
+            code = compile(source, script_path, "exec", dont_inherit=True)
+
+        child_script = Script(flags, code)
+
+        if is_repo:
+            parent_repo = Repo(flags, child_script)
+            parent_build.repos[script_path] = parent_repo
+
+        parent_repo.scripts[script_path] = child_script
+
+        # --------------------------------
         # Script created, save to dedupe dict.
 
-        cls.dedupe[dedupe_key] = new_script #type:ignore
-        cls.loaded_files.append(child_options.script_path)
+        cls.dedupe[dedupe_key] = child_script #type:ignore
 
-        # ----------------------------------------
+        # --------------------------------
         # And run the actual script code
 
-        new_script.exec()
+        child_script.exec(parent_repo, parent_build)
 
-        parent_script.children.append(new_script)
-        Loader.all_scripts.append(new_script)
-
-        return new_script
+        return child_script
 
     # ----------------------------------------------------------------------------------------------
+    # FIXME we should probably not be yielding _all_ tasks, it should probably be per-build at the
+    # highest
 
     @classmethod
     def yield_tasks(cls):
-        for script in cls.all_scripts:
-            yield from script.tasks
-
+        for batch in cls.batches:
+            yield from batch.yield_tasks()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2326,16 +2431,14 @@ class Loader:
 
 class Runner:
 
-    default_runner_options = Dict(
-        max_jobs     = os.cpu_count() or 1,
-        max_errors   = 0,
-    )
-
     @classmethod
-    def reset(cls, runner_options):
-        cls.runner_options = cls.default_runner_options.fill(runner_options)
+    def reset(cls, flags):
+        cls.flags = flags
 
-        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.runner_options.max_jobs)
+        cls.max_jobs   = Expander.get(flags, "max_jobs")
+        cls.max_errors = Expander.get(flags, "max_errors")
+
+        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
@@ -2358,8 +2461,8 @@ class Runner:
         if not isinstance(count, int):
             pass
 
-        if count > cls.runner_options.max_jobs: # pragma: no cover
-            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.runner_options.max_jobs}")
+        if count > cls.max_jobs: # pragma: no cover
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.max_jobs}")
         async with cls.core_lock:
             acquired = 0
             try:
@@ -2381,26 +2484,27 @@ class Runner:
 
     @classmethod
     def select_root_tasks(cls):
-        script  = cv_script.get()
+        batch   = cv_batch.get()
+        repo    = cv_repo.get()
 
-        if script.options.build_target:
+        if batch.build_target:
             # Enable all tasks whose name matches the target regex
             # NOTE - We match task.raw_config.name, _not_ the expanded task.config.name.
             # This is because the task _has not initialized yet_, so we have no config.name.
-            target_regex = re.compile(script.options.target)
+            target_regex = re.compile(batch.build_target)
 
             for task in Loader.yield_tasks():
                 if target_regex.search(task.raw_config.name):
                     task.enable_task()
 
-        elif script.options.build_all:
+        elif batch.build_all:
             for task in Loader.yield_tasks():
                 task.enable_task()
 
         else:
             # Enable all tasks that were generated by the top script
             for task in Loader.yield_tasks():
-                if task.script.options.repo_root == script.options.repo_root:
+                if task.repo == repo:
                     task.enable_task()
 
     # ----------------------------------------------------------------------------------------------
@@ -2429,7 +2533,7 @@ class Runner:
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("Running tasks...\n")
 
-        while cls.live_aio_tasks and (cls.tasks_broken + cls.tasks_failed) <= Runner.runner_options.max_errors:
+        while cls.live_aio_tasks and (cls.tasks_broken + cls.tasks_failed) <= Runner.max_errors:
             finished_aio_task = None
 
             try:
@@ -2460,7 +2564,7 @@ class Runner:
                     cls.live_aio_tasks.discard(finished_aio_task)
                 cls.tasks_awaited += 1
 
-        if cls.tasks_broken + cls.tasks_failed > Runner.runner_options.max_errors:
+        if cls.tasks_broken + cls.tasks_failed > Runner.max_errors:
             with LogLevel.ERROR:
                 Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
 
@@ -2503,67 +2607,34 @@ class Runner:
 
 class Main:
 
-    # fmt: off
-
-    hancho_path = __file__
-    hancho_dir  = os.path.dirname(hancho_path)
-    hancho_cwd  = os.getcwd()
-    build_root  = Path.join(hancho_cwd, "build")
-
-    default_hancho_options = Dict(
-        hancho_path  = hancho_path,
-        hancho_dir   = hancho_dir,
-        opt_file     = "hancho.opts",
-
-        script_path  = Path.join(hancho_cwd, "hancho.py"),
-        script_cwd   = hancho_cwd,
-        task_cwd     = hancho_cwd,
-        repo_root    = hancho_cwd,
-
-        build_tag    = "",
-        build_root   = build_root,
-        build_dir    = build_root,
-        build_target = None,
-        build_force  = False,
-        build_all    = False,
-        build_dry    = False,
-        build_strict = True,
-
-        run_tool     = None,
-        job_size     = 1,
-        depformat    = "gcc" if os.name == "posix" else "msvc",
-    )
-
-    # fmt: on
+    flags : abc.Mapping
 
     # ----------------------------------------------------------------------------------------------
     # INIT
 
     @classmethod
     def init(cls, flags):
+        cls.flags = flags
+
         Log.reset(flags)
         Expander.reset(flags)
-
-        hancho.options = Dict(Main.default_hancho_options)
-
-        onion = Onion.wrap(flags)
-
-        flags.script_cwd = Path.abspath(onion.get("script_cwd"))
-        flags.repo_root  = Path.abspath(onion.get("repo_root"))
-
-        hancho.options = cls.default_hancho_options.fill(flags)
-        hancho.flags = flags
-
         Utils.reset()
         Task.reset()
         Loader.reset()
         Runner.reset(flags)
 
+        internal_flags  = Dict(flags, script_path = __file__)
+        internal_script = Script(internal_flags, code = None)
+        internal_repo   = Repo(internal_flags, internal_script)
+        internal_build  = Batch(internal_flags, internal_repo)
 
-        hancho_script = Script(Dict(flags, script_path =__file__), hancho, sys._getframe().f_code)
-        cv_script.set(hancho_script)
+        Loader.batches.append(internal_build)
+        internal_build.repos[__file__] = internal_repo
+        internal_repo.top_script = internal_script
 
-        Loader.all_scripts.append(hancho_script)
+        cv_batch.set(internal_build)
+        cv_repo.set(internal_repo)
+        cv_script.set(internal_script)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2574,27 +2645,23 @@ class Main:
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
         # misinterpreted as a Hancho bug.
 
+        Main.banner_start(
+            Main.flags['script_path'],
+            Main.flags['repo_root'],
+        )
+
         cv_token = None
 
         try:
-            Main.banner_start(
-                hancho.options.script_path,
-                hancho.options.repo_root,
-                hancho.options.opt_file,
-            )
-
-            # LOAD
 
             Loader.load_started = True
+
+            # ------------------------------------
+            # LOAD
+
             time_a = time.perf_counter()
-
-            onion = Onion.wrap(hancho.options)
-
-            hancho.options.script_path = onion.expand(hancho.options.script_path)
-            hancho.options.script_path = Path.resolve(hancho.options.script_path)
-
-            top_script = Loader.load_from_file(hancho.options.script_path, True, Dict())
-
+            top_options = Dict(Main.flags, is_repo = True)
+            top_script = Loader.load(top_options)
             time_b = time.perf_counter()
 
             cv_token = cv_script.set(top_script)
@@ -2602,14 +2669,12 @@ class Main:
             with LogLevel.VERBOSE, Colors.BLUE:
                 Log.log(f"Loading scripts took {time_b - time_a} seconds\n")
 
+            # ------------------------------------
             # BUILD
+
             time_a = time.perf_counter()
-
-            if top_script.options.run_tool:
-                result = Runner.run_tool(top_script.options.run_tool)
-            else:
-                result = Main.build()
-
+            run_tool = Main.flags['run_tool']
+            result = Runner.run_tool(run_tool) if run_tool else Main.build()
             time_b = time.perf_counter()
 
             with LogLevel.VERBOSE, Colors.GREEN:
@@ -2635,7 +2700,7 @@ class Main:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def parse_flags(cls, argv):
+    def parse_flags(cls, argv, *args, **kwargs) -> abc.Mapping:
 
         desc = textwrap.dedent("""
         ================================================================================
@@ -2654,24 +2719,39 @@ class Main:
 
         # Flags
         # fmt: off
-        parser.add_argument(      "--hancho_dir",   metavar = "(path)",    type=str,       help="Override the directory that we think hancho.py is in.")
+
+        # global
         parser.add_argument('-o', "--opt_file",     metavar = "(path)",    type=str,       help="File containing a Python literal that will be used as additional options")
-        parser.add_argument('-s', "--script_path",  metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
-        parser.add_argument(      "--script_cwd",   metavar = "(path)",    type=str.strip, help="Change to this directory before running the top build script.")
-        parser.add_argument(      "--task_cwd",     metavar = "(path)",    type=str.strip, help="Directory to run commands in.")
-        parser.add_argument('-r', "--repo_root",    metavar = "(path)",    type=str.strip, help="The location of the repo we're building.")
         parser.add_argument(      "--run_tool",     metavar = "(tool)",    type=str.strip, help="Run a subtool.")
-        parser.add_argument(      "--max_errors",   metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument('-j', "--max_jobs",     metavar = "(count)",   type=int,       help="Run a maximum of N jobs in parallel.")
+        parser.add_argument(      "--delims",       metavar = "(delims)",  type=str.strip, help="What characters are used as macro delimiters. Defaults to '{}«»' (don't forget the single quotes)")
         parser.add_argument(      "--depformat",    metavar = "(format)",  type=str.strip, help="Dependency file format (gcc or msvc)")
+        parser.add_argument(      "--job_size",     metavar = "(path)",    type=str.strip, help="The default number of jobs (cores) to allocate to each task.")
+
+        # runner
+        parser.add_argument(      "--max_errors",   metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
+        parser.add_argument('-j', "--max_jobs",     metavar = "(count)",   type=int,       help="Run a maximum of N jobs in parallel (default=cpu_count).")
+
+        # build ok
         parser.add_argument(      "--build_tag",    metavar = "(name)",    type=str.strip, help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
-        parser.add_argument(      "--build_root",   metavar = "(path)",    type=str.strip, help="Directory to put build artifacts in.")
-        parser.add_argument(      "--build_dir",    metavar = "(path)",    type=str.strip, help="Per-task build artifact directory. Directory to put build artifacts in.")
         parser.add_argument('-t', "--build_target", metavar = "(name)",    type=str.strip, help="A regex that selects the targets to build. Defaults to all targets in the top repo.")
         parser.add_argument(      "--build_force",  action = bool_opt,                     help="Rebuild targets even if they're clean.")
         parser.add_argument(      "--build_all",    action = bool_opt,                     help="Build absolutely everything in all build scripts loaded.")
         parser.add_argument(      "--build_dry",    action = bool_opt,                     help="Dry run - Do everything except actually run commands.")
         parser.add_argument(      "--build_strict", action = bool_opt,                     help="Strict mode, slightly more error checking to catch footguns.")
+
+        # repo ok
+        parser.add_argument('-r', "--repo_root",    metavar = "(path)",    type=str.strip, help="The location of the repo we're building.")
+        parser.add_argument(      "--build_root",   metavar = "(path)",    type=str.strip, help="Directory to put build artifacts in.")
+        parser.add_argument(      "--comp_db_path", metavar = "(path)",    type=str.strip, help="Where to put the compilation database (default = {build_dir}/compile_commands.json)")
+        parser.add_argument(      "--stat_db_path", metavar = "(path)",    type=str.strip, help="Where to put the stat database (default = {build_dir}/hancho.json)")
+
+        # script ok
+        parser.add_argument('-s', "--script_path",  metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
+        parser.add_argument(      "--script_cwd",   metavar = "(path)",    type=str.strip, help="Change to this directory before running the top build script.")
+        parser.add_argument(      "--task_cwd",     metavar = "(path)",    type=str.strip, help="Directory to run commands in.")
+        parser.add_argument(      "--build_dir",    metavar = "(path)",    type=str.strip, help="Per-task build artifact directory. Directory to put build artifacts in.")
+
+        # log ok
         parser.add_argument(      "--log_level",    choices = verbosities,                 help="Manually select verbosity level. 'quiet' = none, 'trace' = maximal spam")
         parser.add_argument('-Q', "--log_quiet",    action = bool_opt,                     help="(same as --log_level=quiet)")
         parser.add_argument('-V', "--log_verbose",  action = bool_opt,                     help="(same as --log_level=verbose)")
@@ -2686,25 +2766,27 @@ class Main:
         raw_flags = vars(raw_flags)
         raw_flags = {k:v for k, v in raw_flags.items() if v is not None}
 
-        flags = Dict(
-            Main.default_hancho_options,
-            Runner.default_runner_options,
-            Script.default_script_options,
-            Log.default_log_options,
-            raw_flags
-        )
+        # ------------------------------------
 
-        opt_file = Path.abspath(flags.opt_file)
-
-        if os.path.exists(opt_file):
+        opt_file = raw_flags.get("opt_file")
+        if opt_file and os.path.exists(opt_file):
             with open(opt_file) as f:
                 opts = json.load(f)
-                flags.merge(opts)
+                raw_flags.update(opts)
 
+        delims = raw_flags.get("delims")
+        if delims:
+            new_delims = {}
+            for i in range(0, len(delims), 2):
+                new_delims[delims[i]] = delims[i+1]
+            raw_flags['delims'] = new_delims
+
+        # ------------------------------------
         # Unrecognized command line parameters also become config fields if they are flag-like.
         # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
         # become bools (regardless of capitalization), everything else becomes a string.
 
+        mystery_flags = {}
         for chunk in unrecognized:
             if match := re.match(r"--([^=]+)=(.+)", chunk):
                 key = match.group(1)
@@ -2718,23 +2800,74 @@ class Main:
                     with suppress(NameError, ValueError, SyntaxError):
                         val = ast.literal_eval(val)
 
-                flags[key] = val
+                mystery_flags[key] = val
 
-        return flags
+        # ------------------------------------
+
+        # fmt: off
+
+        # Delims: Normally you'd use '{' and '}' as macro delimiters, but you can also use '«' and '»'.
+        # On Linux, you can type those using control-shift-u a b <enter> and control-shift-u b b <enter>
+        # On Windows, use alt-0171 and alt-0187 with the numbers being typed on the numpad while numlock
+        # is on.
+
+        defaults = types.MappingProxyType(Dict(
+            hancho_path  = __file__,
+            hancho_dir   = os.path.dirname(__file__),
+            opt_file     = None,
+            run_tool     = None,
+            delims       = {"{": "}", "«": "»"},
+            depformat    = "gcc" if os.name == "posix" else "msvc",
+            job_size     = 1,
+            max_errors   = 0,
+            max_jobs     = os.cpu_count() or 1,
+            build_tag    = "",
+            build_target = None,
+            build_force  = False,
+            build_all    = False,
+            build_dry    = False,
+            build_strict = True,
+            repo_root    = "{dirname(abspath(script_path))}",
+            build_root   = "{repo_root}/build",
+            comp_db_path = "{build_root}/compile_commands.json",
+            stat_db_path = "{build_root}/hancho.json",
+            script_path  = "build.hancho",
+            script_cwd   = "{repo_root}",
+            task_cwd     = "{repo_root}",
+            build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
+            log_level    = LogLevel.NORMAL,
+            log_quiet    = False,
+            log_verbose  = False,
+            log_debug    = False,
+            log_trace    = False,
+            log_wrap     = False,
+            log_color    = True,
+            log_time     = True,
+        ))
+
+        # fmt: on
+
+        flags = Dict(defaults)
+        flags.merge(raw_flags)
+        flags.merge(mystery_flags)
+        flags.merge(*args, **kwargs)
+
+        return types.MappingProxyType(flags)
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def banner_start(cls, script_path, repo_root, opt_file):
+    def banner_start(cls, script_path, repo_root):
         with LogLevel.VERBOSE, Colors.LIME:
             Log.log(f"Command line : {" ".join(sys.argv)}\n")
             Log.log(f"Script path  : {script_path}\n")
             Log.log(f"Repo root    : {repo_root}\n")
-            Log.log(f"Opt file     : {opt_file}\n")
-            if not os.path.exists(opt_file):
-                Log.log("Opt file not found!\n")
+            #Log.log(f"Opt file     : {opt_file}")
+            #if opt_file and not os.path.exists(opt_file):
+            #    Log.log(" (not found!)")
+            Log.log("\n")
 
-            if Log.log_options.log_trace:
+            if Log.log_trace:
                 Log.log("Trace mode on\n")
             if Log.log_level_out >= LogLevel.DEBUG:
                 Log.log("Debug mode on\n")
@@ -2751,11 +2884,11 @@ class Main:
         # get the old path), but _before_ we build any tasks.
 
         time_a = time.perf_counter()
-        for script in Loader.all_scripts:
-            script.old_stat_db = script.load_stat_db()
+        for batch in Loader.batches:
+            for repo in batch.repos.values():
+                repo.load_stat_db()
         time_b = time.perf_counter()
 
-        #print("pre_build done")
         with LogLevel.DEBUG, Colors.BLUE:
             Log.log(f"Loading stats took {time_b - time_a:8.6f} seconds\n")
 
@@ -2773,11 +2906,11 @@ class Main:
         # ------------------------------------
 
         time_a = time.perf_counter()
-        for script in Loader.all_scripts:
-            script.save_stat_db()
+        for batch in Loader.batches:
+            for repo in batch.repos.values():
+                repo.save_stat_db()
         time_b = time.perf_counter()
 
-        #print("post_build done")
         with LogLevel.DEBUG, Colors.BLUE:
             Log.log(f"Saving stats took {time_b - time_a:8.6f} seconds\n")
 
@@ -2813,12 +2946,13 @@ class Main:
                 Log.log("BUILD CLEAN\n")
 
         with LogLevel.DEBUG, Colors.BLUE:
-            for script in Loader.all_scripts:
-                Log.log(f"Stats for {script.options.script_path}\n")
-                Log.indent(Colors.BLUE)
-                for k, v in script.reasons.items():
-                    Log.log(f"Rebuild reasons {k:13} = {v}\n")
-                Log.dedent()
+            for batch in Loader.batches:
+                for repo in batch.repos.values():
+                    Log.log(f"Stats for {repo.repo_root}\n")
+                    Log.indent(Colors.BLUE)
+                    for k, v in repo.reasons.items():
+                        Log.log(f"Rebuild reasons {k:13} = {v}\n")
+                    Log.dedent()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2828,6 +2962,7 @@ class Main:
 # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 
 path     = Path
+abspath  = Path.abspath
 basename = Path.basename
 swapext  = Path.swapext
 resolve  = Path.resolve
@@ -2842,16 +2977,16 @@ def build():
     return Main.build()
 
 def load(script_path, *args, **kwargs):
-    script = Loader.load_from_file(script_path, False, Dict(*args, kwargs))
-    module = script.module
-    return module
+    parent = cv_script.get()
+    flags = Dict(parent.flags, *args, kwargs, script_path = script_path, is_repo = False)
+    script = Loader.load(flags)
+    return script.module
 
 def repo(script_path, *args, **kwargs):
-    if "myrepo" in script_path:
-        pass
-    script = Loader.load_from_file(script_path, True, Dict(*args, kwargs))
-    module = script.module
-    return module
+    parent = cv_script.get()
+    flags = Dict(parent.flags, *args, kwargs, script_path = script_path, is_repo = True)
+    script = Loader.load(flags)
+    return script.module
 
 # ----------------------------------------
 
@@ -2908,29 +3043,15 @@ def earlyout(message = ""):
 # ----------------------------------------
 
 def init(*args, **kwargs):
-    flags = Main.parse_flags([])
-    flags.merge(*args, kwargs)
+    flags = Main.parse_flags([], *args, **kwargs)
     Main.init(flags)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region __main__
 
-# Our expander expects there to always be a script context, but when we start up there isn't one.
-# Create a dummy one so that the "there is always a script context" invariant is true.
-
-cv_script.set(
-    Script(
-        options = Dict(
-            Main.default_hancho_options,
-            Runner.default_runner_options,
-            Script.default_script_options,
-            Log.default_log_options
-        ),
-        module = hancho,
-        code = sys._getframe().f_code
-    )
-)
+hancho = sys.modules[__name__]
+sys.modules["hancho"] = hancho
 
 def _start():
     if __name__ == "__main__":

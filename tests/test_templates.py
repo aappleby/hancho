@@ -246,7 +246,10 @@ class TestTemplates(unittest.TestCase):
         import hancho
         foo_in_script = [1, 2, 3]
         """)
-        script = hancho.Loader.load_from_source(__file__, source, False, Dict(blarp = 1234))
+
+        code = compile(source, __file__, "exec", dont_inherit=True)
+
+        script = hancho.Loader.load_from_code(Dict(blarp = 1234, is_repo = False), code)
         token = hancho.cv_script.set(script)
 
         # Expanding 'Task' should read from hancho.py

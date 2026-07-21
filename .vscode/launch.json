@@ -28,8 +28,8 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-T", "--flooper=asdf"],
-      //"args"    : ["--trace"],
+      "args"    : ["-D"],
+      //"args"    : ["--trace"], "-T",
       "preLaunchTask": "Wipe build",
     },
 
