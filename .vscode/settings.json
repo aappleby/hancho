@@ -9,5 +9,12 @@
     "test_*.py"
   ],
   "python.testing.pytestEnabled": false,
-  "python.testing.unittestEnabled": true
+  "python.testing.unittestEnabled": true,
+  "python-envs.pythonProjects": [
+    {
+      "path": ".",
+      "envManager": "ms-python.python:system",
+      "packageManager": "ms-python.python:pip"
+    }
+  ]
 }

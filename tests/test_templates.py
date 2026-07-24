@@ -17,9 +17,7 @@ from hancho import Dict, Expander
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.Log.reset(hancho.Main.parse_flags([]))
     hancho.init(verbosity = "quiet")
-
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
@@ -249,20 +247,24 @@ class TestTemplates(unittest.TestCase):
 
         code = compile(source, __file__, "exec", dont_inherit=True)
 
-        script = hancho.Loader.load_from_code(Dict(blarp = 1234, is_repo = False), code)
-        token = hancho.cv_script.set(script)
+        #def load2(cls, script_path, flags : Dict, source = None, code = None) -> Script:
 
-        # Expanding 'Task' should read from hancho.py
-        self.assertEqual(hancho.Task, Dict().expand2("{Task}"))
+        new_flags = Dict(hancho.ctx.flags, blarp = 1234, is_repo = False)
 
-        # Expanding 'blarp' should read from the options passed into the script
-        self.assertEqual(1234, Dict().expand2("{blarp}"))
+        new_script = hancho.Loader.load2("fake_script.hancho", new_flags, source = None, code = code)
 
-        # Expanding 'foo_in_script' should read from the script module...
-        self.assertEqual([1, 2, 3], Dict().expand2("{foo_in_script}"))
+        with hancho.ctx.set(Dict(hancho.ctx.get(), flags = new_flags, script = new_script)):
+            # Expanding 'Task' should read from hancho.py
+            self.assertEqual(hancho.Task, Dict().expand2("{Task}"))
+
+            # Expanding 'blarp' should read from the options passed into the script
+            self.assertEqual(1234, Dict().expand2("{blarp}"))
+
+            # Expanding 'foo_in_script' should read from the script module...
+            self.assertEqual([1, 2, 3], Dict().expand2("{foo_in_script}"))
 
         # but not after we've left the script context.
-        hancho.cv_script.reset(token)
+
         self.assertEqual("{foo_in_script}", Dict().expand2("{foo_in_script}"))
         self.assertEqual("{blarp}", Dict().expand2("{blarp}"))
 
