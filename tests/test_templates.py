@@ -251,9 +251,17 @@ class TestTemplates(unittest.TestCase):
 
         new_flags = Dict(hancho.ctx.flags, blarp = 1234, is_repo = False)
 
-        new_script = hancho.Loader.load2("fake_script.hancho", new_flags, source = None, code = code)
+        old_ctx = hancho.ctx.get()
+        new_ctx = hancho.Context(
+            flags=new_flags, batch=old_ctx.batch, repo=old_ctx.repo, script=old_ctx.script
+        )
 
-        with hancho.ctx.set(Dict(hancho.ctx.get(), flags = new_flags, script = new_script)):
+        with hancho.ctx.set(new_ctx):
+            script_path = os.path.join(os.getcwd(), "fake_script.hancho")
+            script_cwd  = os.getcwd()
+
+            hancho.ctx.script = hancho.load(script_path, script_cwd, new_flags, code = code)
+
             # Expanding 'Task' should read from hancho.py
             self.assertEqual(hancho.Task, Dict().expand2("{Task}"))
 
@@ -270,14 +278,20 @@ class TestTemplates(unittest.TestCase):
 
     def test_alternate_delims(self):
         d = hancho.Dict(foo = "bar")
-        o1 = hancho.Onion(d, delims={'{':'}'})
-        o2 = hancho.Onion(d, delims={'«':'»'})
+        o1 = hancho.Onion(d, delims='{}')
+        o2 = hancho.Onion(d, delims='«»')
 
         self.assertEqual("bar",   o1.expand("{foo}"))
+        self.assertEqual("{foo{", o2.expand("{foo{"))
+        self.assertEqual("}foo}", o2.expand("}foo}"))
+        self.assertEqual("}foo{", o2.expand("}foo{"))
         self.assertEqual("«foo»", o1.expand("«foo»"))
 
-        self.assertEqual("{foo}", o2.expand("{foo}"))
         self.assertEqual("bar",   o2.expand("«foo»"))
+        self.assertEqual("«foo«", o2.expand("«foo«"))
+        self.assertEqual("»foo»", o2.expand("»foo»"))
+        self.assertEqual("»foo«", o2.expand("»foo«"))
+        self.assertEqual("{foo}", o2.expand("{foo}"))
 
 ####################################################################################################
 

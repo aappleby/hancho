@@ -40,6 +40,7 @@ import types
 import zlib  # for crc32, adler32
 from collections import Counter, abc
 from contextlib import chdir, contextmanager, suppress
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import wraps
 from inspect import isawaitable
@@ -146,7 +147,10 @@ class Dict(dict):
         return Dict(self, other)
 
     def __repr__(self):
-        return Dumper.dump_to_str(key = None, val = self)
+        return self.__dump__(Dumper.Opts())
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str(None, self.__dict__, opts)
 
     def __getitem__(self, key : str):
         return dict.__getitem__(self, key)
@@ -154,13 +158,13 @@ class Dict(dict):
     def __setitem__(self, key : str, val : Any):
         dict.__setitem__(self, key, val)
 
-    def expand(self, template):
+    def expand2(self, template):
         with Tracer(self, "dict.expand", template) as trace:
-            result = Expander._expand(template, self)
+            result = Expander.expand(self, template)
             trace.save_result(result)
             return result
 
-    def eval(self, expr):
+    def eval2(self, expr):
         return self.expand("{" + expr + "}")
 
 
@@ -170,242 +174,48 @@ class Tool(Dict):
 
 # endregion
 # --------------------------------------------------------------------------------------------------
-# region CVProxy
+# region Context/ContextProxy
+# Helper that just wraps "contextvar.get().foo" so you can do "contextvar.foo".
 
-class CVProxy:
+@dataclass
+class Context:
+    flags  : Dict | None
+    batch  : Batch | None
+    repo   : Repo | None
+    script : Script | None
+
+    def __repr__(self):
+        return self.__dump__(Dumper.Opts())
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str("", self.__dict__, opts)
+
+
+class ContextProxy:
     def __init__(self):
         object.__setattr__(self, "_cv", contextvars.ContextVar("ctx", default = None))
 
-    def __getattr__(self, item):
-        return getattr(self.get(), item)
+    def __getattr__(self, key):
+        #return getattr(self.get(), key)
+        return getattr(self._cv.get(), key)
 
-    def __setattr__(self, item, value):
-        setattr(self.get(), item, value)
+    def __setattr__(self, key, val):
+        setattr(self._cv.get(), key, val)
+        #setattr(self.get(), item, value)
 
-    def get(self):
+    def get(self) -> Context:
         return self._cv.get()
 
-    def set(self, new_ctx):
+    def set(self, new_ctx : Context):
         return self._cv.set(new_ctx)
 
-    def update(self, *args, **kwargs):
-        return self.set(Dict(self.get(), *args, kwargs))
-
-    def reset(self, token):
+    @contextmanager
+    def enter(self, new_ctx : Context):
+        token = self._cv.set(new_ctx)
+        yield
         self._cv.reset(token)
 
-ctx = CVProxy()
-
-# endregion
-# --------------------------------------------------------------------------------------------------
-# region Expander
-# Hancho's text expansion system.
-#
-# WARNING - Again, Hancho is NOT A SANDBOX. Expander is the part that evaluates the arbitrary
-# Python code that then formats your drive and spams your grandmother.
-#
-# Expander works similarly to Python's F-strings, but with quite a bit more power. The code here
-# requires some explanation.
-#
-# We do not necessarily know in advance how the users will nest strings, macros, callbacks,
-# etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we always
-# end up with flat strings.
-#
-# The result of this is that the functions here are mutually recursive in a way that can lead to
-# confusing callstacks, but that should handle every possible case of stuff inside other stuff.
-#
-# Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are not
-# expandable by that dict. This allows nested dicts to contain templates that can only be expanded
-# an outer dict, and things will still Just Work.
-
-class Expander:
-    """
-    This class is used to fetch and expand text templates from a dict during text expansion.
-    It allows for both dictionary-like access (using `expander[key]`) and attribute-like access
-    (using `expander.key`), making it versatile for accessing template variables and methods.
-    """
-
-    # ----------------------------------------------------------------------------------------------
-    # Hancho's template expansions can cause infinite loops, so we need some simple complexity
-    # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
-    # up the whole Python stack.
-    # If you do weird things like load scripts from inside macros and you hit MAX_STEPS, that's a
-    # you problem.
-    #
-    # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
-    # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
-
-    cv_depth = contextvars.ContextVar("depth", default = 0)
-    cv_evals = contextvars.ContextVar("evals", default = 0)
-    MAX_DEPTH = 30
-    MAX_EVALS = 300
-
-    @classmethod
-    def reset(cls):
-        pass
-
-    @classmethod
-    def get(cls, context : abc.Mapping, key : str) -> Any:
-        return cls._expand("{" + key + "}", context)
-
-    @classmethod
-    def _expand(cls, variant : Any, context : abc.Mapping) -> Any:
-        """
-        The outer expand function handles setting/resetting the depth/evals-check vars and repeats
-        expansion until we reach a non-string or the string stops changing.
-        """
-
-        if variant == sentinel:
-            raise AssertionError("Tried to expand a sentinel value")
-
-        # Recurse early if we're trying to expand a list of strings.
-        # This ensures that every template gets its own independent depth and evals check.
-        if isinstance(variant, list):
-            result = []
-            for v in variant:
-                # Remember how much budget was spent.
-                saved = Expander.cv_evals.get()
-                # Expand the list element.
-                result.append(Expander._expand(v, context))
-                # Restore the budget so the next string in the list gets it.
-                Expander.cv_evals.set(saved)
-            return result
-
-        if isinstance(variant, dict):
-            result = {}
-            for k, v in variant.items():
-                # Remember how much budget was spent.
-                saved = Expander.cv_evals.get()
-                # Expand the list element.
-                result[k] = Expander._expand(v, context)
-                # Restore the budget so the next string in the list gets it.
-                Expander.cv_evals.set(saved)
-            return result
-
-        # Bail out early if our variant isn't a string.
-        if not isinstance(variant, str):
-            return variant
-
-        if ctx.script:
-            onion = Onion(hancho.__dict__, ctx.flags, ctx.script.module.__dict__, context)
-        else:
-            onion = Onion(hancho.__dict__, ctx.flags, context)
-
-        template = cast(str, variant)
-        delims = onion.raw_get("delims")
-
-        # Bail out if we've gone through too many levels of recursion.
-        depth = Expander.cv_depth.get()
-        if depth >= Expander.MAX_DEPTH:
-            raise RecursionError(f"Expansion failed to terminate after {depth} recursions: {template!r}")
-        Expander.cv_depth.set(depth + 1)
-
-        # OK, we have a string that could be a template. Keep expanding it until it stops changing
-        # or it's no longer a template.
-        try:
-            old_template = None
-            while old_template != template and Utils.is_template2(template, delims):
-                old_template = template
-                with Tracer(onion, "expand", template) as trace:
-                    template = Expander._expand_pass(template, onion, delims)
-                    trace.save_result(template)
-        finally:
-            # And then reset the depth/evals check vars when we're done.
-            if depth == 0:
-                Expander.cv_evals.set(0)
-            Expander.cv_depth.set(depth)
-
-        return template
-
-    # ----------------------------------------------------------------------------------------------
-    # IMPORTANT IMPORTANT IMPORTANT
-    # If you can't eval a macro, you return it unchanged.
-    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++ - we don't
-    # fail on expansion failure so we can retry somewhere/somewhen else.
-
-    @classmethod
-    def _expand_pass(cls, template : str, onion : Onion, delims : dict[str, str]):
-        """This inner expand function does one split-expand-rejoin pass on the template string."""
-
-        # Split the string into literal and macro blocks.
-        blocks = []
-        Expander._split_template(template, blocks, delims)
-
-        # Expand all macro blocks.
-        for i, block in enumerate(blocks):
-
-            # Skip literal blocks.
-            if len(block) < 2 or block[0] not in delims or block[-1] not in delims[block[0]]:
-                continue
-
-            # Bail out if we've taken too many expansion steps already.
-            if (steps := Expander.cv_evals.get()) >= Expander.MAX_EVALS:
-                raise RecursionError(f"Expansion failed to terminate after {steps} evals: '{template!r}'")
-            Expander.cv_evals.set(steps + 1)
-
-            # Otherwise try and expand the macro. Failing is OK.
-            # This should be the _only_ try/except block in the expansion code.
-
-            try:
-                with Tracer(onion, "eval", block) as trace:
-                    result = eval(block[1:-1], {}, onion)
-                    trace.save_result(result)
-
-                # If there was only one block in the list, we're done early.
-                if len(blocks) == 1:
-                    return result
-
-                blocks[i] = Utils.stringify(result)
-
-            # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
-            # callers. As of Python 3.11, this includes asyncio.CancelledError.
-            except RecursionError:
-                raise
-            except Exception as _:
-                # Do NOT print stuff here or it'll spam like mad
-                #traceback.print_exc()
-                pass
-
-        # Otherwise we stringify everything and join the blocks back together.
-        return "".join(blocks)
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def _split_template(cls, text : str, out : list[str], delims):
-        """
-        Extracts all innermost single-brace-delimited spans from a block of text and produces a
-        list of string literals and macros. Escaped braces don't count as delimiters.
-        """
-        assert isinstance(text, str)
-
-        rdelim = ""
-        cursor = 0
-        lbrace = -1
-        escaped = False
-        chunk_count = 0
-        for i, c in enumerate(text):
-            if escaped:
-                escaped = False
-            elif c == '\\':
-                escaped = True
-            elif c in delims:
-                lbrace = i
-                rdelim = delims[c]
-            elif c in rdelim and lbrace >= 0:
-                if cursor < lbrace:
-                    out.append(text[cursor:lbrace])
-                    chunk_count += 1
-                out.append(text[lbrace:i+1])
-                chunk_count += 1
-                cursor = i + 1
-                lbrace = -1
-                rdelim = ""
-
-        if cursor < len(text):
-            out.append(text[cursor:])
-            chunk_count += 1
-        return chunk_count
+ctx = ContextProxy()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -436,6 +246,8 @@ class Onion(abc.Mapping):
 
         self._layers : list[abc.Mapping] = []
         for val in args:
+            if val is None:
+                continue
             if isinstance(val, Onion):
                 self._layers.extend(val._layers)
             elif isinstance(val, abc.Mapping):
@@ -446,22 +258,13 @@ class Onion(abc.Mapping):
         if len(kwargs):
             self._layers.append(kwargs)
 
-#    @classmethod
-#    def _wrap(cls, *args, **kwargs):
-#        """
-#        Wrap the given dict so that when we expand things in it the macros can refer to stuff in
-#        hancho or the script module that created it.
-#        """
-#        script = cv_script.get()
-#
-#        onion = Onion(
-#            hancho.__dict__,
-#            ctx.flags,
-#            ctx.script.module.__dict__,
-#            *args,
-#            **kwargs
-#        )
-#        return onion
+    @classmethod
+    def wrap(cls, *args, **kwargs):
+        if ctx.script:
+            result = Onion(hancho.__dict__, ctx.flags, ctx.script.module.__dict__, *args, **kwargs)
+        else:
+            result = Onion(hancho.__dict__, ctx.flags, *args, **kwargs)
+        return result
 
     def __getattr__(self, key : str):
         try:
@@ -484,7 +287,10 @@ class Onion(abc.Mapping):
         return len(set().union(*self._layers))
 
     def __repr__(self):
-        return Dumper.dump_to_str(key = None, val = self)
+        return self.__dump__(Dumper.Opts())
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str(None, self, opts)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
@@ -504,7 +310,7 @@ class Onion(abc.Mapping):
                     if val is None:
                         saw_a_none = True
                     elif not isinstance(val, abc.Mapping):
-                        result = Expander._expand(val, self)
+                        result = Expander.expand(self, val)
                         trace.save_result(result)
                         return result
 
@@ -543,17 +349,140 @@ class Onion(abc.Mapping):
 
         return default
 
-    def expand(self, template):
-        with Tracer(self, "expand", template) as trace:
-            result = Expander._expand(template, self)
-            trace.save_result(result)
-            return result
+#    def expand(self, template):
+#        result = Expander._expand2(self, template)
+#        trace.save_result(result)
+#        return result
 
 #endregion
+# --------------------------------------------------------------------------------------------------
+# region Expander
+
+class Expander:
+
+    class Literal(str):
+        pass
+
+    class Macro(str):
+        pass
+
+    class Expr(str):
+        pass
+
+    cv_depth = contextvars.ContextVar("depth", default = 0)
+    cv_evals = contextvars.ContextVar("evals", default = 0)
+    MAX_DEPTH = 30
+    MAX_EVALS = 300
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def expand(cls, context : abc.Mapping, variant : Any):
+        if not isinstance(context, Onion):
+            context = Onion.wrap(context)
+        delims = ctx.flags['delims'] if ctx.flags else "{}"
+        return cls._expand_variant(context, delims, variant)
+
+    @classmethod
+    def eval(cls, expr : str, *args, **kwargs):
+        return eval(expr, {}, Onion.wrap(ctx.flags, *args, **kwargs))
+
+    # ----------------------------------------------------------------------------------------------
+
+    @classmethod
+    def _expand_variant(cls, onion : Onion, delims : str, variant : Any) -> Any:
+        if variant == sentinel:
+            raise AssertionError("Tried to expand a sentinel value")
+        elif isinstance(variant, list):
+            return [cls._expand_variant(onion, delims, v) for v in variant]
+        elif isinstance(variant, dict):
+            return {k: cls._expand_variant(onion, delims, v) for k, v in variant.items()}
+        elif isinstance(variant, str):
+            return cls._expand_text(onion, delims, variant)
+        else:
+            return variant
+
+    @classmethod
+    def _expand_text(cls, onion : Onion, delims : str, text : str) -> Any:
+        old_text = ""
+
+        while old_text != text:
+            blocks = []
+            cls._split_text(text, delims, blocks)
+
+            if len(blocks) == 0:
+                return text
+
+            if len(blocks) == 1:
+                return cls._expand_block(onion, blocks[0])
+
+            for i in range(len(blocks)):
+                if isinstance(blocks[i], cls.Macro):
+                    blocks[i] = cls._expand_block(onion, blocks[i])
+                    blocks[i] = Utils.stringify(blocks[i])
+
+            old_text = text
+            text = "".join(blocks)
+
+        return text
+
+    @classmethod
+    def _expand_block(cls, onion : Onion, block : str):
+        if not isinstance(block, cls.Macro):
+            return block
+
+        try:
+            return eval(block[1:-1], {}, onion)
+        except RecursionError:
+            raise
+        except Exception as _:
+            return block
+
+    @classmethod
+    def _split_text(cls, text : str, delims : str, out : list[str]):
+        assert isinstance(text, str)
+
+        rdelim = ""
+        cursor = 0
+        lbrace = -1
+        escaped = False
+        chunk_count = 0
+        for i, c in enumerate(text):
+            if escaped:
+                escaped = False
+            elif c == '\\':
+                escaped = True
+            elif ((pos := delims.find(c)) != -1) and (pos & 1 == 0):
+                lbrace = i
+                rdelim = delims[pos+1]
+            elif c == rdelim and lbrace >= 0:
+                if cursor < lbrace:
+                    out.append(cls.Literal(text[cursor:lbrace]))
+                    chunk_count += 1
+                out.append(cls.Macro(text[lbrace:i+1]))
+                chunk_count += 1
+                cursor = i + 1
+                lbrace = -1
+                rdelim = ""
+
+        if cursor < len(text):
+            out.append(cls.Literal(text[cursor:]))
+            chunk_count += 1
+        return chunk_count
+
+# endregion
 # --------------------------------------------------------------------------------------------------
 # region Dumper
 
 class Dumper:
+    """
+    Hancho's pretty-printer for various types. Note that this is also used for script deduping:
+    if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
+    were identical, you should get one copy of the "stuff" script instead of two.
+
+    As long as you're not doing something bizarre with configs or changing the dumper in the
+    middle of a build, the resulting strings should be stable enough to use for deduping.
+    """
 
     # These types don't get dumped because they're not really dumpable.
     opaque_types = {
@@ -563,69 +492,48 @@ class Dumper:
     }
 
     # These types don't need a type annotation when dumped.
-    base_types = (str, bool, int, float, list, tuple, set, dict, bytes, bytearray, range, type(None),
+    base_types = (str, Expander.Literal, Expander.Macro, bool, int, float, list, tuple, set, dict, bytes, bytearray, range, type(None),
                   *opaque_types.keys())
+
+    @dataclass
+    class Opts:
+        indent : int = 0
+        print_id : bool = True
+        color_code : bool = True
+        max_length : int = 80
+        tab : str = "    "
+
+    class LineTooLong(Exception):
+        pass
 
     @classmethod
     def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max_length = 80, tab = "    "):
-        """
-        Hancho's pretty-printer for various types. Note that this is also used for script deduping:
-        if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
-        were identical, you should get one copy of the "stuff" script instead of two.
-
-        As long as you're not doing something bizarre with configs or changing the dumper in the
-        middle of a build, the resulting strings should be stable enough to use for deduping.
-        """
-
-        # Unwrap tasks only if they're at the bottom level of indentation.
-        if isinstance(val, Task) and indent == 0:
-            val = val.__dict__
-
-        return cls._dump_variant_to_str(key, val, indent, print_id, color_code, max_length, tab, memo = {})
+        opts = Dumper.Opts(indent, print_id, color_code, max_length, tab)
+        return cls._dump_to_str(key, val, opts)
 
     @classmethod
-    def _dump_prefix(cls, key, val, print_id, color_code):
-        prefix = ""
-        if key is not None:
-            prefix += str(key)
+    def _dump_to_str(cls, key, val, opts):
+        try:
+            return cls._dump_flat_variant(key, val, opts)
+        except Dumper.LineTooLong:
+            return cls._dump_deep_variant(key, val, opts)
+
+    @classmethod
+    def _dump_prefix(cls, key, val, opts):
+        if not key:
+            return ""
+
+        prefix = str(key)
         if type(val) not in Dumper.base_types:
             if key:
-                prefix += ":"
+                prefix += ": "
             prefix += type(val).__name__
+            if opts.print_id:
+                prefix += "@" + Utils.hex_id(val).upper()[-4:]
+
         if prefix:
             prefix += " = "
         return prefix
-
-    @classmethod
-    def _dump_suffix(cls, val, print_id):
-        if isinstance(val, (str, bool, int, float)) or not print_id:
-            return ""
-        suffix = " @ 0x" + Utils.hex_id(val).upper()[-4:]
-        return suffix
-
-    @classmethod
-    def _dump_scalar(cls, val, color_code):
-        # Non-containers are always emitted on one line. If they overflow, they overflow.
-        if isinstance(val, Task):
-            val = f"<Task '{val.config.name}'>"
-        elif isinstance(val, contextvars.Context):
-            val = "<Context>"
-        elif isinstance(val, types.ModuleType):
-            val = f"<Module {val.__name__}>"
-        elif isinstance(val, types.FunctionType):
-            val = f"<Function {val.__name__}>"
-        elif isinstance(val, argparse.Namespace):
-            val = val.__dict__
-
-        if type(val) in Dumper.opaque_types:
-            return Dumper.opaque_types[type(val)] # type: ignore
-        elif type(val).__repr__ is object.__repr__:
-            # Objects that don't have a custom repr (and a few built-in types) just get printed
-            # as '<object>'
-            return "<object>"
-        else:
-            result = repr(val)
-            return result
 
     @classmethod
     def _unpack_container(cls, val):
@@ -644,65 +552,96 @@ class Dumper:
             raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
 
     @classmethod
-    def _dump_container_to_flat_str(cls, val, print_id, color_code, max_length, tab, memo):
-        ld, items, rd = cls._unpack_container(val)
-        separator = ", "
-        num_separators = len(items) - 1 if len(items) else 0
-        length = len(ld) + (len(separator) * num_separators) + len(rd)
+    def _dump_scalar(cls, val : Any, opts):
+        if isinstance(val, Task):
+            val = f"<Task '{val.config.name}'>"
+        elif isinstance(val, contextvars.Context):
+            val = "<Context>"
+        elif isinstance(val, types.ModuleType):
+            val = f"<Module {val.__name__}>"
+        elif isinstance(val, types.FunctionType):
+            val = f"<Function {val.__name__}>"
+        elif isinstance(val, argparse.Namespace):
+            val = val.__dict__
 
-        chunks = []
-        for k, v in items:
-            prefix = cls._dump_prefix(k, v, print_id, color_code)
-            suffix = cls._dump_suffix(v, print_id)
-
-            chunk = prefix + cls._dump_variant_to_flat_str(v, print_id, color_code, max_length - length - len(prefix), tab, memo) + suffix
-
-            length += len(chunk)
-            if length > max_length:
-                raise ValueError()
-            chunks.append(chunk)
-
-        return ld + ", ".join(chunks) + rd
-
-    @classmethod
-    def _dump_container_to_str(cls, val, indent, print_id, color_code, max_length, tab, memo):
-        ld, items, rd = cls._unpack_container(val)
-        lines = [
-            cls.dump_to_str(k, v, indent + 1, print_id, color_code, max_length - 1, tab)
-            for k, v in items
-        ]
-        return ld + '\n' + ',\n'.join(lines) + '\n' + (tab * indent) + rd
-
-    @classmethod
-    def _dump_variant_to_flat_str(cls, val, print_id, color_code, max_length, tab, memo):
-        if isinstance(val, (dict, list, tuple, set)):
-            return cls._dump_container_to_flat_str(val, print_id, color_code, max_length, tab, memo)
-        elif isinstance(val, Script):
-            return cls._dump_container_to_flat_str(val.__dict__, print_id, color_code, max_length, tab, memo)
+        if hasattr(val, "__dump__"):
+            return val.__dump__(opts)
+        elif type(val) in Dumper.opaque_types:
+            return Dumper.opaque_types[type(val)] # type: ignore
+        elif type(val).__repr__ is object.__repr__:
+            # Objects that don't have a custom repr (and a few built-in types) just get printed
+            # as '<object>'
+            return "<object>"
         else:
-            return cls._dump_scalar(val, color_code)
+            return repr(val)
 
     @classmethod
-    def _dump_variant_to_str(cls, key, val, indent, print_id, color_code, max_length, tab, memo):
-        prefix = (tab * indent) + cls._dump_prefix(key, val, print_id, color_code)
-        suffix = cls._dump_suffix(val, print_id)
+    def _dump_flat_container(cls, val, opts):
+        ld, items, rd = cls._unpack_container(val)
+
+        separator = ", "
+        first = True
+        result = ld
+
+        for k, v in items:
+            child_opts = replace(opts, max_length = opts.max_length - len(result))
+            if not first:
+                result += separator
+            result += cls._dump_to_str(k, v, child_opts)
+
+            if len(result) > opts.max_length:
+                raise Dumper.LineTooLong()
+
+            first = False
+
+        result += rd
+
+        return result
+
+    @classmethod
+    def _dump_deep_container(cls, val, opts):
+        ld, items, rd = cls._unpack_container(val)
+
+        child_opts = replace(
+            opts,
+            indent = opts.indent + 1,
+            max_length = opts.max_length - len(opts.tab)
+        )
+
+        result  = ld + '\n'
+
+        for i, kv in enumerate(items):
+            k, v = (kv[0], kv[1])
+            result += opts.tab * (opts.indent + 1)
+            result += cls._dump_to_str(k, v, child_opts)
+            if i < len(items) - 1:
+                result += ','
+            result += '\n'
+
+        result += (opts.tab * opts.indent) + rd
+
+        return result
+
+    @classmethod
+    def _dump_flat_variant(cls, key, val, opts):
+        prefix = cls._dump_prefix(key, val, opts)
+        opts2 = replace(opts, max_length = opts.max_length - len(prefix))
 
         if isinstance(val, (dict, list, tuple, set, Onion)):
-            val = val
-        elif isinstance(val, Script):
-            # Don't print scripts if they're not at the top of the dump, otherwise our dumps get
-            # massive
-            if indent > 1:
-                return prefix + f"'{val.script_path}'"
-            else:
-                val = val.__dict__
+            return prefix + cls._dump_flat_container(val, opts2)
         else:
-            return prefix + cls._dump_scalar(val, color_code) + suffix
+            return prefix + cls._dump_scalar(val, opts2)
 
-        try:
-            return prefix + cls._dump_container_to_flat_str(val, print_id, color_code, max_length - (len(prefix) + len(suffix)), tab, memo) + suffix
-        except ValueError:
-            return prefix + cls._dump_container_to_str(val, indent, print_id, color_code, max_length, tab, memo) + suffix
+    @classmethod
+    def _dump_deep_variant(cls, key, val, opts):
+        if isinstance(val, (dict, list, tuple, set, Onion)):
+            prefix = cls._dump_prefix(key, val, opts)
+            opts2 = replace(opts, max_length = opts.max_length - len(prefix))
+            return prefix + cls._dump_deep_container(val, opts2)
+        else:
+            prefix = cls._dump_prefix(key, val, opts)
+            opts2 = replace(opts, max_length = opts.max_length - len(prefix))
+            return prefix + cls._dump_scalar(val, opts2)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -955,6 +894,9 @@ class LogLevel(int, Enum):
         Log.log_level_in = self.old_log_level
         return False
 
+    def __bool__(self):
+        return self.value <= Log.log_level_out
+
 # --------------------------------------------------------------------------------------------------
 
 class Colors(int, Enum):
@@ -1005,15 +947,15 @@ class Log:
     log_level_out = LogLevel.NORMAL # log level we want to appear in the log
 
     @classmethod
-    def reset(cls):
-        cls.log_level   = Expander.get(ctx.flags, "log_level")
-        cls.log_quiet   = Expander.get(ctx.flags, "log_quiet")
-        cls.log_verbose = Expander.get(ctx.flags, "log_verbose")
-        cls.log_debug   = Expander.get(ctx.flags, "log_debug")
-        cls.log_trace   = Expander.get(ctx.flags, "log_trace")
-        cls.log_wrap    = Expander.get(ctx.flags, "log_wrap")
-        cls.log_color   = Expander.get(ctx.flags, "log_color")
-        cls.log_time    = Expander.get(ctx.flags, "log_time")
+    def reset(cls, log_flags):
+        cls.log_level   : int  = cast(int,  log_flags["log_level"])
+        cls.log_quiet   : bool = cast(bool, log_flags["log_quiet"])
+        cls.log_verbose : bool = cast(bool, log_flags["log_verbose"])
+        cls.log_debug   : bool = cast(bool, log_flags["log_debug"])
+        cls.log_trace   : bool = cast(bool, log_flags["log_trace"])
+        cls.log_wrap    : bool = cast(bool, log_flags["log_wrap"])
+        cls.log_color   : bool = cast(bool, log_flags["log_color"])
+        cls.log_time    : bool = cast(bool, log_flags["log_time"])
 
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
@@ -1040,8 +982,8 @@ class Log:
         elif cls.log_quiet:
             cls.log_level = LogLevel.QUIET
 
-        cls.log_level_in  = cls.log_level
-        cls.log_level_out = cls.log_level
+        cls.log_level_in  : int = cls.log_level
+        cls.log_level_out : int = cls.log_level
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1320,13 +1262,19 @@ class Path:
 class Batch:
 
     def __init__(self):
-        self.build_tag    = Expander.get(ctx.flags, "build_tag")
-        self.build_target = Expander.get(ctx.flags, "build_target")
-        self.build_all    = Expander.get(ctx.flags, "build_all")
-        self.build_dry    = Expander.get(ctx.flags, "build_dry")
-        self.build_strict = Expander.get(ctx.flags, "build_strict")
+        self.build_tag    = Expander.eval("build_tag")
+        self.build_target = Expander.eval("build_target")
+        self.build_all    = Expander.eval("build_all")
+        self.build_dry    = Expander.eval("build_dry")
+        self.build_strict = Expander.eval("build_strict")
 
-        self.repos : dict[str, Repo]  = {}
+        self.repos : Dict  = Dict()
+
+    def __repr__(self):
+        return self.__dump__(Dumper.Opts())
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str("", self.__dict__, opts)
 
     def yield_tasks(self):
         for r in self.repos.values():
@@ -1340,10 +1288,10 @@ class Batch:
 class Repo:
 
     def __init__(self):
-        self.repo_root    = Expander.get(ctx.flags, "repo_root")
-        self.build_root   = Expander.get(ctx.flags, "build_root")
-        self.comp_db_path = Expander.get(ctx.flags, "comp_db_path")
-        self.stat_db_path = Expander.get(ctx.flags, "stat_db_path")
+        self.repo_root    = Expander.eval("repo_root")
+        self.build_root   = Expander.eval("build_root")
+        self.comp_db_path = Expander.eval("comp_db_path")
+        self.stat_db_path = Expander.eval("stat_db_path")
 
         # Tally up the rebuild reasons for debugging
         self.reasons = Counter()
@@ -1354,6 +1302,9 @@ class Repo:
         self.new_stat_db : Dict = Dict({})
 
         self.scripts : dict[str, Script]  = {}
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str("", self.__dict__, opts)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1532,7 +1483,6 @@ class Repo:
 
         config      = task.config
         reasons     = self.reasons
-        old_stat_db = self.old_stat_db
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -1575,17 +1525,18 @@ class Repo:
 
 class Script:
 
-    def __init__(self, code : types.CodeType | None):
-        self.code        = code
-        self.script_path = Expander.get(ctx.flags, "script_path")
-        self.script_cwd  = Expander.get(ctx.flags, "script_cwd")
+    def __init__(self, script_path, script_cwd, code : types.CodeType | None):
+        assert Path.resolve(script_path)
+        assert Path.resolve(script_cwd)
 
-        self.script_path = Path.resolve(self.script_path)
-        self.script_cwd  = Path.resolve(self.script_cwd)
+        self.script_path = script_path
+        self.script_cwd  = script_cwd
+        self.code        = code
 
         self.module = types.ModuleType(os.path.basename(self.script_path))
         self.module.__file__ = self.script_path
-        self.module.hancho   = hancho  # type: ignore
+        self.module.hancho   = hancho    # type: ignore
+        self.module.flags    = ctx.flags # type: ignore
 
         self.loaded   = False  # true once the script has finished its exec()
         self.tasks    = []     # all tasks created by this script
@@ -1598,7 +1549,9 @@ class Script:
     # ------------------------------------
 
     def exec2(self):
-        if self.loaded or self.code is None:
+        assert not self.loaded
+        if self.code is None:
+            self.loaded = True
             return
         with chdir(self.script_cwd):
             try:
@@ -1615,7 +1568,10 @@ class Script:
     # ----------------------------------------------------------------------------------------------
 
     def __repr__(self):
-        return Dumper.dump_to_str("Script", self.__dict__, print_id = True, color_code = True)
+        return self.__dump__(Dumper.Opts())
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str("", self.__dict__, opts)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1645,17 +1601,13 @@ class Task:
 
         kwargs = types.MappingProxyType(kwargs)
 
-        #self.raw_config = Dict(*args, **kwargs)
+        self.raw_config = Dict(*args, **kwargs)
 
-        # The task's 'cooked' config contains only the mandatory fields needed to run the command,
-        # all fully expanded. It is expected that build scripts will need to read task.(raw_)config
+        # The task's 'cooked' config contains only the mandatory fields needed to run the command.
+        # It is expected that build scripts will need to read task.(raw_)config
         # in order to implement task callbacks, so this field is not underscore-prefixed.
 
-        self.config = Dict(
-            Dict(name=None, desc=None, command=None),
-            *args,
-            kwargs
-        )
+        self.config = Dict()
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -1671,7 +1623,7 @@ class Task:
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self.config) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self.raw_config) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1718,7 +1670,10 @@ class Task:
         return self
 
     def __repr__(self):
-        return Dumper.dump_to_str(key = "Task", val = self)
+        return self.__dump__(Dumper.Opts())
+
+    def __dump__(self, opts):
+        return Dumper._dump_to_str("", self, opts)
 
     # ----------------------------------------------------------------------------------------------
     # Log helper that adds the [ NN/ XX] tag before the log line.
@@ -1855,28 +1810,33 @@ class Task:
 
     def expand_task(self):
         config = self.config
+        raw_config = self.raw_config
+
         with LogLevel.DEBUG:
             self.log("Task config before expand:\n")
-            self.log(str(self.config) + "\n")
-
+            self.log(str(raw_config) + "\n")
 
         # We wrap the task config in an onion and then tack the 'expanded' dict onto it. Then we
         # expand all the mandatory fields into 'expanded', which makes onion lookups during
         # expansion check 'expanded' first to see if it contains an already-expanded copy of the
         # field.
 
-        config.task_cwd    = Expander.get(config, "task_cwd")
-        config.build_force = Expander.get(config, "build_force")
-        config.depformat   = Expander.get(config, "depformat")
-        config.job_size    = Expander.get(config, "job_size")
-        config.build_dir   = Expander.get(config, "build_dir")
-        config.build_dir   = Path.abspath(config.build_dir)
+        cache = Dict()
 
-        # Build_dir must be expanded _before_ any io fields.
+        onion = Onion.wrap(raw_config, cache, config)
+
+        cache.repo_root  = onion['repo_root']
+        cache.build_root = onion['build_root']
+        cache.script_cwd = onion['script_cwd']
+        cache.build_dir  = onion["build_dir"]
+        cache.task_cwd   = onion["task_cwd"]
+
+        # Build_dir must be expanded and abs'd _before_ we expand any io fields.
+        cache.build_dir   = Path.abspath(cache.build_dir)
 
         # Then we expand all io fields (which could contain build_dir) and fix their paths.
-        for field in config:
-            if not field.startswith("in_") and not field.startswith("out_"):
+        for _field in raw_config:
+            if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
             files = [
@@ -1884,14 +1844,14 @@ class Task:
                   if isinstance(val, Task)
                     else val
                 for val in
-                  Utils.yield_values(config[field])
+                  Utils.yield_values(raw_config[_field])
             ]
 
             files = Utils.flatten(files)
-            files = Expander._expand(files, config)
-            files = self.fix_paths(field, files)
+            files = Expander.expand(onion, files)
+            files = self.fix_paths(_field, files, cache.build_dir)
 
-            if field == "in_depfile":
+            if _field == "in_depfile":
                 # Tasks should have at most one depfile.
                 if len(files) > 1:
                     ex = Task.BROKEN(f"Tasks can't have more than one dependency file! - {files}")
@@ -1899,21 +1859,26 @@ class Task:
                     self._error = ex
                     raise ex
                 self.in_depfile = cast(str, files[0])
-            elif field.startswith("in_"):
-                self.in_files[field] = files
-            elif field.startswith("out_"):
-                self.out_files[field] = files
+            elif _field.startswith("in_"):
+                self.in_files[_field] = files
+            elif _field.startswith("out_"):
+                self.out_files[_field] = files
 
-            self.config[field] = files[0] if len(files) == 1 else files
+            config[_field] = files[0] if len(files) == 1 else files
 
         # And finally we expand name/desc/command, which can contain file paths.
-        config.command = Utils.flatten(Expander.get(config, "command"))
-        config.desc    = Expander.get(config, "desc")
-        config.name    = Expander.get(config, "name")
+        config.name        = onion["name"]
+        config.desc        = onion["desc"]
+        config.command     = Utils.flatten(onion["command"])
+        config.build_dir   = onion["build_dir"]
+        config.task_cwd    = onion["task_cwd"]
+        config.build_force = onion["build_force"]
+        config.depformat   = onion["depformat"]
+        config.job_size    = onion["job_size"]
 
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
-            self.log(str(self.config) + "\n")
+            self.log(str(config) + "\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1962,7 +1927,7 @@ class Task:
 
     # ----------------------------------------------------------------------------------------------
 
-    def fix_paths(self, field, file):
+    def fix_paths(self, field, file, build_dir):
         """
         Input and output file paths in .hancho scripts are declared relative to the directory the
         script is in (stored in the config under 'script_cwd').
@@ -1970,9 +1935,9 @@ class Task:
         repo/build, so we need to fix up the paths to match.
         """
         if isinstance(file, (list, set, tuple)):
-            return [self.fix_paths(field, f) for f in file]
+            return [self.fix_paths(field, f, build_dir) for f in file]
         if isinstance(file, abc.Mapping):
-            return {k:self.fix_paths(field, f) for k, f in file}
+            return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
         file = Path.join(ctx.script.script_cwd, file)
@@ -1985,9 +1950,9 @@ class Task:
         # Note - This will also move "in_depfile" under build_dir - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if field.startswith("out_") or field == "in_depfile":
-            if not Path.startswith(file, self.config.build_dir):
+            if not Path.startswith(file, build_dir):
                 file = Path.relpath(file, ctx.script.script_cwd)
-                file = Path.join(self.config.build_dir, file)
+                file = Path.join(build_dir, file)
 
             if not ctx.batch.build_dry:
                 os.makedirs(Path.dirname(file), exist_ok=True)
@@ -2030,9 +1995,9 @@ class Task:
                 if not isinstance(command, str):
                     continue
                 blocks = []
-                delims = ctx.flags['delims']
-                Expander._split_template(command, blocks, delims)
-                if len(blocks) > 1 or (len(blocks) == 1 and blocks[0][0] == "{"):
+                delims = Onion.wrap(config).get('delims')
+                Expander._split_text(command, delims, blocks)
+                if any(isinstance(block, Expander.Macro) for block in blocks):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
         # Check that all build files would end up under build_dir
@@ -2278,59 +2243,14 @@ class Loader:
         cls.real_filenames : set[str] = set()
         cls.dedupe : dict[tuple[str, str], Script] = {}
         cls.batches : list[Batch] = []
-        #cls.all_repos : dict[str, Repo] = {}
         cls.all_code : dict[str, types.CodeType] = {}
-        cls.load_started = False
 
     # ----------------------------------------------------------------------------------------------
 
-    @classmethod
-    def load2(cls, script_path, flags : Dict, source = None, code = None) -> Script:
 
-        # --------------------------------
-        # Dedupe the load - only scripts with identical real paths and identical configs are
-        # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
-        # build, which they should be in practice.
-
-        config_dump = Dumper.dump_to_str(key = "flags", val = flags)
-        config_dump = cls.match_pointer.sub(r"<\1 \2 at 0x...>", config_dump)
-
-        dedupe_key = (script_path, config_dump)
-        deduped_script = cls.dedupe.get(dedupe_key, None) #type:ignore
-
-        if deduped_script:
-            with LogLevel.VERBOSE, Colors.SKY:
-                Log.log(f"Deduped load of {script_path}\n")
-            return deduped_script
-
-        # --------------------------------
-        # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
-        # root of a new repo.
-
-        #parent_repo   = cv_repo.get()
-        #parent_batch  = cv_batch.get()
-
-        delims = Expander.get(ctx.flags, "delims")
-        assert Path.isabs(script_path) and not Utils.is_template2(script_path, delims)
-
-        if source is None:
-            with open(script_path, encoding="utf-8") as file:
-                source = file.read()
-
-        if code is None:
-            code = compile(source, script_path, "exec", dont_inherit=True)
-
-        child_script = Script(code)
-
-        # --------------------------------
-        # Script created, save to dedupe dict.
-
-        cls.dedupe[dedupe_key] = child_script #type:ignore
-
-        return child_script
 
     # ----------------------------------------------------------------------------------------------
-    # FIXME we should probably not be yielding _all_ tasks, it should probably be per-build at the
+    # FIXME we should probably not be yielding _all_ tasks, it should probably be per-batch at the
     # highest
 
     @classmethod
@@ -2345,9 +2265,9 @@ class Loader:
 class Runner:
 
     @classmethod
-    def reset(cls):
-        cls.max_jobs   = Expander.get(ctx.flags, "max_jobs")
-        cls.max_errors = Expander.get(ctx.flags, "max_errors")
+    def reset(cls, max_errors, max_jobs):
+        cls.max_jobs   = max_jobs
+        cls.max_errors = max_errors
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
@@ -2511,34 +2431,143 @@ class Runner:
 
 # endregion
 # --------------------------------------------------------------------------------------------------
+# region parse_flags
+
+def parse_flags(argv, *args, **kwargs) -> Dict:
+
+    desc = textwrap.dedent("""
+    ================================================================================
+                    Hancho is a simple, pleasant build system
+    ================================================================================
+    """)
+
+    parser = argparse.ArgumentParser(
+        description=desc,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    verbosities = [v.lower() for v in LogLevel.__members__]
+
+    bool_opt = argparse.BooleanOptionalAction
+
+    # ------------------------------------
+    # fmt: off
+
+    repo_root    = "{script_cwd}"
+    build_root   = "{repo_root}/build"
+    script_cwd   = "{dirname(script_path)}"
+    task_cwd     = "{repo_root}"
+    comp_db_path = "{build_root}/compile_commands.json"
+    stat_db_path = "{build_root}/hancho.json"
+
+    depformat = "gcc" if os.name == "posix" else "msvc"
+    max_jobs  = os.cpu_count() or 1
+    build_dir = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}"
+
+    # global
+    parser.add_argument('-o', "--opt_file",     default = "",              metavar = "(path)",    type=str,       help="File containing a Python literal that will be used as additional options")
+    parser.add_argument(      "--run_tool",     default = "",              metavar = "(tool)",    type=str.strip, help="Run a subtool.")
+    parser.add_argument(      "--delims",       default = "{}«»",          metavar = "(delims)",  type=str.strip, help="Characters are used as macro delimiters.")
+    parser.add_argument(      "--depformat",    default = depformat,       metavar = "(format)",  type=str.strip, help="Dependency file format (gcc or msvc)")
+    parser.add_argument(      "--job_size",     default = 1,               metavar = "(path)",    type=str.strip, help="The default number of jobs (cores) to allocate to each task.")
+
+    # runner
+    parser.add_argument(      "--max_errors",   default = 0,               metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
+    parser.add_argument('-j', "--max_jobs",     default = max_jobs,        metavar = "(count)",   type=int,       help="Run a maximum of N jobs in parallel.")
+
+    # build
+    parser.add_argument(      "--build_tag",    default = "",              metavar = "(name)",    type=str.strip, help="Tagged builds will have separate subdirectories under the build directory.")
+    parser.add_argument('-t', "--build_target", default = "",              metavar = "(name)",    type=str.strip, help="A regex that selects a subset of targets to build.")
+    parser.add_argument(      "--build_force",  default = False,           action = bool_opt,                     help="Rebuild targets even if they're clean.")
+    parser.add_argument(      "--build_all",    default = False,           action = bool_opt,                     help="Build every task in every repo.")
+    parser.add_argument(      "--build_dry",    default = False,           action = bool_opt,                     help="Dry run - Do everything except actually run commands.")
+    parser.add_argument(      "--build_strict", default = True,            action = bool_opt,                     help="Strict mode, slightly more error checking to catch footguns.")
+
+    # repo
+    parser.add_argument('-r', "--repo_root",    default = repo_root,       metavar = "(path)",    type=str.strip, help="The location of the repo we're building.")
+    parser.add_argument(      "--build_root",   default = build_root,      metavar = "(path)",    type=str.strip, help="Directory to put build artifacts in.")
+    parser.add_argument(      "--comp_db_path", default = comp_db_path,    metavar = "(path)",    type=str.strip, help="Where to put the compilation database")
+    parser.add_argument(      "--stat_db_path", default = stat_db_path,    metavar = "(path)",    type=str.strip, help="Where to put the stat database")
+
+    # script
+    parser.add_argument('-s', "--script_path",  default = "build.hancho",  metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
+    parser.add_argument(      "--script_cwd",   default = script_cwd,      metavar = "(path)",    type=str.strip, help="Change to this directory before running the top build script.")
+    parser.add_argument(      "--task_cwd",     default = task_cwd,        metavar = "(path)",    type=str.strip, help="Directory to run commands in.")
+    parser.add_argument(      "--build_dir",    default = build_dir,       metavar = "(path)",    type=str.strip, help="Per-task build artifact directory.")
+
+    # log
+    parser.add_argument(      "--log_level",    default = LogLevel.NORMAL, choices = verbosities,                 help="Manually select verbosity level. 'quiet' = none, 'trace' = maximal spam")
+    parser.add_argument('-Q', "--log_quiet",    default = False,           action = bool_opt,                     help="(same as --log_level=quiet)")
+    parser.add_argument('-V', "--log_verbose",  default = False,           action = bool_opt,                     help="(same as --log_level=verbose)")
+    parser.add_argument('-D', "--log_debug",    default = False,           action = bool_opt,                     help="(same as --log_level=debug)")
+    parser.add_argument('-T', "--log_trace",    default = False,           action = bool_opt,                     help="(same as --log_level=trace)")
+    parser.add_argument('-w', "--log_wrap",     default = False,           action = bool_opt,                     help="Wrap lines around the console instead of clipping them")
+    parser.add_argument('-c', "--log_color",    default = True,            action = bool_opt,                     help="Use color in the log for better readability")
+    parser.add_argument(      "--log_time",     default = True,            action = bool_opt,                     help="Timestamp each log line")
+    # fmt: on
+
+    (raw_flags, unrecognized) = parser.parse_known_args(argv if argv else [])
+    raw_flags = vars(raw_flags)
+    raw_flags = {k:v for k, v in raw_flags.items() if v is not None}
+
+    # ------------------------------------
+    # Load flags from opt_file if present
+
+    opt_file = raw_flags.pop("opt_file")
+    if opt_file:
+        #with Colors.GREEN:
+        #    Log.log(f"Loading options file {opt_file!r}\n")
+        if os.path.exists(opt_file):
+            with open(opt_file) as f:
+                try:
+                    opts = json.load(f)
+                    raw_flags.update(opts)
+                except Exception as _:
+                    #with Colors.RED:
+                    #    Log.log(f"Opt file {opt_file!r} invalid!\n")
+                    pass
+        else:
+            #with Colors.RED:
+            #    Log.log(f"Opt file {opt_file!r} not found!\n")
+            pass
+
+    # ------------------------------------
+    # Unrecognized command line parameters also become config fields if they are flag-like.
+    # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
+    # become bools (regardless of capitalization), everything else becomes a string.
+
+    mystery_flags = {}
+    for chunk in unrecognized:
+        if match := re.match(r"--([^=]+)=(.+)", chunk):
+            key = match.group(1)
+            val = match.group(2)
+
+            if val.lower() == "true":
+                val = True
+            elif val.lower() == "false":
+                val = False
+            else:
+                with suppress(NameError, ValueError, SyntaxError):
+                    val = ast.literal_eval(val)
+
+            mystery_flags[key] = val
+
+    flags = Dict()
+    flags.merge(raw_flags)
+    flags.merge(mystery_flags)
+    flags.hancho_dir = os.path.dirname(__file__)
+    flags.merge(*args, kwargs)
+
+    return flags
+
+#endregion
+# --------------------------------------------------------------------------------------------------
 # region Main
 
 class Main:
 
     internal_ctx : Dict
-    top_ctx : Dict
-
-    # ----------------------------------------------------------------------------------------------
-    # INIT
-
-    # We treat the Hancho module itself as a repo, so that we have a place to put everything added
-    # to the build by tests or other code that doesn't load a .hancho script.
-
-    @classmethod
-    def init(cls, flags):
-        ctx.set(Dict(
-            flags  = flags,
-            batch  = None,
-            repo   = None,
-            script = None,
-        ))
-
-        Log.reset()
-        Expander.reset()
-        Utils.reset()
-        Task.reset()
-        Loader.reset()
-        Runner.reset()
+    top_ctx : Context
+    run_tool : str
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2549,48 +2578,27 @@ class Main:
         # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
         # misinterpreted as a Hancho bug.
 
-        repo_root   = Expander.get(ctx.flags, "repo_root")
-        script_path = Expander.get(ctx.flags, "script_path")
-
-        repo_root   = Path.resolve(repo_root)
-        script_path = Path.resolve(script_path)
-
-        Main.banner_start(repo_root, script_path)
+        #print(flags)
+        cls.banner_start()
 
         try:
 
-            Loader.load_started = True
-
-            # ------------------------------------
-            # Load top script
-
-            top_flags  = Dict(ctx.flags)
-            top_batch  = Batch()
-            top_repo   = Repo()
-            top_script = Loader.load2(script_path, top_flags)
-
-            top_batch.repos[script_path] = top_repo
-            top_repo.scripts[script_path] = top_script
-
-            top_ctx = Dict(flags=top_flags, batch=top_batch, repo=top_repo, script=top_script)
-            Loader.batches.append(top_batch)
-            Main.top_ctx = top_ctx
+            #load_top_script()
 
             # ------------------------------------
             # Exec top script and start the build
 
-            with ctx.set(Main.top_ctx):
+            with ctx.enter(cls.top_ctx):
 
                 time_a = time.perf_counter()
-                top_script.exec2()
+                ctx.script.exec2()
                 time_b = time.perf_counter()
 
                 with LogLevel.VERBOSE, Colors.BLUE:
                     Log.log(f"Loading scripts took {time_b - time_a:8.6f} seconds\n")
 
-                run_tool = ctx.flags['run_tool']
                 time_a = time.perf_counter()
-                result = Runner.run_tool(run_tool) if run_tool else Main.build()
+                result = Runner.run_tool(cls.run_tool) if cls.run_tool else cls.build()
                 time_b = time.perf_counter()
 
                 with LogLevel.VERBOSE, Colors.GREEN:
@@ -2599,7 +2607,7 @@ class Main:
             # ------------------------------------
             # Done
 
-            Main.banner_end()
+            cls.banner_end()
             return result
 
         except Exception:
@@ -2615,191 +2623,15 @@ class Main:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def parse_flags(cls, *args, argv, **kwargs) -> abc.Mapping:
-
-        desc = textwrap.dedent("""
-        ================================================================================
-                        Hancho is a simple, pleasant build system
-        ================================================================================
-        """)
-
-        parser = argparse.ArgumentParser(
-            description=desc,
-            #formatter_class=argparse.RawDescriptionHelpFormatter
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter
-        )
-        verbosities = [v.lower() for v in LogLevel.__members__]
-
-        bool_opt = argparse.BooleanOptionalAction
-
-        # Flags
-        # fmt: off
-
-        # global
-        parser.add_argument('-o', "--opt_file",     metavar = "(path)",    type=str,       help="File containing a Python literal that will be used as additional options")
-        parser.add_argument(      "--run_tool",     metavar = "(tool)",    type=str.strip, help="Run a subtool.")
-        parser.add_argument(      "--delims",       metavar = "(delims)",  type=str.strip, help="What characters are used as macro delimiters. Defaults to '{}«»' (don't forget the single quotes)")
-        parser.add_argument(      "--depformat",    metavar = "(format)",  type=str.strip, help="Dependency file format (gcc or msvc)")
-        parser.add_argument(      "--job_size",     metavar = "(path)",    type=str.strip, help="The default number of jobs (cores) to allocate to each task.")
-
-        # runner
-        parser.add_argument(      "--max_errors",   metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument('-j', "--max_jobs",     metavar = "(count)",   type=int,       help="Run a maximum of N jobs in parallel (default=cpu_count).")
-
-        # build ok
-        parser.add_argument(      "--build_tag",    metavar = "(name)",    type=str.strip, help="Set the build tag. Tagged builds will have separate subdirectories under the build directory.")
-        parser.add_argument('-t', "--build_target", metavar = "(name)",    type=str.strip, help="A regex that selects the targets to build. Defaults to all targets in the top repo.")
-        parser.add_argument(      "--build_force",  action = bool_opt,                     help="Rebuild targets even if they're clean.")
-        parser.add_argument(      "--build_all",    action = bool_opt,                     help="Build absolutely everything in all build scripts loaded.")
-        parser.add_argument(      "--build_dry",    action = bool_opt,                     help="Dry run - Do everything except actually run commands.")
-        parser.add_argument(      "--build_strict", action = bool_opt,                     help="Strict mode, slightly more error checking to catch footguns.")
-
-        # repo ok
-        parser.add_argument('-r', "--repo_root",    metavar = "(path)",    type=str.strip, help="The location of the repo we're building.")
-        parser.add_argument(      "--build_root",   metavar = "(path)",    type=str.strip, help="Directory to put build artifacts in.")
-        parser.add_argument(      "--comp_db_path", metavar = "(path)",    type=str.strip, help="Where to put the compilation database (default = {build_dir}/compile_commands.json)")
-        parser.add_argument(      "--stat_db_path", metavar = "(path)",    type=str.strip, help="Where to put the stat database (default = {build_dir}/hancho.json)")
-
-        # script ok
-        parser.add_argument('-s', "--script_path",  metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
-        parser.add_argument(      "--script_cwd",   metavar = "(path)",    type=str.strip, help="Change to this directory before running the top build script.")
-        parser.add_argument(      "--task_cwd",     metavar = "(path)",    type=str.strip, help="Directory to run commands in.")
-        parser.add_argument(      "--build_dir",    metavar = "(path)",    type=str.strip, help="Per-task build artifact directory. Directory to put build artifacts in.")
-
-        # log ok
-        parser.add_argument(      "--log_level",    choices = verbosities,                 help="Manually select verbosity level. 'quiet' = none, 'trace' = maximal spam")
-        parser.add_argument('-Q', "--log_quiet",    action = bool_opt,                     help="(same as --log_level=quiet)")
-        parser.add_argument('-V', "--log_verbose",  action = bool_opt,                     help="(same as --log_level=verbose)")
-        parser.add_argument('-D', "--log_debug",    action = bool_opt,                     help="(same as --log_level=debug)")
-        parser.add_argument('-T', "--log_trace",    action = bool_opt,                     help="(same as --log_level=trace)")
-        parser.add_argument('-w', "--log_wrap",     action = bool_opt,                     help="Wrap lines around the console instead of clipping them")
-        parser.add_argument('-c', "--log_color",    action = bool_opt,                     help="Use color in the log for better readability")
-        parser.add_argument(      "--log_time",     action = bool_opt,                     help="Timestamp each log line")
-        # fmt: on
-
-        (raw_flags, unrecognized) = parser.parse_known_args(argv if argv else [])
-        raw_flags = vars(raw_flags)
-        raw_flags = {k:v for k, v in raw_flags.items() if v is not None}
-
-        # ------------------------------------
-
-        opt_file = raw_flags.get("opt_file")
-        if opt_file:
-            #with Colors.GREEN:
-            #    Log.log(f"Loading options file {opt_file!r}\n")
-            if os.path.exists(opt_file):
-                with open(opt_file) as f:
-                    try:
-                        opts = json.load(f)
-                        raw_flags.update(opts)
-                    except Exception as _:
-                        #with Colors.RED:
-                        #    Log.log(f"Opt file {opt_file!r} invalid!\n")
-                        pass
-            else:
-                #with Colors.RED:
-                #    Log.log(f"Opt file {opt_file!r} not found!\n")
-                pass
-
-
-        delims = raw_flags.get("delims")
-        if delims:
-            new_delims = {}
-            for i in range(0, len(delims), 2):
-                new_delims[delims[i]] = delims[i+1]
-            raw_flags['delims'] = new_delims
-
-        # ------------------------------------
-        # Unrecognized command line parameters also become config fields if they are flag-like.
-        # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
-        # become bools (regardless of capitalization), everything else becomes a string.
-
-        mystery_flags = {}
-        for chunk in unrecognized:
-            if match := re.match(r"--([^=]+)=(.+)", chunk):
-                key = match.group(1)
-                val = match.group(2)
-
-                if val.lower() == "true":
-                    val = True
-                elif val.lower() == "false":
-                    val = False
-                else:
-                    with suppress(NameError, ValueError, SyntaxError):
-                        val = ast.literal_eval(val)
-
-                mystery_flags[key] = val
-
-        # ------------------------------------
-
-        # fmt: off
-
-        # Delims: Normally you'd use '{' and '}' as macro delimiters, but you can also use '«' and '»'.
-        # On Linux, you can type those using control-shift-u a b <enter> and control-shift-u b b <enter>
-        # On Windows, use alt-0171 and alt-0187 with the numbers being typed on the numpad while numlock
-        # is on.
-
-        defaults = Dict(
-            hancho_path  = __file__,
-            hancho_dir   = os.path.dirname(__file__),
-            opt_file     = None,
-            run_tool     = None,
-            delims       = {"{": "}", "«": "»"},
-            depformat    = "gcc" if os.name == "posix" else "msvc",
-            job_size     = 1,
-            max_errors   = 0,
-            max_jobs     = os.cpu_count() or 1,
-            build_tag    = "",
-            build_target = None,
-            build_force  = False,
-            build_all    = False,
-            build_dry    = False,
-            build_strict = True,
-            repo_root    = "{dirname(abspath(script_path))}",
-            build_root   = "{repo_root}/build",
-            comp_db_path = "{build_root}/compile_commands.json",
-            stat_db_path = "{build_root}/hancho.json",
-            script_path  = "build.hancho",
-            script_cwd   = "{repo_root}",
-            task_cwd     = "{repo_root}",
-            build_dir    = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}",
-            log_level    = LogLevel.NORMAL,
-            log_quiet    = False,
-            log_verbose  = False,
-            log_debug    = False,
-            log_trace    = False,
-            log_wrap     = False,
-            log_color    = True,
-            log_time     = True,
-        )
-
-        # fmt: on
-
-        flags = Dict(defaults)
-        flags.merge(raw_flags)
-        flags.merge(mystery_flags)
-        flags.merge(*args, kwargs)
-
-        return flags
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def banner_start(cls, repo_root, script_path):
+    def banner_start(cls):
 
         with LogLevel.VERBOSE, Colors.LIME:
-            flags       = ctx.flags
-            repo_root   = Expander._expand(flags.repo_root, flags)
-            script_path = Expander._expand(flags.script_path, flags)
-            opt_file    = Expander._expand(flags.opt_file, flags)
+            repo_root   = Expander.eval("repo_root")
+            script_path = Expander.eval("script_path")
 
             Log.log(f"Command line : {" ".join(sys.argv)}\n")
             Log.log(f"Repo root    : {repo_root}\n")
             Log.log(f"Script path  : {script_path}\n")
-            Log.log(f"Opt file     : {opt_file}\n")
-
-            if opt_file and not os.path.exists(opt_file):
-                Log.log(f"Opt file {opt_file!r} not found!\n")
 
             if Log.log_trace:
                 Log.log("Trace mode on\n")
@@ -2819,14 +2651,9 @@ class Main:
         # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
         # get the old path), but _before_ we build any tasks.
 
-        #time_a = time.perf_counter()
         for batch in Loader.batches:
             for repo in batch.repos.values():
                 repo.old_stat_db = Repo.load_stat_db(repo.stat_db_path)
-        #time_b = time.perf_counter()
-
-        #with LogLevel.DEBUG, Colors.BLUE:
-        #    Log.log(f"Loading stats took {time_b - time_a:8.6f} seconds\n")
 
         # ------------------------------------
 
@@ -2841,14 +2668,9 @@ class Main:
 
         # ------------------------------------
 
-        #time_a = time.perf_counter()
         for batch in Loader.batches:
             for repo in batch.repos.values():
                 repo.save_stat_db()
-        #time_b = time.perf_counter()
-
-        #with LogLevel.DEBUG, Colors.BLUE:
-        #    Log.log(f"Saving stats took {time_b - time_a:8.6f} seconds\n")
 
         return result
 
@@ -2916,60 +2738,6 @@ def build():
 
 # ----------------------------------------
 
-def load(script_path, *args, **kwargs) -> types.ModuleType:
-    script_path = Expander._expand(script_path, ctx.flags)
-    script_path = Path.resolve(script_path)
-
-    with LogLevel.VERBOSE, Colors.AQUA:
-        Log.log(f"SCRIPT : Loading {script_path}\n")
-
-    new_flags  = Dict(ctx.flags, *args, kwargs, script_path = script_path)
-    new_script = Loader.load2(script_path, new_flags)
-
-    ctx.repo.scripts[script_path] = new_script
-
-    new_ctx = Dict(
-        flags  = new_flags,
-        batch  = ctx.batch,
-        repo   = ctx.repo,
-        script = new_script,
-    )
-
-    with ctx.update(new_ctx):
-        new_script.exec2()
-
-    return new_script.module
-
-# ----------------------------------------
-
-def repo(script_path, *args, **kwargs) -> types.ModuleType:
-    script_path = Expander._expand(script_path, ctx.flags)
-    script_path = Path.resolve(script_path)
-
-    with LogLevel.VERBOSE, Colors.TEAL:
-        Log.log(f"REPO : Loading {script_path}\n")
-
-    new_flags  = Dict(ctx.script.flags, *args, kwargs, script_path = script_path)
-    new_script = Loader.load2(script_path, new_flags)
-    new_repo   = Repo()
-
-    ctx.batch.repos[script_path] = new_repo
-    new_repo.scripts[script_path] = new_script
-
-    new_ctx = Dict(
-        flags  = new_flags,
-        batch  = ctx.batch,
-        repo   = new_repo,
-        script = new_script
-    )
-
-    with ctx.update(new_ctx):
-        new_script.exec2()
-
-    return new_script.module
-
-# ----------------------------------------
-
 def log(*args, **kwargs):
     return Log.log(*args, **kwargs)
 
@@ -3020,47 +2788,347 @@ def earlyout(message = ""):
         Log.log(f"  line = {frame.f_lineno}\n")
     raise Loader.EarlyOut()
 
+# endregion
+# --------------------------------------------------------------------------------------------------
+
+
+hancho = sys.modules[__name__]
+sys.modules["hancho"] = hancho
+
+ctx.set(Context(
+    flags  = parse_flags([]),
+    batch  = None,
+    repo   = None,
+    script = None,
+))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#def load(script_path, *args, **kwargs) -> types.ModuleType:
+#    script_path = Expander.eval("script_path")
+#    script_cwd  = Expander.eval("script_cwd")
+#    script_path = Path.resolve(script_path)
+#    script_cwd  = Path.resolve(script_cwd)
+#
+#    with LogLevel.VERBOSE, Colors.AQUA:
+#        Log.log(f"SCRIPT : Loading {script_path}\n")
+#
+#    new_flags = Dict(ctx.flags, *args, kwargs, script_path = script_path, script_cwd = script_cwd)
+#    new_ctx   = Dict(ctx.get(), flags = new_flags)
+#
+#    with ctx.set(new_ctx):
+#        ctx.script = Loader.load_from_ctx()
+#        ctx.script.exec2()
+#
+#    return ctx.script.module
+
+# ----------------------------------------
+
+#def repo(script_path, *args, **kwargs) -> types.ModuleType:
+#    script_path = Expander.eval("script_path")
+#    script_cwd  = Expander.eval("script_cwd")
+#    script_path = Path.resolve(script_path)
+#    script_cwd  = Path.resolve(script_cwd)
+#
+#    with LogLevel.VERBOSE, Colors.TEAL:
+#        Log.log(f"REPO : Loading {script_path}\n")
+#
+#    new_flags = Dict(
+#        ctx.script.flags,
+#        *args, kwargs,
+#        script_path = script_path,
+#        script_cwd  = script_cwd,
+#        repo_root   = script_cwd,
+#    )
+#
+#
+#    new_repo  = Repo()
+#    new_ctx   = Dict(ctx.get(), repo = new_repo, flags = new_flags)
+#
+#    with ctx.set(new_ctx):
+#        ctx.script = Loader.load_from_ctx()
+#        ctx.script.exec2()
+#
+#    ctx.batch.repos[script_path] = new_repo
+#    new_repo.scripts[script_path] = new_script
+#
+#    new_ctx = Dict(
+#        flags  = new_flags,
+#        batch  = ctx.batch,
+#        repo   = new_repo,
+#        script = new_script
+#    )
+#
+#    with ctx.update(new_ctx):
+#        new_script.exec2()
+#
+#    return new_script.module
+
+#            if code is None:
+#                if source is None:
+#                    with open(script_path, encoding="utf-8") as file:
+#                        source = file.read()
+#                code = compile(source, script_path, "exec", dont_inherit=True)
+
+#def path_to_code(script_path) -> types.CodeType:
+#    script_path = Path.resolve(script_path)
+#    with open(script_path, encoding="utf-8") as file:
+#        source = file.read()
+#    code = compile(source, script_path, "exec", dont_inherit=True)
+#    return code
+
+#def load_from_ctx() -> Script:
+#    # --------------------------------
+#    # Dedupe the load - only scripts with identical real paths and identical configs are
+#    # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
+#    # build, which they should be in practice.
+#
+#    dedupe_key = Dumper.dump_to_str(key = "flags", val = ctx.flags)
+#    dedupe_key = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
+#    deduped_script = Loader.dedupe.get(dedupe_key, None) #type:ignore
+#
+#    if deduped_script:
+#        with LogLevel.VERBOSE, Colors.SKY:
+#            Log.log(f"Deduped load of {ctx.flags.script_path}\n")
+#        return deduped_script
+#
+#    # --------------------------------
+#    # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
+#    # root of a new repo.
+#
+#    script_path = Expander.eval("script_path")
+#    script_cwd  = Expander.eval("script_cwd")
+#    script_path = Path.resolve(script_path)
+#    script_cwd  = Path.resolve(script_cwd)
+#
+#    code = path_to_code(script_path)
+#    child_script = Script(script_path, script_cwd, code)
+#
+#    # --------------------------------
+#    # Script created, save to dedupe dict and repo.
+#
+#    Loader.dedupe[dedupe_key] = child_script #type:ignore
+#    ctx.repo.scripts[script_path] = child_script
+#
+#    child_script.exec2()
+#
+#    return child_script
+
 # ----------------------------------------
 # We create an "internal" context that will contain all the repos/scripts/tasks created by
 # tests and users that import Hancho directly instead of creating build scripts. It will
 # contain a dummy "script" that points at hancho.py.
 
-def init(*args, argv = None, **kwargs):
-    flags = Main.parse_flags(argv, *args, **kwargs)
-    Main.init(flags)
-    new_batch  = Batch()
-    new_repo   = Repo()
-    new_script = Script(code = None)
+#def load_top_script():
+#    repo_root   = Expander.eval("repo_root")
+#    script_path = Expander.eval("script_path")
+#    script_cwd  = Expander.eval("script_cwd")
+#
+#    repo_root   = Path.resolve(repo_root)
+#    script_path = Path.resolve(script_path)
+#    script_cwd  = Path.resolve(script_cwd)
+#
+#    ctx.flags.repo_root   = repo_root
+#    ctx.flags.script_path = script_path
+#    ctx.flags.script_cwd  = script_cwd
+#
+#    # ------------------------------------
+#    # Load top script
+#
+#    #ctx.flags = flags
+#    ctx.batch  = Batch()
+#    ctx.repo   = Repo()
+#    ctx.script = load_from_ctx()
+#
+#    ctx.batch.repos[script_path] = ctx.repo
+#    ctx.repo.scripts[script_path] = ctx.script
+#
+#    Loader.batches.append(ctx.batch)
+#    cls.top_ctx = ctx.get()
+#
+#    Main.top_script = load_from_ctx()
 
-    new_batch.repos[__file__] = new_repo
-    new_repo.scripts[__file__] = new_script
+#def init(*args, argv = None, **kwargs):
+#
+#    # We start with a context that only has the default flags and use that to reinitialize
+#    # Hancho.
+#
+#    log_flags = {k: flags.pop(k) for k in list(flags) if k.startswith("log_")}
+#    Log.reset(log_flags)
+#
+#    run_tool   = flags.pop("run_tool")
+#    max_jobs   = flags.pop("max_jobs")
+#    max_errors = flags.pop("max_errors")
+#
+#    Main.run_tool = run_tool
+#
+#    Utils.reset()
+#    Task.reset()
+#    Loader.reset()
+#    Runner.reset(max_errors, max_jobs)
+#
+#    new_batch  = Batch()
+#    new_repo   = Repo()
+#    new_script = Script(__file__, os.getcwd(), code = None)
+#
+#    new_batch.repos[__file__] = new_repo
+#    new_repo.scripts[__file__] = new_script
+#
+#    Loader.batches.append(new_batch)
+#    ctx.update(batch=new_batch, repo=new_repo, script=new_script)
+#
+#    Main.internal_ctx = ctx.get()
 
-    Loader.batches.append(new_batch)
-    ctx.update(batch=new_batch, repo=new_repo, script=new_script)
-
-    Main.internal_ctx = ctx.get()
+# We treat the Hancho module itself as a repo, so that we have a place to put everything added
+# to the build by tests or other code that doesn't load a .hancho script.
 
 # endregion
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# endregion
+# --------------------------------------------------------------------------------------------------
+# region Repo
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # --------------------------------------------------------------------------------------------------
 # region __main__
 
-hancho = sys.modules[__name__]
-sys.modules["hancho"] = hancho
+is_lib = __name__ != "__main__"
+is_app = __name__ == "__main__"
 
-def _start():
-    # We start with a context that only has the default flags and use that to reinitialize Hancho.
+if is_app:
+    ctx.flags = parse_flags(sys.argv[1:], is_app = True)
+else:
+    ctx.flags = parse_flags([], is_lib = True)
 
-    if __name__ == "__main__":
-        # If we're running Hancho from the command line, main() will load the top script and
-        # initialize the top context.
-        flags = Main.parse_flags(argv = sys.argv[1:])
-        Main.init(flags)
-        result = Main.main()
-        sys.exit(result)
-    else:
-        init(script_path = __file__)
 
-_start()
+if is_app:
+    ctx.flags.script_path  = Path.abspath(Expander.eval("script_path"))
+    ctx.flags.script_cwd   = Path.abspath(Expander.eval("script_cwd"))
+    ctx.flags.repo_root    = Path.abspath(Expander.eval("repo_root"))
+    ctx.flags.build_root   = Path.abspath(Expander.eval("build_root"))
+    ctx.flags.task_cwd     = Path.abspath(Expander.eval("task_cwd"))
+    ctx.flags.comp_db_path = Path.abspath(Expander.eval("comp_db_path"))
+    ctx.flags.stat_db_path = Path.abspath(Expander.eval("stat_db_path"))
+
+
+    ctx.batch  = Batch()
+    ctx.repo   = Repo()
+    ctx.script = Script(__file__, os.getcwd(), code = None)
+
+    ctx.batch.repos[__file__] = ctx.repo
+    ctx.repo.scripts[__file__] = ctx.script
+
+#    print("----------------------------------------")
+#    print(f"flags = {ctx.flags}")
+#    print("----------------------------------------")
+#    print(f"batch = {ctx.batch}")
+#    print("----------------------------------------")
+
+#    d = Dict(foo = 1, bar = 2)
+#    print(d)
+    result = Dumper.dump_to_str("", ctx.get())
+    print(result)
+
+    sys.exit(0)
+
+if is_lib:
+    print("is_lib = True")
+    sys.exit(0)
+
+
+def init(*args, **kwargs):
+    pass
+
+def load(script_path, script_cwd, new_flags, code):
+    pass
+
+def main():
+    pass
+
+#def _start():
+#    if __name__ == "__main__":
+#        init(argv = sys.argv[1:])
+#        result = Main.main()
+#        sys.exit(result)
+#    else:
+#        init(script_path = __file__)
+#
+#_start()
+
+#
+#d = Dict(foo = 1, bar = 2)
+#print(Expander.expand(d, "{foo} {bar}"))
 
 # endregion
 # --------------------------------------------------------------------------------------------------
+

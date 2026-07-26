@@ -28,7 +28,7 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-V"],
+      "args"    : ["-D", "-T"],
       //"args"    : ["--trace"], "-T",
       //"preLaunchTask": "Wipe build",
     },

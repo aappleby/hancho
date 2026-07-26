@@ -20,13 +20,14 @@ def load_tests(loader, tests, ignore):
     return tests
 
 def split(template):
+    delims = "{}"
     out = []
-    delims = {'{':'}'}
-    Expander._split_template(template, out, delims)
+    Expander._split_text(template, delims, out)
     return out
 
 ####################################################################################################
 
+# FIXME test a nested dict using different delimiters than the parent dict
 
 class TestSplitTemplate(unittest.TestCase):
     def setUp(self):
