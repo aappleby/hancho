@@ -40,7 +40,7 @@ import types
 import zlib  # for crc32, adler32
 from collections import Counter, abc
 from contextlib import chdir, contextmanager, suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import wraps
 from inspect import isawaitable
@@ -150,7 +150,7 @@ class Dict(dict):
         return self.__dump__(Dumper.Opts())
 
     def __dump__(self, opts):
-        return Dumper._dump_to_str(None, self.__dict__, opts)
+        return Dumper._dump_to_str("", self.__dict__, opts)
 
     def __getitem__(self, key : str):
         return dict.__getitem__(self, key)
@@ -290,7 +290,7 @@ class Onion(abc.Mapping):
         return self.__dump__(Dumper.Opts())
 
     def __dump__(self, opts):
-        return Dumper._dump_to_str(None, self, opts)
+        return Dumper._dump_to_str("", self, opts)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
@@ -500,23 +500,30 @@ class Dumper:
         indent : int = 0
         print_id : bool = True
         color_code : bool = True
-        max_length : int = 80
         tab : str = "    "
+        len : int = 80
+        max : int = 80
 
     class LineTooLong(Exception):
         pass
 
     @classmethod
-    def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max_length = 80, tab = "    "):
-        opts = Dumper.Opts(indent, print_id, color_code, max_length, tab)
+    def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max = 80, len = 80, tab = "    "):
+        opts = Dumper.Opts(indent, print_id, color_code, tab, len, max)
         return cls._dump_to_str(key, val, opts)
 
     @classmethod
     def _dump_to_str(cls, key, val, opts):
-        try:
-            return cls._dump_flat_variant(key, val, opts)
-        except Dumper.LineTooLong:
-            return cls._dump_deep_variant(key, val, opts)
+        prefix = cls._dump_prefix(key, val, opts)
+        opts = replace(opts, len = opts.len + len(prefix))
+
+        if isinstance(val, (dict, list, tuple, set, Onion)):
+            try:
+                return prefix + cls._dump_flat_container(val, opts)
+            except Dumper.LineTooLong:
+                return prefix + cls._dump_deep_container(val, opts)
+        else:
+            return prefix + cls._dump_scalar(val, opts)
 
     @classmethod
     def _dump_prefix(cls, key, val, opts):
@@ -536,12 +543,12 @@ class Dumper:
         return prefix
 
     @classmethod
-    def _unpack_container(cls, val):
+    def _unpack_container(cls, val) -> tuple[str, list[Any], str]:
         if isinstance(val, tuple):
             items = [(None, v) for v in val]
             return '(', items, ",)" if len(items) == 1 else ')'
         elif isinstance(val, abc.Mapping):
-            return '{', val.items(), '}'
+            return '{', list(val.items()), '}'
         elif isinstance(val, (list, tuple, set)):
             items = [(None, v) for v in val]
             return '[', items, ']'
@@ -584,64 +591,39 @@ class Dumper:
         result = ld
 
         for k, v in items:
-            child_opts = replace(opts, max_length = opts.max_length - len(result))
             if not first:
                 result += separator
-            result += cls._dump_to_str(k, v, child_opts)
+            chunk = cls._dump_to_str(k, v, replace(opts))
+            result += chunk
 
-            if len(result) > opts.max_length:
+            if opts.len + len(result) + len(rd) > opts.max:
                 raise Dumper.LineTooLong()
 
             first = False
 
-        result += rd
-
-        return result
+        return result + rd
 
     @classmethod
     def _dump_deep_container(cls, val, opts):
         ld, items, rd = cls._unpack_container(val)
 
-        child_opts = replace(
-            opts,
-            indent = opts.indent + 1,
-            max_length = opts.max_length - len(opts.tab)
-        )
-
         result  = ld + '\n'
 
-        for i, kv in enumerate(items):
-            k, v = (kv[0], kv[1])
-            result += opts.tab * (opts.indent + 1)
-            result += cls._dump_to_str(k, v, child_opts)
+        for i in range(len(items)):
+            k, v = (items[i][0], items[i][1])
+
+            line = opts.tab * (opts.indent + 1)
+            new_len = len(line) + 1 # +1 for the trailing comma
+            line += cls._dump_to_str(k, v, replace(opts, len = new_len, indent = opts.indent + 1))
             if i < len(items) - 1:
-                result += ','
+                line += ','
+
+            result += line
             result += '\n'
 
         result += (opts.tab * opts.indent) + rd
 
         return result
-
-    @classmethod
-    def _dump_flat_variant(cls, key, val, opts):
-        prefix = cls._dump_prefix(key, val, opts)
-        opts2 = replace(opts, max_length = opts.max_length - len(prefix))
-
-        if isinstance(val, (dict, list, tuple, set, Onion)):
-            return prefix + cls._dump_flat_container(val, opts2)
-        else:
-            return prefix + cls._dump_scalar(val, opts2)
-
-    @classmethod
-    def _dump_deep_variant(cls, key, val, opts):
-        if isinstance(val, (dict, list, tuple, set, Onion)):
-            prefix = cls._dump_prefix(key, val, opts)
-            opts2 = replace(opts, max_length = opts.max_length - len(prefix))
-            return prefix + cls._dump_deep_container(val, opts2)
-        else:
-            prefix = cls._dump_prefix(key, val, opts)
-            opts2 = replace(opts, max_length = opts.max_length - len(prefix))
-            return prefix + cls._dump_scalar(val, opts2)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -3096,7 +3078,14 @@ if is_app:
 
 #    d = Dict(foo = 1, bar = 2)
 #    print(d)
-    result = Dumper.dump_to_str("", ctx.get())
+    result = Dumper.dump_to_str(
+        "",
+        ctx.get(),
+        tab = ".   ",
+        len = shutil.get_terminal_size().columns,
+        max = shutil.get_terminal_size().columns,
+        print_id = True,
+    )
     print(result)
 
     sys.exit(0)
