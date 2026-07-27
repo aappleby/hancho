@@ -188,7 +188,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual("name = {a = 1, b = [2, 'two'], c = (3, 3, 3), d:object = <object>}", d)
 
         # Print IDs, but erase pointers before comparing
-        d = hancho.Dumper.dump_to_str("name", thing1, print_id = True, max_length = 80)
+        d = hancho.Dumper.dump_to_str("name", thing1, print_id = True, max = 80)
         match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]+")
         d = match_pointer.sub("0x?", d)
 
