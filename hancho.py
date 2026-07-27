@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+#!/usr/bin/python3
 # ruff: noqa: RUF012
 # region Header
 
@@ -181,10 +182,12 @@ class Tool(Dict):
 
 @dataclass
 class Context:
+    raw_flags : Dict | None = None
     flags  : Dict | None = None
     batch  : Batch | None = None
     repo   : Repo | None = None
     script : Script | None = None
+    onion : Onion | None = None
 
     def __repr__(self):
         return self.__dump__(Dumper.Opts())
@@ -262,9 +265,9 @@ class Onion(abc.Mapping):
     @classmethod
     def wrap(cls, *args, **kwargs):
         if ctx.script:
-            result = Onion(hancho.__dict__, ctx.flags, ctx.script.module.__dict__, *args, **kwargs)
+            result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, ctx.script.module.__dict__, *args, **kwargs)
         else:
-            result = Onion(hancho.__dict__, ctx.flags, *args, **kwargs)
+            result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, *args, **kwargs)
         return result
 
     def __getattr__(self, key : str):
@@ -303,8 +306,7 @@ class Onion(abc.Mapping):
         return a new Onion containing those mappings.
         """
         with Tracer(self, "get", key) as trace:
-            if key == "delims":
-                pass
+
             # Return the rightmost non-None non-Mapping if present.
             saw_a_none = False
             for layer in reversed(self._layers):
@@ -372,6 +374,7 @@ class Expander:
     class Expr(str):
         pass
 
+    delims : str = "{}«»"
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH = 30
@@ -381,37 +384,39 @@ class Expander:
 
     @classmethod
     def expand(cls, context : abc.Mapping, variant : Any):
+        if not variant:
+            #return variant
+            pass
         if not isinstance(context, Onion):
             context = Onion.wrap(context)
-        delims = ctx.flags['delims'] if ctx.flags else "{}"
-        return cls._expand_variant(context, delims, variant)
+        return cls._expand_variant(context, variant)
 
     @classmethod
-    def eval(cls, expr : str, *args, **kwargs):
-        return eval(expr, {}, Onion.wrap(ctx.flags, *args, **kwargs))
+    def eval(cls, expr : str):
+        return eval(expr, {}, ctx.onion)
 
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def _expand_variant(cls, onion : Onion, delims : str, variant : Any) -> Any:
+    def _expand_variant(cls, onion : Onion, variant : Any) -> Any:
         if variant == sentinel:
             raise AssertionError("Tried to expand a sentinel value")
         elif isinstance(variant, list):
-            return [cls._expand_variant(onion, delims, v) for v in variant]
+            return [cls._expand_variant(onion, v) for v in variant]
         elif isinstance(variant, dict):
-            return {k: cls._expand_variant(onion, delims, v) for k, v in variant.items()}
+            return {k: cls._expand_variant(onion, v) for k, v in variant.items()}
         elif isinstance(variant, str):
-            return cls._expand_text(onion, delims, variant)
+            return cls._expand_text(onion, variant)
         else:
             return variant
 
     @classmethod
-    def _expand_text(cls, onion : Onion, delims : str, text : str) -> Any:
+    def _expand_text(cls, onion : Onion, text : str) -> Any:
         old_text = ""
 
         while old_text != text:
             blocks = []
-            cls._split_text(text, delims, blocks)
+            cls._split_text(text, blocks)
 
             if len(blocks) == 0:
                 return text
@@ -442,7 +447,7 @@ class Expander:
             return block
 
     @classmethod
-    def _split_text(cls, text : str, delims : str, out : list[str]):
+    def _split_text(cls, text : str, out : list[str]):
         assert isinstance(text, str)
 
         rdelim = ""
@@ -455,9 +460,9 @@ class Expander:
                 escaped = False
             elif c == '\\':
                 escaped = True
-            elif ((pos := delims.find(c)) != -1) and (pos & 1 == 0):
+            elif ((pos := Expander.delims.find(c)) != -1) and (pos & 1 == 0):
                 lbrace = i
-                rdelim = delims[pos+1]
+                rdelim = Expander.delims[pos+1]
             elif c == rdelim and lbrace >= 0:
                 if cursor < lbrace:
                     out.append(cls.Literal(text[cursor:lbrace]))
@@ -746,13 +751,7 @@ class Utils:
             return False
 
     @staticmethod
-    def is_template2(text, delims) -> bool:
-        if not isinstance(text, str):
-            return False
-        return any(c in text and delims[c] in text for c in delims)
-
-    @staticmethod
-    def weave(lhs, rhs, *args) -> list[str]:
+    def cross_join(reduce, lhs, rhs, *args) -> list[str]:
         """
         This function does a 'cross join' in the database sense, every line in lhs will be joined
         to every line in rhs (and this will be repeated with *args if present). This is useful for
@@ -762,7 +761,12 @@ class Utils:
 
         lhs2 = Utils.flatten(lhs)
         rhs2 = Utils.weave(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
-        return [lh + rh for lh in lhs2 for rh in rhs2]
+        result = [reduce(lh, rh) for lh in lhs2 for rh in rhs2]
+        return result if len(result) > 1 else result[0]
+
+    @staticmethod
+    def weave(lhs, rhs, *args) -> list[str]:
+        return Utils.cross_join(lambda x, y: x + y, lhs, rhs, *args)
 
     @staticmethod
     def obj_to_float(obj) -> float:
@@ -1005,6 +1009,13 @@ class Log:
     def dedent(cls):
         cls.indent_stack.pop()
 
+    @classmethod
+    @contextmanager
+    def indent2(cls, color = 0):
+        cls.indent(color)
+        yield
+        cls.dedent()
+
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
@@ -1224,6 +1235,7 @@ class Path:
 
     @staticmethod
     def relpath(lhs, rhs):
+        # FIXME should this use cross_join?
         if isinstance(lhs, (list, tuple, set)):
             return [Path.relpath(lh, rhs) for lh in lhs]
         if isinstance(rhs, (list, tuple, set)):
@@ -1247,12 +1259,8 @@ class Path:
         return result
 
     @staticmethod
-    def join(lhs, rhs):
-        if isinstance(lhs, (list, tuple, set)):
-            return [Path.join(lh, rhs) for lh in lhs]
-        if isinstance(rhs, (list, tuple, set)):
-            return [Path.join(lhs, rh) for rh in rhs]
-        return os.path.join(lhs, rhs)
+    def join(lhs, rhs, *args):
+        return Utils.cross_join(os.path.join, lhs, rhs, *args)
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1261,12 +1269,6 @@ class Path:
 class Batch:
 
     def __init__(self):
-        self.build_tag    = Expander.eval("build_tag")
-        self.build_target = Expander.eval("build_target")
-        self.build_all    = Expander.eval("build_all")
-        self.build_dry    = Expander.eval("build_dry")
-        self.build_strict = Expander.eval("build_strict")
-
         self.repos : Dict  = Dict()
 
     def add(self, repo):
@@ -1368,7 +1370,7 @@ class Repo:
     # ----------------------------------------------------------------------------------------------
 
     def save_stat_db(self):
-        if ctx.batch.build_dry:
+        if ctx.flags.build_dry:
             return
 
         # ------------------------------------
@@ -1611,6 +1613,10 @@ class Task:
 
         self.config = Dict()
 
+        self.cache = Dict()
+
+        self.onion = Onion.wrap(self.raw_config, self.cache)
+
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
 
@@ -1750,7 +1756,7 @@ class Task:
 
             # Dry runs early out after the task is initialized but before we do .exists() checks or
             # run any commands.
-            if ctx.batch.build_dry:
+            if ctx.flags.build_dry:
                 return
 
             # Paths updated. See if we need to rebuild our outputs.
@@ -1813,33 +1819,28 @@ class Task:
     # ----------------------------------------------------------------------------------------------
 
     def expand_task(self):
-        config = self.config
-        raw_config = self.raw_config
-
         with LogLevel.DEBUG:
             self.log("Task config before expand:\n")
-            self.log(str(raw_config) + "\n")
+            self.log(str(self.raw_config) + "\n")
 
         # We wrap the task config in an onion and then tack the 'expanded' dict onto it. Then we
         # expand all the mandatory fields into 'expanded', which makes onion lookups during
         # expansion check 'expanded' first to see if it contains an already-expanded copy of the
         # field.
 
-        cache = Dict()
-
-        onion = Onion.wrap(raw_config, cache, config)
-
-        cache.repo_root  = onion['repo_root']
-        cache.build_root = onion['build_root']
-        cache.script_cwd = onion['script_cwd']
-        cache.build_dir  = onion["build_dir"]
-        cache.task_cwd   = onion["task_cwd"]
+        self.cache.repo_root  = self.onion['repo_root']
+        self.cache.build_root = self.onion['build_root']
+        self.cache.script_cwd = self.onion['script_cwd']
+        self.cache.build_dir  = self.onion["build_dir"]
+        self.cache.task_cwd   = self.onion["task_cwd"]
 
         # Build_dir must be expanded and abs'd _before_ we expand any io fields.
-        cache.build_dir   = Path.abspath(cache.build_dir)
+        print(f"old build dir {self.cache.build_dir}")
+        self.cache.build_dir   = Path.abspath(self.cache.build_dir)
+        print(f"new build dir {self.cache.build_dir}")
 
         # Then we expand all io fields (which could contain build_dir) and fix their paths.
-        for _field in raw_config:
+        for _field in self.raw_config:
             if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
@@ -1848,12 +1849,14 @@ class Task:
                   if isinstance(val, Task)
                     else val
                 for val in
-                  Utils.yield_values(raw_config[_field])
+                  Utils.yield_values(self.raw_config[_field])
             ]
 
             files = Utils.flatten(files)
-            files = Expander.expand(onion, files)
-            files = self.fix_paths(_field, files, cache.build_dir)
+            files = Expander.expand(self.onion, files)
+            files = self.fix_paths(_field, files, self.cache.build_dir)
+
+            self.cache[_field] = files[0] if len(files) == 1 else files
 
             if _field == "in_depfile":
                 # Tasks should have at most one depfile.
@@ -1868,21 +1871,25 @@ class Task:
             elif _field.startswith("out_"):
                 self.out_files[_field] = files
 
-            config[_field] = files[0] if len(files) == 1 else files
 
         # And finally we expand name/desc/command, which can contain file paths.
-        config.name        = onion["name"]
-        config.desc        = onion["desc"]
-        config.command     = Utils.flatten(onion["command"])
-        config.build_dir   = onion["build_dir"]
-        config.task_cwd    = onion["task_cwd"]
-        config.build_force = onion["build_force"]
-        config.depformat   = onion["depformat"]
-        config.job_size    = onion["job_size"]
+        self.config.name        = self.onion["name"]
+        self.config.desc        = self.onion["desc"]
+        self.config.command     = self.onion["command"]
+        self.config.build_dir   = self.cache.build_dir
+        self.config.task_cwd    = self.cache.task_cwd
+        self.config.build_force = self.onion["build_force"]
+        self.config.depformat   = self.onion["depformat"]
+        self.config.job_size    = self.onion["job_size"]
+        self.config.command     = Utils.flatten(self.config.command)
+
+        for _field in self.raw_config:
+            if _field.startswith("in_") or _field.startswith("out_"):
+                self.config[_field] = self.cache[_field]
 
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
-            self.log(str(config) + "\n")
+            self.log(str(self.config) + "\n")
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1958,7 +1965,7 @@ class Task:
                 file = Path.relpath(file, ctx.script.script_cwd)
                 file = Path.join(build_dir, file)
 
-            if not ctx.batch.build_dry:
+            if not ctx.flags.build_dry:
                 os.makedirs(Path.dirname(file), exist_ok=True)
 
         return file
@@ -1994,12 +2001,12 @@ class Task:
                     raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # In strict mode, we mark a task broken if its command still has curly braces.
-        if ctx.batch.build_strict:
+        if ctx.flags.build_strict:
             for command in cast(list, config.command):
                 if not isinstance(command, str):
                     continue
                 blocks = []
-                Expander._split_text(command, ctx.flags.delims, blocks)
+                Expander._split_text(command, blocks)
                 if any(isinstance(block, Expander.Macro) for block in blocks):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
@@ -2021,7 +2028,7 @@ class Task:
         for file in Utils.yield_values(task.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-            if not Path.exists(file) and not ctx.batch.build_dry:
+            if not Path.exists(file) and not ctx.flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
     # ----------------------------------------------------------------------------------------------
@@ -2486,14 +2493,14 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     parser.add_argument(      "--log_time",     default = True,            action = bool_opt,                     help="Timestamp each log line")
     # fmt: on
 
-    (raw_flags, unrecognized) = parser.parse_known_args(argv if argv else [])
-    raw_flags = vars(raw_flags)
-    raw_flags = {k:v for k, v in raw_flags.items() if v is not None}
+    (argv_flags, unrecognized) = parser.parse_known_args(argv if argv else [])
+    argv_flags = vars(argv_flags)
+    argv_flags = {k:v for k, v in argv_flags.items() if v is not None}
 
     # ------------------------------------
     # Load flags from opt_file if present
 
-    opt_file = raw_flags.pop("opt_file")
+    opt_file = argv_flags.pop("opt_file")
     if opt_file:
         #with Colors.GREEN:
         #    Log.log(f"Loading options file {opt_file!r}\n")
@@ -2501,7 +2508,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
             with open(opt_file) as f:
                 try:
                     opts = json.load(f)
-                    raw_flags.update(opts)
+                    argv_flags.update(opts)
                 except Exception as _:
                     #with Colors.RED:
                     #    Log.log(f"Opt file {opt_file!r} invalid!\n")
@@ -2534,7 +2541,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 
     flags = Dict()
     flags.hancho_dir = os.path.dirname(__file__)
-    flags.merge(raw_flags)
+    flags.merge(argv_flags)
     flags.merge(mystery_flags)
     flags.merge(*args, kwargs)
 
@@ -2547,62 +2554,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 class Main:
 
     root_ctx : Context
-    top_ctx : Context
     run_tool : str
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def main(cls):
-        # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
-        # message if we failed to catch an exception during load/build.
-        # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
-        # misinterpreted as a Hancho bug.
-
-        try:
-
-            cls.banner_start()
-
-            # ------------------------------------
-            # Exec top script and start the build
-
-#            time_a = time.perf_counter()
-#            ctx.script.exec2()
-#            time_b = time.perf_counter()
-#
-#            with LogLevel.VERBOSE, Colors.BLUE:
-#                Log.log(f"Loading scripts took {time_b - time_a:8.6f} seconds\n")
-
-            if cls.run_tool:
-                time_a = time.perf_counter()
-                result = Runner.run_tool(cls.run_tool)
-                time_b = time.perf_counter()
-
-                with LogLevel.VERBOSE, Colors.GREEN:
-                    Log.log(f"Tool took {time_b - time_a:8.6f} seconds\n")
-            else:
-                time_a = time.perf_counter()
-                result = cls.build()
-                time_b = time.perf_counter()
-
-                with LogLevel.VERBOSE, Colors.GREEN:
-                    Log.log(f"Build took {time_b - time_a:8.6f} seconds\n")
-
-            # ------------------------------------
-            # Done
-
-            cls.banner_end()
-            return result
-
-        except Exception:
-            print(Log.hex_to_ansi(0xFF3030), end="")
-            print("Hancho hit an exception during startup:")
-            traceback.print_exc()
-            print("\x1B[0m", end="")
-            return 1
-        finally:
-            # Don't leave the last line of the log sitting in line_buffer!
-            Log.flush()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2628,17 +2580,17 @@ class Main:
 
     @classmethod
     def select_root_tasks(cls):
-        if ctx.batch.build_target:
+        if ctx.flags.build_target:
             # Enable all tasks whose name matches the target regex
             # NOTE - We match task.raw_config.name, _not_ the expanded task.config.name.
             # This is because the task _has not initialized yet_, so we have no config.name.
-            target_regex = re.compile(ctx.batch.build_target)
+            target_regex = re.compile(ctx.flags.build_target)
 
             for task in Loader.yield_tasks():
                 if target_regex.search(task.raw_config.name):
                     task.enable_task()
 
-        elif ctx.batch.build_all:
+        elif ctx.flags.build_all:
             for task in Loader.yield_tasks():
                 task.enable_task()
 
@@ -3034,115 +2986,148 @@ def load_from_ctx() -> Script:
 # --------------------------------------------------------------------------------------------------
 # region __main__
 
-def init(*args, **kwargs):
 
-    ctx.set(Context())
+def load(script_path, script_cwd, new_flags, code):
+    pass
 
-    if __name__ == "__main__":
-        flags = parse_flags(sys.argv[1:], *args, **kwargs)
+
+# --------------------------------------------------------------------------------------------------
+
+def lib_main():
+    ctx.flags.script_name = "hancho.py"
+    ctx.flags.script_path = __file__
+    ctx.flags.script_cwd  = os.getcwd()
+
+    ctx.script = Script(code = None)
+    ctx.repo.add(ctx.script)
+
+# --------------------------------------------------------------------------------------------------
+
+def app_main():
+
+    ctx.flags.build_tag    = Expander.eval("build_tag")
+    ctx.flags.build_target = Expander.eval("build_target")
+    ctx.flags.build_all    = Expander.eval("build_all")
+    ctx.flags.build_dry    = Expander.eval("build_dry")
+    ctx.flags.build_strict = Expander.eval("build_strict")
+
+    ctx.flags.script_name  = Expander.eval("script_name")
+    ctx.flags.script_path  = Expander.eval("script_path")
+    ctx.flags.script_cwd   = Expander.eval("script_cwd")
+
+    ctx.flags.repo_root    = Expander.eval("repo_root")
+    ctx.flags.build_root   = Expander.eval("build_root")
+    ctx.flags.comp_db_path = Expander.eval("comp_db_path")
+    ctx.flags.stat_db_path = Expander.eval("stat_db_path")
+
+    ctx.script = load_from_ctx()
+    ctx.onion._layers.append(ctx.script.module.__dict__)
+
+    Loader.batches.append(ctx.batch)
+    ctx.batch.add(ctx.repo)
+    ctx.repo.add(ctx.script)
+
+    # ------------------------------------
+
+    Main.banner_start()
+
+    # ------------------------------------
+    # Exec top script and start the build
+
+    time_a = time.perf_counter()
+    ctx.script.exec2()
+    time_b = time.perf_counter()
+    with LogLevel.VERBOSE, Colors.BLUE:
+        Log.log(f"Loading scripts took {time_b - time_a:8.6f} seconds\n")
+
+    if Main.run_tool:
+        time_a = time.perf_counter()
+        result = Runner.run_tool(Main.run_tool)
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.GREEN:
+            Log.log(f"Tool took {time_b - time_a:8.6f} seconds\n")
     else:
-        flags = parse_flags([], *args, **kwargs)
+        time_a = time.perf_counter()
+        result = Main.build()
+        time_b = time.perf_counter()
 
-    log_flags = {k: flags.pop(k) for k in list(flags) if k.startswith("log_")}
+        with LogLevel.VERBOSE, Colors.GREEN:
+            Log.log(f"Build took {time_b - time_a:8.6f} seconds\n")
+
+    # ------------------------------------
+    # Done
+
+    Main.banner_end()
+
+    return result
+
+# --------------------------------------------------------------------------------------------------
+
+def init(argv = None, *args, **kwargs):
+
+    raw_flags = parse_flags(argv, *args, **kwargs)
+
+    log_flags = {k: raw_flags.pop(k) for k in list(raw_flags) if k.startswith("log_")}
     Log.reset(log_flags)
 
-    run_tool   = flags.pop("run_tool")
-    max_jobs   = flags.pop("max_jobs")
-    max_errors = flags.pop("max_errors")
+    run_tool   = raw_flags.pop("run_tool")
+    max_jobs   = raw_flags.pop("max_jobs")
+    max_errors = raw_flags.pop("max_errors")
+    delims     = raw_flags.pop("delims")
 
     Main.run_tool = run_tool
+    Expander.delims = delims
 
     Utils.reset()
     Task.reset()
     Loader.reset()
     Runner.reset(max_errors, max_jobs)
 
+    # ------------------------------------
+
     Main.root_ctx = Context()
-    with ctx.enter(Main.root_ctx):
-        ctx.flags  = Dict(flags, script_name = "hancho.py", script_path = __file__, script_cwd = os.getcwd())
-        ctx.batch  = Batch()
-        ctx.repo   = Repo()
-        ctx.script = Script(code = None)
+    ctx.set(Main.root_ctx)
 
-        ctx.batch.add(ctx.repo)
-        ctx.repo.add(ctx.script)
+    ctx.raw_flags = raw_flags
+    ctx.flags     = Dict()
+    ctx.onion     = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags)
 
-    top_ctx = Context()
-    with ctx.enter(top_ctx):
-        ctx.flags  = Dict(flags)
+    ctx.batch     = Batch()
+    ctx.repo      = Repo()
+    ctx.script    = None
 
-        ctx.flags.build_tag    = Expander.eval("build_tag")
-        ctx.flags.build_target = Expander.eval("build_target")
-        ctx.flags.build_all    = Expander.eval("build_all")
-        ctx.flags.build_dry    = Expander.eval("build_dry")
-        ctx.flags.build_strict = Expander.eval("build_strict")
+    ctx.batch.add(ctx.repo)
 
-        ctx.flags.script_name = Expander.eval("script_name")
-        ctx.flags.script_path = Expander.eval("script_path")
-        ctx.flags.script_cwd  = Expander.eval("script_cwd")
+    if __name__ == "__main__":
+        app_main()
+    else:
+        lib_main()
 
-        ctx.flags.repo_root    = Expander.eval("repo_root")
-        ctx.flags.build_root   = Expander.eval("build_root")
-        ctx.flags.comp_db_path = Expander.eval("comp_db_path")
-        ctx.flags.stat_db_path = Expander.eval("stat_db_path")
+# --------------------------------------------------------------------------------------------------
 
-        ctx.batch  = Batch()
-        ctx.repo   = Repo()
-        ctx.script = load_from_ctx()
+def _start(*args, **kwargs):
 
-        Loader.batches.append(ctx.batch)
-        ctx.batch.add(ctx.repo)
-        ctx.repo.add(ctx.script)
+    # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
+    # message if we failed to catch an exception during load/build.
+    # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
+    # misinterpreted as a Hancho bug.
 
-        ctx.script.exec2()
-        Main.main()
-        #print(ctx.get())
+    try:
+        argv = sys.argv[1:] if __name__ == "__main__" else []
+        init(argv, *args, **kwargs)
 
+    except Exception:
+        print(Log.hex_to_ansi(0xFF3030), end="")
+        print("Hancho hit an unhandled exception:")
+        traceback.print_exc()
+        print("\x1B[0m", end="")
+        return 1
+    finally:
+        # Don't leave the last line of the log sitting in line_buffer!
+        Log.flush()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def load(script_path, script_cwd, new_flags, code):
-    pass
-
-def main():
-    pass
-
-#print("pre-init")
-#print(f">{ctx.get()}<")
-init()
-#print("post-init")
-#print(f">{ctx.get()}<")
-
-
-#def _start():
-#    if __name__ == "__main__":
-#        init(argv = sys.argv[1:])
-#        result = Main.main()
-#        sys.exit(result)
-#    else:
-#        init(script_path = __file__)
-#
-#_start()
-
-#
-#d = Dict(foo = 1, bar = 2)
-#print(Expander.expand(d, "{foo} {bar}"))
+_start()
 
 # endregion
 # --------------------------------------------------------------------------------------------------

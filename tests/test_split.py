@@ -20,9 +20,9 @@ def load_tests(loader, tests, ignore):
     return tests
 
 def split(template):
-    delims = "{}"
+    #delims = "{}"
     out = []
-    Expander._split_text(template, delims, out)
+    Expander._split_text(template, out)
     return out
 
 ####################################################################################################
