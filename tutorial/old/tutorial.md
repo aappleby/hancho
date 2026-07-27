@@ -121,7 +121,7 @@ Task @ 0x727f0371d6a0 {
         "src/util.cpp",
     ],
     out_bin = "app",
-    build_dir = "{build_root}/{build_tag}/{repo_dir}",
+    build_dir = "{join(build_root, build_tag, repo_dir)}",
     _task_index = 0,
     in_files = [],
     out_files = [],

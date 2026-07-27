@@ -760,7 +760,7 @@ class Utils:
         """
 
         lhs2 = Utils.flatten(lhs)
-        rhs2 = Utils.weave(rhs, *args) if len(args) > 0 else Utils.flatten(rhs)
+        rhs2 = Utils.flatten(Utils.cross_join(reduce, rhs, *args) if len(args) > 0 else rhs)
         result = [reduce(lh, rh) for lh in lhs2 for rh in rhs2]
         return result if len(result) > 1 else result[0]
 
@@ -865,7 +865,7 @@ class Utils:
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines = [Path.join(task_cwd, d) for d in deplines]
 
-        return deplines
+        return cast(list[str], deplines)
 
     @classmethod
     def commands_to_string(cls, commands):
@@ -873,6 +873,31 @@ class Utils:
         if len(commands) and callable(commands[0]):
             commands = [c.__name__ for c in commands]
         return "; ".join(commands)
+
+    @staticmethod
+    def tree_map(func) -> abc.Callable[..., str]:
+        """Turns a function into one that can be applied to arbitrarily nested containers."""
+
+        @wraps(func)
+        def wrapper(obj, *args, **kwargs):
+            if isinstance(obj, dict):
+                return type(obj)((k, wrapper(v, *args, **kwargs)) for k, v in obj.items())
+            if isinstance(obj, (list, tuple, set)):
+                return type(obj)(wrapper(v, *args, **kwargs) for v in obj)
+            return func(obj, *args, **kwargs)
+
+        return cast(abc.Callable[..., str], wrapper)
+
+    @staticmethod
+    def tree_all(func):
+        """Turns a predicate into one that can be applied to arbitrarily nested containers."""
+
+        @wraps(func)
+        def wrapper(variant, *args, **kwargs):
+            return all(func(v, *args, **kwargs) for v in Utils.yield_values(variant))
+
+        return wrapper
+
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -1174,30 +1199,6 @@ class Log:
 class Path:
 
     @staticmethod
-    def tree_map(func) -> abc.Callable[..., str]:
-        """Turns a function into one that can be applied to arbitrarily nested containers."""
-
-        @wraps(func)
-        def wrapper(obj, *args, **kwargs):
-            if isinstance(obj, dict):
-                return type(obj)((k, wrapper(v, *args, **kwargs)) for k, v in obj.items())
-            if isinstance(obj, (list, tuple, set)):
-                return type(obj)(wrapper(v, *args, **kwargs) for v in obj)
-            return func(obj, *args, **kwargs)
-
-        return cast(abc.Callable[..., str], wrapper)
-
-    @staticmethod
-    def tree_all(func):
-        """Turns a predicate into one that can be applied to arbitrarily nested containers."""
-
-        @wraps(func)
-        def wrapper(variant, *args, **kwargs):
-            return all(func(v, *args, **kwargs) for v in Utils.yield_values(variant))
-
-        return wrapper
-
-    @staticmethod
     def resolve_path(path, strict):
         """
         This tries to convert a path containing potential env variable references and stuff into a
@@ -1208,16 +1209,16 @@ class Path:
         path = path.resolve(strict = strict)
         return str(path)
 
-    resolve  = tree_map(lambda path : Path.resolve_path(path, strict = True))
-    abspath  = tree_map(os.path.abspath)
-    basename = tree_map(os.path.basename)
-    dirname  = tree_map(os.path.dirname)
-    swapext  = tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
+    resolve  = Utils.tree_map(lambda path : Path.resolve_path(path, strict = True))
+    abspath  = Utils.tree_map(os.path.abspath)
+    basename = Utils.tree_map(os.path.basename)
+    dirname  = Utils.tree_map(os.path.dirname)
+    swapext  = Utils.tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
 
-    isabs    = tree_all(os.path.isabs)
-    isfile   = tree_all(os.path.isfile)
-    isdir    = tree_all(os.path.isdir)
-    exists   = tree_all(os.path.exists)
+    isabs    = Utils.tree_all(os.path.isabs)
+    isfile   = Utils.tree_all(os.path.isfile)
+    isdir    = Utils.tree_all(os.path.isdir)
+    exists   = Utils.tree_all(os.path.exists)
 
     # WARNING - Both 'startswith' and 'relpath' below can throw ValueError if there's a mix of
     # abs/rel paths, or if the paths are on different volumes in Windows. We don't handle this yet,
@@ -1225,7 +1226,7 @@ class Path:
     # macro expansion trace and the macro will be returned unexpanded. Using 'commonpath' here is
     # probably worth it though, as it handles some annoying edge cases.
 
-    startswith = tree_all(lambda p, parent : os.path.commonpath([p, parent]) == parent)
+    startswith = Utils.tree_all(lambda p, parent : os.path.commonpath([p, parent]) == parent)
 
     # Generating relative paths in the presence of symlinks doesn't work with either
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
@@ -1259,7 +1260,7 @@ class Path:
         return result
 
     @staticmethod
-    def join(lhs, rhs, *args):
+    def join(lhs, rhs, *args) -> str | list[str]:
         return Utils.cross_join(os.path.join, lhs, rhs, *args)
 
 # endregion
@@ -1396,7 +1397,7 @@ class Repo:
             if task.in_depfile:
                 deplines = Utils.load_depfile(task.in_depfile, task.config.depformat, task.config.task_cwd)
                 for file in deplines:
-                    stat_db[file] = self.get_stats(file)
+                    stat_db[file] = self.get_stats(file) # type: ignore
 
         # We gather stats from output files in a second pass so that their .command fields
         # overwrite any blank ones from the first pass.
@@ -1823,10 +1824,7 @@ class Task:
             self.log("Task config before expand:\n")
             self.log(str(self.raw_config) + "\n")
 
-        # We wrap the task config in an onion and then tack the 'expanded' dict onto it. Then we
-        # expand all the mandatory fields into 'expanded', which makes onion lookups during
-        # expansion check 'expanded' first to see if it contains an already-expanded copy of the
-        # field.
+        # Task directories _must_ be expanded _before_ we expand any io fields.
 
         self.cache.repo_root  = self.onion['repo_root']
         self.cache.build_root = self.onion['build_root']
@@ -1834,22 +1832,14 @@ class Task:
         self.cache.build_dir  = self.onion["build_dir"]
         self.cache.task_cwd   = self.onion["task_cwd"]
 
-        # Build_dir must be expanded and abs'd _before_ we expand any io fields.
-        print(f"old build dir {self.cache.build_dir}")
-        self.cache.build_dir   = Path.abspath(self.cache.build_dir)
-        print(f"new build dir {self.cache.build_dir}")
-
-        # Then we expand all io fields (which could contain build_dir) and fix their paths.
+        # Then we expand all io fields and fix their paths.
         for _field in self.raw_config:
             if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
             files = [
-                val.out_files
-                  if isinstance(val, Task)
-                    else val
-                for val in
-                  Utils.yield_values(self.raw_config[_field])
+                val.out_files if isinstance(val, Task) else val
+                for val in Utils.yield_values(self.raw_config[_field])
             ]
 
             files = Utils.flatten(files)
@@ -2441,14 +2431,14 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     script_path  = "{abspath(script_name)}"
     script_cwd   = "{dirname(script_path)}"
     repo_root    = "{script_cwd}"
-    build_root   = "{repo_root}/build"
+    build_root   = "{join(repo_root, 'build')}"
+    build_dir    = "{abspath(join(build_root, build_tag, relpath(script_cwd, repo_root)))}"
     task_cwd     = "{repo_root}"
-    comp_db_path = "{build_root}/compile_commands.json"
-    stat_db_path = "{build_root}/hancho.json"
+    comp_db_path = "{join(build_root, 'compile_commands.json')}"
+    stat_db_path = "{join(build_root, 'hancho.json')}"
 
     depformat = "gcc" if os.name == "posix" else "msvc"
     max_jobs  = os.cpu_count() or 1
-    build_dir = "{build_root}/{build_tag}/{relpath(script_cwd, repo_root)}"
 
     # global
     parser.add_argument('-o', "--opt_file",     default = "",              metavar = "(path)",    type=str,       help="File containing a Python literal that will be used as additional options")
@@ -2677,14 +2667,17 @@ class Main:
 path     = Path
 abspath  = Path.abspath
 basename = Path.basename
-swapext  = Path.swapext
-resolve  = Path.resolve
-relpath  = Path.relpath
 dirname  = Path.dirname
-cwd      = os.getcwd
+join     = Path.join
+relpath  = Path.relpath
+resolve  = Path.resolve
+swapext  = Path.swapext
+
 flatten  = Utils.flatten
 run_cmd  = Utils.run_cmd
 weave    = Utils.weave
+
+cwd      = os.getcwd
 
 # ----------------------------------------
 

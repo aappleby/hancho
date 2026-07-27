@@ -173,8 +173,8 @@ during init).
 - `repo_dir` / `repo_file` / `this_repo` - the current repo (rebased by `hancho.repo`).
 - `script_dir` / `script_file` / `this_module` - the currently executing script.
 - `task_cwd` - where shell commands run (defaults to `repo_dir`).
-- `build_root` (`{repo_dir}/build`), `build_tag`, `build_dir`
-  (`{build_root}/{build_tag}/{relpath(task_cwd, repo_dir)}`) - where outputs go. `--build_tag`
+- `build_root` (`{join(repo_dir, 'build')}`), `build_tag`, `build_dir`
+  (`{join(build_root, build_tag, relpath(task_cwd, repo_dir))}`) - where outputs go. `--build_tag`
   gives a build its own subtree (e.g. debug vs. release).
 - `name` / `desc` / `command`, `job_size`, `depformat`, `dry_run`, `enabled`.
 
