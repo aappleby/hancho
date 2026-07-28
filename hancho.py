@@ -162,14 +162,6 @@ class Dict(dict):
     def __setitem__(self, key : str, val : Any):
         dict.__setitem__(self, key, val)
 
-    def expand2(self, template):
-        with Tracer(self, "dict.expand", template) as trace:
-            result = Expander.expand(self, template)
-            trace.save_result(result)
-            return result
-
-    def eval2(self, expr):
-        return self.expand("{" + expr + "}")
 
 
 # Tool is just an alias for Dict to make build scripts more readable.
@@ -249,7 +241,7 @@ class Onion(abc.Mapping):
     def __init__(self, *args, **kwargs):
 
         self._layers : list[abc.Mapping] = []
-        for val in args:
+        for val in (*args, kwargs):
             if val is None:
                 continue
             if isinstance(val, Onion):
@@ -259,16 +251,13 @@ class Onion(abc.Mapping):
             else:
                 raise TypeError(f"Can't use this as an onion layer: {type(val)} = {val}")
 
-        if len(kwargs):
-            self._layers.append(kwargs)
-
-    @classmethod
-    def wrap(cls, *args, **kwargs):
-        if ctx.script:
-            result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, ctx.script.module.__dict__, *args, **kwargs)
-        else:
-            result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, *args, **kwargs)
-        return result
+    #@classmethod
+    #def wrap(cls, *args, **kwargs):
+    #    if ctx.script:
+    #        result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, ctx.script.module.__dict__, *args, **kwargs)
+    #    else:
+    #        result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, *args, **kwargs)
+    #    return result
 
     def __getattr__(self, key : str):
         try:
@@ -354,10 +343,11 @@ class Onion(abc.Mapping):
 
         return default
 
-#    def expand(self, template):
-#        result = Expander._expand2(self, template)
-#        trace.save_result(result)
-#        return result
+    def eval(self, expr):
+        return eval(expr, {}, self)
+
+    def expand(self, variant : Any):
+        return Expander.expand(self, variant)
 
 #endregion
 # --------------------------------------------------------------------------------------------------
@@ -383,17 +373,11 @@ class Expander:
     # ----------------------------------------------------------------------------------------------
 
     @classmethod
-    def expand(cls, context : abc.Mapping, variant : Any):
+    def expand(cls, onion : Onion, variant : Any):
         if not variant:
             #return variant
             pass
-        if not isinstance(context, Onion):
-            context = Onion.wrap(context)
-        return cls._expand_variant(context, variant)
-
-    @classmethod
-    def eval(cls, expr : str):
-        return eval(expr, {}, ctx.onion)
+        return cls._expand_variant(onion, variant)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1293,10 +1277,10 @@ class Batch:
 class Repo:
 
     def __init__(self):
-        self.repo_root    = Expander.eval("repo_root")
-        self.build_root   = Expander.eval("build_root")
-        self.comp_db_path = Expander.eval("comp_db_path")
-        self.stat_db_path = Expander.eval("stat_db_path")
+        self.repo_root    = ctx.onion.repo_root
+        self.build_root   = ctx.onion.build_root
+        self.comp_db_path = ctx.onion.comp_db_path
+        self.stat_db_path = ctx.onion.stat_db_path
 
         # Tally up the rebuild reasons for debugging
         self.reasons = Counter()
@@ -1534,9 +1518,9 @@ class Repo:
 class Script:
 
     def __init__(self, code : types.CodeType | None):
-        self.script_name = Expander.eval("script_name")
-        self.script_path = Expander.eval("script_path")
-        self.script_cwd  = Expander.eval("script_cwd")
+        self.script_name = ctx.onion.script_name
+        self.script_path = ctx.onion.script_path
+        self.script_cwd  = ctx.onion.script_cwd
         self.code        = code
 
         self.module = types.ModuleType(os.path.basename(self.script_name))
@@ -1544,32 +1528,12 @@ class Script:
         self.module.hancho   = hancho    # type: ignore
         self.module.flags    = ctx.flags # type: ignore
 
-        self.loaded   = False  # true once the script has finished its exec()
         self.tasks    = []     # all tasks created by this script
 
     # ------------------------------------
 
     def yield_tasks(self):
         yield from self.tasks
-
-    # ------------------------------------
-
-    def exec2(self):
-        assert not self.loaded
-        if self.code is None:
-            self.loaded = True
-            return
-        with chdir(self.script_cwd):
-            try:
-                Log.indent(Colors.ORANGE)
-                exec(self.code, self.module.__dict__)
-                self.loaded = True
-            except (Loader.Abort, Loader.EarlyOut):
-                pass
-            except Loader.Fail as fail:
-                raise RuntimeError(f"Script failed : {self.script_path}") from fail
-            finally:
-                Log.dedent()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -1616,7 +1580,14 @@ class Task:
 
         self.cache = Dict()
 
-        self.onion = Onion.wrap(self.raw_config, self.cache)
+        self.onion = Onion(
+            hancho.__dict__,
+            ctx.raw_flags,
+            ctx.flags,
+            ctx.script.module.__dict__,
+            self.raw_config,
+            self.cache,
+        )
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -2241,7 +2212,7 @@ class Loader:
     def reset(cls):
         cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
         cls.real_filenames : set[str] = set()
-        cls.dedupe : dict[tuple[str, str], Script] = {}
+        cls.dedupe : dict[str, Script] = {}
         cls.batches : list[Batch] = []
         cls.all_code : dict[str, types.CodeType] = {}
 
@@ -2253,10 +2224,10 @@ class Loader:
     # FIXME we should probably not be yielding _all_ tasks, it should probably be per-batch at the
     # highest
 
-    @classmethod
-    def yield_tasks(cls):
-        for batch in cls.batches:
-            yield from batch.yield_tasks()
+#    @classmethod
+#    def yield_tasks(cls):
+#        for batch in cls.batches:
+#            yield from batch.yield_tasks()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2327,7 +2298,7 @@ class Runner:
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
 
-        for task in Loader.yield_tasks():
+        for task in ctx.batch.yield_tasks():
             if task._enabled:
                 task.create_aio_task()
 
@@ -2395,7 +2366,7 @@ class Runner:
     @classmethod
     def run_tool(cls, tool : str): # pragma: no cover
         if tool == "clean":
-            for task in Loader.yield_tasks():
+            for task in ctx.batch.yield_tasks():
                 root = Path.relpath(task.config.build_root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
@@ -2428,17 +2399,20 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     # ------------------------------------
     # fmt: off
 
-    script_path  = "{abspath(script_name)}"
-    script_cwd   = "{dirname(script_path)}"
+    depformat    = "gcc" if os.name == "posix" else "msvc"
+    max_jobs     = os.cpu_count() or 1
+
     repo_root    = "{script_cwd}"
     build_root   = "{join(repo_root, 'build')}"
-    build_dir    = "{abspath(join(build_root, build_tag, relpath(script_cwd, repo_root)))}"
-    task_cwd     = "{repo_root}"
     comp_db_path = "{join(build_root, 'compile_commands.json')}"
     stat_db_path = "{join(build_root, 'hancho.json')}"
 
-    depformat = "gcc" if os.name == "posix" else "msvc"
-    max_jobs  = os.cpu_count() or 1
+    script_name  = "build.hancho"
+    script_path  = "{abspath(script_name)}"
+    script_cwd   = "{dirname(script_path)}"
+
+    build_dir    = "{abspath(join(build_root, build_tag, relpath(script_cwd, repo_root)))}"
+    task_cwd     = "{repo_root}"
 
     # global
     parser.add_argument('-o', "--opt_file",     default = "",              metavar = "(path)",    type=str,       help="File containing a Python literal that will be used as additional options")
@@ -2466,7 +2440,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     parser.add_argument(      "--stat_db_path", default = stat_db_path,    metavar = "(path)",    type=str.strip, help="Where to put the stat database")
 
     # script
-    parser.add_argument('-s', "--script_name",  default = "build.hancho",  metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
+    parser.add_argument('-s', "--script_name",  default = script_name,     metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
     parser.add_argument(      "--script_path",  default = script_path,     metavar = "(path)",    type=str.strip, help="Absolute path to script_name")
     parser.add_argument(      "--script_cwd",   default = script_cwd,      metavar = "(path)",    type=str.strip, help="Change to this directory before running the top build script.")
     parser.add_argument(      "--task_cwd",     default = task_cwd,        metavar = "(path)",    type=str.strip, help="Directory to run commands in.")
@@ -2548,114 +2522,7 @@ class Main:
 
     # ----------------------------------------------------------------------------------------------
 
-    @classmethod
-    def banner_start(cls):
-
-        with LogLevel.VERBOSE, Colors.LIME:
-            repo_root   = Expander.eval("repo_root")
-            script_path = Expander.eval("script_path")
-
-            Log.log(f"Command line : {" ".join(sys.argv)}\n")
-            Log.log(f"Repo root    : {repo_root}\n")
-            Log.log(f"Script path  : {script_path}\n")
-
-            if Log.log_trace:
-                Log.log("Trace mode on\n")
-            if Log.log_level_out >= LogLevel.DEBUG:
-                Log.log("Debug mode on\n")
-            if Log.log_level_out >= LogLevel.VERBOSE:
-                Log.log("Verbose mode on\n")
-
     # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def select_root_tasks(cls):
-        if ctx.flags.build_target:
-            # Enable all tasks whose name matches the target regex
-            # NOTE - We match task.raw_config.name, _not_ the expanded task.config.name.
-            # This is because the task _has not initialized yet_, so we have no config.name.
-            target_regex = re.compile(ctx.flags.build_target)
-
-            for task in Loader.yield_tasks():
-                if target_regex.search(task.raw_config.name):
-                    task.enable_task()
-
-        elif ctx.flags.build_all:
-            for task in Loader.yield_tasks():
-                task.enable_task()
-
-        else:
-            # Enable all tasks in the top repo
-            for task in ctx.repo.yield_tasks():
-                task.enable_task()
-
-    # ----------------------------------------------------------------------------------------------
-
-
-    @classmethod
-    def build(cls):
-
-        # ------------------------------------
-        # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
-        # get the old path), but _before_ we build any tasks.
-
-        for repo in ctx.batch.repos.values():
-            repo.old_stat_db = Repo.load_stat_db(repo.stat_db_path)
-
-        # ------------------------------------
-
-        cls.select_root_tasks()
-
-        time_a = time.perf_counter()
-        result = Runner.sync_run_tasks()
-        time_b = time.perf_counter()
-
-        with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log(f"Running {Runner.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
-
-        # ------------------------------------
-
-        for repo in ctx.batch.repos.values():
-            repo.save_stat_db()
-
-        return result
-
-    # ----------------------------------------------------------------------------------------------
-
-    @classmethod
-    def banner_end(cls):
-        task_count = len(list(Loader.yield_tasks()))
-
-        with LogLevel.VERBOSE:
-            Log.log(f"Tasks created:    {task_count}\n")
-            Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
-            Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
-            Log.log(f"Tasks broken:     {Runner.tasks_broken}\n")
-            Log.log(f"Tasks failed:     {Runner.tasks_failed}\n")
-            Log.log(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-            Log.log(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-            Log.log(f"Mtime calls:      {Utils.stat_calls}\n")
-            Log.log(f"Hash calls:       {Utils.hash_calls}\n")
-            Log.log(f"Hash bytes:       {Utils.hash_bytes}\n")
-            Log.log(f"Hash time:        {Utils.hash_time:8.6f}\n")
-
-        if Runner.tasks_failed or Runner.tasks_broken:
-            with LogLevel.ERROR, Colors.RED:
-                Log.log("BUILD FAILED\n")
-        elif Runner.tasks_finished:
-            with Colors.GREEN:
-                Log.log("BUILD PASSED\n")
-        else:
-            with Colors.BLUE:
-                Log.log("BUILD CLEAN\n")
-
-        with LogLevel.DEBUG, Colors.BLUE:
-            for repo in ctx.batch.repos.values():
-                Log.log(f"Stats for {repo.repo_root}\n")
-                Log.indent(Colors.BLUE)
-                for k, v in repo.reasons.items():
-                    Log.log(f"Rebuild reasons {k:13} = {v}\n")
-                Log.dedent()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2678,11 +2545,6 @@ run_cmd  = Utils.run_cmd
 weave    = Utils.weave
 
 cwd      = os.getcwd
-
-# ----------------------------------------
-
-def build():
-    return Main.build()
 
 # ----------------------------------------
 
@@ -2756,13 +2618,11 @@ def earlyout(message = ""):
 
 
 #def load(script_path, *args, **kwargs) -> types.ModuleType:
-#    script_path = Expander.eval("script_path")
-#    script_cwd  = Expander.eval("script_cwd")
+#    script_path = ctx.onionscript_path
+#    script_cwd  = ctx.onionscript_cwd
 #    script_path = Path.resolve(script_path)
 #    script_cwd  = Path.resolve(script_cwd)
 #
-#    with LogLevel.VERBOSE, Colors.AQUA:
-#        Log.log(f"SCRIPT : Loading {script_path}\n")
 #
 #    new_flags = Dict(ctx.flags, *args, kwargs, script_path = script_path, script_cwd = script_cwd)
 #    new_ctx   = Dict(ctx.get(), flags = new_flags)
@@ -2776,8 +2636,8 @@ def earlyout(message = ""):
 # ----------------------------------------
 
 #def repo(script_path, *args, **kwargs) -> types.ModuleType:
-#    script_path = Expander.eval("script_path")
-#    script_cwd  = Expander.eval("script_cwd")
+#    script_path = ctx.onion.script_path
+#    script_cwd  = ctx.onion.script_cwd
 #    script_path = Path.resolve(script_path)
 #    script_cwd  = Path.resolve(script_cwd)
 #
@@ -2815,119 +2675,6 @@ def earlyout(message = ""):
 #
 #    return new_script.module
 
-#            if code is None:
-#                if source is None:
-#                    with open(script_path, encoding="utf-8") as file:
-#                        source = file.read()
-#                code = compile(source, script_path, "exec", dont_inherit=True)
-
-def path_to_code(script_path) -> types.CodeType:
-    script_path = Path.resolve(script_path)
-    with open(script_path, encoding="utf-8") as file:
-        source = file.read()
-    code = compile(source, script_path, "exec", dont_inherit=True)
-    return code
-
-def load_from_ctx() -> Script:
-    # --------------------------------
-    # Dedupe the load - only scripts with identical real paths and identical configs are
-    # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
-    # build, which they should be in practice.
-
-    dedupe_key = Dumper.dump_to_str(key = "flags", val = ctx.flags)
-    dedupe_key = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
-    deduped_script = Loader.dedupe.get(dedupe_key, None) #type:ignore
-
-    if deduped_script:
-        with LogLevel.VERBOSE, Colors.SKY:
-            Log.log(f"Deduped load of {ctx.flags.script_path}\n")
-        return deduped_script
-
-    # --------------------------------
-    # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
-    # root of a new repo.
-
-    script_path = Expander.eval("script_path")
-    script_path = Path.resolve(script_path)
-
-    child_script = Script(path_to_code(script_path))
-
-    # --------------------------------
-    # Script created, save to dedupe dict and repo.
-
-    Loader.dedupe[dedupe_key] = child_script #type:ignore
-
-    return child_script
-
-# ----------------------------------------
-# We create an "internal" context that will contain all the repos/scripts/tasks created by
-# tests and users that import Hancho directly instead of creating build scripts. It will
-# contain a dummy "script" that points at hancho.py.
-
-#def load_top_script():
-#    repo_root   = Expander.eval("repo_root")
-#    script_path = Expander.eval("script_path")
-#    script_cwd  = Expander.eval("script_cwd")
-#
-#    repo_root   = Path.resolve(repo_root)
-#    script_path = Path.resolve(script_path)
-#    script_cwd  = Path.resolve(script_cwd)
-#
-#    ctx.flags.repo_root   = repo_root
-#    ctx.flags.script_path = script_path
-#    ctx.flags.script_cwd  = script_cwd
-#
-#    # ------------------------------------
-#    # Load top script
-#
-#    #ctx.flags = flags
-#    ctx.batch  = Batch()
-#    ctx.repo   = Repo()
-#    ctx.script = load_from_ctx()
-#
-#    ctx.batch.repos[script_path] = ctx.repo
-#    ctx.repo.scripts[script_path] = ctx.script
-#
-#    Loader.batches.append(ctx.batch)
-#    cls.top_ctx = ctx.get()
-#
-#    Main.top_script = load_from_ctx()
-
-#def init(*args, argv = None, **kwargs):
-#
-#    # We start with a context that only has the default flags and use that to reinitialize
-#    # Hancho.
-#
-#    log_flags = {k: flags.pop(k) for k in list(flags) if k.startswith("log_")}
-#    Log.reset(log_flags)
-#
-#    run_tool   = flags.pop("run_tool")
-#    max_jobs   = flags.pop("max_jobs")
-#    max_errors = flags.pop("max_errors")
-#
-#    Main.run_tool = run_tool
-#
-#    Utils.reset()
-#    Task.reset()
-#    Loader.reset()
-#    Runner.reset(max_errors, max_jobs)
-#
-#    new_batch  = Batch()
-#    new_repo   = Repo()
-#    new_script = Script(__file__, os.getcwd(), code = None)
-#
-#    new_batch.repos[__file__] = new_repo
-#    new_repo.scripts[__file__] = new_script
-#
-#    Loader.batches.append(new_batch)
-#    ctx.update(batch=new_batch, repo=new_repo, script=new_script)
-#
-#    Main.internal_ctx = ctx.get()
-
-# We treat the Hancho module itself as a repo, so that we have a place to put everything added
-# to the build by tests or other code that doesn't load a .hancho script.
-
-# endregion
 
 
 
@@ -2946,9 +2693,6 @@ def load_from_ctx() -> Script:
 
 
 
-# endregion
-# --------------------------------------------------------------------------------------------------
-# region Repo
 
 
 
@@ -2979,70 +2723,198 @@ def load_from_ctx() -> Script:
 # --------------------------------------------------------------------------------------------------
 # region __main__
 
+def path_to_code(script_path) -> types.CodeType:
+    script_path = Path.resolve(script_path)
+    with open(script_path, encoding="utf-8") as file:
+        source = file.read()
+    code = compile(source, script_path, "exec", dont_inherit=True)
+    return code
 
-def load(script_path, script_cwd, new_flags, code):
+# --------------------------------------------------------------------------------------------------
+
+def flags_to_key(raw_flags) -> str:
+    dedupe_key = Dumper.dump_to_str(key = "raw_flags", val = ctx.raw_flags)
+    dedupe_key = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
+    return dedupe_key
+
+def dedupe_script(raw_flags) -> Script | None:
+    deduped_script = Loader.dedupe.get(flags_to_key(raw_flags), None) #type:ignore
+
+    if deduped_script:
+        with LogLevel.VERBOSE, Colors.SKY:
+            Log.log(f"Deduped load of {ctx.flags.script_path}\n")
+
+    return deduped_script
+
+def add_script_to_dedupe(raw_flags, script):
+    Loader.dedupe[flags_to_key(raw_flags)] = script
+
+# --------------------------------------------------------------------------------------------------
+
+def load(script_path, *args, **kwargs):
+
+    new_ctx = replace(ctx.get())
+
+    new_ctx.raw_flags = Dict(ctx.raw_flags, Dict(script_path = script_path), *args, **kwargs)
+    new_ctx.flags     = Dict()
+    new_ctx.onion     = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags)
+
+    new_ctx.batch  = Batch()
+    new_ctx.repo   = Repo()
+    new_ctx.script = dedupe_script(ctx.raw_flags)
+
+    with ctx.enter(new_ctx):
+        new_ctx.flags.script_path = new_ctx.onion.script_path
+        with LogLevel.VERBOSE, Colors.AQUA:
+            Log.log(f"SCRIPT : Loading {script_path}\n")
+
     pass
 
-
 # --------------------------------------------------------------------------------------------------
 
-def lib_main():
-    ctx.flags.script_name = "hancho.py"
-    ctx.flags.script_path = __file__
-    ctx.flags.script_cwd  = os.getcwd()
+def app_main(raw_flags : Dict):
 
-    ctx.script = Script(code = None)
-    ctx.repo.add(ctx.script)
+    # Flags and onion have to be set first, otherwise we cant expand things.
+    ctx.raw_flags = raw_flags
+    ctx.flags     = Dict()
+    ctx.onion     = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags)
 
-# --------------------------------------------------------------------------------------------------
-
-def app_main():
-
-    ctx.flags.build_tag    = Expander.eval("build_tag")
-    ctx.flags.build_target = Expander.eval("build_target")
-    ctx.flags.build_all    = Expander.eval("build_all")
-    ctx.flags.build_dry    = Expander.eval("build_dry")
-    ctx.flags.build_strict = Expander.eval("build_strict")
-
-    ctx.flags.script_name  = Expander.eval("script_name")
-    ctx.flags.script_path  = Expander.eval("script_path")
-    ctx.flags.script_cwd   = Expander.eval("script_cwd")
-
-    ctx.flags.repo_root    = Expander.eval("repo_root")
-    ctx.flags.build_root   = Expander.eval("build_root")
-    ctx.flags.comp_db_path = Expander.eval("comp_db_path")
-    ctx.flags.stat_db_path = Expander.eval("stat_db_path")
-
-    ctx.script = load_from_ctx()
-    ctx.onion._layers.append(ctx.script.module.__dict__)
+    ctx.batch     = Batch()
+    ctx.repo      = Repo()
+    ctx.script    = None
 
     Loader.batches.append(ctx.batch)
     ctx.batch.add(ctx.repo)
-    ctx.repo.add(ctx.script)
+
+    ctx.raw_flags.script_name  = ctx.onion.script_name
+    ctx.raw_flags.script_path  = ctx.onion.script_path
+    ctx.raw_flags.script_cwd   = ctx.onion.script_cwd
+
+    # --------------------------------
+    # Dedupe the load - only scripts with identical real paths and identical configs are
+    # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
+    # build, which they should be in practice.
+
+    ctx.script = dedupe_script(ctx.raw_flags)
+
+    if not ctx.script:
+        # --------------------------------
+        # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
+        # root of a new repo.
+
+        child_code  = path_to_code(ctx.onion.script_path)
+        ctx.script = Script(child_code)
+        add_script_to_dedupe(ctx.raw_flags, ctx.script)
+        ctx.repo.add(ctx.script)
+
+    ctx.onion._layers.append(ctx.script.module.__dict__)
 
     # ------------------------------------
 
-    Main.banner_start()
+    ctx.flags.build_tag    = ctx.onion.build_tag
+    ctx.flags.build_target = ctx.onion.build_target
+    ctx.flags.build_all    = ctx.onion.build_all
+    ctx.flags.build_dry    = ctx.onion.build_dry
+    ctx.flags.build_strict = ctx.onion.build_strict
+    ctx.flags.script_name  = ctx.onion.script_name
+    ctx.flags.script_path  = ctx.onion.script_path
+    ctx.flags.script_cwd   = ctx.onion.script_cwd
+    ctx.flags.repo_root    = ctx.onion.repo_root
+    ctx.flags.build_root   = ctx.onion.build_root
+    ctx.flags.comp_db_path = ctx.onion.comp_db_path
+    ctx.flags.stat_db_path = ctx.onion.stat_db_path
+
 
     # ------------------------------------
-    # Exec top script and start the build
+
+    with LogLevel.VERBOSE, Colors.LIME:
+        Log.log(f"Command line : {" ".join(sys.argv)}\n")
+        Log.log(f"Repo root    : {ctx.flags.repo_root}\n")
+        Log.log(f"Script path  : {ctx.flags.script_path}\n")
+
+        if Log.log_trace:
+            Log.log("Trace mode on\n")
+        if Log.log_level_out >= LogLevel.DEBUG:
+            Log.log("Debug mode on\n")
+        if Log.log_level_out >= LogLevel.VERBOSE:
+            Log.log("Verbose mode on\n")
+
+    # ------------------------------------
+    # Exec top script
 
     time_a = time.perf_counter()
-    ctx.script.exec2()
+
+    try:
+        Log.indent(Colors.ORANGE)
+        with chdir(ctx.script.script_cwd):
+            if ctx.script.code:
+                exec(ctx.script.code, ctx.script.module.__dict__)
+    except (Loader.Abort, Loader.EarlyOut):
+        pass
+    except Loader.Fail as fail:
+        raise RuntimeError(f"Script failed : {ctx.script.script_path}") from fail
+    finally:
+        Log.dedent()
+
     time_b = time.perf_counter()
     with LogLevel.VERBOSE, Colors.BLUE:
         Log.log(f"Loading scripts took {time_b - time_a:8.6f} seconds\n")
 
-    if Main.run_tool:
+    # ------------------------------------
+    # Start the build
+
+    if ctx.onion.run_tool:
         time_a = time.perf_counter()
-        result = Runner.run_tool(Main.run_tool)
+        result = Runner.run_tool(ctx.onion.run_tool)
         time_b = time.perf_counter()
 
         with LogLevel.VERBOSE, Colors.GREEN:
             Log.log(f"Tool took {time_b - time_a:8.6f} seconds\n")
     else:
         time_a = time.perf_counter()
-        result = Main.build()
+
+        # ------------------------------------
+        # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
+        # get the old path), but _before_ we build any tasks.
+
+        for repo in ctx.batch.repos.values():
+            repo.old_stat_db = Repo.load_stat_db(repo.stat_db_path)
+
+        # ------------------------------------
+
+        if ctx.flags.build_target:
+            # Enable all tasks whose name matches the target regex
+            # NOTE - We match task.raw_config.name, _not_ the expanded task.config.name.
+            # This is because the task _has not initialized yet_, so we have no config.name.
+            target_regex = re.compile(ctx.flags.build_target)
+
+            for task in ctx.batch.yield_tasks():
+                if target_regex.search(task.raw_config.name):
+                    task.enable_task()
+
+        elif ctx.flags.build_all:
+            for task in ctx.batch.yield_tasks():
+                task.enable_task()
+
+        else:
+            # Enable all tasks in the top repo
+            for task in ctx.repo.yield_tasks():
+                task.enable_task()
+
+
+        time_a = time.perf_counter()
+        result = Runner.sync_run_tasks()
+        time_b = time.perf_counter()
+
+        with LogLevel.VERBOSE, Colors.BLUE:
+            Log.log(f"Running {Runner.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
+
+        # ------------------------------------
+
+        for repo in ctx.batch.repos.values():
+            repo.save_stat_db()
+
+
         time_b = time.perf_counter()
 
         with LogLevel.VERBOSE, Colors.GREEN:
@@ -3051,7 +2923,38 @@ def app_main():
     # ------------------------------------
     # Done
 
-    Main.banner_end()
+    task_count = len(list(ctx.batch.yield_tasks()))
+
+    with LogLevel.VERBOSE:
+        Log.log(f"Tasks created:    {task_count}\n")
+        Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
+        Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
+        Log.log(f"Tasks broken:     {Runner.tasks_broken}\n")
+        Log.log(f"Tasks failed:     {Runner.tasks_failed}\n")
+        Log.log(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+        Log.log(f"Tasks skipped:    {Runner.tasks_skipped}\n")
+        Log.log(f"Mtime calls:      {Utils.stat_calls}\n")
+        Log.log(f"Hash calls:       {Utils.hash_calls}\n")
+        Log.log(f"Hash bytes:       {Utils.hash_bytes}\n")
+        Log.log(f"Hash time:        {Utils.hash_time:8.6f}\n")
+
+    if Runner.tasks_failed or Runner.tasks_broken:
+        with LogLevel.ERROR, Colors.RED:
+            Log.log("BUILD FAILED\n")
+    elif Runner.tasks_finished:
+        with Colors.GREEN:
+            Log.log("BUILD PASSED\n")
+    else:
+        with Colors.BLUE:
+            Log.log("BUILD CLEAN\n")
+
+    with LogLevel.DEBUG, Colors.BLUE:
+        for repo in ctx.batch.repos.values():
+            Log.log(f"Stats for {repo.repo_root}\n")
+            Log.indent(Colors.BLUE)
+            for k, v in repo.reasons.items():
+                Log.log(f"Rebuild reasons {k:13} = {v}\n")
+            Log.dedent()
 
     return result
 
@@ -3059,17 +2962,18 @@ def app_main():
 
 def init(argv = None, *args, **kwargs):
 
-    raw_flags = parse_flags(argv, *args, **kwargs)
+    Main.root_ctx = Context()
+    ctx.set(Main.root_ctx)
 
-    log_flags = {k: raw_flags.pop(k) for k in list(raw_flags) if k.startswith("log_")}
+    ctx.raw_flags = parse_flags(argv, *args, **kwargs)
+
+    log_flags = {k: ctx.raw_flags.pop(k) for k in list(ctx.raw_flags) if k.startswith("log_")}
     Log.reset(log_flags)
 
-    run_tool   = raw_flags.pop("run_tool")
-    max_jobs   = raw_flags.pop("max_jobs")
-    max_errors = raw_flags.pop("max_errors")
-    delims     = raw_flags.pop("delims")
+    max_jobs   = ctx.raw_flags.pop("max_jobs")
+    max_errors = ctx.raw_flags.pop("max_errors")
+    delims     = ctx.raw_flags.pop("delims")
 
-    Main.run_tool = run_tool
     Expander.delims = delims
 
     Utils.reset()
@@ -3079,23 +2983,24 @@ def init(argv = None, *args, **kwargs):
 
     # ------------------------------------
 
-    Main.root_ctx = Context()
-    ctx.set(Main.root_ctx)
-
-    ctx.raw_flags = raw_flags
-    ctx.flags     = Dict()
-    ctx.onion     = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags)
-
-    ctx.batch     = Batch()
-    ctx.repo      = Repo()
-    ctx.script    = None
-
-    ctx.batch.add(ctx.repo)
-
     if __name__ == "__main__":
-        app_main()
+        app_main(ctx.raw_flags)
     else:
-        lib_main()
+        # We treat the Hancho module itself as a repo, so that we have a place to put everything
+        # added to the build by tests or other code that doesn't load a .hancho script.
+        ctx.flags     = Dict()
+        ctx.onion     = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags)
+        ctx.batch     = Batch()
+        ctx.repo      = Repo()
+        ctx.script    = None
+        ctx.batch.add(ctx.repo)
+
+        ctx.flags.script_name = "hancho.py"
+        ctx.flags.script_path = __file__
+        ctx.flags.script_cwd  = os.getcwd()
+
+        ctx.script = Script(code = None)
+        ctx.repo.add(ctx.script)
 
 # --------------------------------------------------------------------------------------------------
 
