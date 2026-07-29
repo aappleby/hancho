@@ -251,13 +251,7 @@ class Onion(abc.Mapping):
             else:
                 raise TypeError(f"Can't use this as an onion layer: {type(val)} = {val}")
 
-    #@classmethod
-    #def wrap(cls, *args, **kwargs):
-    #    if ctx.script:
-    #        result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, ctx.script.module.__dict__, *args, **kwargs)
-    #    else:
-    #        result = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags, *args, **kwargs)
-    #    return result
+    # ----------------------------------------
 
     def __getattr__(self, key : str):
         try:
@@ -287,6 +281,8 @@ class Onion(abc.Mapping):
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
+
+    # ----------------------------------------
 
     def get(self, key, default : Any = sentinel) -> Any: # type: ignore
         """
@@ -330,6 +326,8 @@ class Onion(abc.Mapping):
             trace.save_result(result)
             return result
 
+    # ----------------------------------------
+
     def raw_get(self, key, default : Any = sentinel) -> Any:
         """
         A simpler getter equivalent to ChainMap.get - doesn't expand the result.
@@ -342,6 +340,8 @@ class Onion(abc.Mapping):
             raise KeyError(key)
 
         return default
+
+    # ----------------------------------------
 
     def eval(self, expr):
         return eval(expr, {}, self)
@@ -364,7 +364,9 @@ class Expander:
     class Expr(str):
         pass
 
-    delims : str = "{}«»"
+    ldelims : str = "{«"
+    rdelims : str = "}»"
+
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH = 30
@@ -385,82 +387,85 @@ class Expander:
     def _expand_variant(cls, onion : Onion, variant : Any) -> Any:
         if variant == sentinel:
             raise AssertionError("Tried to expand a sentinel value")
-        elif isinstance(variant, list):
-            return [cls._expand_variant(onion, v) for v in variant]
-        elif isinstance(variant, dict):
-            return {k: cls._expand_variant(onion, v) for k, v in variant.items()}
         elif isinstance(variant, str):
             return cls._expand_text(onion, variant)
+        elif isinstance(variant, abc.Collection):
+            return [cls._expand_variant(onion, v) for v in variant]
+        elif isinstance(variant, abc.Mapping):
+            return {k: cls._expand_variant(onion, v) for k, v in variant.items()}
         else:
             return variant
 
     @classmethod
     def _expand_text(cls, onion : Onion, text : str) -> Any:
         old_text = ""
+        blocks = []
 
-        while old_text != text:
-            blocks = []
-            cls._split_text(text, blocks)
+        if not text or not cls._split_text(text, blocks):
+            return text
 
-            if len(blocks) == 0:
-                return text
+        if len(blocks) == 1:
+            return cls._eval_macro(onion, blocks[0])
 
-            if len(blocks) == 1:
-                return cls._expand_block(onion, blocks[0])
+        with Tracer(onion, "expand", text) as trace:
+            while old_text != text:
+                blocks.clear()
 
-            for i in range(len(blocks)):
-                if isinstance(blocks[i], cls.Macro):
-                    blocks[i] = cls._expand_block(onion, blocks[i])
-                    blocks[i] = Utils.stringify(blocks[i])
+                if not text or not cls._split_text(text, blocks):
+                    return text
 
-            old_text = text
-            text = "".join(blocks)
+                if len(blocks) == 1:
+                    return cls._eval_macro(onion, blocks[0])
 
-        return text
+                for i in range(len(blocks)):
+                    if isinstance(blocks[i], cls.Macro):
+                        blocks[i] = cls._eval_macro(onion, blocks[i])
+                        blocks[i] = Utils.stringify(blocks[i])
 
-    @classmethod
-    def _expand_block(cls, onion : Onion, block : str):
-        if not isinstance(block, cls.Macro):
-            return block
+                old_text = text
+                text = "".join(blocks)
+            trace.save_result(text)
 
-        try:
-            return eval(block[1:-1], {}, onion)
-        except RecursionError:
-            raise
-        except Exception as _:
-            return block
+        return str(text)
 
     @classmethod
-    def _split_text(cls, text : str, out : list[str]):
-        assert isinstance(text, str)
+    def _eval_macro(cls, onion : Onion, macro : Expander.Macro):
+        result = None
+        with Tracer(onion, "eval", macro) as trace:
+            try:
+                result = eval(macro[1:-1], {}, onion)
+                return result
+            except RecursionError:
+                raise
+            except Exception as _:
+                return macro
+            finally:
+                trace.save_result(result)
 
-        rdelim = ""
+    @classmethod
+    def _split_text(cls, text : str, out : list[str]) -> int:
+        rdelim = None
         cursor = 0
-        lbrace = -1
-        escaped = False
-        chunk_count = 0
+        idelim = -1
+        macros = 0
+
         for i, c in enumerate(text):
-            if escaped:
-                escaped = False
-            elif c == '\\':
-                escaped = True
-            elif ((pos := Expander.delims.find(c)) != -1) and (pos & 1 == 0):
-                lbrace = i
-                rdelim = Expander.delims[pos+1]
-            elif c == rdelim and lbrace >= 0:
-                if cursor < lbrace:
-                    out.append(cls.Literal(text[cursor:lbrace]))
-                    chunk_count += 1
-                out.append(cls.Macro(text[lbrace:i+1]))
-                chunk_count += 1
+            if (pos := cls.ldelims.find(c)) != -1:
+                idelim = i
+                rdelim = cls.rdelims[pos]
+            elif c == rdelim and idelim >= 0:
+                if cursor < idelim:
+                    out.append(cls.Literal(text[cursor:idelim]))
+                out.append(cls.Macro(text[idelim:i+1]))
+                macros += 1
                 cursor = i + 1
-                lbrace = -1
-                rdelim = ""
+                idelim = -1
+                rdelim = None
 
         if cursor < len(text):
             out.append(cls.Literal(text[cursor:]))
-            chunk_count += 1
-        return chunk_count
+
+        return macros
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -638,13 +643,6 @@ class Dumper:
 class Utils:
 
     @classmethod
-    def reset(cls):
-        cls.stat_calls = 0
-        cls.hash_calls = 0
-        cls.hash_bytes = 0
-        cls.hash_time  = 0
-
-    @classmethod
     def hash(cls, key, h):
         # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
         # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
@@ -704,14 +702,14 @@ class Utils:
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
-        cls.hash_calls += 1
+        Main.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
             blob = f.read()
-            cls.hash_bytes += len(blob)
+            Main.hash_bytes += len(blob)
         result = cls.hash(blob, h)
         time_b = time.perf_counter()
-        cls.hash_time += time_b - time_a
+        Main.hash_time += time_b - time_a
         return result
 
     @staticmethod
@@ -1269,7 +1267,6 @@ class Batch:
         for r in self.repos.values():
             yield from r.yield_tasks()
 
-
 # endregion
 # --------------------------------------------------------------------------------------------------
 # region Repo
@@ -1336,7 +1333,7 @@ class Repo:
     # ----------------------------------------------------------------------------------------------
 
     def get_stats(self, file : str, command = None):
-        Utils.stat_calls += 1
+        Main.stat_calls += 1
 
         _hash = Utils.hash_file(file)
         _stat = os.stat(file)
@@ -1550,11 +1547,6 @@ class Script:
 
 class Task:
 
-    @classmethod
-    def reset(cls):
-        cls.id_counter : int = 0
-        cls.tasks_enabled : int = 0
-
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
     class SKIPPED(Exception):   pass
@@ -1568,8 +1560,6 @@ class Task:
         # The task's 'raw' config contains everything passed in to hancho.Task(), but no templates
         # are expanded.
 
-        kwargs = types.MappingProxyType(kwargs)
-
         self.raw_config = Dict(*args, **kwargs)
 
         # The task's 'cooked' config contains only the mandatory fields needed to run the command.
@@ -1578,15 +1568,13 @@ class Task:
 
         self.config = Dict()
 
-        self.cache = Dict()
-
         self.onion = Onion(
             hancho.__dict__,
             ctx.raw_flags,
             ctx.flags,
             ctx.script.module.__dict__,
             self.raw_config,
-            self.cache,
+            self.config,
         )
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -1634,9 +1622,7 @@ class Task:
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
-            self._enabled = True
-            Task.tasks_enabled += 1
-            self.create_aio_task()
+            self.enable_task()
 
     # ----------------------------------------------------------------------------------------------
     # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -1664,7 +1650,7 @@ class Task:
         for line in message.splitlines(keepends=True):
             with Colors.LIME:
                 if not Log.line_buffer:
-                    Log.log(f"[{self._task_id:3d}/{Task.tasks_enabled:3d}] ")
+                    Log.log(f"[{self._task_id:3d}/{Main.tasks_started:3d}] ")
             Log.log(line)
 
     # ----------------------------------------------------------------------------------------------
@@ -1672,44 +1658,13 @@ class Task:
     def enable_task(self):
         if not self._enabled:
             self._enabled = True
-            Task.tasks_enabled += 1
             if Utils.in_event_loop():
-                self.create_aio_task()
-
-    # ----------------------------------------------------------------------------------------------
-
-    def create_aio_task(self):
-        assert Utils.in_event_loop()
-
-        if self._aio_task is None:
-            t = asyncio.create_task(self.task_top(), context=self._aio_context)
-            t.hancho_task = self # type: ignore
-            Runner.live_aio_tasks.add(t)
-            t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
-            self._aio_task = t
-
-        # Start all tasks referenced by the config so we don't deadlock while waiting for them.
-        for v in self.input_tasks:
-            v.enable_task()
-
-    # ----------------------------------------------------------------------------------------------
-
-    def update_stats(self):
-        config = self.config
-
-        # If there's a depfile from a previous build, load it so we can use it below.
-        if self.in_depfile:
-            self._old_deplines = Utils.load_depfile(
-                self.in_depfile, config.depformat, config.task_cwd
-            )
+                Runner.create_aio_task(self)
 
     # ----------------------------------------------------------------------------------------------
     # Async task entry point
 
     async def task_top(self):
-        Task.id_counter += 1
-        self._task_id = Task.id_counter
-
         task   = self
         config = task.config
 
@@ -1721,7 +1676,13 @@ class Task:
             task.expand_task()
 
             # Update mtime/hash for all input and output files in this task if they exist.
-            task.update_stats()
+
+            # If there's a depfile from a previous build, load it so we can use it below.
+            if self.in_depfile:
+                self._old_deplines = Utils.load_depfile(
+                    self.in_depfile, config.depformat, config.task_cwd
+                )
+
 
             # Inputs are ready, templates are expanded, time to run the task.
             task.sanity_check()
@@ -1742,7 +1703,7 @@ class Task:
             # OK, let's go!
             await task.task_main()
 
-            # And
+            # And we're done
             return task.out_files
 
         except asyncio.CancelledError as ex:
@@ -1795,13 +1756,14 @@ class Task:
             self.log("Task config before expand:\n")
             self.log(str(self.raw_config) + "\n")
 
-        # Task directories _must_ be expanded _before_ we expand any io fields.
+        task_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
+                     'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
 
-        self.cache.repo_root  = self.onion['repo_root']
-        self.cache.build_root = self.onion['build_root']
-        self.cache.script_cwd = self.onion['script_cwd']
-        self.cache.build_dir  = self.onion["build_dir"]
-        self.cache.task_cwd   = self.onion["task_cwd"]
+        for key in task_keys:
+            self.config[key] = None
+
+        # We need to expand the build dir first so we can use it in fix_paths.
+        build_dir = self.onion.build_dir
 
         # Then we expand all io fields and fix their paths.
         for _field in self.raw_config:
@@ -1815,38 +1777,22 @@ class Task:
 
             files = Utils.flatten(files)
             files = Expander.expand(self.onion, files)
-            files = self.fix_paths(_field, files, self.cache.build_dir)
+            files = self.fix_paths(_field, files, build_dir)
 
-            self.cache[_field] = files[0] if len(files) == 1 else files
+            self.config[_field] = files[0] if len(files) == 1 else files
 
             if _field == "in_depfile":
-                # Tasks should have at most one depfile.
-                if len(files) > 1:
-                    ex = Task.BROKEN(f"Tasks can't have more than one dependency file! - {files}")
-                    self.log_exception("Task broken!", ex)
-                    self._error = ex
-                    raise ex
                 self.in_depfile = cast(str, files[0])
             elif _field.startswith("in_"):
                 self.in_files[_field] = files
             elif _field.startswith("out_"):
                 self.out_files[_field] = files
 
+        # And finally we expand the onion to fill the config.
+        for key in task_keys:
+            self.config[key] = self.onion[key]
 
-        # And finally we expand name/desc/command, which can contain file paths.
-        self.config.name        = self.onion["name"]
-        self.config.desc        = self.onion["desc"]
-        self.config.command     = self.onion["command"]
-        self.config.build_dir   = self.cache.build_dir
-        self.config.task_cwd    = self.cache.task_cwd
-        self.config.build_force = self.onion["build_force"]
-        self.config.depformat   = self.onion["depformat"]
-        self.config.job_size    = self.onion["job_size"]
         self.config.command     = Utils.flatten(self.config.command)
-
-        for _field in self.raw_config:
-            if _field.startswith("in_") or _field.startswith("out_"):
-                self.config[_field] = self.cache[_field]
 
         with LogLevel.DEBUG:
             self.log("Task config after expand:\n")
@@ -1967,8 +1913,7 @@ class Task:
                 if not isinstance(command, str):
                     continue
                 blocks = []
-                Expander._split_text(command, blocks)
-                if any(isinstance(block, Expander.Macro) for block in blocks):
+                if Expander._split_text(command, blocks):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
         # Check that all build files would end up under build_dir
@@ -1980,17 +1925,22 @@ class Task:
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
             real_file = cast(str, Path.abspath(file))
-            if real_file in Loader.real_filenames:
+            if real_file in Main.real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            Loader.real_filenames.add(real_file)
+            Main.real_filenames.add(real_file)
 
-        # Check for missing inputs. We have to check build_dry, as the input files may only exist if
+         # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
         for file in Utils.yield_values(task.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
             if not Path.exists(file) and not ctx.flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
+
+        # Tasks should have at most one depfile.
+        if "in_depfile" in self.config and isinstance(self.config.in_depfile, list):
+            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.config.in_depfile}")
+
 
     # ----------------------------------------------------------------------------------------------
 
@@ -2202,32 +2152,17 @@ class Tracer:
 # --------------------------------------------------------------------------------------------------
 # region Loader
 
-class Loader:
+# Raised by hancho scripts when they need to stop running due to some error.
+class ScriptAbort(Exception):
+    pass
 
-    class Abort(Exception):    pass # Raised by hancho scripts when they need to stop running due to some error.
-    class EarlyOut(Exception): pass # Raised by hancho scripts when they are successful but don't need to do anything else.
-    class Fail(Exception):     pass # Script has hit a fatal error
+# Raised by hancho scripts when they are successful but don't need to do anything else.
+class ScriptEarlyOut(Exception):
+    pass
 
-    @classmethod
-    def reset(cls):
-        cls.match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
-        cls.real_filenames : set[str] = set()
-        cls.dedupe : dict[str, Script] = {}
-        cls.batches : list[Batch] = []
-        cls.all_code : dict[str, types.CodeType] = {}
-
-    # ----------------------------------------------------------------------------------------------
-
-
-
-    # ----------------------------------------------------------------------------------------------
-    # FIXME we should probably not be yielding _all_ tasks, it should probably be per-batch at the
-    # highest
-
-#    @classmethod
-#    def yield_tasks(cls):
-#        for batch in cls.batches:
-#            yield from batch.yield_tasks()
+# Script has hit a fatal error
+class ScriptFail(Exception):
+    pass
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2236,24 +2171,14 @@ class Loader:
 class Runner:
 
     @classmethod
-    def reset(cls, max_errors, max_jobs):
+    def reset(cls, max_jobs):
         cls.max_jobs   = max_jobs
-        cls.max_errors = max_errors
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
 
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
         cls.live_aio_tasks : set[asyncio.Task] = set()
-
-        cls.tasks_awaited : int = 0
-        cls.tasks_finished : int = 0
-        cls.tasks_broken : int = 0
-        cls.tasks_failed : int = 0
-        cls.tasks_cancelled : int = 0
-        cls.tasks_skipped : int = 0
-
-    # ----------------------------------------------------------------------------------------------
 
     @classmethod
     async def acquire(cls, count):
@@ -2276,20 +2201,27 @@ class Runner:
                 cls.release(acquired)
                 raise
 
-
     @classmethod
     def release(cls, count):
         for _ in range(count):
             cls.core_sem.release()
 
-    # ----------------------------------------------------------------------------------------------
-
     @classmethod
-    def sync_run_tasks(cls):
-        """Synchronously run all tasks until we're done with all of them."""
-        return asyncio.run(cls.async_run_tasks())
+    def create_aio_task(cls, task):
+        assert Utils.in_event_loop()
 
-    # ----------------------------------------------------------------------------------------------
+        if task._aio_task is None:
+            t = asyncio.create_task(task.task_top(), context=task._aio_context)
+            t.hancho_task = task # type: ignore
+            cls.live_aio_tasks.add(t)
+            t.add_done_callback(lambda t: cls.aio_done_queue.put_nowait(t))
+            task._aio_task = t
+            Main.tasks_started += 1
+            task._task_id = Main.tasks_started
+
+        # Start all tasks referenced by the config so we don't deadlock while waiting for them.
+        for v in task.input_tasks:
+            v.enable_task()
 
     @classmethod
     async def async_run_tasks(cls):
@@ -2300,7 +2232,7 @@ class Runner:
 
         for task in ctx.batch.yield_tasks():
             if task._enabled:
-                task.create_aio_task()
+                Runner.create_aio_task(task)
 
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
@@ -2308,40 +2240,40 @@ class Runner:
         with LogLevel.VERBOSE, Colors.BLUE:
             Log.log("Running tasks...\n")
 
-        while cls.live_aio_tasks and (cls.tasks_broken + cls.tasks_failed) <= Runner.max_errors:
+        while cls.live_aio_tasks and (Main.tasks_broken + Main.tasks_failed) <= Main.max_errors:
             finished_aio_task = None
 
             try:
                 finished_aio_task = cast(asyncio.Task, await cls.aio_done_queue.get())
                 _ = finished_aio_task.result()
-                cls.tasks_finished += 1
+                Main.tasks_finished += 1
             except asyncio.CancelledError:
-                cls.tasks_cancelled += 1
+                Main.tasks_cancelled += 1
             except Task.CANCELLED:
-                cls.tasks_cancelled += 1
+                Main.tasks_cancelled += 1
             except Task.BROKEN:
-                cls.tasks_broken += 1
+                Main.tasks_broken += 1
             except Task.FAILED:
-                cls.tasks_failed += 1
+                Main.tasks_failed += 1
             except Task.SKIPPED:
                 finished_aio_task.hancho_task._complete = True #type:ignore
-                cls.tasks_skipped += 1
+                Main.tasks_skipped += 1
             except BaseException as ex:
                 with LogLevel.DEBUG:
                     Log.log(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
                     Log.log_exception(ex)
-                cls.tasks_failed += 1
+                Main.tasks_failed += 1
             else:
                 # If _none_ of the above exceptions fired, we mark the task as complete.
                 finished_aio_task.hancho_task._complete = True #type:ignore
             finally:
                 if finished_aio_task is not None:
                     cls.live_aio_tasks.discard(finished_aio_task)
-                cls.tasks_awaited += 1
+                Main.tasks_awaited += 1
 
-        if cls.tasks_broken + cls.tasks_failed > Runner.max_errors:
+        if Main.tasks_broken + Main.tasks_failed > Main.max_errors:
             with LogLevel.ERROR:
-                Log.log(f"Too many failures after {cls.tasks_awaited}, cancelling tasks and stopping build\n")
+                Log.log(f"Too many failures after {Main.tasks_awaited}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
             with LogLevel.VERBOSE:
@@ -2351,17 +2283,14 @@ class Runner:
             # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
             # to failures or someone ctrl-c'ing the build, this is purely cosmetic.
 
-            cls.tasks_cancelled += len(cls.live_aio_tasks)
+            Main.tasks_cancelled += len(cls.live_aio_tasks)
             for t in cls.live_aio_tasks:
                 t.cancel()
 
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*cls.live_aio_tasks, return_exceptions=True)
 
-        return 1 if cls.tasks_failed or cls.tasks_broken else 0
-
-    # ----------------------------------------------------------------------------------------------
-    # not worth coverage checking this when we only have one tool and we know it works.
+        return 1 if Main.tasks_failed or Main.tasks_broken else 0
 
     @classmethod
     def run_tool(cls, tool : str): # pragma: no cover
@@ -2519,10 +2448,39 @@ class Main:
 
     root_ctx : Context
     run_tool : str
+    match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
+    real_filenames : set[str] = set()   # for catching multiple targets building the same output
+    dedupe : dict[str, Script] = {}
+    batches : list[Batch] = []
+    stat_calls : int = 0
+    hash_calls : int = 0
+    hash_bytes : int = 0
+    hash_time  : float = 0
 
-    # ----------------------------------------------------------------------------------------------
+    @classmethod
+    def reset(cls, max_errors):
+        cls.root_ctx = Context()
+        ctx.set(cls.root_ctx)
 
-    # ----------------------------------------------------------------------------------------------
+        cls.run_tool = ""
+        cls.real_filenames = set()
+        cls.dedupe = {}
+        cls.batches = []
+
+        cls.stat_calls = 0
+        cls.hash_calls = 0
+        cls.hash_bytes = 0
+        cls.hash_time  = 0
+
+        cls.max_errors = max_errors
+
+        cls.tasks_started : int = 0
+        cls.tasks_awaited : int = 0
+        cls.tasks_finished : int = 0
+        cls.tasks_broken : int = 0
+        cls.tasks_failed : int = 0
+        cls.tasks_cancelled : int = 0
+        cls.tasks_skipped : int = 0
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2572,7 +2530,7 @@ def fail(message):
         Log.log(f"  file = {frame.f_code.co_filename}\n")
         Log.log(f"  func = {frame.f_code.co_name}\n")
         Log.log(f"  line = {frame.f_lineno}\n")
-    raise Loader.Fail()
+    raise ScriptFail()
 
 # ----------------------------------------
 
@@ -2584,7 +2542,7 @@ def abort(message):
         Log.log(f"  file = {frame.f_code.co_filename}\n")
         Log.log(f"  func = {frame.f_code.co_name}\n")
         Log.log(f"  line = {frame.f_lineno}\n")
-    raise Loader.Abort()
+    raise ScriptAbort()
 
 # ----------------------------------------
 
@@ -2596,7 +2554,7 @@ def earlyout(message = ""):
         Log.log(f"  file = {frame.f_code.co_filename}\n")
         Log.log(f"  func = {frame.f_code.co_name}\n")
         Log.log(f"  line = {frame.f_lineno}\n")
-    raise Loader.EarlyOut()
+    raise ScriptEarlyOut()
 
 # endregion
 # --------------------------------------------------------------------------------------------------
@@ -2734,11 +2692,11 @@ def path_to_code(script_path) -> types.CodeType:
 
 def flags_to_key(raw_flags) -> str:
     dedupe_key = Dumper.dump_to_str(key = "raw_flags", val = ctx.raw_flags)
-    dedupe_key = Loader.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
+    dedupe_key = Main.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
     return dedupe_key
 
 def dedupe_script(raw_flags) -> Script | None:
-    deduped_script = Loader.dedupe.get(flags_to_key(raw_flags), None) #type:ignore
+    deduped_script = Main.dedupe.get(flags_to_key(raw_flags), None) #type:ignore
 
     if deduped_script:
         with LogLevel.VERBOSE, Colors.SKY:
@@ -2747,7 +2705,7 @@ def dedupe_script(raw_flags) -> Script | None:
     return deduped_script
 
 def add_script_to_dedupe(raw_flags, script):
-    Loader.dedupe[flags_to_key(raw_flags)] = script
+    Main.dedupe[flags_to_key(raw_flags)] = script
 
 # --------------------------------------------------------------------------------------------------
 
@@ -2779,16 +2737,27 @@ def app_main(raw_flags : Dict):
     ctx.flags     = Dict()
     ctx.onion     = Onion(hancho.__dict__, ctx.raw_flags, ctx.flags)
 
+    ctx.flags.script_name  = ctx.onion.script_name
+    ctx.flags.script_path  = ctx.onion.script_path
+    ctx.flags.script_cwd   = ctx.onion.script_cwd
+
+    ctx.flags.repo_root    = ctx.onion.repo_root
+    ctx.flags.build_root   = ctx.onion.build_root
+    ctx.flags.comp_db_path = ctx.onion.comp_db_path
+    ctx.flags.stat_db_path = ctx.onion.stat_db_path
+
+    ctx.flags.build_tag    = ctx.onion.build_tag
+    ctx.flags.build_target = ctx.onion.build_target
+    ctx.flags.build_all    = ctx.onion.build_all
+    ctx.flags.build_dry    = ctx.onion.build_dry
+    ctx.flags.build_strict = ctx.onion.build_strict
+
     ctx.batch     = Batch()
     ctx.repo      = Repo()
     ctx.script    = None
 
-    Loader.batches.append(ctx.batch)
+    Main.batches.append(ctx.batch)
     ctx.batch.add(ctx.repo)
-
-    ctx.raw_flags.script_name  = ctx.onion.script_name
-    ctx.raw_flags.script_path  = ctx.onion.script_path
-    ctx.raw_flags.script_cwd   = ctx.onion.script_cwd
 
     # --------------------------------
     # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2811,18 +2780,6 @@ def app_main(raw_flags : Dict):
 
     # ------------------------------------
 
-    ctx.flags.build_tag    = ctx.onion.build_tag
-    ctx.flags.build_target = ctx.onion.build_target
-    ctx.flags.build_all    = ctx.onion.build_all
-    ctx.flags.build_dry    = ctx.onion.build_dry
-    ctx.flags.build_strict = ctx.onion.build_strict
-    ctx.flags.script_name  = ctx.onion.script_name
-    ctx.flags.script_path  = ctx.onion.script_path
-    ctx.flags.script_cwd   = ctx.onion.script_cwd
-    ctx.flags.repo_root    = ctx.onion.repo_root
-    ctx.flags.build_root   = ctx.onion.build_root
-    ctx.flags.comp_db_path = ctx.onion.comp_db_path
-    ctx.flags.stat_db_path = ctx.onion.stat_db_path
 
 
     # ------------------------------------
@@ -2849,9 +2806,9 @@ def app_main(raw_flags : Dict):
         with chdir(ctx.script.script_cwd):
             if ctx.script.code:
                 exec(ctx.script.code, ctx.script.module.__dict__)
-    except (Loader.Abort, Loader.EarlyOut):
+    except (ScriptAbort, ScriptEarlyOut):
         pass
-    except Loader.Fail as fail:
+    except ScriptFail as fail:
         raise RuntimeError(f"Script failed : {ctx.script.script_path}") from fail
     finally:
         Log.dedent()
@@ -2903,11 +2860,11 @@ def app_main(raw_flags : Dict):
 
 
         time_a = time.perf_counter()
-        result = Runner.sync_run_tasks()
+        result = asyncio.run(Runner.async_run_tasks())
         time_b = time.perf_counter()
 
         with LogLevel.VERBOSE, Colors.BLUE:
-            Log.log(f"Running {Runner.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
+            Log.log(f"Running {Main.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
 
         # ------------------------------------
 
@@ -2927,21 +2884,24 @@ def app_main(raw_flags : Dict):
 
     with LogLevel.VERBOSE:
         Log.log(f"Tasks created:    {task_count}\n")
-        Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
-        Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
-        Log.log(f"Tasks broken:     {Runner.tasks_broken}\n")
-        Log.log(f"Tasks failed:     {Runner.tasks_failed}\n")
-        Log.log(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        Log.log(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        Log.log(f"Mtime calls:      {Utils.stat_calls}\n")
-        Log.log(f"Hash calls:       {Utils.hash_calls}\n")
-        Log.log(f"Hash bytes:       {Utils.hash_bytes}\n")
-        Log.log(f"Hash time:        {Utils.hash_time:8.6f}\n")
 
-    if Runner.tasks_failed or Runner.tasks_broken:
+        Log.log(f"Tasks started:    {Main.tasks_started}\n")
+        Log.log(f"Tasks awaited:    {Main.tasks_awaited}\n")
+        Log.log(f"Tasks finished:   {Main.tasks_finished}\n")
+        Log.log(f"Tasks broken:     {Main.tasks_broken}\n")
+        Log.log(f"Tasks failed:     {Main.tasks_failed}\n")
+        Log.log(f"Tasks cancelled:  {Main.tasks_cancelled}\n")
+        Log.log(f"Tasks skipped:    {Main.tasks_skipped}\n")
+
+        Log.log(f"Mtime calls:      {Main.stat_calls}\n")
+        Log.log(f"Hash calls:       {Main.hash_calls}\n")
+        Log.log(f"Hash bytes:       {Main.hash_bytes}\n")
+        Log.log(f"Hash time:        {Main.hash_time:8.6f}\n")
+
+    if Main.tasks_failed or Main.tasks_broken:
         with LogLevel.ERROR, Colors.RED:
             Log.log("BUILD FAILED\n")
-    elif Runner.tasks_finished:
+    elif Main.tasks_finished:
         with Colors.GREEN:
             Log.log("BUILD PASSED\n")
     else:
@@ -2962,24 +2922,21 @@ def app_main(raw_flags : Dict):
 
 def init(argv = None, *args, **kwargs):
 
-    Main.root_ctx = Context()
-    ctx.set(Main.root_ctx)
+    raw_flags = parse_flags(argv, *args, **kwargs)
 
-    ctx.raw_flags = parse_flags(argv, *args, **kwargs)
+    max_errors = raw_flags.pop("max_errors", 0)
+    max_jobs   = raw_flags.pop("max_jobs")
+    delims     = raw_flags.pop("delims")
+    log_flags  = {k: raw_flags.pop(k) for k in list(raw_flags) if k.startswith("log_")}
 
-    log_flags = {k: ctx.raw_flags.pop(k) for k in list(ctx.raw_flags) if k.startswith("log_")}
+    Expander.ldelims = delims[::2]
+    Expander.rdelims = delims[1::2]
+
     Log.reset(log_flags)
+    Main.reset(max_errors)
+    Runner.reset(max_jobs)
 
-    max_jobs   = ctx.raw_flags.pop("max_jobs")
-    max_errors = ctx.raw_flags.pop("max_errors")
-    delims     = ctx.raw_flags.pop("delims")
-
-    Expander.delims = delims
-
-    Utils.reset()
-    Task.reset()
-    Loader.reset()
-    Runner.reset(max_errors, max_jobs)
+    ctx.raw_flags = raw_flags
 
     # ------------------------------------
 
