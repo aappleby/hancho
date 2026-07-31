@@ -17,7 +17,7 @@ from hancho import Dict, Expander
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init(verbosity = "quiet")
+    hancho.Hancho.init(verbosity = "quiet")
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
@@ -249,18 +249,19 @@ class TestTemplates(unittest.TestCase):
 
         #def load2(cls, script_path, flags : Dict, source = None, code = None) -> Script:
 
-        new_flags = Dict(hancho.ctx.flags, blarp = 1234, is_repo = False)
+        new_flags = Dict(hancho.Hancho.cv_script.flags, blarp = 1234, is_repo = False)
 
-        old_ctx = hancho.ctx.get()
-        new_ctx = hancho.Context(
-            flags=new_flags, batch=old_ctx.batch, repo=old_ctx.repo, script=old_ctx.script
-        )
+        old_ctx = hancho.Hancho.cv_script.get()
+        new_ctx = hancho.Script(old_ctx.raw_flags, old_ctx.code, False)
 
-        with hancho.ctx.set(new_ctx):
+        with hancho.Hancho.cv_script.set(new_ctx):
             script_path = os.path.join(os.getcwd(), "fake_script.hancho")
             script_cwd  = os.getcwd()
+            new_flags.update(script_path = script_path, script_cwd = script_cwd, code = code)
 
-            hancho.ctx.script = hancho.load(script_path, script_cwd, new_flags, code = code)
+            # FIXME broken with new load stuff
+            script = hancho.Hancho.load(new_flags, is_repo = True)
+            hancho.Hancho.cv_script.set(script)
 
             # Expanding 'Task' should read from hancho.py
             self.assertEqual(hancho.Task, Dict().expand2("{Task}"))

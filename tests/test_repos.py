@@ -27,7 +27,7 @@ def load_tests(loader, tests, ignore):
 
 class TestRepos(unittest.TestCase):
     def setUp(self):
-        hancho.init(verbosity = "quiet")
+        hancho.Hancho.init(verbosity = "quiet")
         sys.stdout.flush()
 
     def tearDown(self):
