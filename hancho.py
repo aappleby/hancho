@@ -46,8 +46,6 @@ from enum import Enum
 from functools import wraps
 from typing import Any, cast
 
-sys.modules["hancho"] = sys.modules[__name__]
-
 MISSING = object()
 
 #endregion
@@ -154,11 +152,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        onion = Onion(hancho = Hancho.module.__dict__, dict = self)
+        onion = Onion(hancho = Hancho.proxy.__dict__, dict = self)
         return Expander.expand(onion, template)
 
     def eval(self, expr):
-        onion = Onion(hancho = Hancho.module.__dict__, dict = self)
+        onion = Onion(hancho = Hancho.proxy.__dict__, dict = self)
         return eval(expr, {}, onion)
 
 class Tool(Dict):
@@ -167,14 +165,10 @@ class Tool(Dict):
 
 class Script:
 
-    class Abort(Exception): pass
-    class EarlyOut(Exception): pass
-    class Fail(Exception): pass
-
     def __init__(self, raw_flags, code, is_repo):
         self.raw_flags = raw_flags
         self.flags     = Dict()
-        self.onion     = Onion(hancho = Hancho.module.__dict__, raw_flags = self.raw_flags, flags = self.flags)
+        self.onion     = Onion(hancho = Hancho.proxy.__dict__, raw_flags = self.raw_flags, flags = self.flags)
 
         self.flags.script_name  = self.onion.script_name
         self.flags.script_path  = self.onion.script_path
@@ -197,14 +191,14 @@ class Script:
 
         self.module = types.ModuleType(os.path.basename(self.flags.script_name))
         self.module.__file__ = self.flags.script_path
-        self.module.hancho   = Hancho.module    # type: ignore
+        self.module.hancho   = Hancho.proxy # type: ignore
         self.module.flags    = self.flags # type: ignore
 
         self.repos : dict[str, Script] = {}
         self.scripts : dict[str, Script] = {}
         self.tasks : list[Task]=  []
 
-        self.onion._layers2["module"] = self.module.__dict__
+        #self.onion._layers2["module"] = self.module.__dict__
 
     def add(self, repo):
         self.repos[repo.repo_root] = repo
@@ -227,6 +221,34 @@ class Script:
     def yield_all_tasks(self):
         for repo in self.yield_repos():
             yield from repo.yield_tasks()
+
+    class Abort(Exception): pass
+    class EarlyOut(Exception): pass
+    class Fail(Exception): pass
+
+    @staticmethod
+    def log_script_error(frame, condition, message):
+        with Log.Level.ERROR, Log.Color.RED:
+            Log.log(f"Script {condition}:\n")
+            Log.log(f"  text = '{message}'\n")
+            Log.log(f"  file = {frame.f_code.co_filename}\n")
+            Log.log(f"  func = {frame.f_code.co_name}\n")
+            Log.log(f"  line = {frame.f_lineno}\n")
+
+    @staticmethod
+    def fail(message):
+        Script.log_script_error(sys._getframe(1), "failed", message)
+        raise Script.Fail()
+
+    @staticmethod
+    def abort(message):
+        Script.log_script_error(sys._getframe(1), "aborted", message)
+        raise Script.Abort()
+
+    @staticmethod
+    def earlyout(message = ""):
+        Script.log_script_error(sys._getframe(1), "exited early", message)
+        raise Script.EarlyOut()
 
 class ContextProxy:
     # Helper that just wraps CVs so you can do "contextvar.foo".
@@ -316,7 +338,8 @@ class Onion(abc.Mapping):
 
     def __dump__(self, key, opts, seen):
         trimmed_layers = dict(self._layers2)
-        del trimmed_layers['hancho']
+        if hasattr(trimmed_layers, "hancho"):
+            delattr(trimmed_layers, "hancho")
         return Dumper._dump_vector(key, self, trimmed_layers, opts, seen)
 
     def get(self, key, default : Any = MISSING) -> Any: # type: ignore
@@ -1416,9 +1439,7 @@ class Task:
         self.config = Dict()
 
         self.onion = Onion(
-            hancho = Hancho.module.__dict__,
-            raw_flags = Hancho.cv_script.raw_flags,
-            flags = Hancho.cv_script.flags,
+            Hancho.cv_script.onion,
             raw_config = self.raw_config,
             config = self.config,
         )
@@ -1584,7 +1605,7 @@ class Task:
     def expand_task(self):
         with Log.Level.DEBUG:
             self.log("Task config before expand:\n")
-            self.log(str(self.raw_config) + "\n")
+            self.log(Dumper.dump("raw_config", self.raw_config) + "\n")
 
         task_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
                      'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
@@ -1626,7 +1647,7 @@ class Task:
 
         with Log.Level.DEBUG:
             self.log("Task config after expand:\n")
-            self.log(str(self.config) + "\n")
+            self.log(Dumper.dump("config", self.config) + "\n")
 
     async def task_main(self):
         task   = self
@@ -2102,6 +2123,35 @@ class Runner:
         else:
             raise AssertionError(f"Don't know how to run tool {tool}")
 
+
+class HanchoProxy(types.ModuleType):
+    # These are aliases for methods in Hancho that have been pulled out so they can be used by
+    # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
+
+    def __init__(self):
+        super().__init__("HanchoProxy")
+        self.__file__ = __file__
+        self.Task     = Task
+        self.Tool     = Tool
+        self.Dumper   = Dumper
+        self.path     = Path
+        self.abspath  = Path.abspath
+        self.basename = Path.basename
+        self.dirname  = Path.dirname
+        self.join     = Path.join
+        self.relpath  = Path.relpath
+        self.resolve  = Path.resolve
+        self.swapext  = Path.swapext
+        self.flatten  = Utils.flatten
+        self.run_cmd  = Utils.run_cmd
+        self.weave    = Utils.weave
+        self.cwd      = os.getcwd
+        self.module   = sys.modules[__name__]
+        self.log      = Log.log
+        self.fail     = Script.Fail
+        self.abort    = Script.Abort
+        self.earlyout = Script.EarlyOut
+
 class Hancho:
     # Just a container for global functions and stuff.
 
@@ -2110,6 +2160,7 @@ class Hancho:
     real_filenames = set() # for catching multiple targets building the same output
     dedupe = {}
     cv_script = ContextProxy()
+    proxy = HanchoProxy()
 
     @staticmethod
     def init(*args, **kwargs):
@@ -2283,7 +2334,7 @@ class Hancho:
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        onion = Onion(hancho = Hancho.module.__dict__, raw_flags = raw_flags)
+        onion = Onion(hancho = Hancho.proxy.__dict__, raw_flags = raw_flags)
         script_path = onion.script_path
         code  = Hancho.path_to_code(script_path)
 
@@ -2463,67 +2514,11 @@ class Hancho:
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
         return dedupe_key
 
-# region aliases
-
-# These are aliases for methods in Hancho that have been pulled out so they can be used by
-# template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
-
-# They _must_ be in the global namespace otherwise users can't do "hancho.flatten()" or whatever
-
-path     = Path
-abspath  = Path.abspath
-basename = Path.basename
-dirname  = Path.dirname
-join     = Path.join
-relpath  = Path.relpath
-resolve  = Path.resolve
-swapext  = Path.swapext
-
-flatten  = Utils.flatten
-run_cmd  = Utils.run_cmd
-weave    = Utils.weave
-
-cwd      = os.getcwd
-
-def log(*args, **kwargs):
-    return Log.log(*args, **kwargs)
-
-def fail(message):
-    with Log.Level.ERROR, Log.Color.RED:
-        frame = sys._getframe(1)
-        Log.log("Script failed:\n")
-        Log.log(f"  text = '{message}'\n")
-        Log.log(f"  file = {frame.f_code.co_filename}\n")
-        Log.log(f"  func = {frame.f_code.co_name}\n")
-        Log.log(f"  line = {frame.f_lineno}\n")
-    raise Script.Fail()
-
-def abort(message):
-    with Log.Level.WARNING, Log.Color.YELLOW:
-        frame = sys._getframe(1)
-        Log.log("Script aborted:\n")
-        Log.log(f"  text = '{message}'\n")
-        Log.log(f"  file = {frame.f_code.co_filename}\n")
-        Log.log(f"  func = {frame.f_code.co_name}\n")
-        Log.log(f"  line = {frame.f_lineno}\n")
-    raise Script.Abort()
-
-def earlyout(message = ""):
-    with Log.Level.VERBOSE, Log.Color.LIME:
-        frame = sys._getframe(1)
-        Log.log("Script exited early:\n")
-        Log.log(f"  text = '{message}'\n")
-        Log.log(f"  file = {frame.f_code.co_filename}\n")
-        Log.log(f"  func = {frame.f_code.co_name}\n")
-        Log.log(f"  line = {frame.f_lineno}\n")
-    raise Script.EarlyOut()
-
-# endregion
 # region _start
 
 def _start():
 
-    print("Hancho starting...")
+    sys.modules["hancho"] = Hancho.proxy
 
     # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
     # message if we failed to catch an exception during load/build.
@@ -2534,6 +2529,7 @@ def _start():
         raw_flags = Hancho.init()
 
         if __name__ == "__main__":
+            print("Hancho starting...")
             Hancho.root_script = Hancho.load(raw_flags, is_repo = True)
             Hancho.cv_script.set(Hancho.root_script)
             Hancho.main()
