@@ -25,6 +25,7 @@ import asyncio
 import colorsys
 import contextvars
 import copy
+import inspect
 import json
 import os
 import pathlib
@@ -43,7 +44,6 @@ from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import wraps
-from inspect import isawaitable
 from typing import Any, cast
 
 sys.modules["hancho"] = sys.modules[__name__]
@@ -144,11 +144,8 @@ class Dict(dict):
     def __or__(self, other):
         return Dict(self, other)
 
-    def __repr__(self):
-        return self.__dump__(Dumper.Opts())
-
-    def __dump__(self, opts):
-        return Dumper._dump_to_str("", self, opts)
+    #def __repr__(self):
+    #    return Dumper.dump_to_str("", self)
 
     def __getitem__(self, key : str):
         return dict.__getitem__(self, key)
@@ -157,11 +154,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        onion = Onion(Aliases.__dict__, self)
+        onion = Onion(Aliases.get(), self)
         return Expander.expand(onion, template)
 
     def eval(self, expr):
-        onion = Onion(Aliases.__dict__, self)
+        onion = Onion(Aliases.get(), self)
         return eval(expr, {}, onion)
 
 class Tool(Dict):
@@ -177,7 +174,7 @@ class Script:
     def __init__(self, raw_flags, code, is_repo):
         self.raw_flags = raw_flags
         self.flags     = Dict()
-        self.onion     = Onion(Aliases.__dict__, self.raw_flags, self.flags)
+        self.onion     = Onion(Aliases.get(), self.raw_flags, self.flags)
 
         self.flags.script_name  = self.onion.script_name
         self.flags.script_path  = self.onion.script_path
@@ -212,11 +209,8 @@ class Script:
     def add(self, repo):
         self.repos[repo.repo_root] = repo
 
-    def __repr__(self):
-        return self.__dump__(Dumper.Opts())
-
-    def __dump__(self, opts):
-        return Dumper._dump_to_str("", self.__dict__, opts)
+    #def __repr__(self):
+    #    return Dumper.dump_to_str("", self)
 
     def yield_tasks(self):
         yield from self.tasks
@@ -278,10 +272,10 @@ class Onion(abc.Mapping):
     Well, 'stack' and 'deck' are overloaded and 'Onion' at least implies nested layers.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args):
 
         self._layers : list[abc.Mapping] = []
-        for val in (*args, kwargs):
+        for val in args:
             if val is None:
                 continue
             if isinstance(val, Onion):
@@ -311,11 +305,8 @@ class Onion(abc.Mapping):
     def __len__(self):
         return len(set().union(*self._layers))
 
-    def __repr__(self):
-        return self.__dump__(Dumper.Opts())
-
-    def __dump__(self, opts):
-        return Dumper._dump_to_str("", self, opts)
+    #def __repr__(self):
+    #    return Dumper.dump_to_str("", self)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers)
@@ -531,6 +522,7 @@ class Dumper:
 
     @dataclass
     class Opts:
+        max_depth : int = 1
         indent : int = 0
         print_id : bool = True
         color_code : bool = True
@@ -542,91 +534,68 @@ class Dumper:
         pass
 
     @classmethod
-    def dump_to_str(cls, key, val, indent = 0, print_id = False, color_code = False, max = 80, len = 0, tab = "    "):
-        opts = Dumper.Opts(indent, print_id, color_code, tab, len, max)
-        return cls._dump_to_str(key, val, opts)
+    def dump_to_str(
+        cls,
+        key,
+        val,
+        max_depth=1,
+        indent=0,
+        print_id=False,
+        color_code=False,
+        max=80,
+        len=0,
+        tab="    ",
+    ):
+        opts = Dumper.Opts(max_depth, indent, print_id, color_code, tab, len, max)
+        return cls._dump_to_str(key, val, opts, set())
 
     @classmethod
-    def _dump_to_str(cls, key, val, opts):
+    def _dump_to_str(cls, key, val, opts, seen : set):
+        if key == "_aio_context":
+            pass
+
+        if isinstance(val, Onion):
+            val = val._layers
+
+        if inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, (str, bytes, bytearray)):
+            return cls._dump_scalar(key, val, opts, seen)
+
+        if isinstance(val, abc.Collection):
+            return cls._dump_collection(key, val, val, opts, seen)
+
+        if hasattr(val, "__dict__"):
+            return cls._dump_collection(key, val, val.__dict__, opts, seen)
+
+        return cls._dump_scalar(key, val, opts, seen)
+
+    @classmethod
+    def _dump_scalar(cls, key, val : Any, opts, seen : set):
+        return cls._dump_prefix(key, val, opts) + repr(val)
+
+    @classmethod
+    def _dump_collection(cls, key, val, contents, opts, seen : set):
         prefix = cls._dump_prefix(key, val, opts)
-        opts = replace(opts, len = opts.len + len(prefix))
 
-        if isinstance(val, (dict, list, tuple, set, Onion)):
-            try:
-                return prefix + cls._dump_flat_container(val, opts)
-            except Dumper.LineTooLong:
-                return prefix + cls._dump_deep_container(val, opts)
-        else:
-            return prefix + cls._dump_scalar(val, opts)
+        if loop := cls.check_loop(val, seen):
+            return prefix + loop
 
-    @classmethod
-    def _dump_prefix(cls, key, val, opts):
-        if not key:
-            return ""
+        ld, items, rd = cls._unpack_container(contents)
 
-        prefix = str(key)
-        if type(val) not in Dumper.base_types:
-            if key:
-                prefix += ": "
-            prefix += type(val).__name__
-            if opts.print_id:
-                prefix += "@" + Utils.hex_id(val).upper()[-4:]
-
-        if prefix:
-            prefix += " = "
-        return prefix
+        try:
+            return prefix + cls._dump_flat_container(key, ld, items, rd, opts, set(seen))
+        except Dumper.LineTooLong:
+            return prefix + cls._dump_deep_container(key, ld, items, rd, opts, set(seen))
 
     @classmethod
-    def _unpack_container(cls, val) -> tuple[str, list[Any], str]:
-        if isinstance(val, tuple):
-            items = [(None, v) for v in val]
-            return '(', items, ",)" if len(items) == 1 else ')'
-        elif isinstance(val, abc.Mapping):
-            return '{', list(val.items()), '}'
-        elif isinstance(val, (list, tuple, set)):
-            items = [(None, v) for v in val]
-            return '[', items, ']'
-        elif isinstance(val, Onion):
-            items = [(None, v) for v in reversed(val._layers)]
-            return '[', items, ']'
-        else:
-            raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
-
-    @classmethod
-    def _dump_scalar(cls, val : Any, opts):
-        #if isinstance(val, Task):
-        #    val = f"<Task '{val.config.name}'>"
-        #elif isinstance(val, contextvars.Context):
-        #    val = "<Context>"
-        #elif isinstance(val, types.ModuleType):
-        #    val = f"<Module {val.__name__}>"
-        #elif isinstance(val, types.FunctionType):
-        #    val = f"<Function {val.__name__}>"
-        #elif isinstance(val, argparse.Namespace):
-        #    val = val.__dict__
-
-        if hasattr(val, "__dump__"):
-            return val.__dump__(opts)
-        elif type(val) in Dumper.opaque_types:
-            return Dumper.opaque_types[type(val)] # type: ignore
-        elif type(val).__repr__ is object.__repr__:
-            # Objects that don't have a custom repr just get printed as '<class blah>'
-            return str(type(val))
-        else:
-            return repr(val)
-
-    @classmethod
-    def _dump_flat_container(cls, val, opts):
-        ld, items, rd = cls._unpack_container(val)
-
+    def _dump_flat_container(cls, key, ld, items, rd, opts, seen : set):
+        result = ld
         separator = ", "
         first = True
-        result = ld
 
         for k, v in items:
             if not first:
                 result += separator
-            chunk = cls._dump_to_str(k, v, replace(opts))
+            chunk = cls._dump_to_str(k, v, opts, set(seen))
             result += chunk
 
             if opts.len + len(result) + len(rd) > opts.max:
@@ -637,17 +606,26 @@ class Dumper:
         return result + rd
 
     @classmethod
-    def _dump_deep_container(cls, val, opts):
-        ld, items, rd = cls._unpack_container(val)
+    def _dump_deep_container(cls, key, ld, items, rd, opts, seen : set):
+        result = ld + '\n'
 
-        result  = ld + '\n'
+        if opts.max_depth == 0:
+            return ld + "..." + rd
+        opts = replace(opts, max_depth = opts.max_depth - 1)
 
         for i in range(len(items)):
             k, v = (items[i][0], items[i][1])
 
-            line = opts.tab * (opts.indent + 1)
-            new_len = len(line) + 1 # +1 for the trailing comma
-            line += cls._dump_to_str(k, v, replace(opts, len = new_len, indent = opts.indent + 1))
+            prefix = opts.tab * (opts.indent + 1)
+
+            new_len = len(prefix) + 1 # +1 for the trailing comma
+            new_indent = opts.indent + 1
+            new_opts = replace(opts, len = new_len, indent = new_indent)
+
+            text = cls._dump_to_str(k, v, new_opts, set(seen))
+
+            line = prefix + text
+
             if i < len(items) - 1:
                 line += ','
 
@@ -657,6 +635,42 @@ class Dumper:
         result += (opts.tab * opts.indent) + rd
 
         return result
+
+    @classmethod
+    def check_loop(cls, val, seen):
+        if id(val) in seen:
+            return "<ref loop>"
+        else:
+            seen.add(id(val))
+            return None
+
+    @classmethod
+    def _dump_prefix(cls, key, val, opts):
+        prefix = ""
+        if key:
+            prefix += f"{key}: "
+
+        prefix += type(val).__name__
+
+        if opts.print_id:
+            prefix += "@" + Utils.hex_id(val).upper()[-4:]
+
+        prefix += " = "
+
+        return prefix
+
+    @classmethod
+    def _unpack_container(cls, val) -> tuple[str, list[Any], str]:
+        if isinstance(val, tuple):
+            items = [(None, v) for v in val]
+            return '(', items, ",)" if len(items) == 1 else ')'
+        elif isinstance(val, abc.Mapping):
+            return '{', list(val.items()), '}'
+        elif isinstance(val, abc.Collection):
+            items = [(None, v) for v in val]
+            return '[', items, ']'
+        else:
+            raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
 
 class Utils:
 
@@ -1423,7 +1437,7 @@ class Task:
         self.config = Dict()
 
         self.onion = Onion(
-            Aliases.__dict__,
+            Aliases.get(),
             Hancho.cv_script.raw_flags,
             Hancho.cv_script.flags,
             self.raw_config,
@@ -1489,13 +1503,8 @@ class Task:
     def __deepcopy__(self, _):
         return self
 
-    def __repr__(self):
-        return self.__dump__(Dumper.Opts())
-
-    def __dump__(self, opts):
-        if opts.indent > 0:
-            return Dumper._dump_to_str("", self.out_files, opts)
-        return Dumper._dump_to_str("", self.__dict__, opts)
+    #def __repr__(self):
+    #    return Dumper.dump_to_str("", self)
 
     def log(self, message : str):
         # Log helper that adds the [ NN/ XX] tag before the log line.
@@ -1839,7 +1848,7 @@ class Task:
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
         # but apparently that's just how Python waitables work.
-        if isawaitable(result):
+        if inspect.isawaitable(result):
             result = await result
 
         return result
@@ -2295,7 +2304,7 @@ class Hancho:
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        onion = Onion(Aliases.__dict__, raw_flags)
+        onion = Onion(Aliases.get(), raw_flags)
         script_path = onion.script_path
         code  = Hancho.path_to_code(script_path)
 
@@ -2495,6 +2504,10 @@ class Aliases:
     weave    = Utils.weave
 
     cwd      = os.getcwd
+
+    @classmethod
+    def get(cls):
+        return {k:v for k, v in Aliases.__dict__.items() if not k.startswith("_")}
 
     @staticmethod
     def log(*args, **kwargs):

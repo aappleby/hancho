@@ -23,6 +23,16 @@
     },
 
     {
+      "name"    : "Debug scratch/build.py",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program" : "${workspaceFolder}/scratch/build.py",
+      "cwd"     : "${workspaceFolder}/scratch",
+      "args"    : ["-D"],
+      //"preLaunchTask": "Wipe build",
+    },
+
+    {
       "name"    : "Debug scratch/build.hancho",
       "type"    : "debugpy",
       "request" : "launch",
@@ -44,16 +54,6 @@
       "preLaunchTask": "Wipe build",
     },
 
-
-    {
-      "name"    : "Debug scratch/build.py",
-      "type"    : "debugpy",
-      "request" : "launch",
-      "program" : "${workspaceFolder}/scratch/build.py",
-      "cwd"     : "${workspaceFolder}/scratchp",
-      "args"    : ["-d", "--verbose", "-j1"],
-      "preLaunchTask": "Wipe build",
-    },
 
     {
       "name"    : "Debug example hello_world",
