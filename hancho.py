@@ -154,11 +154,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        onion = Onion(aliases = Aliases.get(), dict = self)
+        onion = Onion(hancho = Hancho.module.__dict__, dict = self)
         return Expander.expand(onion, template)
 
     def eval(self, expr):
-        onion = Onion(aliases = Aliases.get(), dict = self)
+        onion = Onion(hancho = Hancho.module.__dict__, dict = self)
         return eval(expr, {}, onion)
 
 class Tool(Dict):
@@ -174,7 +174,7 @@ class Script:
     def __init__(self, raw_flags, code, is_repo):
         self.raw_flags = raw_flags
         self.flags     = Dict()
-        self.onion     = Onion(aliases = Aliases.get(), raw_flags = self.raw_flags, flags = self.flags)
+        self.onion     = Onion(hancho = Hancho.module.__dict__, raw_flags = self.raw_flags, flags = self.flags)
 
         self.flags.script_name  = self.onion.script_name
         self.flags.script_path  = self.onion.script_path
@@ -313,6 +313,11 @@ class Onion(abc.Mapping):
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers2.values())
+
+    def __dump__(self, key, opts, seen):
+        trimmed_layers = dict(self._layers2)
+        del trimmed_layers['hancho']
+        return Dumper._dump_vector(key, self, trimmed_layers, opts, seen)
 
     def get(self, key, default : Any = MISSING) -> Any: # type: ignore
         """
@@ -532,6 +537,7 @@ class Dumper:
         tab : str = "    "
         len : int = 80
         max : int = 80
+        flat : bool = False
 
     class LineTooLong(Exception):
         pass
@@ -549,131 +555,101 @@ class Dumper:
         len=0,
         tab="    ",
     ):
-        opts = Dumper.Opts(max_depth, indent, print_id, color_code, tab, len, max)
+        opts = Dumper.Opts(max_depth, indent, print_id, color_code, tab, len, max, flat = False)
         return cls._dump_to_str(key, val, opts, set())
 
     @classmethod
-    def _dump_to_str(cls, key, val, opts, seen : set):
-        if key == "_aio_context":
-            pass
-
-        if isinstance(val, Onion):
-            val = val._layers2
-
-        if inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, (str, bytes, bytearray)):
+    def _dump_to_str(cls, key, val : Any, opts, seen : set):
+        if hasattr(type(val), "__dump__"):
+            return val.__dump__(key, opts, seen)
+        elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val):  # noqa: SIM114
             return cls._dump_scalar(key, val, opts, seen)
-
-        if isinstance(val, abc.Collection):
-            return cls._dump_collection(key, val, val, opts, seen)
-
-        if hasattr(val, "__dict__"):
-            return cls._dump_collection(key, val, val.__dict__, opts, seen)
-
-        return cls._dump_scalar(key, val, opts, seen)
+        elif isinstance(val, (str, bytes, bytearray)):
+            return cls._dump_scalar(key, val, opts, seen)
+        elif isinstance(val, abc.Collection):
+            return cls._dump_vector(key, val, val, opts, seen)
+        elif hasattr(val, "__dict__"):
+            return cls._dump_vector(key, val, val.__dict__, opts, seen)
+        else:
+            return cls._dump_scalar(key, val, opts, seen)
 
     @classmethod
     def _dump_scalar(cls, key, val : Any, opts, seen : set):
         return cls._dump_prefix(key, val, opts) + repr(val)
 
     @classmethod
-    def _dump_collection(cls, key, val, contents, opts, seen : set):
+    def _dump_vector(cls, key, val, contents, opts, seen : set):
         prefix = cls._dump_prefix(key, val, opts)
 
-        if loop := cls.check_loop(val, seen):
-            return prefix + loop
+        if id(val) in seen:
+            return prefix + "<ref loop>"
+        seen.add(id(val))
 
-        ld, items, rd = cls._unpack_container(contents)
+        if isinstance(contents, tuple):
+            items = [(None, v) for v in contents]
+            ld, items, rd = '(', items, ",)" if len(items) == 1 else ')'
+        elif isinstance(contents, abc.Mapping):
+            ld, items, rd = '{', list(contents.items()), '}'
+        elif isinstance(contents, abc.Collection):
+            items = [(None, v) for v in contents]
+            ld, items, rd = '[', items, ']'
+        else:
+            raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
 
-        try:
-            return prefix + cls._dump_flat_container(key, ld, items, rd, opts, set(seen))
-        except Dumper.LineTooLong:
-            return prefix + cls._dump_deep_container(key, ld, items, rd, opts, set(seen))
+        # This slightly odd construct is so that when a deeply nested container doesn't fit on a
+        # line, we rewind the callstack back to the topmost container that was not forced to be
+        # flat.
+
+        if opts.flat:
+            return prefix + cls._dump_flat_vector(key, ld, items, rd, replace(opts, flat = True), set(seen))
+        else:
+            try:
+                return prefix + cls._dump_flat_vector(key, ld, items, rd, replace(opts, flat = True), set(seen))
+            except Dumper.LineTooLong:
+                return prefix + cls._dump_deep_vector(key, ld, items, rd, opts, set(seen))
+
 
     @classmethod
-    def _dump_flat_container(cls, key, ld, items, rd, opts, seen : set):
+    def _dump_flat_vector(cls, key, ld, items, rd, opts, seen : set):
         result = ld
-        separator = ", "
-        first = True
 
-        for k, v in items:
-            if not first:
-                result += separator
-            chunk = cls._dump_to_str(k, v, opts, set(seen))
-            result += chunk
-
+        for i in range(len(items)):
+            result += cls._dump_to_str(items[i][0], items[i][1], opts, set(seen))
+            if i < len(items) - 1: result += ", "
             if opts.len + len(result) + len(rd) > opts.max:
                 raise Dumper.LineTooLong()
-
-            first = False
 
         return result + rd
 
     @classmethod
-    def _dump_deep_container(cls, key, ld, items, rd, opts, seen : set):
+    def _dump_deep_vector(cls, key, ld, items, rd, opts, seen : set):
         result = ld + '\n'
 
         if opts.max_depth == 0:
             return ld + "..." + rd
         opts = replace(opts, max_depth = opts.max_depth - 1)
 
+        # len(pad) + 1 for the trailing comma
+        pad = opts.tab * (opts.indent + 1)
+        new_opts = replace(opts, len = len(pad) + 1, indent = opts.indent + 1)
+
         for i in range(len(items)):
-            k, v = (items[i][0], items[i][1])
-
-            prefix = opts.tab * (opts.indent + 1)
-
-            new_len = len(prefix) + 1 # +1 for the trailing comma
-            new_indent = opts.indent + 1
-            new_opts = replace(opts, len = new_len, indent = new_indent)
-
-            text = cls._dump_to_str(k, v, new_opts, set(seen))
-
-            line = prefix + text
-
-            if i < len(items) - 1:
-                line += ','
-
-            result += line
+            result += pad + cls._dump_to_str(items[i][0], items[i][1], new_opts, set(seen))
+            if i < len(items) - 1: result += ','
             result += '\n'
 
-        result += (opts.tab * opts.indent) + rd
-
-        return result
-
-    @classmethod
-    def check_loop(cls, val, seen):
-        if id(val) in seen:
-            return "<ref loop>"
-        else:
-            seen.add(id(val))
-            return None
+        return result + (opts.tab * opts.indent) + rd
 
     @classmethod
     def _dump_prefix(cls, key, val, opts):
         prefix = ""
-        if key:
-            prefix += f"{key}: "
-
-        prefix += type(val).__name__
-
-        if opts.print_id:
-            prefix += "@" + Utils.hex_id(val).upper()[-4:]
-
-        prefix += " = "
-
+        if key: prefix += f"{key}"
+        if type(val) not in Dumper.base_types:
+            if prefix: prefix += ": "
+            prefix += type(val).__name__
+            if opts.print_id: prefix += "@" + Utils.hex_id(val).upper()[-4:]
+        if prefix: prefix += " = "
         return prefix
-
-    @classmethod
-    def _unpack_container(cls, val) -> tuple[str, list[Any], str]:
-        if isinstance(val, tuple):
-            items = [(None, v) for v in val]
-            return '(', items, ",)" if len(items) == 1 else ')'
-        elif isinstance(val, abc.Mapping):
-            return '{', list(val.items()), '}'
-        elif isinstance(val, abc.Collection):
-            items = [(None, v) for v in val]
-            return '[', items, ']'
-        else:
-            raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
 
 class Utils:
 
@@ -1440,7 +1416,7 @@ class Task:
         self.config = Dict()
 
         self.onion = Onion(
-            aliases = Aliases.get(),
+            hancho = Hancho.module.__dict__,
             raw_flags = Hancho.cv_script.raw_flags,
             flags = Hancho.cv_script.flags,
             raw_config = self.raw_config,
@@ -2293,7 +2269,7 @@ class Hancho:
 
         # --------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
-        # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a 
+        # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
         # build, which they should be in practice.
 
         dedupe_key = Hancho.flags_to_key(raw_flags)
@@ -2307,7 +2283,7 @@ class Hancho:
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        onion = Onion(aliases = Aliases.get(), raw_flags = raw_flags)
+        onion = Onion(hancho = Hancho.module.__dict__, raw_flags = raw_flags)
         script_path = onion.script_path
         code  = Hancho.path_to_code(script_path)
 
@@ -2489,76 +2465,58 @@ class Hancho:
 
 # region aliases
 
-class Aliases:
-    # These are aliases for methods in Hancho that have been pulled out so they can be used by
-    # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
+# These are aliases for methods in Hancho that have been pulled out so they can be used by
+# template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 
-    path     = Path
-    abspath  = Path.abspath
-    basename = Path.basename
-    dirname  = Path.dirname
-    join     = Path.join
-    relpath  = Path.relpath
-    resolve  = Path.resolve
-    swapext  = Path.swapext
+# They _must_ be in the global namespace otherwise users can't do "hancho.flatten()" or whatever
 
-    flatten  = Utils.flatten
-    run_cmd  = Utils.run_cmd
-    weave    = Utils.weave
+path     = Path
+abspath  = Path.abspath
+basename = Path.basename
+dirname  = Path.dirname
+join     = Path.join
+relpath  = Path.relpath
+resolve  = Path.resolve
+swapext  = Path.swapext
 
-    cwd      = os.getcwd
+flatten  = Utils.flatten
+run_cmd  = Utils.run_cmd
+weave    = Utils.weave
 
-    @classmethod
-    def get(cls):
-        return {k:v for k, v in Aliases.__dict__.items() if not k.startswith("_")}
+cwd      = os.getcwd
 
-    @staticmethod
-    def log(*args, **kwargs):
-        return Log.log(*args, **kwargs)
+def log(*args, **kwargs):
+    return Log.log(*args, **kwargs)
 
-    @staticmethod
-    def task(*args, **kwargs):
-        if len(args) and callable(args[0]):
-            # Take hancho.task(callable, ...) and instead of creating a task, collect all the args into
-            # a dict and then splat it into the callback.
-            merged_config = Dict(*args[1:], kwargs)
-            return args[0](**merged_config)
-        else:
-            result = Task(*args, **kwargs)
-            return result
+def fail(message):
+    with Log.Level.ERROR, Log.Color.RED:
+        frame = sys._getframe(1)
+        Log.log("Script failed:\n")
+        Log.log(f"  text = '{message}'\n")
+        Log.log(f"  file = {frame.f_code.co_filename}\n")
+        Log.log(f"  func = {frame.f_code.co_name}\n")
+        Log.log(f"  line = {frame.f_lineno}\n")
+    raise Script.Fail()
 
-    @staticmethod
-    def fail(message):
-        with Log.Level.ERROR, Log.Color.RED:
-            frame = sys._getframe(1)
-            Log.log("Script failed:\n")
-            Log.log(f"  text = '{message}'\n")
-            Log.log(f"  file = {frame.f_code.co_filename}\n")
-            Log.log(f"  func = {frame.f_code.co_name}\n")
-            Log.log(f"  line = {frame.f_lineno}\n")
-        raise Script.Fail()
+def abort(message):
+    with Log.Level.WARNING, Log.Color.YELLOW:
+        frame = sys._getframe(1)
+        Log.log("Script aborted:\n")
+        Log.log(f"  text = '{message}'\n")
+        Log.log(f"  file = {frame.f_code.co_filename}\n")
+        Log.log(f"  func = {frame.f_code.co_name}\n")
+        Log.log(f"  line = {frame.f_lineno}\n")
+    raise Script.Abort()
 
-    @staticmethod
-    def abort(message):
-        with Log.Level.WARNING, Log.Color.YELLOW:
-            frame = sys._getframe(1)
-            Log.log("Script aborted:\n")
-            Log.log(f"  text = '{message}'\n")
-            Log.log(f"  file = {frame.f_code.co_filename}\n")
-            Log.log(f"  func = {frame.f_code.co_name}\n")
-            Log.log(f"  line = {frame.f_lineno}\n")
-        raise Script.Abort()
-
-    @staticmethod
-    def earlyout(message = ""):
-        with Log.Level.VERBOSE, Log.Color.LIME:
-            frame = sys._getframe(1)
-            Log.log("Script exited early:\n")
-            Log.log(f"  text = '{message}'\n")
-            Log.log(f"  file = {frame.f_code.co_filename}\n")
-            Log.log(f"  func = {frame.f_code.co_name}\n")
-            Log.log(f"  line = {frame.f_lineno}\n")
-        raise Script.EarlyOut()
+def earlyout(message = ""):
+    with Log.Level.VERBOSE, Log.Color.LIME:
+        frame = sys._getframe(1)
+        Log.log("Script exited early:\n")
+        Log.log(f"  text = '{message}'\n")
+        Log.log(f"  file = {frame.f_code.co_filename}\n")
+        Log.log(f"  func = {frame.f_code.co_name}\n")
+        Log.log(f"  line = {frame.f_lineno}\n")
+    raise Script.EarlyOut()
 
 # endregion
 # region _start
