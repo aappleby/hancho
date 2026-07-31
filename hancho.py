@@ -145,7 +145,7 @@ class Dict(dict):
         return Dict(self, other)
 
     #def __repr__(self):
-    #    return Dumper.dump_to_str("", self)
+    #    return Dumper.dump("", self)
 
     def __getitem__(self, key : str):
         return dict.__getitem__(self, key)
@@ -210,7 +210,7 @@ class Script:
         self.repos[repo.repo_root] = repo
 
     #def __repr__(self):
-    #    return Dumper.dump_to_str("", self)
+    #    return Dumper.dump("", self)
 
     def yield_tasks(self):
         yield from self.tasks
@@ -309,7 +309,7 @@ class Onion(abc.Mapping):
         return len(result)
 
     #def __repr__(self):
-    #    return Dumper.dump_to_str("", self)
+    #    return Dumper.dump("", self)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers2.values())
@@ -537,7 +537,7 @@ class Dumper:
         pass
 
     @classmethod
-    def dump_to_str(
+    def dump(
         cls,
         key,
         val,
@@ -1507,7 +1507,7 @@ class Task:
         return self
 
     #def __repr__(self):
-    #    return Dumper.dump_to_str("", self)
+    #    return Dumper.dump("", self)
 
     def log(self, message : str):
         # Log helper that adds the [ NN/ XX] tag before the log line.
@@ -2293,7 +2293,7 @@ class Hancho:
 
         # --------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
-        # deduped. This relies on __repr__ and the fields read by dump_to_str being stable during a
+        # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a 
         # build, which they should be in practice.
 
         dedupe_key = Hancho.flags_to_key(raw_flags)
@@ -2483,7 +2483,7 @@ class Hancho:
 
     @staticmethod
     def flags_to_key(raw_flags) -> str:
-        dedupe_key = Dumper.dump_to_str(key = "raw_flags", val = raw_flags)
+        dedupe_key = Dumper.dump(key = "raw_flags", val = raw_flags)
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
         return dedupe_key
 

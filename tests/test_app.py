@@ -184,11 +184,11 @@ class TestApp(unittest.TestCase):
     def test_dumper(self):
         thing1 = {"a": 1, "b":[2, "two"], "c":(3,3,3), "d":object()}
 
-        d = hancho.Dumper.dump_to_str("name", thing1)
+        d = hancho.Dumper.dump("name", thing1)
         self.assertEqual("name = {a = 1, b = [2, 'two'], c = (3, 3, 3), d:object = <object>}", d)
 
         # Print IDs, but erase pointers before comparing
-        d = hancho.Dumper.dump_to_str("name", thing1, print_id = True, max = 80)
+        d = hancho.Dumper.dump("name", thing1, print_id = True, max = 80)
         match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]+")
         d = match_pointer.sub("0x?", d)
 
@@ -203,29 +203,29 @@ class TestApp(unittest.TestCase):
         self.assertEqual(expected, d)
 
         c = contextvars.Context()
-        d = hancho.Dumper.dump_to_str("name", c)
+        d = hancho.Dumper.dump("name", c)
         self.assertEqual("name:Context = '<Context>'", d)
 
-        d = hancho.Dumper.dump_to_str("name", contextvars)
+        d = hancho.Dumper.dump("name", contextvars)
         self.assertEqual("name = '<Module contextvars>'", d)
 
-        d = hancho.Dumper.dump_to_str("name", print)
+        d = hancho.Dumper.dump("name", print)
         self.assertEqual("name = <builtin>", d)
 
         def blep():
             pass
 
-        d = hancho.Dumper.dump_to_str("name", blep)
+        d = hancho.Dumper.dump("name", blep)
         self.assertEqual("name:function = '<Function blep>'", d)
 
         n = argparse.Namespace(foo = 1, bar = 2)
-        d = hancho.Dumper.dump_to_str("name", n)
+        d = hancho.Dumper.dump("name", n)
         self.assertEqual("name:Namespace = {'foo': 1, 'bar': 2}", d)
 
         class Blarp:
             pass
 
-        d = hancho.Dumper.dump_to_str("name", Blarp())
+        d = hancho.Dumper.dump("name", Blarp())
         self.assertEqual("name:Blarp = <object>", d)
 
     def test_weave(self):

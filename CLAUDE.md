@@ -118,7 +118,7 @@ region):
   `myrepo = hancho.repo("myrepo/build.hancho"); ... in_obj = [main_o, myrepo.util_o]`.
 - **Loading is deduped**: the `Loader` keys modules on `(real path, config dump)`. Loading
   the same script with an identical config returns the same module instead of re-running it.
-  This relies on `Utils.dump_to_str` producing stable output (it's also Hancho's
+  This relies on `Dumper.dump` producing stable output (it's also Hancho's
   pretty-printer).
 
 ### Which tasks actually run
