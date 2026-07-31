@@ -154,11 +154,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        onion = Onion(Aliases.get(), self)
+        onion = Onion(aliases = Aliases.get(), dict = self)
         return Expander.expand(onion, template)
 
     def eval(self, expr):
-        onion = Onion(Aliases.get(), self)
+        onion = Onion(aliases = Aliases.get(), dict = self)
         return eval(expr, {}, onion)
 
 class Tool(Dict):
@@ -174,7 +174,7 @@ class Script:
     def __init__(self, raw_flags, code, is_repo):
         self.raw_flags = raw_flags
         self.flags     = Dict()
-        self.onion     = Onion(Aliases.get(), self.raw_flags, self.flags)
+        self.onion     = Onion(aliases = Aliases.get(), raw_flags = self.raw_flags, flags = self.flags)
 
         self.flags.script_name  = self.onion.script_name
         self.flags.script_path  = self.onion.script_path
@@ -204,7 +204,7 @@ class Script:
         self.scripts : dict[str, Script] = {}
         self.tasks : list[Task]=  []
 
-        self.onion._layers.append(self.module.__dict__)
+        self.onion._layers2["module"] = self.module.__dict__
 
     def add(self, repo):
         self.repos[repo.repo_root] = repo
@@ -272,18 +272,20 @@ class Onion(abc.Mapping):
     Well, 'stack' and 'deck' are overloaded and 'Onion' at least implies nested layers.
     """
 
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
 
-        self._layers : list[abc.Mapping] = []
+        self._layers2 : dict[str, abc.Mapping] = {}
+
         for val in args:
             if val is None:
                 continue
             if isinstance(val, Onion):
-                self._layers.extend(val._layers)
-            elif isinstance(val, abc.Mapping):
-                self._layers.append(val)
+                self._layers2.update(val._layers2)
             else:
                 raise TypeError(f"Can't use this as an onion layer: {type(val)} = {val}")
+
+        if kwargs:
+            self._layers2.update(kwargs)
 
     def __getattr__(self, key : str):
         try:
@@ -296,20 +298,21 @@ class Onion(abc.Mapping):
 
     def __iter__(self):
         seen = set()
-        for layer in reversed(self._layers):
+        for layer in reversed(self._layers2.values()):
             for key in layer:
                 if key not in seen:
                     seen.add(key)
                     yield key
 
     def __len__(self):
-        return len(set().union(*self._layers))
+        result = {key for layer in self._layers2.values() for key in layer}
+        return len(result)
 
     #def __repr__(self):
     #    return Dumper.dump_to_str("", self)
 
     def __contains__(self, key):
-        return any(key in layer for layer in self._layers)
+        return any(key in layer for layer in self._layers2.values())
 
     def get(self, key, default : Any = MISSING) -> Any: # type: ignore
         """
@@ -321,7 +324,7 @@ class Onion(abc.Mapping):
 
             # Return the rightmost non-None non-Mapping if present.
             saw_a_none = False
-            for layer in reversed(self._layers):
+            for layer in reversed(self._layers2.values()):
                 if key in layer:
                     val = layer[key]
                     if val is None:
@@ -338,7 +341,7 @@ class Onion(abc.Mapping):
                 return result
 
             # Nope, all mappings. Pull out the ones containing the key.
-            new_layers = [layer[key] for layer in self._layers if key in layer]
+            new_layers = {name:layer[key] for name, layer in self._layers2.items() if key in layer}
 
             # No matches and no default? Bad key.
             if not new_layers and default is MISSING:
@@ -349,7 +352,7 @@ class Onion(abc.Mapping):
                 return default
 
             # Otherwise we make a new onion out of the mappings.
-            result = Onion(*new_layers)
+            result = Onion(**new_layers)
             trace.save_result(result)
             return result
 
@@ -357,7 +360,7 @@ class Onion(abc.Mapping):
         """
         A simpler getter equivalent to ChainMap.get - doesn't expand the result.
         """
-        for layer in reversed(self._layers):
+        for layer in reversed(self._layers2.values()):
             if key in layer:
                 return layer[key]
 
@@ -555,7 +558,7 @@ class Dumper:
             pass
 
         if isinstance(val, Onion):
-            val = val._layers
+            val = val._layers2
 
         if inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, (str, bytes, bytearray)):
             return cls._dump_scalar(key, val, opts, seen)
@@ -1437,11 +1440,11 @@ class Task:
         self.config = Dict()
 
         self.onion = Onion(
-            Aliases.get(),
-            Hancho.cv_script.raw_flags,
-            Hancho.cv_script.flags,
-            self.raw_config,
-            self.config,
+            aliases = Aliases.get(),
+            raw_flags = Hancho.cv_script.raw_flags,
+            flags = Hancho.cv_script.flags,
+            raw_config = self.raw_config,
+            config = self.config,
         )
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -2304,7 +2307,7 @@ class Hancho:
         # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
         # root of a new repo.
 
-        onion = Onion(Aliases.get(), raw_flags)
+        onion = Onion(aliases = Aliases.get(), raw_flags = raw_flags)
         script_path = onion.script_path
         code  = Hancho.path_to_code(script_path)
 
