@@ -165,10 +165,10 @@ class Tool(Dict):
 
 class Script:
 
-    def __init__(self, *, flags : Dict, code : types.CodeType | None, is_repo : bool):
-        self.flags2   = flags
-        self.config  = Dict()
-        self.onion   = Onion(hancho = Hancho.proxy.__dict__, script_flags = self.flags2, script_config = self.config)
+    def __init__(self, *, params : Dict, code : types.CodeType | None, is_repo : bool):
+        self.params = params
+        self.config = Dict()
+        self.onion  = Onion(hancho = Hancho.proxy.__dict__, script_params = self.params, script_config = self.config)
 
         #Log.log(f"Creating script for {self.onion.script_path}\n")
 
@@ -198,9 +198,9 @@ class Script:
 
         self.module.__file__  = self.config.script_path
         self.module.hancho    = Hancho.proxy   # type: ignore
-        self.module.flags     = self.flags2     # type: ignore
-        #self.module.config    = self.config    # type: ignore
-        #self.module.onion     = self.onion     # type: ignore
+        self.module.params    = self.params     # type: ignore
+        self.module.config    = self.config    # type: ignore
+        self.module.onion     = self.onion     # type: ignore
 
     def exec(self):
         if self.code:
@@ -870,18 +870,18 @@ class Log:
     log_level_out = Level.NORMAL # log level we want to appear in the log
 
     @classmethod
-    def reset(cls, flags):
+    def reset(cls, params):
 
-        log_flags  = {k: flags.pop(k) for k in list(flags) if k.startswith("log_")}
+        log_params  = {k: params.pop(k) for k in list(params) if k.startswith("log_")}
 
-        cls.log_level   : int  = cast(int,  log_flags["log_level"])
-        cls.log_quiet   : bool = cast(bool, log_flags["log_quiet"])
-        cls.log_verbose : bool = cast(bool, log_flags["log_verbose"])
-        cls.log_debug   : bool = cast(bool, log_flags["log_debug"])
-        cls.log_trace   : bool = cast(bool, log_flags["log_trace"])
-        cls.log_wrap    : bool = cast(bool, log_flags["log_wrap"])
-        cls.log_color   : bool = cast(bool, log_flags["log_color"])
-        cls.log_time    : bool = cast(bool, log_flags["log_time"])
+        cls.log_level   : int  = cast(int,  log_params["log_level"])
+        cls.log_quiet   : bool = cast(bool, log_params["log_quiet"])
+        cls.log_verbose : bool = cast(bool, log_params["log_verbose"])
+        cls.log_debug   : bool = cast(bool, log_params["log_debug"])
+        cls.log_trace   : bool = cast(bool, log_params["log_trace"])
+        cls.log_wrap    : bool = cast(bool, log_params["log_wrap"])
+        cls.log_color   : bool = cast(bool, log_params["log_color"])
+        cls.log_time    : bool = cast(bool, log_params["log_time"])
 
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
@@ -1447,18 +1447,18 @@ class Task:
         # are expanded.
 
         self.script = Hancho.cv_script.get()
-        self.flags = Dict(*args, **kwargs)
-        self.flags.setdefault("job_size", 1)
+        self.params = Dict(*args, **kwargs)
+        self.params.setdefault("job_size", 1)
 
         # The task's 'cooked' config contains only the mandatory fields needed to run the command.
-        # It is expected that build scripts will need to read task.flags/confing
+        # It is expected that build scripts will need to read task.params/confing
         # in order to implement task callbacks, so this field is not underscore-prefixed.
 
         self.config = Dict()
 
         self.onion = Onion(
             self.script.onion,
-            task_flags  = self.flags,
+            task_params = self.params,
             task_config = self.config,
         )
 
@@ -1476,7 +1476,7 @@ class Task:
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self.flags) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self.params) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1627,7 +1627,7 @@ class Task:
     def expand_task(self):
         with Log.Level.DEBUG:
             self.log("Task config before expand:\n")
-            self.log(Dumper.dump(self.flags) + "\n")
+            self.log(Dumper.dump(self.params) + "\n")
 
         task_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
                      'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
@@ -1639,13 +1639,13 @@ class Task:
         build_dir = self.onion.build_dir
 
         # Then we expand all io fields and fix their paths.
-        for _field in self.flags:
+        for _field in self.params:
             if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
             files = [
                 val.out_files if isinstance(val, Task) else val
-                for val in Utils.yield_values(self.flags[_field])
+                for val in Utils.yield_values(self.params[_field])
             ]
 
             files = Utils.flatten(files)
@@ -1999,9 +1999,9 @@ class Tracer:
 class Runner:
 
     @classmethod
-    def reset(cls, flags):
-        cls.max_jobs = flags.pop("max_jobs")
-        cls.max_errors = flags.pop("max_errors")
+    def reset(cls, params):
+        cls.max_jobs = params.pop("max_jobs")
+        cls.max_errors = params.pop("max_errors")
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
@@ -2152,9 +2152,9 @@ class HanchoProxy(types.ModuleType):
 
     def _init(self, argv = None, *args, **kwargs):
         # And then when the user calls hancho.init(), we do the rest of the initialization.
-        flags = Hancho.parse_flags(argv or [], *args, **kwargs)
+        params = Hancho.parse_flags(argv or [], *args, **kwargs)
 
-        self.flags    = flags
+        self.params   = params
         self.Dict     = Dict
         self.Tool     = Tool
         self.Task     = Task
@@ -2183,7 +2183,7 @@ class HanchoProxy(types.ModuleType):
         self.repo  = self._repo
         self.build = self._build
 
-        Hancho.init(flags)
+        Hancho.init(params)
 
     def _load(self, path, *args, **kwargs) -> types.ModuleType:
         return Hancho.load(Hancho.cv_script.get(), path, False, *args, **kwargs).module
@@ -2198,29 +2198,29 @@ class Hancho:
     # Just a container for global functions and stuff.
 
     proxy : HanchoProxy = HanchoProxy()
-    #flags : Dict = Dict()
+    #params : Dict = Dict()
     real_filenames : set # for catching multiple targets building the same output
     dedupe : dict
 
     cv_script : ContextProxy
 
     @classmethod
-    def init(cls, flags):
+    def init(cls, params):
 
         cls.real_filenames = set()
         cls.dedupe = {}
-        cls.onion = Onion(hancho = cls.proxy.__dict__, flags = flags)
+        cls.onion = Onion(hancho = cls.proxy.__dict__, params = params)
 
-        delims = flags.pop("delims")
+        delims = params.pop("delims")
         Expander.ldelims = delims[::2]
         Expander.rdelims = delims[1::2]
 
-        Log.reset(flags)
-        Runner.reset(flags)
+        Log.reset(params)
+        Runner.reset(params)
         Stats.reset()
 
         root_script = Script(
-            flags=Dict(flags, script_path=__file__, script_cwd=os.getcwd()),
+            params=Dict(params, script_path=__file__, script_cwd=os.getcwd()),
             code=None,
             is_repo=True,
         )
@@ -2357,14 +2357,14 @@ class Hancho:
         return flags
 
     @classmethod
-    def load(cls, parent_script, script_path, is_repo, *args, **kwargs) -> Script:
+    def load(cls, parent_script : Script, script_path : str, is_repo : bool, *args, **kwargs) -> Script:
         script_path = parent_script.onion.expand(script_path)
 
         # --------------------------------
-        # Merge the parent script's flags with whatever was passed in to hancho.load()
+        # Merge the parent script's params with whatever was passed in to hancho.load()
 
-        flags = Dict(
-            parent_script.flags2,
+        params = Dict(
+            parent_script.params,
             Dict(
                 script_path = script_path,
                 script_cwd  = Path.dirname(script_path)
@@ -2378,7 +2378,7 @@ class Hancho:
         # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
         # build, which they should be in practice.
 
-        dedupe_key = Hancho.flags_to_key(flags)
+        dedupe_key = Hancho.dict_to_key(params)
         deduped_script = Hancho.dedupe.get(dedupe_key)
         if deduped_script:
             with Log.Level.VERBOSE, Log.Color.SKY:
@@ -2389,7 +2389,7 @@ class Hancho:
         # Not deduped, create a new script.
 
         code = Hancho.path_to_code(script_path)
-        new_script = Script(flags = flags, code = code, is_repo = is_repo)
+        new_script = Script(params = params, code = code, is_repo = is_repo)
 
         #Log.log(f"Adding {new_script} {script_path} to dedupe\n")
         Hancho.dedupe[dedupe_key] = new_script
@@ -2400,8 +2400,6 @@ class Hancho:
 
     @classmethod
     def main(cls) -> int:
-
-        parent_script = Hancho.cv_script.get()
 
         with Log.Level.VERBOSE, Log.Color.LIME:
             Log.log(f"Command line : {" ".join(sys.argv)}\n")
@@ -2421,6 +2419,7 @@ class Hancho:
         time_a1 = time.perf_counter()
 
         Log.indent(Log.Color.ORANGE)
+        parent_script = Hancho.cv_script.get()
         script_path = Hancho.onion.script_path
         script = Hancho.load(parent_script, script_path, is_repo = True)
         Log.dedent()
@@ -2475,12 +2474,12 @@ class Hancho:
 
         if script.config.build_target:
             # Enable all tasks whose name matches the target regex
-            # NOTE - We match task.flags.name, _not_ the expanded task.config.name.
+            # NOTE - We match task.params.name, _not_ the expanded task.config.name.
             # This is because the task _has not initialized yet_, so we have no config.name.
             target_regex = re.compile(script.config.build_target)
 
             for task in script.yield_all_tasks():
-                if target_regex.search(task.flags.name):
+                if target_regex.search(task.params.name):
                     task.enable_task()
 
         elif script.config.build_all:
@@ -2507,7 +2506,7 @@ class Hancho:
 
     @classmethod
     def banner_end(cls, script):
-        task_count = len(list(script.yield_tasks()))
+        task_count = len(list(script.yield_all_tasks()))
 
         with Log.Level.VERBOSE:
             Log.log(f"Tasks created:    {task_count}\n")
@@ -2536,37 +2535,37 @@ class Hancho:
                 Log.log("BUILD CLEAN\n")
 
         with Log.Level.DEBUG, Log.Color.BLUE:
-            for repo_script in script.yield_repos():
-                Log.log(f"Stats for {repo_script.config.repo_root}\n")
+            for repo in script.yield_repos():
+                Log.log(f"Stats for {repo.config.repo_root}\n")
                 Log.indent(Log.Color.BLUE)
-                for k, v in repo_script.stats.reasons.items():
+                for k, v in repo.stats.reasons.items():
                     Log.log(f"Rebuild reasons {k:13} = {v}\n")
                 Log.dedent()
 
     @classmethod
-    def path_to_code(cls, script_path) -> types.CodeType:
-        script_path = Path.resolve(script_path)
-        with open(script_path, encoding="utf-8") as file:
+    def path_to_code(cls, source_path) -> types.CodeType:
+        source_path = Path.resolve(source_path)
+        with open(source_path, encoding="utf-8") as file:
             source = file.read()
-            code = compile(source, script_path, "exec", dont_inherit=True)
+            code = compile(source, source_path, "exec", dont_inherit=True)
             return code
 
     @classmethod
-    def flags_to_key(cls, flags) -> str:
-        dedupe_key = Dumper.dump(flags)
+    def dict_to_key(cls, params) -> str:
+        dedupe_key = Dumper.dump(params)
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
         return dedupe_key
 
 def _start():
 
-    # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
-    # message if we failed to catch an exception during load/build.
-    # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
-    # misinterpreted as a Hancho bug.
-
     sys.modules["hancho"] = Hancho.proxy
 
     if __name__ == "__main__":
+
+        # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
+        # we failed to catch an exception during load/build. The 'except' clause should catch
+        # Exception and not BaseException so ctrl-c doesn't get misinterpreted as a Hancho bug.
+
         try:
             Hancho.proxy.init(argv = sys.argv[1:])
             result = Hancho.main()
