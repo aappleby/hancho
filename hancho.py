@@ -170,8 +170,6 @@ class Script:
         self.config = Dict()
         self.onion  = Onion(hancho = Hancho.proxy.__dict__, script_params = self.params, script_config = self.config)
 
-        #Log.log(f"Creating script for {self.onion.script_path}\n")
-
         self.config.script_path  = self.onion.script_path
         self.config.script_cwd   = self.onion.script_cwd
 
@@ -2186,10 +2184,10 @@ class HanchoProxy(types.ModuleType):
         Hancho.init(params)
 
     def _load(self, path, *args, **kwargs) -> types.ModuleType:
-        return Hancho.load(Hancho.cv_script.get(), path, False, *args, **kwargs).module
+        return Hancho.load_path(Hancho.cv_script.get(), path, False, *args, **kwargs).module
 
     def _repo(self, path, *args, **kwargs) -> types.ModuleType:
-        return Hancho.load(Hancho.cv_script.get(), path, True, *args, **kwargs).module
+        return Hancho.load_path(Hancho.cv_script.get(), path, True, *args, **kwargs).module
 
     def _build(self) -> int:
         return Hancho.build(Hancho.cv_script.get())
@@ -2357,8 +2355,20 @@ class Hancho:
         return flags
 
     @classmethod
-    def load(cls, parent_script : Script, script_path : str, is_repo : bool, *args, **kwargs) -> Script:
+    def load_path(cls, parent_script : Script, script_path : str, is_repo : bool, *args, **kwargs) -> Script:
         script_path = parent_script.onion.expand(script_path)
+        script_path = Path.resolve(script_path)
+        with open(script_path, encoding="utf-8") as file:
+            source = file.read()
+            return cls.load_source(parent_script, script_path, source, is_repo, *args, **kwargs)
+
+    @classmethod
+    def load_source(cls, parent_script : Script, script_path : str, source : str, is_repo : bool, *args, **kwargs) -> Script:
+        code = compile(source, script_path, "exec", dont_inherit=True)
+        return cls.load_code(parent_script, script_path, code, is_repo, *args, **kwargs)
+
+    @classmethod
+    def load_code(cls, parent_script : Script, script_path : str, code : types.CodeType, is_repo : bool, *args, **kwargs) -> Script:
 
         # --------------------------------
         # Merge the parent script's params with whatever was passed in to hancho.load()
@@ -2372,6 +2382,11 @@ class Hancho:
             *args,
             **kwargs
         )
+
+        return cls.load_code2(script_path, code, params, is_repo)
+
+    @classmethod
+    def load_code2(cls, script_path : str, code : types.CodeType, params : Dict, is_repo : bool) -> Script:
 
         # --------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2388,12 +2403,8 @@ class Hancho:
         # --------------------------------
         # Not deduped, create a new script.
 
-        code = Hancho.path_to_code(script_path)
         new_script = Script(params = params, code = code, is_repo = is_repo)
-
-        #Log.log(f"Adding {new_script} {script_path} to dedupe\n")
         Hancho.dedupe[dedupe_key] = new_script
-
         new_script.exec()
 
         return new_script
@@ -2410,9 +2421,6 @@ class Hancho:
         if Log.log_level_out >= Log.Level.VERBOSE:
             Log.log("Verbose mode on\n")
 
-        #Log.log(f"Repo root    : {Hancho.onion.repo_root}\n")
-        #Log.log(f"Script path  : {Hancho.onion.script_path}\n")
-
         # ------------------------------------
         # Load and exec top script
 
@@ -2421,7 +2429,7 @@ class Hancho:
         Log.indent(Log.Color.ORANGE)
         parent_script = Hancho.cv_script.get()
         script_path = Hancho.onion.script_path
-        script = Hancho.load(parent_script, script_path, is_repo = True)
+        script = Hancho.load_path(parent_script, script_path, is_repo = True)
         Log.dedent()
 
         time_b1 = time.perf_counter()

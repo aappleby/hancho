@@ -245,33 +245,20 @@ class TestTemplates(unittest.TestCase):
         foo_in_script = [1, 2, 3]
         """)
 
-        code = compile(source, __file__, "exec", dont_inherit=True)
+        parent_script = hancho.Hancho.cv_script.get()
+        script_path = os.path.join(os.getcwd(), "fake_script.hancho")
 
-        #def load2(cls, script_path, flags : Dict, source = None, code = None) -> Script:
+        script = hancho.Hancho.load_source(parent_script, script_path, source, is_repo = True)
+        hancho.Hancho.cv_script.set(script)
 
-        new_params = Dict(hancho.Hancho.cv_script.flags, blarp = 1234, is_repo = False)
+        # Expanding 'Task' should read from hancho.py
+        self.assertEqual(hancho.Task, Dict().expand2("{Task}"))
 
-        old_ctx = hancho.Hancho.cv_script.get()
-        new_ctx = hancho.Script(params = old_ctx.params, code = old_ctx.code, is_repo = False)
+        # Expanding 'blarp' should read from the options passed into the script
+        self.assertEqual(1234, Dict().expand2("{blarp}"))
 
-        with hancho.Hancho.cv_script.set(new_ctx):
-            script_path = os.path.join(os.getcwd(), "fake_script.hancho")
-            script_cwd  = os.getcwd()
-            new_params.update(script_path = script_path, script_cwd = script_cwd, code = code)
-
-            # FIXME broken with new load stuff
-            #def load(cls, parent_script : Script, script_path : str, is_repo : bool, *args, **kwargs) -> Script:
-            script = hancho.Hancho.load(hancho.Hancho.cv_script.get(), new_params, is_repo = True)
-            hancho.Hancho.cv_script.set(script)
-
-            # Expanding 'Task' should read from hancho.py
-            self.assertEqual(hancho.Task, Dict().expand2("{Task}"))
-
-            # Expanding 'blarp' should read from the options passed into the script
-            self.assertEqual(1234, Dict().expand2("{blarp}"))
-
-            # Expanding 'foo_in_script' should read from the script module...
-            self.assertEqual([1, 2, 3], Dict().expand2("{foo_in_script}"))
+        # Expanding 'foo_in_script' should read from the script module...
+        self.assertEqual([1, 2, 3], Dict().expand2("{foo_in_script}"))
 
         # but not after we've left the script context.
 
