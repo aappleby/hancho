@@ -154,7 +154,7 @@ def make(*, in_makefile, **kwargs):
 
 
 ####################################################################################################
-# Testsz
+# Tests
 
 run_test = hancho.Tool(
     desc     = "Running test {basename(in_test)}",

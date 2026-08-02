@@ -252,7 +252,7 @@ class TestTemplates(unittest.TestCase):
         new_flags = Dict(hancho.Hancho.cv_script.flags, blarp = 1234, is_repo = False)
 
         old_ctx = hancho.Hancho.cv_script.get()
-        new_ctx = hancho.Script(old_ctx.raw_flags, old_ctx.code, False)
+        new_ctx = hancho.Script(flags = old_ctx.flags2, code = old_ctx.code, is_repo = False)
 
         with hancho.Hancho.cv_script.set(new_ctx):
             script_path = os.path.join(os.getcwd(), "fake_script.hancho")
@@ -260,7 +260,7 @@ class TestTemplates(unittest.TestCase):
             new_flags.update(script_path = script_path, script_cwd = script_cwd, code = code)
 
             # FIXME broken with new load stuff
-            script = hancho.Hancho.load(new_flags, is_repo = True)
+            script = hancho.Hancho.load(hancho.Hancho.cv_script.get(), new_flags, is_repo = True)
             hancho.Hancho.cv_script.set(script)
 
             # Expanding 'Task' should read from hancho.py

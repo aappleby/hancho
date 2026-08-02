@@ -48,6 +48,9 @@ from typing import Any, cast
 
 MISSING = object()
 
+# FIXME change raw_flags/flags to flags/config?
+
+
 #endregion
 
 class Dict(dict):
@@ -152,11 +155,11 @@ class Dict(dict):
         dict.__setitem__(self, key, val)
 
     def expand(self, template):
-        onion = Onion(hancho = Hancho.proxy.__dict__, dict = self)
+        onion = Onion(Hancho.cv_script.onion, dict = self)
         return Expander.expand(onion, template)
 
     def eval(self, expr):
-        onion = Onion(hancho = Hancho.proxy.__dict__, dict = self)
+        onion = Onion(Hancho.cv_script.onion, dict = self)
         return eval(expr, {}, onion)
 
 class Tool(Dict):
@@ -165,40 +168,47 @@ class Tool(Dict):
 
 class Script:
 
-    def __init__(self, raw_flags, code, is_repo):
-        self.raw_flags = raw_flags
-        self.flags     = Dict()
-        self.onion     = Onion(hancho = Hancho.proxy.__dict__, raw_flags = self.raw_flags, flags = self.flags)
+    def __init__(self, *, flags : Dict, code : types.CodeType | None, is_repo : bool):
+        self.flags2   = flags
+        self.config  = Dict()
+        self.onion   = Onion(hancho = Hancho.proxy.__dict__, script_flags = self.flags2, script_config = self.config)
 
-        self.flags.script_name  = self.onion.script_name
-        self.flags.script_path  = self.onion.script_path
-        self.flags.script_cwd   = self.onion.script_cwd
+        Log.log(f"Creating script for {self.onion.script_path}\n")
 
-        self.flags.repo_root    = self.onion.repo_root
-        self.flags.build_root   = self.onion.build_root
-        self.flags.comp_db_path = self.onion.comp_db_path
-        self.flags.stat_db_path = self.onion.stat_db_path
+        self.config.script_path  = self.onion.script_path
+        self.config.script_cwd   = self.onion.script_cwd
 
-        self.flags.build_tag    = self.onion.build_tag
-        self.flags.build_target = self.onion.build_target
-        self.flags.build_all    = self.onion.build_all
-        self.flags.build_dry    = self.onion.build_dry
-        self.flags.build_strict = self.onion.build_strict
+        self.config.repo_root    = self.onion.repo_root
+        self.config.build_root   = self.onion.build_root
+        self.config.comp_db_path = self.onion.comp_db_path
+        self.config.stat_db_path = self.onion.stat_db_path
 
-        self.code = code
+        self.config.build_tag    = self.onion.build_tag
+        self.config.build_target = self.onion.build_target
+        self.config.build_all    = self.onion.build_all
+        self.config.build_dry    = self.onion.build_dry
+        self.config.build_strict = self.onion.build_strict
+
+        self.code    = code
         self.is_repo = is_repo
-        self.stats = Stats(self.flags)
-
-        self.module = types.ModuleType(os.path.basename(self.flags.script_name))
-        self.module.__file__ = self.flags.script_path
-        self.module.hancho   = Hancho.proxy # type: ignore
-        self.module.flags    = self.flags # type: ignore
+        self.stats   = Stats(self.config.comp_db_path, self.config.stat_db_path, self.config.build_dry)
 
         self.repos : dict[str, Script] = {}
         self.scripts : dict[str, Script] = {}
         self.tasks : list[Task]=  []
 
-        #self.onion._layers2["module"] = self.module.__dict__
+        self.module = types.ModuleType(os.path.basename(self.config.script_path))
+
+        self.module.__file__  = self.config.script_path
+        self.module.hancho    = Hancho.proxy   # type: ignore
+        self.module.flags     = self.flags2     # type: ignore
+        #self.module.config    = self.config    # type: ignore
+        #self.module.onion     = self.onion     # type: ignore
+
+    def exec(self):
+        if self.code:
+            with Hancho.cv_script.enter(self), chdir(self.config.script_cwd):
+                exec(self.code, self.module.__dict__)
 
     def add(self, repo):
         self.repos[repo.repo_root] = repo
@@ -252,8 +262,8 @@ class Script:
 
 class ContextProxy:
     # Helper that just wraps CVs so you can do "contextvar.foo".
-    def __init__(self):
-        object.__setattr__(self, "_cv", contextvars.ContextVar("cv_script", default = None))
+    def __init__(self, root_script):
+        object.__setattr__(self, "_cv", contextvars.ContextVar("script", default = root_script))
 
     def __getattr__(self, key):
         return getattr(self._cv.get(), key)
@@ -304,7 +314,7 @@ class Onion(abc.Mapping):
             if isinstance(val, Onion):
                 self._layers2.update(val._layers2)
             else:
-                raise TypeError(f"Can't use this as an onion layer: {type(val)} = {val}")
+                raise TypeError("You need to pass all Onion args as Onion(name=mapping, ...)")
 
         if kwargs:
             self._layers2.update(kwargs)
@@ -583,7 +593,9 @@ class Dumper:
 
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
-        if hasattr(type(val), "__dump__"):
+        if key == "__builtins__":
+            return cls._dump_prefix(key, val, opts) + "<builtins>"
+        elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts, seen)
         elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val):  # noqa: SIM114
             return cls._dump_scalar(key, val, opts, seen)
@@ -1140,17 +1152,18 @@ class Path:
 class Stats:
 
     @classmethod
-    def reset(cls, raw_flags):
+    def reset(cls):
         cls.stat_calls : int = 0
         cls.hash_calls : int = 0
         cls.hash_bytes : int = 0
         cls.hash_time  : float = 0
 
-    def __init__(self, flags):
+    def __init__(self, comp_db_path, stat_db_path, build_dry):
 
-        self.flags = flags
-        self.comp_db_path = flags.comp_db_path
-        self.stat_db_path = flags.stat_db_path
+        #self.config = config
+        self.comp_db_path = comp_db_path
+        self.stat_db_path = stat_db_path
+        self.build_dry    = build_dry
 
         # Tally up the rebuild reasons for debugging
         self.reasons = Counter()
@@ -1297,7 +1310,7 @@ class Stats:
         return cast(list[str], deplines)
 
     def save_stat_db(self, script : Script):
-        if self.flags.build_dry:
+        if self.build_dry:
             return
 
         stat_db = {}
@@ -1430,7 +1443,9 @@ class Task:
         # The task's 'raw' config contains everything passed in to hancho.Task(), but no templates
         # are expanded.
 
-        self.raw_config = Dict(*args, **kwargs)
+        self.script = Hancho.cv_script.get()
+        self.flags = Dict(*args, **kwargs)
+        self.flags.setdefault("job_size", 1)
 
         # The task's 'cooked' config contains only the mandatory fields needed to run the command.
         # It is expected that build scripts will need to read task.(raw_)config
@@ -1439,9 +1454,9 @@ class Task:
         self.config = Dict()
 
         self.onion = Onion(
-            Hancho.cv_script.onion,
-            raw_config = self.raw_config,
-            config = self.config,
+            self.script.onion,
+            task_flags  = self.flags,
+            task_config = self.config,
         )
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -1458,7 +1473,7 @@ class Task:
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self.raw_config) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self.flags) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1484,10 +1499,10 @@ class Task:
         self._task_id : int = 0
         self._stdout : str = ""
         self._stderr : str = ""
-        self._job_size = 0
+        self._cores = 0
         self._complete = False
 
-        Hancho.cv_script.tasks.append(self)
+        self.script.tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -1522,7 +1537,8 @@ class Task:
 
     async def task_top(self):
         task   = self
-        config = task.config
+        config = self.config
+        script = self.script
 
         try:
             # Await all tasks in our input fields and then flatten them.
@@ -1544,16 +1560,16 @@ class Task:
 
             # Dry runs early out after the task is initialized but before we do .exists() checks or
             # run any commands.
-            if Hancho.cv_script.flags.build_dry:
+            if script.config.build_dry:
                 return
 
             # Paths updated. See if we need to rebuild our outputs.
-            task._reason = Hancho.cv_script.stats.rebuild_reason(task)
+            task._reason = script.stats.rebuild_reason(task)
             if not task._reason:
                 raise Task.SKIPPED(f"Task is up-to-date: '{config.name}' : '{config.desc}'")
 
             # Wait for enough jobs to free up to run this task.
-            task._job_size = await Runner.acquire(config.job_size)
+            task._cores = await Runner.acquire(config.job_size)
 
             # OK, let's go!
             await task.task_main()
@@ -1581,7 +1597,7 @@ class Task:
                 Log.log(traceback.format_exc() + "\n")
             task._error = ex
         finally:
-            Runner.release(task._job_size)
+            Runner.release(task._cores)
 
         raise task._error
 
@@ -1605,7 +1621,7 @@ class Task:
     def expand_task(self):
         with Log.Level.DEBUG:
             self.log("Task config before expand:\n")
-            self.log(Dumper.dump("raw_config", self.raw_config) + "\n")
+            self.log(Dumper.dump("flags", self.flags) + "\n")
 
         task_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
                      'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
@@ -1617,13 +1633,13 @@ class Task:
         build_dir = self.onion.build_dir
 
         # Then we expand all io fields and fix their paths.
-        for _field in self.raw_config:
+        for _field in self.flags:
             if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
             files = [
                 val.out_files if isinstance(val, Task) else val
-                for val in Utils.yield_values(self.raw_config[_field])
+                for val in Utils.yield_values(self.flags[_field])
             ]
 
             files = Utils.flatten(files)
@@ -1702,7 +1718,7 @@ class Task:
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
-        file = Path.join(Hancho.cv_script.flags.script_cwd, file)
+        file = Path.join(self.script.config.script_cwd, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -1713,24 +1729,25 @@ class Task:
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if field.startswith("out_") or field == "in_depfile":
             if not Path.startswith(file, build_dir):
-                file = Path.relpath(file, Hancho.cv_script.flags.script_cwd)
+                file = Path.relpath(file, self.script.config.script_cwd)
                 file = Path.join(build_dir, file)
 
-            if not Hancho.cv_script.flags.build_dry:
+            if not self.script.config.build_dry:
                 os.makedirs(Path.dirname(file), exist_ok=True)
 
         return file
 
     def sanity_check(self):
         # Check for all task issues that break the build
-        task   = self
-        config = task.config
+        task = self
+        task_config = self.config
+        script_config = self.script.config
 
-        if not Path.exists(config.task_cwd):
-            raise Task.BROKEN(f"Task working directory '{config.task_cwd}' does not exist")
+        if not Path.exists(task_config.task_cwd):
+            raise Task.BROKEN(f"Task working directory '{task_config.task_cwd}' does not exist")
 
-        if not Path.startswith(config.build_dir, Hancho.cv_script.flags.repo_root):
-            raise Task.BROKEN(f"The build dir {config.build_dir} is not under repo.root {config.repo_root}")
+        if not Path.startswith(task_config.build_dir, script_config.repo_root):
+            raise Task.BROKEN(f"The build dir {task_config.build_dir} is not under repo.root {task_config.repo_root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1740,18 +1757,18 @@ class Task:
         # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(config.command, list):
-            for command in config.command:
-                if type(command) is not type(config.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {config.command}")
+        if isinstance(task_config.command, list):
+            for command in task_config.command:
+                if type(command) is not type(task_config.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {task_config.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
                     raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # In strict mode, we mark a task broken if its command still has curly braces.
-        if Hancho.cv_script.flags.build_strict:
-            for command in cast(list, config.command):
+        if script_config.build_strict:
+            for command in cast(list, task_config.command):
                 if not isinstance(command, str):
                     continue
                 blocks = []
@@ -1761,8 +1778,8 @@ class Task:
         # Check that all build files would end up under build_dir
         for file in Utils.yield_values(task.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, config.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {config.build_dir}")
+            if not Path.startswith(file, task_config.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {task_config.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(task.out_files):
@@ -1776,7 +1793,7 @@ class Task:
         for file in Utils.yield_values(task.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-            if not Path.exists(file) and not Hancho.cv_script.flags.build_dry:
+            if not Path.exists(file) and not script_config.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -1784,18 +1801,19 @@ class Task:
             raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.config.in_depfile}")
 
     async def run_command(self, command):
-        task   = self
-        config = task.config
+        task          = self
+        task_config   = self.config
+        script_config = self.script.config
 
         with Log.Level.VERBOSE, Log.Color.BLUE:
-            task.log(f"{Path.relpath(config.task_cwd, Hancho.cv_script.flags.repo_root)}$ {command}\n")
+            task.log(f"{Path.relpath(task_config.task_cwd, script_config.repo_root)}$ {command}\n")
 
         proc = None
         try:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 command,
-                cwd    = config.task_cwd,
+                cwd    = task_config.task_cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -1836,14 +1854,15 @@ class Task:
                 task.log(task.dump_stdout())
 
     async def call_callback(self, command):
+        script_config = self.script.config
 
         with Log.Level.VERBOSE, Log.Color.BLUE:
-            callback_dir = Path.relpath(Hancho.cv_script.flags.script_cwd, Hancho.cv_script.flags.repo_root)
+            callback_dir = Path.relpath(script_config.script_cwd, script_config.repo_root)
             self.log(f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script_dir where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(Hancho.cv_script.flags.script_cwd):
+        with chdir(script_config.script_cwd):
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -1871,18 +1890,19 @@ class Task:
 
     def log_exception(self, message, ex = None):
         task = self
-        config = task.config
+        task_config = task.config
+        script_config = self.script.config
 
         with Log.Level.ERROR, Log.Color.RED:
             Log.log("========================================\n")
             Log.log(message + "\n")
             Log.log("========================================\n")
 
-            Log.log(f"Script    = {Hancho.cv_script.flags.script_path}:\n")
-            Log.log(f"Task      = '{config.name}' : '{config.desc}'\n")
+            Log.log(f"Script    = {script_config.script_path}:\n")
+            Log.log(f"Task      = '{task_config.name}' : '{task_config.desc}'\n")
             Log.log(f"os.getcwd = {os.getcwd()}\n")
-            Log.log(f"task cwd  = {config.task_cwd}\n")
-            Log.log(f"command   = {config.command}\n")
+            Log.log(f"task cwd  = {task_config.task_cwd}\n")
+            Log.log(f"command   = {task_config.command}\n")
             if ex:
                 Log.log_exception(ex)
             Log.log(task.dump_stdout())
@@ -1980,9 +2000,9 @@ class Tracer:
 class Runner:
 
     @classmethod
-    def reset(cls, raw_flags):
-        cls.max_jobs = raw_flags.pop("max_jobs", os.cpu_count() or 1)
-        cls.max_errors = raw_flags.pop("max_errors", 0)
+    def reset(cls, flags):
+        cls.max_jobs = flags.pop("max_jobs")
+        cls.max_errors = flags.pop("max_errors")
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
@@ -2042,13 +2062,13 @@ class Runner:
             v.enable_task()
 
     @classmethod
-    async def run_tasks(cls):
+    async def run_tasks(cls, script):
         """Run all tasks until we run out."""
 
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
 
-        for task in Hancho.cv_script.yield_all_tasks():
+        for task in script.yield_all_tasks():
             if task._enabled:
                 Runner.create_aio_task(task)
 
@@ -2111,9 +2131,9 @@ class Runner:
         return 1 if Runner.tasks_failed or Runner.tasks_broken else 0
 
     @classmethod
-    def run_tool(cls, tool : str): # pragma: no cover
+    def run_tool(cls, script, tool : str): # pragma: no cover
         if tool == "clean":
-            for task in Hancho.cv_script.yield_all_tasks():
+            for task in script.yield_all_tasks():
                 root = Path.relpath(task.config.build_root, os.getcwd())
                 if Path.isdir(root):
                     Log.log(f"Wiping build_root {root}\n")
@@ -2123,18 +2143,22 @@ class Runner:
         else:
             raise AssertionError(f"Don't know how to run tool {tool}")
 
-
 class HanchoProxy(types.ModuleType):
-    # These are aliases for methods in Hancho that have been pulled out so they can be used by
-    # template expansion. This lets you do {flatten(x)} instead of {Utils.flatten(x)} in macros.
 
     def __init__(self):
         super().__init__("HanchoProxy")
-        self.__file__ = __file__
-        self.Task     = Task
+        self.Dict     = Dict
         self.Tool     = Tool
-        self.Dumper   = Dumper
-        self.path     = Path
+        self.Task     = Task
+        self.Path     = Path
+
+        self.log      = Log.log
+        self.dump     = Dumper.dump
+
+        self.flatten  = Utils.flatten
+        self.run_cmd  = Utils.run_cmd
+        self.weave    = Utils.weave
+
         self.abspath  = Path.abspath
         self.basename = Path.basename
         self.dirname  = Path.dirname
@@ -2142,48 +2166,64 @@ class HanchoProxy(types.ModuleType):
         self.relpath  = Path.relpath
         self.resolve  = Path.resolve
         self.swapext  = Path.swapext
-        self.flatten  = Utils.flatten
-        self.run_cmd  = Utils.run_cmd
-        self.weave    = Utils.weave
-        self.cwd      = os.getcwd
-        self.module   = sys.modules[__name__]
-        self.log      = Log.log
+
         self.fail     = Script.Fail
         self.abort    = Script.Abort
         self.earlyout = Script.EarlyOut
 
+    def init(self, argv = None, *args, **kwargs):
+        Hancho.init(argv, *args, **kwargs)
+
+    def load(self, path, *args, **kwargs) -> types.ModuleType:
+        return Hancho.load(path, False, *args, **kwargs).module
+
+    def repo(self, path, *args, **kwargs) -> types.ModuleType:
+        return Hancho.load(path, True, *args, **kwargs).module
+
+    def build(self) -> int:
+        return Hancho.build(Hancho.cv_script.get())
+
 class Hancho:
     # Just a container for global functions and stuff.
 
-    module : types.ModuleType = sys.modules[__name__]
-    root_script : Script | None = None
-    real_filenames = set() # for catching multiple targets building the same output
-    dedupe = {}
-    cv_script = ContextProxy()
-    proxy = HanchoProxy()
+    proxy : HanchoProxy
+    flags : Dict
+    real_filenames : set # for catching multiple targets building the same output
+    dedupe : dict
 
-    @staticmethod
-    def init(*args, **kwargs):
-        argv = sys.argv[1:] if __name__ == "__main__" else []
-        raw_flags = Hancho.parse_flags(argv, *args, **kwargs)
-        Hancho.reset(raw_flags)
-        return raw_flags
+    root_flags : Dict
+    root_script : Script
+    cv_script : ContextProxy
 
-    @staticmethod
-    def reset(raw_flags):
-        delims = raw_flags.pop("delims")
+    @classmethod
+    def init(cls, argv = None, *args, **kwargs):
+        flags = Hancho.parse_flags(argv or [], *args, **kwargs)
+
+        cls.proxy = HanchoProxy()
+        cls.flags = flags
+        cls.real_filenames = set()
+        cls.dedupe = {}
+        cls.onion = Onion(hancho = cls.proxy.__dict__, flags = flags)
+
+        sys.modules["hancho"] = cls.proxy
+
+        delims = flags.pop("delims")
         Expander.ldelims = delims[::2]
         Expander.rdelims = delims[1::2]
 
-        Log.reset(raw_flags)
-        Runner.reset(raw_flags)
-        Stats.reset(raw_flags)
-        Hancho.root_script = None
-        Hancho.real_filenames = set()
-        Hancho.dedupe = {}
+        Log.reset(flags)
+        Runner.reset(flags)
+        Stats.reset()
 
-    @staticmethod
-    def parse_flags(argv, *args, **kwargs) -> Dict:
+        cls.root_script = Script(
+            flags=Dict(flags, script_path=__file__, script_cwd=os.getcwd()),
+            code=None,
+            is_repo=True,
+        )
+        cls.cv_script = ContextProxy(cls.root_script)
+
+    @classmethod
+    def parse_flags(cls, argv, *args, **kwargs) -> Dict:
 
         desc = textwrap.dedent("""
         ================================================================================
@@ -2210,8 +2250,7 @@ class Hancho:
         comp_db_path = "{join(build_root, 'compile_commands.json')}"
         stat_db_path = "{join(build_root, 'hancho.json')}"
 
-        script_name  = "build.hancho"
-        script_path  = "{abspath(script_name)}"
+        script_path  = os.path.abspath("build.hancho")
         script_cwd   = "{dirname(script_path)}"
 
         build_dir    = "{abspath(join(build_root, build_tag, relpath(script_cwd, repo_root)))}"
@@ -2220,9 +2259,8 @@ class Hancho:
         # global
         parser.add_argument('-o', "--opt_file",     default = "",              metavar = "(path)",    type=str,       help="File containing a Python literal that will be used as additional options")
         parser.add_argument(      "--run_tool",     default = "",              metavar = "(tool)",    type=str.strip, help="Run a subtool.")
-        parser.add_argument(      "--delims",       default = "{}«»",          metavar = "(delims)",  type=str.strip, help="Characters are used as macro delimiters.")
+        parser.add_argument(      "--delims",       default = "{}«»",          metavar = "(delims)",  type=str.strip, help="The characters to use as macro delimiters.")
         parser.add_argument(      "--depformat",    default = depformat,       metavar = "(format)",  type=str.strip, help="Dependency file format (gcc or msvc)")
-        parser.add_argument(      "--job_size",     default = 1,               metavar = "(path)",    type=str.strip, help="The default number of jobs (cores) to allocate to each task.")
 
         # runner
         parser.add_argument(      "--max_errors",   default = 0,               metavar = "(count)",   type=int,       help="The maximum number of task errors we tolerate before abandoning the build")
@@ -2243,9 +2281,8 @@ class Hancho:
         parser.add_argument(      "--stat_db_path", default = stat_db_path,    metavar = "(path)",    type=str.strip, help="Where to put the stat database")
 
         # script
-        parser.add_argument('-s', "--script_name",  default = script_name,     metavar = "(path)",    type=str.strip, help="The .hancho file that starts the build.")
-        parser.add_argument(      "--script_path",  default = script_path,     metavar = "(path)",    type=str.strip, help="Absolute path to script_name")
-        parser.add_argument(      "--script_cwd",   default = script_cwd,      metavar = "(path)",    type=str.strip, help="Change to this directory before running the top build script.")
+        parser.add_argument(      "--script_path",  default = script_path,     metavar = "(path)",    type=str.strip, help="Path to the .hancho file that starts the build.")
+        parser.add_argument(      "--script_cwd",   default = script_cwd,      metavar = "(path)",    type=str.strip, help="If this is an out-of-tree build, change to this directory before running the top build script.")
         parser.add_argument(      "--task_cwd",     default = task_cwd,        metavar = "(path)",    type=str.strip, help="Directory to run commands in.")
         parser.add_argument(      "--build_dir",    default = build_dir,       metavar = "(path)",    type=str.strip, help="Per-task build artifact directory.")
 
@@ -2315,100 +2352,116 @@ class Hancho:
 
         return flags
 
-    @staticmethod
-    def load(raw_flags : Dict, is_repo):
+    @classmethod
+    def load(cls, parent_script, script_path, is_repo, *args, **kwargs) -> Script:
+        script_path = parent_script.onion.expand(script_path)
+
+        # --------------------------------
+        # Merge the parent script's flags with whatever was passed in to hancho.load()
+
+        flags = Dict(
+            parent_script.flags2,
+            Dict(
+                script_path = script_path,
+                script_cwd  = Path.dirname(script_path)
+            ),
+            *args,
+            **kwargs
+        )
 
         # --------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
         # build, which they should be in practice.
 
-        dedupe_key = Hancho.flags_to_key(raw_flags)
-
+        dedupe_key = Hancho.flags_to_key(flags)
         deduped_script = Hancho.dedupe.get(dedupe_key)
         if deduped_script:
             with Log.Level.VERBOSE, Log.Color.SKY:
-                Log.log(f"Deduped load of {Hancho.cv_script.flags.script_path}\n")
+                Log.log(f"Deduped load of {script_path} - {deduped_script}\n")
             return deduped_script
 
-        # Not deduped, create a new Script+Module and also a Repo+BuildDB if this script is the
-        # root of a new repo.
+        # --------------------------------
+        # Not deduped, create a new script.
 
-        onion = Onion(hancho = Hancho.proxy.__dict__, raw_flags = raw_flags)
-        script_path = onion.script_path
-        code  = Hancho.path_to_code(script_path)
+        code = Hancho.path_to_code(script_path)
+        new_script = Script(flags = flags, code = code, is_repo = is_repo)
 
-        new_script = Script(raw_flags, code, is_repo)
+        Log.log(f"Adding {new_script} {script_path} to dedupe\n")
+        Hancho.dedupe[dedupe_key] = new_script
 
-        Hancho.dedupe[dedupe_key] = Hancho.cv_script.get()
+        new_script.exec()
 
         return new_script
 
+    @classmethod
+    def main(cls) -> int:
 
-    @staticmethod
-    def banner_start():
+        parent_script = Hancho.cv_script.get()
+
         with Log.Level.VERBOSE, Log.Color.LIME:
             Log.log(f"Command line : {" ".join(sys.argv)}\n")
-            Log.log(f"Repo root    : {Hancho.cv_script.flags.repo_root}\n")
-            Log.log(f"Script path  : {Hancho.cv_script.flags.script_path}\n")
+        if Log.log_trace:
+            Log.log("Trace mode on\n")
+        if Log.log_level_out >= Log.Level.DEBUG:
+            Log.log("Debug mode on\n")
+        if Log.log_level_out >= Log.Level.VERBOSE:
+            Log.log("Verbose mode on\n")
 
-            if Log.log_trace:
-                Log.log("Trace mode on\n")
-            if Log.log_level_out >= Log.Level.DEBUG:
-                Log.log("Debug mode on\n")
-            if Log.log_level_out >= Log.Level.VERBOSE:
-                Log.log("Verbose mode on\n")
-
-    @staticmethod
-    def main():
-
-        Hancho.banner_start()
+        #Log.log(f"Repo root    : {Hancho.onion.repo_root}\n")
+        #Log.log(f"Script path  : {Hancho.onion.script_path}\n")
 
         # ------------------------------------
-        # Exec top script
+        # Load and exec top script
 
-        time_a = time.perf_counter()
+        time_a1 = time.perf_counter()
 
-        try:
-            Log.indent(Log.Color.ORANGE)
-            with chdir(Hancho.cv_script.flags.script_cwd):
-                if Hancho.cv_script.code:
-                    exec(Hancho.cv_script.code, Hancho.cv_script.module.__dict__)
-        except (Script.Abort, Script.EarlyOut):
-            pass
-        except Script.Fail as fail:
-            raise RuntimeError(f"Script failed : {Hancho.cv_script.flags.script_path}") from fail
-        finally:
-            Log.dedent()
+        Log.indent(Log.Color.ORANGE)
+        script_path = Hancho.onion.script_path
+        script = Hancho.load(parent_script, script_path, is_repo = True)
+        Log.dedent()
 
-        time_b = time.perf_counter()
+        time_b1 = time.perf_counter()
         with Log.Level.VERBOSE, Log.Color.BLUE:
-            Log.log(f"Loading scripts took {time_b - time_a:8.6f} seconds\n")
+            Log.log(f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
 
         # ------------------------------------
         # If we're running a tool, run it and we're done.
 
-        if Hancho.cv_script.onion.run_tool:
-            time_a = time.perf_counter()
-            result = Runner.run_tool(Hancho.cv_script.onion.run_tool)
-            time_b = time.perf_counter()
+        if script.onion.run_tool:
+            time_a2 = time.perf_counter()
+            result = Runner.run_tool(script, script.onion.run_tool)
+            time_b2 = time.perf_counter()
 
             with Log.Level.VERBOSE, Log.Color.GREEN:
-                Log.log(f"Tool took {time_b - time_a:8.6f} seconds\n")
+                Log.log(f"Tool took {time_b2 - time_a2:8.6f} seconds\n")
             return result
 
         # ------------------------------------
         # Start the build
 
-        time_a = time.perf_counter()
+        time_a3 = time.perf_counter()
+        result = Hancho.build(script)
+        time_b3 = time.perf_counter()
+        with Log.Level.VERBOSE, Log.Color.GREEN:
+            Log.log(f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+
+        # ------------------------------------
+        # Done
+
+        Hancho.banner_end(script)
+        return result
+
+    @classmethod
+    def build(cls, script) -> int:
 
         # ------------------------------------
         # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
         # get the old path), but _before_ we build any tasks.
 
-        for repo_script in Hancho.cv_script.yield_repos():
-            if os.path.isfile(repo_script.flags.stat_db_path):
-                with open(repo_script.flags.stat_db_path) as contents:
+        for repo_script in script.yield_repos():
+            if os.path.isfile(repo_script.config.stat_db_path):
+                with open(repo_script.config.stat_db_path) as contents:
                     repo_script.stats.old_stat_db = Dict(json.load(contents))
             else:
                 repo_script.stats.old_stat_db = Dict()
@@ -2416,55 +2469,41 @@ class Hancho:
         # ------------------------------------
         # Select the set of tasks to run.
 
-        if Hancho.cv_script.flags.build_target:
+        if script.config.build_target:
             # Enable all tasks whose name matches the target regex
-            # NOTE - We match task.raw_config.name, _not_ the expanded task.config.name.
+            # NOTE - We match task.flags.name, _not_ the expanded task.config.name.
             # This is because the task _has not initialized yet_, so we have no config.name.
-            target_regex = re.compile(Hancho.cv_script.flags.build_target)
+            target_regex = re.compile(script.config.build_target)
 
-            for task in Hancho.cv_script.yield_all_tasks():
-                if target_regex.search(task.raw_config.name):
+            for task in script.yield_all_tasks():
+                if target_regex.search(task.flags.name):
                     task.enable_task()
 
-        elif Hancho.cv_script.flags.build_all:
-            for task in Hancho.cv_script.yield_all_tasks():
+        elif script.config.build_all:
+            for task in script.yield_all_tasks():
                 task.enable_task()
 
         else:
             # Enable all tasks in the top repo
-            for task in Hancho.cv_script.yield_tasks():
+            for task in script.yield_tasks():
                 task.enable_task()
 
         # ------------------------------------
         # Run the tasks.
 
-        time_a = time.perf_counter()
-        result = asyncio.run(Runner.run_tasks())
-        time_b = time.perf_counter()
-
-        with Log.Level.VERBOSE, Log.Color.BLUE:
-            Log.log(f"Running {Runner.tasks_awaited} tasks took {time_b - time_a:8.6f} seconds\n")
+        result = asyncio.run(Runner.run_tasks(script))
 
         # ------------------------------------
         # Update stat DBs.
 
-        for repo_script in Hancho.cv_script.yield_repos():
+        for repo_script in script.yield_repos():
             repo_script.stats.save_stat_db(repo_script)
 
-        time_b = time.perf_counter()
-
-        with Log.Level.VERBOSE, Log.Color.GREEN:
-            Log.log(f"Build took {time_b - time_a:8.6f} seconds\n")
-
-        # ------------------------------------
-        # Done
-
-        Hancho.banner_end()
         return result
 
-    @staticmethod
-    def banner_end():
-        task_count = len(list(Hancho.cv_script.yield_tasks()))
+    @classmethod
+    def banner_end(cls, script):
+        task_count = len(list(script.yield_tasks()))
 
         with Log.Level.VERBOSE:
             Log.log(f"Tasks created:    {task_count}\n")
@@ -2493,54 +2532,43 @@ class Hancho:
                 Log.log("BUILD CLEAN\n")
 
         with Log.Level.DEBUG, Log.Color.BLUE:
-            for repo_script in Hancho.cv_script.yield_repos():
-                Log.log(f"Stats for {repo_script.flags.repo_root}\n")
+            for repo_script in script.yield_repos():
+                Log.log(f"Stats for {repo_script.config.repo_root}\n")
                 Log.indent(Log.Color.BLUE)
                 for k, v in repo_script.stats.reasons.items():
                     Log.log(f"Rebuild reasons {k:13} = {v}\n")
                 Log.dedent()
 
-    @staticmethod
-    def path_to_code(script_path) -> types.CodeType:
+    @classmethod
+    def path_to_code(cls, script_path) -> types.CodeType:
         script_path = Path.resolve(script_path)
         with open(script_path, encoding="utf-8") as file:
             source = file.read()
             code = compile(source, script_path, "exec", dont_inherit=True)
             return code
 
-    @staticmethod
-    def flags_to_key(raw_flags) -> str:
+    @classmethod
+    def flags_to_key(cls, raw_flags) -> str:
         dedupe_key = Dumper.dump(key = "raw_flags", val = raw_flags)
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
         return dedupe_key
 
-# region _start
-
 def _start():
-
-    sys.modules["hancho"] = Hancho.proxy
 
     # Top-level exception handler just so we can print a big red "SOMETHING BROKE ALL BAD"
     # message if we failed to catch an exception during load/build.
     # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
     # misinterpreted as a Hancho bug.
 
+    argv = sys.argv[1:] if __name__ == "__main__" else []
+    Hancho.init(argv)
+
     try:
-        raw_flags = Hancho.init()
+
 
         if __name__ == "__main__":
-            print("Hancho starting...")
-            Hancho.root_script = Hancho.load(raw_flags, is_repo = True)
-            Hancho.cv_script.set(Hancho.root_script)
-            Hancho.main()
-            sys.exit(0)
-        else:
-            Hancho.root_script = Script(
-                Dict(raw_flags, script_name="hancho.py", script_path=__file__, script_cwd=os.getcwd()),
-                None,
-                True,
-            )
-            Hancho.cv_script.set(Hancho.root_script)
+            result = Hancho.main()
+            sys.exit(result)
 
     except Exception:
         print(Log.hex_to_ansi(0xFF3030), end="")
@@ -2553,6 +2581,3 @@ def _start():
         Log.flush()
 
 _start()
-
-# endregion
-
