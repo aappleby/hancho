@@ -17,7 +17,7 @@ from hancho import Dict, Expander
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.Hancho.init(verbosity = "quiet")
+    hancho.init(verbosity = "quiet") # type: ignore
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)

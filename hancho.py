@@ -143,7 +143,7 @@ class Dict(dict):
         return Dict(self, other)
 
     def __repr__(self):
-        return Dumper.dump(None, self)
+        return Dumper.dump(self)
 
     def __getitem__(self, key : str):
         return dict.__getitem__(self, key)
@@ -211,7 +211,7 @@ class Script:
         self.repos[repo.repo_root] = repo
 
     def __repr__(self):
-        return Dumper.dump(None, self)
+        return Dumper.dump(self)
 
     def yield_tasks(self):
         yield from self.tasks
@@ -338,7 +338,7 @@ class Onion(abc.Mapping):
         return len(result)
 
     def __repr__(self):
-        return Dumper.dump(None, self)
+        return Dumper.dump(self)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers2.values())
@@ -560,7 +560,7 @@ class Dumper:
 
     @dataclass
     class Opts:
-        max_depth : int = 1
+        depth : int = 1
         indent : int = 0
         print_id : bool = True
         color_code : bool = True
@@ -575,9 +575,9 @@ class Dumper:
     @classmethod
     def dump(
         cls,
-        key,
+        #key,
         val,
-        max_depth=1,
+        depth=1,
         indent=0,
         print_id=True,
         color_code=False,
@@ -585,8 +585,9 @@ class Dumper:
         len=0,
         tab="    ",
     ):
-        opts = Dumper.Opts(max_depth, indent, print_id, color_code, tab, len, max, flat = False)
-        return cls._dump_to_str(key, val, opts, set())
+        opts = Dumper.Opts(depth, indent, print_id, color_code, tab, len, max, flat = False)
+        #return cls._dump_to_str(key, val, opts, set())
+        return cls._dump_to_str(None, val, opts, set())
 
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
@@ -657,9 +658,9 @@ class Dumper:
     def _dump_deep_vector(cls, key, ld, items, rd, opts, seen : set):
         result = ld + '\n'
 
-        if opts.max_depth == 0:
+        if opts.depth == 0:
             return ld + "..." + rd
-        opts = replace(opts, max_depth = opts.max_depth - 1)
+        opts = replace(opts, depth = opts.depth - 1)
 
         # len(pad) + 1 for the trailing comma
         pad = opts.tab * (opts.indent + 1)
@@ -1511,7 +1512,7 @@ class Task:
             self.enable_task()
 
     def __repr__(self):
-        return Dumper.dump(None, self)
+        return Dumper.dump(self)
 
     # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
     # Dicts make deep copies and we want dicts to store Tasks, so we work around it by making
@@ -1538,7 +1539,8 @@ class Task:
                 Runner.create_aio_task(self)
 
     async def task_top(self):
-        self.log(Utils.instance_tag(self) + "starting\n")
+        with Log.Level.VERBOSE:
+            self.log(Utils.instance_tag(self) + " starting\n")
 
         task   = self
         config = self.config
@@ -1625,7 +1627,7 @@ class Task:
     def expand_task(self):
         with Log.Level.DEBUG:
             self.log("Task config before expand:\n")
-            self.log(Dumper.dump("flags", self.flags) + "\n")
+            self.log(Dumper.dump(self.flags) + "\n")
 
         task_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
                      'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
@@ -1667,7 +1669,7 @@ class Task:
 
         with Log.Level.DEBUG:
             self.log("Task config after expand:\n")
-            self.log(Dumper.dump("config", self.config) + "\n")
+            self.log(Dumper.dump(self.config) + "\n")
 
     async def task_main(self):
         task   = self
@@ -2143,11 +2145,13 @@ class Runner:
 class HanchoProxy(types.ModuleType):
 
     def __init__(self):
+        # When a HanchoProxy is created, it only exposes an 'init' method - so users can't forget
+        # to initialize it.
         super().__init__("HanchoProxy")
         self.init     = self._init
 
     def _init(self, argv = None, *args, **kwargs):
-        #argv = None, *args, **kwargs
+        # And then when the user calls hancho.init(), we do the rest of the initialization.
         flags = Hancho.parse_flags(argv or [], *args, **kwargs)
 
         self.flags    = flags
@@ -2182,7 +2186,6 @@ class HanchoProxy(types.ModuleType):
         Hancho.init(flags)
 
     def _load(self, path, *args, **kwargs) -> types.ModuleType:
-        #def load(cls, parent_script, script_path, is_repo, *args, **kwargs) -> Script:
         return Hancho.load(Hancho.cv_script.get(), path, False, *args, **kwargs).module
 
     def _repo(self, path, *args, **kwargs) -> types.ModuleType:
@@ -2195,7 +2198,7 @@ class Hancho:
     # Just a container for global functions and stuff.
 
     proxy : HanchoProxy = HanchoProxy()
-    flags : Dict = Dict()
+    #flags : Dict = Dict()
     real_filenames : set # for catching multiple targets building the same output
     dedupe : dict
 
@@ -2203,10 +2206,6 @@ class Hancho:
 
     @classmethod
     def init(cls, flags):
-
-        cls.flags.clear()
-        cls.flags.update(flags)
-        cls.proxy.flags = flags
 
         cls.real_filenames = set()
         cls.dedupe = {}
@@ -2554,7 +2553,7 @@ class Hancho:
 
     @classmethod
     def flags_to_key(cls, flags) -> str:
-        dedupe_key = Dumper.dump(key = "flags", val = flags)
+        dedupe_key = Dumper.dump(flags)
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
         return dedupe_key
 

@@ -31,7 +31,7 @@ def split(template):
 
 class TestSplitTemplate(unittest.TestCase):
     def setUp(self):
-        hancho.Hancho.init(verbosity = "quiet")
+        hancho.init(verbosity = "quiet") # type: ignore
         sys.stdout.flush()
 
     def tearDown(self):
