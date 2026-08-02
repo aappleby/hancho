@@ -48,9 +48,6 @@ from typing import Any, cast
 
 MISSING = object()
 
-# FIXME change raw_flags/flags to flags/config?
-
-
 #endregion
 
 class Dict(dict):
@@ -145,8 +142,8 @@ class Dict(dict):
     def __or__(self, other):
         return Dict(self, other)
 
-    #def __repr__(self):
-    #    return Dumper.dump("", self)
+    def __repr__(self):
+        return Dumper.dump(None, self)
 
     def __getitem__(self, key : str):
         return dict.__getitem__(self, key)
@@ -173,7 +170,7 @@ class Script:
         self.config  = Dict()
         self.onion   = Onion(hancho = Hancho.proxy.__dict__, script_flags = self.flags2, script_config = self.config)
 
-        Log.log(f"Creating script for {self.onion.script_path}\n")
+        #Log.log(f"Creating script for {self.onion.script_path}\n")
 
         self.config.script_path  = self.onion.script_path
         self.config.script_cwd   = self.onion.script_cwd
@@ -213,8 +210,8 @@ class Script:
     def add(self, repo):
         self.repos[repo.repo_root] = repo
 
-    #def __repr__(self):
-    #    return Dumper.dump("", self)
+    def __repr__(self):
+        return Dumper.dump(None, self)
 
     def yield_tasks(self):
         yield from self.tasks
@@ -340,8 +337,8 @@ class Onion(abc.Mapping):
         result = {key for layer in self._layers2.values() for key in layer}
         return len(result)
 
-    #def __repr__(self):
-    #    return Dumper.dump("", self)
+    def __repr__(self):
+        return Dumper.dump(None, self)
 
     def __contains__(self, key):
         return any(key in layer for layer in self._layers2.values())
@@ -394,18 +391,18 @@ class Onion(abc.Mapping):
             trace.save_result(result)
             return result
 
-    def raw_get(self, key, default : Any = MISSING) -> Any:
-        """
-        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
-        """
-        for layer in reversed(self._layers2.values()):
-            if key in layer:
-                return layer[key]
-
-        if default is MISSING:
-            raise KeyError(key)
-
-        return default
+#    def raw_get(self, key, default : Any = MISSING) -> Any:
+#        """
+#        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
+#        """
+#        for layer in reversed(self._layers2.values()):
+#            if key in layer:
+#                return layer[key]
+#
+#        if default is MISSING:
+#            raise KeyError(key)
+#
+#        return default
 
     def eval(self, expr):
         return eval(expr, {}, self)
@@ -582,7 +579,7 @@ class Dumper:
         val,
         max_depth=1,
         indent=0,
-        print_id=False,
+        print_id=True,
         color_code=False,
         max=80,
         len=0,
@@ -682,7 +679,7 @@ class Dumper:
         if type(val) not in Dumper.base_types:
             if prefix: prefix += ": "
             prefix += type(val).__name__
-            if opts.print_id: prefix += "@" + Utils.hex_id(val).upper()[-4:]
+            if opts.print_id: prefix += "@" + Utils.hex_id(val)
         if prefix: prefix += " = "
         return prefix
 
@@ -766,7 +763,12 @@ class Utils:
 
     @staticmethod
     def hex_id(obj):
-        return f"0x{id(obj):016x}"
+        return hex(id(obj))[-4:].upper()
+        #return f"0x{id(obj):016x}"
+
+    @staticmethod
+    def instance_tag(obj):
+        return type(obj).__name__ + "@" + Utils.hex_id(obj)
 
     @classmethod
     def commands_to_string(cls, commands):
@@ -867,9 +869,9 @@ class Log:
     log_level_out = Level.NORMAL # log level we want to appear in the log
 
     @classmethod
-    def reset(cls, raw_flags):
+    def reset(cls, flags):
 
-        log_flags  = {k: raw_flags.pop(k) for k in list(raw_flags) if k.startswith("log_")}
+        log_flags  = {k: flags.pop(k) for k in list(flags) if k.startswith("log_")}
 
         cls.log_level   : int  = cast(int,  log_flags["log_level"])
         cls.log_quiet   : bool = cast(bool, log_flags["log_quiet"])
@@ -1440,7 +1442,7 @@ class Task:
     class BROKEN(Exception):    pass
 
     def __init__(self, *args, **kwargs):
-        # The task's 'raw' config contains everything passed in to hancho.Task(), but no templates
+        # The task's 'raw' flags contain everything passed in to hancho.Task(), but no templates
         # are expanded.
 
         self.script = Hancho.cv_script.get()
@@ -1448,7 +1450,7 @@ class Task:
         self.flags.setdefault("job_size", 1)
 
         # The task's 'cooked' config contains only the mandatory fields needed to run the command.
-        # It is expected that build scripts will need to read task.(raw_)config
+        # It is expected that build scripts will need to read task.flags/confing
         # in order to implement task callbacks, so this field is not underscore-prefixed.
 
         self.config = Dict()
@@ -1508,6 +1510,9 @@ class Task:
         if Utils.in_event_loop():
             self.enable_task()
 
+    def __repr__(self):
+        return Dumper.dump(None, self)
+
     # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
     # Dicts make deep copies and we want dicts to store Tasks, so we work around it by making
     # Tasks just return themselves when copied.
@@ -1517,9 +1522,6 @@ class Task:
 
     def __deepcopy__(self, _):
         return self
-
-    #def __repr__(self):
-    #    return Dumper.dump("", self)
 
     def log(self, message : str):
         # Log helper that adds the [ NN/ XX] tag before the log line.
@@ -1536,6 +1538,8 @@ class Task:
                 Runner.create_aio_task(self)
 
     async def task_top(self):
+        self.log(Utils.instance_tag(self) + "starting\n")
+
         task   = self
         config = self.config
         script = self.script
@@ -1949,13 +1953,6 @@ class Tracer:
         self.result = None
         self.trace = Log.log_trace
 
-        #if len(self.name) > 40:
-        #    self.name = self.name[:34] + "<snip>"
-
-    def get_tag(self, obj):
-        tag = (str(type(obj).__name__)[:2] + "_" + Utils.hex_id(obj)[-4:]).upper()
-        return tag
-
     def save_result(self, result : Any):
         self.result = result
 
@@ -1966,7 +1963,7 @@ class Tracer:
         self.color = Utils.obj_to_hex(self.context)
 
         with Log.color(self.color):
-            Log.log(f"┌ {self.get_tag(self.context)}." + self.enter_message + "\n")
+            Log.log(f"┌ {Utils.instance_tag(self.context)}." + self.enter_message + "\n")
             Log.indent(self.color)
 
         return self
@@ -1988,7 +1985,7 @@ class Tracer:
             message = ""
             with Log.color(color):
                 if isinstance(self.result, (Dict, Onion)):
-                    message = f"└ {self.name!r} : {type} = {self.get_tag(self.result)}\n"
+                    message = f"└ {self.name!r} : {type} = {Utils.instance_tag(self.result)}\n"
                 else:
                     message = f"└ {self.name!r} : {type} = {self.result!r}\n"
 
@@ -2147,6 +2144,13 @@ class HanchoProxy(types.ModuleType):
 
     def __init__(self):
         super().__init__("HanchoProxy")
+        self.init     = self._init
+
+    def _init(self, argv = None, *args, **kwargs):
+        #argv = None, *args, **kwargs
+        flags = Hancho.parse_flags(argv or [], *args, **kwargs)
+
+        self.flags    = flags
         self.Dict     = Dict
         self.Tool     = Tool
         self.Task     = Task
@@ -2171,41 +2175,42 @@ class HanchoProxy(types.ModuleType):
         self.abort    = Script.Abort
         self.earlyout = Script.EarlyOut
 
-    def init(self, argv = None, *args, **kwargs):
-        Hancho.init(argv, *args, **kwargs)
+        self.load  = self._load
+        self.repo  = self._repo
+        self.build = self._build
 
-    def load(self, path, *args, **kwargs) -> types.ModuleType:
-        return Hancho.load(path, False, *args, **kwargs).module
+        Hancho.init(flags)
 
-    def repo(self, path, *args, **kwargs) -> types.ModuleType:
-        return Hancho.load(path, True, *args, **kwargs).module
+    def _load(self, path, *args, **kwargs) -> types.ModuleType:
+        #def load(cls, parent_script, script_path, is_repo, *args, **kwargs) -> Script:
+        return Hancho.load(Hancho.cv_script.get(), path, False, *args, **kwargs).module
 
-    def build(self) -> int:
+    def _repo(self, path, *args, **kwargs) -> types.ModuleType:
+        return Hancho.load(Hancho.cv_script.get(), path, True, *args, **kwargs).module
+
+    def _build(self) -> int:
         return Hancho.build(Hancho.cv_script.get())
 
 class Hancho:
     # Just a container for global functions and stuff.
 
-    proxy : HanchoProxy
-    flags : Dict
+    proxy : HanchoProxy = HanchoProxy()
+    flags : Dict = Dict()
     real_filenames : set # for catching multiple targets building the same output
     dedupe : dict
 
-    root_flags : Dict
-    root_script : Script
     cv_script : ContextProxy
 
     @classmethod
-    def init(cls, argv = None, *args, **kwargs):
-        flags = Hancho.parse_flags(argv or [], *args, **kwargs)
+    def init(cls, flags):
 
-        cls.proxy = HanchoProxy()
-        cls.flags = flags
+        cls.flags.clear()
+        cls.flags.update(flags)
+        cls.proxy.flags = flags
+
         cls.real_filenames = set()
         cls.dedupe = {}
         cls.onion = Onion(hancho = cls.proxy.__dict__, flags = flags)
-
-        sys.modules["hancho"] = cls.proxy
 
         delims = flags.pop("delims")
         Expander.ldelims = delims[::2]
@@ -2215,12 +2220,12 @@ class Hancho:
         Runner.reset(flags)
         Stats.reset()
 
-        cls.root_script = Script(
+        root_script = Script(
             flags=Dict(flags, script_path=__file__, script_cwd=os.getcwd()),
             code=None,
             is_repo=True,
         )
-        cls.cv_script = ContextProxy(cls.root_script)
+        cls.cv_script = ContextProxy(root_script)
 
     @classmethod
     def parse_flags(cls, argv, *args, **kwargs) -> Dict:
@@ -2387,7 +2392,7 @@ class Hancho:
         code = Hancho.path_to_code(script_path)
         new_script = Script(flags = flags, code = code, is_repo = is_repo)
 
-        Log.log(f"Adding {new_script} {script_path} to dedupe\n")
+        #Log.log(f"Adding {new_script} {script_path} to dedupe\n")
         Hancho.dedupe[dedupe_key] = new_script
 
         new_script.exec()
@@ -2548,8 +2553,8 @@ class Hancho:
             return code
 
     @classmethod
-    def flags_to_key(cls, raw_flags) -> str:
-        dedupe_key = Dumper.dump(key = "raw_flags", val = raw_flags)
+    def flags_to_key(cls, flags) -> str:
+        dedupe_key = Dumper.dump(key = "flags", val = flags)
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
         return dedupe_key
 
@@ -2560,24 +2565,23 @@ def _start():
     # The 'except' clause should catch Exception and not BaseException so ctrl-c doesn't get
     # misinterpreted as a Hancho bug.
 
-    argv = sys.argv[1:] if __name__ == "__main__" else []
-    Hancho.init(argv)
+    sys.modules["hancho"] = Hancho.proxy
 
-    try:
-
-
-        if __name__ == "__main__":
+    if __name__ == "__main__":
+        try:
+            Hancho.proxy.init(argv = sys.argv[1:])
             result = Hancho.main()
             sys.exit(result)
 
-    except Exception:
-        print(Log.hex_to_ansi(0xFF3030), end="")
-        print("Hancho hit an unhandled exception:")
-        traceback.print_exc()
-        print("\x1B[0m", end="")
-        sys.exit(1)
-    finally:
-        # Don't leave the last line of the log sitting in line_buffer!
-        Log.flush()
+        except Exception:
+            print(Log.hex_to_ansi(0xFF3030), end="")
+            print("Hancho hit an unhandled exception:")
+            traceback.print_exc()
+            print("\x1B[0m", end="")
+            sys.exit(1)
+
+        finally:
+            # Don't leave the last line of the log sitting in line_buffer!
+            Log.flush()
 
 _start()
