@@ -2458,13 +2458,13 @@ class Hancho:
         # Load and exec top script
 
         time_a1 = time.perf_counter()
-
         Log.indent(Log.Color.ORANGE)
+
         parent_script = Hancho.cv_script.get()
         script_path = Hancho.onion.script_path
         script = Hancho.load_path(parent_script, script_path, is_repo = True)
-        Log.dedent()
 
+        Log.dedent()
         time_b1 = time.perf_counter()
         with Log.Level.VERBOSE, Log.Color.BLUE:
             Log.log(f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
