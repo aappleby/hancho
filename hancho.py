@@ -48,6 +48,8 @@ from typing import Any, cast
 
 MISSING = object()
 
+print("Loading hancho")
+
 #endregion
 
 class Dict(dict):
@@ -455,6 +457,12 @@ class Expander:
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH = 30
     MAX_EVALS = 300
+
+    @classmethod
+    def reset(cls, params):
+        delims = params.pop("delims")
+        Expander.ldelims = delims[::2]
+        Expander.rdelims = delims[1::2]
 
     @classmethod
     def expand(cls, onion : Onion, variant : Any):
@@ -2178,6 +2186,8 @@ class HanchoProxy(types.ModuleType):
     # FIXME we need one HanchoProxy per repo, otherwise if one repo sticks stuff to the proxy
     # another repo can see it.
 
+    # FIXME Or one per script?
+
     def __init__(self):
         # When a HanchoProxy is created, it only exposes an 'init' method - so users can't forget
         # to initialize it.
@@ -2247,10 +2257,7 @@ class Hancho:
         cls.dedupe = {}
         cls.onion = Onion(hancho = cls.proxy.__dict__, params = params)
 
-        delims = params.pop("delims")
-        Expander.ldelims = delims[::2]
-        Expander.rdelims = delims[1::2]
-
+        Expander.reset(params)
         Log.reset(params)
         Runner.reset(params)
         Stats.reset()
@@ -2612,11 +2619,15 @@ class Hancho:
         dedupe_key = "".join(dedupe_key.split())
         return dedupe_key
 
+def init_for_testing(argv, *args, **kwargs):
+    params = Hancho.parse_flags(argv or [], *args, **kwargs)
+    Hancho.init(params)
+
 def _start():
 
-    sys.modules["hancho"] = Hancho.proxy
-
     if __name__ == "__main__":
+
+        sys.modules["hancho"] = Hancho.proxy
 
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
         # we failed to catch an exception during load/build. The 'except' clause should catch
