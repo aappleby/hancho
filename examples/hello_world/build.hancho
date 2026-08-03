@@ -3,7 +3,7 @@
 import hancho
 
 compile_cpp = hancho.Tool(
-    desc    = "Compiling C++ {basename(in_src)} -> {basename(out_obj)}",
+    desc    = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{swapext(in_src, '.o')}",
     in_depfile = "{swapext(out_obj, '.d')}",
@@ -13,7 +13,7 @@ main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
 util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 
 link_cpp_bin = hancho.Tool(
-    desc    = "Linking C++ bin {basename(out_bin)}",
+    desc    = "Linking {basename(out_bin)}",
     command = "g++ {in_objs} -o {out_bin}"
 )
 

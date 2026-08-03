@@ -14,7 +14,7 @@ default_toolchain = hancho.Dict(
 # ----------------------------------------
 
 check_cpp = hancho.Tool(
-    desc = "Checking C++ syntax of {basename(in_src)}",
+    desc = "Checking syntax of {basename(in_src)}",
     command = "{toolchain.compiler} {all_flags} -c {in_src} && touch {out_ok}",
     all_flags = [
         "-fsyntax-only",
@@ -65,14 +65,14 @@ if os.name == "posix":
     )
 
     link_cpp_lib = hancho.Tool(
-        desc    = "Bundling C++ lib {basename(out_lib)}",
+        desc    = "Bundling {basename(out_lib)}",
         command = "ar rcs {out_lib} {in_objs}",
         in_objs = None,
         out_lib = None,
     )
 
     link_cpp_bin = hancho.Tool(
-        desc       = "Linking C++ bin {basename(out_bin)}",
+        desc       = "Linking {basename(out_bin)}",
         toolchain  = default_toolchain,
         command    = "{toolchain.linker} {all_flags} -o {out_bin}",
         all_flags  = [
@@ -119,22 +119,22 @@ else:
 
 def cpp_lib(*, in_srcs=None, in_objs=None, **kwargs):
     new_objs = [
-        hancho.task(compile_cpp.fill(kwargs), in_src=f)
-        for f in hancho.Utils.flatten(in_srcs)
+        hancho.Task(compile_cpp.fill(kwargs), in_src=f)
+        for f in hancho.flatten(in_srcs)
     ]
 
-    return hancho.task(link_cpp_lib.fill(kwargs), in_objs = [new_objs, in_objs])
+    return hancho.Task(link_cpp_lib.fill(kwargs), in_objs = [new_objs, in_objs])
 
 # ----------------------------------------
 
 def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
     new_objs = [
-        hancho.task(compile_cpp.fill(kwargs), in_src=file)
-        for file in hancho.Utils.flatten(in_srcs)
+        hancho.Task(compile_cpp.fill(kwargs), in_src=file)
+        for file in hancho.flatten(in_srcs)
     ]
 
-    return hancho.task(link_cpp_bin.fill(kwargs), in_objs = [new_objs, in_objs, in_libs])
+    return hancho.Task(link_cpp_bin.fill(kwargs), in_objs = [new_objs, in_objs, in_libs])
 
 
 ####################################################################################################
@@ -169,7 +169,7 @@ def cpp_test(*, in_srcs=None, in_objs=None, **kwargs):
 
     new_objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.Utils.flatten(in_srcs)
+        for src in hancho.flatten(in_srcs)
     ]
 
     test_bin = hancho.Task(

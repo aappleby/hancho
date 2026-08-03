@@ -65,59 +65,59 @@ class TestApp(unittest.TestCase):
 
     def test_integer_verbosity(self):
         hancho.init(log_level = 40)
-        self.assertEqual(hancho.LogLevel.WARNING, hancho.Log.log_level_out)
+        self.assertEqual(hancho.Log.Level.WARNING, hancho.log_level_out)
 
     def test_verbosities(self):
         hancho.init(log_verbose = True)
-        self.assertEqual(hancho.LogLevel.VERBOSE, hancho.Log.log_level_out)
+        self.assertEqual(hancho.Log.Level.VERBOSE, hancho.log_level_out)
         hancho.init(log_debug = True)
-        self.assertEqual(hancho.LogLevel.DEBUG, hancho.Log.log_level_out)
+        self.assertEqual(hancho.Log.Level.DEBUG, hancho.log_level_out)
         hancho.init(log_quiet = True)
-        self.assertEqual(hancho.LogLevel.QUIET, hancho.Log.log_level_out)
+        self.assertEqual(hancho.Log.Level.QUIET, hancho.log_level_out)
 
         with self.assertRaises(ValueError):
             hancho.init(log_level = ["boo"])
 
     def test_indentation(self):
         hancho.init(log_color = False, log_time = False)
-        hancho.Log.log("line1\n")
-        hancho.Log.indent(0xFFFFFFFF)
-        hancho.Log.log("line2\n")
-        hancho.Log.dedent()
-        hancho.Log.log("line3\n")
+        hancho.log("line1\n")
+        hancho.indent(0xFFFFFFFF)
+        hancho.log("line2\n")
+        hancho.dedent()
+        hancho.log("line3\n")
 
         self.assertEqual('line1\n│ line2\nline3\n', sys.stdout.getvalue())
 
     def test_no_color(self):
         hancho.init(log_color = False, log_time = False)
-        hancho.Log.log("this should _not_ be blue\n")
+        hancho.log("this should _not_ be blue\n")
         self.assertEqual("this should _not_ be blue\n", sys.stdout.getvalue())
         self.assertNotIn("\x1B", sys.stdout.getvalue())
 
     def test_newlines(self):
         hancho.init(log_color = False, log_time = False)
-        hancho.Log.log("one")
-        hancho.Log.log("two")
-        hancho.Log.log("three")
-        hancho.Log.log("four\n")
+        hancho.log("one")
+        hancho.log("two")
+        hancho.log("three")
+        hancho.log("four\n")
         self.assertEqual('onetwothreefour\n', sys.stdout.getvalue())
 
     def test_flush(self):
         hancho.init(log_color = False, log_time = False)
-        hancho.Log.log("one")
-        hancho.Log.log("two")
-        hancho.Log.log("three")
+        hancho.log("one")
+        hancho.log("two")
+        hancho.log("three")
         hancho.Log.flush()
         self.assertEqual('onetwothree\n', sys.stdout.getvalue())
 
     def test_indent_dedent(self):
         hancho.init(log_color = False, log_time = False)
 
-        hancho.Log.log("┌ one\n")
-        hancho.Log.indent(0xFFFFFFFF)
+        hancho.log("┌ one\n")
+        hancho.indent(0xFFFFFFFF)
         hancho.log("boop\n")
-        hancho.Log.dedent()
-        hancho.Log.log("└ two\n")
+        hancho.dedent()
+        hancho.log("└ two\n")
         hancho.log("soop\n")
 
         text = '┌ one\n│ boop\n└ two\nsoop\n'
@@ -125,9 +125,9 @@ class TestApp(unittest.TestCase):
 
 #        f = StringIO()
 #        with redirect_stdout(f):
-#            hancho.Log.log_indent(0xFFFFFF, "one")
+#            hancho.log_indent(0xFFFFFF, "one")
 #            hancho.log("boop\n")
-#            hancho.Log.log_dedent(0xFFFFFF, "two")
+#            hancho.log_dedent(0xFFFFFF, "two")
 #            hancho.log("soop\n")
 #
 #        text = 'oneboop\n└ twosoop\n'
@@ -138,57 +138,57 @@ class TestApp(unittest.TestCase):
         # the seed changes.
 
         # Byte strings
-        val1 = hancho.Utils.hash(b'1234', 0)
-        val2 = hancho.Utils.hash(b'1234', 1)
-        val3 = hancho.Utils.hash(b'2234', 0)
+        val1 = hancho.hash(b'1234', 0)
+        val2 = hancho.hash(b'1234', 1)
+        val3 = hancho.hash(b'2234', 0)
         self.assertNotEqual(val1, val2, val3)
 
         # String strings. Since there's no utf8 encoding going on, these should hash to the same
         # values as byte strings.
-        val1 = hancho.Utils.hash('1234', 0)
-        val2 = hancho.Utils.hash('1234', 1)
-        val3 = hancho.Utils.hash('2234', 0)
+        val1 = hancho.hash('1234', 0)
+        val2 = hancho.hash('1234', 1)
+        val3 = hancho.hash('2234', 0)
         self.assertNotEqual(val1, val2, val3)
 
         # Functions
         def foo(): return 1 #type:ignore
-        val1 = hancho.Utils.hash(foo, 0)
+        val1 = hancho.hash(foo, 0)
         def foo(): return 2
-        val2 = hancho.Utils.hash(foo, 0)
+        val2 = hancho.hash(foo, 0)
         def goo(): return 2
-        val3 = hancho.Utils.hash(goo, 0)
+        val3 = hancho.hash(goo, 0)
         self.assertNotEqual(val1, val2, val3)
 
         # Lists
-        val1 = hancho.Utils.hash([1, 2, 3], 0)
-        val2 = hancho.Utils.hash([1, 2, 3], 1)
-        val3 = hancho.Utils.hash([1, 2, 3, 0], 0)
+        val1 = hancho.hash([1, 2, 3], 0)
+        val2 = hancho.hash([1, 2, 3], 1)
+        val3 = hancho.hash([1, 2, 3, 0], 0)
         self.assertNotEqual(val1, val2, val3)
 
         # Ints
-        val1 = hancho.Utils.hash(123456789, 0)
-        val2 = hancho.Utils.hash(123456789, 1)
-        val3 = hancho.Utils.hash(123456788, 0)
+        val1 = hancho.hash(123456789, 0)
+        val2 = hancho.hash(123456789, 1)
+        val3 = hancho.hash(123456788, 0)
         self.assertNotEqual(val1, val2, val3)
 
         # Dicts
-        val1 = hancho.Utils.hash({"a":1, "b":2, "c":3}, 0)
-        val2 = hancho.Utils.hash({"a":1, "b":2, "c":3}, 1)
-        val3 = hancho.Utils.hash({"a":1, "b":2, "c":4}, 0)
+        val1 = hancho.hash({"a":1, "b":2, "c":3}, 0)
+        val2 = hancho.hash({"a":1, "b":2, "c":3}, 1)
+        val3 = hancho.hash({"a":1, "b":2, "c":4}, 0)
         self.assertNotEqual(val1, val2, val3)
 
         # Should assert on anything else
         with self.assertRaises(TypeError):
-            val1 = hancho.Utils.hash(subprocess, 0)
+            val1 = hancho.hash(subprocess, 0)
 
     def test_dumper(self):
         thing1 = {"a": 1, "b":[2, "two"], "c":(3,3,3), "d":object()}
 
-        d = hancho.Dumper.dump(thing1)
+        d = hancho.dump(thing1)
         self.assertEqual("name = {a = 1, b = [2, 'two'], c = (3, 3, 3), d:object = <object>}", d)
 
         # Print IDs, but erase pointers before comparing
-        d = hancho.Dumper.dump(thing1, print_id = True, max = 80)
+        d = hancho.dump(thing1, print_id = True, max = 80)
         match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]+")
         d = match_pointer.sub("0x?", d)
 
@@ -203,34 +203,34 @@ class TestApp(unittest.TestCase):
         self.assertEqual(expected, d)
 
         c = contextvars.Context()
-        d = hancho.Dumper.dump(c)
+        d = hancho.dump(c)
         self.assertEqual("name:Context = '<Context>'", d)
 
-        d = hancho.Dumper.dump(contextvars)
+        d = hancho.dump(contextvars)
         self.assertEqual("name = '<Module contextvars>'", d)
 
-        d = hancho.Dumper.dump(print)
+        d = hancho.dump(print)
         self.assertEqual("name = <builtin>", d)
 
         def blep():
             pass
 
-        d = hancho.Dumper.dump(blep)
+        d = hancho.dump(blep)
         self.assertEqual("name:function = '<Function blep>'", d)
 
         n = argparse.Namespace(foo = 1, bar = 2)
-        d = hancho.Dumper.dump(n)
+        d = hancho.dump(n)
         self.assertEqual("name:Namespace = {'foo': 1, 'bar': 2}", d)
 
         class Blarp:
             pass
 
-        d = hancho.Dumper.dump(Blarp())
+        d = hancho.dump(Blarp())
         self.assertEqual("name:Blarp = <object>", d)
 
     def test_weave(self):
         a = ["a", "b", "c"]
         b = ["1", "2", "3"]
-        c = hancho.Utils.weave(a, b)
+        c = hancho.weave(a, b)
         self.assertEqual(['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'c1', 'c2', 'c3'], c)
 #

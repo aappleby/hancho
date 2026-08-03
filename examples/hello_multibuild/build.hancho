@@ -8,6 +8,6 @@ platform = ["rv64", ]
 
 tools = hancho.load("{build_force}/tools/tools_base.hancho")
 
-main_o   = hancho.task(tools.compile_cpp,  in_src = "main.cpp")
+main_o   = hancho.Task(tools.compile_cpp,  in_src = "main.cpp")
 
-main_bin = hancho.task(tools.link_cpp_bin, in_obj = main_o)
+main_bin = hancho.Task(tools.link_cpp_bin, in_obj = main_o)

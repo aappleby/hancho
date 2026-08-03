@@ -7,7 +7,7 @@ from glob import glob
 
 import hancho
 
-dirname = hancho.Path.dirname
+dirname = hancho.dirname
 original_cwd = os.getcwd()
 
 src_files = glob("src/*")

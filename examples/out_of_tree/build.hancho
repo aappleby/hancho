@@ -5,4 +5,4 @@ print(f"script options at {id(options):x}")
 
 options.repo_dir = os.path.join(os.getcwd(), "repo")
 
-hancho.task(command = "touch {out_file}", out_file = "stuff.txt")
+hancho.Task(command = "touch {out_file}", out_file = "stuff.txt")

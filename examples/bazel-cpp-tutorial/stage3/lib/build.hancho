@@ -1,6 +1,6 @@
 import hancho
 
-tools = options.tools
+tools = hancho.tools
 
 hello_time = tools.cc_library(
     in_srcs = ["hello-time.cc"],

@@ -11,7 +11,7 @@ gcc_flags = [
     "-Wno-free-nonheap-object",
     "-fno-omit-frame-pointer",
     "-std=c++14",
-    "-MD -MF {in_depfile}",
+    "-MMD -MF {in_depfile}",
     "-frandom-seed={out_obj}",
     "-fPIC",
     "-iquote .",
@@ -37,7 +37,7 @@ ld_libs = [
 ]
 
 compile_cpp = hancho.Tool(
-    desc       = "Compiling C++ {basename(in_src)} -> {basename(out_obj)}",
+    desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
@@ -49,7 +49,7 @@ compile_cpp = hancho.Tool(
 )
 
 link_cpp_lib = hancho.Tool(
-    desc     = "Bundling C++ library {basename(out_lib)}",
+    desc     = "Bundling {basename(out_lib)}",
     command  = "ar rcs {out_lib} {in_objs}",
     #----------
     in_objs  = None,
@@ -71,7 +71,7 @@ link_cpp_bin = hancho.Tool(
 def cc_library(*, out_lib, in_deps = None, in_srcs = None, in_data = None, in_hdrs = None):
     objs = [
         hancho.Task(compile_cpp, in_src = src)
-        for src in hancho.Utils.flatten(in_srcs)
+        for src in hancho.flatten(in_srcs)
     ]
     bin  = hancho.Task(link_cpp_lib, out_lib = out_lib, in_objs=objs)
     return bin
@@ -79,7 +79,7 @@ def cc_library(*, out_lib, in_deps = None, in_srcs = None, in_data = None, in_hd
 def cc_binary(*, out_bin, in_deps = None, in_srcs = None, in_data = None):
     objs = [
         hancho.Task(compile_cpp, in_src=src)
-        for src in hancho.Utils.flatten(in_srcs)
+        for src in hancho.flatten(in_srcs)
     ]
     bin = hancho.Task(link_cpp_bin, out_bin = out_bin, in_objs=objs, in_deps=in_deps)
     return bin

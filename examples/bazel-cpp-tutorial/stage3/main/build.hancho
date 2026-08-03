@@ -1,7 +1,7 @@
 import hancho
 
-tools = options.tools
-lib = options.lib
+tools = hancho.tools
+lib = hancho.lib
 
 #hello_greet = tools.cc_library(
 #    in_srcs = ["hello-greet.cc"],

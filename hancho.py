@@ -189,7 +189,10 @@ class Script:
         self.parent = parent
 
         if self.parent:
-            self.parent.scripts[self.config.script_path] = self
+            if self.is_repo:
+                self.parent.repos[self.config.script_path] = self
+            else:
+                self.parent.scripts[self.config.script_path] = self
 
         if is_repo:
             self.repo = self
@@ -207,9 +210,10 @@ class Script:
 
         self.module.__file__  = self.config.script_path
         self.module.hancho    = Hancho.proxy   # type: ignore
-        self.module.params    = self.params     # type: ignore
+        self.module.params    = self.params    # type: ignore
         self.module.config    = self.config    # type: ignore
         self.module.onion     = self.onion     # type: ignore
+        self.module.self      = self.module    # type: ignore
 
 #    def get_repo(self) -> Script:
 #        if self.is_repo:
@@ -1331,6 +1335,8 @@ class Stats:
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines = [Path.join(task_cwd, d) for d in deplines]
 
+        deplines = [d for d in deplines if not d.startswith("/usr")]
+
         return cast(list[str], deplines)
 
     def save_stat_db(self, script : Script):
@@ -1520,7 +1526,7 @@ class Task:
         self._error : BaseException | None = None
 
         # Bookkeeping stuff
-        self._task_id : int = 0
+        self._task_id : int = -1
         self._stdout : str = ""
         self._stderr : str = ""
         self._cores = 0
@@ -1550,18 +1556,17 @@ class Task:
         for line in message.splitlines(keepends=True):
             with Log.Color.LIME:
                 if not Log.line_buffer:
-                    Log.log(f"[{self._task_id:3d}/{Runner.tasks_started:3d}] ")
+                    Log.log(f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
             Log.log(line)
 
     def enable_task(self):
         if not self._enabled:
+            Runner.tasks_enabled += 1
             self._enabled = True
             if Utils.in_event_loop():
                 Runner.create_aio_task(self)
 
     async def task_top(self):
-        with Log.Level.VERBOSE:
-            self.log(Utils.instance_tag(self) + " starting\n")
 
         task   = self
         config = self.config
@@ -1570,6 +1575,12 @@ class Task:
         try:
             # Await all tasks in our input fields and then flatten them.
             await task.await_inputs()
+
+            # We're ready to run
+            Runner.tasks_started += 1
+            task._task_id = Runner.tasks_started
+            with Log.Level.VERBOSE:
+                self.log(Utils.instance_tag(self) + " starting\n")
 
             # Expand all mandatory fields in the raw config and fix raw file paths.
             task.expand_task()
@@ -1798,7 +1809,7 @@ class Task:
 
         # In strict mode, we mark a task broken if its command still has curly braces.
         if script_config.build_strict:
-            for command in cast(list, task_config.command):
+            for command in cast(list, Utils.flatten(task_config.command)):
                 if not isinstance(command, str):
                     continue
                 blocks = []
@@ -1947,15 +1958,15 @@ class Tracer:
     # [   0.024] ┌ Onion@94F0.get('name')
     # [   0.024] └ 'name' : NoneType = None
     # [   0.024] ┌ Onion@94F0.get('desc')
-    # [   0.024] │ ┌ Onion@94F0.expand('Linking C++ bin {basename(out_bin)}')
+    # [   0.024] │ ┌ Onion@94F0.expand('Linking {basename(out_bin)}')
     # [   0.024] │ │ ┌ Onion@94F0.eval('{basename(out_bin)}')
     # [   0.024] │ │ │ ┌ Onion@94F0.get('basename')
     # [   0.024] │ │ │ └ 'basename' : function = <function basename at 0x79b4121f2770>
     # [   0.024] │ │ │ ┌ Onion@94F0.get('out_bin')
     # [   0.024] │ │ │ └ 'out_bin' : str = '/home/aappleby/repos/hancho/build/examples/hello_worl...
     # [   0.024] │ │ └ '{basename(out_bin)}' : str = 'hello_world'
-    # [   0.024] │ └ 'Linking C++ bin {basename(out_bin)}' : NoneType = None
-    # [   0.024] └ 'desc' : str = 'Linking C++ bin hello_world'
+    # [   0.024] │ └ 'Linking {basename(out_bin)}' : NoneType = None
+    # [   0.024] └ 'desc' : str = 'Linking hello_world'
     # [   0.024] ┌ Onion@94F0.get('command')
     # [   0.024] │ ┌ Onion@94F0.expand('g++ {in_objs} -o {out_bin}')
     # [   0.024] │ │ ┌ Onion@94F0.eval('{in_objs}')
@@ -2031,8 +2042,8 @@ class Runner:
         cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
         cls.live_aio_tasks : set[asyncio.Task] = set()
 
+        cls.tasks_enabled : int = 0
         cls.tasks_started : int = 0
-        cls.tasks_awaited : int = 0
         cls.tasks_finished : int = 0
         cls.tasks_broken : int = 0
         cls.tasks_failed : int = 0
@@ -2075,8 +2086,6 @@ class Runner:
             cls.live_aio_tasks.add(t)
             t.add_done_callback(lambda t: cls.aio_done_queue.put_nowait(t))
             task._aio_task = t
-            Runner.tasks_started += 1
-            task._task_id = Runner.tasks_started
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
         for v in task.input_tasks:
@@ -2128,11 +2137,11 @@ class Runner:
             finally:
                 if finished_aio_task is not None:
                     cls.live_aio_tasks.discard(finished_aio_task)
-                Runner.tasks_awaited += 1
 
-        if Runner.tasks_broken + Runner.tasks_failed > Runner.max_errors:
+        failures = Runner.tasks_broken + Runner.tasks_failed
+        if failures > Runner.max_errors:
             with Log.Level.ERROR:
-                Log.log(f"Too many failures after {Runner.tasks_awaited}, cancelling tasks and stopping build\n")
+                Log.log(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
             with Log.Level.VERBOSE:
@@ -2166,6 +2175,9 @@ class Runner:
 
 class HanchoProxy(types.ModuleType):
 
+    # FIXME we need one HanchoProxy per repo, otherwise if one repo sticks stuff to the proxy
+    # another repo can see it.
+
     def __init__(self):
         # When a HanchoProxy is created, it only exposes an 'init' method - so users can't forget
         # to initialize it.
@@ -2184,10 +2196,10 @@ class HanchoProxy(types.ModuleType):
 
         self.log      = Log.log
         self.dump     = Dumper.dump
-
         self.flatten  = Utils.flatten
         self.run_cmd  = Utils.run_cmd
         self.weave    = Utils.weave
+        self.hash     = Stats.hash
 
         self.abspath  = Path.abspath
         self.basename = Path.basename
@@ -2206,6 +2218,8 @@ class HanchoProxy(types.ModuleType):
         self.build = self._build
 
         Hancho.init(params)
+        # The "real" hancho module, for use in tests
+        self._hancho = sys.modules[__name__]
 
     def _load(self, path, *args, **kwargs) -> types.ModuleType:
         return Hancho.load_path(Hancho.cv_script.get(), path, False, *args, **kwargs).module
@@ -2552,8 +2566,8 @@ class Hancho:
         with Log.Level.VERBOSE:
             Log.log(f"Tasks created:    {task_count}\n")
 
+            Log.log(f"Tasks enabled:    {Runner.tasks_enabled}\n")
             Log.log(f"Tasks started:    {Runner.tasks_started}\n")
-            Log.log(f"Tasks awaited:    {Runner.tasks_awaited}\n")
             Log.log(f"Tasks finished:   {Runner.tasks_finished}\n")
             Log.log(f"Tasks broken:     {Runner.tasks_broken}\n")
             Log.log(f"Tasks failed:     {Runner.tasks_failed}\n")

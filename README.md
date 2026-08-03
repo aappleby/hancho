@@ -40,7 +40,7 @@ usage: hancho.py [-h] [-v] [-q] [-C ROOT_DIR] [-f ROOT_FILE] .....<snip>
 # dependencies between tasks.
 
 compile_cpp = hancho.Tool(
-    desc    = "Compiling C++ {in_src} -> {out_obj}",
+    desc    = "Compiling {in_src} -> {out_obj}",
     command = "g++ -c {in_src} -o {out_obj}",
     out_obj = "{swapext(in_src, '.o')}",
 )
@@ -60,7 +60,7 @@ util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
 # these dependencies to build a task graph and schedule parallel task execution.
 
 link_cpp_bin = hancho.Tool(
-    desc    = "Linking C++ bin {out_bin}",
+    desc    = "Linking {out_bin}",
     command = "g++ {in_objs} -o {out_bin}",
 )
 

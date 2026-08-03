@@ -11,7 +11,7 @@ gcc_flags = [
     "-Wno-free-nonheap-object",
     "-fno-omit-frame-pointer",
     "-std=c++14",
-    "-MD -MF {in_depfile}",
+    "-MMD -MF {in_depfile}",
     "-frandom-seed={out_obj}",
     "-fPIC",
     "-iquote .",
@@ -39,7 +39,7 @@ ld_libs = [
 #includes   = []
 
 compile_cpp = hancho.Tool(
-    desc       = "Compiling C++ {basename(in_src)} -> {basename(out_obj)}",
+    desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
@@ -54,7 +54,7 @@ compile_cpp = hancho.Tool(
 
 
 link_cpp_lib = hancho.Tool(
-    desc     = "Bundling C++ library {basename(out_lib)}",
+    desc     = "Bundling {basename(out_lib)}",
     command  = "ar rcs {out_lib} {in_objs}",
     #----------
     in_objs  = None,
@@ -76,7 +76,7 @@ link_cpp_bin = hancho.Tool(
 def cc_library(*, in_srcs = None, **kwargs):
     objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src = src)
-        for src in hancho.Utils.flatten(in_srcs)
+        for src in hancho.flatten(in_srcs)
     ]
     bin  = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
     return bin
@@ -84,7 +84,7 @@ def cc_library(*, in_srcs = None, **kwargs):
 def cc_binary(*, in_srcs = None, **kwargs):
     objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.Utils.flatten(in_srcs)
+        for src in hancho.flatten(in_srcs)
     ]
     bin = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
     return bin

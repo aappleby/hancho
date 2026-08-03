@@ -11,7 +11,7 @@ gcc_flags = [
     "-Wno-free-nonheap-object",
     "-fno-omit-frame-pointer",
     "-std=c++14",
-    "-MD -MF {in_depfile}",
+    "-MMD -MF {in_depfile}",
     "-frandom-seed={out_obj}",
     "-fPIC",
     "-iquote .",
@@ -59,6 +59,6 @@ link_cpp_bin = hancho.Tool(
 )
 
 def cc_binary(*, out_bin, in_srcs):
-    objs = [hancho.Task(compile_cpp, in_src = src) for src in hancho.Utils.flatten(in_srcs)]
+    objs = [hancho.Task(compile_cpp, in_src = src) for src in hancho.flatten(in_srcs)]
     bin = hancho.Task(link_cpp_bin, out_bin = out_bin, in_objs = objs)
     return bin

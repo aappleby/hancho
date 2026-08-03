@@ -17,9 +17,9 @@ main_o = hancho.Task(
     includes  = gtk_incs,
 )
 
-#main = hancho.Task(
-#    tools_base.link_cpp_bin,
-#    in_objs  = main_o,
-#    out_bin  = "hello_gtk",
-#    sys_libs = gtk_libs,
-#)
+main = hancho.Task(
+    tools_base.link_cpp_bin,
+    in_objs  = main_o,
+    out_bin  = "hello_gtk",
+    sys_libs = gtk_libs,
+)
