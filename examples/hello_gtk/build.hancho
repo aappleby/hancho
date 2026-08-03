@@ -3,9 +3,9 @@ import hancho
 
 tools_base = hancho.load("{hancho_dir}/tools/tools_base.hancho")
 
-gtk_flags = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
-gtk_incs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
-gtk_libs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --libs')
+gtk_flags = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+gtk_incs  = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+gtk_libs  = hancho.run_cmd('pkg-config gtk+-3.0 --libs')
 
 gtk_incs = [name[2:] for name in gtk_incs.split()]
 gtk_libs = [name[2:] for name in gtk_libs.split()]
@@ -17,9 +17,9 @@ main_o = hancho.Task(
     includes  = gtk_incs,
 )
 
-main = hancho.Task(
-    tools_base.link_cpp_bin,
-    in_objs  = main_o,
-    out_bin  = "hello_gtk",
-    sys_libs = gtk_libs,
-)
+#main = hancho.Task(
+#    tools_base.link_cpp_bin,
+#    in_objs  = main_o,
+#    out_bin  = "hello_gtk",
+#    sys_libs = gtk_libs,
+#)

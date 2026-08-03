@@ -745,6 +745,7 @@ class Utils:
 
     @staticmethod
     def weave(lhs, rhs, *args) -> list[str]:
+        if not lhs or not rhs: return []
         return Utils.cross_join(lambda x, y: x + y, lhs, rhs, *args)
 
     @staticmethod
@@ -1148,7 +1149,6 @@ class Path:
 
     @staticmethod
     def relpath(lhs, rhs):
-        # FIXME should this use cross_join?
         if isinstance(lhs, (list, tuple, set)):
             return [Path.relpath(lh, rhs) for lh in lhs]
         if isinstance(rhs, (list, tuple, set)):
@@ -1942,34 +1942,32 @@ class Task:
 class Tracer:
     # Expansion tracing class used by Expander
     #
-    # The traces generated look like this - the EX_XXXX prefix is an identifier for the Expander being
-    # used so you can tell when the expander changes, the rest are the call arguments and the return
-    # values.
+    # The traces generated look like this -
     #
-    # FIXME update this trace
-    #
-    # [    0.443765] EX_53B0.get('name')
-    # [    0.443795] └ 'name' : str = '_'
-    # [    0.443838] EX_53B0.get('desc')
-    # [    0.443865] │ EX_53B0.expand('Linking C++ bin {out_bin}')
-    # [    0.443894] │ │ EX_53B0.eval('{out_bin}')
-    # [    0.443973] │ │ │ EX_53B0.get('out_bin')
-    # [    0.443999] │ │ │ └ 'out_bin' : str = 'build/examples/hello_gtk/hello_gtk'
-    # [    0.444028] │ │ └ '{out_bin}' : str = 'build/examples/hello_gtk/hello_gtk'
-    # [    0.444054] │ └ 'Linking C++ bin {out_bin}' : str = 'Linking C++ bin build/examples/hello_gtk/hello_gtk'
-    # [    0.444077] └ 'desc' : str = 'Linking C++ bin build/examples/hello_gtk/hello_gtk'
-    # [    0.444112] EX_53B0.get('command')
-    # [    0.444135] │ EX_53B0.expand('{toolchain.linker} {flags} -Wl,--start-group {in_objs} {in_libs} {sys_libs} -Wl,--end-group -o {out_bin}')
-    # [    0.444166] │ │ EX_53B0.eval('{toolchain.linker}')
-    # [    0.444211] │ │ │ EX_53B0.get('toolchain')
-    # [    0.444233] │ │ │ └ 'toolchain' : Expander = EX_7AC0
-    # [    0.444259] │ │ │ EX_7AC0.get('linker')
-    # [    0.444273] │ │ │ └ 'linker' : str = 'x86_64-linux-gnu-g++'
-    # [    0.444295] │ │ └ '{toolchain.linker}' : str = 'x86_64-linux-gnu-g++'
-    # [    0.444320] │ │ EX_53B0.eval('{flags}')
-    # [    0.444356] │ │ │ EX_53B0.get('flags')
-    # [    0.444373] │ │ │ └ 'flags' : list = [None]
-    # [    0.444398] │ │ └ '{flags}' : list = [None]
+    # [   0.024] ┌ Onion@94F0.get('name')
+    # [   0.024] └ 'name' : NoneType = None
+    # [   0.024] ┌ Onion@94F0.get('desc')
+    # [   0.024] │ ┌ Onion@94F0.expand('Linking C++ bin {basename(out_bin)}')
+    # [   0.024] │ │ ┌ Onion@94F0.eval('{basename(out_bin)}')
+    # [   0.024] │ │ │ ┌ Onion@94F0.get('basename')
+    # [   0.024] │ │ │ └ 'basename' : function = <function basename at 0x79b4121f2770>
+    # [   0.024] │ │ │ ┌ Onion@94F0.get('out_bin')
+    # [   0.024] │ │ │ └ 'out_bin' : str = '/home/aappleby/repos/hancho/build/examples/hello_worl...
+    # [   0.024] │ │ └ '{basename(out_bin)}' : str = 'hello_world'
+    # [   0.024] │ └ 'Linking C++ bin {basename(out_bin)}' : NoneType = None
+    # [   0.024] └ 'desc' : str = 'Linking C++ bin hello_world'
+    # [   0.024] ┌ Onion@94F0.get('command')
+    # [   0.024] │ ┌ Onion@94F0.expand('g++ {in_objs} -o {out_bin}')
+    # [   0.024] │ │ ┌ Onion@94F0.eval('{in_objs}')
+    # [   0.024] │ │ │ ┌ Onion@94F0.get('in_objs')
+    # [   0.024] │ │ │ └ 'in_objs' : list = ['/home/aappleby/repos/hancho/build/examples/hello_wo...
+    # [   0.024] │ │ └ '{in_objs}' : list = ['/home/aappleby/repos/hancho/build/examples/hello_wo...
+    # [   0.024] │ │ ┌ Onion@94F0.eval('{out_bin}')
+    # [   0.024] │ │ │ ┌ Onion@94F0.get('out_bin')
+    # [   0.024] │ │ │ └ 'out_bin' : str = '/home/aappleby/repos/hancho/build/examples/hello_worl...
+    # [   0.024] │ │ └ '{out_bin}' : str = '/home/aappleby/repos/hancho/build/examples/hello_worl...
+    # [   0.024] │ └ 'g++ {in_objs} -o {out_bin}' : NoneType = None
+    # [   0.024] └ 'command' : str = 'g++ /home/aappleby/repos/hancho/build/examples/hello_world/...
 
     def __init__(self, context : Dict | Onion, enter_message, name):
         self.enter_message = f"{enter_message}({name!r})"
