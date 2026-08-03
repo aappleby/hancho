@@ -22,3 +22,5 @@ main_app = hancho.Task(
     in_objs = [main_o, util_o],
     out_bin = "hello_world",
 )
+
+#print(hancho.dump(main_app, depth=3))

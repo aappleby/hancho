@@ -165,7 +165,7 @@ class Tool(Dict):
 
 class Script:
 
-    def __init__(self, *, params : Dict, code : types.CodeType | None, is_repo : bool):
+    def __init__(self, *, parent : Script | None, params : Dict, code : types.CodeType | None, is_repo : bool):
         self.params = params
         self.config = Dict()
         self.onion  = Onion(hancho = Hancho.proxy.__dict__, script_params = self.params, script_config = self.config)
@@ -184,9 +184,20 @@ class Script:
         self.config.build_dry    = self.onion.build_dry
         self.config.build_strict = self.onion.build_strict
 
-        self.code    = code
+        self.code = code
         self.is_repo = is_repo
-        self.stats   = Stats(self.config.comp_db_path, self.config.stat_db_path, self.config.build_dry)
+        self.parent = parent
+
+        if self.parent:
+            self.parent.scripts[self.config.script_path] = self
+
+        if is_repo:
+            self.repo = self
+            self.stats = Stats(self.config.comp_db_path, self.config.stat_db_path, self.config.build_dry)
+        else:
+            assert self.parent is not None
+            self.repo  = self.parent.repo
+            self.stats = self.parent.stats
 
         self.repos : dict[str, Script] = {}
         self.scripts : dict[str, Script] = {}
@@ -199,6 +210,21 @@ class Script:
         self.module.params    = self.params     # type: ignore
         self.module.config    = self.config    # type: ignore
         self.module.onion     = self.onion     # type: ignore
+
+#    def get_repo(self) -> Script:
+#        if self.is_repo:
+#            return self
+#        elif self.parent:
+#            return self.parent.get_repo()
+#        else:
+#            raise AssertionError(f"Why does script {self.config.script_path} have no repo?")
+#            return None
+#
+#    def get_stats(self) -> Stats:
+#        if self.is_repo:
+#            return cast(Stats, self.stats)
+#        else:
+#            return self.get_repo().get_stats()
 
     def exec(self):
         if self.code:
@@ -219,7 +245,6 @@ class Script:
     def yield_repos(self):
         if self.is_repo:
             yield self
-        yield from self.repos.values()
         for repo in self.repos.values():
             yield from repo.yield_repos()
 
@@ -1160,8 +1185,6 @@ class Stats:
         cls.hash_time  : float = 0
 
     def __init__(self, comp_db_path, stat_db_path, build_dry):
-
-        #self.config = config
         self.comp_db_path = comp_db_path
         self.stat_db_path = stat_db_path
         self.build_dry    = build_dry
@@ -1663,7 +1686,9 @@ class Task:
         for key in task_keys:
             self.config[key] = self.onion[key]
 
-        self.config.command     = Utils.flatten(self.config.command)
+        self.config.command = Utils.flatten(self.config.command)
+        if len(self.config.command) == 1:
+            self.config.command = self.config.command[0]
 
         with Log.Level.DEBUG:
             self.log("Task config after expand:\n")
@@ -1687,7 +1712,8 @@ class Task:
 
         time_a = time.perf_counter()
 
-        for command in cast(list, config.command):
+        flat_commands = Utils.flatten(config.command)
+        for command in flat_commands:
             if command is None:
                 continue
             elif callable(command):
@@ -2218,7 +2244,8 @@ class Hancho:
         Stats.reset()
 
         root_script = Script(
-            params=Dict(params, script_path=__file__, script_cwd=os.getcwd()),
+            parent = None,
+            params = Dict(params, script_path=__file__, script_cwd=os.getcwd()),
             code=None,
             is_repo=True,
         )
@@ -2376,6 +2403,7 @@ class Hancho:
         params = Dict(
             parent_script.params,
             Dict(
+                repo_root   = "{script_cwd}" if is_repo else parent_script.config.repo_root,
                 script_path = script_path,
                 script_cwd  = Path.dirname(script_path)
             ),
@@ -2383,10 +2411,10 @@ class Hancho:
             **kwargs
         )
 
-        return cls.load_code2(script_path, code, params, is_repo)
+        return cls.load_code2(parent_script, script_path, code, params, is_repo)
 
     @classmethod
-    def load_code2(cls, script_path : str, code : types.CodeType, params : Dict, is_repo : bool) -> Script:
+    def load_code2(cls, parent_script : Script, script_path : str, code : types.CodeType, params : Dict, is_repo : bool) -> Script:
 
         # --------------------------------
         # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2397,15 +2425,20 @@ class Hancho:
         deduped_script = Hancho.dedupe.get(dedupe_key)
         if deduped_script:
             with Log.Level.VERBOSE, Log.Color.SKY:
-                Log.log(f"Deduped load of {script_path} - {deduped_script}\n")
+                Log.log(f"Deduped load of {script_path}\n")
             return deduped_script
 
         # --------------------------------
         # Not deduped, create a new script.
 
-        new_script = Script(params = params, code = code, is_repo = is_repo)
+        with Log.Level.VERBOSE, Log.Color.ORANGE:
+            Log.log(f"Loading {script_path}\n")
+
+        Log.indent(Log.Color.ORANGE)
+        new_script = Script(parent = parent_script, params = params, code = code, is_repo = is_repo)
         Hancho.dedupe[dedupe_key] = new_script
         new_script.exec()
+        Log.dedent()
 
         return new_script
 
@@ -2473,6 +2506,8 @@ class Hancho:
         for repo_script in script.yield_repos():
             if os.path.isfile(repo_script.config.stat_db_path):
                 with open(repo_script.config.stat_db_path) as contents:
+                    with Log.Level.VERBOSE, Log.Color.ORANGE:
+                        Log.log(f"Loading stat_db {repo_script.config.stat_db_path}\n")
                     repo_script.stats.old_stat_db = Dict(json.load(contents))
             else:
                 repo_script.stats.old_stat_db = Dict()
@@ -2560,8 +2595,9 @@ class Hancho:
 
     @classmethod
     def dict_to_key(cls, params) -> str:
-        dedupe_key = Dumper.dump(params)
+        dedupe_key = Dumper.dump(params, print_id = False, tab = "", color_code = False, depth = 999, max = 999)
         dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
+        dedupe_key = "".join(dedupe_key.split())
         return dedupe_key
 
 def _start():

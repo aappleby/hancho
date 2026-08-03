@@ -73,7 +73,7 @@
       "module"  : "hancho",
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
-      "args"    : ["-v", "verbose"],
+      "args"    : ["-D"],
       //"preLaunchTask": "Wipe build",
     },
 
