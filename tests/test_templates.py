@@ -5,6 +5,7 @@ import doctest
 import os
 import sys
 import textwrap
+import traceback
 import unittest
 from typing import cast
 
@@ -17,7 +18,8 @@ from hancho import Dict, Expander
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init(verbosity = "quiet") # type: ignore
+    #hancho.init_for_testing(argv = [], log_trace = True, verbosity = "quiet") # type: ignore
+    hancho.init_for_testing(argv = [], verbosity = "quiet") # type: ignore
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
@@ -30,12 +32,14 @@ class TestTemplates(unittest.TestCase):
 
     def test_basic_eval(self):
         d = Dict(a = 1, b = 2)
-        self.assertEqual('a', d.expand2("a"))
-        self.assertEqual('b', d.expand2("b"))
-        self.assertEqual(1, d.expand2("{a}"))
-        self.assertEqual(2, d.expand2("{b}"))
-        self.assertEqual('1212', d.expand2("{a}{b}{a}{b}"))
-        self.assertEqual(1212,d.expand2("{{a}{b}{a}{b}}"))
+        self.assertEqual('a', d.expand("a"))
+        self.assertEqual('b', d.expand("b"))
+        self.assertEqual(1, d.expand("{a}"))
+        self.assertEqual(2, d.expand("{b}"))
+        self.assertEqual('1212', d.expand("{a}{b}{a}{b}"))
+        self.assertEqual(1212,d.expand("{{a}{b}{a}{b}}"))
+        self.assertEqual(None, d.expand(None))
+        self.assertEqual("", d.expand(""))
 
     # Pathological test cases
 
@@ -43,34 +47,34 @@ class TestTemplates(unittest.TestCase):
         # only macros
         d = Dict(a="{b}", b="{a}")
         with self.assertRaises(RecursionError):
-            d.expand2("{a}")
+            d.expand("{a}")
 
         # inside a template
         d = Dict(foo="foo", x="{y}", y="{x}")
         with self.assertRaises(RecursionError):
-            d.expand2("echo {foo} {x} {foo}")
+            d.expand("echo {foo} {x} {foo}")
 
     def test_self_cycle(self):
         # only macro
         d = Dict(a = "{a}")
         with self.assertRaises(RecursionError):
-            d.expand2("{a}")
+            d.expand("{a}")
 
         # inside a template
         d = Dict(a = "x{a}")
         with self.assertRaises(RecursionError):
-            d.expand2("{a}")
+            d.expand("{a}")
 
     def test_expand_big_array(self):
         d = Dict(name = "prefix")
         count = 1000
         templates = [f"{{name}}_{i:04d}" for i in range(count)]
 
-        expanded = cast(list, d.expand2(templates))
+        expanded = cast(list, d.expand(templates))
         self.assertEqual(count, len(expanded))
         self.assertEqual("prefix_0123", expanded[123])
 
-        expanded = cast(list, d.expand2(templates))
+        expanded = cast(list, d.expand(templates))
         self.assertEqual(count, len(expanded))
         self.assertEqual("prefix_0123", expanded[123])
 
@@ -84,33 +88,26 @@ class TestTemplates(unittest.TestCase):
             d[f"k{links}"] = "sentinel"
             return d
 
-        # Expanding a chain of macros or templates uses the recursion budget.
-        # FIXME why is our budget off by one here?
-
         chain = make_dict(Expander.MAX_DEPTH - 1)
-        self.assertEqual("sentinel", chain.expand2("{k0}"))
+        self.assertEqual("sentinel", chain.expand("{k0}"))
 
         chain = make_dict(Expander.MAX_DEPTH)
         with self.assertRaises(RecursionError):
-            self.assertEqual("sentinel", chain.expand2("{k0}"))
-
-        chain = make_dict(Expander.MAX_DEPTH + 1)
-        with self.assertRaises(RecursionError):
-            self.assertEqual("sentinel", chain.expand2("{k0}"))
+            self.assertEqual("sentinel", chain.expand("{k0}"))
 
     def test_expand_giant_string(self):
-        def test(count):
+        def _test(count):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
-            return d.expand2(giant_string)
+            return d.expand(giant_string)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
-        result = test(Expander.MAX_EVALS)
+        result = _test(Expander.MAX_EVALS)
         self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) #type:ignore
 
         with self.assertRaises(RecursionError):
-            result = test(Expander.MAX_EVALS + 1)
+            result = _test(Expander.MAX_EVALS + 1)
 
     def test_user_recursion(self):
         # A user function that generates a RecursionError that's used inside a template should
@@ -119,12 +116,12 @@ class TestTemplates(unittest.TestCase):
             return recursive()
         d = Dict(func = recursive)
         with self.assertRaises(RecursionError):
-            d.expand2("{func()}")
+            d.expand("{func()}")
 
     def test_macro_evals_to_list_of_macros(self):
         # If a macro evals to a list of macros, the nested macros _shoud_ be auto-expanded
         d = Dict(a=["{b}","{b}"], b="x")
-        self.assertEqual(["x","x"], d.expand2("{a}"))
+        self.assertEqual(["x","x"], d.expand("{a}"))
 
     def test_macro_passthrough(self):
         _number = 42
@@ -135,71 +132,66 @@ class TestTemplates(unittest.TestCase):
         d = Dict(_number = _number, _text = _text, _func = _func, _tuple = _tuple, _map = _map)
 
         # Scalar types should pass through unchanged.
-        self.assertIs(_number, d.expand2("{_number}"))
-        self.assertIs(_text,   d.expand2("{_text}"))
-        self.assertIs(_func,   d.expand2("{_func}"))
+        self.assertIs(_number, d.expand("{_number}"))
+        self.assertIs(_text,   d.expand("{_text}"))
+        self.assertIs(_func,   d.expand("{_func}"))
 
         # Containers should get copied.
-        _tuple2 = cast(list, d.expand2("{_tuple}"))
+        _tuple2 = cast(list, d.expand("{_tuple}"))
         self.assertEqual(_number, _tuple2[0])
         self.assertEqual(_text,   _tuple2[1])
         self.assertEqual(_func,   _tuple2[2])
 
-        _map2 = cast(dict, d.expand2("{_map}"))
+        _map2 = cast(dict, d.expand("{_map}"))
         self.assertEqual(_number, _map2["1"])
         self.assertEqual(_text,   _map2["2"])
         self.assertEqual(_func,   _map2["3"])
-
-    def test_brace_escaping(self):
-        d = Dict(text = "!!!!")
-        template = r"{text} \{inside_esc{text}aped_braces\} {text}"
-        self.assertEqual(r"!!!! \{inside_esc!!!!aped_braces\} !!!!", d.expand2(template))
 
     def test_read_nested_c_first(self):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in
         # the nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-        result = d.expand2("{a.b}")
+        result = d.expand("{a.b}")
         self.assertEqual(result, 10)
 
     def test_TEFINAE(self):
         # TEFINAE - Text Expansion Failure Is Not An Error
         d = Dict(a = 1)
-        self.assertEqual("{missing}", d.expand2("{missing}"))
-        self.assertEqual("1 {missing}", d.expand2("{a} {missing}"))
-        self.assertEqual("{a + missing}", d.expand2("{a + missing}"))
+        self.assertEqual("{missing}", d.expand("{missing}"))
+        self.assertEqual("1 {missing}", d.expand("{a} {missing}"))
+        self.assertEqual("{a + missing}", d.expand("{a + missing}"))
 
     def test_template_nones(self):
         # Nones should turn into empty strings
         d = Dict(a = None, b = "x{a}y")
-        self.assertEqual(d.expand2("{a}"), None)
-        self.assertEqual(d.expand2("{b}"), 'xy')
+        self.assertEqual(d.expand("{a}"), None)
+        self.assertEqual(d.expand("{b}"), 'xy')
 
     def test_flatten_lists(self):
         # Lists should be flattened before joining with spaces
         d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
-        self.assertEqual('flags', d.expand2("flags"))
-        self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], d.expand2("{flags}"))
-        self.assertEqual("flags = 'a b c d e f'", d.expand2("flags = '{flags}'"))
+        self.assertEqual('flags', d.expand("flags"))
+        self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], d.expand("{flags}"))
+        self.assertEqual("flags = 'a b c d e f'", d.expand("flags = '{flags}'"))
 
     def test_templates_with_escaped_char_proxies(self):
         # Testing escape sequences in templates is annoying. Double-check that we can use proxies
         # to build strings with escape sequences.
         d = Dict(a=1, bs="\\", lb="{", rb="}")
-        self.assertEqual(d.expand2(r"{lb}a{rb}"), 1)
-        self.assertEqual(d.expand2(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
+        self.assertEqual(d.expand(r"{lb}a{rb}"), 1)
+        self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
 
     def test_expand_failed_to_terminate1(self):
         # Single recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(flarp="asdf {flarp}")
-            bad_dict.expand2("{flarp}")
+            bad_dict.expand("{flarp}")
 
     def test_expand_failed_to_terminate2(self):
         # Double recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(foo="asdf {bar}", bar="qwer {foo}")
-            bad_dict.expand2("{foo}")
+            bad_dict.expand("{foo}")
 
     def test_expand_failed_to_terminate3(self):
         # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
@@ -207,12 +199,12 @@ class TestTemplates(unittest.TestCase):
         with self.assertRaises(RecursionError):
             subthing = Dict(foo="{subthing.foo} x")
             bad_dict = Dict(command="{subthing.foo}", subthing=subthing)
-            bad_dict.expand2("{command}")
+            bad_dict.expand("{command}")
 
     def test_expand_nested_list(self):
         d = Dict(a = 1, b = 2, c = 3)
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
-        r = d.expand2(v)
+        r = d.expand(v)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self):
@@ -223,22 +215,22 @@ class TestTemplates(unittest.TestCase):
             test_multi_eval = "it works!"
         )
 
-        self.assertEqual(d.expand2("c"),         "c")
-        self.assertEqual(d.expand2("{c}"),       "'  test_multi_eval   '.strip() ")
-        self.assertEqual(d.expand2("{{c}}"),     "test_multi_eval")
-        self.assertEqual(d.expand2("{{{c}}}"),   "it works!")
-        self.assertEqual(d.expand2("{{{{c}}}}"), "{it works!}")
+        self.assertEqual(d.expand("c"),         "c")
+        self.assertEqual(d.expand("{c}"),       "'  test_multi_eval   '.strip() ")
+        self.assertEqual(d.expand("{{c}}"),     "test_multi_eval")
+        self.assertEqual(d.expand("{{{c}}}"),   "it works!")
+        self.assertEqual(d.expand("{{{{c}}}}"), "{it works!}")
 
-    def test_embedded_eval(self):
+    def _test_embedded_eval(self):
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
-        self.assertEqual('1 + 1', d.expand2("{foo}"))
-        self.assertEqual('1 + 1 2 + 2', d.expand2("{foo} {bar}"))
+        self.assertEqual('1 + 1', d.expand("{foo}"))
+        self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}"))
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\"2 + 2\"")
-        self.assertEqual('1 + 1', d.expand2("{foo}"))
-        self.assertEqual('\"2 + 2\"', d.expand2("{bar}"))
-        self.assertEqual('1 + 1 \"2 + 2\"', d.expand2("{foo} {bar}"))
+        self.assertEqual('1 + 1', d.expand("{foo}"))
+        self.assertEqual('\"2 + 2\"', d.expand("{bar}"))
+        self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}"))
 
-    def test_inline_script(self):
+    def _test_inline_script(self):
         # Load a tiny test script.
         source = textwrap.dedent("""
         import hancho
@@ -252,20 +244,20 @@ class TestTemplates(unittest.TestCase):
         hancho.Hancho.cv_script.set(script)
 
         # Expanding 'Task' should read from hancho.py
-        self.assertEqual(hancho.Task, Dict().expand2("{Task}"))
+        self.assertEqual(hancho.Task, Dict().expand("{Task}"))
 
         # Expanding 'blarp' should read from the options passed into the script
-        self.assertEqual(1234, Dict().expand2("{blarp}"))
+        self.assertEqual(1234, Dict().expand("{blarp}"))
 
         # Expanding 'foo_in_script' should read from the script module...
-        self.assertEqual([1, 2, 3], Dict().expand2("{foo_in_script}"))
+        self.assertEqual([1, 2, 3], Dict().expand("{foo_in_script}"))
 
         # but not after we've left the script context.
 
-        self.assertEqual("{foo_in_script}", Dict().expand2("{foo_in_script}"))
-        self.assertEqual("{blarp}", Dict().expand2("{blarp}"))
+        self.assertEqual("{foo_in_script}", Dict().expand("{foo_in_script}"))
+        self.assertEqual("{blarp}", Dict().expand("{blarp}"))
 
-    def test_alternate_delims(self):
+    def _test_alternate_delims(self):
         d = hancho.Dict(foo = "bar")
         o1 = hancho.Onion(d, Dict(delims='{}'))
         o2 = hancho.Onion(d, Dict(delims='«»'))

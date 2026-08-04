@@ -22,7 +22,7 @@
       },
       "presentation": {
         "reveal": "never",
-        //"panel": "shared"
+        "panel": "shared"
       }
     }
   ]

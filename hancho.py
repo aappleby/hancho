@@ -394,7 +394,7 @@ class Onion(abc.Mapping):
                     if val is None:
                         saw_a_none = True
                     elif not isinstance(val, abc.Mapping):
-                        result = Expander.expand(self, val)
+                        result = Expander.expand(self, val, Expander.ldelims, Expander.rdelims)
                         trace.save_result(result)
                         return result
 
@@ -408,50 +408,79 @@ class Onion(abc.Mapping):
             new_layers = {name:layer[key] for name, layer in self._layers2.items() if key in layer}
 
             # No matches and no default? Bad key.
-            if not new_layers and default is MISSING:
-                raise KeyError(key)
-
-            # No matches but we have a default? Return it.
-            if default != MISSING:
-                return default
+            if not new_layers:
+                if default is MISSING:
+                    raise KeyError(key)
+                else:
+                    return default
 
             # Otherwise we make a new onion out of the mappings.
             result = Onion(**new_layers)
             trace.save_result(result)
             return result
 
-#    def raw_get(self, key, default : Any = MISSING) -> Any:
-#        """
-#        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
-#        """
-#        for layer in reversed(self._layers2.values()):
-#            if key in layer:
-#                return layer[key]
-#
-#        if default is MISSING:
-#            raise KeyError(key)
-#
-#        return default
+    def raw_get(self, key, default : Any = MISSING) -> Any:
+        """
+        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
+        """
+        for layer in reversed(self._layers2.values()):
+            if key in layer:
+                return layer[key]
+
+        if default is MISSING:
+            raise KeyError(key)
+
+        return default
 
     def eval(self, expr):
         return eval(expr, {}, self)
 
     def expand(self, variant : Any):
-        return Expander.expand(self, variant)
+        return Expander.expand(self, variant, Expander.ldelims, Expander.rdelims)
 
 class Expander:
+    # Hancho's text expansion system.
+    #
+    # WARNING - Again, Hancho is NOT A SANDBOX. Expander is the part that evaluates the arbitrary
+    # Python code that then formats your hard drive and sends spam to all your coworkers.
+    #
+    # Expander works similarly to Python's F-strings, but with quite a bit more power. The code
+    # here requires some explanation.
+    #
+    # We do not necessarily know in advance how the users will nest strings, macros, callbacks,
+    # etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we
+    # always end up with flat strings.
+    #
+    # The result of this is that the functions here are mutually recursive in a way that can lead
+    # to confusing callstacks, but that should handle every possible case of stuff inside other
+    # stuff.
+    #
+    # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are
+    # not expandable by that dict. This allows nested dicts to contain templates that can only be
+    # expanded an outer dict, and things will still Just Work.
 
-    class Literal(str):
-        pass
+    # Trivial classes just so we can distinguish between literal strings and macro strings without
+    # having to do regex stuff every time.
+    class Literal(str): pass
+    class Macro(str):   pass
+    class Expr(str):    pass
 
-    class Macro(str):
-        pass
-
-    class Expr(str):
-        pass
+    # Delims: Normally you'd use '{' and '}' as macro delimiters, but you can also use '«' and '»'.
+    # On Linux, you can type those using control-shift-u a b <enter> and control-shift-u b b <enter>
+    # On Windows, use alt-0171 and alt-0187 with the numbers being typed on the numpad while numlock
+    # is on.
 
     ldelims : str = "{«"
     rdelims : str = "}»"
+
+    # Hancho's template expansions can cause infinite loops, so we need some simple complexity
+    # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
+    # up the whole Python stack.
+    # If you do weird things like load scripts from inside macros and you hit MAX_STEPS, that's a
+    # you problem.
+    #
+    # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
+    # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
 
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
@@ -465,93 +494,134 @@ class Expander:
         Expander.rdelims = delims[1::2]
 
     @classmethod
-    def expand(cls, onion : Onion, variant : Any):
-        if not variant:
-            #return variant
-            pass
-        return cls._expand_variant(onion, variant)
+    def expand(cls, onion : Onion, variant : Any, ldelims : str | None = None, rdelims : str | None = None):
+        if not ldelims or not rdelims:
+            delims = onion.raw_get("delims", None)
+            if delims:
+                ldelims = delims[::2]
+                rdelims = delims[1::2]
+            else:
+                ldelims = ldelims or Expander.ldelims
+                rdelims = rdelims or Expander.rdelims
 
-    @classmethod
-    def _expand_variant(cls, onion : Onion, variant : Any) -> Any:
         if variant is MISSING:
             raise AssertionError("Tried to expand a sentinel value")
         elif isinstance(variant, str):
-            return cls._expand_text(onion, variant)
+            # We have to catch this case before the 'is collection' below because strings _are_
+            # collections, alas.
+            pass
         elif isinstance(variant, abc.Collection):
-            return [cls._expand_variant(onion, v) for v in variant]
+            return [Expander.expand(onion, v, ldelims, rdelims) for v in variant]
         elif isinstance(variant, abc.Mapping):
-            return {k: cls._expand_variant(onion, v) for k, v in variant.items()}
-        else:
+            return {k: Expander.expand(onion, v, ldelims, rdelims) for k, v in variant.items()}
+        elif not isinstance(variant, str):
             return variant
 
+        # If old_depth = 0, then this is the start of a new expand().
+        new_expand = Expander.cv_depth.get() == 0
+        try:
+            result = cls._expand_text(onion, variant, ldelims, rdelims)
+            return result
+        finally:
+            # And when that expand() is done, we reset the eval budget.
+            if new_expand:
+                Expander.cv_evals.set(0)
+
     @classmethod
-    def _expand_text(cls, onion : Onion, text : str) -> Any:
+    def _expand_text(cls, onion : Onion, text : str, ldelims, rdelims) -> Any:
         old_text = ""
-        blocks = []
-
-        if not text or not cls._split_text(text, blocks):
-            return text
-
-        if len(blocks) == 1:
-            return cls._eval_macro(onion, blocks[0])
+        blocks : list[str] = []
 
         with Tracer(onion, "expand", text) as trace:
             while old_text != text:
                 blocks.clear()
-
-                if not text or not cls._split_text(text, blocks):
+                if not Expander._split_text(text, blocks, ldelims, rdelims):
                     return text
 
-                if len(blocks) == 1:
-                    return cls._eval_macro(onion, blocks[0])
-
                 for i in range(len(blocks)):
-                    if isinstance(blocks[i], cls.Macro):
-                        blocks[i] = cls._eval_macro(onion, blocks[i])
-                        blocks[i] = Utils.stringify(blocks[i])
+                    block = blocks[i]
+                    if isinstance(block, Expander.Macro):
+                        blocks[i] = Expander._eval_macro(onion, block)
+
+                if len(blocks) == 1 and not isinstance(blocks[0], str):
+                    trace.save_result(blocks[0])
+                    return blocks[0]
 
                 old_text = text
-                text = "".join(blocks)
+                text = "".join(Utils.stringify(b) for b in blocks)
+
             trace.save_result(text)
 
         return str(text)
 
     @classmethod
     def _eval_macro(cls, onion : Onion, macro : Expander.Macro):
+
+        # Bail out if we've taken too many expansion steps already.
+        old_evals = Expander.cv_evals.get()
+        if old_evals >= Expander.MAX_EVALS:
+            raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: '{macro!r}'")
+
+        # Bail out if we've gone through too many levels of recursion.
+        old_depth = Expander.cv_depth.get()
+        if old_depth >= Expander.MAX_DEPTH:
+            raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {macro!r}")
+
+        trace = Tracer(onion, "eval", macro)
         result = None
-        with Tracer(onion, "eval", macro) as trace:
-            try:
-                result = eval(macro[1:-1], {}, onion)
-                return result
-            except RecursionError:
-                raise
-            except Exception as _:
-                return macro
-            finally:
-                trace.save_result(result)
+
+        # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
+        # callers. As of Python 3.11, this includes asyncio.CancelledError.
+
+        try:
+            trace.__enter__()
+            Expander.cv_evals.set(old_evals + 1)
+            Expander.cv_depth.set(old_depth + 1)
+            result = eval(macro[1:-1], {}, onion)
+        except RecursionError:
+            raise
+        except Exception as _:
+            # IMPORTANT IMPORTANT IMPORTANT
+            # If you can't eval a macro, you return it unchanged.
+            # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
+            # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
+            result = macro
+        finally:
+            trace.save_result(result)
+            trace.__exit__()
+            Expander.cv_depth.set(old_depth)
+
+        return result
+
 
     @classmethod
-    def _split_text(cls, text : str, out : list[str]) -> int:
+    def _split_text(cls, text : str, out : list[str], ldelims, rdelims) -> int:
+        """
+        Extracts all innermost delimited spans from a block of text and produces a list of string
+        literals and macros. Note that we're not handling "escaped" delimiters, instead we allow
+        the user to change the delimiter when required (default delimiters are {} and «»)
+        """
+
         rdelim = None
         cursor = 0
         idelim = -1
         macros = 0
 
         for i, c in enumerate(text):
-            if (pos := cls.ldelims.find(c)) != -1:
+            if (pos := ldelims.find(c)) != -1:
                 idelim = i
-                rdelim = cls.rdelims[pos]
+                rdelim = rdelims[pos]
             elif c == rdelim and idelim >= 0:
                 if cursor < idelim:
-                    out.append(cls.Literal(text[cursor:idelim]))
-                out.append(cls.Macro(text[idelim:i+1]))
+                    out.append(Expander.Literal(text[cursor:idelim]))
+                out.append(Expander.Macro(text[idelim:i+1]))
                 macros += 1
                 cursor = i + 1
                 idelim = -1
                 rdelim = None
 
         if cursor < len(text):
-            out.append(cls.Literal(text[cursor:]))
+            out.append(Expander.Literal(text[cursor:]))
 
         return macros
 
@@ -722,7 +792,7 @@ class Dumper:
 class Utils:
 
     @staticmethod
-    def stringify(variant) -> str:
+    def stringify(variant : Any) -> str:
         """Converts any type into a template-compatible string."""
         result = ""
         for v in Utils.yield_values(variant):
@@ -1689,7 +1759,7 @@ class Task:
             ]
 
             files = Utils.flatten(files)
-            files = Expander.expand(self.onion, files)
+            files = Expander.expand(self.onion, files, Expander.ldelims, Expander.rdelims)
             files = self.fix_paths(_field, files, build_dir)
 
             self.config[_field] = files[0] if len(files) == 1 else files
@@ -1821,7 +1891,7 @@ class Task:
                 if not isinstance(command, str):
                     continue
                 blocks = []
-                if Expander._split_text(command, blocks):
+                if Expander._split_text(command, blocks, Expander.ldelims, Expander.rdelims):
                     raise Task.BROKEN("STRICT: Command has curly braces in it")
 
         # Check that all build files would end up under build_dir
@@ -2011,7 +2081,7 @@ class Tracer:
 
         return self
 
-    def __exit__(self, exc_type, exc_value, tb): # pragma: no cover
+    def __exit__(self, exc_type = None, exc_value = None, tb = None): # pragma: no cover
         if not self.trace:
             return False
 
