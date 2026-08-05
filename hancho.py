@@ -48,8 +48,6 @@ from typing import Any, cast
 
 MISSING = object()
 
-print("Loading hancho")
-
 #endregion
 
 class Dict(dict):
@@ -557,21 +555,21 @@ class Expander:
     @classmethod
     def _eval_macro(cls, onion : Onion, macro : Expander.Macro):
 
-        # Bail out if we've taken too many expansion steps already.
+        # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
         if old_evals >= Expander.MAX_EVALS:
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: '{macro!r}'")
 
-        # Bail out if we've gone through too many levels of recursion.
+        # Bail out if we've recursed through eval() too many times.
         old_depth = Expander.cv_depth.get()
         if old_depth >= Expander.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {macro!r}")
 
-        trace = Tracer(onion, "eval", macro)
-        result = None
-
         # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
         # callers. As of Python 3.11, this includes asyncio.CancelledError.
+
+        result = None
+        trace = Tracer(onion, "eval", macro)
 
         try:
             trace.__enter__()
@@ -1547,6 +1545,9 @@ class Task:
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
+    config_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
+                    'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
+
     def __init__(self, *args, **kwargs):
         # The task's 'raw' flags contain everything passed in to hancho.Task(), but no templates
         # are expanded.
@@ -1559,7 +1560,7 @@ class Task:
         # It is expected that build scripts will need to read task.params/confing
         # in order to implement task callbacks, so this field is not underscore-prefixed.
 
-        self.config = Dict()
+        self.config = Dict(dict.fromkeys(Task.config_keys))
 
         self.onion = Onion(
             self.script.onion,
@@ -1709,8 +1710,8 @@ class Task:
             task._error = ex
         except Exception as ex:
             task.log_exception("Task threw an exception!", ex)
-            with Log.Level.ERROR:
-                Log.log(traceback.format_exc() + "\n")
+            #with Log.Level.ERROR:
+            #    Log.log(traceback.format_exc() + "\n")
             task._error = ex
         finally:
             Runner.release(task._cores)
@@ -1731,7 +1732,7 @@ class Task:
                 # This input task didn't need to rebuild.
                 pass
             except Exception as ex:
-                self._error = Task.CANCELLED(f"Task is cancelled: '{self.config['name']}' : '{self.config['desc']}'")
+                self._error = Task.CANCELLED(f"Task {hex(id(self))} is cancelled")
                 raise self._error from ex
 
     def expand_task(self):
@@ -1739,10 +1740,7 @@ class Task:
             self.log("Task config before expand:\n")
             self.log(Dumper.dump(self.params) + "\n")
 
-        task_keys = ['name', 'desc', 'command', 'repo_root', 'build_root', 'script_cwd',
-                     'build_dir', 'task_cwd', 'build_force', 'depformat', 'job_size']
-
-        for key in task_keys:
+        for key in Task.config_keys:
             self.config[key] = None
 
         # We need to expand the build dir first so we can use it in fix_paths.
@@ -1772,7 +1770,7 @@ class Task:
                 self.out_files[_field] = files
 
         # And finally we expand the onion to fill the config.
-        for key in task_keys:
+        for key in Task.config_keys:
             self.config[key] = self.onion[key]
 
         self.config.command = Utils.flatten(self.config.command)
@@ -2690,8 +2688,9 @@ class Hancho:
         return dedupe_key
 
 def init_for_testing(argv, *args, **kwargs):
-    params = Hancho.parse_flags(argv or [], *args, **kwargs)
-    Hancho.init(params)
+    proxy = Hancho.proxy
+    proxy.init(argv, *args, **kwargs)
+    return proxy
 
 def _start():
 
