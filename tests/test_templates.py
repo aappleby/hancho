@@ -221,7 +221,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(d.expand("{{{c}}}"),   "it works!")
         self.assertEqual(d.expand("{{{{c}}}}"), "{it works!}")
 
-    def _test_embedded_eval(self):
+    def test_embedded_eval(self):
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
         self.assertEqual('1 + 1', d.expand("{foo}"))
         self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}"))
@@ -230,7 +230,8 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual('\"2 + 2\"', d.expand("{bar}"))
         self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}"))
 
-    def _test_inline_script(self):
+    # FIXME broken
+    def test_inline_script(self):
         # Load a tiny test script.
         source = textwrap.dedent("""
         import hancho
@@ -257,10 +258,11 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual("{foo_in_script}", Dict().expand("{foo_in_script}"))
         self.assertEqual("{blarp}", Dict().expand("{blarp}"))
 
-    def _test_alternate_delims(self):
+    # FIXME broken
+    def test_alternate_delims(self):
         d = hancho.Dict(foo = "bar")
-        o1 = hancho.Onion(d, Dict(delims='{}'))
-        o2 = hancho.Onion(d, Dict(delims='«»'))
+        o1 = hancho.Onion(layer1 = d, layer2 = Dict(delims='{}'))
+        o2 = hancho.Onion(layer1 = d, layer2 = Dict(delims='«»'))
 
         self.assertEqual("bar",   o1.expand("{foo}"))
         self.assertEqual("{foo{", o2.expand("{foo{"))

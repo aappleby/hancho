@@ -658,7 +658,7 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
-    def _test_no_mixed_commands(self):
+    def test_no_mixed_commands(self):
         bad_task = hancho.Task(
             command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
         )
@@ -666,7 +666,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
-    def _test_task_creates_task(self):
+    def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
             hancho.Task(command = lambda task : force_touch(task.config.out_obj), in_src=[], out_obj="dummy.txt")
@@ -680,7 +680,7 @@ class TestTasks(unittest.TestCase):
 
     # This is really slow on Windows for some reason - takes 10 secondss.
     @unittest.skipUnless(os.name == "posix", "requires Linux")
-    def _test_tons_of_tasks(self):
+    def test_tons_of_tasks(self):
         # We should be able to queue up 1000+ tasks at once.
         for i in range(1000):
             hancho.Task(
@@ -695,7 +695,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(1000, len(glob.glob("build/dummy*.txt")))
 
     # This one takes about a second on Windows
-    def _test_jobs(self):
+    def test_jobs(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
         # another batch of 100 tasks that use random numbers of cores.
@@ -735,7 +735,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/slow_result.txt").exists())
 
-    def _test_dry_run(self):
+    def test_dry_run(self):
         self.reinit(log_level = VERBOSITY, max_errors=999, build_dry = True)
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
@@ -750,7 +750,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertFalse(Path("build").exists())
 
-    def _test_dependency_skipped(self):
+    def test_dependency_skipped(self):
         def run():
             self.reinit(log_level = VERBOSITY, core_max=1)
             task1 = hancho.Task(
