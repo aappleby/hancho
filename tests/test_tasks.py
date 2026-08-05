@@ -481,6 +481,7 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertTrue(os.path.exists("build/blarp.txt"))
 
+    # FIXME why did this stop working? because we touched depfile something?
     def test_header_changed(self):
         # Changing a header file tracked in the GCC dependencies file should trigger a rebuild
 

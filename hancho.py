@@ -165,24 +165,16 @@ class Tool(Dict):
 
 class Script:
 
+    config_keys = ["script_path", "script_cwd", "repo_root", "build_root", "comp_db_path",
+                   "stat_db_path", "build_tag", "build_target", "build_all", "build_dry", "build_strict"]
+
     def __init__(self, *, parent : Script | None, params : Dict, code : types.CodeType | None, is_repo : bool):
         self.params = params
-        self.config = Dict()
+        self.config = Dict(dict.fromkeys(Script.config_keys))
         self.onion  = Onion(hancho = Hancho.proxy.__dict__, script_params = self.params, script_config = self.config)
 
-        self.config.script_path  = self.onion.script_path
-        self.config.script_cwd   = self.onion.script_cwd
-
-        self.config.repo_root    = self.onion.repo_root
-        self.config.build_root   = self.onion.build_root
-        self.config.comp_db_path = self.onion.comp_db_path
-        self.config.stat_db_path = self.onion.stat_db_path
-
-        self.config.build_tag    = self.onion.build_tag
-        self.config.build_target = self.onion.build_target
-        self.config.build_all    = self.onion.build_all
-        self.config.build_dry    = self.onion.build_dry
-        self.config.build_strict = self.onion.build_strict
+        for key in Script.config_keys:
+            self.config[key] = self.onion.get(key, None)
 
         self.code = code
         self.is_repo = is_repo
@@ -659,7 +651,12 @@ class Dumper:
         *opaque_types.keys(),
     )
 
-    match_pointer : re.Pattern = re.compile(r"<(\w+) (\w+) at 0[xX][0-9a-fA-F]+>")
+    match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]{4,16}")
+
+    @classmethod
+    def depointer(cls, text):
+        text = Dumper.match_pointer.sub("0x...", text)
+        return text
 
     @dataclass
     class Opts:
@@ -868,7 +865,7 @@ class Utils:
 
     @staticmethod
     def hex_id(obj):
-        return hex(id(obj))[-4:].upper()
+        return "0x" + hex(id(obj))[-4:].upper()
         #return f"0x{id(obj):016x}"
 
     @staticmethod
@@ -2683,7 +2680,7 @@ class Hancho:
     @classmethod
     def dict_to_key(cls, params) -> str:
         dedupe_key = Dumper.dump(params, print_id = False, tab = "", color_code = False, depth = 999, max = 999)
-        dedupe_key = Dumper.match_pointer.sub(r"<\1 \2 at 0x...>", dedupe_key)
+        dedupe_key = Dumper.depointer(dedupe_key)
         dedupe_key = "".join(dedupe_key.split())
         return dedupe_key
 
