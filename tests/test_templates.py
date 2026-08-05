@@ -5,7 +5,6 @@ import doctest
 import os
 import sys
 import textwrap
-import traceback
 import unittest
 from typing import cast
 
@@ -96,18 +95,18 @@ class TestTemplates(unittest.TestCase):
             self.assertEqual("sentinel", chain.expand("{k0}"))
 
     def test_expand_giant_string(self):
-        def _test(count):
+        def test_string(count):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
             return d.expand(giant_string)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
-        result = _test(Expander.MAX_EVALS)
+        result = test_string(Expander.MAX_EVALS)
         self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) #type:ignore
 
         with self.assertRaises(RecursionError):
-            result = _test(Expander.MAX_EVALS + 1)
+            result = test_string(Expander.MAX_EVALS + 1)
 
     def test_user_recursion(self):
         # A user function that generates a RecursionError that's used inside a template should
@@ -241,17 +240,18 @@ class TestTemplates(unittest.TestCase):
         parent_script = hancho.Hancho.cv_script.get()
         script_path = os.path.join(os.getcwd(), "fake_script.hancho")
 
-        script = hancho.Hancho.load_source(parent_script, script_path, source, is_repo = True)
-        hancho.Hancho.cv_script.set(script)
+        script = hancho.Hancho.load_source(parent_script, script_path, source, is_repo = True, blarp = 1234)
 
-        # Expanding 'Task' should read from hancho.py
-        self.assertEqual(hancho.Task, Dict().expand("{Task}"))
+        with hancho.Hancho.cv_script.enter(script):
 
-        # Expanding 'blarp' should read from the options passed into the script
-        self.assertEqual(1234, Dict().expand("{blarp}"))
+            # Expanding 'Task' should read from hancho.py
+            self.assertEqual(hancho.Task, Dict().expand("{Task}"))
 
-        # Expanding 'foo_in_script' should read from the script module...
-        self.assertEqual([1, 2, 3], Dict().expand("{foo_in_script}"))
+            # Expanding 'blarp' should read from the options passed into the script
+            self.assertEqual(1234, Dict().expand("{blarp}"))
+
+            # Expanding 'foo_in_script' should read from the script module...
+            self.assertEqual([1, 2, 3], Dict().expand("{foo_in_script}"))
 
         # but not after we've left the script context.
 

@@ -17,6 +17,8 @@ WARNING - Hancho is NOT A SANDBOX, your build scripts can evaluate arbitrary Pyt
 could format your hard drive and email spam to your grandparents. Use responsibly.
 """
 
+# FIXME do a template test with two nested dicts a.b and a.c where a.c contains a template referring to b.d
+
 from __future__ import annotations
 
 import argparse
@@ -41,7 +43,7 @@ import types
 import zlib  # for crc32, adler32
 from collections import Counter, abc
 from contextlib import chdir, contextmanager, suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from enum import Enum
 from functools import wraps
 from typing import Any, cast
@@ -163,18 +165,33 @@ class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
     pass
 
+@dataclass
+class ScriptConfig:
+    script_path : str   = None # type: ignore
+    script_cwd : str    = None # type: ignore
+    repo_root : str     = None # type: ignore
+    build_root : str    = None # type: ignore
+    comp_db_path : str  = None # type: ignore
+    stat_db_path : str  = None # type: ignore
+    build_tag : str     = None # type: ignore
+    build_target : str  = None # type: ignore
+    build_all : bool    = None # type: ignore
+    build_dry : bool    = None # type: ignore
+    build_strict : bool = None # type: ignore
+
 class Script:
 
-    config_keys = ["script_path", "script_cwd", "repo_root", "build_root", "comp_db_path",
-                   "stat_db_path", "build_tag", "build_target", "build_all", "build_dry", "build_strict"]
-
     def __init__(self, *, parent : Script | None, params : Dict, code : types.CodeType | None, is_repo : bool):
+        # Unpack our params
         self.params = params
-        self.config = Dict(dict.fromkeys(Script.config_keys))
-        self.onion  = Onion(hancho = Hancho.proxy.__dict__, script_params = self.params, script_config = self.config)
-
-        for key in Script.config_keys:
-            self.config[key] = self.onion.get(key, None)
+        self.config = ScriptConfig()
+        self.onion  = Onion(
+            hancho = Hancho.proxy.__dict__,
+            script_params = self.params,
+            script_config = self.config.__dict__
+        )
+        for field in fields(ScriptConfig):
+            setattr(self.config, field.name, self.onion.get(field.name, None))
 
         self.code = code
         self.is_repo = is_repo
@@ -204,8 +221,10 @@ class Script:
         self.module.hancho    = Hancho.proxy   # type: ignore
         self.module.params    = self.params    # type: ignore
         self.module.config    = self.config    # type: ignore
-        self.module.onion     = self.onion     # type: ignore
-        self.module.self      = self.module    # type: ignore
+        #self.module.onion     = self.onion     # type: ignore
+        #self.module.self      = self.module    # type: ignore
+
+        self.onion._layers2["script_module"] = self.module.__dict__
 
 #    def get_repo(self) -> Script:
 #        if self.is_repo:
@@ -384,7 +403,7 @@ class Onion(abc.Mapping):
                     if val is None:
                         saw_a_none = True
                     elif not isinstance(val, abc.Mapping):
-                        result = Expander.expand(self, val, Expander.ldelims, Expander.rdelims)
+                        result = Expander.expand(self, val)
                         trace.save_result(result)
                         return result
 
@@ -426,7 +445,7 @@ class Onion(abc.Mapping):
         return eval(expr, {}, self)
 
     def expand(self, variant : Any):
-        return Expander.expand(self, variant, Expander.ldelims, Expander.rdelims)
+        return Expander.expand(self, variant)
 
 class Expander:
     # Hancho's text expansion system.
@@ -479,9 +498,9 @@ class Expander:
 
     @classmethod
     def reset(cls, params):
-        delims = params.pop("delims")
-        Expander.ldelims = delims[::2]
-        Expander.rdelims = delims[1::2]
+        Expander.delims  = params.pop("delims")
+        Expander.ldelims = Expander.delims[::2]
+        Expander.rdelims = Expander.delims[1::2]
 
     @classmethod
     def expand(cls, onion : Onion, variant : Any, ldelims : str | None = None, rdelims : str | None = None):
@@ -1534,6 +1553,21 @@ class Stats:
         self.reasons["*hash match"] += 1
         return ""
 
+@dataclass
+class TaskConfig:
+    name : str          = None # type: ignore
+    desc : str          = None # type: ignore
+    command : str | list[str] = None # type: ignore
+    in_depfile : str    = None # type: ignore
+    repo_root : str     = None # type: ignore
+    build_root : str    = None # type: ignore
+    script_cwd : str    = None # type: ignore
+    build_dir : str     = None # type: ignore
+    task_cwd : str      = None # type: ignore
+    build_force : bool  = None # type: ignore
+    depformat : str     = None # type: ignore
+    job_size : int      = None # type: ignore
+
 class Task:
     # Task object + bookkeeping
 
@@ -1557,12 +1591,13 @@ class Task:
         # It is expected that build scripts will need to read task.params/confing
         # in order to implement task callbacks, so this field is not underscore-prefixed.
 
-        self.config = Dict(dict.fromkeys(Task.config_keys))
+        #self.config = Dict(dict.fromkeys(Task.config_keys))
+        self.config = TaskConfig()
 
         self.onion = Onion(
             self.script.onion,
             task_params = self.params,
-            task_config = self.config,
+            task_config = self.config.__dict__,
         )
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -1737,8 +1772,8 @@ class Task:
             self.log("Task config before expand:\n")
             self.log(Dumper.dump(self.params) + "\n")
 
-        for key in Task.config_keys:
-            self.config[key] = None
+        #for key in Task.config_keys:
+        #    self.config[key] = None
 
         # We need to expand the build dir first so we can use it in fix_paths.
         build_dir = self.onion.build_dir
@@ -1754,10 +1789,10 @@ class Task:
             ]
 
             files = Utils.flatten(files)
-            files = Expander.expand(self.onion, files, Expander.ldelims, Expander.rdelims)
+            files = Expander.expand(self.onion, files)
             files = self.fix_paths(_field, files, build_dir)
 
-            self.config[_field] = files[0] if len(files) == 1 else files
+            setattr(self.config, _field, files[0] if len(files) == 1 else files)
 
             if _field == "in_depfile":
                 self.in_depfile = cast(str, files[0])
@@ -1768,7 +1803,7 @@ class Task:
 
         # And finally we expand the onion to fill the config.
         for key in Task.config_keys:
-            self.config[key] = self.onion[key]
+            setattr(self.config, key, self.onion[key])
 
         self.config.command = Utils.flatten(self.config.command)
         if len(self.config.command) == 1:
@@ -1880,14 +1915,12 @@ class Task:
                 if not isinstance(command, str) and not callable(command) and command is not None:
                     raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
-        # In strict mode, we mark a task broken if its command still has curly braces.
+        # In strict mode, we mark a task broken if its command still has delimiters in it.
         if script_config.build_strict:
+            delims = task.onion.raw_get("delims", Expander.delims)
             for command in cast(list, Utils.flatten(task_config.command)):
-                if not isinstance(command, str):
-                    continue
-                blocks = []
-                if Expander._split_text(command, blocks, Expander.ldelims, Expander.rdelims):
-                    raise Task.BROKEN("STRICT: Command has curly braces in it")
+                if isinstance(command, str) and any(d in command for d in delims):
+                    raise Task.BROKEN("STRICT: Command has delimiters in it")
 
         # Check that all build files would end up under build_dir
         for file in Utils.yield_values(task.out_files):
@@ -1911,7 +1944,7 @@ class Task:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        if "in_depfile" in self.config and isinstance(self.config.in_depfile, list):
+        if isinstance(self.config.in_depfile, list):
             raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.config.in_depfile}")
 
     async def run_command(self, command):
