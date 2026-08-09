@@ -1,30 +1,17 @@
 
-# FIXME - investigate shadow dict of expanded templates as a cache
-# FIXME We need an option to save the log to the build directory
-# FIXME if we're gonna put stuff in the build directory, we should just do content hashing.
 # FIXME Implement module.__dir__() so "import * from hancho" works
 # FIXME We probably don't need to completely rebuild the stat db in post_build
-# FIXME I feel like we need an explicit "split blob of flags/config into per-task and per-app options" function...
-# FIXME Do we want to keep _loaded_files now that we have better change detection?
 # FIXME Do we want to re-enable rel'ing all in_/out_ paths?
 # FIXME Can we build examples/tutorial from examples/tutorial and also matcheroni/ and have it work somehow?
-# FIXME tests for the various rools in tools/*
+# FIXME tests for the various tools in tools/*
 # FIXME need an example that drives Hancho through hancho.main()
 # FIXME why is text during the dirty run in go.py orange?
-# FIXME add a test that we don't expand anything if our root script is a nop. That should help
-#       ensure that root scripts that change root_dir/repo_dir work correctly.
 
 # FIXME We should probably migrate path manipulation to pathlib.Path, even if we convert to/from
 #       strings. It'll save us string concat debugging.
 
 # FIXME merging lists concats, merging tuples replaces
 # FIXME dicts stringify into lists of keys, tasks resolve to dicts of their outputs
-
-Tasks always pick up the 'config' from the script that created them.
-
-And something similar about sticking stuff on the hancho object -> they go into script.globals, so
-the same deal as config (except those aren't visible to templates)
-
 
 00 - How to download and run Hancho, Trivial .hancho example
 01 - Example with {in_src} and {out_obj}

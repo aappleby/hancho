@@ -240,7 +240,11 @@ class TestTemplates(unittest.TestCase):
         parent_script = hancho.Hancho.cv_script.get()
         script_path = os.path.join(os.getcwd(), "fake_script.hancho")
 
-        script = hancho.Hancho.load_source(parent_script, script_path, source, is_repo = True, blarp = 1234)
+        script = hancho.Hancho.load_source(
+            parent_script,
+            source,
+            params = Dict(is_repo = True, script_path = script_path, blarp = 1234)
+        )
 
         with hancho.Hancho.cv_script.enter(script):
 
