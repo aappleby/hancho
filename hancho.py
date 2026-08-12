@@ -198,8 +198,8 @@ class Dict(dict):
     def __repr__(self):
         return Dumper.dump(self)
 
-    def expand(self, template):
-        return Expander.expand(Onion(dict = self), template)
+    #def expand(self, template):
+    #    return Expander.expand(Onion(dict = self), template)
 
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
@@ -221,7 +221,7 @@ class Tool(Dict):
 
 
 class HanchoConfig:
-    def __init__(self, env):
+    def __init__(self, env : Onion):
         self.root       = env.hancho.root
         self.run_tool   = env.hancho.run_tool
         self.delims     = env.hancho.delims
@@ -230,7 +230,7 @@ class HanchoConfig:
         self.max_jobs   = env.hancho.max_jobs
 
 class LogConfig:
-    def __init__(self, env):
+    def __init__(self, env : Onion):
         self.level      = env.log.level
         self.quiet      = env.log.quiet
         self.verbose    = env.log.verbose
@@ -241,7 +241,7 @@ class LogConfig:
         self.time       = env.log.time
 
 class BuildConfig:
-    def __init__(self, env):
+    def __init__(self, env : Onion):
         self.root       = env.build.root
         self.tag        = env.build.tag
         self.target     = env.build.target
@@ -251,32 +251,20 @@ class BuildConfig:
         self.strict     = env.build.strict
 
 class ScriptConfig:
-    def __init__(self, env):
+    def __init__(self, env : Onion):
         self.path       = env.script.path
         self.root       = env.script.root
 
 class TaskConfig:
-    def __init__(self):
-        self.name       = MISSING
-        self.desc       = MISSING
-        self.command    = MISSING
-        self.cwd        = MISSING
-        self.in_depfile = MISSING
-        self.depformat  = MISSING
-        self.job_size   = MISSING
-        self.build_dir  = MISSING
-
-    def fill(self, env):
-        t = env.task
-
-        self.name       = t.name
-        self.desc       = t.desc
-        self.command    = t.command
-        self.cwd        = t.cwd
-        self.in_depfile = t.in_depfile
-        self.depformat  = t.depformat
-        self.job_size   = t.job_size
-        self.build_dir  = t.build_dir
+    def __init__(self, env : Onion):
+        self.name       = env.task.name
+        self.desc       = env.task.desc
+        self.command    = env.task.command
+        self.cwd        = env.task.cwd
+        self.in_depfile = env.task.in_depfile
+        self.depformat  = env.task.depformat
+        self.job_size   = env.task.job_size
+        self.build_dir  = env.task.build_dir
 
 
 
@@ -344,7 +332,7 @@ hancho_defaults = Dict(
 
 
 class Repo:
-    def __init__(self, env):
+    def __init__(self, env : Onion):
         self.build_config = BuildConfig(env)
         self.repo_root = env.repo.root
         self.stat_db = Dict()
@@ -433,7 +421,7 @@ class Repo:
         comp_db_path = Path.join(self.build_config.root, 'compile_commands.json')
         Utils.save_json(list(comp_db.values()), comp_db_path)
 
-    def rebuild_reason(self, task) -> str:
+    def rebuild_reason(self, task, env) -> str:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
         """
@@ -441,7 +429,7 @@ class Repo:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if task.config.build_force:
+        if env.build.force:
             self.build_reasons["forced"] += 1
             return "Target forced to rebuild"
 
@@ -538,18 +526,16 @@ class Script:
     class EarlyOut(Exception): pass
     class Fail(Exception): pass
 
-    def __init__(self, *, script_env : Onion, script_code : types.CodeType | None):
-        #self.script_params = script_params
-        self.script_env    = script_env
+    def __init__(self, *, script_params : Dict, script_code : types.CodeType | None, env : Onion):
+        self.script_params = script_params
         self.script_code   = script_code
 
-        self.script_config = ScriptConfig(self.script_env)
-        self.script_env.layers["script_config"] = Dict(script = self.script_config)
+        self.script_config = ScriptConfig(env)
 
         self.script_module           = types.ModuleType(os.path.basename(self.script_config.path)) # type: ignore
         self.script_module.__file__  = self.script_config.path
         self.script_module.hancho    = HanchoProxy("hancho")   # type: ignore
-        self.script_module.env       = self.script_env    # type: ignore
+        self.script_module.params    = self.script_params      # type: ignore
 
         # If we put the entire module in the env, we end up with reference loops that break stuff.
         #self.script_env.layers["script_module"] = self.script_module.__dict__
@@ -731,12 +717,16 @@ class Onion(abc.Mapping):
         return any(key in layer for _, layer in self.layers.items())
 
     def __dump__(self, key, opts, seen):
-        #trimmed_layers = dict(self.layers)
+        trimmed_layers = Dict(self.layers)
+        del trimmed_layers.hancho_aliases
+        del trimmed_layers.hancho_defaults
+        #if hasattr(trimmed_layers, "hancho_aliases"):
+        #    delattr(trimmed_layers, "hancho")
         #if hasattr(trimmed_layers, "hancho"):
         #    delattr(trimmed_layers, "hancho")
-        #return Dumper._dump_vector(key, self, trimmed_layers, opts, seen)
+        return Dumper._dump_vector(key, self, trimmed_layers, opts, seen)
         #return Dumper.dump(self)
-        return Dumper._dump_vector(key, self, self.layers, opts, seen)
+        #return Dumper._dump_vector(key, self, self.layers, opts, seen)
 
     def get(self, key, default : Any = MISSING) -> Any:
         # Allow direct access to layers
@@ -1877,21 +1867,12 @@ class Task:
         # The task's 'raw' flags contain everything passed in to hancho.Task(), but no templates
         # are expanded.
 
-        params = Dict(*args, **kwargs)
-
+        self.task_params = Dict(*args, **kwargs)
         self.script = Hancho.cv_script.get()
 
-        self.env = Onion(
-            self.script.script_env,
-            task_params = Dict(task = params),
-            task_config = Dict(task = Dict())
-        )
-
-        Dumper.print(self.env, width = 0)
-
         # The task's 'cooked' config contains only the mandatory fields needed to run the command.
-        # It is expected that build scripts will need to read task.env/confing
-        # in order to implement task callbacks, so this field is not underscore-prefixed.
+        # It is expected that build scripts will need to read task.config in order to implement
+        # task callbacks, so this field is not underscore-prefixed.
         # We can't create it until our input tasks are complete as we need those to expand stuff.
 
         self.config : TaskConfig = MISSING
@@ -1910,7 +1891,7 @@ class Task:
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(params) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self.task_params) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1979,6 +1960,14 @@ class Task:
         script = self.script
         repo   = script.repo
 
+        env = Onion(
+            hancho_aliases  = hancho_aliases,
+            hancho_defaults = hancho_defaults,
+            hancho_params   = Hancho.hancho_params,
+            script_params   = Dict(script = script.script_params),
+            task_params     = Dict(task = task.task_params),
+        )
+
         try:
             # Await all tasks in our input fields and then flatten them.
             await task.await_inputs()
@@ -1990,7 +1979,7 @@ class Task:
                 self.log(Utils.instance_tag(self) + " starting\n")
 
             # Expand all mandatory fields in the raw config and fix raw file paths.
-            task.expand_task()
+            task.expand_task(env)
 
             # Update mtime/hash for all input and output files in this task if they exist.
 
@@ -2001,7 +1990,7 @@ class Task:
                 )
 
             # Inputs are ready, templates are expanded, time to run the task.
-            task.sanity_check()
+            task.sanity_check(env)
 
             # Dry runs early out after the task is initialized but before we do .exists() checks or
             # run any commands.
@@ -2009,7 +1998,7 @@ class Task:
                 return
 
             # Paths updated. See if we need to rebuild our outputs.
-            task._reason = repo.rebuild_reason(task)
+            task._reason = repo.rebuild_reason(task, env)
             if not task._reason:
                 raise Task.SKIPPED(f"Task is up-to-date: '{self.config.name}' : '{self.config.desc}'")
 
@@ -2063,20 +2052,24 @@ class Task:
                 self._error = Task.CANCELLED(f"Task {hex(id(self))} is cancelled")
                 raise self._error from ex
 
-    def expand_task(self):
-        task   = self
-        script = self.script
-        repo   = script.repo
-        env    = task.env
+    def expand_task(self, env):
+        print(env)
 
-        params = env.layers["task_params"].task
+        task   = self
+        script = task.script
+        params = task.task_params
+        repo   = script.repo
 
         with Log.Level.DEBUG:
             task.log("Task config before expand:\n")
             task.log(Dumper.dump(params) + "\n")
 
         # We need to expand the build dir first so we can use it in fix_paths.
+
         build_dir = env.task.build_dir
+
+        print(params)
+        print(env)
 
         # Then we expand all io fields and fix their paths.
         for _field, _files in params.items():
@@ -2089,7 +2082,7 @@ class Task:
             ]
 
             files = Utils.flatten(files)
-            files = Expander.expand(task.env, files)
+            files = Expander.expand(env, files)
             files = task.fix_paths(_field, files, build_dir)
 
             #setattr(self.config, _field, files[0] if len(files) == 1 else files)
@@ -2105,11 +2098,8 @@ class Task:
             elif _field.startswith("out_"):
                 task.out_files[_field] = files
 
-        print(params)
-
         # And finally we use the env to fill the config.
-        task.config = TaskConfig()
-        task.config.fill(task.env)
+        task.config = TaskConfig(env)
 
         Dumper.print(task.config)
 
@@ -2197,7 +2187,7 @@ class Task:
 
         return file
 
-    def sanity_check(self):
+    def sanity_check(self, env : Onion):
         # Check for all task issues that break the build
         task   = self
         script = self.script
@@ -2228,7 +2218,7 @@ class Task:
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if repo.build_config.strict:
-            delims = task.env.raw_get("delims", Expander.delims)
+            delims = env.raw_get("delims", Expander.delims)
             for command in cast(list, Utils.flatten(task.config.command)):
                 if isinstance(command, str) and any(d in command for d in delims):
                     raise Task.BROKEN("STRICT: Command has delimiters in it")
@@ -2395,7 +2385,7 @@ class Tracer:
     # [   0.024] │ └ 'g++ {in_objs} -o {out_bin}' : NoneType = None
     # [   0.024] └ 'command' : str = 'g++ /home/aappleby/repos/hancho/build/examples/hello_world/...
 
-    def __init__(self, env : Dict | Onion, enter_message, name):
+    def __init__(self, env : Onion, enter_message, name):
         self.enter_message = f"{enter_message}({name!r})"
         self.name = name
         self.env = env
@@ -2765,58 +2755,51 @@ class Hancho:
             yield from repo.yield_tasks()
 
     @classmethod
-    def init(cls, params):
-        log_params = hancho_defaults.pop("log").merge(params.pop("log", Dict()))
-        log_config = LogConfig(Dict(log = log_params))
+    def init(cls, params, env):
+        log_config = LogConfig(env)
         Log.reset(log_config)
 
-        env  = Onion(
-            hancho_aliases = hancho_aliases,
-            hancho_defaults = hancho_defaults,
-            hancho_params = params
-        )
-
-        cls.hancho_env = env
-
+        cls.hancho_params = params
         cls.real_filenames = set()
         cls.dedupe = {}
         cls.cv_script = ContextProxy(None)
 
-
-        #cls.hancho_params = params
-        #cls.config = HanchoConfig(cls.hancho_env)
-        #cls.hancho_env.layers["hancho_config"] = Dict(hancho = cls.config)
-
-        env_hancho = env.hancho
-
         Utils.reset()
-        Expander.reset(env_hancho.delims)
-        Runner.reset(env_hancho.max_jobs, env_hancho.max_errors)
+        Expander.reset(env.hancho.delims)
+        Runner.reset(env.hancho.max_jobs, env.hancho.max_errors)
 
         # ---------
 
-        root_params = Dict(
-            script = Dict(
-                path = __file__,
-                root = os.path.dirname(__file__),
-            )
+        script_params = Dict(
+            path = __file__,
+            root = os.path.dirname(__file__),
         )
 
-        root_env = Onion(cls.hancho_env, script_params = root_params)
+        env = Onion(
+            env,
+            script_params = Dict(script = script_params)
+        )
 
-        print(root_env)
-        print(root_env.flat())
+        print(env)
 
-        root_script = Script(script_env = root_env, script_code = None)
+        root_script = Script(script_params = script_params, script_code = None, env = env)
 
-        root_repo = Repo(root_env)
+        root_repo = Repo(env)
         root_repo.add_script(root_script)
 
         cls.cv_script.set(root_script)
 
     @classmethod
     def load_path(cls, parent_script : Script, script_path : str, is_repo : bool, *args, **kwargs) -> Script:
-        script_path = parent_script.script_env.expand(script_path)
+        env = Onion(
+            hancho_aliases  = hancho_aliases,
+            hancho_defaults = hancho_defaults,
+            hancho_params   = Hancho.hancho_params,
+            script_params   = parent_script.script_params,
+            #task_params     = task.task_params
+        )
+
+        script_path = env.expand(script_path)
         script_path = Path.resolve(script_path)
 
         with open(script_path, encoding="utf-8") as file:
@@ -2829,10 +2812,16 @@ class Hancho:
         child_params = Dict(
             *args,
             **kwargs,
-            script = Dict(
-                path = script_path,
-                root = os.path.dirname(script_path)
-            )
+            path = script_path,
+            root = os.path.dirname(script_path)
+        )
+
+        env = Onion(
+            hancho_aliases  = hancho_aliases,
+            hancho_defaults = hancho_defaults,
+            hancho_params   = Hancho.hancho_params,
+            script_params   = Dict(script = child_params),
+            #task_params     = task.task_params
         )
 
         # --------------------------------
@@ -2856,17 +2845,12 @@ class Hancho:
         try:
             Log.indent(Log.Color.ORANGE)
 
-            child_env = Onion(parent_script.script_env)
-
-            # FIXME this is gross
-            child_env.script_params.merge(child_params)
-            child_env.layers.script_config = Dict()
 
             child_code   = compile(source, script_path, "exec", dont_inherit=True)
-            child_script = Script(script_env = child_env, script_code = child_code)
+            child_script = Script(script_params = child_params, script_code = child_code, env = env)
 
             if is_repo:
-                new_repo = Repo(child_env) if is_repo else parent_script.repo
+                new_repo = Repo(env) if is_repo else parent_script.repo
                 new_repo.add_script(child_script)
             else:
                 parent_script.add_child(child_script)
@@ -2881,7 +2865,7 @@ class Hancho:
         return child_script
 
     @classmethod
-    def main(cls) -> int:
+    def main(cls, env) -> int:
 
         with Log.Level.VERBOSE, Log.Color.LIME:
             Log.log(f"Command line : {" ".join(sys.argv)}\n")
@@ -2899,7 +2883,7 @@ class Hancho:
         Log.indent(Log.Color.ORANGE)
 
         parent_script = Hancho.cv_script.get()
-        script_path = Hancho.hancho_env.script.path
+        script_path = env.script.path
         top_script = Hancho.load_path(parent_script, script_path, is_repo = True)
         Hancho.cv_script.set(top_script)
 
@@ -2924,7 +2908,7 @@ class Hancho:
         # ------------------------------------
         # If we're running a tool, run it and we're done.
 
-        tool = Hancho.hancho_env.hancho.run_tool
+        tool = env.hancho.run_tool
 
         if tool:
             time_a2 = time.perf_counter()
@@ -3090,8 +3074,16 @@ class HanchoProxy(types.ModuleType):
     earlyout = Script.EarlyOut
 
     @staticmethod
-    def init(params):
-        Hancho.init(params)
+    def init(*args, **kwargs):
+        hancho_params = Dict(*args, **kwargs)
+        env = Onion(
+            hancho_aliases  = hancho_aliases,
+            hancho_defaults = hancho_defaults,
+            hancho_params   = hancho_params,
+            #script_params   = script.script_params,
+            #task_params     = task.task_params
+        )
+        Hancho.init(hancho_params, env)
 
     @staticmethod
     def load(path, *args, **kwargs) -> types.ModuleType:
@@ -3116,8 +3108,15 @@ class HanchoProxy(types.ModuleType):
 
     @staticmethod
     def init_for_testing(argv, *args, **kwargs):
-        params = parse_flags(argv, *args, **kwargs)
-        Hancho.init(params)
+        hancho_params = parse_flags(argv, *args, **kwargs)
+        env = Onion(
+            hancho_aliases  = hancho_aliases,
+            hancho_defaults = hancho_defaults,
+            hancho_params   = hancho_params,
+            #script_params   = script.script_params,
+            #task_params     = task.task_params
+        )
+        Hancho.init(hancho_params, env)
         return HanchoProxy._module
 
 
@@ -3144,11 +3143,6 @@ sys.modules["hancho"] = HanchoProxy("hancho")
 
 def _start():
 
-    #params = parse_flags(sys.argv)
-    #Hancho.init(params)
-    #print(Dumper.dump(Dict(params), depth=999))
-    #sys.exit(0)
-
     if __name__ == "__main__":
 
         # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
@@ -3157,8 +3151,19 @@ def _start():
 
         try:
             params = parse_flags(sys.argv)
-            Hancho.init(params)
-            result = Hancho.main()
+
+            env = Onion(
+                hancho_aliases  = hancho_aliases,
+                hancho_defaults = hancho_defaults,
+                hancho_params   = params,
+                #script_params   = parent_script.script_params,
+                #task_params     = task.task_params
+            )
+
+            Hancho.init(params, env)
+
+
+            result = Hancho.main(env)
             sys.exit(result)
 
         except Exception:
