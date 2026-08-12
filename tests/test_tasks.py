@@ -13,11 +13,11 @@ import unittest
 from pathlib import Path
 from typing import cast
 
-import hancho
+import hancho as hancho_proxy
+
+# pyright: reportAttributeAccessIssue=false
 
 VERBOSITY = "quiet"
-
-proxy = hancho.Hancho.proxy
 
 if os.name == "nt" and "VCINSTALLDIR" not in os.environ:
     print("Tests must run from a Visual Studio developer prompt!", file=sys.stderr)
@@ -62,7 +62,8 @@ def force_touch(filename, append_text = None):
 class TestTasks(unittest.TestCase):
 
     def reinit(self, **kwargs):
-        hancho.init_for_testing(argv = [], **kwargs) # type: ignore
+        global hancho
+        hancho = hancho_proxy.init_for_testing(argv = [], **kwargs) # type: ignore
 
 
     def setUp(self):
@@ -81,7 +82,7 @@ class TestTasks(unittest.TestCase):
         sys.stdout.flush()
 
     def run_tasks(self, expected):
-        result = proxy.build()
+        result = hancho.build()
         self.assertEqual(result, expected)
 
     # ----------------------------------------------------------------------------------------------

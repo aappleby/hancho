@@ -38,8 +38,8 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-D", "-V", "-T"],
-      //"args"    : ["--trace"], "-T",
+      "args"    : ["-D", "-V", "-T", "--hancho.flerp=120"],
+      //"args"    : ["-D", "-V"],
       //"preLaunchTask": "Wipe build",
       "variablePresentation": {
         "all": "hide",

@@ -4,7 +4,9 @@ import os
 import sys
 import unittest
 
-import hancho
+import hancho as hancho_proxy
+
+# pyright: reportAttributeAccessIssue=false
 
 ####################################################################################################
 
@@ -32,7 +34,8 @@ def split(template, ldelims = None, rdelims = None):
 
 class TestSplit(unittest.TestCase):
     def setUp(self):
-        hancho.init_for_testing([], verbosity = "quiet")
+        global hancho
+        hancho = hancho_proxy.init_for_testing([], verbosity = "quiet")
         sys.stdout.flush()
 
     # FIXME escaping has changed, the escaping tests are invalid

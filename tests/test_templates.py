@@ -232,18 +232,20 @@ class TestTemplates(unittest.TestCase):
     # FIXME broken
     def test_inline_script(self):
         # Load a tiny test script.
+
+        parent_script = hancho.Hancho.cv_script.get()
+        script_path = os.path.join(os.getcwd(), "fake_script.hancho")
         source = textwrap.dedent("""
         import hancho
         foo_in_script = [1, 2, 3]
         """)
 
-        parent_script = hancho.Hancho.cv_script.get()
-        script_path = os.path.join(os.getcwd(), "fake_script.hancho")
-
         script = hancho.Hancho.load_source(
-            parent_script,
-            source,
-            params = Dict(is_repo = True, script_path = script_path, blarp = 1234)
+            parent_script = parent_script,
+            script_path = script_path,
+            source = source,
+            is_repo = True,
+            blarp = 1234
         )
 
         with hancho.Hancho.cv_script.enter(script):
