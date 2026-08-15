@@ -842,34 +842,29 @@ class Onion(abc.Mapping):
     """
 
     def __init__(self, *, name = None, parent = None, **kwargs):
-        object.__setattr__(self, "name",   name)
-        object.__setattr__(self, "parent", parent)
-        object.__setattr__(self, "layers", Dict())
+        self._name = name
+        self._parent = parent
+
         for k, v in kwargs.items():
-            self.layers[k] = v
+            setattr(self, k, v)
+        #object.__setattr__(self, "name",   name)
+        #object.__setattr__(self, "parent", parent)
+        #object.__setattr__(self, "layers", Dict())
+        #for k, v in kwargs.items():
+        #    self.layers[k] = v
+        pass
 
-    def clone(self):
-        result = Onion(name = self.name, parent = self.parent, **self.layers)
-        return result
-
-    def __getattr__(self, key : str):
-        #print(f"getattr {key}")
-        try:
-            return self._get1(key, with_parent = False)
-        except KeyError as err:
-            raise AttributeError from err
+    # ------------------------------------
 
     def __getitem__(self, key):
         #print(f"getitem {key}")
         return self._get1(key, with_parent = True)
 
-    def __setattr__(self, key : str, val : Dict):
-        last_layer = next(reversed(self.layers.values()))
-        last_layer[key] = val
-
     def __setitem__(self, key, val):
-        last_layer = next(reversed(self.layers.values()))
-        last_layer[key] = val
+        setattr(self, key, val)
+
+    def __delitem__(self, key):
+        delattr(self, key)
 
     def __iter__(self):
         seen = set()
@@ -883,6 +878,16 @@ class Onion(abc.Mapping):
         result = {key for _, layer in self.layers.items() for key in layer}
         return len(result)
 
+    # ------------------------------------
+
+    def __getattr__(self, key : str):
+        #print(f"getattr {key}")
+        try:
+            return self._get1(key, with_parent = False)
+        except KeyError as err:
+            raise AttributeError from err
+
+
     def __repr__(self):
         return Dumper.dump(self)
 
@@ -891,31 +896,26 @@ class Onion(abc.Mapping):
 
     def __dump__(self, key, opts, seen):
         prefix = Dumper._dump_prefix(key, self, opts)
-
         if id(self) in seen:
             return prefix + "<ref loop>"
         seen.add(id(self))
-
-        if self.parent:
-            parent_tag = self.parent.name + " @ " + Utils.instance_tag(self.parent)
-            items = [("parent", f"{parent_tag}"), *self.layers.items()]
-        else:
-            items = [("parent", None), *self.layers.items()]
-
+        items = [(k,v) for k, v in self.__dict__.items() if not k.startswith("_")]
+        parent_tag = self._parent._name + " @ " + Utils.instance_tag(self._parent) if self._parent else None
+        items = [("_name", self._name), ("_parent", parent_tag), *self.__dict__.items()]
         return Dumper._dump_items(key, prefix, '{', items, '}', opts, set(seen))
 
-    def _get1(self, key, with_parent, default : Any = Utils.MISSING) -> Any:
-        # Walk the key path until we get a match.
-        while True:
-            key, _, rest = key.partition('.')
-            result = self._get2(key, with_parent, default)
-            if not rest:
-                return result
-            assert isinstance(result, Onion)
-            self = result
-            key = rest
+#    def _get1(self, key, with_parent, default : Any = Utils.MISSING) -> Any:
+#        # Walk the key path until we get a match.
+#        while True:
+#            key, _, rest = key.partition('.')
+#            result = self._get2(key, with_parent, default)
+#            if not rest:
+#                return result
+#            assert isinstance(result, Onion)
+#            self = result
+#            key = rest
 
-    def _get2(self, key, with_parent, default : Any = Utils.MISSING) -> Any:
+    def _get(self, key, with_parent, default : Any = Utils.MISSING) -> Any:
         """
         Searches through layers in reverse order (because we obey rightmost-not-None wins) for a
         key match. If we find it, we expand it before returning it. If we only found Mappings, we
@@ -923,61 +923,60 @@ class Onion(abc.Mapping):
 
         """
 
-        with Tracer(self, "get", key) as trace:
 
-            def on_result(result):
-                if not isinstance(result, Onion):
-                    result = Expander.expand(result, self)
-                trace.save_result(result)
-                return result
+        #with Tracer(self, "get", key) as trace:
 
-            matches = []
-            saw_none = False
+        def on_result(result):
+            if not isinstance(result, Onion):
+                result = Expander.expand(result, self)
+            #trace.save_result(result)
+            return result
 
-            for name, layer in reversed(self.layers.items()):
-                if key not in layer:
-                    continue
+        layers = self.__dict__
+        matches = []
+        saw_none = False
 
-                key2 = f"{name}->{key}"
-                val2 = layer[key]
+        for name, layer in reversed(layers.items()):
+            if not isinstance(layer, abc.Mapping) or key not in layer:
+                continue
 
-                if isinstance(val2, abc.Mapping):
-                    matches.append((key2, val2))
-                elif matches:
-                    pass
-                elif val2 is not None:
-                    return on_result(val2)
-                else:
-                    saw_none = True
+            key2 = f"{name}->{key}"
+            val2 = layer[key]
 
-            if not matches:
-                if saw_none:
-                    return on_result(None)
-                elif with_parent and self.parent:
-                    result = self.parent._get2(key, with_parent, default)
-                    return on_result(result)
-                elif default is Utils.MISSING:
-                    raise KeyError(key)
-                else:
-                    return on_result(default)
+            if isinstance(val2, abc.Mapping):
+                matches.append((key2, val2))
+            elif not matches and val2 is not None:
+                return on_result(val2)
+            else:
+                saw_none |= val2 is None
 
+        if matches:
             result = Onion(name = key, parent = self, **dict(reversed(matches)))
-
-            return on_result(result)
-
-
-    def raw_get(self, key, default : Any = Utils.MISSING) -> Any:
-        """
-        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
-        """
-        for _, layer in reversed(self.layers.items()):
-            if key in layer:
-                return layer[key]
-
-        if default is Utils.MISSING:
+        elif saw_none:
+            result = None
+        elif with_parent and self._parent:
+            result = self._parent._get(key, with_parent, default)
+        elif default is not Utils.MISSING:
+            result = default
+        else:
             raise KeyError(key)
 
-        return default
+        return on_result(result)
+
+
+
+#    def raw_get(self, key, default : Any = Utils.MISSING) -> Any:
+#        """
+#        A simpler getter equivalent to ChainMap.get - doesn't expand the result.
+#        """
+#        for _, layer in reversed(self.layers.items()):
+#            if key in layer:
+#                return layer[key]
+#
+#        if default is Utils.MISSING:
+#            raise KeyError(key)
+#
+#        return default
 
 #    def flat(self):
 #        result = Dict()
@@ -985,15 +984,15 @@ class Onion(abc.Mapping):
 #            result.merge(layer)
 #        return result
 
-    @contextmanager
-    def push_layer(self, name, layer):
-        old_layer = self.layers.get(name, None)
-        self.layers[name] = layer
-        yield
-        if old_layer is None:
-            self.layers.pop(name)
-        else:
-            self.layers[name] = old_layer
+#    @contextmanager
+#    def push_layer(self, name, layer):
+#        old_layer = self.layers.get(name, None)
+#        self.layers[name] = layer
+#        yield
+#        if old_layer is None:
+#            self.layers.pop(name)
+#        else:
+#            self.layers[name] = old_layer
 
 
 
@@ -2837,27 +2836,28 @@ class Hancho:
             Log.indent(Log.Color.ORANGE)
 
 
-            with env.push_layer("script_params", Dict(script = child_params)):
-                child_config = ScriptConfig(env)
-                repo_config  = RepoConfig(env)
-                child_code   = compile(source, child_config.path, "exec", dont_inherit=True)
+            env.script_params = Dict(script = child_params)
 
-                child_script = Script(script_params = child_params, script_config = child_config, script_code = child_code)
-                Hancho.add_script(child_script)
-                parent_script.add_child(child_script)
+            child_config = ScriptConfig(env)
+            repo_config  = RepoConfig(env)
+            child_code   = compile(source, child_config.path, "exec", dont_inherit=True)
 
-                if child_config.is_repo:
-                    parent_repo = Repo(repo_config)
-                    Hancho.add_repo(parent_repo)
-                    parent_repo.add_script(child_script)
-                else:
-                    parent_script.repo.add_script(child_script)
+            child_script = Script(script_params = child_params, script_config = child_config, script_code = child_code)
+            Hancho.add_script(child_script)
+            parent_script.add_child(child_script)
 
-                Hancho.dedupe[dedupe_key] = child_script
+            if child_config.is_repo:
+                parent_repo = Repo(repo_config)
+                Hancho.add_repo(parent_repo)
+                parent_repo.add_script(child_script)
+            else:
+                parent_script.repo.add_script(child_script)
 
-                # Run the script
-                with cv_env.enter(env), cv_script.enter(child_script), chdir(child_config.root):
-                    exec(child_code, child_script.script_module.__dict__, {})
+            Hancho.dedupe[dedupe_key] = child_script
+
+            # Run the script
+            with cv_env.enter(env), cv_script.enter(child_script), chdir(child_config.root):
+                exec(child_code, child_script.script_module.__dict__, {})
 
         finally:
             Log.dedent()
@@ -3029,4 +3029,8 @@ def _start():
             # Don't leave the last line of the log sitting in line_buffer!
             Log.flush()
 
-_start()
+#_start()
+
+a = Onion(name = "onion_name", parent = None, foo = Dict(script = Dict(path = "asdflsdflkj")))
+
+print(a)
