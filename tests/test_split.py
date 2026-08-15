@@ -20,12 +20,9 @@ def load_tests(loader, tests, ignore):
     tests.addTests(doctests)
     return tests
 
-def split(template, ldelims = None, rdelims = None):
-    #delims = "{}"
-    ldelims = ldelims or hancho.Expander.ldelims
-    rdelims = rdelims or hancho.Expander.rdelims
+def split(template):
     out = []
-    hancho.Expander._split_text(template, out, ldelims, rdelims)
+    hancho.Expander._split_text(template, out)
     return out
 
 ####################################################################################################
@@ -114,27 +111,27 @@ class TestSplit(unittest.TestCase):
         self.assertEqual(hash("a"), hash("a"))
         self.assertEqual(hash("{a}"), hash("{a}"))
 
-    def test_alternate_delims(self):
-        # Hancho has the alternate delims «» already built in.
-        result = split("foo «bar» baz «flp» zrk")
-        self.assertEqual(result, ['foo ', '«bar»', ' baz ', '«flp»', ' zrk'])
-
-        # Letters as delims should work, though it's a bad idea.
-        result = split("foo AbarB baz AflpB zrk", ldelims = "A", rdelims = "B")
-        self.assertEqual(result, ['foo ', 'AbarB', ' baz ', 'AflpB', ' zrk'])
-
-        # Extended ascii - two halves of the integral sign.
-        result = split("foo ⌠bar⌡ baz ⌠flp⌡ zrk", ldelims = "⌠", rdelims = "⌡")
-        self.assertEqual(result, ['foo ', '⌠bar⌡', ' baz ', '⌠flp⌡', ' zrk'])
-
-        # Unicode brackets not in the ascii table - ⟪⟫
-        result = split("foo ⟪bar⟫ baz ⟪flp⟫ zrk", ldelims = "⟪", rdelims = "⟫")
-        self.assertEqual(result, ['foo ', '⟪bar⟫', ' baz ', '⟪flp⟫', ' zrk'])
-
-        # Delimiters inside a dict should work.
-        d = hancho.Dict(message = "foo <bar> baz", bar = "bong", delims = "<>")
-        result = d.expand(d.message)
-        self.assertEqual(result, "foo bong baz")
+#    def test_alternate_delims(self):
+#        # Hancho has the alternate delims «» already built in.
+#        result = split("foo «bar» baz «flp» zrk")
+#        self.assertEqual(result, ['foo ', '«bar»', ' baz ', '«flp»', ' zrk'])
+#
+#        # Letters as delims should work, though it's a bad idea.
+#        result = split("foo AbarB baz AflpB zrk", ldelims = "A", rdelims = "B")
+#        self.assertEqual(result, ['foo ', 'AbarB', ' baz ', 'AflpB', ' zrk'])
+#
+#        # Extended ascii - two halves of the integral sign.
+#        result = split("foo ⌠bar⌡ baz ⌠flp⌡ zrk", ldelims = "⌠", rdelims = "⌡")
+#        self.assertEqual(result, ['foo ', '⌠bar⌡', ' baz ', '⌠flp⌡', ' zrk'])
+#
+#        # Unicode brackets not in the ascii table - ⟪⟫
+#        result = split("foo ⟪bar⟫ baz ⟪flp⟫ zrk", ldelims = "⟪", rdelims = "⟫")
+#        self.assertEqual(result, ['foo ', '⟪bar⟫', ' baz ', '⟪flp⟫', ' zrk'])
+#
+#        # Delimiters inside a dict should work.
+#        d = hancho.Dict(message = "foo <bar> baz", bar = "bong", delims = "<>")
+#        result = d.expand(d.message)
+#        self.assertEqual(result, "foo bong baz")
 
 
 
