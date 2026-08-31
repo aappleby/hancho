@@ -610,6 +610,7 @@ class Path:
     resolve  = Utils.tree_map(lambda path : Path._resolve(path, strict = True))
 
     abspath  = Utils.tree_map(os.path.abspath)
+    normpath = Utils.tree_map(os.path.normpath)
     basename = Utils.tree_map(os.path.basename)
     dirname  = Utils.tree_map(os.path.dirname)
     swapext  = Utils.tree_map(lambda p, new_ext : os.path.splitext(p)[0] + new_ext)
@@ -672,9 +673,9 @@ class Path:
 
     @staticmethod
     def join(lhs, rhs, *args) -> str | list[str]:
-        #print(f"{type(lhs)} = {lhs}")
-        #print(f"{type(rhs)} = {rhs}")
-        return Utils.cross_join(os.path.join, lhs, rhs, *args)
+        def join(x, y):
+            return os.path.normpath(os.path.join(x, y))
+        return Utils.cross_join(join, lhs, rhs, *args)
 
 class ContextProxy[T]:
     # Helper that just wraps CVs so you can do "contextvar.foo".
@@ -1559,19 +1560,33 @@ class Task:
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
+    class Config:
+        def __init__(self):
+            self._name : str = Utils.MISSING
+            self._desc : str = Utils.MISSING
+            self._command : str = Utils.MISSING
+            self._cwd : str = Utils.MISSING
+            self._build_dir : str = Utils.MISSING
+            self._in_depfile : str = Utils.MISSING
+            self._depformat : str = Utils.MISSING
+            self._job_size : int = Utils.MISSING
+            self._dry_run : bool = Utils.MISSING
+
+
     def __init__(self, repo, script, env):
         self._repo = repo
         self._script = script
         self._env  = env
+        self._cfg = Task.Config()
 
         self._name : str = Utils.MISSING
         self._desc : str = Utils.MISSING
         self._command : str = Utils.MISSING
         self._cwd : str = Utils.MISSING
+        self._build_dir : str = Utils.MISSING
         self._in_depfile : str = Utils.MISSING
         self._depformat : str = Utils.MISSING
         self._job_size : int = Utils.MISSING
-        self._build_dir : str = Utils.MISSING
         self._dry_run : bool = Utils.MISSING
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -1628,90 +1643,31 @@ class Task:
     def __deepcopy__(self, _):
         return self
 
-class HanchoProxy(types.ModuleType):
 
-    Dict = Dict
-    Tool = Tool
-    Path = Path
 
-    log      = Log.log
-    dump     = Dumper.print
-    flatten  = Utils.flatten
-    run_cmd  = Utils.run_cmd
-    weave    = Utils.weave
-    hash     = Utils.hash
 
-    abspath  = Path.abspath
-    basename = Path.basename
-    dirname  = Path.dirname
-    join     = Path.join
-    relpath  = Path.relpath
-    resolve  = Path.resolve
-    swapext  = Path.swapext
 
-    class Abort(Exception): pass
-    class EarlyOut(Exception): pass
-    class Fail(Exception): pass
 
-    def __init__(self, repo : Repo, script : Script, env : Dict):
-        super().__init__("hancho_proxy")
-        self._repo   = repo
-        self._script = script
-        self._env    = env
 
-    def Task(self, *args, **kwargs):
 
-        task_env = copy.deepcopy(self._env)
-        task_env.task.merge(*args, kwargs)
 
-        task = Task(repo = self._repo, script = self._script, env = task_env)
-        self._script._tasks.append(task)
 
-        # Auto-start the task if it was created dynamically during the build.
-        if Utils.in_event_loop():
-            queue_task(task)
 
-        return task
 
-    def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
-        return load_script(self._env, self._repo, path, root, *args, **kwargs)._script._module
-
-    def repo(self, path, root = None, *args, **kwargs) -> types.ModuleType:
-        return load_script(self._env, None, path, root, *args, **kwargs)._script._module
-
-    def fail(self, message):
-        self._log_script_error(sys._getframe(1), "failed", message)
-        raise self.Fail()
-
-    def abort(self, message):
-        self._log_script_error(sys._getframe(1), "aborted", message)
-        raise self.Abort()
-
-    def earlyout(self, message = ""):
-        self._log_script_error(sys._getframe(1), "exited early", message)
-        raise self.EarlyOut()
-
-    def _log_script_error(self, frame, condition, message):
-        with Log.Level.ERROR, Log.Color.RED:
-            Log.log(f"Script {condition}:\n")
-            Log.log(f"  text = '{message}'\n")
-            Log.log(f"  file = {frame.f_code.co_filename}\n")
-            Log.log(f"  func = {frame.f_code.co_name}\n")
-            Log.log(f"  line = {frame.f_lineno}\n")
-
-    def build(self) -> int:
-        return hancho_build(self._repo)
-
-    @staticmethod
-    def init_for_testing(argv : list[str], *args, **kwargs):
-        return init_lib(argv, *args, **kwargs)
 
 hancho_aliases = Dict(
+    log      = Log.log,
+    dump     = Dumper.print,
+
+    Utils    = Utils,
     flatten  = Utils.flatten,
     run_cmd  = Utils.run_cmd,
     weave    = Utils.weave,
     hash     = Utils.hash,
+
+    Path     = Path,
     abspath  = Path.abspath,
+    normpath = Path.normpath,
     basename = Path.basename,
     dirname  = Path.dirname,
     join     = Path.join,
@@ -1741,7 +1697,7 @@ hancho_defaults = Dict(
     ),
     repo = Dict(
         root        = '{dirname(script.path)}',
-        build_dir   = "{join(repo.root, 'build')}",
+        build_dir   = "{join(root, 'build', build_tag)}",
         build_tag   = '',
         target      = '',
         build_force = False,
@@ -1751,7 +1707,7 @@ hancho_defaults = Dict(
     ),
     script = Dict(
         path    = os.path.abspath("build.hancho"),
-        root    = '{dirname(script.path)}',
+        root    = '{dirname(path)}',
         is_repo = True
     ),
     task = Dict(
@@ -1762,11 +1718,79 @@ hancho_defaults = Dict(
         in_depfile = '',
         depformat  = 'gcc',
         job_size   = 1,
-        build_dir  = '{abspath(join(repo.build_dir, repo.build_tag, relpath(script.root, repo.root)))}',
+        build_dir  = '{join(repo.build_dir, relpath(script.root, repo.root))}',
         dry_run    = '{repo.dry_run}',
         force      = '{repo.build_force}',
     ),
 )
+
+class HanchoProxy(types.ModuleType):
+
+    def __init__(self, repo : Repo, script : Script, env : Dict):
+        super().__init__("hancho_proxy")
+        self._repo   = repo
+        self._script = script
+        self._env    = env
+
+    def __getattr__(self, key):
+        # Delegate to hancho_aliases so we don't have to duplicate it.
+        return getattr(hancho_aliases, key)
+
+    Dict = Dict
+    Tool = Tool
+
+    def Task(self, *args, **kwargs):
+
+        task_env = copy.deepcopy(self._env)
+        task_env.task.merge(*args, kwargs)
+
+        task = Task(repo = self._repo, script = self._script, env = task_env)
+        self._script._tasks.append(task)
+
+        # Auto-start the task if it was created dynamically during the build.
+        if Utils.in_event_loop():
+            queue_task(task)
+
+        return task
+
+    def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
+        return load_script(self._env, self._repo, path, root, *args, **kwargs)._script._module
+
+    def repo(self, path, root = None, *args, **kwargs) -> types.ModuleType:
+        return load_script(self._env, None, path, root, *args, **kwargs)._script._module
+
+    class EarlyOut(Exception): pass
+    class Fail(Exception): pass
+    class Abort(Exception): pass
+
+    def fail(self, message):
+        self._log_script_error(sys._getframe(1), "failed", message)
+        raise self.Fail()
+
+    def abort(self, message):
+        self._log_script_error(sys._getframe(1), "aborted", message)
+        raise self.Abort()
+
+    def earlyout(self, message = ""):
+        self._log_script_error(sys._getframe(1), "exited early", message)
+        raise self.EarlyOut()
+
+    def _log_script_error(self, frame, condition, message):
+        with Log.Level.ERROR, Log.Color.RED:
+            Log.log(f"Script {condition}:\n")
+            Log.log(f"  text = '{message}'\n")
+            Log.log(f"  file = {frame.f_code.co_filename}\n")
+            Log.log(f"  func = {frame.f_code.co_name}\n")
+            Log.log(f"  line = {frame.f_lineno}\n")
+
+    def build(self) -> int:
+        return hancho_build(self._repo)
+
+    @staticmethod
+    def init_for_testing(argv : list[str], *args, **kwargs):
+        return init_lib(argv, *args, **kwargs)
+
+
 
 
 
@@ -1803,7 +1827,6 @@ def init_lib(argv, *args, **kwargs) -> HanchoProxy:
     top_env = Dict(hancho_defaults, flags)
     object.__setattr__(top_env, "_up", hancho_aliases)
     Hancho.init(top_env)
-    #root_proxy = load_script(top_env, None, None, os.path.dirname(__file__))
     root_proxy = load_script(top_env, None, None, None)
     return root_proxy
 
@@ -1863,19 +1886,6 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
         if v is not None:
             argv_flags.set_by_path(k, v)
 
-#    task_params = Dict(
-#        name = "<no name>",
-#        desc = "<no desc>",
-#        command = "",
-#        cwd = "{repo.root}",
-#        in_depfile = "",
-#        depformat = "gcc",
-#        job_size = 1,
-#        build_dir = "{abspath(join(build.root, build.tag, relpath(script.root, repo.root)))}"
-#    )
-#
-#    argv_flags.task = task_params
-
     # ------------------------------------
     # Load flags from opt_file if present
 
@@ -1931,7 +1941,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, root : str | None, *args, **kwargs) -> HanchoProxy:
 
     if path:
-        root = root or old_env.script.root
+        root = root or "{script.root}"
         path = old_env.expand(path)
         root = old_env.expand(root)
 
@@ -1943,19 +1953,13 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     with Log.Level.VERBOSE, Log.Color.ORANGE:
         Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
-    env = copy.deepcopy(old_env)
-    env.script.merge(*args, kwargs)
-
-    env.script.path = path
-    if root:
-        env.script.root = root
-    else:
-        root = env.script.root
+    new_env = copy.deepcopy(old_env)
+    new_env.script.merge(*args, kwargs, path = path, root = root)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
     # build, which they should be in practice.
-    dupe_key = Dumper.dump(env, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
+    dupe_key = Dumper.dump(new_env, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
     dupe_key = Dumper.depointer(dupe_key)
     dupe_key = "".join(dupe_key.split())
 
@@ -1963,22 +1967,20 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
         return dupe
 
     if path:
-        path = Path.resolve(Expander.expand(path, env.script))
         with open(path, encoding="utf-8") as file:
             source = file.read()
             code = compile(source, path, "exec", dont_inherit=True)
     else:
         code = None
 
-    root   = Path.resolve(Expander.expand(root, env.script))
-    repo   = parent_repo or Repo(env)
+    repo   = parent_repo or Repo(new_env)
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
-    script = Script(repo, path, root, module, env, code)
-    proxy  = HanchoProxy(repo, script, env)
+    script = Script(repo, path, root, module, new_env, code)
+    proxy  = HanchoProxy(repo, script, new_env)
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
-    module.env      = env     # type: ignore
+    module.env      = new_env     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
     Hancho.repos.add(proxy._repo)
@@ -2020,7 +2022,7 @@ def hancho_main() -> int:
     Log.indent(Log.Color.ORANGE)
 
     top_repo  = Repo(top_env)
-    top_proxy = load_script(top_env, top_repo, top_env.script.path, top_env.script.root)
+    top_proxy = load_script(top_env, top_repo, "{script.path}", "{script.root}")
 
     Log.dedent()
     time_b1 = time.perf_counter()
@@ -2384,7 +2386,7 @@ def expand_task(task : Task):
 
     # We need to expand the build dir first so we can use it in fix_paths.
     exp_task = Expander(task._env.task)
-    task._build_dir = exp_task.build_dir
+    build_dir = exp_task.build_dir
 
     # Then we expand all io fields and fix their paths.
     for _field, _files in task._env.task.items():
@@ -2398,7 +2400,7 @@ def expand_task(task : Task):
 
         files = Expander.expand(files, task._env.task)
         files = Utils.flatten(files)
-        files = fix_paths(task, _field, files, task._build_dir)
+        files = fix_paths(task, _field, files, build_dir)
 
         #setattr(self.config, _field, files[0] if len(files) == 1 else files)
         #task.expanded_files[_field] = files[0] if len(files) == 1 else files
@@ -2413,10 +2415,21 @@ def expand_task(task : Task):
         elif _field.startswith("out_"):
             task.out_files[_field] = files
 
+    task._cfg._name       = exp_task.name
+    task._cfg._desc       = exp_task.desc
+    task._cfg._command    = exp_task.command
+    task._cfg._cwd        = exp_task.cwd
+    task._cfg._build_dir  = exp_task.build_dir
+    task._cfg._in_depfile = exp_task.in_depfile
+    task._cfg._depformat  = exp_task.depformat
+    task._cfg._job_size   = exp_task.job_size
+    task._cfg._dry_run    = exp_task.dry_run
+
     task._name       = exp_task.name
     task._desc       = exp_task.desc
     task._command    = exp_task.command
     task._cwd        = exp_task.cwd
+    task._build_dir  = exp_task.build_dir
     task._in_depfile = exp_task.in_depfile
     task._depformat  = exp_task.depformat
     task._job_size   = exp_task.job_size
