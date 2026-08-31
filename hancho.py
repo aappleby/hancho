@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 #!/usr/bin/python3
 # ruff: noqa: RUF012
-# pyright: reportSelfClsParameterName=false
 # region Header
 
 """
@@ -52,6 +51,9 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from functools import wraps
 from typing import Any, cast
+
+# Just a sanity check that we haven't accidentally imported the 'real' hancho twice.
+assert "hancho" not in sys.modules
 
 hancho = sys.modules[__name__]
 
@@ -728,6 +730,7 @@ class Dict(dict):
 
         self.merge(*args, kwargs)
         self._sanity()
+        pass
 
     def __deepcopy__(self, memo):
         if id(self) in memo:
@@ -816,7 +819,8 @@ class Dict(dict):
     def _sanity(self):
         for _, val in self.items():
             if isinstance(val, Dict):
-                assert val._up is self
+                if val._up is not self:
+                    raise AssertionError("val._up is not self")
                 val._sanity()
 
     def _walk(self, key, spawn = False):
@@ -835,19 +839,36 @@ class Dict(dict):
 
     def _get(self, key, check_parent):
         try:
-            dest, key2 = self._walk(key, spawn = False)
-            return dict.__getitem__(dest, key2)
+            return dict.__getitem__(self, key)
         except KeyError:
             if self._up and check_parent:
                 return self._up._get(key, check_parent)
             else:
                 raise
 
-    def _set(self, key, val):
+    def get_by_path(self, key, check_parent):
+        try:
+            dest, key2 = self._walk(key, spawn = False)
+            return self._get(dest, key2)
+        except KeyError:
+            if self._up and check_parent:
+                return self._up.get_by_path(key, check_parent)
+            else:
+                raise
+
+    def set_by_path(self, key, val):
         dest, key = self._walk(key, spawn = True)
         if isinstance(val, Dict):
             object.__setattr__(val, "_up", self)
         dict.__setitem__(dest, key, val)
+
+    def _set(self, key, val):
+        if '.' in key:
+            print(key)
+        #dest, key = self._walk(key, spawn = True)
+        if isinstance(val, Dict):
+            object.__setattr__(val, "_up", self)
+        dict.__setitem__(self, key, val)
 
     def _del(self, key):
         dest, key = self._walk(key, spawn = False)
@@ -880,6 +901,9 @@ class Dict(dict):
         except KeyError as err:
             raise AttributeError from err
 
+    def expand(self, variant : Any) -> Any:
+        return Expander.expand(variant, Expander(self))
+
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
     pass
@@ -905,9 +929,12 @@ class Expander(abc.Mapping):
     # not expandable by that dict. This allows nested dicts to contain templates that can only be
     # expanded an outer dict, and things will still Just Work.
 
+    # region instance methods
 
-    def __init__(self, env : abc.Mapping):
-        self.env : abc.Mapping
+    def __init__(self, env : Dict | Expander):
+        if isinstance(env, Expander):
+            return env
+        self.env : Dict
         object.__setattr__(self, "env", env)
 
 
@@ -939,13 +966,29 @@ class Expander(abc.Mapping):
         return self.env.__len__()
 
     def _get(self, key):
-        trace = Tracer(self.env, "get", key)
-        result = self.env[key]
-        result = Expander.expand(result, self.env)
-        if isinstance(result, abc.Mapping):
+        trace = Tracer(self, "get", key)
+        env = self.env
+        result = None
+
+        while env:
+            if key in env:
+                result = env[key]
+                break
+            elif env._up:
+                env = env._up
+            else:
+                trace.exit(None)
+                raise KeyError(key)
+
+        if isinstance(result, (Dict, Expander)):
             result = Expander(result)
+        else:
+            result = Expander.expand(result, self)
         trace.exit(result)
+
         return result
+
+    # endregion
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
     # having to do regex stuff every time.
@@ -968,19 +1011,26 @@ class Expander(abc.Mapping):
     MAX_EVALS = 300
 
     @classmethod
-    def expand(cls, variant : Any, env : abc.Mapping):
+    def expand(cls, variant : Any, env : Dict | Expander):
+        if isinstance(env, Dict):
+            env = Expander(env)
+
         if variant is Utils.MISSING:
             raise AssertionError("Tried to expand a sentinel value")
+
         elif isinstance(variant, str):
             # We have to catch this case before the 'is collection' below because strings _are_
             # collections, alas.
             pass
+        elif isinstance(variant, (bytes, bytearray)):
+            return variant
         elif isinstance(variant, abc.Mapping):
             return type(variant)(**{k: Expander.expand(v, env) for k, v in variant.items()})
         elif isinstance(variant, abc.Collection):
             return [Expander.expand(v, env) for v in variant]
         elif not isinstance(variant, str):
             return variant
+
 
         # If old_depth = 0, then this is the start of a new expand().
         new_expand = Expander.cv_depth.get() == 0
@@ -993,7 +1043,7 @@ class Expander(abc.Mapping):
                 Expander.cv_evals.set(0)
 
     @classmethod
-    def _expand_text(cls, text : str, env : abc.Mapping) -> Any:
+    def _expand_text(cls, text : str, env : Expander) -> Any:
         old_text = ""
         blocks : list[str] = []
 
@@ -1002,15 +1052,23 @@ class Expander(abc.Mapping):
         while old_text != text:
 
             blocks.clear()
-            if not Expander._split_text(text, blocks):
-                result = text
-                return result
+            Expander._split_text(text, blocks)
+            #result = text
+            #return result
 
-            #if len(blocks) == 1 and isinstance(blocks[0], Expander.Macro):
-            #    return Expander._eval_macro(blocks[0], env)
+            match blocks:
+                case []:
+                    return text
+                case [Expander.Macro() as m]:
+                    return Expander._eval_macro(m, env)
+                case [Expander.Literal() as l]:
+                    return l
 
-            if len(blocks) == 1 and isinstance(blocks[0], Expander.Literal):
-                return blocks[0]
+#            if len(blocks) == 1:
+#                if isinstance(blocks[0], Expander.Macro):
+#                    return Expander._eval_macro(blocks[0], env)
+#                if isinstance(blocks[0], Expander.Literal):
+#                    return blocks[0]
 
             # ----------
 
@@ -1032,7 +1090,7 @@ class Expander(abc.Mapping):
         return result
 
     @classmethod
-    def _eval_macro(cls, macro : Expander.Macro, env : abc.Mapping):
+    def _eval_macro(cls, macro : Expander.Macro, env : Expander):
 
         # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
@@ -1053,7 +1111,7 @@ class Expander(abc.Mapping):
         try:
             Expander.cv_evals.set(old_evals + 1)
             Expander.cv_depth.set(old_depth + 1)
-            result = eval(macro[1:-1], hancho_aliases, env)
+            result = eval(macro[1:-1], None, env)
             trace.exit(result)
         except RecursionError:
             raise
@@ -1072,7 +1130,6 @@ class Expander(abc.Mapping):
             Expander.cv_depth.set(old_depth)
 
         return result
-
 
     @classmethod
     def _split_text(cls, text : str, out : list[str]) -> int:
@@ -1127,6 +1184,7 @@ class Dumper:
 
     # These types don't need a type annotation when dumped.
     base_types = (
+        Enum,
         str,
         Expander.Literal,
         Expander.Macro,
@@ -1193,7 +1251,7 @@ class Dumper:
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts, seen)
-        elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val):  # noqa: SIM114
+        elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, Enum):  # noqa: SIM114
             return cls._dump_scalar(key, val, opts, seen)
         elif isinstance(val, (str, bytes, bytearray)):
             return cls._dump_scalar(key, val, opts, seen)
@@ -1402,7 +1460,7 @@ class Repo:
             yield from script.yield_tasks()
 
 def load_stat_db(repo):
-    stat_db_path = os.path.join(repo._root, 'hancho.json')
+    stat_db_path = os.path.join(repo._build_dir, 'hancho.json')
 
     if os.path.isfile(stat_db_path):
         with open(stat_db_path) as contents:
@@ -1433,10 +1491,10 @@ def save_stat_db(repo):
         for file in Utils.yield_values(task.in_files):
             stat_db[file] = Utils.get_stats(file)
 
-        if task.config.in_depfile:
-            deplines = Utils.load_depfile(task.config.in_depfile, task.config.depformat, task.config.cwd)
+        if task._in_depfile:
+            deplines = Utils.load_depfile(task._in_depfile, task._depformat, task._cwd)
             for file in deplines:
-                stat_db[file] = repo.get_stats(file) # type: ignore
+                stat_db[file] = Utils.get_stats(file) # type: ignore
 
     # We gather stats from output files in a second pass so that their .command fields
     # overwrite any blank ones from the first pass.
@@ -1446,9 +1504,9 @@ def save_stat_db(repo):
             continue
 
         for file in Utils.yield_values(task.out_files):
-            stat_db[file] = Utils.get_stats(file, task.config.command)
+            stat_db[file] = Utils.get_stats(file, task._command)
 
-    stat_db_path = Path.join(repo._root, 'hancho.json')
+    stat_db_path = Path.join(repo._build_dir, 'hancho.json')
     Utils.save_json(stat_db, stat_db_path)
 
     # ------------------------------------
@@ -1463,12 +1521,12 @@ def save_stat_db(repo):
         for file in Utils.yield_values(task.in_files):
             # Haven't tested this in an IDE, but I think it matches the spec.
             comp_db[file] = {
-                "directory" : task.config.cwd,
-                "command"   : Utils.commands_to_string(task.config.command),
+                "directory" : task._cwd,
+                "command"   : Utils.commands_to_string(task._command),
                 "file"      : file,
             }
 
-    comp_db_path = Path.join(repo._root, 'compile_commands.json')
+    comp_db_path = Path.join(repo._build_dir, 'compile_commands.json')
     Utils.save_json(list(comp_db.values()), comp_db_path)
 
 
@@ -1616,11 +1674,9 @@ class HanchoProxy(types.ModuleType):
         return task
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
-        root = root or os.path.dirname(path)
         return load_script(self._env, self._repo, path, root, *args, **kwargs)._script._module
 
     def repo(self, path, root = None, *args, **kwargs) -> types.ModuleType:
-        root = root or os.path.dirname(path)
         return load_script(self._env, None, path, root, *args, **kwargs)._script._module
 
     def fail(self, message):
@@ -1650,19 +1706,19 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(argv : list[str], *args, **kwargs):
         return init_lib(argv, *args, **kwargs)
 
-hancho_aliases = {
-    "flatten"  : Utils.flatten,
-    "run_cmd"  : Utils.run_cmd,
-    "weave"    : Utils.weave,
-    "hash"     : Utils.hash,
-    "abspath"  : Path.abspath,
-    "basename" : Path.basename,
-    "dirname"  : Path.dirname,
-    "join"     : Path.join,
-    "relpath"  : Path.relpath,
-    "resolve"  : Path.resolve,
-    "swapext"  : Path.swapext,
-}
+hancho_aliases = Dict(
+    flatten  = Utils.flatten,
+    run_cmd  = Utils.run_cmd,
+    weave    = Utils.weave,
+    hash     = Utils.hash,
+    abspath  = Path.abspath,
+    basename = Path.basename,
+    dirname  = Path.dirname,
+    join     = Path.join,
+    relpath  = Path.relpath,
+    resolve  = Path.resolve,
+    swapext  = Path.swapext,
+)
 
 hancho_defaults = Dict(
     hancho = Dict(
@@ -1745,8 +1801,10 @@ def _start():
 def init_lib(argv, *args, **kwargs):
     flags = parse_flags(argv, *args, **kwargs)
     top_env = Dict(hancho_defaults, flags)
+    object.__setattr__(top_env, "_up", hancho_aliases)
     Hancho.init(top_env)
-    root_proxy = load_script(top_env, None, None, os.path.dirname(__file__))
+    #root_proxy = load_script(top_env, None, None, os.path.dirname(__file__))
+    root_proxy = load_script(top_env, None, None, None)
     return root_proxy
 
 def parse_flags(argv, *args, **kwargs) -> Dict:
@@ -1803,7 +1861,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     argv_flags = Dict()
     for k, v in argv_vars.items():
         if v is not None:
-            argv_flags[k] = v
+            argv_flags.set_by_path(k, v)
 
 #    task_params = Dict(
 #        name = "<no name>",
@@ -1863,20 +1921,36 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     flags = Dict()
     flags.merge(argv_flags)
 
-    flags.merge(mystery_flags)
+    for k, v in mystery_flags.items():
+        flags.set_by_path(k, v)
+
     flags.merge(*args, kwargs)
 
     return flags
 
-def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, root : str, *args, **kwargs) -> HanchoProxy:
+def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, root : str | None, *args, **kwargs) -> HanchoProxy:
+
+    if path:
+        root = root or old_env.script.root
+        path = old_env.expand(path)
+        root = old_env.expand(root)
+
+        path = Path.resolve(path)
+        root = Path.resolve(root)
+    else:
+        assert root is None
 
     with Log.Level.VERBOSE, Log.Color.ORANGE:
         Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
     env = copy.deepcopy(old_env)
     env.script.merge(*args, kwargs)
+
     env.script.path = path
-    env.script.root = root
+    if root:
+        env.script.root = root
+    else:
+        root = env.script.root
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
@@ -1917,6 +1991,7 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     if code and root:
         with chdir(root):
             Log.indent(Log.Color.ORANGE)
+            sys.modules["hancho"] = proxy
             exec(code, module.__dict__, {})
             Log.dedent()
 
@@ -1926,6 +2001,7 @@ def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
     top_env = Dict(hancho_defaults, flags)
+    object.__setattr__(top_env, "_up", hancho_aliases)
     Hancho.init(top_env)
 
     with Log.Level.VERBOSE, Log.Color.LIME:
@@ -2079,17 +2155,23 @@ def hancho_build(top_repo : Repo) -> int:
 
     return result
 
-def queue_task(task):
-    if not task._enabled:
-        Runner.tasks_enabled += 1
-        task._enabled = True
+def create_aio_task(task):
+    assert Utils.in_event_loop()
 
-    if Utils.in_event_loop() and not task._aio_task:
+    if task._aio_task is None:
         t = asyncio.create_task(task_top(task), context=task._aio_context)
         t.hancho_task = task # type: ignore
         Runner.live_aio_tasks.add(t)
         t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
         task._aio_task = t
+
+def queue_task(task):
+    if not task._enabled:
+        Runner.tasks_enabled += 1
+        task._enabled = True
+
+    if Utils.in_event_loop():
+        create_aio_task(task)
 
     # Start all tasks referenced by the config so we don't deadlock while waiting for them.
     for v in task.input_tasks:
@@ -2105,6 +2187,14 @@ def queue_task(task):
 
 async def async_run_tasks():
     """Run all tasks until we run out."""
+
+    # ------------------------------------
+    # Create asyncio tasks for all enabled Hancho tasks.
+
+    for repo in Hancho.repos:
+        for task in repo.yield_tasks():
+            if task._enabled:
+                create_aio_task(task)
 
     # ------------------------------------
     # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
@@ -2173,7 +2263,7 @@ async def task_top(task):
         Runner.tasks_started += 1
         task._task_id = Runner.tasks_started
         with Log.Level.VERBOSE:
-            task.log(Utils.instance_tag(task) + " starting\n")
+            log_task(task, Utils.instance_tag(task) + " starting\n")
 
         # Expand all mandatory fields in the raw config and fix raw file paths.
         expand_task(task)
@@ -2220,12 +2310,12 @@ async def task_top(task):
         task._error = ex
     except Task.SKIPPED as ex:
         with Log.Level.VERBOSE:
-            task.log(str(ex) + "\n")
+            log_task(task, str(ex) + "\n")
         task._error = ex
     except Exception as ex:
+        with Log.Level.ERROR:
+            Log.log(traceback.format_exc() + "\n")
         log_exception(task, "Task threw an exception!", ex)
-        #with Log.Level.ERROR:
-        #    Log.log(traceback.format_exc() + "\n")
         task._error = ex
     finally:
         Runner.release(task._cores)
@@ -2240,10 +2330,10 @@ async def task_main(task):
     text += repr(task._desc) if task._desc else ""
 
     with Log.Level.NORMAL, Log.Color.TEAL:
-        task.log(f"Task {text}\n")
+        log_task(task, f"Task {text}\n")
 
     with Log.Level.VERBOSE, Log.color(0x606060):
-        task.log(f"Task rebuilding because: {task._reason}\n")
+        log_task(task, f"Task rebuilding because: {task._reason}\n")
 
     time_a = time.perf_counter()
 
@@ -2252,15 +2342,15 @@ async def task_main(task):
         if command is None:
             continue
         elif callable(command):
-            await task.call_callback(command)
+            await call_callback(task, command)
         else:
-            await task.run_command(command)
+            await run_command(task, command)
 
     time_b = time.perf_counter()
 
     with Log.Level.VERBOSE, Log.color(0x606060):
         message  = f"Task took {time_b-time_a:8.6f} sec: {text}\n"
-        task.log(message)
+        log_task(task, message)
 
     # See if the task wrote all its output files
 
@@ -2288,17 +2378,17 @@ async def await_inputs(task):
             raise task._error from ex
 
 def expand_task(task):
-    repo = task._repo
-
     with Log.Level.DEBUG:
-        task.log("Task config before expand:\n")
-        task.log(Dumper.dump(task._proxy._env) + "\n")
+        log_task(task, "Task env:\n")
+        log_task(task, Dumper.dump(task._task_env) + "\n")
 
     # We need to expand the build dir first so we can use it in fix_paths.
+    exp = Expander(task._task_env.task)
+    task._build_dir = exp.build_dir
 
     # Then we expand all io fields and fix their paths.
-    for _field, _files in task._env.items():
-        if not _field.startswith("in_") and not _field.startswith("out_") and _field != "in_depfile":
+    for _field, _files in task._task_env.task.items():
+        if not _field.startswith("in_") and not _field.startswith("out_"): # and _field != "in_depfile":
             continue
 
         files = [
@@ -2306,13 +2396,13 @@ def expand_task(task):
             for val in Utils.yield_values(_files)
         ]
 
+        files = Expander.expand(files, task._task_env.task)
         files = Utils.flatten(files)
-        files = Expander.expand(files, task._env)
-        files = task.fix_paths(_field, files, repo._build_dir)
+        files = fix_paths(task, _field, files, task._build_dir)
 
         #setattr(self.config, _field, files[0] if len(files) == 1 else files)
         #task.expanded_files[_field] = files[0] if len(files) == 1 else files
-        task._env[_field] = files[0] if len(files) == 1 else files
+        task._task_env.task[_field] = files[0] if len(files) == 1 else files
 
         # FIXME did the config objects break depfile?
 
@@ -2326,7 +2416,6 @@ def expand_task(task):
     # FIXME I don't think the fixed paths are ending up back in the env :/
     #task.config = TaskConfig(env)
 
-    exp = Expander(task._env)
     task._name       = exp.name
     task._desc       = exp.desc
     task._command    = exp.command
@@ -2334,14 +2423,13 @@ def expand_task(task):
     task._in_depfile = exp.in_depfile
     task._depformat  = exp.depformat
     task._job_size   = exp.job_size
-    task._build_dir  = exp.build_dir
     task._dry_run    = exp.dry_run
 
     # And now we can do stuff that needs to read self.config
 
-    for _field in task._env:
+    for _field in task._task_env:
         if (_field.startswith("out_") or _field == "in_depfile") and not task._dry_run:
-            file = task._env[_field]
+            file = task._task_env[_field]
             os.makedirs(Path.dirname(file), exist_ok=True)
 
     # FIXME commenting this out is gonna break something
@@ -2349,8 +2437,8 @@ def expand_task(task):
     #    self.config.command = self.config.command[0]
 
     with Log.Level.DEBUG:
-        task.log("Task after expand:\n")
-        task.log(Dumper.dump(task) + "\n")
+        log_task(task, "Task after expand:\n")
+        log_task(task, Dumper.dump(task) + "\n")
 
 def fix_paths(task, field, file, build_dir):
     """
@@ -2360,9 +2448,9 @@ def fix_paths(task, field, file, build_dir):
     repo/build, so we need to fix up the paths to match.
     """
     if isinstance(file, (list, set, tuple)):
-        return [task.fix_paths(field, f, build_dir) for f in file]
+        return [fix_paths(task, field, f, build_dir) for f in file]
     if isinstance(file, abc.Mapping):
-        return {k:task.fix_paths(field, f, build_dir) for k, f in file}
+        return {k:fix_paths(task, field, f, build_dir) for k, f in file}
 
     # Join script_cwd with the filename to produce an absolute path.
     file = Path.join(task._script._root, file)
@@ -2443,7 +2531,7 @@ def sanity_check(task):
 
 async def run_command(task, command):
     with Log.Level.VERBOSE, Log.Color.BLUE:
-        task.log(f"{Path.relpath(task._cwd, task._repo._root)}$ {command}\n")
+        log_task(task, f"{Path.relpath(task._cwd, task._repo._root)}$ {command}\n")
 
     proc = None
     try:
@@ -2488,12 +2576,12 @@ async def run_command(task, command):
 
     if task._stdout or task._stderr:
         with Log.Level.VERBOSE, Log.color(0x666666):
-            task.log(task.dump_stdout())
+            log_task(task, dump_stdout(task))
 
 async def call_callback(task, command):
     with Log.Level.VERBOSE, Log.Color.BLUE:
         callback_dir = Path.relpath(task._script._root, task._repo._root)
-        task.log(f"{callback_dir}$ {command}\n")
+        log_task(task, f"{callback_dir}$ {command}\n")
 
     # Callbacks run from the script dir where they were defined so that relative paths used
     # in the callback will be correct.
@@ -2526,7 +2614,7 @@ def rebuild_reason(task) -> str:
     # ------------------------------------
     # Check the trivial reasons to rebuild
 
-    if repo._force:
+    if repo._build_force:
         repo.build_reasons["forced"] += 1
         return "Target forced to rebuild"
 
@@ -2543,15 +2631,15 @@ def rebuild_reason(task) -> str:
     # ------------------------------------
 
     for filename in Utils.yield_values(task.in_files):
-        if reason := repo.check_stat(filename):
+        if reason := check_stat(repo, filename):
             return reason
 
     for filename in task._old_deplines:
-        if reason := repo.check_stat(filename):
+        if reason := check_stat(repo, filename):
             return reason
 
     for filename in Utils.yield_values(task.out_files):
-        if reason := check_stat(repo, filename, task.config.command):
+        if reason := check_stat(repo, filename, task._command):
             return reason
 
     repo.build_reasons["*task clean"] += 1
@@ -2569,21 +2657,21 @@ def check_stat(repo, filename, command = None):
     old_stat = repo.stat_db[filename]
     new_stat = Utils.get_stats(filename, command)
 
-    if old_stat.st_mtime_ns != new_stat.st_mtime_ns:
+    if old_stat['st_mtime_ns'] != new_stat['st_mtime_ns']:
         repo.build_reasons["mtime mismatch"] += 1
-        return f"Mtime mismatch {old_stat.st_mtime_ns} != {new_stat.st_mtime_ns} for : {filename}"
+        return f"Mtime mismatch {old_stat['st_mtime_ns']} != {new_stat['st_mtime_ns']} for : {filename}"
 
-    if old_stat.st_size != new_stat.st_size:
+    if old_stat['st_size'] != new_stat['st_size']:
         repo.build_reasons["size mismatch"] += 1
-        return f"Size mismatch {old_stat.st_size} != {new_stat.st_size} for : {filename}"
+        return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
 
-    if old_stat.hash != new_stat.hash:
+    if old_stat['hash'] != new_stat['hash']:
         repo.build_reasons["hash mismatch"] += 1
-        return f"Hash mismatch {old_stat.hash} -> {new_stat.hash} for : {filename}"
+        return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
 
-    if command is not None and old_stat.command != new_stat.command:
+    if command is not None and old_stat['command'] != new_stat['command']:
         repo.build_reasons["command changed"] += 1
-        return f"Command used to generate file has changed : {filename!r} : {old_stat.command!r} : {new_stat.command!r}"
+        return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
 
     # Does not need to rebuild based on file stats / hash
     repo.build_reasons["*hash match"] += 1
@@ -2622,7 +2710,7 @@ def log_exception(task, message, ex = None):
         Log.log(f"command   = {task._command}\n")
         if ex:
             Log.log_exception(ex)
-        Log.log(task.dump_stdout())
+        Log.log(dump_stdout(task))
 
         Log.log("========================================\n")
 
