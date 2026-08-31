@@ -1459,7 +1459,7 @@ class Repo:
         for script in self.scripts:
             yield from script.yield_tasks()
 
-def load_stat_db(repo):
+def load_stat_db(repo : Repo):
     stat_db_path = os.path.join(repo._build_dir, 'hancho.json')
 
     if os.path.isfile(stat_db_path):
@@ -1472,7 +1472,7 @@ def load_stat_db(repo):
             Log.log(f"No stat db for {repo._root}\n")
         repo.stat_db = Dict()
 
-def save_stat_db(repo):
+def save_stat_db(repo : Repo):
     if repo._dry_run:
         return
 
@@ -1562,17 +1562,17 @@ class Task:
     def __init__(self, repo, script, env):
         self._repo = repo
         self._script = script
-        self._task_env  = env
+        self._env  = env
 
-        #exp = Expander(env.task)
-        #self._name       = exp.name
-        #self._desc       = exp.desc
-        #self._command    = exp.command
-        #self._cwd        = exp.cwd
-        #self._in_depfile = exp.in_depfile
-        #self._depformat  = exp.depformat
-        #self._job_size   = exp.job_size
-        #self._build_dir  = exp.build_dir
+        self._name : str = Utils.MISSING
+        self._desc : str = Utils.MISSING
+        self._command : str = Utils.MISSING
+        self._cwd : str = Utils.MISSING
+        self._in_depfile : str = Utils.MISSING
+        self._depformat : str = Utils.MISSING
+        self._job_size : int = Utils.MISSING
+        self._build_dir : str = Utils.MISSING
+        self._dry_run : bool = Utils.MISSING
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -1588,7 +1588,7 @@ class Task:
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self._task_env) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self._env) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1600,7 +1600,7 @@ class Task:
         self._aio_context = contextvars.copy_context()
 
         # Input dependencies read from the source.o.d file.
-        self._deplines = []
+        self._old_deplines = []
 
         # Why this task rebuilt, or "" if it did not need to rebuild.
         self._reason = ""
@@ -1798,7 +1798,7 @@ def _start():
         # Don't leave the last line of the log sitting in line_buffer!
         Log.flush()
 
-def init_lib(argv, *args, **kwargs):
+def init_lib(argv, *args, **kwargs) -> HanchoProxy:
     flags = parse_flags(argv, *args, **kwargs)
     top_env = Dict(hancho_defaults, flags)
     object.__setattr__(top_env, "_up", hancho_aliases)
@@ -2123,7 +2123,7 @@ def hancho_build(top_repo : Repo) -> int:
 
     if top_repo._target:
         # Enable all tasks whose name matches the target regex
-        # NOTE - We match task.task_params.name, _not_ the expanded task.config.name.
+        # NOTE - We match task.task_params.name, _not_ the expanded task._name.
         # This is because the task _has not initialized yet_, so we have no config.name.
         target_regex = re.compile(top_repo._target)
 
@@ -2155,7 +2155,7 @@ def hancho_build(top_repo : Repo) -> int:
 
     return result
 
-def create_aio_task(task):
+def create_aio_task(task : Task):
     assert Utils.in_event_loop()
 
     if task._aio_task is None:
@@ -2165,7 +2165,7 @@ def create_aio_task(task):
         t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
         task._aio_task = t
 
-def queue_task(task):
+def queue_task(task : Task):
     if not task._enabled:
         Runner.tasks_enabled += 1
         task._enabled = True
@@ -2254,7 +2254,7 @@ async def async_run_tasks():
 
     return 1 if Runner.tasks_failed or Runner.tasks_broken else 0
 
-async def task_top(task):
+async def task_top(task : Task):
     try:
         # Await all tasks in our input fields and then flatten them.
         await await_inputs(task)
@@ -2281,7 +2281,7 @@ async def task_top(task):
 
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if task._dry_run:
+        if task._repo._dry_run:
             return
 
         # Paths updated. See if we need to rebuild our outputs.
@@ -2322,7 +2322,7 @@ async def task_top(task):
 
     raise task._error
 
-async def task_main(task):
+async def task_main(task : Task):
     # Run all the task's commands
 
     text  = repr(task._name) if task._name else ""
@@ -2360,7 +2360,7 @@ async def task_main(task):
 
     # Done!
 
-async def await_inputs(task):
+async def await_inputs(task : Task):
     # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
     # modifying tasks after they're created but before they're started. If you point task B's
     # inputs at task A and task A's inputs at task B and it blows up, that's on you.
@@ -2377,17 +2377,17 @@ async def await_inputs(task):
             task._error = Task.CANCELLED(f"Task {hex(id(task))} is cancelled")
             raise task._error from ex
 
-def expand_task(task):
+def expand_task(task : Task):
     with Log.Level.DEBUG:
         log_task(task, "Task env:\n")
-        log_task(task, Dumper.dump(task._task_env) + "\n")
+        log_task(task, Dumper.dump(task._env) + "\n")
 
     # We need to expand the build dir first so we can use it in fix_paths.
-    exp = Expander(task._task_env.task)
-    task._build_dir = exp.build_dir
+    exp_task = Expander(task._env.task)
+    task._build_dir = exp_task.build_dir
 
     # Then we expand all io fields and fix their paths.
-    for _field, _files in task._task_env.task.items():
+    for _field, _files in task._env.task.items():
         if not _field.startswith("in_") and not _field.startswith("out_"): # and _field != "in_depfile":
             continue
 
@@ -2396,13 +2396,13 @@ def expand_task(task):
             for val in Utils.yield_values(_files)
         ]
 
-        files = Expander.expand(files, task._task_env.task)
+        files = Expander.expand(files, task._env.task)
         files = Utils.flatten(files)
         files = fix_paths(task, _field, files, task._build_dir)
 
         #setattr(self.config, _field, files[0] if len(files) == 1 else files)
         #task.expanded_files[_field] = files[0] if len(files) == 1 else files
-        task._task_env.task[_field] = files[0] if len(files) == 1 else files
+        task._env.task[_field] = files[0] if len(files) == 1 else files
 
         # FIXME did the config objects break depfile?
 
@@ -2413,34 +2413,28 @@ def expand_task(task):
         elif _field.startswith("out_"):
             task.out_files[_field] = files
 
-    # FIXME I don't think the fixed paths are ending up back in the env :/
-    #task.config = TaskConfig(env)
+    task._name       = exp_task.name
+    task._desc       = exp_task.desc
+    task._command    = exp_task.command
+    task._cwd        = exp_task.cwd
+    task._in_depfile = exp_task.in_depfile
+    task._depformat  = exp_task.depformat
+    task._job_size   = exp_task.job_size
+    task._dry_run    = exp_task.dry_run
 
-    task._name       = exp.name
-    task._desc       = exp.desc
-    task._command    = exp.command
-    task._cwd        = exp.cwd
-    task._in_depfile = exp.in_depfile
-    task._depformat  = exp.depformat
-    task._job_size   = exp.job_size
-    task._dry_run    = exp.dry_run
-
-    # And now we can do stuff that needs to read self.config
-
-    for _field in task._task_env:
+    for _field in task._env.task:
         if (_field.startswith("out_") or _field == "in_depfile") and not task._dry_run:
-            file = task._task_env[_field]
+            file = task._env.task[_field]
             os.makedirs(Path.dirname(file), exist_ok=True)
 
-    # FIXME commenting this out is gonna break something
-    #if len(self.config.command) == 1:
-    #    self.config.command = self.config.command[0]
+    if len(task._command) == 1:
+        task._command = task._command[0]
 
     with Log.Level.DEBUG:
         log_task(task, "Task after expand:\n")
         log_task(task, Dumper.dump(task) + "\n")
 
-def fix_paths(task, field, file, build_dir):
+def fix_paths(task : Task, field : str, file : (str | list | set | tuple | abc.Mapping), build_dir : str):
     """
     Input and output file paths in .hancho scripts are declared relative to the directory the
     script is in (stored in the config under 'script_cwd').
@@ -2468,7 +2462,7 @@ def fix_paths(task, field, file, build_dir):
 
     return file
 
-def sanity_check(task):
+def sanity_check(task : Task):
     repo = task._repo
 
     # Check for all task issues that break the build
@@ -2529,7 +2523,7 @@ def sanity_check(task):
     if isinstance(task._in_depfile, list):
         raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task._in_depfile}")
 
-async def run_command(task, command):
+async def run_command(task : Task, command : str):
     with Log.Level.VERBOSE, Log.Color.BLUE:
         log_task(task, f"{Path.relpath(task._cwd, task._repo._root)}$ {command}\n")
 
@@ -2578,7 +2572,7 @@ async def run_command(task, command):
         with Log.Level.VERBOSE, Log.color(0x666666):
             log_task(task, dump_stdout(task))
 
-async def call_callback(task, command):
+async def call_callback(task : Task, command : abc.Callable):
     with Log.Level.VERBOSE, Log.Color.BLUE:
         callback_dir = Path.relpath(task._script._root, task._repo._root)
         log_task(task, f"{callback_dir}$ {command}\n")
@@ -2604,7 +2598,7 @@ async def call_callback(task, command):
 
 
 
-def rebuild_reason(task) -> str:
+def rebuild_reason(task : Task) -> str:
     """
     Figures out why we have to run a Task, or returns "" if we don't.
     """
@@ -2645,7 +2639,7 @@ def rebuild_reason(task) -> str:
     repo.build_reasons["*task clean"] += 1
     return ""
 
-def check_stat(repo, filename, command = None):
+def check_stat(repo : Repo, filename : str, command = None):
     if not Path.exists(filename):
         repo.build_reasons["file missing"] += 1
         return f"File missing: {filename}"
@@ -2677,7 +2671,7 @@ def check_stat(repo, filename, command = None):
     repo.build_reasons["*hash match"] += 1
     return ""
 
-def dump_stdout(task) -> str:
+def dump_stdout(task : Task) -> str:
     result = ""
     if task._stdout:
         result += "---------------- Stdout ----------------\n"
@@ -2689,7 +2683,7 @@ def dump_stdout(task) -> str:
         result += "----------------------------------------\n"
     return result
 
-def log_task(task, message : str):
+def log_task(task : Task, message : str):
     # Log helper that adds the [ NN/ XX] tag before the log line.
     for line in message.splitlines(keepends=True):
         with Log.Color.LIME:
@@ -2697,7 +2691,7 @@ def log_task(task, message : str):
                 Log.log(f"[{task._task_id:3d}/{Runner.tasks_enabled:3d}] ")
         Log.log(line)
 
-def log_exception(task, message, ex = None):
+def log_exception(task : Task, message, ex = None):
     with Log.Level.ERROR, Log.Color.RED:
         Log.log("========================================\n")
         Log.log(message + "\n")
