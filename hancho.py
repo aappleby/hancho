@@ -31,6 +31,7 @@ import asyncio
 import colorsys
 import contextvars
 import copy
+import dataclasses
 import inspect
 import json
 import os
@@ -47,7 +48,7 @@ import types
 import zlib  # for crc32, adler32
 from collections import Counter, abc
 from contextlib import chdir, contextmanager, suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
 from functools import wraps
 from typing import Any, cast
@@ -1214,6 +1215,7 @@ class Dumper:
     class Opts:
         depth : int = 3
         indent : int = 0
+        fold : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
         print_id : bool = True
         color_code : bool = True
         tab : str = "    "
@@ -1231,14 +1233,14 @@ class Dumper:
         val,
         depth=3,
         indent=0,
+        fold = None,
         print_id=True,
         color_code=False,
         width=80,
         len=0,
         tab="    ",
     ):
-        opts = Dumper.Opts(depth, indent, print_id, color_code, tab, len, width, flat = False)
-        #return cls._dump_to_str(key, val, opts, set())
+        opts = Dumper.Opts(depth, indent, fold or [], print_id, color_code, tab, len, width, flat = False)
         return cls._dump_to_str(None, val, opts, set())
 
     @classmethod
@@ -1248,6 +1250,9 @@ class Dumper:
 
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
+        if key == "hancho":
+            pass
+
         if key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif hasattr(type(val), "__dump__"):
@@ -1270,6 +1275,9 @@ class Dumper:
     @classmethod
     def _dump_vector(cls, key, val, contents, opts, seen : set):
         prefix = cls._dump_prefix(key, val, opts)
+
+#        if opts.fold and key in opts.fold:
+#            return prefix + "<folded>"
 
         if id(val) in seen:
             return prefix + "<ref loop>"
@@ -1294,11 +1302,14 @@ class Dumper:
         # line, we rewind the callstack back to the topmost container that was not forced to be
         # flat.
 
+        if opts.fold and key in opts.fold:
+            return prefix + ld + "<folded>" + rd
+
         if opts.flat:
             return prefix + cls._dump_items_flat(key, ld, items, rd, opts, set(seen))
         else:
             try:
-                return prefix + cls._dump_items_flat(key, ld, items, rd, replace(opts, flat = True), set(seen))
+                return prefix + cls._dump_items_flat(key, ld, items, rd, dataclasses.replace(opts, flat = True), set(seen))
             except Dumper.LineTooLong:
                 return prefix + cls._dump_items_deep(key, ld, items, rd, opts, set(seen))
 
@@ -1320,11 +1331,11 @@ class Dumper:
 
         if opts.depth == 0:
             return ld + "..." + rd
-        opts = replace(opts, depth = opts.depth - 1)
+        opts = dataclasses.replace(opts, depth = opts.depth - 1)
 
         # len(pad) + 1 for the trailing comma
         pad = opts.tab * (opts.indent + 1)
-        new_opts = replace(opts, len = len(pad) + 1, indent = opts.indent + 1)
+        new_opts = dataclasses.replace(opts, len = len(pad) + 1, indent = opts.indent + 1)
 
         for i in range(len(items)):
             result += pad + cls._dump_to_str(items[i][0], items[i][1], new_opts, set(seen))
@@ -1562,15 +1573,15 @@ class Task:
 
     class Config:
         def __init__(self):
-            self._name : str = Utils.MISSING
-            self._desc : str = Utils.MISSING
-            self._command : str = Utils.MISSING
-            self._cwd : str = Utils.MISSING
-            self._build_dir : str = Utils.MISSING
-            self._in_depfile : str = Utils.MISSING
-            self._depformat : str = Utils.MISSING
-            self._job_size : int = Utils.MISSING
-            self._dry_run : bool = Utils.MISSING
+            self.name : str = Utils.MISSING
+            self.desc : str = Utils.MISSING
+            self.command : str = Utils.MISSING
+            self.cwd : str = Utils.MISSING
+            self.build_dir : str = Utils.MISSING
+            self.in_depfile : str = Utils.MISSING
+            self.depformat : str = Utils.MISSING
+            self.job_size : int = Utils.MISSING
+            self.dry_run : bool = Utils.MISSING
 
 
     def __init__(self, repo, script, env):
@@ -2382,7 +2393,7 @@ async def await_inputs(task : Task):
 def expand_task(task : Task):
     with Log.Level.DEBUG:
         log_task(task, "Task env:\n")
-        log_task(task, Dumper.dump(task._env) + "\n")
+        log_task(task, Dumper.dump(task._env, fold = ["hancho", "log", "in_objs"]) + "\n")
 
     # We need to expand the build dir first so we can use it in fix_paths.
     exp_task = Expander(task._env.task)
@@ -2415,15 +2426,15 @@ def expand_task(task : Task):
         elif _field.startswith("out_"):
             task.out_files[_field] = files
 
-    task._cfg._name       = exp_task.name
-    task._cfg._desc       = exp_task.desc
-    task._cfg._command    = exp_task.command
-    task._cfg._cwd        = exp_task.cwd
-    task._cfg._build_dir  = exp_task.build_dir
-    task._cfg._in_depfile = exp_task.in_depfile
-    task._cfg._depformat  = exp_task.depformat
-    task._cfg._job_size   = exp_task.job_size
-    task._cfg._dry_run    = exp_task.dry_run
+    task._cfg.name       = exp_task.name
+    task._cfg.desc       = exp_task.desc
+    task._cfg.command    = exp_task.command
+    task._cfg.cwd        = exp_task.cwd
+    task._cfg.build_dir  = exp_task.build_dir
+    task._cfg.in_depfile = exp_task.in_depfile
+    task._cfg.depformat  = exp_task.depformat
+    task._cfg.job_size   = exp_task.job_size
+    task._cfg.dry_run    = exp_task.dry_run
 
     task._name       = exp_task.name
     task._desc       = exp_task.desc
@@ -2445,7 +2456,7 @@ def expand_task(task : Task):
 
     with Log.Level.DEBUG:
         log_task(task, "Task after expand:\n")
-        log_task(task, Dumper.dump(task) + "\n")
+        log_task(task, Dumper.dump(task._cfg) + "\n")
 
 def fix_paths(task : Task, field : str, file : (str | list | set | tuple | abc.Mapping), build_dir : str):
     """
