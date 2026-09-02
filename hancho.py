@@ -1276,9 +1276,6 @@ class Dumper:
     def _dump_vector(cls, key, val, contents, opts, seen : set):
         prefix = cls._dump_prefix(key, val, opts)
 
-#        if opts.fold and key in opts.fold:
-#            return prefix + "<folded>"
-
         if id(val) in seen:
             return prefix + "<ref loop>"
         seen.add(id(val))
@@ -1302,7 +1299,7 @@ class Dumper:
         # line, we rewind the callstack back to the topmost container that was not forced to be
         # flat.
 
-        if opts.fold and key in opts.fold:
+        if key in opts.fold:
             return prefix + ld + "<folded>" + rd
 
         if opts.flat:
@@ -1467,7 +1464,7 @@ class Repo:
         self.root_script : Script = Utils.MISSING
         self.scripts = []
 
-    def yield_tasks(self):
+    def yield_tasks(self) -> abc.Iterator[Task]:
         for script in self.scripts:
             yield from script.yield_tasks()
 
@@ -1503,8 +1500,8 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             stat_db[file] = Utils.get_stats(file)
 
-        if task._in_depfile:
-            deplines = Utils.load_depfile(task._in_depfile, task._depformat, task._cwd)
+        if task._cfg.in_depfile:
+            deplines = Utils.load_depfile(task._cfg.in_depfile, task._cfg.depformat, task._cfg.cwd)
             for file in deplines:
                 stat_db[file] = Utils.get_stats(file) # type: ignore
 
@@ -1516,7 +1513,7 @@ def save_stat_db(repo : Repo):
             continue
 
         for file in Utils.yield_values(task.out_files):
-            stat_db[file] = Utils.get_stats(file, task._command)
+            stat_db[file] = Utils.get_stats(file, task._cfg.command)
 
     stat_db_path = Path.join(repo._build_dir, 'hancho.json')
     Utils.save_json(stat_db, stat_db_path)
@@ -1533,8 +1530,8 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             # Haven't tested this in an IDE, but I think it matches the spec.
             comp_db[file] = {
-                "directory" : task._cwd,
-                "command"   : Utils.commands_to_string(task._command),
+                "directory" : task._cfg.cwd,
+                "command"   : Utils.commands_to_string(task._cfg.command),
                 "file"      : file,
             }
 
@@ -1560,7 +1557,7 @@ class Script:
     def __repr__(self):
         return Dumper.dump(self)
 
-    def yield_tasks(self):
+    def yield_tasks(self) -> abc.Iterator[Task]:
         yield from self._tasks
         for child in self._children:
             yield from child.yield_tasks()
@@ -1572,33 +1569,22 @@ class Task:
     class BROKEN(Exception):    pass
 
     class Config:
-        def __init__(self):
-            self.name : str = Utils.MISSING
-            self.desc : str = Utils.MISSING
-            self.command : str = Utils.MISSING
-            self.cwd : str = Utils.MISSING
-            self.build_dir : str = Utils.MISSING
-            self.in_depfile : str = Utils.MISSING
-            self.depformat : str = Utils.MISSING
-            self.job_size : int = Utils.MISSING
-            self.dry_run : bool = Utils.MISSING
-
+        def __init__(self, exp_task):
+            self.name       = exp_task.name
+            self.desc       = exp_task.desc
+            self.command    = exp_task.command
+            self.cwd        = exp_task.cwd
+            self.build_dir  = exp_task.build_dir
+            self.in_depfile = exp_task.in_depfile
+            self.depformat  = exp_task.depformat
+            self.job_size   = exp_task.job_size
+            self.dry_run    = exp_task.dry_run
 
     def __init__(self, repo, script, env):
-        self._repo = repo
-        self._script = script
-        self._env  = env
-        self._cfg = Task.Config()
-
-        self._name : str = Utils.MISSING
-        self._desc : str = Utils.MISSING
-        self._command : str = Utils.MISSING
-        self._cwd : str = Utils.MISSING
-        self._build_dir : str = Utils.MISSING
-        self._in_depfile : str = Utils.MISSING
-        self._depformat : str = Utils.MISSING
-        self._job_size : int = Utils.MISSING
-        self._dry_run : bool = Utils.MISSING
+        self._repo : Repo        = repo
+        self._script : Script    = script
+        self._env : Dict         = env
+        self._cfg : Task.Config  = Utils.MISSING
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -2142,7 +2128,7 @@ def hancho_build(top_repo : Repo) -> int:
 
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
-                if target_regex.search(task.task_params.name):
+                if target_regex.search(task._env.task.name):
                     queue_task(task)
 
     elif top_repo._build_all:
@@ -2267,6 +2253,12 @@ async def async_run_tasks():
 
     return 1 if Runner.tasks_failed or Runner.tasks_broken else 0
 
+
+
+
+
+
+
 async def task_top(task : Task):
     try:
         # Await all tasks in our input fields and then flatten them.
@@ -2286,7 +2278,7 @@ async def task_top(task : Task):
         # If there's a depfile from a previous build, load it so we can use it below.
         if task.in_depfile:
             task._old_deplines = Utils.load_depfile(
-                task.in_depfile, task._depformat, task._cwd
+                task.in_depfile, task._cfg.depformat, task._cfg.cwd
             )
 
         # Inputs are ready, templates are expanded, time to run the task.
@@ -2300,10 +2292,10 @@ async def task_top(task : Task):
         # Paths updated. See if we need to rebuild our outputs.
         task._reason = rebuild_reason(task)
         if not task._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{task._name}' : '{task._desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{task._cfg.name}' : '{task._cfg.desc}'")
 
         # Wait for enough jobs to free up to run this task.
-        task._cores = await Runner.acquire(task._job_size)
+        task._cores = await Runner.acquire(task._cfg.job_size)
 
         # OK, let's go!
         await task_main(task)
@@ -2335,12 +2327,19 @@ async def task_top(task : Task):
 
     raise task._error
 
+
+
+
+
+
+
+
 async def task_main(task : Task):
     # Run all the task's commands
 
-    text  = repr(task._name) if task._name else ""
-    text += " : " if task._name and task._desc else ""
-    text += repr(task._desc) if task._desc else ""
+    text  = repr(task._cfg.name) if task._cfg.name else ""
+    text += " : " if task._cfg.name and task._cfg.desc else ""
+    text += repr(task._cfg.desc) if task._cfg.desc else ""
 
     with Log.Level.NORMAL, Log.Color.TEAL:
         log_task(task, f"Task {text}\n")
@@ -2350,7 +2349,7 @@ async def task_main(task : Task):
 
     time_a = time.perf_counter()
 
-    flat_commands = Utils.flatten(task._command)
+    flat_commands = Utils.flatten(task._cfg.command)
     for command in flat_commands:
         if command is None:
             continue
@@ -2373,6 +2372,11 @@ async def task_main(task : Task):
 
     # Done!
 
+
+
+
+
+
 async def await_inputs(task : Task):
     # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
     # modifying tasks after they're created but before they're started. If you point task B's
@@ -2389,6 +2393,9 @@ async def await_inputs(task : Task):
         except Exception as ex:
             task._error = Task.CANCELLED(f"Task {hex(id(task))} is cancelled")
             raise task._error from ex
+
+
+
 
 def expand_task(task : Task):
     with Log.Level.DEBUG:
@@ -2426,37 +2433,32 @@ def expand_task(task : Task):
         elif _field.startswith("out_"):
             task.out_files[_field] = files
 
-    task._cfg.name       = exp_task.name
-    task._cfg.desc       = exp_task.desc
-    task._cfg.command    = exp_task.command
-    task._cfg.cwd        = exp_task.cwd
-    task._cfg.build_dir  = exp_task.build_dir
-    task._cfg.in_depfile = exp_task.in_depfile
-    task._cfg.depformat  = exp_task.depformat
-    task._cfg.job_size   = exp_task.job_size
-    task._cfg.dry_run    = exp_task.dry_run
+    task._cfg = Task.Config(exp_task)
 
-    task._name       = exp_task.name
-    task._desc       = exp_task.desc
-    task._command    = exp_task.command
-    task._cwd        = exp_task.cwd
-    task._build_dir  = exp_task.build_dir
-    task._in_depfile = exp_task.in_depfile
-    task._depformat  = exp_task.depformat
-    task._job_size   = exp_task.job_size
-    task._dry_run    = exp_task.dry_run
+    #task._name       = exp_task.name
+    #task._desc       = exp_task.desc
+    #task._command    = exp_task.command
+    #task._cwd        = exp_task.cwd
+    #task._build_dir  = exp_task.build_dir
+    #task._in_depfile = exp_task.in_depfile
+    #task._depformat  = exp_task.depformat
+    #task._job_size   = exp_task.job_size
+    #task._dry_run    = exp_task.dry_run
 
     for _field in task._env.task:
-        if (_field.startswith("out_") or _field == "in_depfile") and not task._dry_run:
+        if (_field.startswith("out_") or _field == "in_depfile") and not task._cfg.dry_run:
             file = task._env.task[_field]
             os.makedirs(Path.dirname(file), exist_ok=True)
 
-    if len(task._command) == 1:
-        task._command = task._command[0]
+    if len(task._cfg.command) == 1:
+        task._cfg.command = task._cfg.command[0]
 
     with Log.Level.DEBUG:
         log_task(task, "Task after expand:\n")
         log_task(task, Dumper.dump(task._cfg) + "\n")
+
+
+
 
 def fix_paths(task : Task, field : str, file : (str | list | set | tuple | abc.Mapping), build_dir : str):
     """
@@ -2486,16 +2488,19 @@ def fix_paths(task : Task, field : str, file : (str | list | set | tuple | abc.M
 
     return file
 
+
+
+
 def sanity_check(task : Task):
     repo = task._repo
 
     # Check for all task issues that break the build
 
-    if not Path.exists(task._cwd):
-        raise Task.BROKEN(f"Task working directory '{task._cwd}' does not exist")
+    if not Path.exists(task._cfg.cwd):
+        raise Task.BROKEN(f"Task working directory '{task._cfg.cwd}' does not exist")
 
-    if not Path.startswith(task._build_dir, repo._root):
-        raise Task.BROKEN(f"The build dir {task._build_dir} is not under repo.root {repo._root}")
+    if not Path.startswith(task._cfg.build_dir, repo._root):
+        raise Task.BROKEN(f"The build dir {task._cfg.build_dir} is not under repo.root {repo._root}")
 
     # In order to provide the least amount of bafflement to users, CLI commands execute
     # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -2505,10 +2510,10 @@ def sanity_check(task : Task):
     # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
     # And that means we disallow mixed cli/callback command lists.
 
-    if isinstance(task._command, list):
-        for command in task._command:
-            if type(command) is not type(task._command[0]):
-                raise Task.BROKEN(f"Commands aren't the same type: {task._command}")
+    if isinstance(task._cfg.command, list):
+        for command in task._cfg.command:
+            if type(command) is not type(task._cfg.command[0]):
+                raise Task.BROKEN(f"Commands aren't the same type: {task._cfg.command}")
 
             # Check that task's commands are either strings or callables.
             if not isinstance(command, str) and not callable(command) and command is not None:
@@ -2516,7 +2521,7 @@ def sanity_check(task : Task):
 
     # In strict mode, we mark a task broken if its command still has delimiters in it.
     if repo._strict:
-        for command in cast(list, Utils.flatten(task._command)):
+        for command in cast(list, Utils.flatten(task._cfg.command)):
             out = []
             Expander._split_text(command, out)
             if len(out) > 1:
@@ -2525,8 +2530,8 @@ def sanity_check(task : Task):
     # Check that all build files would end up under build_dir
     for file in Utils.yield_values(task.out_files):
         assert Path.isabs(file)
-        if not Path.startswith(file, task._build_dir):
-            raise Task.BROKEN(f"Path error, output file {file} is not under build dir {task._build_dir}")
+        if not Path.startswith(file, task._cfg.build_dir):
+            raise Task.BROKEN(f"Path error, output file {file} is not under build dir {task._cfg.build_dir}")
 
     # Check for task collisions
     for file in Utils.yield_values(task.out_files):
@@ -2544,19 +2549,22 @@ def sanity_check(task : Task):
             raise Task.BROKEN(f"Input file missing - {file}")
 
     # Tasks should have at most one depfile.
-    if isinstance(task._in_depfile, list):
-        raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task._in_depfile}")
+    if isinstance(task._cfg.in_depfile, list):
+        raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task._cfg.in_depfile}")
+
+
+
 
 async def run_command(task : Task, command : str):
     with Log.Level.VERBOSE, Log.Color.BLUE:
-        log_task(task, f"{Path.relpath(task._cwd, task._repo._root)}$ {command}\n")
+        log_task(task, f"{Path.relpath(task._cfg.cwd, task._repo._root)}$ {command}\n")
 
     proc = None
     try:
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd    = task._cwd,
+            cwd    = task._cfg.cwd,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
             start_new_session = True
@@ -2657,7 +2665,7 @@ def rebuild_reason(task : Task) -> str:
             return reason
 
     for filename in Utils.yield_values(task.out_files):
-        if reason := check_stat(repo, filename, task._command):
+        if reason := check_stat(repo, filename, task._cfg.command):
             return reason
 
     repo.build_reasons["*task clean"] += 1
@@ -2722,10 +2730,10 @@ def log_exception(task : Task, message, ex = None):
         Log.log("========================================\n")
 
         Log.log(f"Script    = {task._script._path}:\n")
-        Log.log(f"Task      = '{task._name}' : '{task._desc}'\n")
+        Log.log(f"Task      = '{task._cfg.name}' : '{task._cfg.desc}'\n")
         Log.log(f"os.getcwd = {os.getcwd()}\n")
-        Log.log(f"task cwd  = {task._cwd}\n")
-        Log.log(f"command   = {task._command}\n")
+        Log.log(f"task cwd  = {task._cfg.cwd}\n")
+        Log.log(f"command   = {task._cfg.command}\n")
         if ex:
             Log.log_exception(ex)
         Log.log(dump_stdout(task))
