@@ -333,40 +333,38 @@ class Utils:
 
 class Log:
 
-    class Color(int, Enum):
+    class Color:
         """12 half-saturated, 80% value Log.Color evenly spaced around the HSV wheel"""
 
-        RED     = 0xCC6666
-        PINK    = 0xCC6699
-        MAGENTA = 0xCC66CC
-        VIOLET  = 0x9966CC
-        BLUE    = 0x6666CC
-        SKY     = 0x6699CC
-        TEAL    = 0x66CCCC
-        AQUA    = 0x66CC99
-        GREEN   = 0x66CC66
-        LIME    = 0x99CC66
-        YELLOW  = 0xCCCC66
-        ORANGE  = 0xCC9966
+        def __init__(self, color):
+            self.color = color
 
         def __enter__(self):
             self.old_color = Log.current_color
-            Log.current_color = self
+            Log.current_color = self.color
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             Log.current_color = self.old_color
             return False
 
-    class Level(int, Enum):
-        FATAL    = 0  # Fatal always beats quiet
-        QUIET    = 10
-        CRITICAL = 20 # Should critical/error beat quiet?
-        ERROR    = 30
-        WARNING  = 40
-        NORMAL   = 50
-        VERBOSE  = 60
-        DEBUG    = 70
+    RED     = Color(0xCC6666)
+    PINK    = Color(0xCC6699)
+    MAGENTA = Color(0xCC66CC)
+    VIOLET  = Color(0x9966CC)
+    BLUE    = Color(0x6666CC)
+    SKY     = Color(0x6699CC)
+    TEAL    = Color(0x66CCCC)
+    AQUA    = Color(0x66CC99)
+    GREEN   = Color(0x66CC66)
+    LIME    = Color(0x99CC66)
+    YELLOW  = Color(0xCCCC66)
+    ORANGE  = Color(0xCC9966)
+
+
+    class Level:
+        def __init__(self, level):
+            self.level = level
 
         def __enter__(self):
             self.old_log_level = Log.log_level_in
@@ -378,7 +376,27 @@ class Log:
             return False
 
         def __bool__(self):
-            return self.value <= Log.log_level_out
+            return self.level <= Log.log_level_out
+
+    FATAL    = Level(0 ) # Fatal always beats quiet
+    QUIET    = Level(10)
+    CRITICAL = Level(20) # Should critical/error beat quiet?
+    ERROR    = Level(30)
+    WARNING  = Level(40)
+    NORMAL   = Level(50)
+    VERBOSE  = Level(60)
+    DEBUG    = Level(70)
+
+    levels = {
+        "FATAL": FATAL,
+        "QUIET": QUIET,
+        "CRITICAL": CRITICAL,
+        "ERROR": ERROR,
+        "WARNING": WARNING,
+        "NORMAL": NORMAL,
+        "VERBOSE": VERBOSE,
+        "DEBUG": DEBUG,
+    }
 
     config : Dict = Utils.MISSING
     con_w         = 80
@@ -387,8 +405,8 @@ class Log:
     current_color = -1
     line_buffer   = ""
     match_escapes = re.compile(r"(\x1B.*?m)")
-    log_level_in  = Level.NORMAL
-    log_level_out = Level.NORMAL # log level we want to appear in the log
+    log_level_in  = NORMAL
+    log_level_out = NORMAL # log level we want to appear in the log
 
     @classmethod
     def reset(cls, env_log : Dict):
@@ -401,9 +419,7 @@ class Log:
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
         if cls.config.level is not None:
-            if isinstance(cls.config.level, str):
-                cls.log_level = Log.Level[cls.config.level.upper()]
-            elif isinstance(cls.config.level, int):
+            if isinstance(cls.config.level, int):
                 cls.log_level = Log.Level(cls.config.level)
             else:
                 raise ValueError(f"Got an unknown log level '{type(cls.config.level)} = {cls.config.level}'")
@@ -411,24 +427,14 @@ class Log:
         # The individual -T/-D/-V/-Q flags override --log_level, with the 'loudest' flag winning.
 
         if cls.config.debug:
-            cls.config.level = Log.Level.DEBUG
+            cls.config.level = Log.DEBUG.level
         elif cls.config.verbose:
-            cls.config.level = Log.Level.VERBOSE
+            cls.config.level = Log.VERBOSE.level
         elif cls.config.quiet:
-            cls.config.level = Log.Level.QUIET
+            cls.config.level = Log.QUIET.level
 
-        cls.log_level_in  : int = cast(int, cls.config.level)
-        cls.log_level_out : int = cast(int, cls.config.level)
-
-    @classmethod
-    @contextmanager
-    def color(cls, new_color):
-        old_color = cls.current_color
-        try:
-            cls.current_color = new_color
-            yield
-        finally:
-            cls.current_color = old_color
+        cls.log_level_in  = cls.Level(cls.config.level)
+        cls.log_level_out = cls.Level(cls.config.level)
 
     @classmethod
     def indent(cls, color = 0):
@@ -466,7 +472,7 @@ class Log:
         if not isinstance(text, str) or len(text) == 0:
             return
 
-        if cls.log_level_in > cls.log_level_out:
+        if cls.log_level_in.level > cls.log_level_out.level:
             return
 
         if cls.current_color >= 0 and cls.config.color:
@@ -507,7 +513,7 @@ class Log:
 
             assert cls.log_level_in is not None
 
-            if cls.log_level_in <= cls.log_level_out:
+            if cls.log_level_in.level <= cls.log_level_out.level:
                 sys.stdout.write(cls.line_buffer)
 
             cls.line_buffer = ""
@@ -518,7 +524,7 @@ class Log:
         if tb:
             frame = tb[-1]
             cls.log("  text = ")
-            with cls.color(0xFFFF00):
+            with cls.Color(0xFFFF00):
                 cls.log(f"'{ex}'\n")
             cls.log(f"  file = {frame.filename}\n")
             cls.log(f"  func = {frame.name}\n")
@@ -659,7 +665,7 @@ class Path:
         try:
             prefix = os.path.commonpath([lhs, rhs])
         except Exception:
-            with Log.Level.ERROR, Log.Color.RED:
+            with Log.ERROR, Log.RED:
                 Log.log(f"Commonpath failed for '{lhs}' and '{rhs}'\n")
             raise
 
@@ -724,7 +730,7 @@ class Dict(dict):
         self._up : Dict
 
         super().__init__()
-        super().__setattr__("_up", None)
+        self.link(None)
 
         for i, arg in enumerate(args):
             if not isinstance(arg, abc.Mapping) and arg is not None:
@@ -739,15 +745,17 @@ class Dict(dict):
             return memo[id(self)]
 
         dest = Dict()
+        dest.link(self._up)
         for key, val in self.items():
             with suppress(BaseException):
                 val = copy.deepcopy(val)
             dest._set(key, val)
 
-        object.__setattr__(dest, "_up", self._up)
-
         dest._sanity()
         return dest
+
+    def link(self, dest):
+        object.__setattr__(self, "_up", dest)
 
     def merge(self, *args, **kwargs):
         for rhs in (*args, kwargs):
@@ -861,7 +869,7 @@ class Dict(dict):
     def set_by_path(self, key, val):
         dest, key = self._walk(key, spawn = True)
         if isinstance(val, Dict):
-            object.__setattr__(val, "_up", self)
+            val.link(self)
         dict.__setitem__(dest, key, val)
 
     def _set(self, key, val):
@@ -869,7 +877,7 @@ class Dict(dict):
             print(key)
         #dest, key = self._walk(key, spawn = True)
         if isinstance(val, Dict):
-            object.__setattr__(val, "_up", self)
+            val.link(self)
         dict.__setitem__(self, key, val)
 
     def _del(self, key):
@@ -952,19 +960,19 @@ class Expander(abc.Mapping):
             raise AttributeError from ex
 
     def __setattr__(self, key, val):
-        raise TypeError("Expander is read-only")
+        self.env.__setattr__(key, val)
 
     def __delattr__(self, key):
-        raise TypeError("Expander is read-only")
+        self.env.__delattr__(key)
 
     def __getitem__(self, key) -> Any:
         return self._get(key)
 
     def __setitem__(self, key, val):
-        raise TypeError("Expander is read-only")
+        self.env.__setitem__(key, val)
 
     def __delitem__(self, key):
-        raise TypeError("Expander is read-only")
+        self.env.__delitem__(key)
 
     def __iter__(self):
         return self.env.__iter__()
@@ -973,18 +981,15 @@ class Expander(abc.Mapping):
         return self.env.__len__()
 
     def _get(self, key):
-        trace = Tracer(self, "get", key)
-        result = None
-
-        try:
+        #with Tracer(self, "get", key) as trace:
+        with trace(self, "get", key) as t:
             result = self.env[key]
             if isinstance(result, (Dict, Expander)):
                 result = Expander(result)
             else:
                 result = Expander.expand(result, self)
+            t.append(result)
             return result
-        finally:
-            trace.exit(result)
 
 
     # endregion
@@ -1063,27 +1068,15 @@ class Expander(abc.Mapping):
                 case [Expander.Literal() as l]:
                     return l
 
-#            if len(blocks) == 1:
-#                if isinstance(blocks[0], Expander.Macro):
-#                    return Expander._eval_macro(blocks[0], env)
-#                if isinstance(blocks[0], Expander.Literal):
-#                    return blocks[0]
-
-            # ----------
-
-            trace = Tracer(env, "expand", text)
-
-            old_text = text
-            text = ""
-
-            for block in blocks:
-                if isinstance(block, Expander.Macro):
-                    block = Expander._eval_macro(block, env)
-                    block = Utils.stringify(block)
-                text += block
-
-            trace.exit(text)
-
+            with trace(env, "expand", text) as t:
+                old_text = text
+                text = ""
+                for block in blocks:
+                    if isinstance(block, Expander.Macro):
+                        block = Expander._eval_macro(block, env)
+                        block = Utils.stringify(block)
+                    text += block
+                t.append(text)
 
         result = text
         return result
@@ -1105,28 +1098,27 @@ class Expander(abc.Mapping):
         # callers. As of Python 3.11, this includes asyncio.CancelledError.
 
         result = None
-        trace = Tracer(env, "eval", macro)
 
-        try:
-            Expander.cv_evals.set(old_evals + 1)
-            Expander.cv_depth.set(old_depth + 1)
-            result = eval(macro[1:-1], None, env)
-            trace.exit(result)
-        except RecursionError:
-            raise
-        except Exception as _:
-            # FIXME probably don't do this here, do it in onion.get
-            #if env.parent:
-            #    return cls._eval_macro(macro, env.parent)
+        with trace(env, "eval", macro) as t:
+            try:
+                Expander.cv_evals.set(old_evals + 1)
+                Expander.cv_depth.set(old_depth + 1)
+                result = eval(macro[1:-1], None, env)
+                t.append(result)
+            except RecursionError:
+                raise
+            except Exception as _:
+                # FIXME probably don't do this here, do it in onion.get
+                #if env.parent:
+                #    return cls._eval_macro(macro, env.parent)
 
-            # IMPORTANT IMPORTANT IMPORTANT
-            # If you can't eval a macro, you return it unchanged.
-            # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
-            # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
-            result = macro
-            trace.exit(result)
-        finally:
-            Expander.cv_depth.set(old_depth)
+                # IMPORTANT IMPORTANT IMPORTANT
+                # If you can't eval a macro, you return it unchanged.
+                # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
+                # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
+                result = macro
+            finally:
+                Expander.cv_depth.set(old_depth)
 
         return result
 
@@ -1349,40 +1341,33 @@ class Dumper:
         if prefix: prefix += " = "
         return prefix
 
-class Tracer:
-    # Expansion tracing class used by Expander
+@contextmanager
+def trace(env, action, arg):
+    env_color = Utils.obj_to_hex(env)
 
-    def __init__(self, env, action, arg):
-        self.env = env
-        self.action = action
-        self.arg = arg
+    with Log.Color(env_color):
+        Log.log(f"┌ {Utils.instance_tag(env)}")
+    Log.log(f".{action}({arg!r})\n")
+    Log.indent(env_color)
 
-        env_color = Utils.obj_to_hex(self.env)
+    results = []
+    yield results
 
-        with Log.color(env_color):
-            Log.log(f"┌ {Utils.instance_tag(self.env)}")
-        Log.log(f".{self.action}({self.arg!r})\n")
-        Log.indent(env_color)
+    Log.dedent()
+    env_color = Utils.obj_to_hex(env)
 
-    def exit(self, result):
-        Log.dedent()
-
-        env_color = Utils.obj_to_hex(self.env)
+    for result in results:
         result_color = 0
-
         result_type = type(result)
         if isinstance(result, (Dict|Expander)):
             result_color = Utils.obj_to_hex(result)
             result = Utils.instance_tag(result)
-
-        with Log.color(env_color):
+        with Log.Color(env_color):
             Log.log("└ ")
-        Log.log(f"{self.arg!r} : ")
+        Log.log(f"{arg!r} : ")
         Log.log(f"{result_type.__name__} = ")
-        with Log.color(result_color):
+        with Log.Color(result_color):
             Log.log(f"{result!r}\n")
-
-        return result
 
 class Runner:
 
@@ -1474,11 +1459,11 @@ def load_stat_db(repo : Repo):
 
     if os.path.isfile(stat_db_path):
         with open(stat_db_path) as contents:
-            with Log.Level.VERBOSE, Log.Color.ORANGE:
+            with Log.VERBOSE, Log.ORANGE:
                 Log.log(f"Loading stat_db {stat_db_path}\n")
             repo.stat_db = Dict(json.load(contents))
     else:
-        with Log.Level.VERBOSE, Log.Color.ORANGE:
+        with Log.VERBOSE, Log.ORANGE:
             Log.log(f"No stat db for {repo._root}\n")
         repo.stat_db = Dict()
 
@@ -1583,16 +1568,15 @@ class Task:
         self._repo : Repo        = repo
         self._script : Script    = script
         self._env : Dict         = env
-        self.cfg = Dict()
 
-        object.__setattr__(self.cfg, "_up", self._env.task)
+        self.cfg = Dict()
+        self.cfg.link(self._env.task)
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
 
         self.in_files  = {}
         self.out_files = {}
-        #self.in_depfile : str = ""
 
         # ------------------------------------
         # Implementation details below this line
@@ -1768,7 +1752,7 @@ class HanchoProxy(types.ModuleType):
         raise self.EarlyOut()
 
     def _log_script_error(self, frame, condition, message):
-        with Log.Level.ERROR, Log.Color.RED:
+        with Log.ERROR, Log.RED:
             Log.log(f"Script {condition}:\n")
             Log.log(f"  text = '{message}'\n")
             Log.log(f"  file = {frame.f_code.co_filename}\n")
@@ -1811,7 +1795,7 @@ def _start():
 def init_lib(argv, *args, **kwargs) -> HanchoProxy:
     flags = parse_flags(argv, *args, **kwargs)
     top_env = Dict(hancho_defaults, flags)
-    object.__setattr__(top_env, "_up", hancho_aliases)
+    top_env.link(hancho_aliases)
     Hancho.init(top_env)
     root_proxy = load_script(top_env, None, None, None)
     return root_proxy
@@ -1830,7 +1814,6 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
         description=desc,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    levels = [v.lower() for v in Log.Level.__members__]
 
     bool_opt = argparse.BooleanOptionalAction
 
@@ -1843,6 +1826,8 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     parser.add_argument(      "--hancho.depformat",   type=str.strip,     help="Dependency file format (gcc or msvc)")
     parser.add_argument(      "--hancho.max_errors",  type=int,           help="The maximum number of task errors we tolerate before abandoning the build")
     parser.add_argument('-j', "--hancho.max_jobs",    type=int,           help="Run a maximum of N jobs in parallel.")
+
+    levels = Log.levels.keys()
 
     parser.add_argument(      "--log.level",          choices = levels,   help="Manually select verbosity level. 'quiet' = none, 'trace' = maximal spam")
     parser.add_argument('-Q', "--log.quiet",          action = bool_opt,  help="(same as --log_level=quiet)")
@@ -1879,7 +1864,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 
     opt_file = argv_flags.pop("opt_file", None)
     if opt_file:
-        #with Log.Color.GREEN:
+        #with Log.GREEN:
         #    Log.log(f"Loading options file {opt_file!r}\n")
         if os.path.exists(opt_file):
             with open(opt_file) as f:
@@ -1887,11 +1872,11 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
                     opts = json.load(f)
                     argv_flags.update(opts)
                 except Exception as _:
-                    #with Log.Color.RED:
+                    #with Log.RED:
                     #    Log.log(f"Opt file {opt_file!r} invalid!\n")
                     pass
         else:
-            #with Log.Color.RED:
+            #with Log.RED:
             #    Log.log(f"Opt file {opt_file!r} not found!\n")
             pass
 
@@ -1940,7 +1925,7 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     else:
         assert root is None
 
-    with Log.Level.VERBOSE, Log.Color.ORANGE:
+    with Log.VERBOSE, Log.ORANGE:
         Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
     new_env = copy.deepcopy(old_env)
@@ -1982,7 +1967,7 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     # Run the script
     if code and root:
         with chdir(root):
-            Log.indent(Log.Color.ORANGE)
+            Log.indent(Log.ORANGE.color)
             sys.modules["hancho"] = proxy
             exec(code, module.__dict__, {})
             Log.dedent()
@@ -1995,30 +1980,30 @@ def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
     top_env = Dict(hancho_defaults, flags)
-    object.__setattr__(top_env, "_up", hancho_aliases)
+    top_env.link(hancho_aliases)
     Hancho.init(top_env)
 
-    with Log.Level.VERBOSE, Log.Color.LIME:
+    with Log.VERBOSE, Log.LIME:
         Log.log(f"Command line : {" ".join(sys.argv)}\n")
     if Log.config.trace:
         Log.log("Trace mode on\n")
-    if Log.log_level_out >= Log.Level.DEBUG:
+    if Log.log_level_out.level >= Log.DEBUG.level:
         Log.log("Debug mode on\n")
-    if Log.log_level_out >= Log.Level.VERBOSE:
+    if Log.log_level_out.level >= Log.VERBOSE.level:
         Log.log("Verbose mode on\n")
 
     # ------------------------------------
     # Load and exec top script
 
     time_a1 = time.perf_counter()
-    Log.indent(Log.Color.ORANGE)
+    Log.indent(Log.ORANGE.color)
 
     top_repo  = Repo(top_env)
     top_proxy = load_script(top_env, top_repo, "{script.path}", "{script.root}")
 
     Log.dedent()
     time_b1 = time.perf_counter()
-    with Log.Level.VERBOSE, Log.Color.BLUE:
+    with Log.VERBOSE, Log.BLUE:
         Log.log(f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
@@ -2031,7 +2016,7 @@ def hancho_main() -> int:
         result = run_tool(tool)
         time_b2 = time.perf_counter()
 
-        with Log.Level.VERBOSE, Log.Color.GREEN:
+        with Log.VERBOSE, Log.GREEN:
             Log.log(f"Tool took {time_b2 - time_a2:8.6f} seconds\n")
         return result
 
@@ -2041,7 +2026,7 @@ def hancho_main() -> int:
     time_a3 = time.perf_counter()
     result = hancho_build(top_proxy._repo)
     time_b3 = time.perf_counter()
-    with Log.Level.VERBOSE, Log.Color.GREEN:
+    with Log.VERBOSE, Log.GREEN:
         Log.log(f"Build took {time_b3 - time_a3:8.6f} seconds\n")
 
     # ------------------------------------
@@ -2051,7 +2036,7 @@ def hancho_main() -> int:
     for repo in Hancho.repos:
         task_count += len(list(repo.yield_tasks()))
 
-    with Log.Level.VERBOSE:
+    with Log.VERBOSE:
         Log.log(f"Tasks created:    {task_count}\n")
 
         Log.log(f"Tasks enabled:    {Runner.tasks_enabled}\n")
@@ -2068,19 +2053,19 @@ def hancho_main() -> int:
         Log.log(f"Hash time:        {Utils.hash_time:8.6f}\n")
 
     if Runner.tasks_failed or Runner.tasks_broken:
-        with Log.Level.ERROR, Log.Color.RED:
+        with Log.ERROR, Log.RED:
             Log.log("BUILD FAILED\n")
     elif Runner.tasks_finished:
-        with Log.Color.GREEN:
+        with Log.GREEN:
             Log.log("BUILD PASSED\n")
     else:
-        with Log.Color.BLUE:
+        with Log.BLUE:
             Log.log("BUILD CLEAN\n")
 
-    #with Log.Level.DEBUG, Log.Color.BLUE:
+    #with Log.DEBUG, Log.BLUE:
     #    for repo in cls.repos.items():
     #        Log.log(f"Stats for {script.repo_root}\n")
-    #        Log.indent(Log.Color.BLUE)
+    #        Log.indent(Log.BLUE)
     #        for k, v in script.reasons.items():
     #            Log.log(f"Rebuild reasons {k:13} = {v}\n")
     #        Log.dedent()
@@ -2193,7 +2178,7 @@ async def async_run_tasks():
     # ------------------------------------
     # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-    with Log.Level.VERBOSE, Log.Color.BLUE:
+    with Log.VERBOSE, Log.BLUE:
         Log.log("Running tasks...\n")
 
     while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
@@ -2215,7 +2200,7 @@ async def async_run_tasks():
             finished_aio_task.hancho_task._complete = True #type:ignore
             Runner.tasks_skipped += 1
         except BaseException as ex:
-            with Log.Level.DEBUG:
+            with Log.DEBUG:
                 Log.log(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
                 Log.log_exception(ex)
             Runner.tasks_failed += 1
@@ -2228,11 +2213,11 @@ async def async_run_tasks():
 
     failures = Runner.tasks_broken + Runner.tasks_failed
     if failures > Runner.max_errors:
-        with Log.Level.ERROR:
+        with Log.ERROR:
             Log.log(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
         # Cancel all the asyncio.Tasks that haven't completed yet
-        with Log.Level.VERBOSE:
+        with Log.VERBOSE:
             Log.log(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
 
         # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
@@ -2257,7 +2242,7 @@ async def task_top(task : Task):
         return await task_main(task)
 
     except asyncio.CancelledError as ex:
-        with Log.Level.VERBOSE:
+        with Log.VERBOSE:
             log_task(task, f"<asyncio.CancelledError {ex}>\n")
         task._error = ex
 
@@ -2270,12 +2255,12 @@ async def task_top(task : Task):
         task._error = ex
 
     except Task.SKIPPED as ex:
-        with Log.Level.VERBOSE:
+        with Log.VERBOSE:
             log_task(task, str(ex) + "\n")
         task._error = ex
 
     except Exception as ex:
-        with Log.Level.ERROR:
+        with Log.ERROR:
             Log.log(traceback.format_exc() + "\n")
         log_exception(task, "Task threw an exception!", ex)
         task._error = ex
@@ -2294,7 +2279,7 @@ async def task_main(task : Task):
     # We're ready to run
     Runner.tasks_started += 1
     task._task_id = Runner.tasks_started
-    with Log.Level.VERBOSE:
+    with Log.VERBOSE:
         log_task(task, Utils.instance_tag(task) + " starting\n")
 
     # Expand all mandatory fields in the raw config and fix raw file paths.
@@ -2325,13 +2310,13 @@ async def task_main(task : Task):
 
     # Run all the task's commands
 
-    with Log.Level.NORMAL, Log.Color.TEAL:
+    with Log.NORMAL, Log.TEAL:
         text  = repr(task.cfg.name) if task.cfg.name else ""
         text += " : " if task.cfg.name and task.cfg.desc else ""
         text += repr(task.cfg.desc) if task.cfg.desc else ""
         log_task(task, f"Task {text}\n")
 
-    with Log.Level.VERBOSE, Log.color(0x606060):
+    with Log.VERBOSE, Log.Color(0x606060):
         log_task(task, f"Task rebuilding because: {task._reason}\n")
 
     time_a = time.perf_counter()
@@ -2347,7 +2332,7 @@ async def task_main(task : Task):
 
     time_b = time.perf_counter()
 
-    with Log.Level.VERBOSE, Log.color(0x606060):
+    with Log.VERBOSE, Log.Color(0x606060):
         message  = f"Task took {time_b-time_a:8.6f} sec: {text}\n"
         log_task(task, message)
 
@@ -2382,7 +2367,7 @@ async def await_inputs(task : Task):
 # ==================================================================================================
 
 def expand_task(task : Task):
-    with Log.Level.DEBUG:
+    with Log.DEBUG:
         log_task(task, "Task env:\n")
         log_task(task, Dumper.dump(task._env, fold = ["hancho", "log", "in_objs"]) + "\n")
 
@@ -2426,7 +2411,7 @@ def expand_task(task : Task):
     if len(task.cfg.command) == 1:
         task.cfg.command = task.cfg.command[0]
 
-    with Log.Level.DEBUG:
+    with Log.DEBUG:
         log_task(task, "Task after expand:\n")
         log_task(task, Dumper.dump(task.cfg) + "\n")
 
@@ -2526,7 +2511,7 @@ def sanity_check(task : Task):
 # ==================================================================================================
 
 async def run_command(task : Task, command : str):
-    with Log.Level.VERBOSE, Log.Color.BLUE:
+    with Log.VERBOSE, Log.BLUE:
         log_task(task, f"{Path.relpath(task.cfg.cwd, task._repo._root)}$ {command}\n")
 
     proc = None
@@ -2571,13 +2556,13 @@ async def run_command(task : Task, command : str):
         raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
     if task._stdout or task._stderr:
-        with Log.Level.VERBOSE, Log.color(0x666666):
+        with Log.VERBOSE, Log.Color(0x666666):
             log_task(task, dump_stdout(task))
 
 # ==================================================================================================
 
 async def call_callback(task : Task, command : abc.Callable):
-    with Log.Level.VERBOSE, Log.Color.BLUE:
+    with Log.VERBOSE, Log.BLUE:
         callback_dir = Path.relpath(task._script._root, task._repo._root)
         log_task(task, f"{callback_dir}$ {command}\n")
 
@@ -2689,7 +2674,7 @@ def dump_stdout(task : Task) -> str:
 def log_task(task : Task, message : str):
     # Log helper that adds the [ NN/ XX] tag before the log line.
     for line in message.splitlines(keepends=True):
-        with Log.Color.LIME:
+        with Log.LIME:
             if not Log.line_buffer:
                 Log.log(f"[{task._task_id:3d}/{Runner.tasks_enabled:3d}] ")
         Log.log(line)
@@ -2697,7 +2682,7 @@ def log_task(task : Task, message : str):
 # ==================================================================================================
 
 def log_exception(task : Task, message, ex = None):
-    with Log.Level.ERROR, Log.Color.RED:
+    with Log.ERROR, Log.RED:
         Log.log("========================================\n")
         Log.log(message + "\n")
         Log.log("========================================\n")
