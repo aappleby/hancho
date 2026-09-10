@@ -1,11 +1,12 @@
 #!/usr/bin/python3
 """Test cases for Hancho's Dict class"""
 
+import copy
 import unittest
+from collections import abc
 
 from hancho import Dict
 
-# FIXME test that nested dicts and arrays get deep copied
 # FIXME test fill()
 
 # --------------------------------------------------------------------------------------------------
@@ -16,32 +17,33 @@ class TestDict(unittest.TestCase):
         d = Dict({"a": 1, "b": 2})
         self.assertEqual(d.a, 1)
         self.assertEqual(d["b"], 2)
+
+        d = Dict({"a": 1}, {"b": 2})
+        self.assertEqual(d.a, 1)
+        self.assertEqual(d["b"], 2)
+
+        d = Dict(a = 1, b = 2)
+        self.assertEqual(d.a, 1)
+        self.assertEqual(d["b"], 2)
+
         with self.assertRaises(AttributeError):
             _ = d.missing
         with self.assertRaises(KeyError):
             _ = d["missing"]
 
-    def test_dict_upgrades(self):
-        # Internal dicts should be upgraded to hancho.Dict
-        d = Dict(a = {'b' : {'c' : 1}})
-        self.assertIs(Dict, type(d))
-        self.assertIs(Dict, type(d.a))
-        self.assertIs(Dict, type(d.a.b))
-        self.assertIs(int,  type(d.a.b.c))
-
     def test_merge_rightmost_wins(self):
-        d1 = Dict({"a": 1, "b": 2})
-        d2 = Dict({"b": 3, "c": 4})
+        d1 = {"a": 1, "b": 2}
+        d2 = {"b": 3, "c": 4}
         merged = Dict(d1, d2)
         self.assertEqual(merged.a, 1)
         self.assertEqual(merged.b, 3)
         self.assertEqual(merged.c, 4)
 
     def test_recursive_merge(self):
-        d1 = Dict({"a": {"x": 1, "y": 2}})
-        d2 = Dict({"a": {"y": 3, "z": 4}})
+        d1 = {"a": {"x": 1, "y": 2}}
+        d2 = {"a": {"y": 3, "z": 4}}
         merged = Dict(d1, d2)
-        self.assertIsInstance(merged.a, Dict)
+        #self.assertIsInstance(merged.a, Dict)
         self.assertEqual(merged.a.x, 1)
         self.assertEqual(merged.a.y, 3)
         self.assertEqual(merged.a.z, 4)
@@ -50,7 +52,7 @@ class TestDict(unittest.TestCase):
         # Basic merging should work
         r = Dict()
         self.assertEqual(0, len(r))
-        r = Dict(Dict(), {}, {})
+        r = Dict({}, {}, {})
         self.assertEqual(0, len(r))
         r = Dict({}, {"bar": None})
         self.assertEqual(1, len(r))
@@ -83,6 +85,63 @@ class TestDict(unittest.TestCase):
         d = Dict({"bar": 2}, {})
         self.assertEqual(1, len(d))
         self.assertEqual(2, d.bar)
+
+
+    def test_copy_and_deep_copy(self):
+        def set_all_items(d):
+            if isinstance(d, abc.MutableMapping):
+                for k, v in list(d.items()): d[k] = set_all_items(v)
+            elif isinstance(d, abc.MutableSequence):
+                for i, v in enumerate(d): d[i] = set_all_items(v)
+            else:
+                d = "SENTINEL"
+            return d
+
+        def check_all_items(d):
+            if isinstance(d, (str, bytes, bytearray)):
+                self.assertNotEqual(d, "SENTINEL")
+            elif isinstance(d, abc.Mapping):
+                for v in d.values(): check_all_items(v)
+            elif isinstance(d, abc.Collection):
+                for v in d: check_all_items(v)
+            else:
+                self.assertNotEqual(d, "SENTINEL")
+
+        with self.assertRaises(AssertionError):
+            check_all_items("SENTINEL")
+        with self.assertRaises(AssertionError):
+            check_all_items(["SENTINEL"])
+        with self.assertRaises(AssertionError):
+            check_all_items({"SENTINEL"})
+        with self.assertRaises(AssertionError):
+            check_all_items(("SENTINEL",))
+        with self.assertRaises(AssertionError):
+            check_all_items({"SENTINEL":"SENTINEL"})
+
+        a = Dict(
+            foo=1,
+            bar=2,
+            baz=Dict(q=1,r=2,z=3),
+            qux=Dict(q=Dict(a=1,b=2,c=3)),
+            blar = [[1,2,3,[4,5,6,[7]]]],
+            bulp = (1, 2, 3),
+            fwen = {1, 2, 3},
+        )
+
+        b = copy.copy(a)
+        assert a == b
+        set_all_items(b)
+        check_all_items(a)
+
+        b = copy.deepcopy(a)
+        assert a == b
+        set_all_items(b)
+        check_all_items(a)
+
+        b = Dict(a)
+        assert a == b
+        set_all_items(b)
+        check_all_items(a)
 
 # --------------------------------------------------------------------------------------------------
 

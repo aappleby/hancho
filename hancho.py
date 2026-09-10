@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 #!/usr/bin/python3
 # ruff: noqa: RUF012
-# region Header
+#region Header
 
 """
 Hancho v1.0.0 @ 2026-06-05 - A simple, pleasant build system.
@@ -32,6 +32,7 @@ import colorsys
 import contextvars
 import copy
 import dataclasses
+import hashlib
 import inspect
 import json
 import os
@@ -45,20 +46,22 @@ import textwrap
 import time
 import traceback
 import types
-import zlib  # for crc32, adler32
 from collections import Counter, abc
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
 from functools import wraps
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 # Just a sanity check that we haven't accidentally imported the 'real' hancho twice.
-assert "hancho" not in sys.modules
+#assert "hancho" not in sys.modules
 
 hancho = sys.modules[__name__]
+K = TypeVar("K")
+V = TypeVar("V")
 
 #endregion
+# ==================================================================================================
 
 class Utils:
 
@@ -113,7 +116,10 @@ class Utils:
         """
         Generates a 'random' float in the range [0.0,1.0) by hashing the object's ID.
         """
-        temp = Utils.hash(id(obj), 0)
+        temp = id(obj) & 0xFFFFFFFF
+        temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
+        temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
+        temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
         return (temp & 0xFFFFFFFF) / 0x100000000
 
     @staticmethod
@@ -149,7 +155,6 @@ class Utils:
     @staticmethod
     def hex_id(obj):
         return "0x" + hex(id(obj))[-4:].upper()
-        #return f"0x{id(obj):016x}"
 
     @staticmethod
     def instance_tag(obj):
@@ -168,8 +173,9 @@ class Utils:
 
         @wraps(func)
         def wrapper(obj, *args, **kwargs):
-            if isinstance(obj, dict):
-                return type(obj)((k, wrapper(v, *args, **kwargs)) for k, v in obj.items())
+            if isinstance(obj, (dict, Dict)):
+                wrapped_items = {k: wrapper(v, *args, **kwargs) for k, v in obj.items()}
+                return type(obj)(**wrapped_items)
             if isinstance(obj, (list, tuple, set)):
                 return type(obj)(wrapper(v, *args, **kwargs) for v in obj)
             return func(obj, *args, **kwargs)
@@ -187,77 +193,18 @@ class Utils:
         return wrapper
 
     @classmethod
-    def hash(cls, key, h):
-        # For some reason Python's stdlib does not have a fast non-crypto 64-bit hash, so we
-        # improvise one here from two 32-bit hashes that are implemented in C. This is not as good
-        # as a real 64-bit hash, but it'll do.
-
-        def split(h):
-            return (h & 0xFFFFFFFF, (h >> 32) & 0xFFFFFFFF)
-
-        def join(h0, h1):
-            return (h1 << 32) | h0
-
-        # Feistel-ish mix to tangle up the two 32-bit hashes.
-        def mix(h0, h1):
-            assert isinstance(h0, int) and h0 <= 0xFFFFFFFF
-            assert isinstance(h1, int) and h1 <= 0xFFFFFFFF
-
-            c = 0x58949537 # meaningless odd constant
-            j = 0x90678F0D # another meaningless constant
-            k = 0x48728717 # another meaningless constant
-
-            h0 = j ^ h1 ^ ((h0 * c) & 0xFFFFFFFF)
-            h1 = k ^ h0 ^ (h0 >> 16)
-            return (h0, h1)
-
-        if isinstance(key, bytes):
-            h0, h1 = split(h)
-            h0 = zlib.crc32(key, h0)
-            h1 = zlib.adler32(key, h1)
-            h0, h1 = mix(h0, h1)
-            h0, h1 = mix(h0, h1)
-            h0, h1 = mix(h0, h1)
-            h = join(h0, h1)
-        elif isinstance(key, int):
-            h0, h1 = mix(*split(h))
-            k0, k1 = mix(*split(key))
-            h0, h1 = mix(k0 ^ h0, k1 ^ h1)
-            h = join(h0, h1)
-        elif isinstance(key, str):
-            h = cls.hash(key.encode(), h)
-        elif callable(key):
-            h = cls.hash(key.__name__, h)
-            h = cls.hash(key.__defaults__, h)
-            h = cls.hash(key.__code__.co_code, h)
-            h = cls.hash(key.__code__.co_consts, h)
-        elif isinstance(key, dict):
-            for k, v, in sorted(key.items()):
-                h = cls.hash(k, h)
-                h = cls.hash(v, h)
-        elif isinstance(key, (list, tuple, set)):
-            for k in key:
-                h = cls.hash(k, h)
-        elif key is None:
-            h = join(*mix(*split(h)))
-        else:
-            raise TypeError(f"Don't know how to hash a {type(key)} = {key}")
-        return h
-
-    @classmethod
     def hash_file(cls, abs_path, h = 0):
         Utils.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
-            blob = f.read()
-            Utils.hash_bytes += len(blob)
-        result = cls.hash(blob, h)
+            Utils.hash_bytes += os.fstat(f.fileno()).st_size
+            digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=8))
         time_b = time.perf_counter()
         Utils.hash_time += time_b - time_a
-        return result
+        return digest
 
     @classmethod
-    def get_stats(cls, file : str, command = None):
+    def get_stats(cls, file : str, command = None) -> Dict:
         cls.stat_calls += 1
 
         _hash = cls.hash_file(file)
@@ -330,6 +277,8 @@ class Utils:
         def __bool__(self): return False
 
     MISSING : Any = Missing()
+
+# ==================================================================================================
 
 class Log:
 
@@ -418,27 +367,29 @@ class Log:
         cls.line_buffer   = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if cls.config.level is not None:
-            if isinstance(cls.config.level, int):
-                cls.log_level = Log.Level(cls.config.level)
+        level = cls.config['level']
+
+        if level is not None:
+            if isinstance(level, int):
+                cls.log_level = Log.Level(level)
             else:
-                raise ValueError(f"Got an unknown log level '{type(cls.config.level)} = {cls.config.level}'")
+                raise ValueError(f"Got an unknown log level '{type(level)} = {level}'")
 
         # The individual -T/-D/-V/-Q flags override --log_level, with the 'loudest' flag winning.
 
-        if cls.config.debug:
-            cls.config.level = Log.DEBUG.level
-        elif cls.config.verbose:
-            cls.config.level = Log.VERBOSE.level
-        elif cls.config.quiet:
-            cls.config.level = Log.QUIET.level
+        if cls.config['debug']:
+            cls.config['level'] = Log.DEBUG.level
+        elif cls.config['verbose']:
+            cls.config['level'] = Log.VERBOSE.level
+        elif cls.config['quiet']:
+            cls.config['level'] = Log.QUIET.level
 
-        cls.log_level_in  = cls.Level(cls.config.level)
-        cls.log_level_out = cls.Level(cls.config.level)
+        cls.log_level_in  = cls.Level(cls.config['level'])
+        cls.log_level_out = cls.Level(cls.config['level'])
 
     @classmethod
     def indent(cls, color = 0):
-        ansi = cls.hex_to_ansi(color) if cls.config.color else ""
+        ansi = cls.hex_to_ansi(color) if cls.config['color'] else ""
         cls.indent_stack.append(ansi + "│ " + cls.reset_color())
 
     @classmethod
@@ -462,7 +413,7 @@ class Log:
 
     @classmethod
     def reset_color(cls):
-        if cls.current_color != 0 and cls.config.color:
+        if cls.current_color != 0 and cls.config['color']:
             return "\x1B[0m"
         else:
             return ""
@@ -475,9 +426,9 @@ class Log:
         if cls.log_level_in.level > cls.log_level_out.level:
             return
 
-        if cls.current_color >= 0 and cls.config.color:
+        if cls.current_color >= 0 and cls.config['color']:
             hex = cls.current_color
-            color_prefix = cls.hex_to_ansi(hex) if cls.config.color else ""
+            color_prefix = cls.hex_to_ansi(hex) if cls.config['color'] else ""
             color_suffix = cls.reset_color()
         else:
             color_prefix = ""
@@ -508,7 +459,7 @@ class Log:
             if cls.line_buffer[-1] != '\n':
                 cls.line_buffer += '\n'
 
-            if not cls.config.wrap:
+            if not cls.config['wrap']:
                 cls.line_buffer = cls.clip_printable(cls.line_buffer, cls.con_w)
 
             assert cls.log_level_in is not None
@@ -536,7 +487,7 @@ class Log:
     @classmethod
     def get_timestamp(cls):
         """Returns the timestamp string that is placed at the left of log entries."""
-        return f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.config.time else ""
+        return f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.config['time'] else ""
 
     @classmethod
     def get_indentation(cls):
@@ -711,6 +662,242 @@ class ContextProxy[T]:
         yield
         self.reset(token)
 
+# ==================================================================================================
+# region Dict merging
+
+def generic_merge(
+    dst: Dict,
+    lhs: dict | Dict,
+    rhs: dict | Dict,
+    merge_dicts: bool,
+    merge_lists: bool,
+    keep_a: bool,
+    keep_b: bool,
+):
+    assert type(dst) is Dict
+
+    keys = list(lhs) + [r for r in rhs if r not in lhs]
+    #keys = lhs.keys() | rhs.keys()
+    #keys = {*lhs, *rhs}
+
+    for key in keys:
+        if key in lhs and key not in rhs and not keep_a:
+            continue
+        if key not in lhs and key in rhs and not keep_b:
+            continue
+
+        lhs2 = lhs.get(key)
+        rhs2 = rhs.get(key)
+
+        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
+            dst2 = Dict()
+            generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
+        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
+            dst2 = copy.deepcopy(list(lhs2) + list(rhs2))
+        elif rhs2 is not None:
+            dst2 = Dict(rhs2) if type(rhs2) is Dict else copy.deepcopy(rhs2)
+        else:
+            dst2 = Dict(lhs2) if type(lhs2) is Dict else copy.deepcopy(lhs2)
+
+        if isinstance(dst2, Dict):
+            dst2.link(dst)
+
+        dict.__setitem__(dst, key, dst2)
+
+    # FIXME sanity checking
+    dst.check_links()
+
+    return dst
+
+# Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+# only keys that were already in lhs. For example, if you have a Dict that contains
+# "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+# - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+# compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+def fill(lhs : Dict, *args : Dict, **kwargs):
+    dest = copy.deepcopy(lhs)
+    for rhs in (*args, kwargs):
+        generic_merge(
+            dest, dest, rhs,
+            merge_dicts=True, merge_lists=True,
+            keep_a=True, keep_b=False)
+    return dest
+
+def update(lhs : Dict, *args : dict, **kwargs):
+    for rhs in [d for d in (*args, kwargs) if d]:
+        generic_merge(
+            lhs, lhs, rhs,
+            merge_dicts=True, merge_lists=True,
+            keep_a=True, keep_b=True)
+    return lhs
+
+def merge(*args : Dict, **kwargs):
+    result = update(Dict(), *args, **kwargs)
+    return result
+
+def _walk(lhs : Dict, key : str, spawn = False):
+    while True:
+        key, _, rest = key.partition('.')
+        if not rest:
+            return (lhs, key)
+        if key in lhs:
+            key, lhs = rest, dict.__getitem__(lhs, key)
+        elif spawn:
+            dest = Dict()
+            dict.__setitem__(lhs, key, dest)
+            key, lhs = rest, dest
+        else:
+            raise KeyError(key)
+# endregion
+# ==================================================================================================
+
+def parse_flags(argv, *args, **kwargs) -> Dict:
+
+    desc = textwrap.dedent("""
+    ================================================================================
+                    Hancho is a simple, pleasant build system
+    ================================================================================
+    """)
+
+    parser = argparse.ArgumentParser(
+        description=desc,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    bool_opt = argparse.BooleanOptionalAction
+
+    # ------------------------------------
+    # fmt: off
+
+    parser.add_argument(      "--hancho.root",        type=str.strip,     help="Hancho lives in this directory (so we can find hancho/tools, etc).")
+    parser.add_argument('-o', "--hancho.opt_file",    type=str.strip,     help="File containing JSON that will be used as additional options")
+    parser.add_argument(      "--hancho.run_tool",    type=str.strip,     help="Run a subtool.")
+    parser.add_argument(      "--hancho.depformat",   type=str.strip,     help="Dependency file format (gcc or msvc)")
+    parser.add_argument(      "--hancho.max_errors",  type=int,           help="The maximum number of task errors we tolerate before abandoning the build")
+    parser.add_argument('-j', "--hancho.max_jobs",    type=int,           help="Run a maximum of N jobs in parallel.")
+
+    levels = Log.levels.keys()
+
+    parser.add_argument(      "--log.level",          choices = levels,   help="Manually select verbosity level. 'quiet' = none, 'trace' = maximal spam")
+    parser.add_argument('-Q', "--log.quiet",          action = bool_opt,  help="(same as --log_level=quiet)")
+    parser.add_argument('-V', "--log.verbose",        action = bool_opt,  help="(same as --log_level=verbose)")
+    parser.add_argument('-D', "--log.debug",          action = bool_opt,  help="(same as --log_level=debug)")
+    parser.add_argument('-T', "--log.trace",          action = bool_opt,  help="(same as --log_level=trace)")
+    parser.add_argument('-w', "--log.wrap",           action = bool_opt,  help="Wrap lines around the console instead of clipping them")
+    parser.add_argument('-c', "--log.color",          action = bool_opt,  help="Use color in the log for better readability")
+    parser.add_argument(      "--log.time",           action = bool_opt,  help="Timestamp each log line")
+
+    parser.add_argument(      "--repo.root",          type=str.strip,     help="The top repo lives in this directory.")
+    parser.add_argument(      "--repo.build",         type=str.strip,     help="Build artifacts go in this directory.")
+    parser.add_argument(      "--repo.tag",           type=str.strip,     help="Tagged builds will have separate subdirectories under the build directory.")
+    parser.add_argument('-t', "--repo.target",        type=str.strip,     help="A regex that selects a subset of targets to build.")
+    parser.add_argument(      "--repo.force",         action = bool_opt,  help="Rebuild targets even if they're clean.")
+    parser.add_argument(      "--repo.all",           action = bool_opt,  help="Build every task in every repo.")
+    parser.add_argument(      "--repo.dry_run",       action = bool_opt,  help="Dry run - Do everything except actually run commands.")
+    parser.add_argument(      "--repo.strict",        action = bool_opt,  help="Strict mode, slightly more error checking to catch footguns.")
+
+    parser.add_argument(      "--script.path",        type=str.strip,     help="Path to the .hancho file that starts the build.")
+    parser.add_argument(      "--script.root",        type=str.strip,     help="The top script runs in this directory.")
+    # fmt: on
+
+    (argv_vars, unrecognized) = parser.parse_known_args(argv if argv else [])
+    argv_vars = vars(argv_vars)
+
+
+    def get_by_path(rhs : Dict, key : str):
+        dest, key = _walk(rhs, key, spawn = False)
+        return dest[key]
+
+    def set_by_path(lhs : Dict, key : str, val : Any):
+        dest, key = _walk(lhs, key, spawn = True)
+        dest[key] = val
+
+    argv_flags = Dict()
+    for k, v in argv_vars.items():
+        if v is not None:
+            set_by_path(argv_flags, k, v)
+
+    # ------------------------------------
+    # Load flags from opt_file if present
+
+    opt_file = argv_flags.pop("opt_file", None)
+    if opt_file:
+        #with Log.GREEN:
+        #    Log.log(f"Loading options file {opt_file!r}\n")
+        if os.path.exists(opt_file):
+            with open(opt_file) as f:
+                try:
+                    opts = json.load(f)
+                    argv_flags.update(opts)
+                except Exception as _:
+                    #with Log.RED:
+                    #    Log.log(f"Opt file {opt_file!r} invalid!\n")
+                    pass
+        else:
+            #with Log.RED:
+            #    Log.log(f"Opt file {opt_file!r} not found!\n")
+            pass
+
+    # ------------------------------------
+    # Unrecognized command line flags also become config fields if they are flag-like.
+    # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
+    # become bools (regardless of capitalization), everything else becomes a string.
+
+    mystery_flags = Dict()
+    for chunk in unrecognized:
+        if match := re.match(r"--([^=]+)=(.+)", chunk):
+            key = match.group(1)
+            val = match.group(2)
+
+            if val.lower() == "true":
+                val = True
+            elif val.lower() == "false":
+                val = False
+            else:
+                with suppress(NameError, ValueError, SyntaxError):
+                    val = ast.literal_eval(val)
+
+            mystery_flags[key] = val
+
+    flags = Dict()
+    merge(flags, argv_flags)
+
+    for k, v in mystery_flags.items():
+        set_by_path(flags, k, v)
+
+    merge(flags, *args, Dict(kwargs))
+
+    return flags
+
+# ==================================================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class Dict(dict):
     """
     This class extends 'dict' in a couple ways -
@@ -724,87 +911,39 @@ class Dict(dict):
     5. Dict's constructor makes copies of all basic container types (collections and mappings) in
     its inputs. I can't guarantee that everything you might put in a Dict will be deep-copied, but
     it should be close enough.
+
+    FIXME - This _must_ have an _up pointer, otherwise we can't expand things like "hancho.somefunction(var_on_task)"
+    because 'hancho' doesn't resolve inside task and 'var_on_task' doesn't resolve at the top level of the env
+
     """
 
-    def __init__(self, *args, **kwargs):
-        self._up : Dict
+    def __init__(self, *args : dict[str, Any] | Dict, **kwargs : Any):
+        #assert all(isinstance(d, dict) for d in args)
 
-        super().__init__()
-        self.link(None)
+        self._up : Dict | None
+        object.__setattr__(self, "_up", None)
 
-        for i, arg in enumerate(args):
-            if not isinstance(arg, abc.Mapping) and arg is not None:
-                raise ValueError(f"Argument #{i} was not a dict - {arg}")
+        dicts = [d for d in (*args, kwargs) if d]
+        update(self, *dicts)
+        self.check_links()
 
-        self.merge(*args, kwargs)
-        self._sanity()
-        pass
+    # ==============================================================================================
 
-    def __deepcopy__(self, memo):
-        if id(self) in memo:
-            return memo[id(self)]
+    def link(self, up : Dict):
+        object.__setattr__(self, "_up", up)
 
-        dest = Dict()
-        dest.link(self._up)
-        for key, val in self.items():
-            with suppress(BaseException):
-                val = copy.deepcopy(val)
-            dest._set(key, val)
+    def check_links(self):
+        for v in self.values():
+            if isinstance(v, Dict):
+                if object.__getattribute__(v, "_up") != self:
+                    raise AssertionError(f"Child dict not linked to parent - {v} -> {self}")
+                v.check_links()
 
-        dest._sanity()
-        return dest
+    # ==============================================================================================
+    # region Dunders
 
-    def link(self, dest):
-        object.__setattr__(self, "_up", dest)
-
-    def merge(self, *args, **kwargs):
-        for rhs in (*args, kwargs):
-            if rhs:
-                Dict.generic_merge(
-                    self, self, rhs,
-                    merge_dicts=True, merge_lists=True,
-                    keep_a=True, keep_b=True)
-        return self
-
-    # Fill-in-the-blank (or override what's there): Merges self and args into a new dict, keeping
-    # only keys that were already in self. For example, if you have a config that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-    def fill(self, *args, **kwargs):
-        dest = Dict(self)
-        for rhs in (*args, kwargs):
-            Dict.generic_merge(
-                dest, dest, rhs,
-                merge_dicts=True, merge_lists=True,
-                keep_a=True, keep_b=False)
-        return dest
-
-    @classmethod
-    def generic_merge(cls, dst, lhs, rhs, merge_dicts, merge_lists, keep_a, keep_b):
-        keys = list(lhs) + [r for r in rhs if r not in lhs]
-
-        for key in keys:
-            if key in     lhs and key not in rhs and not keep_a: continue
-            if key not in lhs and key     in rhs and not keep_b: continue
-
-            lhs2 = lhs.get(key, None)
-            rhs2 = rhs.get(key, None)
-
-            if isinstance(lhs2, Dict) and isinstance(rhs2, Dict) and merge_dicts:
-                dst2 = Dict()
-                cls.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
-                dst[key] = dst2
-            elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
-                dst[key] = copy.deepcopy(list(lhs2) + list(rhs2))
-            else:
-                dst[key] = copy.deepcopy(lhs2 if rhs2 is None else rhs2)
-
-        return dst
-
-    def __or__(self, other):
-        return Dict(self, other)
+    def __copy__(self):
+        return copy.deepcopy(self)
 
     def __repr__(self):
         return Dumper.dump(self)
@@ -815,112 +954,80 @@ class Dict(dict):
             prefix += f"{key}"
             prefix += ": "
         prefix += f"Dict@{Utils.hex_id(self)}"
-        if self._up:
-            prefix += f" -> Dict@{Utils.hex_id(self._up)}"
-        if prefix: prefix += " = "
+        if prefix:
+            prefix += " = "
 
         if id(self) in seen:
             return prefix + "<ref loop>"
         seen.add(id(self))
 
         items = list(self.items())
-        return Dumper._dump_items(key, prefix, '{', items, '}', opts, set(seen))
+        return Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
 
-    def _sanity(self):
-        for _, val in self.items():
-            if isinstance(val, Dict):
-                if val._up is not self:
-                    raise AssertionError("val._up is not self")
-                val._sanity()
+    # endregion
+    # ==============================================================================================
+    # region MutableMapping interface
 
-    def _walk(self, key, spawn = False):
-        while True:
-            key, _, rest = key.partition('.')
-            if not rest:
-                return (self, key)
-            if key in self:
-                key, self = rest, self[key]
-            else:
-                if not spawn:
-                    raise KeyError(key)
-                dest = Dict()
-                dict.__setitem__(self, key, dest)
-                key, self = rest, dest
+    def __getitem__(self, key: str) -> Any:
+        return self._get(key)
 
-    def _get(self, key, check_parent):
-        try:
-            return dict.__getitem__(self, key)
-        except KeyError:
-            if self._up and check_parent:
-                return self._up._get(key, check_parent)
-            else:
-                raise
-
-    def get_by_path(self, key, check_parent):
-        try:
-            dest, key2 = self._walk(key, spawn = False)
-            return self._get(dest, key2)
-        except KeyError:
-            if self._up and check_parent:
-                return self._up.get_by_path(key, check_parent)
-            else:
-                raise
-
-    def set_by_path(self, key, val):
-        dest, key = self._walk(key, spawn = True)
-        if isinstance(val, Dict):
-            val.link(self)
-        dict.__setitem__(dest, key, val)
-
-    def _set(self, key, val):
-        if '.' in key:
-            print(key)
-        #dest, key = self._walk(key, spawn = True)
-        if isinstance(val, Dict):
-            val.link(self)
-        dict.__setitem__(self, key, val)
-
-    def _del(self, key):
-        dest, key = self._walk(key, spawn = False)
-        return dict.__delitem__(dest, key)
-
-    def __getitem__(self, key : str) -> Any:
-        return self._get(key, check_parent = True)
-
-    def __setitem__(self, key : str, val : Any):
+    def __setitem__(self, key: str, val: Any):
         return self._set(key, val)
 
-    def __delitem__(self, key : str):
+    def __delitem__(self, key: str):
         return self._del(key)
 
-    def __getattr__(self, key : str) -> Any:
+    # endregion
+    # ==============================================================================================
+    # region Attribute interface
+
+    def __getattr__(self, key: str) -> Any:
         try:
-            return self._get(key, check_parent = False)
+            return self._get(key)
         except KeyError as err:
             raise AttributeError from err
 
-    def __setattr__(self, key : str, val : Any):
+    def __setattr__(self, key: str, val: Any):
         try:
             return self._set(key, val)
         except KeyError as err:
             raise AttributeError from err
 
-    def __delattr__(self, key : str):
+    def __delattr__(self, key: str):
         try:
             return self._del(key)
         except KeyError as err:
             raise AttributeError from err
 
-    def expand(self, variant : Any) -> Any:
-        return Expander.expand(variant, Expander(self))
+    # endregion
+    # ==============================================================================================
 
-    def collapse(self) -> Dict:
-        temp = self._up.collapse() if self._up else Dict()
-        temp.merge(self)
-        return temp
+    def _get(self, key, default = Utils.MISSING):
+        if dict.__contains__(self, key):
+            return dict.__getitem__(self, key)
+        elif default is not Utils.MISSING:
+            return default
+        else:
+            raise KeyError(key)
+
+    def _set(self, key, val):
+        dest, key = _walk(self, key, spawn = True)
+        dict.__setitem__(dest, key, val)
+        if isinstance(val, Dict):
+            val.link(self)
+
+    def _del(self, key):
+        dest, key = _walk(self, key, spawn = False)
+        dict.__delitem__(dest, key)
+
+
 
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
+    pass
+
+class Data(Dict):
+    # Same thing
     pass
 
 class Expander(abc.Mapping):
@@ -941,21 +1048,19 @@ class Expander(abc.Mapping):
     # stuff.
     #
     # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are
-    # not expandable by that dict. This allows nested dicts to contain templates that can only be
-    # expanded an outer dict, and things will still Just Work.
+    # not expandable by that Dict. This allows nested dicts to contain templates that can only be
+    # expanded an outer Dict, and things will still Just Work.
 
-    # region instance methods
+    #region instance methods
 
-    def __init__(self, env : Dict | Expander):
-        if isinstance(env, Expander):
-            return env
+    def __init__(self, env : Dict):
+        env.check_links()
         self.env : Dict
         object.__setattr__(self, "env", env)
 
-
     def __getattr__(self, key) -> Any:
         try:
-            return self._get(key)
+            return self._get(key, check_up = False)
         except KeyError as ex:
             raise AttributeError from ex
 
@@ -965,8 +1070,8 @@ class Expander(abc.Mapping):
     def __delattr__(self, key):
         self.env.__delattr__(key)
 
-    def __getitem__(self, key) -> Any:
-        return self._get(key)
+    def __getitem__(self, key : str) -> Any:
+        return self._get(key, check_up = True)
 
     def __setitem__(self, key, val):
         self.env.__setitem__(key, val)
@@ -980,25 +1085,56 @@ class Expander(abc.Mapping):
     def __len__(self):
         return self.env.__len__()
 
-    def _get(self, key):
-        #with Tracer(self, "get", key) as trace:
-        with trace(self, "get", key) as t:
-            result = self.env[key]
-            if isinstance(result, (Dict, Expander)):
-                result = Expander(result)
+    def _get(self, key : str, check_up : bool):
+        result = Utils.MISSING
+        env = object.__getattribute__(self, "env")
+
+        try:
+            trace_start(env, "get", key)
+
+            if key in env:
+                result = env[key]
+                if isinstance(result, Dict):
+                    result = Expander(env = result)
+                else:
+                    assert type(result) is not dict
+                    result = Expander.expand(result, env)
+
+            elif check_up:
+                up = object.__getattribute__(env, "_up")
+                if up:
+                    Log.dedent()
+                    env_color = Utils.obj_to_hex(env)
+                    with Log.Color(env_color):
+                        Log.log(f"├ {Utils.instance_tag(env)}")
+                    Log.log(" -> ")
+                    with Log.Color(Utils.obj_to_hex(up)):
+                        Log.log(f"{Utils.instance_tag(up)}\n")
+                    Log.indent(env_color)
+
+                    result = Expander(up)._get(key, check_up)
+
+                else:
+                    raise KeyError(key)
             else:
-                result = Expander.expand(result, self)
-            t.append(result)
+                raise KeyError(key)
+
+            #trace_end(env, key, result)
             return result
 
+        finally:
+            trace_end(env, key, result)
 
-    # endregion
+
+    #endregion
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
     # having to do regex stuff every time.
     class Literal(str): pass
     class Macro(str):   pass
     class Expr(str):    pass
+
+    class Blocks(list[Literal | Macro]): pass
 
     # Hancho's template expansions can cause infinite loops, so we need some simple complexity
     # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
@@ -1009,152 +1145,154 @@ class Expander(abc.Mapping):
     # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
     # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
 
+
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH = 30
     MAX_EVALS = 300
 
+    # ==============================================================================================
+
+    @staticmethod
+    def is_terminal(var):
+        pass
+
     @classmethod
-    def expand(cls, variant : Any, env : Dict | Expander):
+    def expand(cls, var : Any, env : Dict | Expander) -> Any:
+        old_depth = Expander.cv_depth.get()
+
+        # Bail out if we've recursed too many times.
+        if old_depth > Expander.MAX_DEPTH:
+            raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
+        Expander.cv_depth.set(old_depth + 1)
+
         if isinstance(env, Dict):
-            env = Expander(env)
+            env.check_links()
+            env = Expander(env = env)
 
-        if variant is Utils.MISSING:
-            raise AssertionError("Tried to expand a sentinel value")
-
-        elif isinstance(variant, str):
-            # We have to catch this case before the 'is collection' below because strings _are_
-            # collections, alas.
-            pass
-        elif isinstance(variant, (bytes, bytearray)):
-            return variant
-        elif isinstance(variant, abc.Mapping):
-            return type(variant)(**{k: Expander.expand(v, env) for k, v in variant.items()})
-        elif isinstance(variant, abc.Collection):
-            return [Expander.expand(v, env) for v in variant]
-        elif not isinstance(variant, str):
-            return variant
-
-
-        # If old_depth = 0, then this is the start of a new expand().
-        new_expand = Expander.cv_depth.get() == 0
         try:
-            result = cls._expand_text(variant, env)
-            return result
+            while True:
+                if var is Utils.MISSING:
+                    raise AssertionError("Tried to expand a sentinel value")
+
+                if isinstance(var, (bytes, bytearray)):
+                    return var
+
+                if isinstance(var, abc.Mapping):
+                    raise AssertionError("Do we really want to support expanding mappings?")
+                    old_evals = Expander.cv_evals.get()
+                    var = type(var)(**{k: Expander.expand(v, env) for k, v in var.items()})
+                    Expander.cv_evals.set(old_evals)
+                    return var
+
+                if isinstance(var, abc.Collection) and not isinstance(var, str):
+                    old_evals = Expander.cv_evals.get()
+                    # the linter doesn't like this, but we know collection constructors can accept a
+                    # generator
+                    var = type(var)(Expander.expand(v, env) for v in var) # type: ignore
+                    Expander.cv_evals.set(old_evals)
+                    return var
+
+                if not isinstance(var, str):
+                    # If we don't know what to do with this type, just return it.
+                    return var
+
+                # Ok, we know 'var' is a string, split it.
+                blocks = Expander.Blocks()
+                blocks.clear()
+                Expander._split_text(var, blocks)
+
+                if len(blocks) == 0:
+                    return var
+                if len(blocks) == 1:
+                    if isinstance(blocks[0], Expander.Literal):
+                        break
+                    if isinstance(blocks[0], Expander.Macro):
+                        old_var = var
+                        trace_start(env.env, "eval", var)
+                        var = Expander._eval_macro(blocks[0], env) # type: ignore
+                        trace_end(env.env, old_var, var)
+                        if old_var == var:
+                            break
+                else:
+                    trace_start(env.env, "expand", var)
+                    for i, b in enumerate(blocks):
+                        if isinstance(b, Expander.Macro):
+                            blocks[i] = Expander._eval_macro(b, env)
+                    old_var, var = var, "".join(Utils.stringify(b) for b in blocks)
+                    trace_end(env.env, old_var, var)
+                    if old_var == var:
+                        break
+
         finally:
-            # And when that expand() is done, we reset the eval budget.
-            if new_expand:
+            Expander.cv_depth.set(old_depth)
+            if old_depth == 0:
+                # We just finished an expansion - reset the eval budget
                 Expander.cv_evals.set(0)
 
-    @classmethod
-    def _expand_text(cls, text : str, env : Expander) -> Any:
-        old_text = ""
-        blocks : list[str] = []
+        return var
 
-        result = None
+    # ==============================================================================================
+    # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
+    # callers. As of Python 3.11, this includes asyncio.CancelledError.
 
-        while old_text != text:
+    # IMPORTANT IMPORTANT IMPORTANT
+    # If you can't eval a macro, you return it unchanged.
 
-            blocks.clear()
-            Expander._split_text(text, blocks)
-            #result = text
-            #return result
+    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
+    # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
-            match blocks:
-                case []:
-                    return text
-                case [Expander.Macro() as m]:
-                    return Expander._eval_macro(m, env)
-                case [Expander.Literal() as l]:
-                    return l
-
-            with trace(env, "expand", text) as t:
-                old_text = text
-                text = ""
-                for block in blocks:
-                    if isinstance(block, Expander.Macro):
-                        block = Expander._eval_macro(block, env)
-                        block = Utils.stringify(block)
-                    text += block
-                t.append(text)
-
-        result = text
-        return result
 
     @classmethod
-    def _eval_macro(cls, macro : Expander.Macro, env : Expander):
-
+    def _eval_macro(cls, var : Expander.Macro, env : Expander) -> Any:
         # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
         if old_evals >= Expander.MAX_EVALS:
-            raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: '{macro!r}'")
+            raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: '{var!r}'")
+        Expander.cv_evals.set(old_evals + 1)
 
-        # Bail out if we've recursed through eval() too many times.
-        old_depth = Expander.cv_depth.get()
-        if old_depth >= Expander.MAX_DEPTH:
-            raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {macro!r}")
+        try:
+            new_var = eval(var[1:-1], hancho_aliases, env)
+            return new_var
+        except RecursionError:
+            raise
+        except Exception as ex:
+            Log.log(f"eval failed because >{ex}<\n")
+            return var
+        except BaseException:
+            raise
 
-        # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
-        # callers. As of Python 3.11, this includes asyncio.CancelledError.
-
-        result = None
-
-        with trace(env, "eval", macro) as t:
-            try:
-                Expander.cv_evals.set(old_evals + 1)
-                Expander.cv_depth.set(old_depth + 1)
-                result = eval(macro[1:-1], None, env)
-                t.append(result)
-            except RecursionError:
-                raise
-            except Exception as _:
-                # FIXME probably don't do this here, do it in onion.get
-                #if env.parent:
-                #    return cls._eval_macro(macro, env.parent)
-
-                # IMPORTANT IMPORTANT IMPORTANT
-                # If you can't eval a macro, you return it unchanged.
-                # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
-                # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
-                result = macro
-            finally:
-                Expander.cv_depth.set(old_depth)
-
-        return result
+    # ==============================================================================================
 
     @classmethod
-    def _split_text(cls, text : str, out : list[str]) -> int:
+    def _split_text(cls, text : str, out_blocks : Blocks):
         """
         Extracts all innermost delimited spans from a block of text and produces a list of string
         literals and macros. Note that we're not handling "escaped" delimiters, instead we allow
         the user to change the delimiter when required (default delimiters are {} and «»)
         """
 
-        ldelims = '{«'
-        rdelims = '}»'
-
-        rdelim = None
+        ldelim = '«' if '«' in text else '{'
+        rdelim = '»' if '»' in text else '}'
         cursor = 0
         idelim = -1
         macros = 0
 
         for i, c in enumerate(text):
-            if (pos := ldelims.find(c)) != -1:
+            if c == ldelim:
                 idelim = i
-                rdelim = rdelims[pos]
             elif c == rdelim and idelim >= 0:
                 if cursor < idelim:
-                    out.append(Expander.Literal(text[cursor:idelim]))
-                out.append(Expander.Macro(text[idelim:i+1]))
+                    out_blocks.append(Expander.Literal(text[cursor:idelim]))
+                out_blocks.append(Expander.Macro(text[idelim:i+1]))
                 macros += 1
                 cursor = i + 1
                 idelim = -1
-                rdelim = None
 
         if cursor < len(text):
-            out.append(Expander.Literal(text[cursor:]))
+            out_blocks.append(Expander.Literal(text[cursor:]))
 
-        return macros
+    # ==============================================================================================
 
 class Dumper:
     """
@@ -1341,8 +1479,10 @@ class Dumper:
         if prefix: prefix += " = "
         return prefix
 
-@contextmanager
-def trace(env, action, arg):
+def trace_start(env, action, arg):
+    #if not Log.config['trace']:
+    #    return
+
     env_color = Utils.obj_to_hex(env)
 
     with Log.Color(env_color):
@@ -1350,24 +1490,27 @@ def trace(env, action, arg):
     Log.log(f".{action}({arg!r})\n")
     Log.indent(env_color)
 
-    results = []
-    yield results
+def trace_end(env, arg, result):
+    #if not Log.config['trace']:
+    #    return
 
     Log.dedent()
-    env_color = Utils.obj_to_hex(env)
 
-    for result in results:
-        result_color = 0
-        result_type = type(result)
-        if isinstance(result, (Dict|Expander)):
-            result_color = Utils.obj_to_hex(result)
-            result = Utils.instance_tag(result)
-        with Log.Color(env_color):
-            Log.log("└ ")
-        Log.log(f"{arg!r} : ")
-        Log.log(f"{result_type.__name__} = ")
-        with Log.Color(result_color):
-            Log.log(f"{result!r}\n")
+    if isinstance(result, Expander):
+        result = result.env
+
+    env_color = Utils.obj_to_hex(env)
+    result_color = 0
+    result_type = type(result)
+    if isinstance(result, (dict|Dict|Expander)):
+        result_color = Utils.obj_to_hex(result)
+        result = Utils.instance_tag(result)
+    with Log.Color(env_color):
+        Log.log("└ ")
+    Log.log(f"{arg!r} : ")
+    Log.log(f"{result_type.__name__} = ")
+    with Log.Color(result_color):
+        Log.log(f"{result!r}\n")
 
 class Runner:
 
@@ -1420,13 +1563,13 @@ class Hancho:
     # Just a container for global stuff.
 
     real_filenames : set[str] = set()
-    dedupe : dict[str, HanchoProxy] = {}
+    dedupe : Dict = Dict()
     repos : set[Repo] = set()
 
     @classmethod
     def init(cls, top_env):
         cls.real_filenames = set()
-        cls.dedupe = {}
+        cls.dedupe = Dict()
         cls.repos : set[Repo] = set()
 
         Log.reset(top_env.log)
@@ -1435,17 +1578,16 @@ class Hancho:
 
 class Repo:
     def __init__(self, env : Dict):
-        exp = Expander(env.repo)
-        self._root        = exp.root
-        self._build_dir   = exp.build_dir
-        self._build_tag   = exp.build_tag
-        self._target      = exp.target
-        self._build_force = exp.build_force
-        self._build_all   = exp.build_all
-        self._dry_run     = exp.dry_run
-        self._strict      = exp.strict
+        self._root  : str        = Expander.expand("{repo.root}", env)
+        self._build_dir : str    = Expander.expand("{repo.build_dir}", env)
+        self._build_tag  : str   = Expander.expand("{repo.build_tag}", env)
+        self._target  : str      = Expander.expand("{repo.target}", env)
+        self._build_force : bool = Expander.expand("{repo.build_force}", env)
+        self._build_all : bool   = Expander.expand("{repo.build_all}", env)
+        self._dry_run : bool     = Expander.expand("{repo.dry_run}", env)
+        self._strict : bool      = Expander.expand("{repo.strict}", env)
 
-        self.stat_db = Dict()
+        self.stat_db = {}
         self.build_reasons = Counter()
         self.root_script : Script = Utils.MISSING
         self.scripts = []
@@ -1461,11 +1603,11 @@ def load_stat_db(repo : Repo):
         with open(stat_db_path) as contents:
             with Log.VERBOSE, Log.ORANGE:
                 Log.log(f"Loading stat_db {stat_db_path}\n")
-            repo.stat_db = Dict(json.load(contents))
+            repo.stat_db = json.load(contents)
     else:
         with Log.VERBOSE, Log.ORANGE:
             Log.log(f"No stat db for {repo._root}\n")
-        repo.stat_db = Dict()
+        repo.stat_db = {}
 
 def save_stat_db(repo : Repo):
     if repo._dry_run:
@@ -1486,8 +1628,8 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             stat_db[file] = Utils.get_stats(file)
 
-        if task.cfg.in_depfile:
-            deplines = Utils.load_depfile(task.cfg.in_depfile, task.cfg.depformat, task.cfg.cwd)
+        if task.cfg['in_depfile']:
+            deplines = Utils.load_depfile(task.cfg['in_depfile'], task.cfg['depformat'], task.cfg['cwd'])
             for file in deplines:
                 stat_db[file] = Utils.get_stats(file) # type: ignore
 
@@ -1499,7 +1641,7 @@ def save_stat_db(repo : Repo):
             continue
 
         for file in Utils.yield_values(task.out_files):
-            stat_db[file] = Utils.get_stats(file, task.cfg.command)
+            stat_db[file] = Utils.get_stats(file, task.cfg['command'])
 
     stat_db_path = Path.join(repo._build_dir, 'hancho.json')
     Utils.save_json(stat_db, stat_db_path)
@@ -1516,14 +1658,13 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             # Haven't tested this in an IDE, but I think it matches the spec.
             comp_db[file] = {
-                "directory" : task.cfg.cwd,
-                "command"   : Utils.commands_to_string(task.cfg.command),
+                "directory" : task.cfg['cwd'],
+                "command"   : Utils.commands_to_string(task.cfg['command']),
                 "file"      : file,
             }
 
     comp_db_path = Path.join(repo._build_dir, 'compile_commands.json')
     Utils.save_json(list(comp_db.values()), comp_db_path)
-
 
 # ==================================================================================================
 
@@ -1564,13 +1705,11 @@ class Task:
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(self, repo, script, env):
-        self._repo : Repo        = repo
-        self._script : Script    = script
-        self._env : Dict         = env
-
-        self.cfg = Dict()
-        self.cfg.link(self._env.task)
+    def __init__(self, repo : Repo, script : Script, env : Dict):
+        self._repo   = repo
+        self._script = script
+        self._env    = env
+        self.cfg     = {}
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -1627,6 +1766,7 @@ class Task:
 
 # ==================================================================================================
 
+# This _must_ be a real 'dict' so we can pass it into the 'globals' arg to eval()
 hancho_aliases = Dict(
     log      = Log.log,
     dump     = Dumper.print,
@@ -1635,7 +1775,6 @@ hancho_aliases = Dict(
     flatten  = Utils.flatten,
     run_cmd  = Utils.run_cmd,
     weave    = Utils.weave,
-    hash     = Utils.hash,
 
     Path     = Path,
     abspath  = Path.abspath,
@@ -1713,12 +1852,14 @@ class HanchoProxy(types.ModuleType):
         return getattr(hancho_aliases, key)
 
     Dict = Dict
+    Expander = Expander
     Tool = Tool
 
     def Task(self, *args, **kwargs):
 
         task_env = copy.deepcopy(self._env)
-        task_env.task.merge(*args, kwargs)
+
+        update(task_env['task'], *args, Dict(kwargs))
 
         task = Task(repo = self._repo, script = self._script, env = task_env)
         self._script._tasks.append(task)
@@ -1794,7 +1935,7 @@ def _start():
 
 def init_lib(argv, *args, **kwargs) -> HanchoProxy:
     flags = parse_flags(argv, *args, **kwargs)
-    top_env = Dict(hancho_defaults, flags)
+    top_env = merge(hancho_defaults, flags)
     top_env.link(hancho_aliases)
     Hancho.init(top_env)
     root_proxy = load_script(top_env, None, None, None)
@@ -1802,123 +1943,12 @@ def init_lib(argv, *args, **kwargs) -> HanchoProxy:
 
 # ==================================================================================================
 
-def parse_flags(argv, *args, **kwargs) -> Dict:
-
-    desc = textwrap.dedent("""
-    ================================================================================
-                    Hancho is a simple, pleasant build system
-    ================================================================================
-    """)
-
-    parser = argparse.ArgumentParser(
-        description=desc,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-
-    bool_opt = argparse.BooleanOptionalAction
-
-    # ------------------------------------
-    # fmt: off
-
-    parser.add_argument(      "--hancho.root",        type=str.strip,     help="Hancho lives in this directory (so we can find hancho/tools, etc).")
-    parser.add_argument('-o', "--hancho.opt_file",    type=str.strip,     help="File containing JSON that will be used as additional options")
-    parser.add_argument(      "--hancho.run_tool",    type=str.strip,     help="Run a subtool.")
-    parser.add_argument(      "--hancho.depformat",   type=str.strip,     help="Dependency file format (gcc or msvc)")
-    parser.add_argument(      "--hancho.max_errors",  type=int,           help="The maximum number of task errors we tolerate before abandoning the build")
-    parser.add_argument('-j', "--hancho.max_jobs",    type=int,           help="Run a maximum of N jobs in parallel.")
-
-    levels = Log.levels.keys()
-
-    parser.add_argument(      "--log.level",          choices = levels,   help="Manually select verbosity level. 'quiet' = none, 'trace' = maximal spam")
-    parser.add_argument('-Q', "--log.quiet",          action = bool_opt,  help="(same as --log_level=quiet)")
-    parser.add_argument('-V', "--log.verbose",        action = bool_opt,  help="(same as --log_level=verbose)")
-    parser.add_argument('-D', "--log.debug",          action = bool_opt,  help="(same as --log_level=debug)")
-    parser.add_argument('-T', "--log.trace",          action = bool_opt,  help="(same as --log_level=trace)")
-    parser.add_argument('-w', "--log.wrap",           action = bool_opt,  help="Wrap lines around the console instead of clipping them")
-    parser.add_argument('-c', "--log.color",          action = bool_opt,  help="Use color in the log for better readability")
-    parser.add_argument(      "--log.time",           action = bool_opt,  help="Timestamp each log line")
-
-    parser.add_argument(      "--repo.root",          type=str.strip,     help="The top repo lives in this directory.")
-    parser.add_argument(      "--repo.build",         type=str.strip,     help="Build artifacts go in this directory.")
-    parser.add_argument(      "--repo.tag",           type=str.strip,     help="Tagged builds will have separate subdirectories under the build directory.")
-    parser.add_argument('-t', "--repo.target",        type=str.strip,     help="A regex that selects a subset of targets to build.")
-    parser.add_argument(      "--repo.force",         action = bool_opt,  help="Rebuild targets even if they're clean.")
-    parser.add_argument(      "--repo.all",           action = bool_opt,  help="Build every task in every repo.")
-    parser.add_argument(      "--repo.dry_run",       action = bool_opt,  help="Dry run - Do everything except actually run commands.")
-    parser.add_argument(      "--repo.strict",        action = bool_opt,  help="Strict mode, slightly more error checking to catch footguns.")
-
-    parser.add_argument(      "--script.path",        type=str.strip,     help="Path to the .hancho file that starts the build.")
-    parser.add_argument(      "--script.root",        type=str.strip,     help="The top script runs in this directory.")
-    # fmt: on
-
-    (argv_vars, unrecognized) = parser.parse_known_args(argv if argv else [])
-    argv_vars = vars(argv_vars)
-
-    argv_flags = Dict()
-    for k, v in argv_vars.items():
-        if v is not None:
-            argv_flags.set_by_path(k, v)
-
-    # ------------------------------------
-    # Load flags from opt_file if present
-
-    opt_file = argv_flags.pop("opt_file", None)
-    if opt_file:
-        #with Log.GREEN:
-        #    Log.log(f"Loading options file {opt_file!r}\n")
-        if os.path.exists(opt_file):
-            with open(opt_file) as f:
-                try:
-                    opts = json.load(f)
-                    argv_flags.update(opts)
-                except Exception as _:
-                    #with Log.RED:
-                    #    Log.log(f"Opt file {opt_file!r} invalid!\n")
-                    pass
-        else:
-            #with Log.RED:
-            #    Log.log(f"Opt file {opt_file!r} not found!\n")
-            pass
-
-    # ------------------------------------
-    # Unrecognized command line flags also become config fields if they are flag-like.
-    # Naked flags become {'name':True}, number types become numbers, 'true' and 'false'
-    # become bools (regardless of capitalization), everything else becomes a string.
-
-    mystery_flags = {}
-    for chunk in unrecognized:
-        if match := re.match(r"--([^=]+)=(.+)", chunk):
-            key = match.group(1)
-            val = match.group(2)
-
-            if val.lower() == "true":
-                val = True
-            elif val.lower() == "false":
-                val = False
-            else:
-                with suppress(NameError, ValueError, SyntaxError):
-                    val = ast.literal_eval(val)
-
-            mystery_flags[key] = val
-
-    flags = Dict()
-    flags.merge(argv_flags)
-
-    for k, v in mystery_flags.items():
-        flags.set_by_path(k, v)
-
-    flags.merge(*args, kwargs)
-
-    return flags
-
-# ==================================================================================================
-
 def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, root : str | None, *args, **kwargs) -> HanchoProxy:
 
     if path:
         root = root or "{script.root}"
-        path = old_env.expand(path)
-        root = old_env.expand(root)
+        path = Expander.expand(path, old_env)
+        root = Expander.expand(root, old_env)
 
         path = Path.resolve(path)
         root = Path.resolve(root)
@@ -1929,7 +1959,7 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
         Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
     new_env = copy.deepcopy(old_env)
-    new_env.script.merge(*args, kwargs, path = path, root = root)
+    update(new_env['script'], *args, Dict(kwargs), path = path, root = root)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
@@ -1967,10 +1997,12 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     # Run the script
     if code and root:
         with chdir(root):
-            Log.indent(Log.ORANGE.color)
-            sys.modules["hancho"] = proxy
-            exec(code, module.__dict__, {})
-            Log.dedent()
+            try:
+                Log.indent(Log.ORANGE.color)
+                sys.modules["hancho"] = proxy
+                exec(code, module.__dict__, {})
+            finally:
+                Log.dedent()
 
     return proxy
 
@@ -1979,13 +2011,14 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
 def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
-    top_env = Dict(hancho_defaults, flags)
+    top_env = merge(hancho_defaults, flags)
     top_env.link(hancho_aliases)
+
     Hancho.init(top_env)
 
     with Log.VERBOSE, Log.LIME:
         Log.log(f"Command line : {" ".join(sys.argv)}\n")
-    if Log.config.trace:
+    if Log.config['trace']:
         Log.log("Trace mode on\n")
     if Log.log_level_out.level >= Log.DEBUG.level:
         Log.log("Debug mode on\n")
@@ -1996,12 +2029,13 @@ def hancho_main() -> int:
     # Load and exec top script
 
     time_a1 = time.perf_counter()
-    Log.indent(Log.ORANGE.color)
+    try:
+        Log.indent(Log.ORANGE.color)
 
-    top_repo  = Repo(top_env)
-    top_proxy = load_script(top_env, top_repo, "{script.path}", "{script.root}")
-
-    Log.dedent()
+        top_repo  = Repo(top_env)
+        top_proxy = load_script(top_env, top_repo, "{script.path}", "{script.root}")
+    finally:
+        Log.dedent()
     time_b1 = time.perf_counter()
     with Log.VERBOSE, Log.BLUE:
         Log.log(f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
@@ -2009,7 +2043,7 @@ def hancho_main() -> int:
     # ------------------------------------
     # If we're running a tool, run it and we're done.
 
-    tool = top_env.hancho.run_tool
+    tool = top_env['hancho']['run_tool']
 
     if tool:
         time_a2 = time.perf_counter()
@@ -2110,7 +2144,7 @@ def hancho_build(top_repo : Repo) -> int:
 
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
-                if target_regex.search(task._env.task.name):
+                if target_regex.search(task._env['task']['name']):
                     queue_task(task)
 
     elif top_repo._build_all:
@@ -2286,9 +2320,9 @@ async def task_main(task : Task):
     expand_task(task)
 
     # If there's a depfile from a previous build, load it so we can use it below.
-    if task.cfg.in_depfile:
+    if task.cfg['in_depfile']:
         task._old_deplines = Utils.load_depfile(
-            task.cfg.in_depfile, task.cfg.depformat, task.cfg.cwd
+            task.cfg['in_depfile'], task.cfg['depformat'], task.cfg['cwd']
         )
 
     # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -2303,17 +2337,17 @@ async def task_main(task : Task):
     # Paths updated. See if we need to rebuild our outputs.
     task._reason = rebuild_reason(task)
     if not task._reason:
-        raise Task.SKIPPED(f"Task is up-to-date: '{task.cfg.name}' : '{task.cfg.desc}'")
+        raise Task.SKIPPED(f"Task is up-to-date: '{task.cfg['name']}' : '{task.cfg['desc']}'")
 
     # Wait for enough jobs to free up to run this task.
-    task._cores = await Runner.acquire(task.cfg.job_size)
+    task._cores = await Runner.acquire(task.cfg['job_size'])
 
     # Run all the task's commands
 
     with Log.NORMAL, Log.TEAL:
-        text  = repr(task.cfg.name) if task.cfg.name else ""
-        text += " : " if task.cfg.name and task.cfg.desc else ""
-        text += repr(task.cfg.desc) if task.cfg.desc else ""
+        text  = repr(task.cfg['name']) if task.cfg['name'] else ""
+        text += " : " if task.cfg['name'] and task.cfg['desc'] else ""
+        text += repr(task.cfg['desc']) if task.cfg['desc'] else ""
         log_task(task, f"Task {text}\n")
 
     with Log.VERBOSE, Log.Color(0x606060):
@@ -2321,7 +2355,7 @@ async def task_main(task : Task):
 
     time_a = time.perf_counter()
 
-    flat_commands = Utils.flatten(task.cfg.command)
+    flat_commands = Utils.flatten(task.cfg['command'])
     for command in flat_commands:
         if command is None:
             continue
@@ -2372,10 +2406,10 @@ def expand_task(task : Task):
         log_task(task, Dumper.dump(task._env, fold = ["hancho", "log", "in_objs"]) + "\n")
 
     # We need to expand the build dir first so we can use it in fix_paths.
-    build_dir = Expander(task.cfg).build_dir
+    build_dir = Expander.expand("{build_dir}", task._env)
 
     # Then we expand all io fields and fix their paths.
-    for _field, _files in task._env.task.items():
+    for _field, _files in task._env['task'].items():
         if not _field.startswith("in_") and not _field.startswith("out_"): # and _field != "in_depfile":
             continue
 
@@ -2384,7 +2418,7 @@ def expand_task(task : Task):
             for val in Utils.yield_values(_files)
         ]
 
-        files = Expander.expand(files, task.cfg)
+        files = Expander.expand(files, task._env)
         files = Utils.flatten(files)
         files = fix_paths(task, _field, files, build_dir)
         files = files[0] if len(files) == 1 else files
@@ -2392,24 +2426,22 @@ def expand_task(task : Task):
         task.cfg[_field] = files
 
         if _field == "in_depfile":
-            task.cfg.in_depfile = cast(str, files)
+            task.cfg['in_depfile'] = cast(str, files)
         elif _field.startswith("in_"):
             task.in_files[_field] = files
         elif _field.startswith("out_"):
             task.out_files[_field] = files
 
-    exp_task = Expander(task.cfg)
-
     for key in ['name', 'desc', 'command', 'cwd', 'build_dir', 'in_depfile', 'depformat', 'job_size', 'dry_run']:
-        setattr(task.cfg, key, getattr(exp_task, key))
+        task.cfg['key'] = Expander.expand("{" + key + "}", task._env.task)
 
     for _field in task.cfg:
-        if (_field.startswith("out_") or _field == "in_depfile") and not task.cfg.dry_run:
+        if (_field.startswith("out_") or _field == "in_depfile") and not task.cfg['dry_run']:
             file = task.cfg[_field]
             os.makedirs(Path.dirname(file), exist_ok=True)
 
-    if len(task.cfg.command) == 1:
-        task.cfg.command = task.cfg.command[0]
+    if len(task.cfg['command']) == 1:
+        task.cfg['command'] = task.cfg['command'][0]
 
     with Log.DEBUG:
         log_task(task, "Task after expand:\n")
@@ -2452,11 +2484,11 @@ def sanity_check(task : Task):
 
     # Check for all task issues that break the build
 
-    if not Path.exists(task.cfg.cwd):
-        raise Task.BROKEN(f"Task working directory '{task.cfg.cwd}' does not exist")
+    if not Path.exists(task.cfg['cwd']):
+        raise Task.BROKEN(f"Task working directory '{task.cfg['cwd']}' does not exist")
 
-    if not Path.startswith(task.cfg.build_dir, repo._root):
-        raise Task.BROKEN(f"The build dir {task.cfg.build_dir} is not under repo.root {repo._root}")
+    if not Path.startswith(task.cfg['build_dir'], repo._root):
+        raise Task.BROKEN(f"The build dir {task.cfg['build_dir']} is not under repo.root {repo._root}")
 
     # In order to provide the least amount of bafflement to users, CLI commands execute
     # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -2466,10 +2498,10 @@ def sanity_check(task : Task):
     # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
     # And that means we disallow mixed cli/callback command lists.
 
-    if isinstance(task.cfg.command, list):
-        for command in task.cfg.command:
-            if type(command) is not type(task.cfg.command[0]):
-                raise Task.BROKEN(f"Commands aren't the same type: {task.cfg.command}")
+    if isinstance(task.cfg['command'], list):
+        for command in task.cfg['command']:
+            if type(command) is not type(task.cfg['command'][0]):
+                raise Task.BROKEN(f"Commands aren't the same type: {task.cfg['command']}")
 
             # Check that task's commands are either strings or callables.
             if not isinstance(command, str) and not callable(command) and command is not None:
@@ -2477,17 +2509,17 @@ def sanity_check(task : Task):
 
     # In strict mode, we mark a task broken if its command still has delimiters in it.
     if repo._strict:
-        for command in cast(list, Utils.flatten(task.cfg.command)):
-            out = []
+        for command in cast(list, Utils.flatten(task.cfg['command'])):
+            out = Expander.Blocks()
             Expander._split_text(command, out)
-            if len(out) > 1:
+            if (len(out) > 1) or (len(out) == 1 and isinstance(out[0], Expander.Macro)):
                 raise Task.BROKEN("STRICT: Command has delimiters in it")
 
     # Check that all build files would end up under build_dir
     for file in Utils.yield_values(task.out_files):
         assert Path.isabs(file)
-        if not Path.startswith(file, task.cfg.build_dir):
-            raise Task.BROKEN(f"Path error, output file {file} is not under build dir {task.cfg.build_dir}")
+        if not Path.startswith(file, task.cfg['build_dir']):
+            raise Task.BROKEN(f"Path error, output file {file} is not under build dir {task.cfg['build_dir']}")
 
     # Check for task collisions
     for file in Utils.yield_values(task.out_files):
@@ -2505,21 +2537,21 @@ def sanity_check(task : Task):
             raise Task.BROKEN(f"Input file missing - {file}")
 
     # Tasks should have at most one depfile.
-    if isinstance(task.cfg.in_depfile, list):
-        raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task.cfg.in_depfile}")
+    if isinstance(task.cfg['in_depfile'], list):
+        raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task.cfg['in_depfile']}")
 
 # ==================================================================================================
 
 async def run_command(task : Task, command : str):
     with Log.VERBOSE, Log.BLUE:
-        log_task(task, f"{Path.relpath(task.cfg.cwd, task._repo._root)}$ {command}\n")
+        log_task(task, f"{Path.relpath(task.cfg['cwd'], task._repo._root)}$ {command}\n")
 
     proc = None
     try:
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             command,
-            cwd    = task.cfg.cwd,
+            cwd    = task.cfg['cwd'],
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
             start_new_session = True
@@ -2615,7 +2647,7 @@ def rebuild_reason(task : Task) -> str:
             return reason
 
     for filename in Utils.yield_values(task.out_files):
-        if reason := check_stat(repo, filename, task.cfg.command):
+        if reason := check_stat(repo, filename, task.cfg['command']):
             return reason
 
     repo.build_reasons["*task clean"] += 1
@@ -2688,10 +2720,10 @@ def log_exception(task : Task, message, ex = None):
         Log.log("========================================\n")
 
         Log.log(f"Script    = {task._script._path}:\n")
-        Log.log(f"Task      = '{task.cfg.name}' : '{task.cfg.desc}'\n")
+        Log.log(f"Task      = '{task.cfg['name']}' : '{task.cfg['desc']}'\n")
         Log.log(f"os.getcwd = {os.getcwd()}\n")
-        Log.log(f"task cwd  = {task.cfg.cwd}\n")
-        Log.log(f"command   = {task.cfg.command}\n")
+        Log.log(f"task cwd  = {task.cfg['cwd']}\n")
+        Log.log(f"command   = {task.cfg['command']}\n")
         if ex:
             Log.log_exception(ex)
         Log.log(dump_stdout(task))
@@ -2706,7 +2738,7 @@ def run_tool(tool : str): # pragma: no cover
             build_root = repo._build_dir
 
             # Tiny bit of sanity checking so we don't inadvertently delete a repo.
-            assert build_root.starts_with(repo._root) and build_root != repo._root
+            assert build_root.startswith(repo._root) and build_root != repo._root
 
             if Path.isdir(build_root):
                 Log.log(f"Wiping build_root {build_root}\n")

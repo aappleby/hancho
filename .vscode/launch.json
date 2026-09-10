@@ -30,6 +30,13 @@
       "cwd"     : "${workspaceFolder}/scratch",
       "args"    : ["-D"],
       //"preLaunchTask": "Wipe build",
+
+      //"variablePresentation": {
+      //    "function": "hide",
+      //    "special": "hide",
+      //    "class": "hide",
+      //    "protected": "group",
+      //},
     },
 
     {
@@ -41,10 +48,10 @@
       "args"    : ["-D", "-V", "-T", "--hancho.flerp=120"],
       //"args"    : ["-D", "-V"],
       //"preLaunchTask": "Wipe build",
-      "variablePresentation": {
-        "all": "hide",
-        "protected": "group",
-      }
+      //"variablePresentation": {
+      //  "all": "hide",
+      //  "protected": "group",
+      //}
     },
 
     {
