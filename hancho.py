@@ -19,7 +19,7 @@ could format your hard drive and email spam to your grandparents. Use responsibl
 """
 
 # FIXME do a template test with two nested dicts a.b and a.c where a.c contains a template referring to b.d
-
+# FIXME change 'env' to 'tree'
 # FIXME param defaults should just be another layer in the onion
 # FIXME onions should be able to contain other onions, like Onion(parent = Onion(some_layer = blee), some_layer = blah)
 
@@ -394,6 +394,8 @@ class Log:
 
     @classmethod
     def dedent(cls):
+        if not cls.indent_stack:
+            pass
         cls.indent_stack.pop()
 
     @classmethod
@@ -1103,15 +1105,7 @@ class Expander(abc.Mapping):
             elif check_up:
                 up = object.__getattribute__(env, "_up")
                 if up:
-                    Log.dedent()
-                    env_color = Utils.obj_to_hex(env)
-                    with Log.Color(env_color):
-                        Log.log(f"├ {Utils.instance_tag(env)}")
-                    Log.log(" -> ")
-                    with Log.Color(Utils.obj_to_hex(up)):
-                        Log.log(f"{Utils.instance_tag(up)}\n")
-                    Log.indent(env_color)
-
+                    trace_up(env, up)
                     result = Expander(up)._get(key, check_up)
 
                 else:
@@ -1119,11 +1113,11 @@ class Expander(abc.Mapping):
             else:
                 raise KeyError(key)
 
-            #trace_end(env, key, result)
             return result
 
         finally:
             trace_end(env, key, result)
+            pass
 
 
     #endregion
@@ -1179,7 +1173,9 @@ class Expander(abc.Mapping):
                     return var
 
                 if isinstance(var, abc.Mapping):
-                    raise AssertionError("Do we really want to support expanding mappings?")
+                    if isinstance(var, Expander):
+                        var = var.env
+                    #raise AssertionError("Do we really want to support expanding mappings?")
                     old_evals = Expander.cv_evals.get()
                     var = type(var)(**{k: Expander.expand(v, env) for k, v in var.items()})
                     Expander.cv_evals.set(old_evals)
@@ -1207,6 +1203,7 @@ class Expander(abc.Mapping):
                 if len(blocks) == 1:
                     if isinstance(blocks[0], Expander.Literal):
                         break
+
                     if isinstance(blocks[0], Expander.Macro):
                         old_var = var
                         trace_start(env.env, "eval", var)
@@ -1215,12 +1212,16 @@ class Expander(abc.Mapping):
                         if old_var == var:
                             break
                 else:
-                    trace_start(env.env, "expand", var)
-                    for i, b in enumerate(blocks):
-                        if isinstance(b, Expander.Macro):
-                            blocks[i] = Expander._eval_macro(b, env)
-                    old_var, var = var, "".join(Utils.stringify(b) for b in blocks)
-                    trace_end(env.env, old_var, var)
+                    old_var = None
+                    try:
+                        trace_start(env.env, "expand", var)
+                        for i, b in enumerate(blocks):
+                            if isinstance(b, Expander.Macro):
+                                blocks[i] = Expander._eval_macro(b, env)
+                        old_var, var = var, "".join(Utils.stringify(b) for b in blocks)
+                    finally:
+                        trace_end(env.env, old_var, var)
+                        pass
                     if old_var == var:
                         break
 
@@ -1480,37 +1481,60 @@ class Dumper:
         return prefix
 
 def trace_start(env, action, arg):
-    #if not Log.config['trace']:
-    #    return
+    if not Log.config['trace']:
+        return
+
+    try:
+        env_color = Utils.obj_to_hex(env)
+
+        with Log.Color(env_color):
+            Log.log(f"┌ {Utils.instance_tag(env)}")
+        Log.log(f".{action}({arg!r})\n")
+        Log.indent(env_color)
+        pass
+    except:
+        raise
+
+def trace_up(env, up):
+    if not Log.config['trace']:
+        return
 
     env_color = Utils.obj_to_hex(env)
-
-    with Log.Color(env_color):
-        Log.log(f"┌ {Utils.instance_tag(env)}")
-    Log.log(f".{action}({arg!r})\n")
-    Log.indent(env_color)
+    try:
+        Log.dedent()
+        with Log.Color(env_color):
+            Log.log(f"├ {Utils.instance_tag(env)}")
+        Log.log(" -> ")
+        with Log.Color(Utils.obj_to_hex(up)):
+            Log.log(f"{Utils.instance_tag(up)}\n")
+    finally:
+        Log.indent(env_color)
 
 def trace_end(env, arg, result):
-    #if not Log.config['trace']:
-    #    return
+    if not Log.config['trace']:
+        return
 
-    Log.dedent()
+    try:
+        Log.dedent()
 
-    if isinstance(result, Expander):
-        result = result.env
+        if isinstance(result, Expander):
+            result = result.env
 
-    env_color = Utils.obj_to_hex(env)
-    result_color = 0
-    result_type = type(result)
-    if isinstance(result, (dict|Dict|Expander)):
-        result_color = Utils.obj_to_hex(result)
-        result = Utils.instance_tag(result)
-    with Log.Color(env_color):
-        Log.log("└ ")
-    Log.log(f"{arg!r} : ")
-    Log.log(f"{result_type.__name__} = ")
-    with Log.Color(result_color):
-        Log.log(f"{result!r}\n")
+        env_color = Utils.obj_to_hex(env)
+        result_color = 0
+        result_type = type(result)
+        if isinstance(result, (dict|Dict|Expander)):
+            result_color = Utils.obj_to_hex(result)
+            result = Utils.instance_tag(result)
+        with Log.Color(env_color):
+            Log.log("└ ")
+        Log.log(f"{arg!r} : ")
+        Log.log(f"{result_type.__name__} = ")
+        with Log.Color(result_color):
+            Log.log(f"{result!r}\n")
+        pass
+    except:
+        raise
 
 class Runner:
 
@@ -1803,7 +1827,7 @@ hancho_defaults = Dict(
         quiet   = False,
         verbose = False,
         debug   = False,
-        trace   = False,
+        trace   = True, #False,
         wrap    = False,
         color   = True,
         time    = True

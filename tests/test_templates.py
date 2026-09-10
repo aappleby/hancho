@@ -67,8 +67,6 @@ class TestTemplates(unittest.TestCase):
         d = Dict(name = "prefix")
         count = 300 - 11
         templates = [f"{{name}}_{i:04d}" for i in range(count)]
-        print(templates)
-
         expanded = cast(list, Expander.expand(templates, d))
         self.assertEqual(count, len(expanded))
         self.assertEqual(f"prefix_{count//2:04d}", expanded[count//2])
@@ -101,7 +99,7 @@ class TestTemplates(unittest.TestCase):
         with self.assertRaises(RecursionError):
             self.assertEqual("sentinel", Expander.expand("{k0}", chain))
 
-    def _test_expand_giant_string(self):
+    def test_expand_giant_string(self):
         def _test_string(count):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
@@ -115,7 +113,7 @@ class TestTemplates(unittest.TestCase):
         with self.assertRaises(RecursionError):
             result = _test_string(Expander.MAX_EVALS + 1)
 
-    def _test_user_recursion(self):
+    def test_user_recursion(self):
         # A user function that generates a RecursionError that's used inside a template should
         # propagate the error.
         def recursive():
@@ -125,7 +123,6 @@ class TestTemplates(unittest.TestCase):
             Expander.expand("{func()}", d)
 
     def test_macro_evals_to_list_of_macros(self):
-        print()
         # If a macro evals to a list of macros, the nested macros _shoud_ be auto-expanded
         d = Dict(a=["{b}","{b}"], b="x")
         e = Expander.expand("{a}", d)
@@ -164,7 +161,7 @@ class TestTemplates(unittest.TestCase):
         # FIXME
         pass
 
-    def _test_macro_passthrough(self):
+    def test_macro_passthrough(self):
         _number = 42
         _text="hello world"
         _func = lambda x : x + 1  # noqa: E731
@@ -188,53 +185,53 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(_text,   _map2["2"])
         self.assertEqual(_func,   _map2["3"])
 
-    def _test_read_nested_c_first(self):
+    def test_read_nested_c_first(self):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in
         # the nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
         result = Expander.expand("{a.b}", d)
         self.assertEqual(result, 10)
 
-    def _test_TEFINAE(self):
+    def test_TEFINAE(self):
         # TEFINAE - Text Expansion Failure Is Not An Error
         d = Dict(a = 1)
         self.assertEqual("{missing}", Expander.expand("{missing}", d))
         self.assertEqual("1 {missing}", Expander.expand("{a} {missing}", d))
         self.assertEqual("{a + missing}", Expander.expand("{a + missing}", d))
 
-    def _test_template_nones(self):
+    def test_template_nones(self):
         # Nones should turn into empty strings
         d = Dict(a = None, b = "x{a}y")
         self.assertEqual(Expander.expand("{a}", d), None)
         self.assertEqual(Expander.expand("{b}", d), 'xy')
 
-    def _test_flatten_lists(self):
+    def test_flatten_lists(self):
         # Lists should be flattened before joining with spaces
         d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
         self.assertEqual('flags', Expander.expand("flags", d))
         self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], Expander.expand("{flags}", d))
         self.assertEqual("flags = 'a b c d e f'", Expander.expand("flags = '{flags}'", d))
 
-    def _test_templates_with_escaped_char_proxies(self):
+    def test_templates_with_escaped_char_proxies(self):
         # Testing escape sequences in templates is annoying. Double-check that we can use proxies
         # to build strings with escape sequences.
         d = Dict(a=1, bs="\\", lb="{", rb="}")
         self.assertEqual(Expander.expand(r"{lb}a{rb}", d), 1)
         self.assertEqual(Expander.expand(r"{bs}{lb}a{bs}{rb}", d), r"\{a\}")
 
-    def _test_expand_failed_to_terminate1(self):
+    def test_expand_failed_to_terminate1(self):
         # Single recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(flarp="asdf {flarp}")
             Expander.expand("{flarp}", bad_dict)
 
-    def _test_expand_failed_to_terminate2(self):
+    def test_expand_failed_to_terminate2(self):
         # Double recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(foo="asdf {bar}", bar="qwer {foo}")
             Expander.expand("{foo}", bad_dict)
 
-    def _test_expand_failed_to_terminate3(self):
+    def test_expand_failed_to_terminate3(self):
         # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
         # in 'bad_dict'
         with self.assertRaises(RecursionError):
@@ -242,7 +239,7 @@ class TestTemplates(unittest.TestCase):
             bad_dict = Dict(command="{subthing.foo}", subthing=subthing)
             Expander.expand("{command}", bad_dict)
 
-    def _test_expand_nested_list(self):
+    def test_expand_nested_list(self):
         d = Dict(a = 1, b = 2, c = 3)
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
         r = Expander.expand(v, d)
