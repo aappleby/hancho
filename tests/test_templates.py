@@ -18,6 +18,7 @@ def setUpModule():
     os.chdir(os.path.dirname(__file__))
     #hancho.init_for_testing(argv = [], log_trace = True, verbosity = "quiet") # type: ignore
     hancho.init_for_testing(argv = [], verbosity = "quiet") # type: ignore
+    print()
 
 def load_tests(loader, tests, ignore):
     doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
@@ -39,7 +40,33 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(None, Expander.expand(None, d))
         self.assertEqual("", Expander.expand("", d))
 
-    # Pathological test cases
+    def test_macro_to_fixed_point(self):
+        d = Dict(a = "{b}", b = "{c}", c = "{d}")
+        self.assertEqual("{d}", Expander.expand("{a}", d))
+
+    def test_expand_dict(self):
+        d = Dict(a = Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"))
+        self.assertEqual(
+            Expander.expand(">{a}<", d),
+            ">1 2 x{foo}x{bar}x<"
+        )
+
+        d = Dict(a = Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"), foo = 3, bar = 4)
+        self.assertEqual(
+            Expander.expand(">{a}<", d),
+            ">1 2 x3x4x<"
+        )
+
+    def test_read_from_up(self):
+        d1 = Dict(a = "foo")
+        d2 = Dict(a = "bar")
+        b = Dict(c = "{a}")
+
+        b.link(d1)
+        self.assertEqual("foo", Expander.expand("{c}", b))
+
+        b.link(d2)
+        self.assertEqual("bar", Expander.expand("{c}", b))
 
     def test_mutual_cycle(self):
         # only macros
@@ -65,11 +92,16 @@ class TestTemplates(unittest.TestCase):
 
     def test_expand_big_array(self):
         d = Dict(name = "prefix")
-        count = 300 - 11
+        count = Expander.MAX_EVALS
         templates = [f"{{name}}_{i:04d}" for i in range(count)]
         expanded = cast(list, Expander.expand(templates, d))
         self.assertEqual(count, len(expanded))
         self.assertEqual(f"prefix_{count//2:04d}", expanded[count//2])
+
+        with self.assertRaises(RecursionError):
+            count = Expander.MAX_EVALS + 1
+            templates = [f"{{name}}_{i:04d}" for i in range(count)]
+            expanded = cast(list, Expander.expand(templates, d))
 
     def test_expand_long_chain_good(self):
         def make_dict(links):
@@ -176,11 +208,11 @@ class TestTemplates(unittest.TestCase):
 
         # Containers should get copied.
         _tuple2 = cast(list, Expander.expand("{_tuple}", d))
-        self.assertEqual(_number, _tuple2[0])
-        self.assertEqual(_text,   _tuple2[1])
-        self.assertEqual(_func,   _tuple2[2])
+        self.assertIsNot(_tuple, _tuple2)
+        self.assertEqual(_tuple, _tuple2)
 
         _map2 = cast(dict, Expander.expand("{_map}", d))
+        self.assertIsNot(_map,    _map2)
         self.assertEqual(_number, _map2["1"])
         self.assertEqual(_text,   _map2["2"])
         self.assertEqual(_func,   _map2["3"])
@@ -245,7 +277,7 @@ class TestTemplates(unittest.TestCase):
         r = Expander.expand(v, d)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
-    def _test_multi_eval(self):
+    def test_multi_eval(self):
         d = Dict(
             a = "'  test_mul",
             b = "ti_eval   '.strip() ",
@@ -259,7 +291,7 @@ class TestTemplates(unittest.TestCase):
         self.assertEqual(Expander.expand("{{{c}}}", d),   "it works!")
         self.assertEqual(Expander.expand("{{{{c}}}}", d), "{it works!}")
 
-    def _test_embedded_eval(self):
+    def test_embedded_eval(self):
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
         self.assertEqual('1 + 1', Expander.expand("{foo}", d))
         self.assertEqual('1 + 1 2 + 2', Expander.expand("{foo} {bar}", d))

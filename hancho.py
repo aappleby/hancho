@@ -19,9 +19,6 @@ could format your hard drive and email spam to your grandparents. Use responsibl
 """
 
 # FIXME do a template test with two nested dicts a.b and a.c where a.c contains a template referring to b.d
-# FIXME change 'env' to 'tree'
-# FIXME param defaults should just be another layer in the onion
-# FIXME onions should be able to contain other onions, like Onion(parent = Onion(some_layer = blee), some_layer = blah)
 
 from __future__ import annotations
 
@@ -358,8 +355,8 @@ class Log:
     log_level_out = NORMAL # log level we want to appear in the log
 
     @classmethod
-    def reset(cls, env_log : Dict):
-        cls.config        = env_log
+    def reset(cls, config : Dict):
+        cls.config        = config
         cls.con_w         = shutil.get_terminal_size().columns
         cls.time_origin   = time.perf_counter()
         cls.indent_stack  = []
@@ -914,8 +911,8 @@ class Dict(dict):
     its inputs. I can't guarantee that everything you might put in a Dict will be deep-copied, but
     it should be close enough.
 
-    FIXME - This _must_ have an _up pointer, otherwise we can't expand things like "hancho.somefunction(var_on_task)"
-    because 'hancho' doesn't resolve inside task and 'var_on_task' doesn't resolve at the top level of the env
+    NOTE - This _must_ have an _up pointer, otherwise we can't expand things like "hancho.somefunction(var_on_task)"
+    because 'hancho' doesn't resolve inside task and 'var_on_task' doesn't resolve at the top level of the dict
 
     """
 
@@ -1004,9 +1001,11 @@ class Dict(dict):
     # endregion
     # ==============================================================================================
 
-    def _get(self, key, default = Utils.MISSING):
+    def _get(self, key, default = Utils.MISSING, check_up = False):
         if dict.__contains__(self, key):
             return dict.__getitem__(self, key)
+        elif check_up and self._up:
+            return self._up._get(key, default, check_up)
         elif default is not Utils.MISSING:
             return default
         else:
@@ -1055,68 +1054,72 @@ class Expander(abc.Mapping):
 
     #region instance methods
 
-    def __init__(self, env : Dict):
-        env.check_links()
-        self.env : Dict
-        object.__setattr__(self, "env", env)
+    def __init__(self, tree : Dict | Expander):
+        tree.check_links()
+        self.tree : Dict
+        object.__setattr__(self, "tree", tree)
+
+    @classmethod
+    def wrap(cls, tree : Dict | Expander):
+        if isinstance(tree, Expander):
+            return tree
+        else:
+            return Expander(tree)
 
     def __getattr__(self, key) -> Any:
         try:
-            return self._get(key, check_up = False)
+            return self._get(key, default = Utils.MISSING, check_up = False)
         except KeyError as ex:
             raise AttributeError from ex
 
     def __setattr__(self, key, val):
-        self.env.__setattr__(key, val)
+        self.tree.__setattr__(key, val)
 
     def __delattr__(self, key):
-        self.env.__delattr__(key)
+        self.tree.__delattr__(key)
 
     def __getitem__(self, key : str) -> Any:
-        return self._get(key, check_up = True)
+        return self._get(key, default = Utils.MISSING, check_up = True)
 
     def __setitem__(self, key, val):
-        self.env.__setitem__(key, val)
+        self.tree.__setitem__(key, val)
 
     def __delitem__(self, key):
-        self.env.__delitem__(key)
+        self.tree.__delitem__(key)
+
 
     def __iter__(self):
-        return self.env.__iter__()
+        return self.tree.__iter__()
 
     def __len__(self):
-        return self.env.__len__()
+        return self.tree.__len__()
 
-    def _get(self, key : str, check_up : bool):
+    def _get(self, key : str, default = Utils.MISSING, check_up : bool = False):
         result = Utils.MISSING
-        env = object.__getattribute__(self, "env")
 
+        cursor = self.tree
+
+        result = Utils.MISSING
         try:
-            trace_start(env, "get", key)
-
-            if key in env:
-                result = env[key]
-                if isinstance(result, Dict):
-                    result = Expander(env = result)
-                else:
-                    assert type(result) is not dict
-                    result = Expander.expand(result, env)
-
-            elif check_up:
-                up = object.__getattribute__(env, "_up")
-                if up:
-                    trace_up(env, up)
-                    result = Expander(up)._get(key, check_up)
-
+            while True:
+                trace_start(cursor, "get", key)
+                if key in cursor:
+                    result = cursor[key]
+                    if isinstance(result, Dict):
+                        # have to do this so that "read nested c first" resolves in the dest dict first
+                        result = Expander.wrap(result)
+                    else:
+                        result = Expander.expand(result, cursor)
+                    return result
+                elif check_up and (up := object.__getattribute__(cursor, "_up")):
+                    trace_up(cursor, up, "get", key)
+                    #result = Expander.wrap(up)._get(key, default, check_up)
+                    #return result
+                    cursor = up
                 else:
                     raise KeyError(key)
-            else:
-                raise KeyError(key)
-
-            return result
-
         finally:
-            trace_end(env, key, result)
+            trace_end(cursor, key, result)
             pass
 
 
@@ -1151,79 +1154,63 @@ class Expander(abc.Mapping):
     def is_terminal(var):
         pass
 
+
     @classmethod
-    def expand(cls, var : Any, env : Dict | Expander) -> Any:
-        old_depth = Expander.cv_depth.get()
+    def expand(cls, var : Any, tree : Dict | Expander) -> Any:
+        if isinstance(tree, Expander):
+            tree = tree.tree
+
+        if isinstance(tree, Dict):
+            tree.check_links()
 
         # Bail out if we've recursed too many times.
+        old_depth = Expander.cv_depth.get()
         if old_depth > Expander.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
         Expander.cv_depth.set(old_depth + 1)
 
-        if isinstance(env, Dict):
-            env.check_links()
-            env = Expander(env = env)
-
         try:
-            while True:
+            old_var = None
+            while old_var != var:
+                old_var = var
+
+                if isinstance(var, Expander):
+                    var = var.tree
+
                 if var is Utils.MISSING:
                     raise AssertionError("Tried to expand a sentinel value")
+                elif isinstance(var, abc.Mapping):
+                    result = type(var)()
+                    for k, v in var.items():
+                        v2 = Expander.expand(v, tree)
+                        result[k] = v2 # type: ignore
+                    return result
 
-                if isinstance(var, (bytes, bytearray)):
+                elif isinstance(var, abc.Collection) and not isinstance(var, (str, bytes, bytearray)):
+                    return type(var)(Expander.expand(v, tree) for v in var) # type: ignore
+                elif not isinstance(var, str):
                     return var
 
-                if isinstance(var, abc.Mapping):
-                    if isinstance(var, Expander):
-                        var = var.env
-                    #raise AssertionError("Do we really want to support expanding mappings?")
-                    old_evals = Expander.cv_evals.get()
-                    var = type(var)(**{k: Expander.expand(v, env) for k, v in var.items()})
-                    Expander.cv_evals.set(old_evals)
-                    return var
 
-                if isinstance(var, abc.Collection) and not isinstance(var, str):
-                    old_evals = Expander.cv_evals.get()
-                    # the linter doesn't like this, but we know collection constructors can accept a
-                    # generator
-                    var = type(var)(Expander.expand(v, env) for v in var) # type: ignore
-                    Expander.cv_evals.set(old_evals)
-                    return var
+                blocks = Expander._split_text(var)
 
-                if not isinstance(var, str):
-                    # If we don't know what to do with this type, just return it.
-                    return var
-
-                # Ok, we know 'var' is a string, split it.
-                blocks = Expander.Blocks()
-                blocks.clear()
-                Expander._split_text(var, blocks)
 
                 if len(blocks) == 0:
                     return var
-                if len(blocks) == 1:
-                    if isinstance(blocks[0], Expander.Literal):
-                        break
+                if len(blocks) == 1 and isinstance(blocks[0], Expander.Literal):
+                    return var
 
-                    if isinstance(blocks[0], Expander.Macro):
-                        old_var = var
-                        trace_start(env.env, "eval", var)
-                        var = Expander._eval_macro(blocks[0], env) # type: ignore
-                        trace_end(env.env, old_var, var)
-                        if old_var == var:
-                            break
+
+                if len(blocks) == 1 and isinstance(blocks[0], Expander.Macro):
+                    var = Expander._eval_macro(blocks[0], tree) # type: ignore
                 else:
-                    old_var = None
-                    try:
-                        trace_start(env.env, "expand", var)
-                        for i, b in enumerate(blocks):
-                            if isinstance(b, Expander.Macro):
-                                blocks[i] = Expander._eval_macro(b, env)
-                        old_var, var = var, "".join(Utils.stringify(b) for b in blocks)
-                    finally:
-                        trace_end(env.env, old_var, var)
-                        pass
-                    if old_var == var:
-                        break
+                    trace_start(tree, "expand", var)
+                    for i, b in enumerate(blocks):
+                        if isinstance(b, Expander.Macro):
+                            blocks[i] = Expander.expand(b, tree)
+                    var = "".join(Utils.stringify(b) for b in blocks)
+                    trace_end(tree, old_var, var)
+
 
         finally:
             Expander.cv_depth.set(old_depth)
@@ -1245,36 +1232,48 @@ class Expander(abc.Mapping):
 
 
     @classmethod
-    def _eval_macro(cls, var : Expander.Macro, env : Expander) -> Any:
+    def _eval_macro(cls, var : Expander.Macro, tree : Dict) -> Any:
         # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
         if old_evals >= Expander.MAX_EVALS:
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: '{var!r}'")
         Expander.cv_evals.set(old_evals + 1)
 
+        old_var = var
+
         try:
-            new_var = eval(var[1:-1], hancho_aliases, env)
-            return new_var
+            trace_start(tree, "eval", var)
+            var = eval(var[1:-1], hancho_aliases, Expander.wrap(tree))
         except RecursionError:
             raise
-        except Exception as ex:
-            Log.log(f"eval failed because >{ex}<\n")
-            return var
+        except Exception as _:
+            #Log.log(f"eval failed because >{ex}<\n")
+            pass
         except BaseException:
             raise
+        finally:
+            trace_end(tree, old_var, var)
+
+        return var
 
     # ==============================================================================================
 
     @classmethod
-    def _split_text(cls, text : str, out_blocks : Blocks):
+    def _split_text(cls, text : str) -> Blocks:
         """
         Extracts all innermost delimited spans from a block of text and produces a list of string
         literals and macros. Note that we're not handling "escaped" delimiters, instead we allow
         the user to change the delimiter when required (default delimiters are {} and «»)
         """
 
-        ldelim = '«' if '«' in text else '{'
-        rdelim = '»' if '»' in text else '}'
+        out_blocks = Expander.Blocks()
+        if '«' in text:
+            ldelim = '«'
+            rdelim = '»'
+        else:
+            ldelim = '{'
+            rdelim = '}'
+
         cursor = 0
         idelim = -1
         macros = 0
@@ -1292,6 +1291,8 @@ class Expander(abc.Mapping):
 
         if cursor < len(text):
             out_blocks.append(Expander.Literal(text[cursor:]))
+
+        return out_blocks
 
     # ==============================================================================================
 
@@ -1480,37 +1481,57 @@ class Dumper:
         if prefix: prefix += " = "
         return prefix
 
-def trace_start(env, action, arg):
+def trace_start(tree, action, arg):
     if not Log.config['trace']:
         return
 
-    try:
-        env_color = Utils.obj_to_hex(env)
+    if isinstance(tree, Expander):
+        tree = tree.tree
 
-        with Log.Color(env_color):
-            Log.log(f"┌ {Utils.instance_tag(env)}")
+    try:
+        tree_color = Utils.obj_to_hex(tree)
+
+        with Log.Color(tree_color):
+            Log.log(f"┌ {Utils.instance_tag(tree)}")
         Log.log(f".{action}({arg!r})\n")
-        Log.indent(env_color)
+        Log.indent(tree_color)
         pass
     except:
         raise
 
-def trace_up(env, up):
+def trace_up(tree, up, action, arg):
     if not Log.config['trace']:
         return
 
-    env_color = Utils.obj_to_hex(env)
+    if isinstance(tree, Expander):
+        tree = tree.tree
+
+    tree_color = Utils.obj_to_hex(tree)
+    up_color = Utils.obj_to_hex(up)
     try:
         Log.dedent()
-        with Log.Color(env_color):
-            Log.log(f"├ {Utils.instance_tag(env)}")
-        Log.log(" -> ")
-        with Log.Color(Utils.obj_to_hex(up)):
-            Log.log(f"{Utils.instance_tag(up)}\n")
-    finally:
-        Log.indent(env_color)
+        #with Log.Color(tree_color):
+        #    Log.log(f"├ {Utils.instance_tag(tree)}")
+        #Log.log(" -> ")
+        #with Log.Color(up_color):
+        #    Log.log(f"{Utils.instance_tag(up)}\n")
 
-def trace_end(env, arg, result):
+        #with Log.Color(tree_color):
+        #    Log.log(f"┌ {Utils.instance_tag(tree)}")
+        #Log.log(f".{action}({arg!r})\n")
+
+
+        with Log.Color(tree_color):
+            Log.log(f"├ {Utils.instance_tag(up)}")
+        Log.log(f".{action}({arg!r})")
+        Log.log(" -> ")
+        with Log.Color(up_color):
+            Log.log(f"{Utils.instance_tag(up)}\n")
+
+    finally:
+        Log.indent(up_color)
+
+def trace_end(tree, arg, result):
     if not Log.config['trace']:
         return
 
@@ -1518,15 +1539,15 @@ def trace_end(env, arg, result):
         Log.dedent()
 
         if isinstance(result, Expander):
-            result = result.env
+            result = result.tree
 
-        env_color = Utils.obj_to_hex(env)
+        tree_color = Utils.obj_to_hex(tree)
         result_color = 0
         result_type = type(result)
         if isinstance(result, (dict|Dict|Expander)):
             result_color = Utils.obj_to_hex(result)
             result = Utils.instance_tag(result)
-        with Log.Color(env_color):
+        with Log.Color(tree_color):
             Log.log("└ ")
         Log.log(f"{arg!r} : ")
         Log.log(f"{result_type.__name__} = ")
@@ -1591,25 +1612,25 @@ class Hancho:
     repos : set[Repo] = set()
 
     @classmethod
-    def init(cls, top_env):
+    def init(cls, top_tree):
         cls.real_filenames = set()
         cls.dedupe = Dict()
         cls.repos : set[Repo] = set()
 
-        Log.reset(top_env.log)
+        Log.reset(top_tree.log)
         Utils.reset()
-        Runner.reset(top_env.hancho.max_jobs, top_env.hancho.max_errors)
+        Runner.reset(top_tree.hancho.max_jobs, top_tree.hancho.max_errors)
 
 class Repo:
-    def __init__(self, env : Dict):
-        self._root  : str        = Expander.expand("{repo.root}", env)
-        self._build_dir : str    = Expander.expand("{repo.build_dir}", env)
-        self._build_tag  : str   = Expander.expand("{repo.build_tag}", env)
-        self._target  : str      = Expander.expand("{repo.target}", env)
-        self._build_force : bool = Expander.expand("{repo.build_force}", env)
-        self._build_all : bool   = Expander.expand("{repo.build_all}", env)
-        self._dry_run : bool     = Expander.expand("{repo.dry_run}", env)
-        self._strict : bool      = Expander.expand("{repo.strict}", env)
+    def __init__(self, tree : Dict):
+        self._root  : str        = Expander.expand("{repo.root}", tree)
+        self._build_dir : str    = Expander.expand("{repo.build_dir}", tree)
+        self._build_tag  : str   = Expander.expand("{repo.build_tag}", tree)
+        self._target  : str      = Expander.expand("{repo.target}", tree)
+        self._build_force : bool = Expander.expand("{repo.build_force}", tree)
+        self._build_all : bool   = Expander.expand("{repo.build_all}", tree)
+        self._dry_run : bool     = Expander.expand("{repo.dry_run}", tree)
+        self._strict : bool      = Expander.expand("{repo.strict}", tree)
 
         self.stat_db = {}
         self.build_reasons = Counter()
@@ -1699,16 +1720,16 @@ class Script:
         script_path: str | None,
         script_root: str | None,
         module: types.ModuleType,
-        script_env: Dict,
+        tree: Dict,
         code: types.CodeType | None,
     ):
 
-        self._repo       = repo
-        self._path       = script_path
-        self._root       = script_root
-        self._module     = module
-        self._script_env = script_env
-        self._code       = code
+        self._repo   = repo
+        self._path   = script_path
+        self._root   = script_root
+        self._module = module
+        self._tree   = tree
+        self._code   = code
 
         self._tasks : list[Task] =  []
         self._children : list[Script] = []
@@ -1729,10 +1750,10 @@ class Task:
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(self, repo : Repo, script : Script, env : Dict):
+    def __init__(self, repo : Repo, script : Script, tree : Dict):
         self._repo   = repo
         self._script = script
-        self._env    = env
+        self._tree   = tree
         self.cfg     = {}
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -1748,7 +1769,7 @@ class Task:
 
         # This must be populated -before- the task starts, as we need it to queue up the task's
         # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self._env) if isinstance(v, Task)]
+        self.input_tasks = [v for v in Utils.yield_values(self._tree) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -1827,7 +1848,7 @@ hancho_defaults = Dict(
         quiet   = False,
         verbose = False,
         debug   = False,
-        trace   = True, #False,
+        trace   = False, #True,
         wrap    = False,
         color   = True,
         time    = True
@@ -1865,11 +1886,11 @@ hancho_defaults = Dict(
 
 class HanchoProxy(types.ModuleType):
 
-    def __init__(self, repo : Repo, script : Script, env : Dict):
+    def __init__(self, repo : Repo, script : Script, tree : Dict):
         super().__init__("hancho_proxy")
         self._repo   = repo
         self._script = script
-        self._env    = env
+        self._tree    = tree
 
     def __getattr__(self, key):
         # Delegate to hancho_aliases so we don't have to duplicate it.
@@ -1881,11 +1902,11 @@ class HanchoProxy(types.ModuleType):
 
     def Task(self, *args, **kwargs):
 
-        task_env = copy.deepcopy(self._env)
+        task_tree = copy.deepcopy(self._tree)
 
-        update(task_env['task'], *args, Dict(kwargs))
+        update(task_tree['task'], *args, Dict(kwargs))
 
-        task = Task(repo = self._repo, script = self._script, env = task_env)
+        task = Task(repo = self._repo, script = self._script, tree = task_tree)
         self._script._tasks.append(task)
 
         # Auto-start the task if it was created dynamically during the build.
@@ -1895,10 +1916,10 @@ class HanchoProxy(types.ModuleType):
         return task
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
-        return load_script(self._env, self._repo, path, root, *args, **kwargs)._script._module
+        return load_script(self._tree, self._repo, path, root, *args, **kwargs)._script._module
 
     def repo(self, path, root = None, *args, **kwargs) -> types.ModuleType:
-        return load_script(self._env, None, path, root, *args, **kwargs)._script._module
+        return load_script(self._tree, None, path, root, *args, **kwargs)._script._module
 
     class EarlyOut(Exception): pass
     class Fail(Exception): pass
@@ -1959,20 +1980,20 @@ def _start():
 
 def init_lib(argv, *args, **kwargs) -> HanchoProxy:
     flags = parse_flags(argv, *args, **kwargs)
-    top_env = merge(hancho_defaults, flags)
-    top_env.link(hancho_aliases)
-    Hancho.init(top_env)
-    root_proxy = load_script(top_env, None, None, None)
+    top_tree = merge(hancho_defaults, flags)
+    top_tree.link(hancho_aliases)
+    Hancho.init(top_tree)
+    root_proxy = load_script(top_tree, None, None, None)
     return root_proxy
 
 # ==================================================================================================
 
-def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, root : str | None, *args, **kwargs) -> HanchoProxy:
+def load_script(old_tree : Dict, parent_repo : Repo | None, path : str | None, root : str | None, *args, **kwargs) -> HanchoProxy:
 
     if path:
         root = root or "{script.root}"
-        path = Expander.expand(path, old_env)
-        root = Expander.expand(root, old_env)
+        path = Expander.expand(path, old_tree)
+        root = Expander.expand(root, old_tree)
 
         path = Path.resolve(path)
         root = Path.resolve(root)
@@ -1982,13 +2003,13 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     with Log.VERBOSE, Log.ORANGE:
         Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
-    new_env = copy.deepcopy(old_env)
-    update(new_env['script'], *args, Dict(kwargs), path = path, root = root)
+    new_tree = copy.deepcopy(old_tree)
+    update(new_tree['script'], *args, Dict(kwargs), path = path, root = root)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
     # build, which they should be in practice.
-    dupe_key = Dumper.dump(new_env, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
+    dupe_key = Dumper.dump(new_tree, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
     dupe_key = Dumper.depointer(dupe_key)
     dupe_key = "".join(dupe_key.split())
 
@@ -2002,14 +2023,14 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
     else:
         code = None
 
-    repo   = parent_repo or Repo(new_env)
+    repo   = parent_repo or Repo(new_tree)
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
-    script = Script(repo, path, root, module, new_env, code)
-    proxy  = HanchoProxy(repo, script, new_env)
+    script = Script(repo, path, root, module, new_tree, code)
+    proxy  = HanchoProxy(repo, script, new_tree)
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
-    module.env      = new_env     # type: ignore
+    module.tree     = new_tree     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
     Hancho.repos.add(proxy._repo)
@@ -2035,10 +2056,10 @@ def load_script(old_env : Dict, parent_repo : Repo | None, path : str | None, ro
 def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
-    top_env = merge(hancho_defaults, flags)
-    top_env.link(hancho_aliases)
+    top_tree = merge(hancho_defaults, flags)
+    top_tree.link(hancho_aliases)
 
-    Hancho.init(top_env)
+    Hancho.init(top_tree)
 
     with Log.VERBOSE, Log.LIME:
         Log.log(f"Command line : {" ".join(sys.argv)}\n")
@@ -2056,8 +2077,8 @@ def hancho_main() -> int:
     try:
         Log.indent(Log.ORANGE.color)
 
-        top_repo  = Repo(top_env)
-        top_proxy = load_script(top_env, top_repo, "{script.path}", "{script.root}")
+        top_repo  = Repo(top_tree)
+        top_proxy = load_script(top_tree, top_repo, "{script.path}", "{script.root}")
     finally:
         Log.dedent()
     time_b1 = time.perf_counter()
@@ -2067,7 +2088,7 @@ def hancho_main() -> int:
     # ------------------------------------
     # If we're running a tool, run it and we're done.
 
-    tool = top_env['hancho']['run_tool']
+    tool = top_tree['hancho']['run_tool']
 
     if tool:
         time_a2 = time.perf_counter()
@@ -2168,7 +2189,7 @@ def hancho_build(top_repo : Repo) -> int:
 
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
-                if target_regex.search(task._env['task']['name']):
+                if target_regex.search(task._tree['task']['name']):
                     queue_task(task)
 
     elif top_repo._build_all:
@@ -2426,14 +2447,14 @@ async def await_inputs(task : Task):
 
 def expand_task(task : Task):
     with Log.DEBUG:
-        log_task(task, "Task env:\n")
-        log_task(task, Dumper.dump(task._env, fold = ["hancho", "log", "in_objs"]) + "\n")
+        log_task(task, "Task tree:\n")
+        log_task(task, Dumper.dump(task._tree, fold = ["hancho", "log", "in_objs"]) + "\n")
 
     # We need to expand the build dir first so we can use it in fix_paths.
-    build_dir = Expander.expand("{build_dir}", task._env)
+    build_dir = Expander.expand("{build_dir}", task._tree)
 
     # Then we expand all io fields and fix their paths.
-    for _field, _files in task._env['task'].items():
+    for _field, _files in task._tree['task'].items():
         if not _field.startswith("in_") and not _field.startswith("out_"): # and _field != "in_depfile":
             continue
 
@@ -2442,7 +2463,7 @@ def expand_task(task : Task):
             for val in Utils.yield_values(_files)
         ]
 
-        files = Expander.expand(files, task._env)
+        files = Expander.expand(files, task._tree)
         files = Utils.flatten(files)
         files = fix_paths(task, _field, files, build_dir)
         files = files[0] if len(files) == 1 else files
@@ -2457,7 +2478,7 @@ def expand_task(task : Task):
             task.out_files[_field] = files
 
     for key in ['name', 'desc', 'command', 'cwd', 'build_dir', 'in_depfile', 'depformat', 'job_size', 'dry_run']:
-        task.cfg['key'] = Expander.expand("{" + key + "}", task._env.task)
+        task.cfg['key'] = Expander.expand("{" + key + "}", task._tree.task)
 
     for _field in task.cfg:
         if (_field.startswith("out_") or _field == "in_depfile") and not task.cfg['dry_run']:
@@ -2534,8 +2555,7 @@ def sanity_check(task : Task):
     # In strict mode, we mark a task broken if its command still has delimiters in it.
     if repo._strict:
         for command in cast(list, Utils.flatten(task.cfg['command'])):
-            out = Expander.Blocks()
-            Expander._split_text(command, out)
+            out = Expander._split_text(command)
             if (len(out) > 1) or (len(out) == 1 and isinstance(out[0], Expander.Macro)):
                 raise Task.BROKEN("STRICT: Command has delimiters in it")
 
