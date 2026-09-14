@@ -344,24 +344,6 @@ class TestTemplates(unittest.TestCase):
 #        #self.assertEqual("{blarp}", Dict().expand("{blarp}"))
 #        self.assertIsNotNone(script)
 
-#    # FIXME broken
-#    def _test_alternate_delims(self):
-#        d = hancho.Dict(foo = "bar")
-#        o1 = hancho.Onion(layer1 = d, layer2 = Dict(delims='{}'))
-#        o2 = hancho.Onion(layer1 = d, layer2 = Dict(delims='«»'))
-#
-#        self.assertEqual("bar",   Expander.expand("{foo}", o1))
-#        self.assertEqual("{foo{", Expander.expand("{foo{", o2))
-#        self.assertEqual("}foo}", Expander.expand("}foo}", o2))
-#        self.assertEqual("}foo{", Expander.expand("}foo{", o2))
-#        self.assertEqual("«foo»", Expander.expand("«foo»", o1))
-#
-#        self.assertEqual("bar",   Expander.expand("«foo»", o2))
-#        self.assertEqual("«foo«", Expander.expand("«foo«", o2))
-#        self.assertEqual("»foo»", Expander.expand("»foo»", o2))
-#        self.assertEqual("»foo«", Expander.expand("»foo«", o2))
-#        self.assertEqual("{foo}", Expander.expand("{foo}", o2))
-
 ####################################################################################################
 
 if __name__ == "__main__":

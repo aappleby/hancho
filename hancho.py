@@ -48,14 +48,14 @@ from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
 from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 # Just a sanity check that we haven't accidentally imported the 'real' hancho twice.
 #assert "hancho" not in sys.modules
 
 hancho = sys.modules[__name__]
-K = TypeVar("K")
-V = TypeVar("V")
+#K = TypeVar("K")
+#V = TypeVar("V")
 
 #endregion
 # ==================================================================================================
@@ -119,12 +119,30 @@ class Utils:
         temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
         return (temp & 0xFFFFFFFF) / 0x100000000
 
+#    @staticmethod
+#    def obj_to_hex_color2(obj) -> int:
+#        hue = Utils.obj_to_float(obj)
+#        r, g, b = colorsys.hsv_to_rgb(hue, 0.6, 0.8)
+#        r, g, b = (int(r * 255), int(g * 255), int(b * 255))
+#        return (r << 16) | (g << 8) | b
+
+    color_map = {}
+    color_cursor = 0
+
     @staticmethod
-    def obj_to_hex(obj) -> int:
-        hue = Utils.obj_to_float(obj)
+    def obj_to_hex_color(obj) -> int:
+        oid = id(obj)
+        if oid in Utils.color_map:
+            return Utils.color_map[oid]
+        phi = 1.61803398875
+        hue = (0.3 + Utils.color_cursor * phi) % 1
+        Utils.color_cursor += 1
+
         r, g, b = colorsys.hsv_to_rgb(hue, 0.6, 0.8)
         r, g, b = (int(r * 255), int(g * 255), int(b * 255))
-        return (r << 16) | (g << 8) | b
+        result = (r << 16) | (g << 8) | b
+        Utils.color_map[oid] = result
+        return result
 
     @staticmethod
     def run_cmd(cmd : str):
@@ -195,7 +213,7 @@ class Utils:
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
             Utils.hash_bytes += os.fstat(f.fileno()).st_size
-            digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=8))
+            digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=8)).hexdigest()
         time_b = time.perf_counter()
         Utils.hash_time += time_b - time_a
         return digest
@@ -860,12 +878,12 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
             mystery_flags[key] = val
 
     flags = Dict()
-    merge(flags, argv_flags)
+    update(flags, argv_flags)
 
     for k, v in mystery_flags.items():
         set_by_path(flags, k, v)
 
-    merge(flags, *args, Dict(kwargs))
+    update(flags, *args, Dict(kwargs))
 
     return flags
 
@@ -1012,13 +1030,15 @@ class Dict(dict):
             raise KeyError(key)
 
     def _set(self, key, val):
-        dest, key = _walk(self, key, spawn = True)
+        #dest, key = _walk(self, key, spawn = True)
+        dest = self
         dict.__setitem__(dest, key, val)
         if isinstance(val, Dict):
             val.link(self)
 
     def _del(self, key):
-        dest, key = _walk(self, key, spawn = False)
+        #dest, key = _walk(self, key, spawn = False)
+        dest = self
         dict.__delitem__(dest, key)
 
 
@@ -1102,8 +1122,8 @@ class Expander(abc.Mapping):
         result = Utils.MISSING
         try:
             while True:
-                trace_start(cursor, "get", key)
                 if key in cursor:
+                    #trace_start(cursor, "get", key)
                     result = cursor[key]
                     if isinstance(result, Dict):
                         # have to do this so that "read nested c first" resolves in the dest dict first
@@ -1112,14 +1132,14 @@ class Expander(abc.Mapping):
                         result = Expander.expand(result, cursor)
                     return result
                 elif check_up and (up := object.__getattribute__(cursor, "_up")):
-                    trace_up(cursor, up, "get", key)
+                    #trace_up(cursor, up, "get", key)
                     #result = Expander.wrap(up)._get(key, default, check_up)
                     #return result
                     cursor = up
                 else:
                     raise KeyError(key)
         finally:
-            trace_end(cursor, key, result)
+            #trace_end(cursor, key, result)
             pass
 
 
@@ -1141,7 +1161,6 @@ class Expander(abc.Mapping):
     #
     # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
     # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
-
 
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
@@ -1191,25 +1210,22 @@ class Expander(abc.Mapping):
                 elif not isinstance(var, str):
                     return var
 
-
                 blocks = Expander._split_text(var)
 
-
-                if len(blocks) == 0:
+                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], Expander.Literal)):
                     return var
-                if len(blocks) == 1 and isinstance(blocks[0], Expander.Literal):
-                    return var
-
 
                 if len(blocks) == 1 and isinstance(blocks[0], Expander.Macro):
                     var = Expander._eval_macro(blocks[0], tree) # type: ignore
                 else:
-                    trace_start(tree, "expand", var)
-                    for i, b in enumerate(blocks):
-                        if isinstance(b, Expander.Macro):
-                            blocks[i] = Expander.expand(b, tree)
-                    var = "".join(Utils.stringify(b) for b in blocks)
-                    trace_end(tree, old_var, var)
+                    try:
+                        trace_start(tree, "expand", var)
+                        for i, b in enumerate(blocks):
+                            if isinstance(b, Expander.Macro):
+                                blocks[i] = Expander.expand(b, tree)
+                        var = "".join(Utils.stringify(b) for b in blocks)
+                    finally:
+                        trace_end(tree, old_var, var)
 
 
         finally:
@@ -1262,26 +1278,19 @@ class Expander(abc.Mapping):
     def _split_text(cls, text : str) -> Blocks:
         """
         Extracts all innermost delimited spans from a block of text and produces a list of string
-        literals and macros. Note that we're not handling "escaped" delimiters, instead we allow
-        the user to change the delimiter when required (default delimiters are {} and «»)
+        literals and macros. Note that we're not handling "escaped" delimiters, instead we just
+        translate "«»" into "{}" right before we run a command
         """
 
         out_blocks = Expander.Blocks()
-        if '«' in text:
-            ldelim = '«'
-            rdelim = '»'
-        else:
-            ldelim = '{'
-            rdelim = '}'
-
         cursor = 0
         idelim = -1
         macros = 0
 
         for i, c in enumerate(text):
-            if c == ldelim:
+            if c == '{':
                 idelim = i
-            elif c == rdelim and idelim >= 0:
+            elif c == '}' and idelim >= 0:
                 if cursor < idelim:
                     out_blocks.append(Expander.Literal(text[cursor:idelim]))
                 out_blocks.append(Expander.Macro(text[idelim:i+1]))
@@ -1489,7 +1498,7 @@ def trace_start(tree, action, arg):
         tree = tree.tree
 
     try:
-        tree_color = Utils.obj_to_hex(tree)
+        tree_color = Utils.obj_to_hex_color(tree)
 
         with Log.Color(tree_color):
             Log.log(f"┌ {Utils.instance_tag(tree)}")
@@ -1506,10 +1515,10 @@ def trace_up(tree, up, action, arg):
     if isinstance(tree, Expander):
         tree = tree.tree
 
-    tree_color = Utils.obj_to_hex(tree)
-    up_color = Utils.obj_to_hex(up)
+    tree_color = Utils.obj_to_hex_color(tree)
+    up_color = Utils.obj_to_hex_color(up)
     try:
-        Log.dedent()
+        #Log.dedent()
         #with Log.Color(tree_color):
         #    Log.log(f"├ {Utils.instance_tag(tree)}")
         #Log.log(" -> ")
@@ -1522,14 +1531,15 @@ def trace_up(tree, up, action, arg):
 
 
         with Log.Color(tree_color):
-            Log.log(f"├ {Utils.instance_tag(up)}")
+            Log.log(f"┌ {Utils.instance_tag(tree)}")
         Log.log(f".{action}({arg!r})")
         Log.log(" -> ")
         with Log.Color(up_color):
             Log.log(f"{Utils.instance_tag(up)}\n")
 
     finally:
-        Log.indent(up_color)
+        #Log.indent(up_color)
+        pass
 
 def trace_end(tree, arg, result):
     if not Log.config['trace']:
@@ -1541,11 +1551,11 @@ def trace_end(tree, arg, result):
         if isinstance(result, Expander):
             result = result.tree
 
-        tree_color = Utils.obj_to_hex(tree)
+        tree_color = Utils.obj_to_hex_color(tree)
         result_color = 0
         result_type = type(result)
         if isinstance(result, (dict|Dict|Expander)):
-            result_color = Utils.obj_to_hex(result)
+            result_color = Utils.obj_to_hex_color(result)
             result = Utils.instance_tag(result)
         with Log.Color(tree_color):
             Log.log("└ ")
@@ -1648,11 +1658,16 @@ def load_stat_db(repo : Repo):
         with open(stat_db_path) as contents:
             with Log.VERBOSE, Log.ORANGE:
                 Log.log(f"Loading stat_db {stat_db_path}\n")
-            repo.stat_db = json.load(contents)
+            repo.stat_db = Dict(json.load(contents))
     else:
         with Log.VERBOSE, Log.ORANGE:
             Log.log(f"No stat db for {repo._root}\n")
-        repo.stat_db = {}
+        repo.stat_db = Dict()
+
+    for key, val in list(repo.stat_db.items()):
+        repo.stat_db[key] = Dict(val)
+    pass
+
 
 def save_stat_db(repo : Repo):
     if repo._dry_run:
@@ -1673,7 +1688,9 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             stat_db[file] = Utils.get_stats(file)
 
-        if task.cfg['in_depfile']:
+        in_depfile = task.cfg['in_depfile']
+        if in_depfile:
+            stat_db[in_depfile] = Utils.get_stats(in_depfile)
             deplines = Utils.load_depfile(task.cfg['in_depfile'], task.cfg['depformat'], task.cfg['cwd'])
             for file in deplines:
                 stat_db[file] = Utils.get_stats(file) # type: ignore
@@ -1754,11 +1771,12 @@ class Task:
         self._repo   = repo
         self._script = script
         self._tree   = tree
-        self.cfg     = {}
+        self.cfg     = Dict()
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
 
+        self.in_depfile = ""
         self.in_files  = {}
         self.out_files = {}
 
@@ -1900,6 +1918,9 @@ class HanchoProxy(types.ModuleType):
     Expander = Expander
     Tool = Tool
 
+    def dump(self, *args, **kwargs):
+        print(Dumper.dump(*args, **kwargs))
+
     def Task(self, *args, **kwargs):
 
         task_tree = copy.deepcopy(self._tree)
@@ -1952,7 +1973,7 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(argv : list[str], *args, **kwargs):
         return init_lib(argv, *args, **kwargs)
 
-# ==================================================================================================
+# ==============================================1665====================================================
 
 def _start():
 
@@ -2000,56 +2021,61 @@ def load_script(old_tree : Dict, parent_repo : Repo | None, path : str | None, r
     else:
         assert root is None
 
-    with Log.VERBOSE, Log.ORANGE:
-        Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
+    try:
+        with Log.VERBOSE, Log.ORANGE:
+            Log.log(f"Loading {"repo" if not parent_repo else "script"} {path}\n")
+        Log.indent(Log.ORANGE.color)
 
-    new_tree = copy.deepcopy(old_tree)
-    update(new_tree['script'], *args, Dict(kwargs), path = path, root = root)
+        new_tree = copy.deepcopy(old_tree)
+        update(new_tree, *args, kwargs)
+        update(new_tree, script = Dict(path = path, root = root))
 
-    # Dedupe the load - only scripts with identical real paths and identical configs are
-    # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
-    # build, which they should be in practice.
-    dupe_key = Dumper.dump(new_tree, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
-    dupe_key = Dumper.depointer(dupe_key)
-    dupe_key = "".join(dupe_key.split())
+        # Dedupe the load - only scripts with identical real paths and identical configs are
+        # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
+        # build, which they should be in practice.
+        dupe_key = Dumper.dump(new_tree, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
+        dupe_key = Dumper.depointer(dupe_key)
+        dupe_key = "".join(dupe_key.split())
 
-    if dupe := Hancho.dedupe.get(dupe_key, None):
-        return dupe
+        if dupe := Hancho.dedupe.get(dupe_key, None):
+            return dupe
 
-    if path:
-        with open(path, encoding="utf-8") as file:
-            source = file.read()
-            code = compile(source, path, "exec", dont_inherit=True)
-    else:
-        code = None
+        if path:
+            with open(path, encoding="utf-8") as file:
+                source = file.read()
+                code = compile(source, path, "exec", dont_inherit=True)
+        else:
+            code = None
 
-    repo   = parent_repo or Repo(new_tree)
-    module = types.ModuleType(os.path.basename(path) if path else "<no path>")
-    script = Script(repo, path, root, module, new_tree, code)
-    proxy  = HanchoProxy(repo, script, new_tree)
+        repo   = parent_repo or Repo(new_tree)
+        module = types.ModuleType(os.path.basename(path) if path else "<no path>")
+        script = Script(repo, path, root, module, new_tree, code)
+        proxy  = HanchoProxy(repo, script, new_tree)
 
-    module.__file__ = path
-    module.hancho   = proxy   # type: ignore
-    module.tree     = new_tree     # type: ignore
+        module.__file__ = path
+        module.hancho   = proxy   # type: ignore
+        module.tree     = new_tree     # type: ignore
 
-    Hancho.dedupe[dupe_key] = proxy
-    Hancho.repos.add(proxy._repo)
+        Hancho.dedupe[dupe_key] = proxy
+        Hancho.repos.add(proxy._repo)
 
-    repo.scripts.append(script)
-    if not repo.root_script:
-        repo.root_script = script
+        repo.scripts.append(script)
+        if not repo.root_script:
+            repo.root_script = script
 
-    # Run the script
-    if code and root:
-        with chdir(root):
-            try:
-                Log.indent(Log.ORANGE.color)
-                sys.modules["hancho"] = proxy
-                exec(code, module.__dict__, {})
-            finally:
-                Log.dedent()
+        # Run the script
+        if code and root:
+            with chdir(root):
+                try:
+                    Log.indent(Log.ORANGE.color)
+                    sys.modules["hancho"] = proxy
+                    exec(code, module.__dict__, {})
+                finally:
+                    Log.dedent()
 
-    return proxy
+        return proxy
+    finally:
+        Log.dedent()
 
 # ==================================================================================================
 
@@ -2074,13 +2100,8 @@ def hancho_main() -> int:
     # Load and exec top script
 
     time_a1 = time.perf_counter()
-    try:
-        Log.indent(Log.ORANGE.color)
-
-        top_repo  = Repo(top_tree)
-        top_proxy = load_script(top_tree, top_repo, "{script.path}", "{script.root}")
-    finally:
-        Log.dedent()
+    top_repo  = Repo(top_tree)
+    top_proxy = load_script(top_tree, top_repo, "{script.path}", "{script.root}")
     time_b1 = time.perf_counter()
     with Log.VERBOSE, Log.BLUE:
         Log.log(f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
@@ -2189,7 +2210,7 @@ def hancho_build(top_repo : Repo) -> int:
 
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
-                if target_regex.search(task._tree['task']['name']):
+                if target_regex.search(task._tree.task.name):
                     queue_task(task)
 
     elif top_repo._build_all:
@@ -2315,7 +2336,7 @@ async def async_run_tasks():
 # ==================================================================================================
 
 async def task_top(task : Task):
-    # Entry point for tasks, just so we can keep all the task-levle exception handling together.
+    # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
     try:
         return await task_main(task)
@@ -2451,39 +2472,47 @@ def expand_task(task : Task):
         log_task(task, Dumper.dump(task._tree, fold = ["hancho", "log", "in_objs"]) + "\n")
 
     # We need to expand the build dir first so we can use it in fix_paths.
-    build_dir = Expander.expand("{build_dir}", task._tree)
+    build_dir = Expander.expand("{build_dir}", task._tree.task)
 
     # Then we expand all io fields and fix their paths.
-    for _field, _files in task._tree['task'].items():
+    for _field, _files in list(task._tree.task.items()):
         if not _field.startswith("in_") and not _field.startswith("out_"): # and _field != "in_depfile":
             continue
 
         files = [
             val.out_files if isinstance(val, Task) else val
             for val in Utils.yield_values(_files)
+            if val
         ]
 
-        files = Expander.expand(files, task._tree)
-        files = Utils.flatten(files)
-        files = fix_paths(task, _field, files, build_dir)
-        files = files[0] if len(files) == 1 else files
+        if files:
+            files = Expander.expand(files, task._tree.task)
+            files = Utils.flatten(files)
+            files = fix_paths(task, _field, files, build_dir)
+            files = files[0] if len(files) == 1 else files
 
-        task.cfg[_field] = files
+            task._tree.task[_field] = files
 
-        if _field == "in_depfile":
-            task.cfg['in_depfile'] = cast(str, files)
-        elif _field.startswith("in_"):
-            task.in_files[_field] = files
-        elif _field.startswith("out_"):
-            task.out_files[_field] = files
+            if _field == "in_depfile":
+                task.in_depfile = cast(str, files)
+            elif _field.startswith("in_"):
+                task.in_files[_field] = files
+            elif _field.startswith("out_"):
+                task.out_files[_field] = files
+
+    pass
 
     for key in ['name', 'desc', 'command', 'cwd', 'build_dir', 'in_depfile', 'depformat', 'job_size', 'dry_run']:
-        task.cfg['key'] = Expander.expand("{" + key + "}", task._tree.task)
+        task.cfg[key] = Expander.expand("{" + key + "}", task._tree.task)
 
     for _field in task.cfg:
         if (_field.startswith("out_") or _field == "in_depfile") and not task.cfg['dry_run']:
             file = task.cfg[_field]
-            os.makedirs(Path.dirname(file), exist_ok=True)
+            if file:
+                try:
+                    os.makedirs(Path.dirname(file), exist_ok=True)
+                finally:
+                    pass
 
     if len(task.cfg['command']) == 1:
         task.cfg['command'] = task.cfg['command'][0]
@@ -2540,7 +2569,7 @@ def sanity_check(task : Task):
     # and callbacks execute from dir(script_path) (because you expect to be in the same
     # directory as the script when the callback is firing).
 
-    # This means that pre-rel-ified paths can only be rel'd to one of the two cwds, not both.
+    # This means that pre-relative-ified paths can only be rel'd to one of the two cwds, not both.
     # And that means we disallow mixed cli/callback command lists.
 
     if isinstance(task.cfg['command'], list):
@@ -2592,9 +2621,13 @@ async def run_command(task : Task, command : str):
 
     proc = None
     try:
+        # Convert any alt delims into curly braces
+        curlify = str.maketrans({"«" : "{", "»" : "}"})
+        curly_command = command.translate(curlify)
+
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
-            command,
+            curly_command,
             cwd    = task.cfg['cwd'],
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
@@ -2692,6 +2725,10 @@ def rebuild_reason(task : Task) -> str:
 
     for filename in Utils.yield_values(task.out_files):
         if reason := check_stat(repo, filename, task.cfg['command']):
+            return reason
+
+    if task.cfg['in_depfile']:  # noqa: SIM102
+        if reason := check_stat(repo, task.cfg['in_depfile']):
             return reason
 
     repo.build_reasons["*task clean"] += 1
