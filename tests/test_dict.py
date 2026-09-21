@@ -5,9 +5,11 @@ import copy
 import unittest
 from collections import abc
 
-from hancho import Dict
+import hancho
 
 # FIXME test fill()
+
+Dict = hancho.Dict
 
 # --------------------------------------------------------------------------------------------------
 

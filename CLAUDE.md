@@ -183,7 +183,7 @@ during init).
 `target` (regex), `-C/--root_dir`, `-f/--root_file`, `-t/--tool` (e.g. `clean` wipes
 `repo.build`), `--build_tag`, `-j/--max_jobs`, `--max_errors`, `-n/--dry_run`,
 `-a/--rebuild`, `--log-wrap`, `--strict`, and verbosity shortcuts `-q/-v/-d/--trace` or
-`--verbosity=LEVEL` (QUIET..TRACE). **Unrecognized `--flags` become config fields**
+`--log.level=LEVEL`. **Unrecognized `--flags` become config fields**
 (`--foo` -> `foo=True`, `--foo=3` -> `foo=3`), so scripts can read arbitrary CLI options.
 
 ### Embedding Hancho

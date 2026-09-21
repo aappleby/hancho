@@ -1,0 +1,173 @@
+#!/usr/bin/python3
+"""Template file for creating new test cases"""
+
+import doctest
+import os
+import sys
+import unittest
+
+#import hancho
+from hancho import Dict, Onion
+
+
+def setUpModule():
+    os.chdir(os.path.dirname(__file__))
+
+def load_tests(loader, tests, ignore):
+    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
+    tests.addTests(doctests)
+    return tests
+
+
+class TestOnion(unittest.TestCase):
+    def setUp(self):
+        sys.stdout.flush()
+
+    def tearDown(self):
+        sys.stdout.flush()
+
+    def test_basic_lookup(self):
+        a = Dict(foo = 1,    bar = 2, baz = None)
+        b = Dict(foo = None, bar = 3, baz = 7)
+        c = Dict(foo = None, bar = 1, baz = None)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertEqual(o.foo, 1)
+        self.assertEqual(o.bar, 1)
+        self.assertEqual(o.baz, 7)
+
+        # If the rightmost non-None 'foo' is a non-Mapping, it should be the result.
+        a = Dict(foo = Dict(bar = 1))
+        b = Dict(foo = 2)
+        c = Dict(foo = None)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertEqual(2, o.foo)
+
+        # If the rightmost non-None 'foo' is a Mapping, we should get a new Onion from reading it.
+        a = Dict(foo = 2)
+        b = Dict(foo = Dict(bar = 1))
+        c = Dict(foo = None)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertIsInstance(o.foo, Onion)
+        self.assertEqual(1, o.foo.bar)
+
+        # If all the 'foo's are None, we should get a None
+        a = Dict(foo = None)
+        b = Dict(foo = None)
+        c = Dict(foo = None)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertEqual(None, o.foo)
+
+        # If there are no 'foo's, we should get AttributeError or KeyError
+        a = Dict(not_foo = None)
+        b = Dict(not_foo = None)
+        c = Dict(not_foo = None)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        with self.assertRaises(AttributeError):
+            _ = o.foo
+        with self.assertRaises(KeyError):
+            _ = o['foo']
+
+        # If multiple layers have matches that are Mappings, we should get a new Onion with all
+        # matches.
+        a = Dict(foo = Dict(x = 1))
+        b = Dict(foo = Dict(y = 2))
+        c = Dict(foo = Dict(z = 3))
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertIsInstance(o.foo, Onion)
+        self.assertEqual(1, o.foo.x)
+        self.assertEqual(2, o.foo.y)
+        self.assertEqual(3, o.foo.z)
+
+        # If the rightmost match is a Mapping but not all matches are Mappings, we should get a
+        # new onion with only the Mapping matches.
+        a = Dict(foo = Dict(x = 1))
+        b = Dict(foo = 2)
+        c = Dict(foo = Dict(z = 3))
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertIsInstance(o.foo, Onion)
+        self.assertEqual(2, len(o.foo))
+        self.assertEqual(1, o.foo.x)
+        self.assertEqual(3, o.foo.z)
+
+        # We should be able to go multiple levels deep with the nesting
+        a = Dict(x = Dict(y = Dict(q = 1)))
+        b = Dict(x = Dict(y = Dict(r = 2)))
+        c = Dict(x = Dict(y = Dict(s = 3)))
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertIsInstance(o.x.y, Onion)
+        self.assertEqual(3, len(o.x.y))
+        self.assertEqual(1, o.x.y.q)
+        self.assertEqual(2, o.x.y.r)
+        self.assertEqual(3, o.x.y.s)
+
+    def test_autoexpand(self):
+        # Rightmost match should be autoexpanded.
+        a = Dict(foo = 7,       bar = 1)
+        b = Dict(foo = "{bar}", bar = 2)
+        c = Dict(foo = "{baz}", baz = 3)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertEqual(3, o.foo)
+
+        a = Dict(foo = "{bar}", bar = Dict(baz = 7))
+        o = Onion(name = "name", parent = None, a = a)
+        self.assertEqual(7, o.foo.baz)
+
+        a = Dict(foo = "{bar}", bar = Dict(baz = "{bep}", bep = 7))
+        o = Onion(name = "name", parent = None, a = a)
+        self.assertEqual(7, o.foo.baz)
+
+    def test_expand_inner_first(self):
+        # Onions should obey the same "macro lookups proceed from inner dict to outer dict" rule
+        # as regular dicts.
+        d = Onion(name = "name", parent = None, layer = Dict(a = Dict(b = "{c}", c = 10), c = 20))
+        result = d.expand("{a.b}")
+        self.assertEqual(result, 10)
+        result = d.a.expand("{b}")
+        self.assertEqual(result, 10)
+
+        # If there is no 'a.c' and we pull 'a' out, it should no longer see layer.c
+        d = Onion(name = "name", parent = None, layer = Dict(a = Dict(b = "{c}"), c = 20))
+        result = d.a.expand("{b}")
+        self.assertEqual(result, "{c}")
+
+    def test_expand_across_layers(self):
+        # Expansion should be able to work across layers regardless of order
+        a = Dict(foo = "{bar}")
+        b = Dict(bar = "{baz}")
+        c = Dict(baz = 3)
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertEqual(3, o.foo)
+
+        a = Dict(baz = 3)
+        b = Dict(bar = "{baz}")
+        c = Dict(foo = "{bar}")
+        o = Onion(name = "name", parent = None, a = a, b = b, c = c)
+        self.assertEqual(3, o.foo)
+
+    def test_compose_onions(self):
+        a = Dict(foo = None)
+        b = Dict(foo = 1)
+        c = Dict(foo = None)
+        d = Dict(foo = 2)
+
+        # An onion made of onions should work the same as if we concatenated all the layers
+        o1 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, a = a), lb = Onion(name = "name", parent = None, b = b), lc = Onion(name = "name", parent = None, c = c), ld = Onion(name = "name", parent = None, d = d))
+        o2 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, b = b), lb = Onion(name = "name", parent = None, c = c), lc = Onion(name = "name", parent = None, d = d), ld = Onion(name = "name", parent = None, a = a))
+        o3 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, c = c), lb = Onion(name = "name", parent = None, d = d), lc = Onion(name = "name", parent = None, a = a), ld = Onion(name = "name", parent = None, b = b))
+        o4 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, d = d), lb = Onion(name = "name", parent = None, a = a), lc = Onion(name = "name", parent = None, b = b), ld = Onion(name = "name", parent = None, c = c))
+
+        self.assertEqual(2, o1.foo)
+        self.assertEqual(2, o2.foo)
+        self.assertEqual(1, o3.foo)
+        self.assertEqual(1, o4.foo)
+
+        # And it should be the same regardless of how the layers are spread amongst onions.
+        o1 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, a = a, b = b), lb = Onion(name = "name", parent = None, c = c, d = d))
+        o2 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, b = b, c = c), lb = Onion(name = "name", parent = None, d = d, a = a))
+        o3 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, c = c, d = d), lb = Onion(name = "name", parent = None, a = a, b = b))
+        o4 = Onion(name = "name", parent = None, la = Onion(name = "name", parent = None, d = d, a = a), lb = Onion(name = "name", parent = None, b = b, c = c))
+
+        self.assertEqual(2, o1.foo)
+        self.assertEqual(2, o2.foo)
+        self.assertEqual(1, o3.foo)
+        self.assertEqual(1, o4.foo)
