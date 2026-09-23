@@ -10,7 +10,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_good_build_path", "-vvv"],
+      "args"    : ["tests.test_tasks.TestTasks.test_sync_command", "-vvv"],
       "preLaunchTask": "Wipe build",
     },
 

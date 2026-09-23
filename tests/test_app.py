@@ -45,7 +45,7 @@ class TestApp(unittest.TestCase):
 
     def init(self, *, argv):
         global hancho
-        hancho = hancho.init_for_testing(argv = [*argv, f"--script.path={__file__}"]) # type: ignore
+        hancho = hancho.init_for_testing(file = __file__, argv = [*argv]) # type: ignore
         sys.stdout.seek(0)
         sys.stdout.truncate(0)
 
@@ -88,7 +88,7 @@ class TestApp(unittest.TestCase):
         self.assertIn("invalid choice: 'boo'", result.stderr)
 
     def test_indentation(self):
-        self.init(argv = ["--log.color=False", "--log.time=False"])
+        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
         Log.info("line1\n")
         Log.indent(0xFFFFFFFF)
         Log.info("line2\n")
@@ -96,14 +96,17 @@ class TestApp(unittest.TestCase):
         Log.info("line3\n")
         self.assertEqual('line1\n│ line2\nline3\n', sys.stdout.getvalue())
 
+    def test_nothing(self):
+        pass
+
     def test_no_color(self):
-        self.init(argv = ["--log.color=False", "--log.time=False"])
+        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
         Log.info("this should _not_ be blue\n")
         self.assertEqual("this should _not_ be blue\n", sys.stdout.getvalue())
         self.assertNotIn("\x1B", sys.stdout.getvalue())
 
     def test_newlines(self):
-        self.init(argv = ["--log.color=False", "--log.time=False"])
+        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
         Log.info("one")
         Log.info("two")
         Log.info("three")
@@ -111,7 +114,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual('onetwothreefour\n', sys.stdout.getvalue())
 
     def test_flush(self):
-        self.init(argv = ["--log.color=False", "--log.time=False"])
+        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
         Log.info("one")
         Log.info("two")
         Log.info("three")
@@ -120,7 +123,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual('onetwothree\n', sys.stdout.getvalue())
 
     def test_indent_dedent(self):
-        self.init(argv = ["--log.color=False", "--log.time=False"])
+        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
 
         Log.info("┌ one\n")
         Log.indent(0xFFFFFFFF)
@@ -133,7 +136,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual(text, sys.stdout.getvalue())
 
     def test_dumper(self):
-        self.init(argv = ["--log.color=False", "--log.time=False"])
+        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
 
         def check(value, expected, **kwargs):
             result = dump(value, **kwargs)

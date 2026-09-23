@@ -15,7 +15,7 @@ from hancho import Dict, Expander
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init_for_testing(argv = ["--log.level=critical"]) # type: ignore
+    hancho.init_for_testing(file = __file__, argv = ["--log.level=critical"]) # type: ignore
     print()
 
 ####################################################################################################

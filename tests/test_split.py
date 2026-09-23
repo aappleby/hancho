@@ -21,9 +21,6 @@ def split(template):
 
 class TestSplit(unittest.TestCase):
     def setUp(self):
-        #global hancho
-        #hancho = hancho.init_for_testing(["--log.level=critical"])
-        #hancho = hancho_proxy.init_for_testing([])
         sys.stdout.flush()
 
     def tearDown(self):
