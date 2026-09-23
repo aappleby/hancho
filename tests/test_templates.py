@@ -125,18 +125,18 @@ class TestTemplates(unittest.TestCase):
             self.assertEqual("sentinel", Expander._expand("{k0}", chain))
 
     def test_expand_giant_string(self):
-        def _test_string(count):
+        def expand_string(count):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
             return Expander._expand(giant_string, d)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
-        result = _test_string(Expander.MAX_EVALS)
+        result = expand_string(Expander.MAX_EVALS)
         self.assertTrue(f">foo_{Expander.MAX_EVALS // 2:02d}<" in result) #type:ignore
 
         with self.assertRaises(RecursionError):
-            result = _test_string(Expander.MAX_EVALS + 1)
+            result = expand_string(Expander.MAX_EVALS + 1)
 
     def test_user_recursion(self):
         # A user function that generates a RecursionError that's used inside a template should

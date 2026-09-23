@@ -99,117 +99,6 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertEqual(1, hancho.Runner.tasks_cancelled)
 
-
-    # ----------------------------------------------------------------------------------------------
-
-    #    def _test_manual_queue1(self):
-    #        # If a task is _not_ queued, it should _not_ run.
-    #        t = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
-    #            out_file = "test_manual_queue.txt",
-    #        )
-    #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
-    #        self.run_tasks(0)
-    #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
-    #
-    #    def _test_manual_queue2(self):
-    #        # If a task _is_ manually queued, it _should_ run.
-    #        t = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
-    #            out_file = "test_manual_queue.txt",
-    #        )
-    #        t.start2()
-    #        self.assertFalse(os.path.exists("build/test_manual_queue.txt"))
-    #        self.run_tasks(0)
-    #        self.assertTrue(os.path.exists("build/test_manual_queue.txt"))
-    #
-    #    def _test_manual_queue3(self):
-    #        # A manually queued task should trigger its inputs to run.
-    #
-    #        # t0 is _not_ queued
-    #        t0 = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
-    #            out_file = "test_manual_queue3a.txt",
-    #        )
-    #
-    #        # t1 is _not_ queued
-    #        t1 = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
-    #            out_file = "test_manual_queue3b.txt",
-    #        )
-    #
-    #        # t2 depends on t0 but not t1, t0 should be transitively queued
-    #        t2 = hancho.Task(
-    #            command = lambda task : force_touch(task.config.out_file),
-    #            in_file  = t0,
-    #            out_file = "test_manual_queue3c.txt",
-    #        )
-    #        t2.start2()
-    #
-    #        self.assertFalse(os.path.exists("build/test_manual_queue3a.txt"))
-    #        self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
-    #        self.assertFalse(os.path.exists("build/test_manual_queue3c.txt"))
-    #
-    #        self.run_tasks(0)
-    #
-    #        self.assertTrue(os.path.exists("build/test_manual_queue3a.txt"))
-    #        self.assertFalse(os.path.exists("build/test_manual_queue3b.txt"))
-    #        self.assertTrue(os.path.exists("build/test_manual_queue3c.txt"))
-
-    # ----------------------------------------------------------------------------------------------
-
-    #  def _test_subrepos1(self):
-    #      repo = self.hancho.repo("subrepo")
-    #      task = repo.task(
-    #          command = "cat {rel_source_files} > {rel_build_files}",
-    #          source_files = "stuff.txt",
-    #          build_files = "repo.txt",
-    #          b*ase_path = os.path.abspath("subrepo")
-    #      )
-    #      self.run_tasks(0)
-
-
-    #      self.assertTrue(Path("build/subrepo/repo.txt").exists())
-    #
-    #    def _test_subrepos1(self):
-    #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
-    #        result = subprocess.run(
-    #            f"{sys.executable} ../../hancho.py -v -d top_test1.hancho".split(),
-    #            shell=True,
-    #            text=True,
-    #            capture_output=True,
-    #            cwd="subrepo_tests",
-    #        )
-    #        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
-    #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
-    #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
-    #
-    #    def _test_subrepos2(self):
-    #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
-    #        result = subprocess.run(
-    #            f"{sys.executable} ../../hancho.py -v -d top_test2.hancho".split(),
-    #            shell=True,
-    #            text=True,
-    #            capture_output=True,
-    #            cwd="subrepo_tests",
-    #        )
-    #        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
-    #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
-    #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
-    #
-    #    def _test_subrepos3(self):
-    #        shutil.rmtree("subrepo_tests/build", ignore_errors=True)
-    #        result = subprocess.run(
-    #            f"{sys.executable} ../../hancho.py -v -d top_test3.hancho".split(),
-    #            shell=True,
-    #            text=True,
-    #            capture_output=True,
-    #            cwd="subrepo_tests",
-    #        )
-    #        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
-    #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
-    #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
-
     # ----------------------------------------------------------------------------------------------
 
     def test_good_build_path(self):
@@ -389,16 +278,38 @@ class TestTasks(unittest.TestCase):
 
     # ----------------------------------------------------------------------------------------------
 
-    # FIXME need a test that checks that a task with no outputs always rebuilds
+    def test_command_changed(self):
+        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+        hancho.Task(
+            command="echo foo{in_src} > {out_txt}",
+            in_src = "src/test.cpp",
+            out_txt="test_command_changed.txt",
+        )
+        self.assertFalse(Path("build/test_command_changed.txt").exists())
+        self.run_tasks(0)
+        self.assertTrue(Path("build/test_command_changed.txt").exists())
+        mtime1 = mtime_ns("build/test_command_changed.txt")
 
-#    def _test_no_output_always_rebuilds(self):
-#        task = hancho.Task()
+        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+        hancho.Task(
+            command="echo foo{in_src} > {out_txt}",
+            in_src = "src/test.cpp",
+            out_txt="test_command_changed.txt",
+        )
+        self.run_tasks(0)
+        mtime2 = mtime_ns("build/test_command_changed.txt")
 
-    # FIXME test_command_changed
-    def _test_command_changed(self):
-        pass
+        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+        hancho.Task(
+            command="echo bar{in_src} > {out_txt}",
+            in_src = "src/test.cpp",
+            out_txt="test_command_changed.txt",
+        )
+        self.run_tasks(0)
+        mtime3 = mtime_ns("build/test_command_changed.txt")
 
-    # FIXME how the hell do we test size changed / hash changed while _not_ changing the mtime?
+        self.assertEqual(mtime1, mtime2)
+        self.assertLess(mtime2, mtime3)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -741,7 +652,8 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(Path("build").exists())
 
     # FIXME - Why was the second task "always rebuilding"?
-    def _test_dependency_skipped(self):
+    # ...because "build_force" is true
+    def test_dependency_skipped(self):
         def run():
             self.reinit(argv = ["--log.level=debug", "--hancho.max_jobs=1"])
             task1 = hancho.Task(
@@ -757,7 +669,7 @@ class TestTasks(unittest.TestCase):
                 command = lambda task : shutil.copy(task._tree.task.in_file, task._tree.task.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
-                build_force=True,
+                force=True,
             )
             self.run_tasks(0)
             return (task1, task2)

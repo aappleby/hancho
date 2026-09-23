@@ -2378,7 +2378,21 @@ def expand_task(task : Task):
 
     pass
 
-    for key in ['name', 'desc', 'command', 'cwd', 'build_dir', 'in_depfile', 'depformat', 'job_size', 'dry_run']:
+#    task = Dict(
+#        name       = '<no name>',
+#        desc       = '<no desc>',
+#        command    = None,
+#        cwd        = '{repo.root}',
+#        in_depfile = '',
+#        depformat  = "gcc" if os.name == "posix" else "msvc",
+#        job_size   = 1,
+#        build_dir  = '{join(repo.build_dir, relpath(script.root, repo.root))}',
+#        dry_run    = '{repo.dry_run}',
+#        force      = '{repo.build_force}',
+#    ),
+
+
+    for key in hancho_defaults.task:
         task.cfg[key] = tree.task._get(key)
 
     task.cfg['command'] = Utils.flatten(task.cfg['command'])
@@ -2580,9 +2594,13 @@ def rebuild_reason(task : Task) -> str:
     # ------------------------------------
     # Check the trivial reasons to rebuild
 
-    if repo._build_force:
+    if task.cfg.force:
         repo.build_reasons["forced"] += 1
-        return "Target forced to rebuild"
+        return "Target forced to rebuild due to task.force"
+
+    if task._repo._build_force:
+        repo.build_reasons["forced"] += 1
+        return "Target forced to rebuild due to repo.build_force"
 
     has_input = any(Utils.yield_values(task.in_files))
     if not has_input:

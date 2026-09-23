@@ -61,9 +61,6 @@ class TestApp(unittest.TestCase):
         result = subprocess.run(cmd, capture_output = True, text=True)
         self.assertIn("Hancho is a simple, pleasant build system", result.stdout)
 
-    def _test_log_levels(self):
-        pass
-
     # FIXME disabling this while we fiddle with what should/should not be ferried between scripts
 #    def _test_script_globals(self):
 #        hancho.foo = 12
