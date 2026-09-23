@@ -50,7 +50,6 @@ from enum import Enum
 from functools import wraps
 from typing import Any, cast
 
-print("hancho")
 #endregion
 # ==================================================================================================
 #region constants
@@ -697,6 +696,9 @@ def _walk(lhs : Dict, key : str, spawn = False):
 
 def parse_flags(argv, *args, **kwargs) -> Dict:
 
+    if len(argv) > 0 and "hancho.py" in argv[0]:
+        argv = argv[1:]
+
     desc = textwrap.dedent("""
     ================================================================================
                     Hancho is a simple, pleasant build system
@@ -705,7 +707,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 
     parser = argparse.ArgumentParser(
         description=desc,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
     def str_to_bool(value):
@@ -720,6 +722,8 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 
     # ------------------------------------
     # fmt: off
+
+    parser.add_argument("repo.targets", nargs="*", help="The names or partial names of targets to build")
 
     parser.add_argument('-o', "--opt_file",           type=str.strip,     help="File containing JSON that will be used as additional options")
 
@@ -739,7 +743,6 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     parser.add_argument(      "--repo.root",          type=str.strip,     help="The top repo lives in this directory.")
     parser.add_argument(      "--repo.build_dir",     type=str.strip,     help="Build artifacts go in this directory.")
     parser.add_argument(      "--repo.build_tag",     type=str.strip,     help="Tagged builds will have separate subdirectories under the build directory.")
-    parser.add_argument('-t', "--repo.target",        type=str.strip,     help="A regex that selects a subset of targets to build.")
     parser.add_argument(      "--repo.build_force",   type = str_to_bool,  choices = [True, False], help="Rebuild targets even if they're clean.")
     parser.add_argument(      "--repo.build_all",     type = str_to_bool,  choices = [True, False], help="Build every task in every repo.")
     parser.add_argument(      "--repo.dry_run",       type = str_to_bool,  choices = [True, False], help="Dry run - Do everything except actually run commands.")
@@ -974,11 +977,12 @@ class Dict(dict):
         dest = self
         dict.__delitem__(dest, key)
 
-    def expand(self, key):
-        return Expander._expand(key, self)
+    def expand(self, template):
+        return Expander._expand(template, self)
 
-    def _get(self, key):
-        return Expander.wrap(self)._get(key)
+    def _get1(self, key):
+        val = dict.__getitem__(self, key)
+        return Expander._expand(val, self)
 
 # ==================================================================================================
 
@@ -1029,7 +1033,7 @@ class Expander(abc.Mapping):
 
     def __getattr__(self, key) -> Any:
         try:
-            return self._get(key, default = Utils.MISSING, check_up = False)
+            return self._get2(key, default = Utils.MISSING, check_up = False)
         except KeyError as ex:
             raise AttributeError from ex
 
@@ -1040,7 +1044,7 @@ class Expander(abc.Mapping):
         self.tree.__delattr__(key)
 
     def __getitem__(self, key : str) -> Any:
-        return self._get(key, default = Utils.MISSING, check_up = True)
+        return self._get2(key, default = Utils.MISSING, check_up = True)
 
     def __setitem__(self, key, val):
         self.tree.__setitem__(key, val)
@@ -1048,14 +1052,13 @@ class Expander(abc.Mapping):
     def __delitem__(self, key):
         self.tree.__delitem__(key)
 
-
     def __iter__(self):
         return self.tree.__iter__()
 
     def __len__(self):
         return self.tree.__len__()
 
-    def _get(self, key : str, default = Utils.MISSING, check_up : bool = False):
+    def _get2(self, key : str, default = Utils.MISSING, check_up : bool = False):
         cursor = self.tree
         result = Utils.MISSING
         try:
@@ -1066,8 +1069,6 @@ class Expander(abc.Mapping):
                     break
                 elif check_up and (up := object.__getattribute__(cursor, "_up")):
                     trace_up(cursor, up, "get", key)
-                    #result = Expander.wrap(up)._get(key, default, check_up)
-                    #return result
                     cursor = up
                 else:
                     raise KeyError(key)
@@ -1271,18 +1272,16 @@ class Dumper:
         bool,
         int,
         float,
-        #list,
-        #tuple,
-        #set,
-        #dict,
+        list,
+        tuple,
+        set,
+        dict,
         #bytes,
         #bytearray,
         range,
         type(None),
         *opaque_types.keys(),
     )
-
-    #base_types = ()
 
     match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]{4,16}")
 
@@ -1564,14 +1563,10 @@ class Hancho:
 
 class Repo:
     def __init__(self, tree : Dict):
-        self._root  : str        = tree.repo._get("root")
-        self._build_dir : str    = tree.repo._get("build_dir")
-        self._build_tag  : str   = tree.repo._get("build_tag")
-        self._target  : str      = tree.repo._get("target")
-        self._build_force : bool = tree.repo._get("build_force")
-        self._build_all : bool   = tree.repo._get("build_all")
-        self._dry_run : bool     = tree.repo._get("dry_run")
-        self._strict : bool      = tree.repo._get("strict")
+        self._tree = tree
+
+        for key in tree.repo:
+            tree.repo[key] = tree.repo._get1(key)
 
         self.stat_db = {}
         self.build_reasons = Counter()
@@ -1585,14 +1580,14 @@ class Repo:
 # ==================================================================================================
 
 def load_stat_db(repo : Repo):
-    stat_db_path = os.path.join(repo._build_dir, 'hancho.json')
+    stat_db_path = os.path.join(repo._tree.repo.build_dir, 'hancho.json')
 
     if os.path.isfile(stat_db_path):
         with open(stat_db_path) as contents:
             log.info(f"{ansi_color(Log.ORANGE)}Loading stat_db {stat_db_path}\n")
             repo.stat_db = Dict(json.load(contents))
     else:
-        log.info(f"{ansi_color(Log.ORANGE)}No stat db for {repo._root}\n")
+        log.info(f"{ansi_color(Log.ORANGE)}No stat db for {repo._tree.repo.root}\n")
         repo.stat_db = Dict()
 
     for key, val in list(repo.stat_db.items()):
@@ -1602,7 +1597,7 @@ def load_stat_db(repo : Repo):
 # ==================================================================================================
 
 def save_stat_db(repo : Repo):
-    if repo._dry_run:
+    if repo._tree.repo.dry_run:
         return
 
     stat_db = {}
@@ -1637,7 +1632,7 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.out_files):
             stat_db[file] = Utils.get_stats(file, task.cfg['command'])
 
-    stat_db_path = Path.join(repo._build_dir, 'hancho.json')
+    stat_db_path = Path.join(repo._tree.repo.build_dir, 'hancho.json')
     Utils.save_json(stat_db, stat_db_path)
 
     # ------------------------------------
@@ -1657,7 +1652,7 @@ def save_stat_db(repo : Repo):
                 "file"      : file,
             }
 
-    comp_db_path = Path.join(repo._build_dir, 'compile_commands.json')
+    comp_db_path = Path.join(repo._tree.repo.build_dir, 'compile_commands.json')
     Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # ==================================================================================================
@@ -1788,7 +1783,8 @@ hancho_defaults = Dict(
         trace      = False, #True,
     ),
     log = Dict(
-        level     = "debug",
+        #level     = "debug",
+        level     = "info",
         wrap      = False,
         color     = True,
         timestamp = True
@@ -1797,7 +1793,7 @@ hancho_defaults = Dict(
         root        = '{script.root}',
         build_dir   = "{join(root, 'build', build_tag)}",
         build_tag   = '',
-        target      = '',
+        targets     = [],
         build_force = False,
         build_all   = False,
         dry_run     = False,
@@ -1844,7 +1840,6 @@ class HanchoProxy(types.ModuleType):
         top_tree.link(mid_tree)
         Hancho.init(top_tree)
 
-        #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
         root_proxy = load_script(parent_repo = None, new_tree = top_tree)
         return root_proxy
 
@@ -1939,12 +1934,12 @@ def _start():
 
 def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 
-    path = new_tree.script._get("path")
-    root = new_tree.script._get("root")
+    path = new_tree.script._get1("path")
+    root = new_tree.script._get1("root")
     path = Path.resolve(path)
     root = Path.resolve(root)
 
-    #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
+    log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     with log.indenter(Log.ORANGE):
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
@@ -1998,13 +1993,14 @@ def hancho_main() -> int:
     mid_tree = Dict(log = tree_log, hancho = tree_hancho)
     mid_tree.link(hancho_aliases)
     top_tree.link(mid_tree)
+
     Hancho.init(top_tree)
 
-    log.debug(f"{ansi_color(Log.LIME)}Command line : {" ".join(sys.argv)}\n")
+    log.info(f"{ansi_color(Log.LIME)}Command line : {" ".join(sys.argv)}\n")
     if Hancho.trace:
-        log.debug("Trace mode on\n")
+        log.info("Trace mode on\n")
     if log.log_level <= Log.DEBUG:
-        log.debug("Debug mode on\n")
+        log.info("Debug mode on\n")
 
     # ------------------------------------
     # Load and exec top script
@@ -2014,7 +2010,7 @@ def hancho_main() -> int:
     #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     top_proxy = load_script(top_repo, top_tree)
     time_b1 = time.perf_counter()
-    log.debug(f"{ansi_color(Log.BLUE)}Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
+    log.info(f"{ansi_color(Log.BLUE)}Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
     # Start the build
@@ -2022,7 +2018,7 @@ def hancho_main() -> int:
     time_a3 = time.perf_counter()
     result = hancho_build(top_proxy._repo)
     time_b3 = time.perf_counter()
-    log.debug(f"{ansi_color(Log.GREEN)}Build took {time_b3 - time_a3:8.6f} seconds\n")
+    log.info(f"{ansi_color(Log.GREEN)}Build took {time_b3 - time_a3:8.6f} seconds\n")
 
     # ------------------------------------
     # Done
@@ -2090,18 +2086,18 @@ def hancho_build(top_repo : Repo) -> int:
     # ------------------------------------
     # Select the set of tasks to run.
 
-    if top_repo._target:
-        # Enable all tasks whose name matches the target regex
-        # NOTE - We match task.task_params.name, _not_ the expanded task._name.
-        # This is because the task _has not initialized yet_, so we have no config.name.
-        target_regex = re.compile(top_repo._target)
+    if top_repo._tree.repo.targets:
+        for target in top_repo._tree.repo.targets:
+            # Enable all tasks whose name contains any of the targets
+            # NOTE - We match task.task_params.name, _not_ the expanded task._name.
+            # This is because the task _has not initialized yet_, so we have no config.name.
 
-        for repo in Hancho.repos:
-            for task in repo.yield_tasks():
-                if target_regex.search(task._tree.task.name):
-                    queue_task(task)
+            for repo in Hancho.repos:
+                for task in repo.yield_tasks():
+                    if target in task._tree.task.name:
+                        queue_task(task)
 
-    elif top_repo._build_all:
+    elif top_repo._tree.repo.build_all:
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
                 queue_task(task)
@@ -2166,7 +2162,7 @@ async def async_run_tasks():
     # ------------------------------------
     # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-    log.debug(f"{ansi_color(Log.BLUE)}Running tasks...\n")
+    log.info(f"{ansi_color(Log.BLUE)}Running tasks...\n")
 
     while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
         finished_aio_task = None
@@ -2187,7 +2183,7 @@ async def async_run_tasks():
             finished_aio_task.hancho_task._complete = True #type:ignore
             Runner.tasks_skipped += 1
         except BaseException as ex:
-            log.debug(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
+            log.warning(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
             log.exception(ex)
             Runner.tasks_failed += 1
         else:
@@ -2202,7 +2198,7 @@ async def async_run_tasks():
         log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
         # Cancel all the asyncio.Tasks that haven't completed yet
-        log.debug(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
+        log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
 
         # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
         # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
@@ -2276,7 +2272,7 @@ async def task_main(task : Task):
 
     # Dry runs early out after the task is initialized but before we do .exists() checks or
     # run any commands.
-    if task._repo._dry_run:
+    if task._repo._tree.repo.dry_run:
         return
 
     # Paths updated. See if we need to rebuild our outputs.
@@ -2348,7 +2344,7 @@ def expand_task(task : Task):
     tree = task._tree
 
     # We need to expand the build dir first so we can use it in fix_paths.
-    build_dir = tree.task._get("build_dir")
+    build_dir = tree.task._get1("build_dir")
 
     # Then we expand all io fields and fix their paths.
     for _field, _files in list(tree.task.items()):
@@ -2393,7 +2389,7 @@ def expand_task(task : Task):
 
 
     for key in hancho_defaults.task:
-        task.cfg[key] = tree.task._get(key)
+        task.cfg[key] = tree.task._get1(key)
 
     task.cfg['command'] = Utils.flatten(task.cfg['command'])
 
@@ -2457,8 +2453,8 @@ def sanity_check(task : Task):
     if not Path.exists(task.cfg['cwd']):
         raise BROKEN(f"Task working directory '{task.cfg['cwd']}' does not exist")
 
-    if not Path.startswith(task.cfg['build_dir'], repo._root):
-        raise BROKEN(f"The build dir {task.cfg['build_dir']} is not under repo.root {repo._root}")
+    if not Path.startswith(task.cfg['build_dir'], repo._tree.repo.root):
+        raise BROKEN(f"The build dir {task.cfg['build_dir']} is not under repo.root {repo._tree.repo.root}")
 
     # In order to provide the least amount of bafflement to users, CLI commands execute
     # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -2478,7 +2474,7 @@ def sanity_check(task : Task):
                 raise BROKEN(f"Command {command} is not a string or a callable?")
 
     # In strict mode, we mark a task broken if its command still has delimiters in it.
-    if repo._strict:
+    if repo._tree.repo.strict:
         for command in cast(list, Utils.flatten(task.cfg['command'])):
             if not isinstance(command, str):
                 continue
@@ -2504,7 +2500,7 @@ def sanity_check(task : Task):
     for file in Utils.yield_values(task.in_files):
         if not Path.isabs(file):
             raise BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-        if not Path.exists(file) and not repo._dry_run:
+        if not Path.exists(file) and not repo._tree.repo.dry_run:
             raise BROKEN(f"Input file missing - {file}")
 
     # Tasks should have at most one depfile.
@@ -2514,7 +2510,7 @@ def sanity_check(task : Task):
 # ==================================================================================================
 
 async def run_command(task : Task, command : str):
-    log_task(task, Log.INFO, f"{Path.relpath(task.cfg['cwd'], task._repo._root)}$ {command}\n")
+    log_task(task, Log.INFO, f"{Path.relpath(task.cfg['cwd'], task._repo._tree.repo.root)}$ {command}\n")
 
     proc = None
     try:
@@ -2567,7 +2563,7 @@ async def run_command(task : Task, command : str):
 # ==================================================================================================
 
 async def call_callback(task : Task, command : abc.Callable):
-    callback_dir = Path.relpath(task._script._root, task._repo._root)
+    callback_dir = Path.relpath(task._script._root, task._repo._tree.repo.root)
     log_task(task, Log.INFO, f"{callback_dir}$ {command}\n")
 
     # Callbacks run from the script dir where they were defined so that relative paths used
@@ -2598,7 +2594,7 @@ def rebuild_reason(task : Task) -> str:
         repo.build_reasons["forced"] += 1
         return "Target forced to rebuild due to task.force"
 
-    if task._repo._build_force:
+    if task._repo._tree.repo.build_force:
         repo.build_reasons["forced"] += 1
         return "Target forced to rebuild due to repo.build_force"
 
@@ -2693,8 +2689,6 @@ def log_task(task : Task, level : int, message : str):
 # ==================================================================================================
 
 def log_task_exception(task : Task, message, ex = None):
-    print(task)
-
     log.error("========================================\n")
     log.error(message + "\n")
     log.error("========================================\n")

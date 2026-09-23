@@ -1,11 +1,9 @@
 #!/usr/bin/python3
 """Template file for creating new test cases"""
 
-import argparse
 import contextvars
 import doctest
 import os
-import re
 import subprocess
 import sys
 import textwrap
@@ -48,6 +46,8 @@ class TestApp(unittest.TestCase):
     def init(self, *, argv):
         global hancho
         hancho = hancho.init_for_testing(argv = [*argv, f"--script.path={__file__}"]) # type: ignore
+        sys.stdout.seek(0)
+        sys.stdout.truncate(0)
 
     def tearDown(self):
         sys.stdout = self.old_stdout
