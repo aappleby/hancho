@@ -648,18 +648,18 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
-    def _test_no_mixed_commands(self):
+    def test_no_mixed_commands(self):
         bad_task = hancho.Task(
             command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
         )
 
         self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.BROKEN)
 
-    def _test_task_creates_task(self):
+    def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
-            hancho.Task(command = lambda task : force_touch(task.config.out_obj), in_src=[], out_obj="dummy.txt")
+            hancho.Task(command = lambda task : force_touch(task._tree.task.out_obj), in_src=[], out_obj="dummy.txt")
             return []
 
         hancho.Task(command=callback, in_src=[], out_obj=[])
@@ -670,7 +670,7 @@ class TestTasks(unittest.TestCase):
 
     # This is really slow on Windows for some reason - takes 10 secondss.
     @unittest.skipUnless(os.name == "posix", "requires Linux")
-    def _test_tons_of_tasks(self):
+    def test_tons_of_tasks(self):
         # We should be able to queue up 1000+ tasks at once.
         for i in range(1000):
             hancho.Task(
@@ -685,7 +685,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(1000, len(glob.glob("build/dummy*.txt")))
 
     # This one takes about a second on Windows
-    def _test_jobs(self):
+    def test_jobs(self):
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
         # another batch of 100 tasks that use random numbers of cores.
@@ -703,7 +703,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             desc="********** I am the slow task, I eat all the cores **********",
             command=[
-                lambda task : force_touch(task.config.out_obj),
+                lambda task : force_touch(task._tree.task.out_obj),
                 lambda task : time.sleep(0.3)
             ],
             job_size=os.cpu_count(),
@@ -725,7 +725,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/slow_result.txt").exists())
 
-    def _test_dry_run(self):
+    def test_dry_run(self):
         self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999", "--repo.dry_run=True"])
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
@@ -740,20 +740,21 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertFalse(Path("build").exists())
 
+    # FIXME - Why was the second task "always rebuilding"?
     def _test_dependency_skipped(self):
         def run():
-            self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_jobs=1"])
+            self.reinit(argv = ["--log.level=debug", "--hancho.max_jobs=1"])
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
+                command = lambda task : shutil.copy(task._tree.task.in_file, task._tree.task.out_file),
                 in_file="data/dummy.txt",
                 out_file="blerp/sherp",
             )
             task2 = hancho.Task(
                 name="task2",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task.config.in_file, task.config.out_file),
+                command = lambda task : shutil.copy(task._tree.task.in_file, task._tree.task.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
                 build_force=True,
@@ -778,13 +779,15 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(hancho.Runner.tasks_skipped, 0)
 
         (task1, task2) = run()
-        self.assertTrue(isinstance(task1._error, hancho.Task.SKIPPED))
+        self.assertTrue(isinstance(task1._error, hancho.SKIPPED))
         #self.assertTrue(task2._error is None)
         self.assertTrue(Path("build/blerp/sherp").exists())
         self.assertTrue(Path("build/blerp/nerp").exists())
         mtime1b = mtime_ns("build/blerp/sherp")
         mtime2b = mtime_ns("build/blerp/nerp")
         self.assertEqual(mtime1a, mtime1b) # first task clean, should be skipped
+
+        # Test failing here
         self.assertLess(mtime2a, mtime2b)  # second task always rebuilds and the skipped task shouldn't stop it.
 
         self.assertEqual(hancho.Runner.tasks_finished, 1)

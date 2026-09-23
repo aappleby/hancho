@@ -490,6 +490,7 @@ class Log:
 
         return result
 
+Log.reset()
 log = Log()
 
 # ==================================================================================================
@@ -707,7 +708,15 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    bool_opt = argparse.BooleanOptionalAction
+    def str_to_bool(value):
+        if isinstance(value, str) and value.lower() in ['true', '1']:
+            return True
+        elif isinstance(value, str) and value.lower() in ['false', '0']:
+            return False
+        else:
+            raise argparse.ArgumentTypeError(f"Don't know what to do with {type(value)} = {value}")
+
+    #bool_opt = argparse.BooleanOptionalAction
 
     # ------------------------------------
     # fmt: off
@@ -717,23 +726,24 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     parser.add_argument(      "--hancho.root",        type=str.strip,     help="Hancho lives in this directory (so we can find hancho/tools, etc).")
     parser.add_argument(      "--hancho.max_errors",  type=int,           help="The maximum number of task errors we tolerate before abandoning the build")
     parser.add_argument('-j', "--hancho.max_jobs",    type=int,           help="Run a maximum of N jobs in parallel.")
-    parser.add_argument('-T', "--hancho.trace",       action = bool_opt,  help="Display template expansion traces for debugging")
+    parser.add_argument('-T', "--hancho.trace",       type = str_to_bool,  choices = [True, False], help="Display template expansion traces for debugging")
 
     levels = ["debug", "info", "warning", "error", "critical"]
 
     parser.add_argument(      "--log.level",          choices = levels,   help="Select verbosity level.")
-    parser.add_argument('-w', "--log.wrap",           action = bool_opt,  help="Wrap lines around the console instead of clipping them")
-    parser.add_argument('-c', "--log.color",          action = bool_opt,  help="Use color in the log for better readability")
-    parser.add_argument(      "--log.timestamp",      action = bool_opt,  help="Timestamp each log line")
+    parser.add_argument('-w', "--log.wrap",           type = str_to_bool,  choices = [True, False], help="Wrap lines around the console instead of clipping them")
+    parser.add_argument('-c', "--log.color",          type = str_to_bool,  choices = [True, False], help="Use color in the log for better readability")
+
+    parser.add_argument(      "--log.timestamp",      type = str_to_bool,  choices = [True, False], help="Timestamp each log line")
 
     parser.add_argument(      "--repo.root",          type=str.strip,     help="The top repo lives in this directory.")
     parser.add_argument(      "--repo.build_dir",     type=str.strip,     help="Build artifacts go in this directory.")
     parser.add_argument(      "--repo.build_tag",     type=str.strip,     help="Tagged builds will have separate subdirectories under the build directory.")
     parser.add_argument('-t', "--repo.target",        type=str.strip,     help="A regex that selects a subset of targets to build.")
-    parser.add_argument(      "--repo.build_force",   action = bool_opt,  help="Rebuild targets even if they're clean.")
-    parser.add_argument(      "--repo.build_all",     action = bool_opt,  help="Build every task in every repo.")
-    parser.add_argument(      "--repo.dry_run",       action = bool_opt,  help="Dry run - Do everything except actually run commands.")
-    parser.add_argument(      "--repo.strict",        action = bool_opt,  help="Strict mode, slightly more error checking to catch footguns.")
+    parser.add_argument(      "--repo.build_force",   type = str_to_bool,  choices = [True, False], help="Rebuild targets even if they're clean.")
+    parser.add_argument(      "--repo.build_all",     type = str_to_bool,  choices = [True, False], help="Build every task in every repo.")
+    parser.add_argument(      "--repo.dry_run",       type = str_to_bool,  choices = [True, False], help="Dry run - Do everything except actually run commands.")
+    parser.add_argument(      "--repo.strict",        type = str_to_bool,  choices = [True, False], help="Strict mode, slightly more error checking to catch footguns.")
 
     parser.add_argument(      "--script.path",        type=str.strip,     help="Path to the .hancho file that starts the build.")
     parser.add_argument(      "--script.root",        type=str.strip,     help="The top script runs in this directory.")
@@ -941,11 +951,12 @@ class Dict(dict):
     # endregion
     # ==============================================================================================
 
-    def internal_get(self, key, default = Utils.MISSING, check_up = False):
+
+    def internal_get(self, key, default = Utils.MISSING, check_up = True):
         if dict.__contains__(self, key):
             return dict.__getitem__(self, key)
-        elif check_up and self._up:
-            return self._up.internal_get(key, default, check_up)
+        elif check_up and (up2 := object.__getattribute__(self, "_up")):
+            return up2.internal_get(key, default, check_up)
         elif default is not Utils.MISSING:
             return default
         else:
@@ -1271,6 +1282,8 @@ class Dumper:
         *opaque_types.keys(),
     )
 
+    #base_types = ()
+
     match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]{4,16}")
 
     @classmethod
@@ -1341,7 +1354,7 @@ class Dumper:
 
     @classmethod
     def _dump_vector(cls, key, val, contents, opts, seen : set):
-        prefix = cls._dump_prefix(key, val, opts)
+        prefix = cls._dump_prefix(key, val, opts, force_type = True)
 
         if id(val) in seen:
             return prefix + "<ref loop>"
@@ -1409,11 +1422,13 @@ class Dumper:
         return result + (opts.tab * opts.indent) + rd
 
     @classmethod
-    def _dump_prefix(cls, key, val, opts):
+    def _dump_prefix(cls, key, val, opts, force_type = False):
         prefix = ""
         if key: prefix += f"{key}"
-        if type(val) not in Dumper.base_types:
-            if prefix: prefix += ": "
+        if (type(val) not in Dumper.base_types) or force_type:
+            #if prefix: prefix += " :"
+            #if prefix: prefix += " "
+            prefix += ":"
             prefix += type(val).__name__
             if opts.print_id: prefix += "@" + Utils.hex_id(val)
         if prefix: prefix += " = "
@@ -1822,9 +1837,14 @@ class HanchoProxy(types.ModuleType):
         flags = parse_flags(argv, *args, **kwargs)
 
         top_tree = merge(hancho_defaults, flags)
-        top_tree.link(hancho_aliases)
+        tree_log = top_tree.pop("log")
+        tree_hancho = top_tree.pop("hancho")
+        mid_tree = Dict(log = tree_log, hancho = tree_hancho)
+        mid_tree.link(hancho_aliases)
+        top_tree.link(mid_tree)
         Hancho.init(top_tree)
 
+        #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
         root_proxy = load_script(parent_repo = None, new_tree = top_tree)
         return root_proxy
 
@@ -1855,6 +1875,7 @@ class HanchoProxy(types.ModuleType):
         new_tree = copy.deepcopy(self._tree)
         update(new_tree, *args, kwargs)
         update(new_tree, script = Dict(path = path, root = root))
+        #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
         return load_script(None if is_repo else self._repo, self._tree)._script._module
 
 
@@ -1923,7 +1944,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     path = Path.resolve(path)
     root = Path.resolve(root)
 
-    log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
+    #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     with log.indenter(Log.ORANGE):
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
@@ -1972,8 +1993,11 @@ def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
     top_tree = merge(hancho_defaults, flags)
-    top_tree.link(hancho_aliases)
-
+    tree_log = top_tree.pop("log")
+    tree_hancho = top_tree.pop("hancho")
+    mid_tree = Dict(log = tree_log, hancho = tree_hancho)
+    mid_tree.link(hancho_aliases)
+    top_tree.link(mid_tree)
     Hancho.init(top_tree)
 
     log.debug(f"{ansi_color(Log.LIME)}Command line : {" ".join(sys.argv)}\n")
@@ -1987,6 +2011,7 @@ def hancho_main() -> int:
 
     time_a1 = time.perf_counter()
     top_repo  = Repo(top_tree)
+    #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     top_proxy = load_script(top_repo, top_tree)
     time_b1 = time.perf_counter()
     log.debug(f"{ansi_color(Log.BLUE)}Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
