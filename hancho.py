@@ -1562,13 +1562,11 @@ class Hancho:
 # ==================================================================================================
 
 class Repo:
-    def __init__(self, tree : Dict):
-        self._tree = tree
-        self.node = tree.repo
+    def __init__(self, repo_node : Dict):
+        for key in repo_node:
+            repo_node[key] = repo_node._get1(key)
 
-        for key in self.node:
-            self.node[key] = self.node._get1(key)
-
+        self.node = repo_node
         self.stat_db = {}
         self.build_reasons = Counter()
         self.root_script : Script = Utils.MISSING
@@ -1665,7 +1663,7 @@ class Script:
         script_path: str | None,
         script_root: str | None,
         module: types.ModuleType,
-        tree: Dict,
+        script_node: Dict,
         code: types.CodeType | None,
     ):
 
@@ -1673,7 +1671,7 @@ class Script:
         self._path   = script_path
         self._root   = script_root
         self._module = module
-        self._tree   = tree
+        self.node   = script_node
         self._code   = code
 
         self._tasks : list[Task] =  []
@@ -1695,11 +1693,11 @@ class SKIPPED(Exception):   pass
 class BROKEN(Exception):    pass
 
 class Task:
-    def __init__(self, repo : Repo, script : Script, tree : Dict):
+    def __init__(self, repo : Repo, script : Script, task_node : Dict):
         self._repo   = repo
         self._script = script
-        self._tree   = tree
-        self.node    = tree.task
+        #self._tree   = tree
+        self.node    = task_node
         self.cfg     = Dict()
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
@@ -1868,9 +1866,9 @@ class HanchoProxy(types.ModuleType):
         print(Dumper.dump(*args, **kwargs))
 
     def Task(self, *args, **kwargs):
-        task_tree = copy.deepcopy(self._tree)
-        update(task_tree['task'], *args, Dict(kwargs))
-        task = Task(repo = self._repo, script = self._script, tree = task_tree)
+        task_node = Dict(self._tree.task, *args, kwargs)
+        task_node.link(self._tree)
+        task = Task(repo = self._repo, script = self._script, task_node = task_node)
         self._script._tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -1971,9 +1969,9 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
         else:
             code = None
 
-        repo   = parent_repo or Repo(new_tree)
+        repo   = parent_repo or Repo(new_tree.repo)
         module = types.ModuleType(os.path.basename(path) if path else "<no path>")
-        script = Script(repo, path, root, module, new_tree, code)
+        script = Script(repo, path, root, module, new_tree.script, code)
         proxy  = HanchoProxy(repo, script, new_tree)
 
         module.__file__ = path
@@ -2019,7 +2017,7 @@ def hancho_main() -> int:
     # Load and exec top script
 
     time_a1 = time.perf_counter()
-    top_repo  = Repo(top_tree)
+    top_repo  = Repo(top_tree.repo)
     #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     top_proxy = load_script(top_repo, top_tree)
     time_b1 = time.perf_counter()
@@ -2352,7 +2350,7 @@ async def await_inputs(task : Task):
 def expand_task(task : Task):
     if log.log_level <= Log.DEBUG:
         log_task(task, Log.DEBUG, "Task tree:\n")
-        log_task(task, Log.DEBUG, Dumper.dump(task._tree, fold = ["hancho", "log", "in_objs"]) + "\n")
+        log_task(task, Log.DEBUG, Dumper.dump(task.node, fold = ["hancho", "log", "in_objs"]) + "\n")
 
     #tree = task._tree
 
@@ -2376,7 +2374,7 @@ def expand_task(task : Task):
             files = fix_paths(task, _field, files, build_dir)
             files = files[0] if len(files) == 1 else files
 
-            task._tree.task[_field] = files
+            task.node[_field] = files
 
             if _field == "in_depfile":
                 task.in_depfile = cast(str, files)
