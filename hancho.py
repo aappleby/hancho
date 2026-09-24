@@ -824,32 +824,6 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 
 # ==================================================================================================
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class Dict(dict):
     """
     This class extends 'dict' in a couple ways -
@@ -954,7 +928,6 @@ class Dict(dict):
     # endregion
     # ==============================================================================================
 
-
     def internal_get(self, key, default = Utils.MISSING, check_up = True):
         if dict.__contains__(self, key):
             return dict.__getitem__(self, key)
@@ -982,7 +955,9 @@ class Dict(dict):
 
     def _get1(self, key):
         val = dict.__getitem__(self, key)
-        return Expander._expand(val, self)
+        result = Expander._expand(val, self)
+        dict.__setitem__(self, key, result)
+        return result
 
 # ==================================================================================================
 
@@ -1082,8 +1057,6 @@ class Expander(abc.Mapping):
             result = cursor.expand(result)
         return result
 
-
-
     #endregion
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1110,10 +1083,13 @@ class Expander(abc.Mapping):
 
     # ==============================================================================================
 
-    @staticmethod
-    def is_terminal(var):
-        pass
-
+    @classmethod
+    def xip(cls, tree : Dict):
+        for key, val in tree.items():
+            if isinstance(val, Dict):
+                cls.xip(val)
+            else:
+                tree[cast(str, key)] = Expander._expand(val, tree)
 
     @classmethod
     def _expand(cls, var : Any, tree : Dict | Expander) -> Any:
@@ -1614,10 +1590,10 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             stat_db[file] = Utils.get_stats(file)
 
-        in_depfile = task.cfg['in_depfile']
+        in_depfile = task.node.in_depfile
         if in_depfile:
             stat_db[in_depfile] = Utils.get_stats(in_depfile)
-            deplines = Utils.load_depfile(task.cfg['in_depfile'], task.cfg['depformat'], task.cfg['cwd'])
+            deplines = Utils.load_depfile(task.node.in_depfile, task.node.depformat, task.node.cwd)
             for file in deplines:
                 stat_db[file] = Utils.get_stats(file) # type: ignore
 
@@ -1629,7 +1605,7 @@ def save_stat_db(repo : Repo):
             continue
 
         for file in Utils.yield_values(task.out_files):
-            stat_db[file] = Utils.get_stats(file, task.cfg['command'])
+            stat_db[file] = Utils.get_stats(file, task.node.command)
 
     stat_db_path = Path.join(repo.node.build_dir, 'hancho.json')
     Utils.save_json(stat_db, stat_db_path)
@@ -1646,8 +1622,8 @@ def save_stat_db(repo : Repo):
         for file in Utils.yield_values(task.in_files):
             # Haven't tested this in an IDE, but I think it matches the spec.
             comp_db[file] = {
-                "directory" : task.cfg['cwd'],
-                "command"   : Utils.commands_to_string(task.cfg['command']),
+                "directory" : task.node.cwd,
+                "command"   : Utils.commands_to_string(task.node.command),
                 "file"      : file,
             }
 
@@ -1696,9 +1672,7 @@ class Task:
     def __init__(self, repo : Repo, script : Script, task_node : Dict):
         self._repo   = repo
         self._script = script
-        #self._tree   = tree
         self.node    = task_node
-        self.cfg     = Dict()
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -1711,10 +1685,6 @@ class Task:
         # Implementation details below this line
 
         self._enabled = False
-
-        # This must be populated -before- the task starts, as we need it to queue up the task's
-        # dependencies
-        self.input_tasks = [v for v in Utils.yield_values(self.node) if isinstance(v, Task)]
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -2154,7 +2124,7 @@ def queue_task(task : Task):
         create_aio_task(task)
 
     # Start all tasks referenced by the config so we don't deadlock while waiting for them.
-    for v in task.input_tasks:
+    for v in [v for v in Utils.yield_values(task.node) if isinstance(v, Task)]:
         queue_task(v)
 
 # ==================================================================================================
@@ -2272,9 +2242,9 @@ async def task_main(task : Task):
     expand_task(task)
 
     # If there's a depfile from a previous build, load it so we can use it below.
-    if task.cfg['in_depfile']:
+    if task.node.in_depfile:
         task._old_deplines = Utils.load_depfile(
-            task.cfg['in_depfile'], task.cfg['depformat'], task.cfg['cwd']
+            task.node.in_depfile, task.node.depformat, task.node.cwd
         )
 
     # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -2289,23 +2259,23 @@ async def task_main(task : Task):
     # Paths updated. See if we need to rebuild our outputs.
     task._reason = rebuild_reason(task)
     if not task._reason:
-        raise SKIPPED(f"Task is up-to-date: '{task.cfg['name']}' : '{task.cfg['desc']}'")
+        raise SKIPPED(f"Task is up-to-date: '{task.node.name}' : '{task.node.desc}'")
 
     # Wait for enough jobs to free up to run this task.
-    task._cores = await Runner.acquire(task.cfg['job_size'])
+    task._cores = await Runner.acquire(task.node.job_size)
 
     # Run all the task's commands
 
-    text  = repr(task.cfg['name']) if task.cfg['name'] else ""
-    text += " : " if task.cfg['name'] and task.cfg['desc'] else ""
-    text += repr(task.cfg['desc']) if task.cfg['desc'] else ""
+    text  = repr(task.node.name) if task.node.name else ""
+    text += " : " if task.node.name and task.node.desc else ""
+    text += repr(task.node.desc) if task.node.desc else ""
     log_task(task, Log.INFO, f"{ansi_color(Log.TEAL)}Task {text}\n")
 
     log_task(task, Log.DEBUG, f"{ansi_color(0x606060)}Task rebuilding because: {task._reason}\n")
 
     time_a = time.perf_counter()
 
-    for command in task.cfg['command']:
+    for command in task.node.command:
         if command is None:
             continue
         elif callable(command):
@@ -2333,7 +2303,7 @@ async def await_inputs(task : Task):
     # modifying tasks after they're created but before they're started. If you point task B's
     # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-    for input_task in task.input_tasks:
+    for input_task in [v for v in Utils.yield_values(task.node) if isinstance(v, Task)]:
         if input_task._aio_task is None:
             raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
         try:
@@ -2348,18 +2318,17 @@ async def await_inputs(task : Task):
 # ==================================================================================================
 
 def expand_task(task : Task):
+    node = task.node
+
     if log.log_level <= Log.DEBUG:
         log_task(task, Log.DEBUG, "Task tree:\n")
-        log_task(task, Log.DEBUG, Dumper.dump(task.node, fold = ["hancho", "log", "in_objs"]) + "\n")
+        log_task(task, Log.DEBUG, Dumper.dump(node, fold = ["hancho", "log", "in_objs"]) + "\n")
 
     #tree = task._tree
 
-    # We need to expand the build dir first so we can use it in fix_paths.
-    build_dir = task.node._get1("build_dir")
-
     # Then we expand all io fields and fix their paths.
-    for _field, _files in list(task.node.items()):
-        if not _field.startswith("in_") and not _field.startswith("out_"): # and _field != "in_depfile":
+    for _field, _files in list(node.items()):
+        if not _field.startswith("in_") and not _field.startswith("out_"):
             continue
 
         files = [
@@ -2369,12 +2338,12 @@ def expand_task(task : Task):
         ]
 
         if files:
-            files = task.node.expand(files)
+            files = node.expand(files)
             files = Utils.flatten(files)
-            files = fix_paths(task, _field, files, build_dir)
+            files = fix_paths(task, _field, files, node._get1("build_dir"))
             files = files[0] if len(files) == 1 else files
 
-            task.node[_field] = files
+            node[_field] = files
 
             if _field == "in_depfile":
                 task.in_depfile = cast(str, files)
@@ -2383,36 +2352,11 @@ def expand_task(task : Task):
             elif _field.startswith("out_"):
                 task.out_files[_field] = files
 
-    pass
+    Expander.xip(node)
 
-#    task = Dict(
-#        name       = '<no name>',
-#        desc       = '<no desc>',
-#        command    = None,
-#        cwd        = '{repo.root}',
-#        in_depfile = '',
-#        depformat  = "gcc" if os.name == "posix" else "msvc",
-#        job_size   = 1,
-#        build_dir  = '{join(repo.build_dir, relpath(script.root, repo.root))}',
-#        dry_run    = '{repo.dry_run}',
-#        force      = '{repo.build_force}',
-#    ),
+    node.command = Utils.flatten(node.command)
 
-
-    for key in hancho_defaults.task:
-        task.cfg[key] = task.node._get1(key)
-
-    task.cfg['command'] = Utils.flatten(task.cfg['command'])
-    task.node.command = task.node._get1("command")
-
-#    if not task.cfg.dry_run:
-#        for _field in tree.task:
-#            if _field.startswith("out_") or _field == "in_depfile":
-#                file = tree.task[_field]
-#                if file:
-#                    os.makedirs(Path.dirname(file), exist_ok=True)
-
-    if not task.cfg.dry_run:
+    if not node.dry_run:
         for file in filter(None, task.out_files.values()):
             os.makedirs(Path.dirname(file), exist_ok=True)
         if task.in_depfile:
@@ -2423,7 +2367,7 @@ def expand_task(task : Task):
 
     if log.log_level <= Log.DEBUG:
         log_task(task, Log.DEBUG, "Task after expand:\n")
-        log_task(task, Log.DEBUG, Dumper.dump(task.cfg) + "\n")
+        log_task(task, Log.DEBUG, Dumper.dump(node) + "\n")
 
 # ==================================================================================================
 
@@ -2462,11 +2406,11 @@ def sanity_check(task : Task):
 
     # Check for all task issues that break the build
 
-    if not Path.exists(task.cfg['cwd']):
-        raise BROKEN(f"Task working directory '{task.cfg['cwd']}' does not exist")
+    if not Path.exists(task.node.cwd):
+        raise BROKEN(f"Task working directory '{task.node.cwd}' does not exist")
 
-    if not Path.startswith(task.cfg['build_dir'], repo.node.root):
-        raise BROKEN(f"The build dir {task.cfg['build_dir']} is not under repo.root {repo.node.root}")
+    if not Path.startswith(task.node.build_dir, repo.node.root):
+        raise BROKEN(f"The build dir {task.node.build_dir} is not under repo.root {repo.node.root}")
 
     # In order to provide the least amount of bafflement to users, CLI commands execute
     # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -2476,10 +2420,10 @@ def sanity_check(task : Task):
     # This means that pre-relative-ified paths can only be rel'd to one of the two cwds, not both.
     # And that means we disallow mixed cli/callback command lists.
 
-    if isinstance(task.cfg['command'], list):
-        for command in task.cfg['command']:
-            if type(command) is not type(task.cfg['command'][0]):
-                raise BROKEN(f"Commands aren't the same type: {task.cfg['command']}")
+    if isinstance(task.node.command, list):
+        for command in task.node.command:
+            if type(command) is not type(task.node.command[0]):
+                raise BROKEN(f"Commands aren't the same type: {task.node.command}")
 
             # Check that task's commands are either strings or callables.
             if not isinstance(command, str) and not callable(command) and command is not None:
@@ -2487,7 +2431,7 @@ def sanity_check(task : Task):
 
     # In strict mode, we mark a task broken if its command still has delimiters in it.
     if repo.node.strict:
-        for command in cast(list, Utils.flatten(task.cfg['command'])):
+        for command in cast(list, Utils.flatten(task.node.command)):
             if not isinstance(command, str):
                 continue
             out = Expander._split_text(command)
@@ -2497,8 +2441,8 @@ def sanity_check(task : Task):
     # Check that all build files would end up under build_dir
     for file in Utils.yield_values(task.out_files):
         assert Path.isabs(file)
-        if not Path.startswith(file, task.cfg['build_dir']):
-            raise BROKEN(f"Path error, output file {file} is not under build dir {task.cfg['build_dir']}")
+        if not Path.startswith(file, task.node.build_dir):
+            raise BROKEN(f"Path error, output file {file} is not under build dir {task.node.build_dir}")
 
     # Check for task collisions
     for file in Utils.yield_values(task.out_files):
@@ -2516,13 +2460,13 @@ def sanity_check(task : Task):
             raise BROKEN(f"Input file missing - {file}")
 
     # Tasks should have at most one depfile.
-    if isinstance(task.cfg['in_depfile'], list):
-        raise BROKEN(f"Tasks can't have more than one dependency file! - {task.cfg['in_depfile']}")
+    if isinstance(task.node.in_depfile, list) and len(task.node.in_depfile) > 1:
+        raise BROKEN(f"Tasks can't have more than one dependency file! - {task.node.in_depfile}")
 
 # ==================================================================================================
 
 async def run_command(task : Task, command : str):
-    log_task(task, Log.INFO, f"{Path.relpath(task.cfg['cwd'], task._repo.node.root)}$ {command}\n")
+    log_task(task, Log.INFO, f"{Path.relpath(task.node.cwd, task._repo.node.root)}$ {command}\n")
 
     proc = None
     try:
@@ -2533,7 +2477,7 @@ async def run_command(task : Task, command : str):
         # Create the subprocess via asyncio and then await the result.
         proc = await asyncio.create_subprocess_shell(
             curly_command,
-            cwd    = task.cfg['cwd'],
+            cwd    = task.node.cwd,
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
             start_new_session = True
@@ -2602,7 +2546,7 @@ def rebuild_reason(task : Task) -> str:
     # ------------------------------------
     # Check the trivial reasons to rebuild
 
-    if task.cfg.force:
+    if task.node.force:
         repo.build_reasons["forced"] += 1
         return "Target forced to rebuild due to task.force"
 
@@ -2631,11 +2575,11 @@ def rebuild_reason(task : Task) -> str:
             return reason
 
     for filename in Utils.yield_values(task.out_files):
-        if reason := check_stat(repo, filename, task.cfg['command']):
+        if reason := check_stat(repo, filename, task.node.command):
             return reason
 
-    if task.cfg['in_depfile']:  # noqa: SIM102
-        if reason := check_stat(repo, task.cfg['in_depfile']):
+    if task.node.in_depfile:  # noqa: SIM102
+        if reason := check_stat(repo, task.node.in_depfile):
             return reason
 
     repo.build_reasons["*task clean"] += 1
@@ -2701,14 +2645,15 @@ def log_task(task : Task, level : int, message : str):
 # ==================================================================================================
 
 def log_task_exception(task : Task, message, ex = None):
+    node = task.node
     log.error("========================================\n")
     log.error(message + "\n")
     log.error("========================================\n")
     log.error(f"Script    = {task._script._path}:\n")
-    log.error(f"Task      = '{task.node.name}' : '{task.node.desc}'\n")
+    log.error(f"Task      = '{node.name}' : '{node.desc}'\n")
     log.error(f"os.getcwd = {os.getcwd()}\n")
-    log.error(f"task cwd  = {task.node.cwd}\n")
-    log.error(f"command   = {task.node.command}\n")
+    log.error(f"task cwd  = {node.cwd}\n")
+    log.error(f"command   = {node.command}\n")
     log.exception(ex)
     log.error(dump_stdout(task))
     log.error("========================================\n")
