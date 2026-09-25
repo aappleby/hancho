@@ -336,7 +336,6 @@ class Log:
         cls.line_buffer   = ""
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
-
     @classmethod
     def indent(cls, hex_color : int  = 0):
         cls.indent_stack.append(f"{ansi_color(hex_color)}│{ansi_color(Log.RESET)} ")
@@ -619,8 +618,6 @@ def generic_merge(
     assert isinstance(dst, Dict)
 
     keys = list(lhs) + [r for r in rhs if r not in lhs]
-    #keys = lhs.keys() | rhs.keys()
-    #keys = {*lhs, *rhs}
 
     for key in keys:
         if key in lhs and key not in rhs and not keep_a:
@@ -718,8 +715,6 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
         else:
             raise argparse.ArgumentTypeError(f"Don't know what to do with {type(value)} = {value}")
 
-    #bool_opt = argparse.BooleanOptionalAction
-
     # ------------------------------------
     # fmt: off
 
@@ -730,11 +725,11 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     parser.add_argument(      "--hancho.root",        type=str.strip,     help="Hancho lives in this directory (so we can find hancho/tools, etc).")
     parser.add_argument(      "--hancho.max_errors",  type=int,           help="The maximum number of task errors we tolerate before abandoning the build")
     parser.add_argument('-j', "--hancho.max_jobs",    type=int,           help="Run a maximum of N jobs in parallel.")
-    parser.add_argument('-T', "--hancho.trace",       type = str_to_bool,  choices = [True, False], help="Display template expansion traces for debugging")
+    parser.add_argument('-t', "--hancho.trace",       type = str_to_bool,  choices = [True, False], help="Display template expansion traces for debugging")
 
     levels = ["debug", "info", "warning", "error", "critical"]
 
-    parser.add_argument(      "--log.level",          choices = levels,   help="Select verbosity level.")
+    parser.add_argument('-l',  "--log.level",          choices = levels,   help="Select verbosity level.")
     parser.add_argument('-w', "--log.wrap",           type = str_to_bool,  choices = [True, False], help="Wrap lines around the console instead of clipping them")
     parser.add_argument('-c', "--log.color",          type = str_to_bool,  choices = [True, False], help="Use color in the log for better readability")
 
@@ -1090,6 +1085,7 @@ class Expander(abc.Mapping):
                 cls.xip(val)
             else:
                 tree[cast(str, key)] = Expander._expand(val, tree)
+        return tree
 
     @classmethod
     def _expand(cls, var : Any, tree : Dict | Expander) -> Any:
@@ -1525,6 +1521,12 @@ class Hancho:
 
     @classmethod
     def init(cls, top_tree):
+        log_node = top_tree.pop("log")
+        hancho_node = top_tree.pop("hancho")
+        mid_tree = Dict(log = log_node, hancho = hancho_node)
+        mid_tree.link(hancho_aliases)
+        top_tree.link(mid_tree)
+
         cls.real_filenames = set()
         cls.dedupe = Dict()
         cls.repos : set[Repo] = set()
@@ -1539,10 +1541,7 @@ class Hancho:
 
 class Repo:
     def __init__(self, repo_node : Dict):
-        for key in repo_node:
-            repo_node[key] = repo_node._get1(key)
-
-        self.node = repo_node
+        self.node = Expander.xip(repo_node)
         self.stat_db = {}
         self.build_reasons = Counter()
         self.root_script : Script = Utils.MISSING
@@ -1647,7 +1646,7 @@ class Script:
         self._path   = script_path
         self._root   = script_root
         self._module = module
-        self.node   = script_node
+        self.node    = Expander.xip(script_node)
         self._code   = code
 
         self._tasks : list[Task] =  []
@@ -1754,8 +1753,8 @@ hancho_defaults = Dict(
     ),
     log = Dict(
         #level     = "debug",
-        #level     = "info",
-        level     = "critical",
+        level     = "info",
+        #level     = "critical",
         wrap      = False,
         color     = True,
         timestamp = True
@@ -1803,22 +1802,10 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(file : str, argv : list[str], *args, **kwargs) -> HanchoProxy:
         flags = parse_flags(argv, *args, **kwargs)
 
-        hancho_defaults.script.path = file
-        hancho_defaults.script.root = os.path.dirname(file)
-
         top_tree = merge(hancho_defaults, flags)
-        tree_log = top_tree.pop("log")
-        tree_hancho = top_tree.pop("hancho")
-        mid_tree = Dict(log = tree_log, hancho = tree_hancho)
-        mid_tree.link(hancho_aliases)
-        top_tree.link(mid_tree)
-
-        #top_tree.script.path = __file__
-        #top_tree.script.root = os.path.dirname(__file__)
-        #top_tree.script.root = os.getcwd()
-
+        top_tree.script.path = file
+        top_tree.script.root = os.path.dirname(file)
         Hancho.init(top_tree)
-
 
         root_proxy = load_script(parent_repo = None, new_tree = top_tree)
         return root_proxy
@@ -1849,10 +1836,9 @@ class HanchoProxy(types.ModuleType):
         root = root or Path.dirname(path)
         new_tree = copy.deepcopy(self._tree)
         update(new_tree, *args, kwargs)
-        update(new_tree, script = Dict(path = path, root = root))
-        #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
+        new_tree.script.path = path
+        new_tree.script.root = root
         return load_script(None if is_repo else self._repo, self._tree)._script._module
-
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
         return self._load(path, root, False,  *args, **kwargs)
@@ -1913,11 +1899,10 @@ def _start():
 # ==================================================================================================
 
 def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
+    Expander.xip(new_tree.script)
 
-    path = new_tree.script._get1("path")
-    path = Path.resolve(path)
-    root = new_tree.script._get1("root")
-    root = Path.resolve(root)
+    path = Path.resolve(new_tree.script.path)
+    root = Path.resolve(new_tree.script.root)
 
     log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     with log.indenter(Log.ORANGE):
@@ -1931,13 +1916,11 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
         if dupe := Hancho.dedupe.get(dupe_key, None):
             return dupe
 
-        if path and path.endswith(".hancho"):
-            print(path)
+        code = None
+        if path.endswith(".hancho"):
             with open(path, encoding="utf-8") as file:
                 source = file.read()
                 code = compile(source, path, "exec", dont_inherit=True)
-        else:
-            code = None
 
         repo   = parent_repo or Repo(new_tree.repo)
         module = types.ModuleType(os.path.basename(path) if path else "<no path>")
@@ -1969,12 +1952,6 @@ def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
     top_tree = merge(hancho_defaults, flags)
-    tree_log = top_tree.pop("log")
-    tree_hancho = top_tree.pop("hancho")
-    mid_tree = Dict(log = tree_log, hancho = tree_hancho)
-    mid_tree.link(hancho_aliases)
-    top_tree.link(mid_tree)
-
     Hancho.init(top_tree)
 
     log.info(f"{ansi_color(Log.LIME)}Command line : {" ".join(sys.argv)}\n")
@@ -1988,7 +1965,6 @@ def hancho_main() -> int:
 
     time_a1 = time.perf_counter()
     top_repo  = Repo(top_tree.repo)
-    #log.info(f"{ansi_color(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
     top_proxy = load_script(top_repo, top_tree)
     time_b1 = time.perf_counter()
     log.info(f"{ansi_color(Log.BLUE)}Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
@@ -2028,25 +2004,17 @@ def hancho_main() -> int:
     else:
         log.info(f"{ansi_color(Log.BLUE)}BUILD CLEAN\n")
 
-#    if log.log_level <= DEBUG:
-#        for script in Hancho.scripts:
-#            log.debug(f"Stats for {script.repo_root}\n")
-#            with log.indenter(BLUE):
-#               for k, v in script.reasons.items():
-#                    log.debug(f"Rebuild reasons {k:13} = {v}\n")
+#    for script in Hancho.scripts:
+#        log.debug(f"Stats for {script.repo_root}\n")
+#        with log.indenter(BLUE):
+#           for k, v in script.reasons.items():
+#                log.debug(f"Rebuild reasons {k:13} = {v}\n")
 
     return result
 
 # ==================================================================================================
 
 def hancho_build(top_repo : Repo) -> int:
-
-#    for repo in Hancho.repos:
-#        Log.log(f"Repo {repo._root}\n")
-#        Log.indent()
-#        for script in repo.scripts:
-#            Log.log(f"Script {script.script_config.path}\n")
-#        Log.dedent()
 
     # ------------------------------------
     # Sanity-check the repo/script hierarchies
@@ -2120,6 +2088,7 @@ def queue_task(task : Task):
         Runner.tasks_enabled += 1
         task._enabled = True
 
+    # If this task was dynamically created during the build, add it to asyncio immediately.
     if Utils.in_event_loop():
         create_aio_task(task)
 
@@ -2265,12 +2234,10 @@ async def task_main(task : Task):
     task._cores = await Runner.acquire(task.node.job_size)
 
     # Run all the task's commands
-
     text  = repr(task.node.name) if task.node.name else ""
     text += " : " if task.node.name and task.node.desc else ""
     text += repr(task.node.desc) if task.node.desc else ""
     log_task(task, Log.INFO, f"{ansi_color(Log.TEAL)}Task {text}\n")
-
     log_task(task, Log.DEBUG, f"{ansi_color(0x606060)}Task rebuilding because: {task._reason}\n")
 
     time_a = time.perf_counter()
