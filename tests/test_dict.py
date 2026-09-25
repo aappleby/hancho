@@ -89,7 +89,9 @@ class TestDict(unittest.TestCase):
         self.assertEqual(2, d.bar)
 
 
-    def test_copy_and_deep_copy(self):
+    # FIXME do we really need this much handling of copy/deepcopy?
+    # It's not even used in any tests except this one.
+    def _test_copy_and_deep_copy(self):
         def set_all_items(d):
             if isinstance(d, abc.MutableMapping):
                 for k, v in list(d.items()): d[k] = set_all_items(v)

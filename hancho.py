@@ -604,92 +604,6 @@ class ContextProxy[T]:
         self.reset(token)
 
 # ==================================================================================================
-# region Dict merging
-
-def generic_merge(
-    dst: Dict,
-    lhs: dict | Dict,
-    rhs: dict | Dict,
-    merge_dicts: bool,
-    merge_lists: bool,
-    keep_a: bool,
-    keep_b: bool,
-):
-    assert isinstance(dst, Dict)
-
-    keys = list(lhs) + [r for r in rhs if r not in lhs]
-
-    for key in keys:
-        if key in lhs and key not in rhs and not keep_a:
-            continue
-        if key not in lhs and key in rhs and not keep_b:
-            continue
-
-        lhs2 = lhs.get(key)
-        rhs2 = rhs.get(key)
-
-        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
-            dst2 = Dict()
-            generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
-        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
-            dst2 = copy.deepcopy(list(lhs2) + list(rhs2))
-        elif rhs2 is not None:
-            dst2 = Dict(rhs2) if type(rhs2) is Dict else copy.deepcopy(rhs2)
-        else:
-            dst2 = Dict(lhs2) if type(lhs2) is Dict else copy.deepcopy(lhs2)
-
-        if isinstance(dst2, Dict):
-            dst2.link(dst)
-
-        dict.__setitem__(dst, key, dst2)
-
-    # FIXME sanity checking
-    dst.check_links()
-
-    return dst
-
-# Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-# only keys that were already in lhs. For example, if you have a Dict that contains
-# "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-# - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-# compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-def fill(lhs : Dict, *args : Dict, **kwargs):
-    dest = copy.deepcopy(lhs)
-    for rhs in (*args, kwargs):
-        generic_merge(
-            dest, dest, rhs,
-            merge_dicts=True, merge_lists=True,
-            keep_a=True, keep_b=False)
-    return dest
-
-def update(lhs : Dict, *args : dict, **kwargs):
-    for rhs in [d for d in (*args, kwargs) if d]:
-        generic_merge(
-            lhs, lhs, rhs,
-            merge_dicts=True, merge_lists=True,
-            keep_a=True, keep_b=True)
-    return lhs
-
-def merge(*args : Dict, **kwargs):
-    result = update(Dict(), *args, **kwargs)
-    return result
-
-def _walk(lhs : Dict, key : str, spawn = False):
-    while True:
-        key, _, rest = key.partition('.')
-        if not rest:
-            return (lhs, key)
-        if key in lhs:
-            key, lhs = rest, dict.__getitem__(lhs, key)
-        elif spawn:
-            dest = Dict()
-            dict.__setitem__(lhs, key, dest)
-            key, lhs = rest, dest
-        else:
-            raise KeyError(key)
-# endregion
-# ==================================================================================================
 
 def parse_flags(argv, *args, **kwargs) -> Dict:
 
@@ -844,8 +758,10 @@ class Dict(dict):
         self._up : Dict | None
         object.__setattr__(self, "_up", None)
 
-        dicts = [d for d in (*args, kwargs) if d]
-        update(self, *dicts)
+        self._in : Dict | None
+        object.__setattr__(self, "_in", None)
+
+        update(self, *filter(None, [*args, kwargs]))
         self.check_links()
 
     # ==============================================================================================
@@ -863,8 +779,12 @@ class Dict(dict):
     # ==============================================================================================
     # region Dunders
 
-    def __copy__(self):
-        return copy.deepcopy(self)
+#    def __copy__(self):
+#        return copy.deepcopy(self)
+
+    def __reduce_ex__(self, protocol):
+        raise BaseException("don't copy dict")
+        return super().__reduce_ex__(protocol)
 
     def __repr__(self):
         return Dumper.dump(self)
@@ -954,8 +874,6 @@ class Dict(dict):
         dict.__setitem__(self, key, result)
         return result
 
-# ==================================================================================================
-
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
     pass
@@ -964,6 +882,89 @@ class Data(Dict):
     # Same thing
     pass
 
+# ==================================================================================================
+# region Dict merging
+
+def generic_merge(
+    dst: Dict,
+    lhs: dict | Dict,
+    rhs: dict | Dict,
+    merge_dicts: bool,
+    merge_lists: bool,
+    keep_a: bool,
+    keep_b: bool,
+):
+    assert isinstance(dst, Dict)
+
+    keys = list(lhs) + [r for r in rhs if r not in lhs]
+
+    for key in keys:
+        if key in lhs and key not in rhs and not keep_a:
+            continue
+        if key not in lhs and key in rhs and not keep_b:
+            continue
+
+        lhs2 = lhs.get(key)
+        rhs2 = rhs.get(key)
+
+        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
+            dst2 = Dict()
+            generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
+        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
+            dst2 = lhs2 + rhs2
+        elif rhs2 is not None:
+            dst2 = rhs2
+        else:
+            dst2 = lhs2
+
+        if isinstance(dst2, Dict):
+            dst2.link(dst)
+
+        dict.__setitem__(dst, key, dst2)
+
+    # FIXME sanity checking
+    dst.check_links()
+
+    return dst
+
+# Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+# only keys that were already in lhs. For example, if you have a Dict that contains
+# "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+# - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+# compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+def fill(lhs : Dict, *args : Dict, **kwargs):
+    dest = Dict(lhs)
+    for rhs in (*args, kwargs):
+        generic_merge(
+            dest, dest, rhs,
+            merge_dicts=True, merge_lists=True,
+            keep_a=True, keep_b=False)
+    return dest
+
+def update(lhs : Dict, *args : dict, **kwargs):
+    for rhs in filter(None, [*args, kwargs]):
+        generic_merge(
+            lhs, lhs, rhs,
+            merge_dicts=True, merge_lists=True,
+            keep_a=True, keep_b=True)
+    return lhs
+
+def _walk(lhs : Dict, key : str, spawn = False):
+    while True:
+        key, _, rest = key.partition('.')
+        if not rest:
+            return (lhs, key)
+        if key in lhs:
+            key, lhs = rest, dict.__getitem__(lhs, key)
+        elif spawn:
+            dest = Dict()
+            dict.__setitem__(lhs, key, dest)
+            key, lhs = rest, dest
+        else:
+            raise KeyError(key)
+
+# endregion
 # ==================================================================================================
 
 class Expander(abc.Mapping):
@@ -1802,7 +1803,7 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(file : str, argv : list[str], *args, **kwargs) -> HanchoProxy:
         flags = parse_flags(argv, *args, **kwargs)
 
-        top_tree = merge(hancho_defaults, flags)
+        top_tree = Dict(hancho_defaults, flags)
         top_tree.script.path = file
         top_tree.script.root = os.path.dirname(file)
         Hancho.init(top_tree)
@@ -1951,7 +1952,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
-    top_tree = merge(hancho_defaults, flags)
+    top_tree = Dict(hancho_defaults, flags)
     Hancho.init(top_tree)
 
     log.info(f"{ansi_color(Log.LIME)}Command line : {" ".join(sys.argv)}\n")
