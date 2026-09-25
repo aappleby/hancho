@@ -766,7 +766,9 @@ class Dict(dict):
         result = Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
 
         if cursor := object.__getattribute__(self, "_in"):
-            result += " + " + Dumper.dump(cursor)
+            result += " + "
+            result += Dumper._dump_to_str(None, cursor, opts, seen)
+            result += (opts.tab * (opts.indent))
 
         return result
 
@@ -809,14 +811,35 @@ class Dict(dict):
     # ==============================================================================================
 
     def internal_get(self, key, default = Utils.MISSING, check_up = True):
-        if dict.__contains__(self, key):
-            return dict.__getitem__(self, key)
-        elif check_up and (up2 := object.__getattribute__(self, "_up")):
+#        cursor1 = self
+#        while cursor1:
+#            cursor2 = cursor1
+#            while cursor2:
+#                if dict.__contains__(cursor2, key):
+#                    return dict.__getitem__(cursor2, key)
+#                cursor2 = object.__getattribute__(cursor2, "_in")
+#
+#            cursor1 = object.__getattribute__(cursor1, "_up") if check_up else None
+
+        cursor = self
+        while cursor:
+            if dict.__contains__(cursor, key):
+                return dict.__getitem__(cursor, key)
+            cursor = object.__getattribute__(cursor, "_in")
+
+#        if dict.__contains__(self, key):
+#            return dict.__getitem__(self, key)
+#
+#        if in2 := object.__getattribute__(self, "_in"):
+#            return in2.internal_get(key, default, check_up)
+#
+        if check_up and (up2 := object.__getattribute__(self, "_up")):
             return up2.internal_get(key, default, check_up)
-        elif default is not Utils.MISSING:
+
+        if default is not Utils.MISSING:
             return default
-        else:
-            raise KeyError(key)
+
+        raise KeyError(key)
 
     def internal_set(self, key, val):
         #dest, key = _walk(self, key, spawn = True)
@@ -1505,7 +1528,8 @@ class Hancho:
         hancho_node = top_tree.pop("hancho")
         mid_tree = Dict(log = log_node, hancho = hancho_node)
         mid_tree.link(hancho_aliases)
-        top_tree.link(mid_tree)
+        #top_tree.link(mid_tree)
+        stack(top_tree, mid_tree)
 
         cls.real_filenames = set()
         cls.dedupe = Dict()
