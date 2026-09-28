@@ -141,7 +141,9 @@ class TestApp(unittest.TestCase):
         def check(value, expected, **kwargs):
             result = dump(value, **kwargs)
             expected = textwrap.dedent(expected).strip()
-            self.assertEqual(result, expected)
+            self.assertEqual(expected, result)
+
+        class Blarp: pass
 
         thing1 = {
             "a": 1,
@@ -149,33 +151,33 @@ class TestApp(unittest.TestCase):
             "c": (3, 3, 3),
             "d": object(),
             "e": "foobar",
+            "f": Blarp(),
         }
 
         expected = """
-        :dict = {
+        {
             a = 1,
-            b:list = [2, 'two'],
-            c:tuple = (3, 3, 3),
+            b = [2, 'two'],
+            c = (3, 3, 3),
             d:object = <object object at 0x...>,
-            e = 'foobar'
+            e = 'foobar',
+            f:Blarp = {}
         }
         """
         check(thing1, expected, print_id = False)
 
-
         expected = """
-        :dict@0x... = {
+        {
             a = 1,
-            b:list@0x... = [2, 'two'],
-            c:tuple@0x... = (3, 3, 3),
+            b = [2, 'two'],
+            c = (3, 3, 3),
             d:object@0x... = <object object at 0x...>,
-            e = 'foobar'
+            e = 'foobar',
+            f:Blarp@0x... = {}
         }
         """
-        check(thing1, expected)
-
+        check(thing1, expected, print_id = True)
         check(contextvars.Context(), ":Context@0x... = {}")
-
         check(print, ":builtin_function_or_method@0x... = <built-in function print>")
 
     def test_weave(self):

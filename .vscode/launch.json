@@ -45,13 +45,14 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-D", "-V", "-T"],
+      "args"    : ["-D", "-V", "-t=true"],
       //"args"    : ["-D", "-V"],
       //"preLaunchTask": "Wipe build",
-      //"variablePresentation": {
-      //  "all": "hide",
-      //  "protected": "group",
-      //}
+
+      "variablePresentation": {
+        "special": "hide",
+        "function": "hide",
+      }
     },
 
     {
