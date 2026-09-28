@@ -57,11 +57,6 @@ from typing import Any, cast
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
-def ansi(hex):
-    """Converts a color hex code into an ANSI escape sequence"""
-    r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
-    return f"\x1B[38;2;{r};{g};{b}m" if hex else "\x1B[0m"
-
 #endregion
 # ==================================================================================================
 #region Utils
@@ -74,6 +69,12 @@ class Utils:
         cls.hash_calls : int = 0
         cls.hash_bytes : int = 0
         cls.hash_time  : float = 0
+
+    @staticmethod
+    def hex_to_ansi(hex):
+        """Converts a color hex code into an ANSI escape sequence"""
+        r, g, b = ((hex >> 16) & 0xFF, (hex >>  8) & 0xFF, (hex >>  0) & 0xFF)
+        return f"\x1B[38;2;{r};{g};{b}m" if hex else "\x1B[0m"
 
     @staticmethod
     def stringify(variant : Any) -> str:
@@ -131,7 +132,7 @@ class Utils:
     color_cursor = 0
 
     @staticmethod
-    def obj_to_hex_color(obj) -> int:
+    def obj_to_ansi_color(obj) -> str:
         oid = id(obj)
         if oid in Utils.color_map:
             return Utils.color_map[oid]
@@ -141,7 +142,7 @@ class Utils:
 
         r, g, b = colorsys.hsv_to_rgb(hue, 0.6, 0.8)
         r, g, b = (int(r * 255), int(g * 255), int(b * 255))
-        result = (r << 16) | (g << 8) | b
+        result = Utils.hex_to_ansi((r << 16) | (g << 8) | b)
         Utils.color_map[oid] = result
         return result
 
@@ -284,7 +285,7 @@ class Utils:
                 deplines2 = deplines1.split()
                 deplines3 = [d for d in deplines2 if d[-1] != ':']
             else:
-                raise BROKEN(f"Invalid depfile format {format}") # pragma: no cover
+                raise Task.BROKEN(f"Invalid depfile format {format}") # pragma: no cover
 
         # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
         deplines4 : list[str] = [cast(str, Path.join(task_cwd, d)) for d in deplines3]
@@ -305,25 +306,25 @@ class Utils:
 
 class Log:
 
-    """12 half-saturated, 80% value Log.Color evenly spaced around the HSV wheel"""
-    RED     = 0xCC6666
-    PINK    = 0xCC6699
-    MAGENTA = 0xCC66CC
-    VIOLET  = 0x9966CC
-    BLUE    = 0x6666CC
-    SKY     = 0x6699CC
-    TEAL    = 0x66CCCC
-    AQUA    = 0x66CC99
-    GREEN   = 0x66CC66
-    LIME    = 0x99CC66
-    YELLOW  = 0xCCCC66
-    ORANGE  = 0xCC9966
-    RESET   = 0x000000
+    """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
+    RED     = Utils.hex_to_ansi(0xCC6666)
+    PINK    = Utils.hex_to_ansi(0xCC6699)
+    MAGENTA = Utils.hex_to_ansi(0xCC66CC)
+    VIOLET  = Utils.hex_to_ansi(0x9966CC)
+    BLUE    = Utils.hex_to_ansi(0x6666CC)
+    SKY     = Utils.hex_to_ansi(0x6699CC)
+    TEAL    = Utils.hex_to_ansi(0x66CCCC)
+    AQUA    = Utils.hex_to_ansi(0x66CC99)
+    GREEN   = Utils.hex_to_ansi(0x66CC66)
+    LIME    = Utils.hex_to_ansi(0x99CC66)
+    YELLOW  = Utils.hex_to_ansi(0xCCCC66)
+    ORANGE  = Utils.hex_to_ansi(0xCC9966)
 
-    GRAY1 = 0x333333
-    GRAY2 = 0x666666
-    GRAY3 = 0x999999
-    GRAY4 = 0xCCCCCC
+    GRAY1   = Utils.hex_to_ansi(0x333333)
+    GRAY2   = Utils.hex_to_ansi(0x666666)
+    GRAY3   = Utils.hex_to_ansi(0x999999)
+    GRAY4   = Utils.hex_to_ansi(0xCCCCCC)
+    RESET   = Utils.hex_to_ansi(0x000000)
 
     DEBUG    = 10
     INFO     = 20
@@ -345,8 +346,8 @@ class Log:
         cls.match_escapes = re.compile(r"(\x1B.*?m)")
 
     @classmethod
-    def indent(cls, hex_color : int  = 0):
-        cls.indent_stack.append(f"{ansi(hex_color)}│{ansi(Log.RESET)} ")
+    def indent(cls, ansi_color : str = RESET):
+        cls.indent_stack.append(f"{ansi_color}│{Log.RESET} ")
 
     @classmethod
     def dedent(cls):
@@ -354,30 +355,30 @@ class Log:
 
     @classmethod
     @contextmanager
-    def indenter(cls, hex_color : int = 0):
-        cls.indent(hex_color)
+    def indenter(cls, ansi_color : str = RESET):
+        cls.indent(ansi_color)
         yield
         cls.dedent()
 
     @classmethod
     def debug(cls, text):
-        cls._log(Log.DEBUG, Log.AQUA, text)
+        cls._log(Log.DEBUG, Log.AQUA + text)
 
     @classmethod
     def info(cls, text):
-        cls._log(Log.INFO, Log.GREEN, text)
+        cls._log(Log.INFO, Log.GREEN + text)
 
     @classmethod
     def warning(cls, text):
-        cls._log(Log.WARNING, Log.YELLOW, text)
+        cls._log(Log.WARNING, Log.YELLOW + text)
 
     @classmethod
     def error(cls, text):
-        cls._log(Log.ERROR, Log.ORANGE, text)
+        cls._log(Log.ERROR, Log.ORANGE + text)
 
     @classmethod
     def critical(cls, text):
-        cls._log(Log.CRITICAL, Log.RED, text)
+        cls._log(Log.CRITICAL, Log.RED + text)
 
     @classmethod
     def exception(cls, ex):
@@ -397,13 +398,11 @@ class Log:
             Log.error(f"Could not extract traceback from {ex}!")
 
     @classmethod
-    def _log(cls, log_level, hex_color, text):
+    def _log(cls, log_level : int, text : str):
         if log_level < cls.log_level:
             return
         if not isinstance(text, str) or len(text) == 0:
             return
-
-        color_code = ansi(hex_color)
 
         # FIXME str.partition might be easier here
         lines = text.splitlines(keepends=True)
@@ -412,16 +411,14 @@ class Log:
                 cls.line_buffer += f"[{time.perf_counter() - cls.time_origin:8.3f}] " if cls.timestamp else ""
                 cls.line_buffer += "".join(cls.indent_stack)
 
-            # Wrap the line in the color prefix/suffix, but don't lose newlines.
             if line[-1] == '\n':
-                line = line[:-1]
-                line = f"{color_code}{line}{ansi(Log.RESET)}\n"
-            else:
-                line = f"{color_code}{line}{ansi(Log.RESET)}"
-
-            cls.line_buffer += line
-            if cls.line_buffer[-1] == '\n':
+                cls.line_buffer += line[:-1]
+                cls.line_buffer += Log.RESET
+                cls.line_buffer += '\n'
                 cls._flush()
+            else:
+                cls.line_buffer += line
+                cls.line_buffer += Log.RESET
 
     @classmethod
     def _flush(cls):
@@ -1340,13 +1337,11 @@ def trace_start(tree, action, arg):
     if isinstance(tree, Expander):
         tree = tree.tree
 
-    try:
-        tree_color = Utils.obj_to_hex_color(tree)
-        Log.info(f"{ansi(tree_color)}┌ {Utils.instance_tag(tree)}")
-        Log.info(f"{ansi(0)}.{action}({arg!r})\n")
-        Log.indent(tree_color)
-    except:
-        raise
+    tree_color = Utils.obj_to_ansi_color(tree)
+    tree_tag   = Utils.instance_tag(tree)
+
+    Log.info(f"{tree_color}┌ {tree_tag}{Log.RESET}.{action}({arg!r})\n")
+    Log.indent(tree_color)
 
 # ==================================================================================================
 
@@ -1357,12 +1352,12 @@ def trace_up(tree, up, action, arg):
     if isinstance(tree, Expander):
         tree = tree.tree
 
-    tree_color = Utils.obj_to_hex_color(tree)
-    tree_tag = Utils.instance_tag(tree)
-    up_color = Utils.obj_to_hex_color(up)
-    up_tag   = Utils.instance_tag(up)
+    tree_color = Utils.obj_to_ansi_color(tree)
+    tree_tag   = Utils.instance_tag(tree)
+    up_color   = Utils.obj_to_ansi_color(up)
+    up_tag     = Utils.instance_tag(up)
 
-    Log.info(f"{ansi(tree_color)}┌ {tree_tag}{ansi(0)}.{action}({arg!r}) -> {ansi(up_color)}{up_tag}\n")
+    Log.info(f"{tree_color}┌ {tree_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
 
 # ==================================================================================================
 
@@ -1374,18 +1369,18 @@ def trace_end(tree, arg, result):
     if isinstance(result, Expander):
         result = result.tree
 
-    tree_color = ansi(Utils.obj_to_hex_color(tree))
-    result_color = 0
-    result_type = type(result)
-    if isinstance(result, (dict,Dict,Expander)):
-        result_color = Utils.obj_to_hex_color(result)
-    result_color = ansi(result_color)
+    tree_color   = Utils.obj_to_ansi_color(tree)
+    result_color = Log.RESET
+    result_type  = type(result)
 
+    if isinstance(result, (dict,Dict,Expander)):
+        result_color = Utils.obj_to_ansi_color(result)
+
+    Log.info(f"{tree_color}└ {arg!r} : {result_type.__name__}{Log.RESET} = ")
     if isinstance(result, (Dict, list, set)):
-        result_tag = Utils.instance_tag(result)
-        Log.info(f"{tree_color}└ {arg!r} : {result_type.__name__} {ansi(0)}= {result_color}{result_tag}\n")
+        Log.info(f"{result_color}{Utils.instance_tag(result)}\n")
     else:
-        Log.info(f"{tree_color}└ {arg!r} : {result_type.__name__} {ansi(0)}= {result_color}{result!r}\n")
+        Log.info(f"{result_color}{result!r}\n")
 
 # ==================================================================================================
 
@@ -1522,10 +1517,10 @@ class Repo:
 
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
-                Log.info(f"{ansi(Log.ORANGE)}Loading stat_db {stat_db_path}\n")
+                Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
                 repo.stat_db = json.load(contents)
         else:
-            Log.info(f"{ansi(Log.ORANGE)}No stat db for {repo.node.root}\n")
+            Log.info(Log.ORANGE + f"No stat db for {repo.node.root}\n")
             repo.stat_db = {}
 
         #for key, val in list(repo.stat_db.items()):
@@ -1625,12 +1620,13 @@ class Script:
 
 # ==================================================================================================
 
-class FAILED(Exception):    pass
-class CANCELLED(Exception): pass
-class SKIPPED(Exception):   pass
-class BROKEN(Exception):    pass
-
 class Task:
+
+    class FAILED(Exception):    pass
+    class CANCELLED(Exception): pass
+    class SKIPPED(Exception):   pass
+    class BROKEN(Exception):    pass
+
     def __init__(self, repo : Repo, script : Script, task_node : Dict):
         self._repo   = repo
         self._script = script
@@ -1725,15 +1721,15 @@ class Task:
             self.log_task(Log.DEBUG, f"<asyncio.CancelledError {ex}>\n")
             self._error = ex
 
-        except BROKEN as ex:
+        except Task.BROKEN as ex:
             self.log_task_exception("Task broken!", ex)
             self._error = ex
 
-        except FAILED as ex:
+        except Task.FAILED as ex:
             self.log_task_exception("Task failed!", ex)
             self._error = ex
 
-        except SKIPPED as ex:
+        except Task.SKIPPED as ex:
             self.log_task(Log.DEBUG, str(ex) + "\n")
             self._error = ex
 
@@ -1778,7 +1774,7 @@ class Task:
         # Paths updated. See if we need to rebuild our outputs.
         self._reason = self.rebuild_reason()
         if not self._reason:
-            raise SKIPPED(f"Task is up-to-date: '{self.node.name}' : '{self.node.desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{self.node.name}' : '{self.node.desc}'")
 
         # Wait for enough jobs to free up to run this task.
         self._cores = await Runner.acquire(self.node.job_size)
@@ -1787,8 +1783,8 @@ class Task:
         text  = repr(self.node.name) if self.node.name else ""
         text += " : " if self.node.name and self.node.desc else ""
         text += repr(self.node.desc) if self.node.desc else ""
-        self.log_task(Log.INFO, f"{ansi(Log.TEAL)}Task {text}\n")
-        self.log_task(Log.DEBUG, f"{ansi(0x606060)}Task rebuilding because: {self._reason}\n")
+        self.log_task(Log.INFO, Log.TEAL + f"Task {text}\n")
+        self.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {self._reason}\n")
 
         time_a = time.perf_counter()
 
@@ -1802,13 +1798,13 @@ class Task:
 
         time_b = time.perf_counter()
 
-        self.log_task(Log.DEBUG, f"{ansi(0x606060)}Task took {time_b-time_a:8.6f} sec: {text}\n")
+        self.log_task(Log.DEBUG, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
 
         # See if the task wrote all its output files
 
         for file in Utils.yield_values(self.out_files):
             if not os.path.exists(file):
-                raise FAILED(f"Task ran, but output file still missing: {file}")
+                raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         # And we're done
         return self.out_files
@@ -1825,11 +1821,11 @@ class Task:
                 raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
             try:
                 await input_task._aio_task
-            except SKIPPED:
+            except Task.SKIPPED:
                 # This input task didn't need to rebuild.
                 pass
             except Exception as ex:
-                self._error = CANCELLED(f"Task {hex(id(self))} is cancelled")
+                self._error = Task.CANCELLED(f"Task {hex(id(self))} is cancelled")
                 raise self._error from ex
 
     # ==================================================================================================
@@ -1879,7 +1875,7 @@ class Task:
                 os.makedirs(Path.dirname(file), exist_ok=True)
             if self.in_depfile:
                 if isinstance(self.in_depfile, list):
-                    raise BROKEN("in_depfile can't be a list")
+                    raise Task.BROKEN("in_depfile can't be a list")
                 os.makedirs(Path.dirname(self.in_depfile), exist_ok=True)
 
 
@@ -1925,10 +1921,10 @@ class Task:
         # Check for all task issues that break the build
 
         if not Path.exists(self.node.cwd):
-            raise BROKEN(f"Task working directory '{self.node.cwd}' does not exist")
+            raise Task.BROKEN(f"Task working directory '{self.node.cwd}' does not exist")
 
         if not Path.startswith(self.node.build_dir, repo.node.root):
-            raise BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.node.root}")
+            raise Task.BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.node.root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1941,11 +1937,11 @@ class Task:
         if isinstance(self.node.command, list):
             for command in self.node.command:
                 if type(command) is not type(self.node.command[0]):
-                    raise BROKEN(f"Commands aren't the same type: {self.node.command}")
+                    raise Task.BROKEN(f"Commands aren't the same type: {self.node.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
-                    raise BROKEN(f"Command {command} is not a string or a callable?")
+                    raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if repo.node.strict:
@@ -1954,32 +1950,32 @@ class Task:
                     continue
                 out = Expander._split_text(command)
                 if (len(out) > 1) or (len(out) == 1 and isinstance(out[0], Expander.Macro)):
-                    raise BROKEN("STRICT: Command has delimiters in it")
+                    raise Task.BROKEN("STRICT: Command has delimiters in it")
 
         # Check that all build files would end up under build_dir
         for file in Utils.yield_values(self.out_files):
             assert Path.isabs(file)
             if not Path.startswith(file, self.node.build_dir):
-                raise BROKEN(f"Path error, output file {file} is not under build dir {self.node.build_dir}")
+                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self.node.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(self.out_files):
             real_file = cast(str, Path.abspath(file))
             if real_file in Hancho.real_filenames:
-                raise BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
+                raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
             Hancho.real_filenames.add(real_file)
 
             # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
         for file in Utils.yield_values(self.in_files):
             if not Path.isabs(file):
-                raise BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
+                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
             if not Path.exists(file) and not repo.node.dry_run:
-                raise BROKEN(f"Input file missing - {file}")
+                raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
         if isinstance(self.node.in_depfile, list) and len(self.node.in_depfile) > 1:
-            raise BROKEN(f"Tasks can't have more than one dependency file! - {self.node.in_depfile}")
+            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.node.in_depfile}")
 
     # ==================================================================================================
 
@@ -2021,15 +2017,15 @@ class Task:
             raise ex
         except Exception as ex:
             # All other exceptions are treated as a task failure.
-            raise FAILED(f"Command threw an exception : {ex}") from ex
+            raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
         self._stdout = stdout_data.decode(errors="replace")
         self._stderr = stderr_data.decode(errors="replace")
 
         if proc.returncode == 2:
-            raise BROKEN("Command return code was 2 : bash error")
+            raise Task.BROKEN("Command return code was 2 : bash error")
         elif proc.returncode:
-            raise FAILED(f"Command return code was non-zero : {proc.returncode}")
+            raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
         if (self._stdout or self._stderr):
             self.log_task(Log.DEBUG, self.dump_stdout())
@@ -2123,8 +2119,8 @@ class Task:
         # Log helper that adds the [ NN/ XX] tag before the log line.
         for line in message.splitlines(keepends=True):
             if not Log.line_buffer:
-                Log._log(level, Log.RESET, f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
-            Log._log(level, Log.RESET, line)
+                Log._log(level, f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
+            Log._log(level, line)
 
     # ==================================================================================================
 
@@ -2222,6 +2218,7 @@ class HanchoProxy(types.ModuleType):
         self._repo   = repo
         self._script = script
         self._tree   = tree
+        self.module  = hancho
 
     @staticmethod
     def init_for_testing(file : str, argv : list[str], *args, **kwargs) -> HanchoProxy:
@@ -2311,9 +2308,9 @@ def _start():
             sys.modules["hancho"] = HanchoProxy.init_for_testing(__file__, [])
 
     except Exception:
-        print(f"{ansi(0xFF3030)}Hancho hit an unhandled exception:")
+        print(Log.RED + "Hancho hit an unhandled exception:")
         traceback.print_exc()
-        print(f"{ansi(Log.RESET)}")
+        print(Log.RESET)
         sys.exit(1)
 
     finally:
@@ -2328,7 +2325,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     path = Path.resolve(new_tree.script.path)
     root = Path.resolve(new_tree.script.root)
 
-    Log.info(f"{ansi(Log.ORANGE)}Loading {"repo" if not parent_repo else "script"} {path}\n")
+    Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
     with Log.indenter(Log.ORANGE):
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
@@ -2379,7 +2376,7 @@ def hancho_main() -> int:
     top_tree.name = "<top>"
     Hancho.init(top_tree)
 
-    Log.info(f"{ansi(Log.LIME)}Command line : {" ".join(sys.argv)}\n")
+    Log.info(Log.LIME + f"Command line : {" ".join(sys.argv)}\n")
     if Hancho.trace:
         Log.info("Trace mode on\n")
     if Log.log_level <= Log.DEBUG:
@@ -2392,7 +2389,7 @@ def hancho_main() -> int:
     top_repo  = Repo(top_tree.repo)
     top_proxy = load_script(top_repo, top_tree)
     time_b1 = time.perf_counter()
-    Log.info(f"{ansi(Log.BLUE)}Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
+    Log.info(Log.BLUE + f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
     # Start the build
@@ -2400,7 +2397,7 @@ def hancho_main() -> int:
     time_a3 = time.perf_counter()
     result = hancho_build(top_proxy._repo)
     time_b3 = time.perf_counter()
-    Log.info(f"{ansi(Log.GREEN)}Build took {time_b3 - time_a3:8.6f} seconds\n")
+    Log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
 
     # ------------------------------------
     # Done
@@ -2423,11 +2420,11 @@ def hancho_main() -> int:
     Log.debug(f"Hash time:        {Utils.hash_time:8.6f}\n")
 
     if Runner.tasks_failed or Runner.tasks_broken:
-        Log.error(f"{ansi(Log.RED)}BUILD FAILED\n")
+        Log.error(Log.RED + "BUILD FAILED\n")
     elif Runner.tasks_finished:
-        Log.info(f"{ansi(Log.GREEN)}BUILD PASSED\n")
+        Log.info(Log.GREEN + "BUILD PASSED\n")
     else:
-        Log.info(f"{ansi(Log.BLUE)}BUILD CLEAN\n")
+        Log.info(Log.BLUE + "BUILD CLEAN\n")
 
 #    for script in Hancho.scripts:
 #        log.debug(f"Stats for {script.repo_root}\n")
@@ -2510,7 +2507,7 @@ async def async_run_tasks():
     # ------------------------------------
     # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-    Log.info(f"{ansi(Log.BLUE)}Running tasks...\n")
+    Log.info(Log.BLUE + "Running tasks...\n")
 
     while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
         finished_aio_task = None
@@ -2521,13 +2518,13 @@ async def async_run_tasks():
             Runner.tasks_finished += 1
         except asyncio.CancelledError:
             Runner.tasks_cancelled += 1
-        except CANCELLED:
+        except Task.CANCELLED:
             Runner.tasks_cancelled += 1
-        except BROKEN:
+        except Task.BROKEN:
             Runner.tasks_broken += 1
-        except FAILED:
+        except Task.FAILED:
             Runner.tasks_failed += 1
-        except SKIPPED:
+        except Task.SKIPPED:
             finished_aio_task.hancho_task._complete = True #type:ignore
             Runner.tasks_skipped += 1
         except BaseException as ex:
