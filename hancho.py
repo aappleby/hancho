@@ -2255,11 +2255,27 @@ class HanchoProxy(types.ModuleType):
         return task
 
     def _load(self, path, root, is_repo, *args, **kwargs) -> types.ModuleType:
-        root = root or Path.dirname(path)
-        new_tree = Dict(self._tree, *args, kwargs)
-        new_tree.script.path = path
-        new_tree.script.root = root
-        return load_script(None if is_repo else self._repo, self._tree)._script._module
+        if root is None:
+            root = Path.dirname(path)
+
+        new_tree = Dict(self._tree, *args, kwargs, Dict(script = Dict(path = path, root = root)))
+
+#        path = self._tree.expand(path)
+#        root = self._tree.expand(root)
+#        if root is None:
+#            root = Path.dirname(path)
+#        new_tree = Dict(self._tree, *args, kwargs)
+#        new_tree.script.path = path
+#        new_tree.script.root = root
+#
+#        Expander.xip(new_tree.script)
+#        path = Path.resolve(new_tree.script.path)
+#        if new_tree.script.root is None:
+#            root = Path.dirname(path)
+#        else:
+#            root = Path.resolve(new_tree.script.root)
+
+        return load_script(None if is_repo else self._repo, new_tree)._script._module
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
         return self._load(path, root, False,  *args, **kwargs)
@@ -2325,47 +2341,52 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     path = Path.resolve(new_tree.script.path)
     root = Path.resolve(new_tree.script.root)
 
-    Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
-    with Log.indenter(Log.ORANGE):
-        # Dedupe the load - only scripts with identical real paths and identical configs are
-        # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
-        # build, which they should be in practice.
-        dupe_key = Dumper.dump(new_tree, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
-        dupe_key = Dumper.depointer(dupe_key)
-        dupe_key = "".join(dupe_key.split())
+    # Dedupe the load - only scripts with identical real paths and identical configs are
+    # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
+    # build, which they should be in practice.
+    dupe_key = Dumper.dump(new_tree, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
+    dupe_key = Dumper.depointer(dupe_key)
+    dupe_key = "".join(dupe_key.split())
 
-        if dupe := Hancho.dedupe.get(dupe_key, None):
-            return dupe
+    if dupe := Hancho.dedupe.get(dupe_key, None):
+        Log.info(Log.LIME + f"Deduped {"repo" if not parent_repo else "script"} {path}\n")
+        return dupe
+    else:
+        Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
-        code = None
-        if path.endswith(".hancho"):
-            with open(path, encoding="utf-8") as file:
-                source = file.read()
-                code = compile(source, path, "exec", dont_inherit=True)
+    code = None
+    if path.endswith(".hancho"):
+        with open(path, encoding="utf-8") as file:
+            source = file.read()
+            code = compile(source, path, "exec", dont_inherit=True)
 
-        repo   = parent_repo or Repo(new_tree.repo)
-        module = types.ModuleType(os.path.basename(path) if path else "<no path>")
-        script = Script(repo, path, root, module, new_tree.script, code)
-        proxy  = HanchoProxy(repo, script, new_tree)
+    repo   = parent_repo or Repo(new_tree.repo)
+    module = types.ModuleType(os.path.basename(path) if path else "<no path>")
+    script = Script(repo, path, root, module, new_tree.script, code)
+    proxy  = HanchoProxy(repo, script, new_tree)
 
-        module.__file__ = path
-        module.hancho   = proxy   # type: ignore
-        module.tree     = new_tree     # type: ignore
+    module.__file__ = path
+    module.hancho   = proxy   # type: ignore
+    module.tree     = new_tree     # type: ignore
 
-        Hancho.dedupe[dupe_key] = proxy
-        Hancho.repos.add(proxy._repo)
+    Hancho.dedupe[dupe_key] = proxy
+    Hancho.repos.add(proxy._repo)
 
-        repo.scripts.append(script)
-        if not repo.root_script:
-            repo.root_script = script
+    repo.scripts.append(script)
+    if not repo.root_script:
+        repo.root_script = script
 
-        # Run the script
-        if code and root:
-            with chdir(root), Log.indenter(Log.ORANGE):
-                sys.modules["hancho"] = proxy
-                exec(code, module.__dict__, {})
-
+    if not code or not root:
         return proxy
+
+    # Run the script
+    try:
+        with chdir(root), Log.indenter(Log.ORANGE):
+            sys.modules["hancho"] = proxy
+            exec(code, module.__dict__)
+            return proxy
+    finally:
+        sys.modules["hancho"] = hancho
 
 # ==================================================================================================
 

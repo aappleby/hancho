@@ -97,7 +97,7 @@ hancho: BUILD CLEAN
 If your project uses Git subrepos and your subrepo also builds with Hancho, you can load the subrepo's build script via ```hancho.repo()``` - this will ensure that all of its build targets go in ```build_root/build_tag/subrepo/path-relative-to-subrepo``` instead of getting mixed in with the rest of your build files.
 
 ```py
-tools_base = hancho.load("{hancho_dir}/tools/tools_base.hancho")
+tools_base = hancho.load("{hancho.root}/tools/tools_base.hancho")
 awesomelib = hancho.repo("subrepos/awesomelib/build.hancho")
 
 hancho.Task(
@@ -129,31 +129,6 @@ HanchoAPI @ 0x7cb6c8d0b110 {
   Task = <class '__main__.Task'>,
 }
 ```
-
-Special fields and methods in ```hancho```
-'Dict',
-'Task',
-'__call__',
-'context',
-'hancho_dir',
-'load',
-'load_module',
-'repo',
-'root'
-
-Fields automatically added to ```hancho.Context```:
-|Field name | Description |
-| -----    | ----- |
-|root_dir  | The directory Hancho was started in.|
-|root_path | The build script Hancho read first|
-|repo_name | The name of the repo or subrepo we're currently in. Empty string for the root repo, directory name for subrepos. Used to keep repos from colliding in ```build```|
-|repo_dir  | The directory of the repo we're currently in.|
-|mod_name  | The name of the Hancho script currently being processed |
-|mod_dir   | The directory of the Hancho script currently being processed |
-|mod_path  | The absolute path of the Hancho script currently being processed|
-|build_root| The place where all ```out_*``` files should go. Defaults to ```{root_dir}/build```|
-|build_tag | A descriptive tag such as ```debug```, ```release```, etcetera that can be used to divide your ```build``` directory up into ```build/debug```. Defaults to empty string.|
-
 
 ## Merging Configs together combines their fields.
 

@@ -1,0 +1,86 @@
+⊞ :Dict@0x15E0
+├─⊟ repo:Dict@0x2F70
+│ ├── name = '<repo>',
+│ ├── root = '/home/aappleby/repos/hancho/scratch',
+│ ├── build_dir = '/home/aappleby/repos/hancho/scratch/build',
+│ ├── build_tag = '',
+│ ├── targets = [],
+│ ├─⊟ targets = [],
+│ │ ├── thing1
+│ │ ├── thing1
+│ │ └── thing3
+│ ├── build_force = False,
+│ ├── build_all = False,
+│ ├── dry_run = False,
+│ └── strict = True
+├─⊟ script:Dict@0xE710
+│ ├── name = '<script>',
+│ ├── path = '/home/aappleby/repos/hancho/scratch/build.hancho',
+│ └── root = '/home/aappleby/repos/hancho/scratch'
+├─⊟ task:Dict@0xAB10
+│ ├── name = '<no name>',
+│ ├── desc = '<no desc>',
+│ ├── command = None,
+│ ├── cwd = '{repo.root}',
+│ ├── in_depfile = '',
+│ ├── depformat = 'gcc',
+│ ├── job_size = 1,
+│ ├── build_dir = '{join(repo.build_dir, relpath(script.root, repo.root))}',
+│ ├── dry_run = '{repo.dry_run}',
+│ └── force = '{repo.build_force}'
+├─⊞ flarp
+└── name = '<top>'
+
+
+⊕⊖⊗⊘⊙⊚⊛⊜⊝⦿
+⊞⊟⊠⊡
+◯
+
+⊟ :Dict@0x15E0
+├─⊟ repo:Dict@0x2F70
+│ ├─⊡ name = '<repo>',
+│ ├─⊡ root = '/home/aappleby/repos/hancho/scratch',
+│ ├─⊡ build_dir = '/home/aappleby/repos/hancho/scratch/build',
+│ ├─⊡ build_tag = '',
+│ ├─⊡ targets = [],
+│ └─⊞ targets = [],
+├─⊞ flarp
+└─⊡ name = '<top>'
+
+
+
+⊖ :Dict@0x15E0
+├─⊖ repo:Dict@0x2F70
+│ ├─⊙ name = '<repo>',
+│ ├─⊙ root = '/home/aappleby/repos/hancho/scratch',
+│ ├─⊙ build_dir = '/home/aappleby/repos/hancho/scratch/build',
+│ ├─⊙ build_tag = '',
+│ ├─⊙ targets = [],
+│ └─⊕ targets = [],
+├─⊕ flarp
+└─⊙ name = '<top>'
+
+
+
+┌ <script>@0xE710.eval('{dirname(path)}')
+│ ┌ <script>@0xE710.get('dirname') -> <top>@0x15E0
+│ ┌ <top>@0x15E0.get('dirname') -> <mid>@0x31E0
+│ ┌ <mid>@0x31E0.get('dirname') -> <aliases>@0x7070
+│ ┌ <aliases>@0x7070.get('dirname')
+│ └ 'dirname' : function = <function dirname at 0x72af524338a0>
+│ ┌ <script>@0xE710.get('path')
+│ └ 'path' : str = '/home/aappleby/repos/hancho/scratch/build.hancho'
+└ '{dirname(path)}' : str = '/home/aappleby/repos/hancho/scratch'
+
+⊜ <script>@0xE710.eval('{dirname(path)}')
+├─⊙ <script>@0xE710.get('dirname') -> <top>@0x15E0
+│ └─⊙ <top>@0x15E0.get('dirname') -> <mid>@0x31E0
+│   └─⊙ <mid>@0x31E0.get('dirname') -> <aliases>@0x7070
+│     └─⊙ <aliases>@0x7070.get('dirname')
+│       └─⦿ 'dirname' : function = <function dirname at 0x72af524338a0>
+├─⊙ <script>@0xE710.get('path')
+│ └─⦿ 'path' : str = '/home/aappleby/repos/hancho/scratch/build.hancho'
+└─⦿ '{dirname(path)}' : str = '/home/aappleby/repos/hancho/scratch'
+
+
+┬
