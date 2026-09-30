@@ -36,7 +36,7 @@
 ⊞⊟⊠⊡
 ◯
 
-⊟ :Dict@0x15E0
+:Dict@0x15E0
 ├─⊟ repo:Dict@0x2F70
 │ ├─⊡ name = '<repo>',
 │ ├─⊡ root = '/home/aappleby/repos/hancho/scratch',

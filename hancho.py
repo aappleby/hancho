@@ -798,17 +798,17 @@ class Dict(dict):
     def __repr__(self):
         return Dumper.dump(self)
 
-    def __dump__(self, key, opts, seen):
-        prefix = Dumper._dump_prefix(key, self, opts)
-
-        if id(self) in seen:
-            return prefix + "<ref loop>"
-        seen.add(id(self))
-
-        items = list(self.items())
-        result = Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
-
-        return result
+#    def __dump__(self, key, opts, seen):
+#        prefix = Dumper._dump_prefix(key, self, opts)
+#
+#        if id(self) in seen:
+#            return prefix + "<ref loop>"
+#        seen.add(id(self))
+#
+#        items = list(self.items())
+#        result = Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
+#
+#        return result
 
     # endregion
     # ==============================================================================================
@@ -1138,6 +1138,7 @@ class Expander(abc.Mapping):
 
         return out_blocks
 
+
 # ==================================================================================================
 
 class Dumper:
@@ -1187,12 +1188,12 @@ class Dumper:
     @dataclass
     class Opts:
         depth : int = 3
-        indent : int = 0
+        indent_stack2 : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
         fold : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
         print_id : bool = True
         print_prefix : bool = True
         color_code : bool = True
-        tab : str = "    "
+        tab : int = 4
         len : int = 80
         width : int = 80
         flat : bool = False
@@ -1206,16 +1207,18 @@ class Dumper:
         #key,
         val,
         depth=3,
-        indent=0,
         fold = None,
         print_id=True,
         print_prefix=True,
         color_code=False,
         width=80,
         len=0,
-        tab="    ",
+        tab=4,
+        indent_level = 0
     ):
-        opts = Dumper.Opts(depth, indent, fold or [], print_id, print_prefix, color_code, tab, len, width, flat = False)
+        fold = fold or []
+        indent_stack2 = [" "] * indent_level
+        opts = Dumper.Opts(depth, indent_stack2, fold, print_id, print_prefix, color_code, tab, len, width, False)
         return cls._dump_to_str(None, val, opts, set())
 
     @classmethod
@@ -1225,9 +1228,6 @@ class Dumper:
 
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
-        if key == "hancho":
-            pass
-
         if key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif hasattr(type(val), "__dump__"):
@@ -1306,16 +1306,20 @@ class Dumper:
             return ld + "..." + rd
         opts = dataclasses.replace(opts, depth = opts.depth - 1)
 
+        opts.indent_stack2.append(" ")
+
         # len(pad) + 1 for the trailing comma
-        pad = opts.tab * (opts.indent + 1)
-        new_opts = dataclasses.replace(opts, len = len(pad) + 1, indent = opts.indent + 1)
+        pad = (" " * opts.tab) * len(opts.indent_stack2)
+        new_opts = dataclasses.replace(opts, len = len(pad) + 1)
 
         for i in range(len(items)):
             result += pad + cls._dump_to_str(items[i][0], items[i][1], new_opts, set(seen))
             if i < len(items) - 1: result += ','
             result += '\n'
+        opts.indent_stack2.pop()
 
-        return result + (opts.tab * opts.indent) + rd
+        pad = (" " * opts.tab) * len(opts.indent_stack2)
+        return result + pad + rd
 
     @classmethod
     def _dump_prefix(cls, key, val, opts, force_type = False):
@@ -2211,6 +2215,8 @@ hancho_defaults = Dict(
 
 # ==================================================================================================
 
+# FIXME can we turn this into just another dict and bind methods via types.MethodType?
+
 class HanchoProxy(types.ModuleType):
 
     def __init__(self, repo : Repo, script : Script, tree : Dict):
@@ -2344,7 +2350,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
     # build, which they should be in practice.
-    dupe_key = Dumper.dump(new_tree, print_id = False, tab = "", color_code = False, depth = 999, width = 999)
+    dupe_key = Dumper.dump(new_tree, print_id = False, tab = 0, color_code = False, depth = 999, width = 999)
     dupe_key = Dumper.depointer(dupe_key)
     dupe_key = "".join(dupe_key.split())
 
@@ -2582,3 +2588,125 @@ async def async_run_tasks():
 # ==================================================================================================
 
 _start()
+
+
+
+# ==================================================================================================
+
+#class Blarp:
+#    pass
+#
+#thing1 = {
+#    "a": 1,
+#    "b": [2, "two"],
+#    "c": (3, 3, 3),
+#    "d": object(),
+#    "e": "foobar",
+#    "f": Blarp(),
+#    "g": {"a" : "laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa"}
+#}
+#
+#Dumper.print(thing1)
+
+if False:
+    #foo = {
+    #    "a": 1,
+    #    "b": 2,
+    #    "c" : {
+    #        "dddd" : {"a":"b"},
+    #        "qqqq" : {
+    #            "azasdlkfsjd" : "slkdjflskdfjs"
+    #        },
+    #        "eeee" : 4
+    #    },
+    #    "jfjd" : [1,2,3],
+    #    "g" : "slkjdlfskdjlfskjd"
+    #}
+
+    #indent_stack = ["├"]
+
+    #folded = [foo['c']['qqqq']]
+    #folded = []
+
+
+    #pad = 2
+    icons = "⊡⊞⊟"
+    icons = "◻◰◲"
+    icons = "◇◈◆"
+    icons = "◆▶▼"
+    icons = "*>v"
+    lines = "│├└ "
+    dash  = "─"
+
+    def tree_node_icon(k, v, opts : Dumper.Opts):
+        if v in opts.fold:
+            return icons[1]
+        elif isinstance(v, dict):
+            return icons[2]
+        else:
+            return icons[0]
+
+    def dump(tree : Tree, opts : Dumper.Opts):
+        print()
+        items = list(tree.items())
+        for i, (k, v) in enumerate(items):
+            last = i == len(items) - 1
+            old_tail = opts.indent_stack2[-1]
+            if last:
+                opts.indent_stack2[-1] = lines[2]
+
+            print((" " * (opts.tab - 1)).join(opts.indent_stack2) + (dash * (opts.tab - 1)), end = "")
+
+            opts.indent_stack2[-1] = lines[3] if last else lines[0]
+            opts.indent_stack2.append(lines[1])
+            dump_tree_variant(k, v,opts)
+            opts.indent_stack2.pop()
+            opts.indent_stack2[-1] = old_tail
+
+    def dump_tree_variant(k, v, opts : Dumper.Opts):
+        print(f"{tree_node_icon(k,v,opts)} {k}", end = "")
+
+        if isinstance(v, dict):
+            if v in opts.fold:
+                print(" *", end = "")
+            elif isinstance(v, Tree):
+                dump(v, opts)
+        else:
+            print(f" = {v!r}")
+
+    #print_variant("foo", foo, Dumper.Opts())
+
+
+
+    class Tree(Dict):
+        def __dump__(self, key, opts, seen):
+            opts.indent_stack = ["├"]
+            opts.tab = 3
+            prefix = Dumper._dump_prefix(key, self, opts)
+
+            if id(self) in seen:
+                return prefix + "<ref loop>"
+            seen.add(id(self))
+
+            print(prefix, end = "")
+            dump(self, opts)
+            #items = list(self.items())
+            #result = Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
+
+            return ""
+
+
+    a = Dict(
+        foo = 1,
+        bar = Dict(
+            a = 1,
+            b = 2,
+            c = "three"
+        ),
+    #    tree = Tree(
+    #        a = 1,
+    #        b = 2
+    #    )
+    )
+
+    Dumper.print(a, width = 0)
