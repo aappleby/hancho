@@ -1141,6 +1141,7 @@ class Expander(abc.Mapping):
 
 
 # ==================================================================================================
+# region Dumper
 
 class Dumper:
     """
@@ -1333,7 +1334,9 @@ class Dumper:
         if prefix: prefix += " = "
         return prefix
 
+#endregion
 # ==================================================================================================
+# region Tracer
 
 def trace_start(tree, action, arg):
     if not Hancho.trace:
@@ -1387,7 +1390,9 @@ def trace_end(tree, arg, result):
     else:
         Log.info(f"{result_color}{result!r}\n")
 
+#endregion
 # ==================================================================================================
+# region Runner
 
 class Runner:
 
@@ -1436,6 +1441,7 @@ class Runner:
         for _ in range(count):
             cls.core_sem.release()
 
+# endregion
 # ==================================================================================================
 
 class Hancho:
@@ -1477,119 +1483,119 @@ class Repo:
 
     def yield_tasks(self) -> abc.Iterator[Task]:
         for script in self.repo_scripts:
-            yield from script.node.script_tasks2
+            yield from script.node.script_tasks
 
-    # ==============================================================================================
+# ==============================================================================================
 
-    def check_stat(self, filename : str, command = None):
-        repo = self
-        if not Path.exists(filename):
-            Hancho.build_reasons["file missing"] += 1
-            return f"File missing: {filename}"
+def check_stat(self, filename : str, command = None):
+    repo = self
+    if not Path.exists(filename):
+        Hancho.build_reasons["file missing"] += 1
+        return f"File missing: {filename}"
 
-        if filename not in repo.repo_stat_db:
-            Hancho.build_reasons["stat missing"] += 1
-            return f"Stat missing: {filename}"
+    if filename not in repo.repo_stat_db:
+        Hancho.build_reasons["stat missing"] += 1
+        return f"Stat missing: {filename}"
 
-        old_stat = repo.repo_stat_db[filename]
-        new_stat = Utils.get_stats(filename, command)
+    old_stat = repo.repo_stat_db[filename]
+    new_stat = Utils.get_stats(filename, command)
 
-        if old_stat['st_mtime_ns'] != new_stat['st_mtime_ns']:
-            Hancho.build_reasons["mtime mismatch"] += 1
-            return f"Mtime mismatch {old_stat['st_mtime_ns']} != {new_stat['st_mtime_ns']} for : {filename}"
+    if old_stat['st_mtime_ns'] != new_stat['st_mtime_ns']:
+        Hancho.build_reasons["mtime mismatch"] += 1
+        return f"Mtime mismatch {old_stat['st_mtime_ns']} != {new_stat['st_mtime_ns']} for : {filename}"
 
-        if old_stat['st_size'] != new_stat['st_size']:
-            Hancho.build_reasons["size mismatch"] += 1
-            return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
+    if old_stat['st_size'] != new_stat['st_size']:
+        Hancho.build_reasons["size mismatch"] += 1
+        return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
 
-        if old_stat['hash'] != new_stat['hash']:
-            Hancho.build_reasons["hash mismatch"] += 1
-            return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
+    if old_stat['hash'] != new_stat['hash']:
+        Hancho.build_reasons["hash mismatch"] += 1
+        return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
 
-        if command is not None and old_stat['command'] != new_stat['command']:
-            Hancho.build_reasons["command changed"] += 1
-            return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
+    if command is not None and old_stat['command'] != new_stat['command']:
+        Hancho.build_reasons["command changed"] += 1
+        return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
 
-        # Does not need to rebuild based on file stats / hash
-        Hancho.build_reasons["*hash match"] += 1
-        return ""
+    # Does not need to rebuild based on file stats / hash
+    Hancho.build_reasons["*hash match"] += 1
+    return ""
 
 
-    def load_stat_db(self):
-        repo = self
-        stat_db_path = os.path.join(repo.repo_node.build_dir, 'hancho.json')
+def load_stat_db(self):
+    repo = self
+    stat_db_path = os.path.join(repo.repo_node.build_dir, 'hancho.json')
 
-        if os.path.isfile(stat_db_path):
-            with open(stat_db_path) as contents:
-                Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-                repo.repo_stat_db = json.load(contents)
-        else:
-            Log.info(Log.ORANGE + f"No stat db for {repo.repo_node.root}\n")
-            repo.repo_stat_db = {}
+    if os.path.isfile(stat_db_path):
+        with open(stat_db_path) as contents:
+            Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
+            repo.repo_stat_db = json.load(contents)
+    else:
+        Log.info(Log.ORANGE + f"No stat db for {repo.repo_node.root}\n")
+        repo.repo_stat_db = {}
 
-        #for key, val in list(repo.stat_db.items()):
-        #    repo.stat_db[key] = Dict(val)
-        pass
+    #for key, val in list(repo.stat_db.items()):
+    #    repo.stat_db[key] = Dict(val)
+    pass
 
-    def save_stat_db(self):
-        repo = self
-        if repo.repo_node.dry_run:
-            return
+def save_stat_db(self):
+    repo = self
+    if repo.repo_node.dry_run:
+        return
 
-        stat_db = {}
+    stat_db = {}
 
-        # FIXME we could probably save a little work if we didn't always re-stat every input and
-        # output, but this is safe for now.
+    # FIXME we could probably save a little work if we didn't always re-stat every input and
+    # output, but this is safe for now.
 
-        # ------------------------------------
-        # Gather stats for all input files in all tasks.
+    # ------------------------------------
+    # Gather stats for all input files in all tasks.
 
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
+    for task in repo.yield_tasks():
+        if not task._complete:
+            continue
 
-            for file in Utils.yield_values(task.in_files):
-                stat_db[file] = Utils.get_stats(file)
+        for file in Utils.yield_values(task.in_files):
+            stat_db[file] = Utils.get_stats(file)
 
-            in_depfile = task.node.in_depfile
-            if in_depfile:
-                stat_db[in_depfile] = Utils.get_stats(in_depfile)
-                deplines = Utils.load_depfile(task.node.in_depfile, task.node.depformat, task.node.cwd)
-                for file in deplines:
-                    stat_db[file] = Utils.get_stats(file) # type: ignore
+        in_depfile = task.node.in_depfile
+        if in_depfile:
+            stat_db[in_depfile] = Utils.get_stats(in_depfile)
+            deplines = Utils.load_depfile(task.node.in_depfile, task.node.depformat, task.node.cwd)
+            for file in deplines:
+                stat_db[file] = Utils.get_stats(file) # type: ignore
 
-        # We gather stats from output files in a second pass so that their .command fields
-        # overwrite any blank ones from the first pass.
+    # We gather stats from output files in a second pass so that their .command fields
+    # overwrite any blank ones from the first pass.
 
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
+    for task in repo.yield_tasks():
+        if not task._complete:
+            continue
 
-            for file in Utils.yield_values(task.out_files):
-                stat_db[file] = Utils.get_stats(file, task.node.command)
+        for file in Utils.yield_values(task.out_files):
+            stat_db[file] = Utils.get_stats(file, task.node.command)
 
-        stat_db_path = Path.join(repo.repo_node.build_dir, 'hancho.json')
-        Utils.save_json(stat_db, stat_db_path)
+    stat_db_path = Path.join(repo.repo_node.build_dir, 'hancho.json')
+    Utils.save_json(stat_db, stat_db_path)
 
-        # ------------------------------------
-        # And do the same for compile_commands.json with a slightly different format.
+    # ------------------------------------
+    # And do the same for compile_commands.json with a slightly different format.
 
-        comp_db = {}
+    comp_db = {}
 
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
+    for task in repo.yield_tasks():
+        if not task._complete:
+            continue
 
-            for file in Utils.yield_values(task.in_files):
-                # Haven't tested this in an IDE, but I think it matches the spec.
-                comp_db[file] = {
-                    "directory" : task.node.cwd,
-                    "command"   : Utils.commands_to_string(task.node.command),
-                    "file"      : file,
-                }
+        for file in Utils.yield_values(task.in_files):
+            # Haven't tested this in an IDE, but I think it matches the spec.
+            comp_db[file] = {
+                "directory" : task.node.cwd,
+                "command"   : Utils.commands_to_string(task.node.command),
+                "file"      : file,
+            }
 
-        comp_db_path = Path.join(repo.repo_node.build_dir, 'compile_commands.json')
-        Utils.save_json(list(comp_db.values()), comp_db_path)
+    comp_db_path = Path.join(repo.repo_node.build_dir, 'compile_commands.json')
+    Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # ==================================================================================================
 
@@ -2060,19 +2066,19 @@ class Task:
         # ------------------------------------
 
         for filename in Utils.yield_values(self.in_files):
-            if reason := repo.check_stat(filename):
+            if reason := check_stat(repo, filename):
                 return reason
 
         for filename in self._old_deplines:
-            if reason := repo.check_stat(filename):
+            if reason := check_stat(repo, filename):
                 return reason
 
         for filename in Utils.yield_values(self.out_files):
-            if reason := repo.check_stat(filename, self.node.command):
+            if reason := check_stat(repo, filename, self.node.command):
                 return reason
 
         if self.node.in_depfile:  # noqa: SIM102
-            if reason := repo.check_stat(self.node.in_depfile):
+            if reason := check_stat(repo, self.node.in_depfile):
                 return reason
 
         Hancho.build_reasons["*task clean"] += 1
@@ -2164,13 +2170,15 @@ hancho_defaults = Dict(
         build_force = False,
         build_all   = False,
         dry_run     = False,
-        strict      = True
+        strict      = True,
+        repo_stat_db2 = {},
+        repo_scripts2 = []
     ),
     script = Dict(
         name  = "<script>",
         path  = os.path.abspath("build.hancho"),
         root  = '{dirname(path)}',
-        script_tasks2 = [],
+        script_tasks = [],
     ),
     task = Dict(
         name       = '<no name>',
@@ -2228,7 +2236,7 @@ class HanchoProxy(types.ModuleType):
         task_node = Dict(self._tree.task, *args, kwargs)
         task_node.link(self._tree)
         task = Task(repo = self._repo, script = self._script, task_node = task_node)
-        self._script.node.script_tasks2.append(task)
+        self._script.node.script_tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2437,7 +2445,7 @@ def hancho_build(top_repo : Repo) -> int:
 
     # Also this is here and not in hancho_main because tests also need to load stats.
     for repo in Hancho.repos:
-        repo.load_stat_db()
+        load_stat_db(repo)
 
     # ------------------------------------
     # Select the set of tasks to run.
@@ -2472,7 +2480,7 @@ def hancho_build(top_repo : Repo) -> int:
     # Update stat DBs.
 
     for repo in Hancho.repos:
-        repo.save_stat_db()
+        save_stat_db(repo)
 
     return result
 
