@@ -12,7 +12,7 @@ from io import StringIO
 import hancho as hancho_proxy
 from hancho import Dumper, Log, Utils
 
-VERBOSITY = "debug"
+VERBOSITY = "critical"
 
 def dump(text, **kwargs):
     return Dumper.depointer(Dumper.dump(text, **kwargs))

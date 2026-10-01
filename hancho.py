@@ -939,7 +939,7 @@ class Expander(abc.Mapping):
     #region instance methods
 
     def __init__(self, tree : object):
-        self.tree : Dict
+        self.tree : object
         object.__setattr__(self, "tree", tree)
 
     @classmethod
@@ -961,10 +961,16 @@ class Expander(abc.Mapping):
         return self.internal_get(key, check_up = True)
 
     def __iter__(self):
-        return self.tree.__iter__()
+        if isinstance(self.tree, abc.Mapping):
+            return self.tree.__iter__()
+        else:
+            return vars(self.tree).__iter__()
 
     def __len__(self):
-        return self.tree.__len__()
+        if isinstance(self.tree, abc.Mapping):
+            return self.tree.__len__()
+        else:
+            return vars(self.tree).__len__()
 
     # ====================================
 
@@ -972,19 +978,27 @@ class Expander(abc.Mapping):
 
         cursor = self.tree
         result = Utils.MISSING
-        while key not in cursor:
-            if check_up and (up := object.__getattribute__(cursor, "_up")):
-                trace_up(cursor, up, "get", key)
-                cursor = up
-            else:
-                raise KeyError(key)
+
+        if isinstance(cursor, abc.Mapping):
+            while key not in cursor:
+                if check_up and hasattr(cursor, "_up") and (up := cursor._up): # type: ignore
+                    trace_up(cursor, up, "get", key)
+                    cursor = up
+                else:
+                    raise KeyError(key)
+        else:
+            while key not in vars(cursor):
+                if check_up and hasattr(cursor, "_up") and (up := cursor._up): # type: ignore
+                    trace_up(cursor, up, "get", key)
+                    cursor = up
+                else:
+                    raise KeyError(key)
 
         trace_start(cursor, "get", key)
-        result = cursor._dict[key]
+        result = getattr(cursor, key)
         trace_end(cursor, key, result)
 
-
-        if isinstance(result, Dict):
+        if isinstance(result, abc.Mapping):
             # have to do this so that "read nested c first" resolves in the dest dict first
             result = Expander.wrap(result)
         else:
@@ -1018,16 +1032,23 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     @classmethod
-    def xip(cls, tree : Dict):
-        for key, val in tree.items():
-            if isinstance(val, Dict):
-                cls.xip(val)
-            else:
-                tree[cast(str, key)] = Expander._expand(val, tree)
+    def xip(cls, tree : object):
+        if isinstance(tree, abc.MutableMapping):
+            for key, val in tree.items():
+                if isinstance(val, Dict):
+                    cls.xip(val)
+                else:
+                    tree[cast(str, key)] = Expander._expand(val, tree)
+        else:
+            for key, val in vars(tree).items():
+                if isinstance(val, Dict):
+                    cls.xip(val)
+                else:
+                    vars(tree)[cast(str, key)] = Expander._expand(val, tree)
         return tree
 
     @classmethod
-    def _expand(cls, var : Any, tree : Dict | Expander) -> Any:
+    def _expand(cls, var : Any, tree : object) -> Any:
         if isinstance(tree, Expander):
             tree = tree.tree
 
@@ -1493,7 +1514,7 @@ class Hancho:
 
 class Repo:
     def __init__(self, repo_node : Dict):
-        self.repo_node = Expander.xip(repo_node)
+        self.repo_node : Any = Expander.xip(repo_node)
         self.repo_stat_db = {}
         self.repo_scripts = []
 
@@ -2353,11 +2374,12 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     dupe_key = Dumper.depointer(dupe_key)
     dupe_key = "".join(dupe_key.split())
 
-    if dupe := Hancho.dedupe.get(dupe_key, None):
-        Log.info(Log.LIME + f"Deduped {"repo" if not parent_repo else "script"} {path}\n")
-        return dupe
-    else:
-        Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
+    if "hancho.py" not in path:
+        if dupe := Hancho.dedupe.get(dupe_key, None):
+            Log.info(Log.LIME + f"Deduped {"repo" if not parent_repo else "script"} {path}\n")
+            return dupe
+        else:
+            Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
 
     code = None
     if path.endswith(".hancho"):
@@ -2368,8 +2390,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     repo   = parent_repo or Repo(new_tree.repo)
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
 
-
-    new_tree.script = Expander.xip(new_tree.script)
+    Expander.xip(new_tree.script)
     script = Script(new_tree.script)
     proxy  = HanchoProxy(repo, script, module, new_tree)
 
@@ -2575,6 +2596,16 @@ async def async_run_tasks():
 
 _start()
 
+#class Blarp:
+#    def __init__(self):
+#        self.a = 1234
+#        self.b = 3483984
+#        self.c = "sldkfjsdlf"
+#
+#
+#b = Blarp()
+#
+#print(Expander._expand("{str(a * b) + c}", b))
 
 
 # ==================================================================================================
