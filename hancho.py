@@ -1487,8 +1487,7 @@ class Repo:
 
 # ==============================================================================================
 
-def check_stat(self, filename : str, command = None):
-    repo = self
+def check_stat(repo, filename : str, command = None):
     if not Path.exists(filename):
         Hancho.build_reasons["file missing"] += 1
         return f"File missing: {filename}"
@@ -1521,8 +1520,7 @@ def check_stat(self, filename : str, command = None):
     return ""
 
 
-def load_stat_db(self):
-    repo = self
+def load_stat_db(repo):
     stat_db_path = os.path.join(repo.repo_node.build_dir, 'hancho.json')
 
     if os.path.isfile(stat_db_path):
@@ -1533,12 +1531,7 @@ def load_stat_db(self):
         Log.info(Log.ORANGE + f"No stat db for {repo.repo_node.root}\n")
         repo.repo_stat_db = {}
 
-    #for key, val in list(repo.stat_db.items()):
-    #    repo.stat_db[key] = Dict(val)
-    pass
-
-def save_stat_db(self):
-    repo = self
+def save_stat_db(repo):
     if repo.repo_node.dry_run:
         return
 
@@ -1601,7 +1594,7 @@ def save_stat_db(self):
 
 class Script:
     def __init__(self, node: Dict):
-        self.node  = Expander.xip(node)
+        self.node  = node
 
 # ==================================================================================================
 
@@ -2350,6 +2343,9 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 
     repo   = parent_repo or Repo(new_tree.repo)
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
+
+
+    new_tree.script = Expander.xip(new_tree.script)
     script = Script(new_tree.script)
     proxy  = HanchoProxy(repo, script, module, new_tree)
 
