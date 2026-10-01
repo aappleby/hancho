@@ -27,6 +27,7 @@ import ast
 import asyncio
 import colorsys
 import contextvars
+import copy
 import dataclasses
 import hashlib
 import inspect
@@ -791,9 +792,9 @@ class Dict(dict):
     # ==============================================================================================
     # region Dunders
 
-    def __reduce_ex__(self, protocol):
-        raise BaseException("don't copy Dicts")
-        return super().__reduce_ex__(protocol)
+#    def __reduce_ex__(self, protocol):
+#        raise BaseException("don't copy Dicts")
+#        return super().__reduce_ex__(protocol)
 
     def __repr__(self):
         return Dumper.dump(self)
@@ -1444,6 +1445,7 @@ class Hancho:
     dedupe : Dict = Dict()
     repos : set[Repo] = set()
     trace = False
+    build_reasons = Counter()
 
     @classmethod
     def init(cls, top_tree):
@@ -1469,63 +1471,61 @@ class Hancho:
 
 class Repo:
     def __init__(self, repo_node : Dict):
-        self.node = Expander.xip(repo_node)
-        self.stat_db = {}
-        self.build_reasons = Counter()
-        self.root_script : Script = Utils.MISSING
-        self.scripts = []
+        self.repo_node = Expander.xip(repo_node)
+        self.repo_stat_db = {}
+        self.repo_scripts = []
 
     def yield_tasks(self) -> abc.Iterator[Task]:
-        for script in self.scripts:
-            yield from script.yield_tasks()
+        for script in self.repo_scripts:
+            yield from script.node.script_tasks2
 
     # ==============================================================================================
 
     def check_stat(self, filename : str, command = None):
         repo = self
         if not Path.exists(filename):
-            repo.build_reasons["file missing"] += 1
+            Hancho.build_reasons["file missing"] += 1
             return f"File missing: {filename}"
 
-        if filename not in repo.stat_db:
-            repo.build_reasons["stat missing"] += 1
+        if filename not in repo.repo_stat_db:
+            Hancho.build_reasons["stat missing"] += 1
             return f"Stat missing: {filename}"
 
-        old_stat = repo.stat_db[filename]
+        old_stat = repo.repo_stat_db[filename]
         new_stat = Utils.get_stats(filename, command)
 
         if old_stat['st_mtime_ns'] != new_stat['st_mtime_ns']:
-            repo.build_reasons["mtime mismatch"] += 1
+            Hancho.build_reasons["mtime mismatch"] += 1
             return f"Mtime mismatch {old_stat['st_mtime_ns']} != {new_stat['st_mtime_ns']} for : {filename}"
 
         if old_stat['st_size'] != new_stat['st_size']:
-            repo.build_reasons["size mismatch"] += 1
+            Hancho.build_reasons["size mismatch"] += 1
             return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
 
         if old_stat['hash'] != new_stat['hash']:
-            repo.build_reasons["hash mismatch"] += 1
+            Hancho.build_reasons["hash mismatch"] += 1
             return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
 
         if command is not None and old_stat['command'] != new_stat['command']:
-            repo.build_reasons["command changed"] += 1
+            Hancho.build_reasons["command changed"] += 1
             return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
 
         # Does not need to rebuild based on file stats / hash
-        repo.build_reasons["*hash match"] += 1
+        Hancho.build_reasons["*hash match"] += 1
         return ""
 
 
     def load_stat_db(self):
         repo = self
-        stat_db_path = os.path.join(repo.node.build_dir, 'hancho.json')
+        stat_db_path = os.path.join(repo.repo_node.build_dir, 'hancho.json')
 
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
                 Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-                repo.stat_db = json.load(contents)
+                repo.repo_stat_db = json.load(contents)
         else:
-            Log.info(Log.ORANGE + f"No stat db for {repo.node.root}\n")
-            repo.stat_db = {}
+            Log.info(Log.ORANGE + f"No stat db for {repo.repo_node.root}\n")
+            repo.repo_stat_db = {}
 
         #for key, val in list(repo.stat_db.items()):
         #    repo.stat_db[key] = Dict(val)
@@ -1533,7 +1533,7 @@ class Repo:
 
     def save_stat_db(self):
         repo = self
-        if repo.node.dry_run:
+        if repo.repo_node.dry_run:
             return
 
         stat_db = {}
@@ -1568,7 +1568,7 @@ class Repo:
             for file in Utils.yield_values(task.out_files):
                 stat_db[file] = Utils.get_stats(file, task.node.command)
 
-        stat_db_path = Path.join(repo.node.build_dir, 'hancho.json')
+        stat_db_path = Path.join(repo.repo_node.build_dir, 'hancho.json')
         Utils.save_json(stat_db, stat_db_path)
 
         # ------------------------------------
@@ -1588,39 +1588,14 @@ class Repo:
                     "file"      : file,
                 }
 
-        comp_db_path = Path.join(repo.node.build_dir, 'compile_commands.json')
+        comp_db_path = Path.join(repo.repo_node.build_dir, 'compile_commands.json')
         Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # ==================================================================================================
 
 class Script:
-    def __init__(
-        self,
-        repo: Repo,
-        script_path: str | None,
-        script_root: str | None,
-        module: types.ModuleType,
-        script_node: Dict,
-        code: types.CodeType | None,
-    ):
-
-        self._repo   = repo
-        self._path   = script_path
-        self._root   = script_root
-        self._module = module
-        self.node    = Expander.xip(script_node)
-        self._code   = code
-
-        self._tasks : list[Task] =  []
-        self._children : list[Script] = []
-
-    def __repr__(self):
-        return Dumper.dump(self)
-
-    def yield_tasks(self) -> abc.Iterator[Task]:
-        yield from self._tasks
-        for child in self._children:
-            yield from child.yield_tasks()
+    def __init__(self, node: Dict):
+        self.node  = Expander.xip(node)
 
 # ==================================================================================================
 
@@ -1772,7 +1747,7 @@ class Task:
 
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if self._repo.node.dry_run:
+        if self._repo.repo_node.dry_run:
             return
 
         # Paths updated. See if we need to rebuild our outputs.
@@ -1902,7 +1877,7 @@ class Task:
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
-        file = Path.join(self._script._root, file)
+        file = Path.join(self._script.node.root, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -1912,7 +1887,7 @@ class Task:
         # Note - This will also move "in_depfile" under build_dir - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(file, build_dir):
-            file = Path.relpath(file, self._script._root)
+            file = Path.relpath(file, self._script.node.root)
             file = Path.join(build_dir, file)
 
         return file
@@ -1927,8 +1902,8 @@ class Task:
         if not Path.exists(self.node.cwd):
             raise Task.BROKEN(f"Task working directory '{self.node.cwd}' does not exist")
 
-        if not Path.startswith(self.node.build_dir, repo.node.root):
-            raise Task.BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.node.root}")
+        if not Path.startswith(self.node.build_dir, repo.repo_node.root):
+            raise Task.BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.repo_node.root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1948,7 +1923,7 @@ class Task:
                     raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if repo.node.strict:
+        if repo.repo_node.strict:
             for command in Utils.flatten(self.node.command):
                 if not isinstance(command, str):
                     continue
@@ -1974,7 +1949,7 @@ class Task:
         for file in Utils.yield_values(self.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-            if not Path.exists(file) and not repo.node.dry_run:
+            if not Path.exists(file) and not repo.repo_node.dry_run:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -1984,7 +1959,7 @@ class Task:
     # ==================================================================================================
 
     async def run_command(self : Task, command : str):
-        self.log_task(Log.INFO, f"{Path.relpath(self.node.cwd, self._repo.node.root)}$ {command}\n")
+        self.log_task(Log.INFO, f"{Path.relpath(self.node.cwd, self._repo.repo_node.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2037,12 +2012,12 @@ class Task:
     # ==================================================================================================
 
     async def call_callback(self : Task, command : abc.Callable):
-        callback_dir = Path.relpath(self._script._root, self._repo.node.root)
+        callback_dir = Path.relpath(self._script.node.root, self._repo.repo_node.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(self._script._root): # type: ignore
+        with chdir(self._script.node.root): # type: ignore
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2065,21 +2040,21 @@ class Task:
         # Check the trivial reasons to rebuild
 
         if self.node.force:
-            repo.build_reasons["forced"] += 1
+            Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to task.force"
 
-        if self._repo.node.build_force:
-            repo.build_reasons["forced"] += 1
+        if self._repo.repo_node.build_force:
+            Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to repo.build_force"
 
         has_input = any(Utils.yield_values(self.in_files))
         if not has_input:
-            repo.build_reasons["no inputs"] += 1
+            Hancho.build_reasons["no inputs"] += 1
             return "Always rebuild a target with no inputs"
 
         has_output = any(Utils.yield_values(self.out_files))
         if not has_output:
-            repo.build_reasons["no outputs"] += 1
+            Hancho.build_reasons["no outputs"] += 1
             return "Always rebuild a target with no outputs"
 
         # ------------------------------------
@@ -2100,7 +2075,7 @@ class Task:
             if reason := repo.check_stat(self.node.in_depfile):
                 return reason
 
-        repo.build_reasons["*task clean"] += 1
+        Hancho.build_reasons["*task clean"] += 1
         return ""
 
     # ==================================================================================================
@@ -2133,7 +2108,7 @@ class Task:
         Log.error("========================================\n")
         Log.error(message + "\n")
         Log.error("========================================\n")
-        Log.error(f"Script    = {self._script._path}:\n")
+        Log.error(f"Script    = {self._script.node.path}:\n")
         Log.error(f"Task      = '{node.name}' : '{node.desc}'\n")
         Log.error(f"os.getcwd = {os.getcwd()}\n")
         Log.error(f"task cwd  = {node.cwd}\n")
@@ -2175,9 +2150,7 @@ hancho_defaults = Dict(
     ),
     log = Dict(
         name       = "<log>",
-        #level     = "debug",
         level     = "info",
-        #level     = "critical",
         wrap      = False,
         color     = True,
         timestamp = True
@@ -2194,14 +2167,14 @@ hancho_defaults = Dict(
         strict      = True
     ),
     script = Dict(
-        name       = "<script>",
-        path    = os.path.abspath("build.hancho"),
-        root    = '{dirname(path)}',
+        name  = "<script>",
+        path  = os.path.abspath("build.hancho"),
+        root  = '{dirname(path)}',
+        script_tasks2 = [],
     ),
     task = Dict(
         name       = '<no name>',
         desc       = '<no desc>',
-        #command    = 'echo {name} : {desc}',
         command    = None,
         cwd        = '{repo.root}',
         in_depfile = '',
@@ -2219,10 +2192,11 @@ hancho_defaults = Dict(
 
 class HanchoProxy(types.ModuleType):
 
-    def __init__(self, repo : Repo, script : Script, tree : Dict):
+    def __init__(self, repo : Repo, script : Script, module : types.ModuleType, tree : Dict):
         super().__init__("hancho_proxy")
         self._repo   = repo
         self._script = script
+        self._module = module
         self._tree   = tree
         self.module  = hancho
 
@@ -2230,7 +2204,7 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(file : str, argv : list[str], *args, **kwargs) -> HanchoProxy:
         flags = parse_flags(argv, *args, **kwargs)
 
-        top_tree = Dict(hancho_defaults, flags)
+        top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
         top_tree.script.path = file
         top_tree.script.root = os.path.dirname(file)
         Hancho.init(top_tree)
@@ -2254,7 +2228,7 @@ class HanchoProxy(types.ModuleType):
         task_node = Dict(self._tree.task, *args, kwargs)
         task_node.link(self._tree)
         task = Task(repo = self._repo, script = self._script, task_node = task_node)
-        self._script._tasks.append(task)
+        self._script.node.script_tasks2.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2281,7 +2255,7 @@ class HanchoProxy(types.ModuleType):
 #        else:
 #            root = Path.resolve(new_tree.script.root)
 
-        return load_script(None if is_repo else self._repo, new_tree)._script._module
+        return load_script(None if is_repo else self._repo, new_tree)._module
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
         return self._load(path, root, False,  *args, **kwargs)
@@ -2368,8 +2342,8 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 
     repo   = parent_repo or Repo(new_tree.repo)
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
-    script = Script(repo, path, root, module, new_tree.script, code)
-    proxy  = HanchoProxy(repo, script, new_tree)
+    script = Script(new_tree.script)
+    proxy  = HanchoProxy(repo, script, module, new_tree)
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
@@ -2378,9 +2352,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     Hancho.dedupe[dupe_key] = proxy
     Hancho.repos.add(proxy._repo)
 
-    repo.scripts.append(script)
-    if not repo.root_script:
-        repo.root_script = script
+    repo.repo_scripts.append(script)
 
     if not code or not root:
         return proxy
@@ -2399,7 +2371,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 def hancho_main() -> int:
 
     flags = parse_flags(sys.argv)
-    top_tree = Dict(hancho_defaults, flags)
+    top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
     top_tree.name = "<top>"
     Hancho.init(top_tree)
 
@@ -2453,25 +2425,11 @@ def hancho_main() -> int:
     else:
         Log.info(Log.BLUE + "BUILD CLEAN\n")
 
-#    for script in Hancho.scripts:
-#        log.debug(f"Stats for {script.repo_root}\n")
-#        with log.indenter(BLUE):
-#           for k, v in script.reasons.items():
-#                log.debug(f"Rebuild reasons {k:13} = {v}\n")
-
     return result
 
 # ==================================================================================================
 
 def hancho_build(top_repo : Repo) -> int:
-
-    # ------------------------------------
-    # Sanity-check the repo/script hierarchies
-
-    for repo in Hancho.repos:
-        assert repo.root_script in repo.scripts
-        for script in repo.scripts:
-            assert script._repo == repo
 
     # ------------------------------------
     # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
@@ -2484,8 +2442,8 @@ def hancho_build(top_repo : Repo) -> int:
     # ------------------------------------
     # Select the set of tasks to run.
 
-    if top_repo.node.targets:
-        for target in top_repo.node.targets:
+    if top_repo.repo_node.targets:
+        for target in top_repo.repo_node.targets:
             # Enable all tasks whose name contains any of the targets
             # NOTE - We match task.task_params.name, _not_ the expanded task._name.
             # This is because the task _has not initialized yet_, so we have no config.name.
@@ -2495,7 +2453,7 @@ def hancho_build(top_repo : Repo) -> int:
                     if target in task.node.name:
                         task.queue_task()
 
-    elif top_repo.node.build_all:
+    elif top_repo.repo_node.build_all:
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
                 task.queue_task()
