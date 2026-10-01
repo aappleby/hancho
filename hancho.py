@@ -747,25 +747,25 @@ class Dict(abc.MutableMapping):
             Dict.generic_merge(
                 self, self, rhs,
                 merge_dicts=True, merge_lists=True,
-                keep_a=True, keep_b=True)
+                keep_lhs=True, keep_rhs=True)
 
     @staticmethod
     def generic_merge(dst: Dict, lhs: dict | Dict, rhs: dict | Dict,
-        merge_dicts: bool, merge_lists: bool, keep_a: bool, keep_b: bool):
+        merge_dicts: bool, merge_lists: bool, keep_lhs: bool, keep_rhs: bool):
 
         assert isinstance(dst, Dict)
         keys = list(lhs) + [r for r in rhs if r not in lhs]
 
         for key in keys:
-            if key in lhs and key not in rhs and not keep_a: continue
-            if key not in lhs and key in rhs and not keep_b: continue
+            if key in lhs and key not in rhs and not keep_lhs: continue
+            if key not in lhs and key in rhs and not keep_rhs: continue
 
             lhs2 = lhs.get(key)
             rhs2 = rhs.get(key)
 
             if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
                 dst2 = Dict()
-                Dict.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_a, keep_b)
+                Dict.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
             elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
                 dst2 = lhs2 + rhs2
             elif rhs2 is not None:
@@ -914,6 +914,85 @@ class Data(Dict):
 
 # endregion
 # ==================================================================================================
+# region mergey stuffs
+
+
+def merge_mappings(
+    dst: abc.MutableMapping,
+    lhs: abc.Mapping,
+    rhs: abc.Mapping,
+    merge_dicts: bool,
+    merge_lists: bool,
+    keep_lhs: bool,
+    keep_rhs: bool,
+):
+
+    lkeys = lhs.keys()
+    rkeys = rhs.keys()
+
+    for key in lkeys | rkeys:
+        if key in lkeys and key not in rkeys and not keep_lhs:
+            continue
+        if key not in lkeys and key in rkeys and not keep_rhs:
+            continue
+
+        lhs2 = lhs.get(key)
+        rhs2 = rhs.get(key)
+        dst2 = None
+
+        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
+            dst2 = Dict()
+            Dict.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
+        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
+            dst2 = lhs2 + rhs2
+        elif rhs2 is not None:
+            dst2 = rhs2
+        else:
+            dst2 = lhs2
+
+        if dst2 is not None:
+            dst[key] = dst2
+
+    return dst
+
+
+def merge_variants(
+    dst: object | abc.MutableMapping,
+    lhs: object | abc.Mapping,
+    rhs: object | abc.Mapping,
+    merge_dicts: bool,
+    merge_lists: bool,
+    keep_lhs: bool,
+    keep_rhs: bool,
+):
+    if not isinstance(dst, abc.MutableMapping):
+        dst = vars(dst)
+    if not isinstance(lhs, abc.Mapping):
+        lhs = vars(lhs)
+    if not isinstance(rhs, abc.Mapping):
+        rhs = vars(rhs)
+
+    return merge_mappings(dst, lhs, rhs, merge_dicts, merge_lists, keep_lhs, keep_rhs)
+
+
+def update_variant(
+    lhs: object | abc.Mapping,
+    rhs: object | abc.Mapping,
+    merge_dicts: bool,
+    merge_lists: bool,
+    keep_rhs: bool,
+):
+    if not isinstance(lhs, abc.MutableMapping):
+        lhs = vars(lhs)
+    if not isinstance(rhs, abc.Mapping):
+        rhs = vars(rhs)
+
+    return merge_mappings(lhs, lhs, rhs, merge_dicts, merge_lists, True, keep_rhs)
+
+
+# endregion
+# ==================================================================================================
+# region Expander
 
 class Expander(abc.Mapping):
     # Hancho's text expansion system.
@@ -1176,7 +1255,7 @@ class Expander(abc.Mapping):
 
         return out_blocks
 
-
+# endregion
 # ==================================================================================================
 # region Dumper
 
@@ -1480,6 +1559,7 @@ class Runner:
 
 # endregion
 # ==================================================================================================
+# region Hancho
 
 class Hancho:
     # Just a container for global stuff.
@@ -1510,6 +1590,7 @@ class Hancho:
         Utils.reset()
         Runner.reset(hancho.max_jobs, hancho.max_errors)
 
+# endregion
 # ==================================================================================================
 
 class Repo:
@@ -1523,6 +1604,7 @@ class Repo:
             yield from script.node.script_tasks
 
 # ==============================================================================================
+# region stat stuff
 
 def check_stat(repo, filename : str, command = None):
     if not Path.exists(filename):
@@ -1635,13 +1717,19 @@ def save_stat_db(repo):
     comp_db_path = Path.join(repo.repo_node.build_dir, 'compile_commands.json')
     Utils.save_json(list(comp_db.values()), comp_db_path)
 
+# endregion
 # ==================================================================================================
 
 class Script:
     def __init__(self, node: Dict):
+        self.name  = "<script>",
+        self.path  = os.path.abspath("build.hancho"),
+        self.root  = '{dirname(path)}',
+        self.script_tasks = [],
         self.node  = node
 
 # ==================================================================================================
+# region Task
 
 class Task:
 
@@ -2161,6 +2249,7 @@ class Task:
         Log.error(self.dump_stdout())
         Log.error("========================================\n")
 
+# endregion
 # ==================================================================================================
 
 hancho_aliases = Dict(
@@ -2392,6 +2481,9 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 
     Expander.xip(new_tree.script)
     script = Script(new_tree.script)
+
+    new_tree.script2 = script
+
     proxy  = HanchoProxy(repo, script, module, new_tree)
 
     module.__file__ = path
@@ -2594,136 +2686,41 @@ async def async_run_tasks():
 
 # ==================================================================================================
 
-_start()
+scratch = False
 
-#class Blarp:
-#    def __init__(self):
-#        self.a = 1234
-#        self.b = 3483984
-#        self.c = "sldkfjsdlf"
-#
-#
-#b = Blarp()
-#
-#print(Expander._expand("{str(a * b) + c}", b))
+if not scratch:
+    _start()
+else:
+    print("hello")
 
+    class Blah:
+        def __setitem__(self, key, val):
+            print(f"setitem({key}, {val})")
+            setattr(self, key, val)
 
-# ==================================================================================================
+        def __setattr__(self, key, val):
+            print(f"setattr({key}, {val})")
+            object.__setattr__(self, key, val)
 
-#class Blarp:
-#    pass
-#
-#thing1 = {
-#    "a": 1,
-#    "b": [2, "two"],
-#    "c": (3, 3, 3),
-#    "d": object(),
-#    "e": "foobar",
-#    "f": Blarp(),
-#    "g": {"a" : "laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa"}
-#}
-#
-#Dumper.print(thing1)
+    class Glom:
+        pass
 
-if False:
-    #foo = {
-    #    "a": 1,
-    #    "b": 2,
-    #    "c" : {
-    #        "dddd" : {"a":"b"},
-    #        "qqqq" : {
-    #            "azasdlkfsjd" : "slkdjflskdfjs"
-    #        },
-    #        "eeee" : 4
-    #    },
-    #    "jfjd" : [1,2,3],
-    #    "g" : "slkjdlfskdjlfskjd"
-    #}
+    a : Any = Blah()
+    b : Any = Glom()
 
-    #indent_stack = ["├"]
+    a.foo = 1
+    a.bar = 2
+    a.glom = [4, 5, 6]
+    a.derp = {"a":1, "b":2}
 
-    #folded = [foo['c']['qqqq']]
-    #folded = []
+    b.bar = 3
+    b.baz = 4
+    b.glom = [1, 2, 3]
+    b.derp = {"a":3, "c":4}
 
+    print(vars(a))
+    #merge_objects(a, a, b, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
+    update_variant(a, b, merge_dicts = True, merge_lists = True, keep_rhs = True)
+    #update_dict(vars(a), vars(b), merge_dicts = True, merge_lists = True, keep_rhs = True)
 
-    #pad = 2
-    icons = "⊡⊞⊟"
-    icons = "◻◰◲"
-    icons = "◇◈◆"
-    icons = "◆▶▼"
-    icons = "*>v"
-    lines = "│├└ "
-    dash  = "─"
-
-    def tree_node_icon(k, v, opts : Dumper.Opts):
-        if v in opts.fold:
-            return icons[1]
-        elif isinstance(v, dict):
-            return icons[2]
-        else:
-            return icons[0]
-
-    def dump(tree : Tree, opts : Dumper.Opts):
-        print()
-        items = list(tree.items())
-        for i, (k, v) in enumerate(items):
-            last = i == len(items) - 1
-            old_tail = opts.indent_stack2[-1]
-            if last:
-                opts.indent_stack2[-1] = lines[2]
-
-            print((" " * (opts.tab - 1)).join(opts.indent_stack2) + (dash * (opts.tab - 1)), end = "")
-
-            opts.indent_stack2[-1] = lines[3] if last else lines[0]
-            opts.indent_stack2.append(lines[1])
-            dump_tree_variant(k, v,opts)
-            opts.indent_stack2.pop()
-            opts.indent_stack2[-1] = old_tail
-
-    def dump_tree_variant(k, v, opts : Dumper.Opts):
-        print(f"{tree_node_icon(k,v,opts)} {k}", end = "")
-
-        if isinstance(v, dict):
-            if v in opts.fold:
-                print(" *", end = "")
-            elif isinstance(v, Tree):
-                dump(v, opts)
-        else:
-            print(f" = {v!r}")
-
-    #print_variant("foo", foo, Dumper.Opts())
-
-
-
-    class Tree(Dict):
-        def __dump__(self, key, opts, seen):
-            opts.indent_stack = ["├"]
-            opts.tab = 3
-            prefix = Dumper._dump_prefix(key, self, opts)
-
-            if id(self) in seen:
-                return prefix + "<ref loop>"
-            seen.add(id(self))
-
-            print(prefix, end = "")
-            dump(self, opts)
-            #items = list(self.items())
-            #result = Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
-
-            return ""
-
-
-    a = Dict(
-        foo = 1,
-        bar = Dict(
-            a = 1,
-            b = 2,
-            c = "three"
-        ),
-    #    tree = Tree(
-    #        a = 1,
-    #        b = 2
-    #    )
-    )
-
-    Dumper.print(a, width = 0)
+    print(vars(a))
