@@ -579,7 +579,7 @@ class Path:
 # ==================================================================================================
 #region parse_flags
 
-def parse_flags(argv, *args, **kwargs) -> Dict:
+def parse_flags(*argv) -> Dict:
 
     if len(argv) > 0 and "hancho.py" in argv[0]:
         argv = argv[1:]
@@ -695,7 +695,7 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
     # ------------------------------------
     # Merge 'em all and we're done.
 
-    flags = Dict(argv_flags, opt_file, mystery_flags, *args, kwargs)
+    flags = Dict(argv_flags, opt_file, mystery_flags)
     return flags
 
 #endregion
@@ -801,6 +801,9 @@ class Dict(abc.MutableMapping):
 #        raise BaseException("don't copy Dicts")
 #        return super().__reduce_ex__(protocol)
 
+#    def __repr__(self):
+#        return Dumper.dump(self)
+
     def __repr__(self):
         return Dumper.dump(self)
 
@@ -897,7 +900,7 @@ class Dict(abc.MutableMapping):
     def xip(self, key):
         """Expand-in-place. Replaces a field with its expanded version."""
         cursor, val = self.search(key, False)
-        result = cursor.expand(val)
+        result = Expander._expand(val, cursor)
         cursor._dict[key] = result
         return result
 
@@ -935,17 +938,18 @@ class Expander(abc.Mapping):
 
     #region instance methods
 
-    def __init__(self, tree : Dict | Expander):
-        tree.check_links()
+    def __init__(self, tree : object):
         self.tree : Dict
         object.__setattr__(self, "tree", tree)
 
     @classmethod
-    def wrap(cls, tree : Dict | Expander):
+    def wrap(cls, tree : object):
         if isinstance(tree, Expander):
             return tree
         else:
             return Expander(tree)
+
+    # ====================================
 
     def __getattr__(self, key) -> Any:
         try:
@@ -953,26 +957,16 @@ class Expander(abc.Mapping):
         except KeyError as ex:
             raise AttributeError from ex
 
-    def __setattr__(self, key, val):
-        self.tree.__setattr__(key, val)
-
-    def __delattr__(self, key):
-        self.tree.__delattr__(key)
-
     def __getitem__(self, key : str) -> Any:
         return self.internal_get(key, check_up = True)
-
-    def __setitem__(self, key, val):
-        self.tree.__setitem__(key, val)
-
-    def __delitem__(self, key):
-        self.tree.__delitem__(key)
 
     def __iter__(self):
         return self.tree.__iter__()
 
     def __len__(self):
         return self.tree.__len__()
+
+    # ====================================
 
     def internal_get(self, key : str, check_up : bool = False):
 
@@ -990,11 +984,11 @@ class Expander(abc.Mapping):
         trace_end(cursor, key, result)
 
 
-        if isinstance(result, Dict):  # noqa: SIM108
+        if isinstance(result, Dict):
             # have to do this so that "read nested c first" resolves in the dest dict first
             result = Expander.wrap(result)
         else:
-            result = cursor.expand(result)
+            result = Expander._expand(result, cursor)
         return result
 
     #endregion
@@ -1059,12 +1053,12 @@ class Expander(abc.Mapping):
                 elif isinstance(var, abc.Mapping):
                     result = type(var)()
                     for k, v in var.items():
-                        v2 = tree.expand(v)
+                        v2 = Expander._expand(v, tree)
                         result[k] = v2 # type: ignore
                     return result
 
                 elif isinstance(var, abc.Collection) and not isinstance(var, (str, bytes, bytearray)):
-                    return type(var)(tree.expand(v) for v in var) # type: ignore
+                    return type(var)(Expander._expand(v, tree) for v in var) # type: ignore
                 elif not isinstance(var, str):
                     return var
 
@@ -1080,7 +1074,7 @@ class Expander(abc.Mapping):
                         trace_start(tree, "expand", var)
                         for i, b in enumerate(blocks):
                             if isinstance(b, Expander.Macro):
-                                blocks[i] = tree.expand(b)
+                                blocks[i] = Expander._expand(b, tree)
                         var = "".join(Utils.stringify(b) for b in blocks)
                     finally:
                         trace_end(tree, old_var, var)
@@ -1106,7 +1100,7 @@ class Expander(abc.Mapping):
 
 
     @classmethod
-    def _eval_macro(cls, var : Expander.Macro, tree : Dict) -> Any:
+    def _eval_macro(cls, var : Expander.Macro, tree : object) -> Any:
         # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
         if old_evals >= Expander.MAX_EVALS:
@@ -1860,7 +1854,7 @@ class Task:
             ]
 
             if files:
-                files = node.expand(files)
+                files = Expander._expand(files, node)
                 files = Utils.flatten(files)
                 files = self.fix_paths(_field, files, build_dir)
                 files = files[0] if len(files) == 1 else files
@@ -2232,8 +2226,8 @@ class HanchoProxy(types.ModuleType):
         self.module  = hancho
 
     @staticmethod
-    def init_for_testing(file : str, argv : list[str], *args, **kwargs) -> HanchoProxy:
-        flags = parse_flags(argv, *args, **kwargs)
+    def init_for_testing(file : str, *args) -> HanchoProxy:
+        flags = parse_flags(*args)
 
         top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
         top_tree.script.path = file
@@ -2332,7 +2326,7 @@ def _start():
             sys.modules["hancho"] = sys.modules[__name__]
             sys.exit(hancho_main())
         else:
-            sys.modules["hancho"] = HanchoProxy.init_for_testing(__file__, [])
+            sys.modules["hancho"] = HanchoProxy.init_for_testing(__file__)
 
     except Exception:
         print(Log.RED + "Hancho hit an unhandled exception:")
@@ -2404,7 +2398,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 
 def hancho_main() -> int:
 
-    flags = parse_flags(sys.argv)
+    flags = parse_flags(*sys.argv)
     top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
     top_tree.name = "<top>"
     Hancho.init(top_tree)

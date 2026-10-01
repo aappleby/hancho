@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 """Template file for creating new test cases"""
 
-import contextvars
 import doctest
 import os
 import subprocess
@@ -11,10 +10,7 @@ import unittest
 from io import StringIO
 
 import hancho as hancho_proxy
-
-Log = hancho_proxy.Log
-Utils = hancho_proxy.Utils
-Dumper = hancho_proxy.Dumper
+from hancho import Dumper, Log, Utils
 
 VERBOSITY = "debug"
 
@@ -47,13 +43,8 @@ class TestApp(unittest.TestCase):
         sys.stdout = StringIO()
 
     def reinit(self, *argv):
-        #global hancho
-        #hancho = hancho.init_for_testing(file = __file__, argv = [*argv]) # type: ignore
         global hancho
-        hancho = hancho_proxy.init_for_testing(
-            file = __file__,
-            argv = [f"--log.level={VERBOSITY}", *argv]
-        )
+        hancho = hancho_proxy.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
         sys.stdout.seek(0)
         sys.stdout.truncate(0)
 

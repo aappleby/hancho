@@ -16,7 +16,7 @@ import hancho as hancho_proxy
 
 # pyright: reportAttributeAccessIssue=false
 
-VERBOSITY = "critical"
+VERBOSITY = "debug"
 
 if os.name == "nt" and "VCINSTALLDIR" not in os.environ:
     print("Tests must run from a Visual Studio developer prompt!", file=sys.stderr)
@@ -52,10 +52,7 @@ class TestTasks(unittest.TestCase):
 
     def reinit(self, *argv):
         global hancho
-        hancho = hancho_proxy.init_for_testing(
-            file = __file__,
-            argv = [f"--log.level={VERBOSITY}", *argv]
-        )
+        hancho = hancho_proxy.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
 
     def setUp(self):
         # Always wipe the build dir before a test, but make sure we're in the right dir.

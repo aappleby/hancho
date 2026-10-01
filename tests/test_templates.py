@@ -8,15 +8,22 @@ from typing import cast
 
 sys.path.append("..")
 
-import hancho
+import hancho as hancho_proxy
 from hancho import Dict, Expander
+
+VERBOSITY = "critical"
+
+# the hancho references hit this and it's bogus because of the weird way hancho intercepts
+# attributes
+# pyright: reportAttributeAccessIssue=false
 
 ####################################################################################################
 
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
-    hancho.init_for_testing(file = __file__, argv = ["--log.level=critical"]) # type: ignore
-    print()
+
+    global hancho
+    hancho = hancho_proxy.init_for_testing(__file__, f"--log.level={VERBOSITY}")
 
 ####################################################################################################
 
