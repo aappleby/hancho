@@ -10,11 +10,13 @@ import textwrap
 import unittest
 from io import StringIO
 
-import hancho
+import hancho as hancho_proxy
 
-Log = hancho.Log
-Utils = hancho.Utils
-Dumper = hancho.Dumper
+Log = hancho_proxy.Log
+Utils = hancho_proxy.Utils
+Dumper = hancho_proxy.Dumper
+
+VERBOSITY = "debug"
 
 def dump(text, **kwargs):
     return Dumper.depointer(Dumper.dump(text, **kwargs))
@@ -44,9 +46,14 @@ class TestApp(unittest.TestCase):
         self.old_stdout = sys.stdout
         sys.stdout = StringIO()
 
-    def init(self, *, argv):
+    def reinit(self, *argv):
+        #global hancho
+        #hancho = hancho.init_for_testing(file = __file__, argv = [*argv]) # type: ignore
         global hancho
-        hancho = hancho.init_for_testing(file = __file__, argv = [*argv]) # type: ignore
+        hancho = hancho_proxy.init_for_testing(
+            file = __file__,
+            argv = [f"--log.level={VERBOSITY}", *argv]
+        )
         sys.stdout.seek(0)
         sys.stdout.truncate(0)
 
@@ -69,19 +76,19 @@ class TestApp(unittest.TestCase):
 #        self.assertEqual(12, script.globals.foo)
 
     def test_verbosities(self):
-        self.init(argv = ["--log.level=debug"])
+        self.reinit("--log.level=debug")
         self.assertEqual(Log.DEBUG, Log.log_level)
 
-        self.init(argv = ["--log.level=info"])
+        self.reinit("--log.level=info")
         self.assertEqual(Log.INFO, Log.log_level)
 
-        self.init(argv = ["--log.level=warning"])
+        self.reinit("--log.level=warning")
         self.assertEqual(Log.WARNING, Log.log_level)
 
-        self.init(argv = ["--log.level=error"])
+        self.reinit("--log.level=error")
         self.assertEqual(Log.ERROR, Log.log_level)
 
-        self.init(argv = ["--log.level=critical"])
+        self.reinit("--log.level=critical")
         self.assertEqual(Log.CRITICAL, Log.log_level)
 
         cmd = [sys.executable, "../hancho.py", "--log.level=boo"]
@@ -89,7 +96,7 @@ class TestApp(unittest.TestCase):
         self.assertIn("invalid choice: 'boo'", result.stderr)
 
     def test_indentation(self):
-        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
+        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         Log.info("line1\n")
         Log.indent(hancho.module.Utils.hex_to_ansi(0xFFFFFFFF))
         Log.info("line2\n")
@@ -101,13 +108,13 @@ class TestApp(unittest.TestCase):
         pass
 
     def test_no_color(self):
-        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
+        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         Log.info("this should _not_ be blue\n")
         self.assertEqual("this should _not_ be blue\n", sys.stdout.getvalue())
         self.assertNotIn("\x1B", sys.stdout.getvalue())
 
     def test_newlines(self):
-        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
+        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         Log.info("one")
         Log.info("two")
         Log.info("three")
@@ -115,7 +122,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual('onetwothreefour\n', sys.stdout.getvalue())
 
     def test_flush(self):
-        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
+        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         Log.info("one")
         Log.info("two")
         Log.info("three")
@@ -124,7 +131,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual('onetwothree\n', sys.stdout.getvalue())
 
     def test_indent_dedent(self):
-        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
+        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
 
         Log.info("┌ one\n")
         Log.indent(hancho.module.Utils.hex_to_ansi(0xFFFFFFFF))
@@ -137,8 +144,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual(text, sys.stdout.getvalue())
 
     def test_dumper(self):
-        print("?")
-        self.init(argv = ["--log.level=info", "--log.color=False", "--log.time=False"])
+        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
 
         def check(value, expected, **kwargs):
             result = dump(value, **kwargs)

@@ -16,7 +16,7 @@ import hancho as hancho_proxy
 
 # pyright: reportAttributeAccessIssue=false
 
-VERBOSITY = "debug"
+VERBOSITY = "critical"
 
 if os.name == "nt" and "VCINSTALLDIR" not in os.environ:
     print("Tests must run from a Visual Studio developer prompt!", file=sys.stderr)
@@ -50,9 +50,12 @@ def force_touch(filename, append_text = None):
 
 class TestTasks(unittest.TestCase):
 
-    def reinit(self, *, argv):
+    def reinit(self, *argv):
         global hancho
-        hancho = hancho_proxy.init_for_testing(file = __file__, argv = [*argv, "--log.level=critical"]) # type: ignore
+        hancho = hancho_proxy.init_for_testing(
+            file = __file__,
+            argv = [f"--log.level={VERBOSITY}", *argv]
+        )
 
     def setUp(self):
         # Always wipe the build dir before a test, but make sure we're in the right dir.
@@ -62,7 +65,7 @@ class TestTasks(unittest.TestCase):
         # OK, now we should be good to start up Hancho.
         # Note: using 'max_errors = 0' will break the cancellation test, we have to tolerate the
         # failure to see the cancellation.
-        self.reinit(argv = ["--log.level=debug", "--hancho.max_errors=999"])
+        self.reinit("--hancho.max_errors=999")
         sys.stdout.flush()
 
     def tearDown(self):
@@ -203,7 +206,7 @@ class TestTasks(unittest.TestCase):
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
         def run():
-            self.reinit(argv = [f"--log.level={VERBOSITY}"])
+            self.reinit()
             hancho.Task(
                 command=[
                     lambda task : time.sleep(0.1),
@@ -224,7 +227,7 @@ class TestTasks(unittest.TestCase):
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild
         def run():
-            self.reinit(argv = [f"--log.level={VERBOSITY}"])
+            self.reinit()
             time.sleep(0.01)
             compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
@@ -253,7 +256,7 @@ class TestTasks(unittest.TestCase):
         dummy = "data/dummy.txt"
 
         def run():
-            self.reinit(argv = [f"--log.level={VERBOSITY}"])
+            self.reinit()
             hancho.Task(
                 desc="test_dep_changed {in_src}",
                 #command="sleep 0.1 && touch {out_obj}",
@@ -279,7 +282,7 @@ class TestTasks(unittest.TestCase):
     # ----------------------------------------------------------------------------------------------
 
     def test_command_changed(self):
-        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+        self.reinit("--hancho.max_errors=999")
         hancho.Task(
             command="echo foo{in_src} > {out_txt}",
             in_src = "src/test.cpp",
@@ -290,7 +293,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/test_command_changed.txt").exists())
         mtime1 = mtime_ns("build/test_command_changed.txt")
 
-        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+        self.reinit("--hancho.max_errors=999")
         hancho.Task(
             command="echo foo{in_src} > {out_txt}",
             in_src = "src/test.cpp",
@@ -299,7 +302,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         mtime2 = mtime_ns("build/test_command_changed.txt")
 
-        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+        self.reinit("--hancho.max_errors=999")
         hancho.Task(
             command="echo bar{in_src} > {out_txt}",
             in_src = "src/test.cpp",
@@ -395,8 +398,7 @@ class TestTasks(unittest.TestCase):
             raise AssertionError("Don't know this platform")
 
         def run():
-            #self.reinit(log_level = VERBOSITY) #type:ignore
-            self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999"])
+            self.reinit("--hancho.max_errors=999")
             time.sleep(0.01)
             compile = hancho.Tool(
                 desc="test_header_changed {in_src}",
@@ -447,7 +449,7 @@ class TestTasks(unittest.TestCase):
 
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
-        self.reinit(argv = [f"--log.level={VERBOSITY}", "--flarpy=flarp.txt"])
+        self.reinit("--flarpy=flarp.txt")
         hancho.Task(
             command = lambda task : force_touch(task.node.out_file),
             in_files=[],
@@ -637,7 +639,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/slow_result.txt").exists())
 
     def test_dry_run(self):
-        self.reinit(argv = [f"--log.level={VERBOSITY}", "--hancho.max_errors=999", "--repo.dry_run=True"])
+        self.reinit("--hancho.max_errors=999", "--repo.dry_run=True")
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
@@ -655,7 +657,7 @@ class TestTasks(unittest.TestCase):
     # ...because "build_force" is true
     def test_dependency_skipped(self):
         def run():
-            self.reinit(argv = ["--log.level=debug", "--hancho.max_jobs=1"])
+            self.reinit("--hancho.max_jobs=1")
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",

@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 #!/usr/bin/python3
-# ruff: noqa: RUF012
+# ruff: noqa: RUF012 C408
 #region Header
 
 """
@@ -227,7 +227,7 @@ class Utils:
         return digest
 
     @classmethod
-    def get_stats(cls, file : str, command = None) -> Dict:
+    def get_stats(cls, file : str, command = None) -> dict:
         cls.stat_calls += 1
 
         _hash = cls.hash_file(file)
@@ -235,7 +235,7 @@ class Utils:
 
         command = Utils.commands_to_string(command)
 
-        stat = Dict(
+        stat = dict(
             hash = _hash,
             st_size = _stat.st_size,
             st_mtime_ns = _stat.st_mtime_ns,
@@ -702,7 +702,8 @@ def parse_flags(argv, *args, **kwargs) -> Dict:
 # ==================================================================================================
 #region Dict
 
-class Dict(dict):
+
+class Dict(abc.MutableMapping):
     """
     This class extends 'dict' in a couple ways -
     1. Dict supports "foo.bar" attribute access in addition to "foo['bar']"
@@ -719,9 +720,11 @@ class Dict(dict):
     """
 
     def __init__(self, *args : dict[str, Any] | Dict, **kwargs : Any):
+        self._dict : dict
         self._up : Dict | None
-        object.__setattr__(self, "_up", None)
 
+        object.__setattr__(self, "_dict", {})
+        object.__setattr__(self, "_up", None)
         self.update(*args, kwargs)
         self.check_links()
 
@@ -731,14 +734,16 @@ class Dict(dict):
         object.__setattr__(self, "_up", up)
 
     def check_links(self):
-        for v in self.values():
+        for v in self._dict.values():
             if isinstance(v, Dict):
                 if object.__getattribute__(v, "_up") != self:
                     raise AssertionError(f"Child dict not linked to parent - {v} -> {self}")
                 v.check_links()
 
-    def update(self, *args, **kwargs):
-        for rhs in filter(None, [*args, kwargs]):
+    # FIXME this is colliding with something in MutableMapping
+    def update(self, *args : dict | Dict, **kwargs): # type: ignore
+        all_things = list(args) + [kwargs]  # noqa: RUF005
+        for rhs in filter(None, all_things):
             Dict.generic_merge(
                 self, self, rhs,
                 merge_dicts=True, merge_lists=True,
@@ -771,7 +776,7 @@ class Dict(dict):
             if isinstance(dst2, Dict):
                 dst2.link(dst)
 
-            dict.__setitem__(dst, key, dst2)
+            dst._dict[key] = dst2
 
         dst.check_links()
         return dst
@@ -824,6 +829,15 @@ class Dict(dict):
     def __delitem__(self, key: str):
         return self.internal_del(key)
 
+    def __iter__(self):
+        return self._dict.__iter__()
+
+    def __len__(self):
+        return self._dict.__len__()
+
+    def __contains__(self, key):
+        return self._dict.__contains__(key)
+
     # endregion
     # ==============================================================================================
     # region Attribute interface
@@ -832,22 +846,23 @@ class Dict(dict):
         try:
             return self.internal_get(key)
         except KeyError as err:
-            raise AttributeError from err
+            raise AttributeError(key) from err
 
     def __setattr__(self, key: str, val: Any):
         try:
             return self.internal_set(key, val)
         except KeyError as err:
-            raise AttributeError from err
+            raise AttributeError(key) from err
 
     def __delattr__(self, key: str):
         try:
             return self.internal_del(key)
         except KeyError as err:
-            raise AttributeError from err
+            raise AttributeError(key) from err
 
     # endregion
     # ==============================================================================================
+
 
     def search(self, key : str, check_up : bool):
         cursor = self
@@ -856,18 +871,25 @@ class Dict(dict):
                 cursor = up
             else:
                 raise KeyError(key)
-        return (cursor, dict.__getitem__(cursor, key))
+        return (cursor, cursor._dict[key])
 
     def internal_get(self, key, check_up = True):
+        if key == "_dict":
+            return object.__getattribute__(self, "_dict")
+
         return self.search(key, check_up)[1]
 
     def internal_set(self, key, val):
-        dict.__setitem__(self, key, val)
+        if key == "_dict":
+            object.__setattr__(self, key, val)
+            return
+
+        self._dict[key] = val
         if isinstance(val, Dict):
             val.link(self)
 
     def internal_del(self, key):
-        dict.__delitem__(self, key)
+        del self._dict[key]
 
     def expand(self, template):
         return Expander._expand(template, self)
@@ -876,7 +898,7 @@ class Dict(dict):
         """Expand-in-place. Replaces a field with its expanded version."""
         cursor, val = self.search(key, False)
         result = cursor.expand(val)
-        dict.__setitem__(cursor, key, result)
+        cursor._dict[key] = result
         return result
 
 class Tool(Dict):
@@ -964,7 +986,7 @@ class Expander(abc.Mapping):
                 raise KeyError(key)
 
         trace_start(cursor, "get", key)
-        result = dict.__getitem__(cursor, key)
+        result = cursor._dict[key]
         trace_end(cursor, key, result)
 
 
@@ -1499,9 +1521,17 @@ def check_stat(repo, filename : str, command = None):
     old_stat = repo.repo_stat_db[filename]
     new_stat = Utils.get_stats(filename, command)
 
-    if old_stat['st_mtime_ns'] != new_stat['st_mtime_ns']:
-        Hancho.build_reasons["mtime mismatch"] += 1
-        return f"Mtime mismatch {old_stat['st_mtime_ns']} != {new_stat['st_mtime_ns']} for : {filename}"
+    try:
+        old_ns = old_stat['st_mtime_ns']
+        new_ns = new_stat['st_mtime_ns']
+
+        if old_ns != new_ns:
+            Hancho.build_reasons["mtime mismatch"] += 1
+            return f"Mtime mismatch {old_ns} != {new_ns} for : {filename}"
+    except Exception as err:
+        print(err)
+        traceback.print_exc()
+        raise err
 
     if old_stat['st_size'] != new_stat['st_size']:
         Hancho.build_reasons["size mismatch"] += 1
