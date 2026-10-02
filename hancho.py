@@ -746,6 +746,22 @@ def merge_variants(
 # ==================================================================================================
 #region Dict
 
+# FIXME ok this doesn't work on arbitrary objects because they can have back links or whatever
+# maybe change this to only check keys that don't start with an underscore?
+# that would still be annoying... caveat emptor
+def check_links(variant):
+    return
+    try:
+        variant = variant if isinstance(variant, abc.Mapping) else vars(variant)
+    except TypeError as ex:
+        return
+
+    for k, v in variant.items():
+        if k == "_up":
+            continue
+        if hasattr(v, "_up") and object.__getattribute__(v, "_up") != variant:
+            raise AssertionError(f"Child dict not linked to parent - {k}:{v} -> {variant}")
+        check_links(v)
 
 class Dict(abc.MutableMapping):
     """
@@ -770,19 +786,12 @@ class Dict(abc.MutableMapping):
         object.__setattr__(self, "_dict", {})
         object.__setattr__(self, "_up", None)
         self.update(*args, kwargs)
-        self.check_links()
+        #check_links(self)
 
     # ==============================================================================================
 
     def link(self, up : Dict):
         object.__setattr__(self, "_up", up)
-
-    def check_links(self):
-        for v in self._dict.values():
-            if isinstance(v, Dict):
-                if object.__getattribute__(v, "_up") != self:
-                    raise AssertionError(f"Child dict not linked to parent - {v} -> {self}")
-                v.check_links()
 
     # FIXME this is colliding with something in MutableMapping
 
@@ -904,8 +913,9 @@ class Dict(abc.MutableMapping):
             return
 
         self._dict[key] = val
-        if isinstance(val, Dict):
-            val.link(self)
+
+        if hasattr(val, "_up"):
+            object.__setattr__(val, "_up", self)
 
     def internal_del(self, key):
         del self._dict[key]
@@ -996,20 +1006,14 @@ class Expander(abc.Mapping):
         cursor = self.tree
         result = Utils.MISSING
 
-        if isinstance(cursor, abc.Mapping):
-            while key not in cursor:
-                if check_up and hasattr(cursor, "_up") and (up := cursor._up): # type: ignore
-                    trace_up(cursor, up, "get", key)
-                    cursor = up
-                else:
-                    raise KeyError(key)
-        else:
-            while key not in vars(cursor):
-                if check_up and hasattr(cursor, "_up") and (up := cursor._up): # type: ignore
-                    trace_up(cursor, up, "get", key)
-                    cursor = up
-                else:
-                    raise KeyError(key)
+        keys = cursor if isinstance(cursor, abc.Mapping) else vars(cursor)
+        while key not in keys:
+            if check_up and hasattr(cursor, "_up") and (up := cursor._up): # type: ignore
+                trace_up(cursor, up, "get", key)
+                cursor = up
+                keys = cursor if isinstance(cursor, abc.Mapping) else vars(cursor)
+            else:
+                raise KeyError(key)
 
         trace_start(cursor, "get", key)
         result = getattr(cursor, key)
@@ -1050,14 +1054,19 @@ class Expander(abc.Mapping):
 
     @classmethod
     def xip(cls, tree : object):
+        # FIXME this is messy
         if isinstance(tree, abc.MutableMapping):
             for key, val in tree.items():
+                if key == "_up":
+                    continue
                 if isinstance(val, Dict):
                     cls.xip(val)
                 else:
                     tree[cast(str, key)] = Expander._expand(val, tree)
         else:
             for key, val in vars(tree).items():
+                if key == "_up":
+                    continue
                 if isinstance(val, Dict):
                     cls.xip(val)
                 else:
@@ -1070,7 +1079,7 @@ class Expander(abc.Mapping):
             tree = tree.tree
 
         if isinstance(tree, Dict):
-            tree.check_links()
+            check_links(tree)
 
         # Bail out if we've recursed too many times.
         old_depth = Expander.cv_depth.get()
@@ -1532,8 +1541,18 @@ class Hancho:
 # ==================================================================================================
 
 class Repo:
-    def __init__(self, repo_node : Dict):
-        self.repo_node : Any = Expander.xip(repo_node)
+    def __init__(self, up):
+        self._up         = up
+        self.name        = "<repo>"
+        self.root        = '{script3.root}'
+        self.build_dir   = "{join(root, 'build', build_tag)}"
+        self.build_tag   = ''
+        self.targets     = []
+        self.build_force = False
+        self.build_all   = False
+        self.dry_run     = False
+        self.strict      = True
+
         self.repo_stat_db = {}
         self.repo_scripts = []
 
@@ -1586,18 +1605,18 @@ def check_stat(repo, filename : str, command = None):
 
 
 def load_stat_db(repo):
-    stat_db_path = os.path.join(repo.repo_node.build_dir, 'hancho.json')
+    stat_db_path = os.path.join(repo.build_dir, 'hancho.json')
 
     if os.path.isfile(stat_db_path):
         with open(stat_db_path) as contents:
             Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
             repo.repo_stat_db = json.load(contents)
     else:
-        Log.info(Log.ORANGE + f"No stat db for {repo.repo_node.root}\n")
+        Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
         repo.repo_stat_db = {}
 
 def save_stat_db(repo):
-    if repo.repo_node.dry_run:
+    if repo.dry_run:
         return
 
     stat_db = {}
@@ -1632,7 +1651,7 @@ def save_stat_db(repo):
         for file in Utils.yield_values(task.out_files):
             stat_db[file] = Utils.get_stats(file, task.node.command)
 
-    stat_db_path = Path.join(repo.repo_node.build_dir, 'hancho.json')
+    stat_db_path = Path.join(repo.build_dir, 'hancho.json')
     Utils.save_json(stat_db, stat_db_path)
 
     # ------------------------------------
@@ -1652,17 +1671,18 @@ def save_stat_db(repo):
                 "file"      : file,
             }
 
-    comp_db_path = Path.join(repo.repo_node.build_dir, 'compile_commands.json')
+    comp_db_path = Path.join(repo.build_dir, 'compile_commands.json')
     Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # endregion
 # ==================================================================================================
 
 class Script:
-    def __init__(self, name, path, root):
-        self.name  = name
-        self.path  = path
-        self.root  = root
+    def __init__(self, up):
+        self._up   = up
+        self.name  = "<script>"
+        self.path  = os.path.abspath("build.hancho")
+        self.root  = '{dirname(path)}'
         self.script_tasks = []
 
 # ==================================================================================================
@@ -1816,7 +1836,7 @@ class Task:
 
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if self._repo.repo_node.dry_run:
+        if self._repo.dry_run:
             return
 
         # Paths updated. See if we need to rebuild our outputs.
@@ -1971,8 +1991,8 @@ class Task:
         if not Path.exists(self.node.cwd):
             raise Task.BROKEN(f"Task working directory '{self.node.cwd}' does not exist")
 
-        if not Path.startswith(self.node.build_dir, repo.repo_node.root):
-            raise Task.BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.repo_node.root}")
+        if not Path.startswith(self.node.build_dir, repo.root):
+            raise Task.BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1992,7 +2012,7 @@ class Task:
                     raise Task.BROKEN(f"Command {command} is not a string or a callable?")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if repo.repo_node.strict:
+        if repo.strict:
             for command in Utils.flatten(self.node.command):
                 if not isinstance(command, str):
                     continue
@@ -2018,7 +2038,7 @@ class Task:
         for file in Utils.yield_values(self.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
-            if not Path.exists(file) and not repo.repo_node.dry_run:
+            if not Path.exists(file) and not repo.dry_run:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -2028,7 +2048,7 @@ class Task:
     # ==================================================================================================
 
     async def run_command(self : Task, command : str):
-        self.log_task(Log.INFO, f"{Path.relpath(self.node.cwd, self._repo.repo_node.root)}$ {command}\n")
+        self.log_task(Log.INFO, f"{Path.relpath(self.node.cwd, self._repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2081,7 +2101,7 @@ class Task:
     # ==================================================================================================
 
     async def call_callback(self : Task, command : abc.Callable):
-        callback_dir = Path.relpath(self._script.root, self._repo.repo_node.root)
+        callback_dir = Path.relpath(self._script.root, self._repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
@@ -2112,7 +2132,7 @@ class Task:
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to task.force"
 
-        if self._repo.repo_node.build_force:
+        if self._repo.build_force:
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to repo.build_force"
 
@@ -2211,6 +2231,7 @@ hancho_aliases = Dict(
 # ==================================================================================================
 
 hancho_defaults = Dict(
+    name = "<defaults>",
     hancho = Dict(
         name       = "<hancho>",
         root       = os.path.dirname(__file__),
@@ -2235,14 +2256,8 @@ hancho_defaults = Dict(
         build_all   = False,
         dry_run     = False,
         strict      = True,
-        repo_stat_db2 = {},
-        repo_scripts2 = []
     ),
-    script3 = Script(
-        name  = "<script>",
-        path  = os.path.abspath("build.hancho"),
-        root  = '{dirname(path)}',
-    ),
+    script3 = Script(None),
     task = Dict(
         name       = '<no name>',
         desc       = '<no desc>',
@@ -2276,8 +2291,12 @@ class HanchoProxy(types.ModuleType):
         flags = parse_flags(*args)
 
         top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
+        top_tree.script3.name = "<name>"
         top_tree.script3.path = file
         top_tree.script3.root = os.path.dirname(file)
+
+        check_links(top_tree)
+
         Hancho.init(top_tree)
 
         root_proxy = load_script(parent_repo = None, new_tree = top_tree)
@@ -2401,7 +2420,13 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
             source = file.read()
             code = compile(source, path, "exec", dont_inherit=True)
 
-    repo   = parent_repo or Repo(new_tree.repo)
+
+
+    repo   = parent_repo or Repo(new_tree)
+    merge_variants(repo, repo, new_tree.repo, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
+    Expander.xip(repo)
+
+
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
 
     proxy  = HanchoProxy(repo, new_tree.script3, module, new_tree)
@@ -2434,6 +2459,8 @@ def hancho_main() -> int:
     flags = parse_flags(*sys.argv)
     top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
     top_tree.name = "<top>"
+    check_links(top_tree)
+
     Hancho.init(top_tree)
 
     Log.info(Log.LIME + f"Command line : {" ".join(sys.argv)}\n")
@@ -2446,7 +2473,11 @@ def hancho_main() -> int:
     # Load and exec top script
 
     time_a1 = time.perf_counter()
-    top_repo  = Repo(top_tree.repo)
+
+    top_repo  = Repo(top_tree)
+    merge_variants(top_repo, top_repo, top_tree.repo, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
+    Expander.xip(top_repo)
+
     top_proxy = load_script(top_repo, top_tree)
     time_b1 = time.perf_counter()
     Log.info(Log.BLUE + f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
@@ -2503,8 +2534,8 @@ def hancho_build(top_repo : Repo) -> int:
     # ------------------------------------
     # Select the set of tasks to run.
 
-    if top_repo.repo_node.targets:
-        for target in top_repo.repo_node.targets:
+    if top_repo.targets:
+        for target in top_repo.targets:
             # Enable all tasks whose name contains any of the targets
             # NOTE - We match task.task_params.name, _not_ the expanded task._name.
             # This is because the task _has not initialized yet_, so we have no config.name.
@@ -2514,7 +2545,7 @@ def hancho_build(top_repo : Repo) -> int:
                     if target in task.node.name:
                         task.queue_task()
 
-    elif top_repo.repo_node.build_all:
+    elif top_repo.build_all:
         for repo in Hancho.repos:
             for task in repo.yield_tasks():
                 task.queue_task()
