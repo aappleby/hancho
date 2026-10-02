@@ -631,8 +631,8 @@ def parse_flags(*argv) -> Dict:
     parser.add_argument(      "--repo.dry_run",       type = str_to_bool,  choices = [True, False], help="Dry run - Do everything except actually run commands.")
     parser.add_argument(      "--repo.strict",        type = str_to_bool,  choices = [True, False], help="Strict mode, slightly more error checking to catch footguns.")
 
-    parser.add_argument(      "--script.path",        type=str.strip,     help="Path to the .hancho file that starts the build.")
-    parser.add_argument(      "--script.root",        type=str.strip,     help="The top script runs in this directory.")
+    parser.add_argument(      "--script3.path",        type=str.strip,     help="Path to the .hancho file that starts the build.")
+    parser.add_argument(      "--script3.root",        type=str.strip,     help="The top script runs in this directory.")
 
     parser.add_argument(      "--task.depformat",     type=str.strip,     help="Default dependency file format (gcc or msvc) for tasks")
     # fmt: on
@@ -700,6 +700,50 @@ def parse_flags(*argv) -> Dict:
 
 #endregion
 # ==================================================================================================
+# region mergey stuffs
+
+
+def merge_variants(
+    dst: object | abc.MutableMapping,
+    lhs: object | abc.Mapping,
+    rhs: object | abc.Mapping,
+    merge_dicts: bool,
+    merge_lists: bool,
+    keep_lhs: bool,
+    keep_rhs: bool,
+):
+    dst = dst if isinstance(dst, abc.MutableMapping) else vars(dst)
+    lhs = lhs if isinstance(lhs, abc.Mapping) else vars(lhs)
+    rhs = rhs if isinstance(rhs, abc.Mapping) else vars(rhs)
+
+    lkeys = lhs.keys()
+    rkeys = rhs.keys()
+    keys = list(lhs) + [r for r in rhs if r not in lhs]
+
+    for key in keys:
+        if key in lkeys and key not in rkeys and not keep_lhs:
+            continue
+        if key not in lkeys and key in rkeys and not keep_rhs:
+            continue
+
+        lhs2 = lhs.get(key)
+        rhs2 = rhs.get(key)
+        dst2 = None
+
+        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
+            dst2 = Dict()
+            merge_variants(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
+        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
+            dst2 = lhs2 + rhs2
+        elif rhs2 is not None:
+            dst2 = rhs2
+        else:
+            dst2 = lhs2
+
+        dst[key] = dst2
+
+# endregion
+# ==================================================================================================
 #region Dict
 
 
@@ -741,45 +785,17 @@ class Dict(abc.MutableMapping):
                 v.check_links()
 
     # FIXME this is colliding with something in MutableMapping
-    def update(self, *args : dict | Dict, **kwargs): # type: ignore
+
+    #def update(self, other: abc.Mapping[Any, Any] | abc.Iterable[Tuple[Any, Any]] = ..., **kwargs: Any) -> None:
+    #    pass
+
+    def update(self, *args, **kwargs):
         all_things = list(args) + [kwargs]  # noqa: RUF005
         for rhs in filter(None, all_things):
-            Dict.generic_merge(
+            merge_variants(
                 self, self, rhs,
                 merge_dicts=True, merge_lists=True,
                 keep_lhs=True, keep_rhs=True)
-
-    @staticmethod
-    def generic_merge(dst: Dict, lhs: dict | Dict, rhs: dict | Dict,
-        merge_dicts: bool, merge_lists: bool, keep_lhs: bool, keep_rhs: bool):
-
-        assert isinstance(dst, Dict)
-        keys = list(lhs) + [r for r in rhs if r not in lhs]
-
-        for key in keys:
-            if key in lhs and key not in rhs and not keep_lhs: continue
-            if key not in lhs and key in rhs and not keep_rhs: continue
-
-            lhs2 = lhs.get(key)
-            rhs2 = rhs.get(key)
-
-            if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
-                dst2 = Dict()
-                Dict.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
-            elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
-                dst2 = lhs2 + rhs2
-            elif rhs2 is not None:
-                dst2 = rhs2
-            else:
-                dst2 = lhs2
-
-            if isinstance(dst2, Dict):
-                dst2.link(dst)
-
-            dst._dict[key] = dst2
-
-        dst.check_links()
-        return dst
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -790,7 +806,7 @@ class Dict(abc.MutableMapping):
     def fill(self : Dict, *args : Dict, **kwargs):
         dest = Dict(self)
         for rhs in (*args, kwargs):
-            Dict.generic_merge(dest, dest, rhs, True, True, True, False)
+            merge_variants(dest, dest, rhs, True, True, True, False)
         return dest
 
 
@@ -911,84 +927,6 @@ class Tool(Dict):
 class Data(Dict):
     # Same thing
     pass
-
-# endregion
-# ==================================================================================================
-# region mergey stuffs
-
-
-def merge_mappings(
-    dst: abc.MutableMapping,
-    lhs: abc.Mapping,
-    rhs: abc.Mapping,
-    merge_dicts: bool,
-    merge_lists: bool,
-    keep_lhs: bool,
-    keep_rhs: bool,
-):
-
-    lkeys = lhs.keys()
-    rkeys = rhs.keys()
-
-    for key in lkeys | rkeys:
-        if key in lkeys and key not in rkeys and not keep_lhs:
-            continue
-        if key not in lkeys and key in rkeys and not keep_rhs:
-            continue
-
-        lhs2 = lhs.get(key)
-        rhs2 = rhs.get(key)
-        dst2 = None
-
-        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
-            dst2 = Dict()
-            Dict.generic_merge(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
-        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
-            dst2 = lhs2 + rhs2
-        elif rhs2 is not None:
-            dst2 = rhs2
-        else:
-            dst2 = lhs2
-
-        if dst2 is not None:
-            dst[key] = dst2
-
-    return dst
-
-
-def merge_variants(
-    dst: object | abc.MutableMapping,
-    lhs: object | abc.Mapping,
-    rhs: object | abc.Mapping,
-    merge_dicts: bool,
-    merge_lists: bool,
-    keep_lhs: bool,
-    keep_rhs: bool,
-):
-    if not isinstance(dst, abc.MutableMapping):
-        dst = vars(dst)
-    if not isinstance(lhs, abc.Mapping):
-        lhs = vars(lhs)
-    if not isinstance(rhs, abc.Mapping):
-        rhs = vars(rhs)
-
-    return merge_mappings(dst, lhs, rhs, merge_dicts, merge_lists, keep_lhs, keep_rhs)
-
-
-def update_variant(
-    lhs: object | abc.Mapping,
-    rhs: object | abc.Mapping,
-    merge_dicts: bool,
-    merge_lists: bool,
-    keep_rhs: bool,
-):
-    if not isinstance(lhs, abc.MutableMapping):
-        lhs = vars(lhs)
-    if not isinstance(rhs, abc.Mapping):
-        rhs = vars(rhs)
-
-    return merge_mappings(lhs, lhs, rhs, merge_dicts, merge_lists, True, keep_rhs)
-
 
 # endregion
 # ==================================================================================================
@@ -1601,7 +1539,7 @@ class Repo:
 
     def yield_tasks(self) -> abc.Iterator[Task]:
         for script in self.repo_scripts:
-            yield from script.node.script_tasks
+            yield from script.script_tasks
 
 # ==============================================================================================
 # region stat stuff
@@ -1721,12 +1659,11 @@ def save_stat_db(repo):
 # ==================================================================================================
 
 class Script:
-    def __init__(self, node: Dict):
-        self.name  = "<script>",
-        self.path  = os.path.abspath("build.hancho"),
-        self.root  = '{dirname(path)}',
-        self.script_tasks = [],
-        self.node  = node
+    def __init__(self, name, path, root):
+        self.name  = name
+        self.path  = path
+        self.root  = root
+        self.script_tasks = []
 
 # ==================================================================================================
 # region Task
@@ -2009,7 +1946,7 @@ class Task:
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
-        file = Path.join(self._script.node.root, file)
+        file = Path.join(self._script.root, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -2019,7 +1956,7 @@ class Task:
         # Note - This will also move "in_depfile" under build_dir - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(file, build_dir):
-            file = Path.relpath(file, self._script.node.root)
+            file = Path.relpath(file, self._script.root)
             file = Path.join(build_dir, file)
 
         return file
@@ -2144,12 +2081,12 @@ class Task:
     # ==================================================================================================
 
     async def call_callback(self : Task, command : abc.Callable):
-        callback_dir = Path.relpath(self._script.node.root, self._repo.repo_node.root)
+        callback_dir = Path.relpath(self._script.root, self._repo.repo_node.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(self._script.node.root): # type: ignore
+        with chdir(self.node._up.script3.root): # type: ignore
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2240,7 +2177,7 @@ class Task:
         Log.error("========================================\n")
         Log.error(message + "\n")
         Log.error("========================================\n")
-        Log.error(f"Script    = {self._script.node.path}:\n")
+        Log.error(f"Script    = {self._script.path}:\n")
         Log.error(f"Task      = '{node.name}' : '{node.desc}'\n")
         Log.error(f"os.getcwd = {os.getcwd()}\n")
         Log.error(f"task cwd  = {node.cwd}\n")
@@ -2290,7 +2227,7 @@ hancho_defaults = Dict(
     ),
     repo = Dict(
         name        = "<repo>",
-        root        = '{script.root}',
+        root        = '{script3.root}',
         build_dir   = "{join(root, 'build', build_tag)}",
         build_tag   = '',
         targets     = [],
@@ -2301,11 +2238,10 @@ hancho_defaults = Dict(
         repo_stat_db2 = {},
         repo_scripts2 = []
     ),
-    script = Dict(
+    script3 = Script(
         name  = "<script>",
         path  = os.path.abspath("build.hancho"),
         root  = '{dirname(path)}',
-        script_tasks = [],
     ),
     task = Dict(
         name       = '<no name>',
@@ -2315,7 +2251,7 @@ hancho_defaults = Dict(
         in_depfile = '',
         depformat  = "gcc" if os.name == "posix" else "msvc",
         job_size   = 1,
-        build_dir  = '{join(repo.build_dir, relpath(script.root, repo.root))}',
+        build_dir  = '{join(repo.build_dir, relpath(script3.root, repo.root))}',
         dry_run    = '{repo.dry_run}',
         force      = '{repo.build_force}',
     ),
@@ -2340,8 +2276,8 @@ class HanchoProxy(types.ModuleType):
         flags = parse_flags(*args)
 
         top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
-        top_tree.script.path = file
-        top_tree.script.root = os.path.dirname(file)
+        top_tree.script3.path = file
+        top_tree.script3.root = os.path.dirname(file)
         Hancho.init(top_tree)
 
         root_proxy = load_script(parent_repo = None, new_tree = top_tree)
@@ -2363,7 +2299,7 @@ class HanchoProxy(types.ModuleType):
         task_node = Dict(self._tree.task, *args, kwargs)
         task_node.link(self._tree)
         task = Task(repo = self._repo, script = self._script, task_node = task_node)
-        self._script.node.script_tasks.append(task)
+        self._script.script_tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2373,22 +2309,11 @@ class HanchoProxy(types.ModuleType):
         if root is None:
             root = Path.dirname(path)
 
-        new_tree = Dict(self._tree, *args, kwargs, Dict(script = Dict(path = path, root = root)))
-
-#        path = self._tree.expand(path)
-#        root = self._tree.expand(root)
-#        if root is None:
-#            root = Path.dirname(path)
-#        new_tree = Dict(self._tree, *args, kwargs)
-#        new_tree.script.path = path
-#        new_tree.script.root = root
-#
-#        Expander.xip(new_tree.script)
-#        path = Path.resolve(new_tree.script.path)
-#        if new_tree.script.root is None:
-#            root = Path.dirname(path)
-#        else:
-#            root = Path.resolve(new_tree.script.root)
+        new_tree = Dict(
+            copy.deepcopy(self._tree),
+            *args, kwargs,
+            script3 = Dict(path = path, root = root)
+        )
 
         return load_script(None if is_repo else self._repo, new_tree)._module
 
@@ -2451,10 +2376,10 @@ def _start():
 # ==================================================================================================
 
 def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
-    Expander.xip(new_tree.script)
+    Expander.xip(new_tree.script3)
 
-    path = Path.resolve(new_tree.script.path)
-    root = Path.resolve(new_tree.script.root)
+    path = Path.resolve(new_tree.script3.path)
+    root = Path.resolve(new_tree.script3.root)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
@@ -2479,12 +2404,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     repo   = parent_repo or Repo(new_tree.repo)
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
 
-    Expander.xip(new_tree.script)
-    script = Script(new_tree.script)
-
-    new_tree.script2 = script
-
-    proxy  = HanchoProxy(repo, script, module, new_tree)
+    proxy  = HanchoProxy(repo, new_tree.script3, module, new_tree)
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
@@ -2493,7 +2413,7 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
     Hancho.dedupe[dupe_key] = proxy
     Hancho.repos.add(proxy._repo)
 
-    repo.repo_scripts.append(script)
+    repo.repo_scripts.append(new_tree.script3)
 
     if not code or not root:
         return proxy

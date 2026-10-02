@@ -172,7 +172,7 @@ def cpp_test(*, in_srcs=None, in_objs=None, **kwargs):
     test_bin = hancho.Task(
         link_cpp_bin.fill(kwargs),
         in_objs=[new_objs, in_objs],
-        test_dir = "{script_dir}",
+        test_dir = "{script3.root}",
     )
 
     return hancho.Task(run_test.fill(kwargs), in_test=test_bin)

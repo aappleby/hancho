@@ -4,7 +4,7 @@ import sys
 
 tools = hancho.load("tools_stage3.hancho")
 
-tools.compile_cpp.includes.append("-I" + tree.script.root)
+tools.compile_cpp.includes.append("-I" + tree.script3.root)
 
 lib   = hancho.load("lib/build.hancho")
 
