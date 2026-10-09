@@ -47,7 +47,7 @@ from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
 from functools import wraps
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 #endregion
 # ==================================================================================================
@@ -56,6 +56,10 @@ from typing import Any, cast
 # Just a sanity check that we haven't accidentally imported the 'real' hancho twice.
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
+
+old_vars = vars
+def vars(v):
+    return v if Utils.is_mapping(v) else old_vars(v)
 
 #endregion
 # ==================================================================================================
@@ -157,13 +161,31 @@ class Utils:
         return list(Utils.yield_values(variant))
 
     @staticmethod
+    def is_scalar(v):
+        return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
+
+    @staticmethod
+    def is_sequence(v) -> TypeGuard[abc.Sequence]:
+        if isinstance(v, (str, bytes, bytearray)):
+            return False
+        return isinstance(v, abc.Sequence)
+
+    @staticmethod
+    def is_set(v) -> TypeGuard[abc.Set]:
+        return isinstance(v, abc.Set)
+
+    @staticmethod
+    def is_mapping(v) -> TypeGuard[abc.MutableMapping]:
+        return isinstance(v, abc.MutableMapping)
+
+    @staticmethod
     def yield_values(variant) -> Any:
         if variant is None:
             return
-        elif isinstance(variant, abc.Mapping):
+        elif Utils.is_mapping(variant):
             for v in variant.values():
                 yield from Utils.yield_values(v)
-        elif isinstance(variant, (list, tuple, set)):
+        elif Utils.is_set(variant) or Utils.is_sequence(variant):
             for v in variant:
                 yield from Utils.yield_values(v)
         else:
@@ -177,7 +199,7 @@ class Utils:
     def instance_tag(obj):
         #if obj is hancho_aliases:
         #    return "{aliases}"
-        if isinstance(obj, abc.Mapping) and 'name' in obj:
+        if Utils.is_mapping(obj) and 'name' in obj:
             return obj['name'] + "@" + Utils.hex_id(obj)
         else:
             return type(obj).__name__ + "@" + Utils.hex_id(obj)
@@ -195,12 +217,14 @@ class Utils:
 
         @wraps(func)
         def wrapper(obj, *args, **kwargs):
-            if isinstance(obj, (dict, Dict)):
-                wrapped_items = {k: wrapper(v, *args, **kwargs) for k, v in obj.items()}
-                return type(obj)(**wrapped_items)
-            if isinstance(obj, (list, tuple, set)):
-                return type(obj)(wrapper(v, *args, **kwargs) for v in obj)
-            return func(obj, *args, **kwargs)
+            if Utils.is_mapping(obj):
+                items = {k: wrapper(v, *args, **kwargs) for k, v in obj.items()}
+                return type(obj)(**items)
+            elif Utils.is_sequence(obj) or Utils.is_set(obj):
+                items = [wrapper(v, *args, **kwargs) for v in obj]
+                return type(obj)(*items)
+            else:
+                return func(obj, *args, **kwargs)
 
         return cast(abc.Callable[..., str], wrapper)
 
@@ -542,8 +566,6 @@ class Path:
 
     @staticmethod
     def relpath(lhs, rhs):
-        if isinstance(lhs, (list, tuple, set)):
-            return [Path.relpath(lh, rhs) for lh in lhs]
         if isinstance(rhs, (list, tuple, set)):
             return [Path.relpath(lhs, rh) for rh in rhs]
 
@@ -704,7 +726,7 @@ def parse_flags(*argv) -> Dict:
 
 def merge_variants(
     lhs: Node | abc.MutableMapping,
-    rhs: Node | abc.Mapping,
+    rhs: Node | abc.MutableMapping,
     merge_dicts: bool = True,
     merge_lists: bool = True,
     keep_lhs: bool = True,
@@ -713,8 +735,8 @@ def merge_variants(
     if rhs is None:
         return lhs
 
-    lhs = lhs if isinstance(lhs, abc.Mapping) else vars(lhs)
-    rhs = rhs if isinstance(rhs, abc.Mapping) else vars(rhs)
+    lhs = vars(lhs)
+    rhs = vars(rhs)
 
     lkeys = lhs.keys()
     rkeys = rhs.keys()
@@ -733,11 +755,13 @@ def merge_variants(
         rhs2 = rhs.get(key)
         dst2 = None
 
-        if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
+        if Utils.is_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_dicts:
             merge_variants(lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
             dst2 = lhs2
-        elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
-            dst2 = lhs2 + rhs2
+        elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_lists:
+            dst2 = [*lhs2, *rhs2]
+        elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_lists:
+            dst2 = lhs2 | rhs2
         elif rhs2 is not None:
             dst2 = rhs2
         else:
@@ -768,7 +792,11 @@ def get_up(src : Dict | Node) -> Dict | Node | None:
         return None
 
 
-class Dict(abc.MutableMapping):
+class Node:
+    pass
+
+
+class Dict(Node, abc.MutableMapping):
     """
     This class extends 'dict' in a couple ways -
     1. Dict supports "foo.bar" attribute access in addition to "foo['bar']"
@@ -785,19 +813,18 @@ class Dict(abc.MutableMapping):
     """
 
     @staticmethod
-    def dictify(d):
-        if not isinstance(d, dict):
-            return d
-        assert isinstance(d, (dict, Dict))
+    def dictify(d : dict):
+        new_d = Dict.__new__(Dict)
+        object.__setattr__(new_d, "_dict", d)
 
-        if type(d) is dict:
-            new_d = Dict.__new__(Dict)
-            object.__setattr__(new_d, "_dict", d)
-            d = new_d
-
-        for k,v in d.items():
-            d[k] = Dict.dictify(v)
-        return d
+        for k,v in new_d.items():
+            if isinstance(v, dict):
+                new_d[k] = Dict.dictify(v)
+            elif isinstance(v, list):
+                for i, v2 in enumerate(v):
+                    if isinstance(v2, dict):
+                        v[i] = Dict.dictify(v2)
+        return new_d
 
 
 
@@ -814,7 +841,7 @@ class Dict(abc.MutableMapping):
     #    pass
 
     def update(self, *args, **kwargs):
-        all_things = list(args) + [kwargs]  # noqa: RUF005
+        all_things = [*args, kwargs]
         for rhs in filter(None, all_things):
             rhs = Dict.dictify(rhs)
             merge_variants(
@@ -1023,16 +1050,10 @@ class Expander(abc.Mapping):
         return self.internal_get(key, check_up = True)
 
     def __iter__(self):
-        if isinstance(self.tree, abc.Mapping):
-            return self.tree.__iter__()
-        else:
-            return vars(self.tree).__iter__()
+        return vars(self.tree).__iter__()
 
     def __len__(self):
-        if isinstance(self.tree, abc.Mapping):
-            return self.tree.__len__()
-        else:
-            return vars(self.tree).__len__()
+        return vars(self.tree).__len__()
 
     # ====================================
 
@@ -1041,12 +1062,12 @@ class Expander(abc.Mapping):
         cursor = self.tree
         result = Utils.MISSING
 
-        keys = cursor if isinstance(cursor, abc.Mapping) else vars(cursor)
+        keys = vars(cursor)
         while key not in keys:
             if check_up and (up := get_up(cursor)): # type: ignore
                 trace_up(cursor, up, "get", key)
                 cursor = up
-                keys = cursor if isinstance(cursor, abc.Mapping) else vars(cursor)
+                keys = vars(cursor)
             else:
                 raise KeyError(key)
 
@@ -1090,22 +1111,17 @@ class Expander(abc.Mapping):
     @classmethod
     def xip(cls, tree : Dict | Node):
         # FIXME this is messy
-        if isinstance(tree, abc.MutableMapping):
-            for key, val in tree.items():
-                if key == "_up":
-                    continue
-                if isinstance(val, Dict):
-                    cls.xip(val)
-                else:
-                    tree[cast(str, key)] = Expander._expand(val, tree)
-        else:
-            for key, val in vars(tree).items():
-                if key == "_up":
-                    continue
-                if isinstance(val, Dict):
-                    cls.xip(val)
-                else:
-                    vars(tree)[cast(str, key)] = Expander._expand(val, tree)
+
+        tree_vars = vars(tree)
+
+        for key, val in tree_vars.items():
+            if key == "_up":
+                continue
+            if isinstance(val, Dict):
+                cls.xip(val)
+            else:
+                tree_vars[cast(str, key)] = Expander._expand(val, tree)
+
         return tree
 
     @classmethod
@@ -1129,14 +1145,13 @@ class Expander(abc.Mapping):
 
                 if var is Utils.MISSING:
                     raise AssertionError("Tried to expand a sentinel value")
-                elif isinstance(var, abc.Mapping):
+                elif Utils.is_mapping(var):
                     result = type(var)()
                     for k, v in var.items():
                         v2 = Expander._expand(v, tree)
                         result[k] = v2 # type: ignore
                     return result
-
-                elif isinstance(var, abc.Collection) and not isinstance(var, (str, bytes, bytearray)):
+                elif Utils.is_sequence(var) or Utils.is_set(var):
                     return type(var)(Expander._expand(v, tree) for v in var) # type: ignore
                 elif not isinstance(var, str):
                     return var
@@ -1329,11 +1344,9 @@ class Dumper:
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts, seen)
-        elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, Enum):  # noqa: SIM114
+        elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, Enum):
             return cls._dump_scalar(key, val, opts, seen)
-        elif isinstance(val, (str, bytes, bytearray)):
-            return cls._dump_scalar(key, val, opts, seen)
-        elif isinstance(val, abc.Collection):
+        elif Utils.is_sequence(val) or Utils.is_mapping(val):
             return cls._dump_vector(key, val, val, opts, seen)
         elif hasattr(val, "__dict__"):
             return cls._dump_vector(key, val, val.__dict__, opts, seen)
@@ -1352,14 +1365,18 @@ class Dumper:
             return prefix + "<ref loop>"
         seen.add(id(val))
 
-        if isinstance(contents, tuple):
-            items = [(None, v) for v in contents]
-            ld, items, rd = '(', items, ",)" if len(items) == 1 else ')'
-        elif isinstance(contents, abc.Mapping):
+        if Utils.is_mapping(contents):
             ld, items, rd = '{', list(contents.items()), '}'
-        elif isinstance(contents, abc.Collection):
+        elif Utils.is_sequence(contents):
             items = [(None, v) for v in contents]
-            ld, items, rd = '[', items, ']'
+            if isinstance(contents, tuple):
+                ld, items, rd = '(', items, ",)" if len(items) == 1 else ')'
+            else:
+                ld, items, rd = '[', items, ']'
+        elif Utils.is_set(contents):
+            items = [(None, v) for v in contents]
+            ld, items, rd = '{', items, "}"
+
         else:
             raise AssertionError(f"Don't know what to do with {type(val)}") # pragma: no cover
 
@@ -1476,11 +1493,11 @@ def trace_end(tree, arg, result):
     result_color = Log.RESET
     result_type  = type(result)
 
-    if isinstance(result, (dict,Dict,Expander)):
+    if Utils.is_mapping(result):
         result_color = Utils.obj_to_ansi_color(result)
 
     Log.info(f"{tree_color}└ {arg!r} : {result_type.__name__}{Log.RESET} = ")
-    if isinstance(result, (Dict, list, set)):
+    if not Utils.is_scalar(result):
         Log.info(f"{result_color}{Utils.instance_tag(result)}\n")
     else:
         Log.info(f"{result_color}{result!r}\n")
@@ -1565,9 +1582,6 @@ class Hancho:
 
 # endregion
 # ==================================================================================================
-
-class Node:
-    pass
 
 class Repo(Node):
     def __init__(self):
@@ -1989,9 +2003,9 @@ class Task:
         In general we want to run commands from the root of the repo and store output files in
         repo/build, so we need to fix up the paths to match.
         """
-        if isinstance(file, (list, set, tuple)):
+        if Utils.is_sequence(file) or Utils.is_set(file):
             return [self.fix_paths(field, f, build_dir) for f in file]
-        if isinstance(file, abc.Mapping):
+        if Utils.is_mapping(file):
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
@@ -2712,9 +2726,4 @@ else:
     b.glom = [1, 2, 3]
     b.derp = {"a":3, "c":4}
 
-    print(vars(a))
-    #merge_objects(a, a, b, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
     update_variant(a, b, merge_dicts = True, merge_lists = True, keep_rhs = True)  # type: ignore # noqa: F821
-    #update_dict(vars(a), vars(b), merge_dicts = True, merge_lists = True, keep_rhs = True)
-
-    print(vars(a))

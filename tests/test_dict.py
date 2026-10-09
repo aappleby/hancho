@@ -102,11 +102,9 @@ class TestDict(unittest.TestCase):
             return d
 
         def check_all_items(d):
-            if isinstance(d, (str, bytes, bytearray)):
-                self.assertNotEqual(d, "SENTINEL")
-            elif isinstance(d, abc.Mapping):
+            if hancho.Utils.is_mapping(d):
                 for v in d.values(): check_all_items(v)
-            elif isinstance(d, abc.Collection):
+            elif hancho.Utils.is_sequence(d) or hancho.Utils.is_set(d):
                 for v in d: check_all_items(v)
             else:
                 self.assertNotEqual(d, "SENTINEL")
