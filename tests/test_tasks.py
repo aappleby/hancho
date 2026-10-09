@@ -52,7 +52,13 @@ class TestTasks(unittest.TestCase):
 
     def reinit(self, *argv):
         global hancho
-        hancho = hancho_proxy.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
+        hancho = hancho_proxy.init_for_testing(
+            __file__,
+            f"--log.level={VERBOSITY}",
+            "--log.wrap=True",
+            "--hancho.trace=True",
+            *argv
+        )
 
     def setUp(self):
         # Always wipe the build dir before a test, but make sure we're in the right dir.
@@ -74,6 +80,10 @@ class TestTasks(unittest.TestCase):
 
     def test_none(self):
         pass
+
+    def test_trivial(self):
+        hancho.Task(command="echo test_run_tasks_zero")
+        self.run_tasks(0)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -447,8 +457,14 @@ class TestTasks(unittest.TestCase):
     def test_arbitrary_flags(self):
         # Passing arbitrary flags to Hancho should work
         self.reinit("--flarpy=flarp.txt")
+
+        def callback(task):
+            return force_touch(task.node.out_file)
+
         hancho.Task(
-            command = lambda task : force_touch(task.node.out_file),
+            name = "test_arbitrary_flags",
+            desc = "yes it's a test case",
+            command = callback,
             in_files=[],
             out_file="{flarpy}",
         )

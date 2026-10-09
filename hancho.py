@@ -27,7 +27,6 @@ import ast
 import asyncio
 import colorsys
 import contextvars
-import copy
 import dataclasses
 import hashlib
 import inspect
@@ -704,15 +703,16 @@ def parse_flags(*argv) -> Dict:
 
 
 def merge_variants(
-    dst: object | abc.MutableMapping,
-    lhs: object | abc.Mapping,
-    rhs: object | abc.Mapping,
-    merge_dicts: bool,
-    merge_lists: bool,
-    keep_lhs: bool,
-    keep_rhs: bool,
+    lhs: Node | abc.MutableMapping,
+    rhs: Node | abc.Mapping,
+    merge_dicts: bool = True,
+    merge_lists: bool = True,
+    keep_lhs: bool = True,
+    keep_rhs: bool = True,
 ):
-    dst = dst if isinstance(dst, abc.MutableMapping) else vars(dst)
+    if rhs is None:
+        return lhs
+
     lhs = lhs if isinstance(lhs, abc.Mapping) else vars(lhs)
     rhs = rhs if isinstance(rhs, abc.Mapping) else vars(rhs)
 
@@ -721,6 +721,9 @@ def merge_variants(
     keys = list(lhs) + [r for r in rhs if r not in lhs]
 
     for key in keys:
+        if key == "_up":
+            continue
+
         if key in lkeys and key not in rkeys and not keep_lhs:
             continue
         if key not in lkeys and key in rkeys and not keep_rhs:
@@ -731,8 +734,8 @@ def merge_variants(
         dst2 = None
 
         if isinstance(lhs2, (dict, Dict)) and isinstance(rhs2, (dict, Dict)) and merge_dicts:
-            dst2 = Dict()
-            merge_variants(dst2, lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
+            merge_variants(lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
+            dst2 = lhs2
         elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_lists:
             dst2 = lhs2 + rhs2
         elif rhs2 is not None:
@@ -740,28 +743,30 @@ def merge_variants(
         else:
             dst2 = lhs2
 
-        dst[key] = dst2
+        lhs[key] = dst2
 
 # endregion
 # ==================================================================================================
 #region Dict
 
-# FIXME ok this doesn't work on arbitrary objects because they can have back links or whatever
-# maybe change this to only check keys that don't start with an underscore?
-# that would still be annoying... caveat emptor
-def check_links(variant):
-    return
-    try:
-        variant = variant if isinstance(variant, abc.Mapping) else vars(variant)
-    except TypeError as ex:
-        return
+def link(src, dst):
+    # This can't be in Dict as we want to link both dicts and arbitrary objects.
+    dst_cursor = dst
+    while(dst_cursor):
+        dst_up = get_up(dst_cursor)
+        if dst_up == src:
+            raise AttributeError("bad linky")
+        dst_cursor = dst_up
 
-    for k, v in variant.items():
-        if k == "_up":
-            continue
-        if hasattr(v, "_up") and object.__getattribute__(v, "_up") != variant:
-            raise AssertionError(f"Child dict not linked to parent - {k}:{v} -> {variant}")
-        check_links(v)
+    #print(f"{src} -> {dst}")
+    object.__setattr__(src, "_up", dst)
+
+def get_up(src : Dict | Node) -> Dict | Node | None:
+    try:
+        return object.__getattribute__(src, "_up")
+    except AttributeError:
+        return None
+
 
 class Dict(abc.MutableMapping):
     """
@@ -779,19 +784,29 @@ class Dict(abc.MutableMapping):
 
     """
 
+    @staticmethod
+    def dictify(d):
+        if not isinstance(d, dict):
+            return d
+        assert isinstance(d, (dict, Dict))
+
+        if type(d) is dict:
+            new_d = Dict.__new__(Dict)
+            object.__setattr__(new_d, "_dict", d)
+            d = new_d
+
+        for k,v in d.items():
+            d[k] = Dict.dictify(v)
+        return d
+
+
+
     def __init__(self, *args : dict[str, Any] | Dict, **kwargs : Any):
         self._dict : dict
-        self._up : Dict | None
-
         object.__setattr__(self, "_dict", {})
-        object.__setattr__(self, "_up", None)
-        self.update(*args, kwargs)
-        #check_links(self)
+        self.update(*args, **kwargs)
 
     # ==============================================================================================
-
-    def link(self, up : Dict):
-        object.__setattr__(self, "_up", up)
 
     # FIXME this is colliding with something in MutableMapping
 
@@ -801,8 +816,9 @@ class Dict(abc.MutableMapping):
     def update(self, *args, **kwargs):
         all_things = list(args) + [kwargs]  # noqa: RUF005
         for rhs in filter(None, all_things):
+            rhs = Dict.dictify(rhs)
             merge_variants(
-                self, self, rhs,
+                self, rhs,
                 merge_dicts=True, merge_lists=True,
                 keep_lhs=True, keep_rhs=True)
 
@@ -815,7 +831,7 @@ class Dict(abc.MutableMapping):
     def fill(self : Dict, *args : Dict, **kwargs):
         dest = Dict(self)
         for rhs in (*args, kwargs):
-            merge_variants(dest, dest, rhs, True, True, True, False)
+            merge_variants(dest, rhs, True, True, True, False)
         return dest
 
 
@@ -891,21 +907,40 @@ class Dict(abc.MutableMapping):
     # endregion
     # ==============================================================================================
 
-
-    def search(self, key : str, check_up : bool):
+    def walk(self, key : str, check_up : bool) -> Dict | Node:
         cursor = self
-        while key not in cursor:
-            if check_up and (up := object.__getattribute__(cursor, "_up")):
+        #while key not in cursor:
+        while True:
+            if isinstance(cursor, Dict):
+                if key in cursor:
+                    break
+            elif isinstance(cursor, Node):
+                if hasattr(cursor, key):
+                    break
+            else:
+                raise TypeError(f"Don't know how to search a {type(cursor)}")
+            if check_up and (up := get_up(cursor)):
                 cursor = up
             else:
                 raise KeyError(key)
-        return (cursor, cursor._dict[key])
+        return cursor
 
     def internal_get(self, key, check_up = True):
-        if key == "_dict":
-            return object.__getattribute__(self, "_dict")
+        _dict = object.__getattribute__(self, "_dict")
 
-        return self.search(key, check_up)[1]
+        if key == "_dict":
+            return _dict
+        if key == "_up":
+            return get_up(self)
+
+        owner = self.walk(key, check_up)
+
+        if isinstance(owner, Dict):
+            return owner._dict[key]
+        elif isinstance(owner, Node):
+            return getattr(owner, key)
+        else:
+            raise KeyError(key)
 
     def internal_set(self, key, val):
         if key == "_dict":
@@ -925,9 +960,9 @@ class Dict(abc.MutableMapping):
 
     def xip(self, key):
         """Expand-in-place. Replaces a field with its expanded version."""
-        cursor, val = self.search(key, False)
-        result = Expander._expand(val, cursor)
-        cursor._dict[key] = result
+        result = getattr(self, key)
+        result = Expander._expand(result, self)
+        setattr(self, key, result)
         return result
 
 class Tool(Dict):
@@ -965,12 +1000,12 @@ class Expander(abc.Mapping):
 
     #region instance methods
 
-    def __init__(self, tree : object):
-        self.tree : object
+    def __init__(self, tree : Dict | Node):
+        self.tree : Dict | Node
         object.__setattr__(self, "tree", tree)
 
     @classmethod
-    def wrap(cls, tree : object):
+    def wrap(cls, tree : Dict | Node):
         if isinstance(tree, Expander):
             return tree
         else:
@@ -1008,7 +1043,7 @@ class Expander(abc.Mapping):
 
         keys = cursor if isinstance(cursor, abc.Mapping) else vars(cursor)
         while key not in keys:
-            if check_up and hasattr(cursor, "_up") and (up := cursor._up): # type: ignore
+            if check_up and (up := get_up(cursor)): # type: ignore
                 trace_up(cursor, up, "get", key)
                 cursor = up
                 keys = cursor if isinstance(cursor, abc.Mapping) else vars(cursor)
@@ -1019,7 +1054,7 @@ class Expander(abc.Mapping):
         result = getattr(cursor, key)
         trace_end(cursor, key, result)
 
-        if isinstance(result, abc.Mapping):
+        if isinstance(result, (Dict, Node)):
             # have to do this so that "read nested c first" resolves in the dest dict first
             result = Expander.wrap(result)
         else:
@@ -1053,7 +1088,7 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     @classmethod
-    def xip(cls, tree : object):
+    def xip(cls, tree : Dict | Node):
         # FIXME this is messy
         if isinstance(tree, abc.MutableMapping):
             for key, val in tree.items():
@@ -1074,12 +1109,9 @@ class Expander(abc.Mapping):
         return tree
 
     @classmethod
-    def _expand(cls, var : Any, tree : object) -> Any:
+    def _expand(cls, var : Any, tree : Dict | Node) -> Any:
         if isinstance(tree, Expander):
             tree = tree.tree
-
-        if isinstance(tree, Dict):
-            check_links(tree)
 
         # Bail out if we've recursed too many times.
         old_depth = Expander.cv_depth.get()
@@ -1147,7 +1179,7 @@ class Expander(abc.Mapping):
 
 
     @classmethod
-    def _eval_macro(cls, var : Expander.Macro, tree : object) -> Any:
+    def _eval_macro(cls, var : Expander.Macro, tree : Dict | Node) -> Any:
         # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
         if old_evals >= Expander.MAX_EVALS:
@@ -1161,8 +1193,8 @@ class Expander(abc.Mapping):
             var = eval(var[1:-1], {}, Expander.wrap(tree))
         except RecursionError:
             raise
-        except Exception as _:
-            #Log.log(f"eval failed because >{ex}<\n")
+        except Exception as ex:
+            Log.critical(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         except BaseException:
             raise
@@ -1519,12 +1551,6 @@ class Hancho:
 
     @classmethod
     def init(cls, top_tree):
-        log_node = top_tree.pop("log")
-        hancho_node = top_tree.pop("hancho")
-        mid_tree = Dict(name="<mid>", log = log_node, hancho = hancho_node)
-        mid_tree.link(hancho_aliases)
-        top_tree.link(mid_tree)
-
         cls.real_filenames = set()
         cls.dedupe = Dict()
         cls.repos : set[Repo] = set()
@@ -1540,9 +1566,12 @@ class Hancho:
 # endregion
 # ==================================================================================================
 
-class Repo:
-    def __init__(self, up):
-        self._up         = up
+class Node:
+    pass
+
+class Repo(Node):
+    def __init__(self):
+        super().__init__()
         self.name        = "<repo>"
         self.root        = '{script3.root}'
         self.build_dir   = "{join(root, 'build', build_tag)}"
@@ -1677,9 +1706,9 @@ def save_stat_db(repo):
 # endregion
 # ==================================================================================================
 
-class Script:
-    def __init__(self, up):
-        self._up   = up
+class Script(Node):
+    def __init__(self):
+        super().__init__()
         self.name  = "<script>"
         self.path  = os.path.abspath("build.hancho")
         self.root  = '{dirname(path)}'
@@ -1903,7 +1932,7 @@ class Task:
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(node, fold = ["hancho", "log", "in_objs"]) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(node, fold = ["hancho", "log", "in_objs", "_up"]) + "\n")
 
         #tree = task._tree
         build_dir = node.xip("build_dir")
@@ -2230,47 +2259,58 @@ hancho_aliases = Dict(
 
 # ==================================================================================================
 
-hancho_defaults = Dict(
-    name = "<defaults>",
-    hancho = Dict(
-        name       = "<hancho>",
-        root       = os.path.dirname(__file__),
-        max_errors = 0,
-        max_jobs   = os.cpu_count() or 1,
-        trace      = False, #True,
-    ),
-    log = Dict(
-        name       = "<log>",
-        level     = "info",
-        wrap      = False,
-        color     = True,
-        timestamp = True
-    ),
-    repo = Dict(
-        name        = "<repo>",
-        root        = '{script3.root}',
-        build_dir   = "{join(root, 'build', build_tag)}",
-        build_tag   = '',
-        targets     = [],
-        build_force = False,
-        build_all   = False,
-        dry_run     = False,
-        strict      = True,
-    ),
-    script3 = Script(None),
-    task = Dict(
-        name       = '<no name>',
-        desc       = '<no desc>',
-        command    = None,
-        cwd        = '{repo.root}',
-        in_depfile = '',
-        depformat  = "gcc" if os.name == "posix" else "msvc",
-        job_size   = 1,
-        build_dir  = '{join(repo.build_dir, relpath(script3.root, repo.root))}',
-        dry_run    = '{repo.dry_run}',
-        force      = '{repo.build_force}',
-    ),
-)
+class Defaults(Node):
+    def __init__(self):
+        self._up = hancho_aliases
+        self.name = "<defaults>"
+
+        self.hancho = Dict(
+            name       = "<hancho>",
+            root       = os.path.dirname(__file__),
+            max_errors = 0,
+            max_jobs   = os.cpu_count() or 1,
+            trace      = False, #True,
+        )
+        link(self.hancho, self)
+
+        self.log = Dict(
+            name       = "<log>",
+            level     = "info",
+            wrap      = False,
+            color     = True,
+            timestamp = True
+        )
+        link(self.log, self)
+
+        self.repo = Dict(
+            name        = "<repo>",
+            root        = '{script3.root}',
+            build_dir   = "{join(root, 'build', build_tag)}",
+            build_tag   = '',
+            targets     = [],
+            build_force = False,
+            build_all   = False,
+            dry_run     = False,
+            strict      = True,
+        )
+        link(self.repo, self)
+
+        self.script3 = Script()
+        link(self.script3, self)
+
+        self.task = Dict(
+            name       = '<no name>',
+            desc       = '<no desc>',
+            command    = None,
+            cwd        = '{repo.root}',
+            in_depfile = '',
+            depformat  = "gcc" if os.name == "posix" else "msvc",
+            job_size   = 1,
+            build_dir  = '{join(repo.build_dir, relpath(script3.root, repo.root))}',
+            dry_run    = '{repo.dry_run}',
+            force      = '{repo.build_force}',
+        )
+        link(self.task, self)
 
 # ==================================================================================================
 
@@ -2278,7 +2318,7 @@ hancho_defaults = Dict(
 
 class HanchoProxy(types.ModuleType):
 
-    def __init__(self, repo : Repo, script : Script, module : types.ModuleType, tree : Dict):
+    def __init__(self, repo : Repo, script : Script, module : types.ModuleType, tree : Defaults):
         super().__init__("hancho_proxy")
         self._repo   = repo
         self._script = script
@@ -2290,12 +2330,11 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(file : str, *args) -> HanchoProxy:
         flags = parse_flags(*args)
 
-        top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
+        top_tree = Defaults()
+        merge_variants(top_tree, flags)
         top_tree.script3.name = "<name>"
         top_tree.script3.path = file
         top_tree.script3.root = os.path.dirname(file)
-
-        check_links(top_tree)
 
         Hancho.init(top_tree)
 
@@ -2316,7 +2355,7 @@ class HanchoProxy(types.ModuleType):
 
     def Task(self, *args, **kwargs):
         task_node = Dict(self._tree.task, *args, kwargs)
-        task_node.link(self._tree)
+        link(task_node, self._tree)
         task = Task(repo = self._repo, script = self._script, task_node = task_node)
         self._script.script_tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
@@ -2328,11 +2367,13 @@ class HanchoProxy(types.ModuleType):
         if root is None:
             root = Path.dirname(path)
 
-        new_tree = Dict(
-            copy.deepcopy(self._tree),
-            *args, kwargs,
+        new_tree = Defaults()
+        overrides = Dict(
+            *args,
+            kwargs,
             script3 = Dict(path = path, root = root)
         )
+        merge_variants(new_tree, overrides)
 
         return load_script(None if is_repo else self._repo, new_tree)._module
 
@@ -2394,7 +2435,7 @@ def _start():
 
 # ==================================================================================================
 
-def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
+def load_script(parent_repo : Repo | None, new_tree : Defaults) -> HanchoProxy:
     Expander.xip(new_tree.script3)
 
     path = Path.resolve(new_tree.script3.path)
@@ -2422,8 +2463,9 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 
 
 
-    repo   = parent_repo or Repo(new_tree)
-    merge_variants(repo, repo, new_tree.repo, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
+    repo   = parent_repo or Repo()
+    link(repo, new_tree)
+    merge_variants(repo, new_tree.repo)
     Expander.xip(repo)
 
 
@@ -2457,9 +2499,9 @@ def load_script(parent_repo : Repo | None, new_tree : Dict) -> HanchoProxy:
 def hancho_main() -> int:
 
     flags = parse_flags(*sys.argv)
-    top_tree = Dict(copy.deepcopy(hancho_defaults), flags)
+    top_tree = Defaults()
+    merge_variants(top_tree, flags)
     top_tree.name = "<top>"
-    check_links(top_tree)
 
     Hancho.init(top_tree)
 
@@ -2474,8 +2516,9 @@ def hancho_main() -> int:
 
     time_a1 = time.perf_counter()
 
-    top_repo  = Repo(top_tree)
-    merge_variants(top_repo, top_repo, top_tree.repo, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
+    top_repo  = Repo()
+    link(top_repo, top_tree)
+    merge_variants(top_repo, top_tree.repo)
     Expander.xip(top_repo)
 
     top_proxy = load_script(top_repo, top_tree)
@@ -2671,7 +2714,7 @@ else:
 
     print(vars(a))
     #merge_objects(a, a, b, merge_dicts = True, merge_lists = True, keep_lhs = True, keep_rhs = True)
-    update_variant(a, b, merge_dicts = True, merge_lists = True, keep_rhs = True)
+    update_variant(a, b, merge_dicts = True, merge_lists = True, keep_rhs = True)  # type: ignore # noqa: F821
     #update_dict(vars(a), vars(b), merge_dicts = True, merge_lists = True, keep_rhs = True)
 
     print(vars(a))
