@@ -199,19 +199,19 @@ class TestTemplates(unittest.TestCase):
         _func = lambda x : x + 1  # noqa: E731
         _tuple = (_number, _text, _func)
         _map = Dict({"1" : _number, "2" : _text, "3" : _func})
-        d = Dict(_number = _number, _text = _text, _func = _func, _tuple = _tuple, _map = _map)
+        d = Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_map = _map)
 
         # Scalar types should pass through unchanged.
-        self.assertIs(_number, Expander._expand("{_number}", d))
-        self.assertIs(_text,   Expander._expand("{_text}", d))
-        self.assertIs(_func,   Expander._expand("{_func}", d))
+        self.assertIs(_number, Expander._expand("{x_number}", d))
+        self.assertIs(_text,   Expander._expand("{x_text}", d))
+        self.assertIs(_func,   Expander._expand("{x_func}", d))
 
         # Containers should get copied.
-        _tuple2 = cast(list, Expander._expand("{_tuple}", d))
+        _tuple2 = cast(list, Expander._expand("{x_tuple}", d))
         self.assertIsNot(_tuple, _tuple2)
         self.assertEqual(_tuple, _tuple2)
 
-        _map2 = cast(dict, Expander._expand("{_map}", d))
+        _map2 = cast(dict, Expander._expand("{x_map}", d))
         self.assertIsNot(_map,    _map2)
         self.assertEqual(_number, _map2["1"])
         self.assertEqual(_text,   _map2["2"])

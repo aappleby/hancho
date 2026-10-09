@@ -12,6 +12,14 @@
       "module"  : "unittest",
       "args"    : ["tests.test_tasks.TestTasks.test_dry_run", "-vvv"],
       "preLaunchTask": "Wipe build",
+
+
+      "variablePresentation": {
+          "special":   "group",
+          "function":  "inline",
+          "class":     "group",
+          "protected": "inline"
+      },
     },
 
     {

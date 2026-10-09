@@ -27,6 +27,7 @@ import ast
 import asyncio
 import colorsys
 import contextvars
+import copy
 import dataclasses
 import hashlib
 import inspect
@@ -202,8 +203,6 @@ class Utils:
 
     @staticmethod
     def instance_tag(obj):
-        #if obj is hancho_aliases:
-        #    return "{aliases}"
         if Utils.is_mapping(obj) and 'name' in obj:
             return obj['name'] + "@" + Utils.hex_id(obj)
         else:
@@ -728,9 +727,11 @@ def parse_flags(*argv) -> Dict:
 # ==================================================================================================
 # region mergey stuffs
 
+# FIXME need to audit stuff and make it all ignore private ("_blah") fields.
+
 def merge_variants(
     lhs: Scope,
-    rhs: abc.Mapping,
+    rhs: abc.Mapping | Scope,
     merge_dicts: bool = True,
     merge_lists: bool = True,
     keep_lhs: bool = True,
@@ -742,11 +743,15 @@ def merge_variants(
     # Prune lhs keys if needed
     if not keep_lhs:
         for key in lvars:
+            if key.startswith("_"):
+                continue
             if key not in rvars:
                 del lvars[key]
 
     # Merge all lhs+rhs pairs
     for key in lvars:
+        if key.startswith("_"):
+            continue
         if key not in rvars:
             continue
 
@@ -762,13 +767,15 @@ def merge_variants(
         elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_lists:
             lvars[key] = lhs2 | rhs2
         elif rhs2 is not None:
-            lvars[key] = rhs2
+            lvars[key] = copy.copy(rhs2)
 
     # Save rhs keys if needed
     if keep_rhs:
         for key in rvars:
+            if key.startswith("_"):
+                continue
             if key not in lvars:
-                lvars[key] = rvars[key]
+                lvars[key] = copy.copy(rvars[key])
 
 # endregion
 # ==================================================================================================
@@ -776,12 +783,15 @@ def merge_variants(
 
 class Scope:
     def __init__(self):
-        self.set_up(None)
+        object.__setattr__(self, "_up", None)
 
-    def get_up(self) -> Scope | None:
+    def has_up(self) -> bool:
+        return hasattr(self, "_up")
+
+    def get_up(self) -> Scope:
         return object.__getattribute__(self, "_up")
 
-    def set_up(self, up : Scope | None):
+    def set_up(self, up : Scope):
         # Check that we're not going to create a loop.
         cursor = up
         while(cursor):
@@ -789,6 +799,10 @@ class Scope:
                 raise AttributeError("bad linky")
             cursor = cursor.get_up()
         object.__setattr__(self, "_up", up)
+
+    # This is here so that the linter doesn't complain about reading unknown fields off a scope.
+    def __getattr__(self, key) -> Any:
+        return object.__getattribute__(self, key)
 
 # endregion
 # ==================================================================================================
@@ -1077,15 +1091,15 @@ class Expander(abc.Mapping):
     def xip(cls, scope : Scope):
         # FIXME this is messy
 
-        tree_vars = vars(scope)
+        scope_vars = vars(scope)
 
-        for key, val in tree_vars.items():
-            if key == "_up":
+        for key, val in scope_vars.items():
+            if key.startswith("_"):
                 continue
             if isinstance(val, Dict):
                 cls.xip(val)
             else:
-                tree_vars[cast(str, key)] = Expander._expand(val, scope)
+                scope_vars[cast(str, key)] = Expander._expand(val, scope)
 
         return scope
 
@@ -1533,7 +1547,7 @@ class Hancho:
     build_reasons = Counter()
 
     @classmethod
-    def init(cls, top_tree):
+    def init(cls, top_tree : Scope):
         cls.real_filenames = set()
         cls.dedupe = Dict()
         cls.repos : set[Repo] = set()
@@ -1641,13 +1655,13 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task.in_files):
+            for file in Utils.yield_values(task._task_scope.in_files):
                 stat_db[file] = Utils.get_stats(file)
 
-            in_depfile = task.task_scope.in_depfile
+            in_depfile = task._task_scope.in_depfile
             if in_depfile:
                 stat_db[in_depfile] = Utils.get_stats(in_depfile)
-                deplines = Utils.load_depfile(task.task_scope.in_depfile, task.task_scope.depformat, task.task_scope.cwd)
+                deplines = Utils.load_depfile(task._task_scope.in_depfile, task._task_scope.depformat, task._task_scope.cwd)
                 for file in deplines:
                     stat_db[file] = Utils.get_stats(file) # type: ignore
 
@@ -1658,8 +1672,8 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task.out_files):
-                stat_db[file] = Utils.get_stats(file, task.task_scope.command)
+            for file in Utils.yield_values(task._task_scope.out_files):
+                stat_db[file] = Utils.get_stats(file, task._task_scope.command)
 
         stat_db_path = Path.join(repo.build_dir, 'hancho.json')
         Utils.save_json(stat_db, stat_db_path)
@@ -1673,11 +1687,11 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task.in_files):
+            for file in Utils.yield_values(task._task_scope.in_files):
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
-                    "directory" : task.task_scope.cwd,
-                    "command"   : Utils.commands_to_string(task.task_scope.command),
+                    "directory" : task._task_scope.cwd,
+                    "command"   : Utils.commands_to_string(task._task_scope.command),
                     "file"      : file,
                 }
 
@@ -1709,20 +1723,13 @@ class Task(Scope):
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(self, repo : Repo, script : Script, task_scope : Dict):
-        self._repo   = repo
-        self._script = script
-        self.task_scope   = task_scope
+    def __init__(self, script : Script, task_scope : Dict):
+        # FIXME something weird going on here with copies, we should _not_ be copying _up!
+        task_scope2 = copy.deepcopy(task_scope)
 
-        # Build scripts also may need to see the complete list of inputs/outputs to a task in
-        # addition to the individual in_/out_ fields, so these are public.
 
-        self.in_depfile = ""
-        self.in_files  = {}
-        self.out_files = {}
-
-        # ------------------------------------
-        # Implementation details below this line
+        self._repo   = task_scope.get_up().repo
+        self._task_scope = task_scope2
 
         self._enabled = False
 
@@ -1776,8 +1783,6 @@ class Task(Scope):
             t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
             self._aio_task = t
 
-    # ==================================================================================================
-
     def queue_task(self):
         if not self._enabled:
             Runner.tasks_enabled += 1
@@ -1788,10 +1793,8 @@ class Task(Scope):
             self.create_aio_task()
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
-        for v in [v for v in Utils.yield_values(self.task_scope) if isinstance(v, Task)]:
+        for v in [v for v in Utils.yield_values(self._task_scope) if isinstance(v, Task)]:
             v.queue_task()
-
-    # ==================================================================================================
 
     async def task_top(self):
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
@@ -1824,8 +1827,6 @@ class Task(Scope):
 
         raise self._error
 
-    # ==================================================================================================
-
     async def task_main(self):
         # Await all tasks in our input fields and then flatten them.
         await self.await_inputs()
@@ -1836,12 +1837,12 @@ class Task(Scope):
         self.log_task(Log.DEBUG, Utils.instance_tag(self) + " starting\n")
 
         # Expand all mandatory fields in the raw config and fix raw file paths.
-        self.expand_task()
+        self.expand_task(self._task_scope)
 
         # If there's a depfile from a previous build, load it so we can use it below.
-        if self.task_scope.in_depfile:
+        if self._task_scope.in_depfile:
             self._old_deplines = Utils.load_depfile(
-                self.task_scope.in_depfile, self.task_scope.depformat, self.task_scope.cwd
+                self._task_scope.in_depfile, self._task_scope.depformat, self._task_scope.cwd
             )
 
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -1850,27 +1851,27 @@ class Task(Scope):
 
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if self._repo.dry_run:
+        if self._task_scope.get_up().repo.dry_run:
             return
 
         # Paths updated. See if we need to rebuild our outputs.
         self._reason = self.rebuild_reason()
         if not self._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{self.task_scope.name}' : '{self.task_scope.desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{self._task_scope.name}' : '{self._task_scope.desc}'")
 
         # Wait for enough jobs to free up to run this task.
-        self._cores = await Runner.acquire(self.task_scope.job_size)
+        self._cores = await Runner.acquire(self._task_scope.job_size)
 
         # Run all the task's commands
-        text  = repr(self.task_scope.name) if self.task_scope.name else ""
-        text += " : " if self.task_scope.name and self.task_scope.desc else ""
-        text += repr(self.task_scope.desc) if self.task_scope.desc else ""
+        text  = repr(self._task_scope.name) if self._task_scope.name else ""
+        text += " : " if self._task_scope.name and self._task_scope.desc else ""
+        text += repr(self._task_scope.desc) if self._task_scope.desc else ""
         self.log_task(Log.INFO, Log.TEAL + f"Task {text}\n")
         self.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {self._reason}\n")
 
         time_a = time.perf_counter()
 
-        for command in self.task_scope.command:
+        for command in self._task_scope.command:
             if command is None:
                 continue
             elif callable(command):
@@ -1884,21 +1885,19 @@ class Task(Scope):
 
         # See if the task wrote all its output files
 
-        for file in Utils.yield_values(self.out_files):
+        for file in Utils.yield_values(self._task_scope.out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         # And we're done
-        return self.out_files
-
-    # ==================================================================================================
+        return self._task_scope.out_files
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for input_task in [v for v in Utils.yield_values(self.task_scope) if isinstance(v, Task)]:
+        for input_task in [v for v in Utils.yield_values(self._task_scope) if isinstance(v, Task)]:
             if input_task._aio_task is None:
                 raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
             try:
@@ -1910,10 +1909,7 @@ class Task(Scope):
                 self._error = Task.CANCELLED(f"Task {hex(id(self))} is cancelled")
                 raise self._error from ex
 
-    # ==================================================================================================
-
-    def expand_task(self):
-        scope = self.task_scope
+    def expand_task(self, scope):
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
@@ -1927,7 +1923,7 @@ class Task(Scope):
                 continue
 
             files = [
-                val.out_files if isinstance(val, Task) else val
+                val._task_scope.out_files if isinstance(val, Task) else val
                 for val in Utils.yield_values(_files)
                 if val
             ]
@@ -1941,30 +1937,28 @@ class Task(Scope):
                 scope[_field] = files
 
                 if _field == "in_depfile":
-                    self.in_depfile = cast(str, files)
+                    scope.in_depfile = cast(str, files)
                 elif _field.startswith("in_"):
-                    self.in_files[_field] = files
+                    scope.in_files[_field] = files
                 elif _field.startswith("out_"):
-                    self.out_files[_field] = files
+                    scope.out_files[_field] = files
 
         # Fields all expanded, we can expand the rest of the task now.
         Expander.xip(scope)
         scope.command = Utils.flatten(scope.command)
 
         if not scope.dry_run:
-            for file in filter(None, self.out_files.values()):
+            for file in filter(None, self._task_scope.out_files.values()):
                 os.makedirs(Path.dirname(file), exist_ok=True)
-            if self.in_depfile:
-                if isinstance(self.in_depfile, list):
+            if self._task_scope.in_depfile:
+                if isinstance(self._task_scope.in_depfile, list):
                     raise Task.BROKEN("in_depfile can't be a list")
-                os.makedirs(Path.dirname(self.in_depfile), exist_ok=True)
+                os.makedirs(Path.dirname(self._task_scope.in_depfile), exist_ok=True)
 
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(scope) + "\n")
-
-    # ==================================================================================================
 
     def fix_paths(self : Task, field : str, file : (str | list | set | tuple | abc.Mapping), build_dir : str):
         """
@@ -1979,7 +1973,7 @@ class Task(Scope):
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
-        file = Path.join(self._script.root, file)
+        file = Path.join(self._task_scope.get_up().script3.root, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -1989,23 +1983,21 @@ class Task(Scope):
         # Note - This will also move "in_depfile" under build_dir - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
         if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(file, build_dir):
-            file = Path.relpath(file, self._script.root)
+            file = Path.relpath(file, self._task_scope.get_up().script3.root)
             file = Path.join(build_dir, file)
 
         return file
-
-    # ==================================================================================================
 
     def sanity_check(self : Task):
         repo = self._repo
 
         # Check for all task issues that break the build
 
-        if not Path.exists(self.task_scope.cwd):
-            raise Task.BROKEN(f"Task working directory '{self.task_scope.cwd}' does not exist")
+        if not Path.exists(self._task_scope.cwd):
+            raise Task.BROKEN(f"Task working directory '{self._task_scope.cwd}' does not exist")
 
-        if not Path.startswith(self.task_scope.build_dir, repo.root):
-            raise Task.BROKEN(f"The build dir {self.task_scope.build_dir} is not under repo.root {repo.root}")
+        if not Path.startswith(self._task_scope.build_dir, repo.root):
+            raise Task.BROKEN(f"The build dir {self._task_scope.build_dir} is not under repo.root {repo.root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -2015,10 +2007,10 @@ class Task(Scope):
         # This means that pre-relative-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(self.task_scope.command, list):
-            for command in self.task_scope.command:
-                if type(command) is not type(self.task_scope.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {self.task_scope.command}")
+        if isinstance(self._task_scope.command, list):
+            for command in self._task_scope.command:
+                if type(command) is not type(self._task_scope.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {self._task_scope.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
@@ -2026,7 +2018,7 @@ class Task(Scope):
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if repo.strict:
-            for command in Utils.flatten(self.task_scope.command):
+            for command in Utils.flatten(self._task_scope.command):
                 if not isinstance(command, str):
                     continue
                 out = Expander._split_text(command)
@@ -2034,13 +2026,13 @@ class Task(Scope):
                     raise Task.BROKEN("STRICT: Command has delimiters in it")
 
         # Check that all build files would end up under build_dir
-        for file in Utils.yield_values(self.out_files):
+        for file in Utils.yield_values(self._task_scope.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, self.task_scope.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self.task_scope.build_dir}")
+            if not Path.startswith(file, self._task_scope.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self._task_scope.build_dir}")
 
         # Check for task collisions
-        for file in Utils.yield_values(self.out_files):
+        for file in Utils.yield_values(self._task_scope.out_files):
             real_file = cast(str, Path.abspath(file))
             if real_file in Hancho.real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
@@ -2048,20 +2040,20 @@ class Task(Scope):
 
             # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
-        for file in Utils.yield_values(self.in_files):
+        for file in Utils.yield_values(self._task_scope.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
             if not Path.exists(file) and not repo.dry_run:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        if isinstance(self.task_scope.in_depfile, list) and len(self.task_scope.in_depfile) > 1:
-            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.task_scope.in_depfile}")
-
-    # ==================================================================================================
+        if isinstance(self._task_scope.in_depfile, list) and len(self._task_scope.in_depfile) > 1:
+            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self._task_scope.in_depfile}")
 
     async def run_command(self : Task, command : str):
-        self.log_task(Log.INFO, f"{Path.relpath(self.task_scope.cwd, self._repo.root)}$ {command}\n")
+        repo = self._task_scope.get_up().repo
+
+        self.log_task(Log.INFO, f"{Path.relpath(self._task_scope.cwd, repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2072,7 +2064,7 @@ class Task(Scope):
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 curly_command,
-                cwd    = self.task_scope.cwd,
+                cwd    = self._task_scope.cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2111,15 +2103,17 @@ class Task(Scope):
         if (self._stdout or self._stderr):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
-    # ==================================================================================================
-
     async def call_callback(self : Task, command : abc.Callable):
-        callback_dir = Path.relpath(self._script.root, self._repo.root)
+        callback_dir = Path.relpath(self._task_scope.script3.root, self._task_scope.repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(self.task_scope._up.script3.root): # type: ignore
+        up = self._task_scope.get_up()
+        assert up is not None
+        script_root = up.script3.root
+
+        with chdir(script_root): # type: ignore
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2129,39 +2123,36 @@ class Task(Scope):
 
         return result
 
-    # ==================================================================================================
-
     def rebuild_reason(self : Task) -> str:
         """
         Figures out why we have to run a Task, or returns "" if we don't.
         """
-
         repo = self._repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if self.task_scope.force:
+        if self._task_scope.force:
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to task.force"
 
-        if self._repo.build_force:
+        if self._task_scope.repo.build_force:
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to repo.build_force"
 
-        has_input = any(Utils.yield_values(self.in_files))
+        has_input = any(Utils.yield_values(self._task_scope.in_files))
         if not has_input:
             Hancho.build_reasons["no inputs"] += 1
             return "Always rebuild a target with no inputs"
 
-        has_output = any(Utils.yield_values(self.out_files))
+        has_output = any(Utils.yield_values(self._task_scope.out_files))
         if not has_output:
             Hancho.build_reasons["no outputs"] += 1
             return "Always rebuild a target with no outputs"
 
         # ------------------------------------
 
-        for filename in Utils.yield_values(self.in_files):
+        for filename in Utils.yield_values(self._task_scope.in_files):
             if reason := repo.check_stat(filename):
                 return reason
 
@@ -2169,18 +2160,16 @@ class Task(Scope):
             if reason := repo.check_stat(filename):
                 return reason
 
-        for filename in Utils.yield_values(self.out_files):
-            if reason := repo.check_stat(filename, self.task_scope.command):
+        for filename in Utils.yield_values(self._task_scope.out_files):
+            if reason := repo.check_stat(filename, self._task_scope.command):
                 return reason
 
-        if self.task_scope.in_depfile:  # noqa: SIM102
-            if reason := repo.check_stat(self.task_scope.in_depfile):
+        if self._task_scope.in_depfile:  # noqa: SIM102
+            if reason := repo.check_stat(self._task_scope.in_depfile):
                 return reason
 
         Hancho.build_reasons["*task clean"] += 1
         return ""
-
-    # ==================================================================================================
 
     def dump_stdout(self : Task) -> str:
         result = ""
@@ -2194,8 +2183,6 @@ class Task(Scope):
             result += "----------------------------------------\n"
         return result
 
-    # ==================================================================================================
-
     def log_task(self : Task, level : int, message : str):
         # Log helper that adds the [ NN/ XX] tag before the log line.
         for line in message.splitlines(keepends=True):
@@ -2203,14 +2190,12 @@ class Task(Scope):
                 Log._log(level, f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
             Log._log(level, line)
 
-    # ==================================================================================================
-
     def log_task_exception(self : Task, message, ex = None):
-        scope = self.task_scope
+        scope = self._task_scope
         Log.error("========================================\n")
         Log.error(message + "\n")
         Log.error("========================================\n")
-        Log.error(f"Script    = {self._script.path}:\n")
+        Log.error(f"Script    = {self._task_scope.get_up().script3.path}:\n")
         Log.error(f"Task      = '{scope.name}' : '{scope.desc}'\n")
         Log.error(f"os.getcwd = {os.getcwd()}\n")
         Log.error(f"task cwd  = {scope.cwd}\n")
@@ -2221,31 +2206,34 @@ class Task(Scope):
 
 # endregion
 # ==================================================================================================
+# region Aliases
 
-hancho_aliases = Dict(
-    name     = "<aliases>",
+class Aliases(Scope):
+    def __init__(self):
+        super().__init__()
+        self.name     = "<aliases>"
+        self.dump     = Dumper.print
+        self.flatten  = Utils.flatten
+        self.run_cmd  = Utils.run_cmd
+        self.weave    = Utils.weave
+        self.abspath  = Path.abspath
+        self.normpath = Path.normpath
+        self.basename = Path.basename
+        self.dirname  = Path.dirname
+        self.join     = Path.join
+        self.relpath  = Path.relpath
+        self.resolve  = Path.resolve
+        self.swapext  = Path.swapext
 
-    dump     = Dumper.print,
+hancho_aliases = Aliases()
 
-    flatten  = Utils.flatten,
-    run_cmd  = Utils.run_cmd,
-    weave    = Utils.weave,
-
-    abspath  = Path.abspath,
-    normpath = Path.normpath,
-    basename = Path.basename,
-    dirname  = Path.dirname,
-    join     = Path.join,
-    relpath  = Path.relpath,
-    resolve  = Path.resolve,
-    swapext  = Path.swapext,
-)
-
+# endregion
 # ==================================================================================================
+# region Defaults
 
 class Defaults(Scope):
     def __init__(self):
-        self._up = hancho_aliases
+
         self.name = "<defaults>"
 
         self.hancho = Dict(
@@ -2255,7 +2243,6 @@ class Defaults(Scope):
             max_jobs   = os.cpu_count() or 1,
             trace      = False, #True,
         )
-        self.hancho.set_up(self)
 
         self.log = Dict(
             name       = "<log>",
@@ -2264,24 +2251,8 @@ class Defaults(Scope):
             color     = True,
             timestamp = True
         )
-        self.log.set_up(self)
-
-        self.repo = Dict(
-            name        = "<repo>",
-            root        = '{script3.root}',
-            build_dir   = "{join(root, 'build', build_tag)}",
-            build_tag   = '',
-            targets     = [],
-            build_force = False,
-            build_all   = False,
-            dry_run     = False,
-            strict      = True,
-        )
-        self.repo.set_up(self)
-
+        self.repo = Repo()
         self.script3 = Script()
-        self.script3.set_up(self)
-
         self.task = Dict(
             name       = '<no name>',
             desc       = '<no desc>',
@@ -2293,21 +2264,29 @@ class Defaults(Scope):
             build_dir  = '{join(repo.build_dir, relpath(script3.root, repo.root))}',
             dry_run    = '{repo.dry_run}',
             force      = '{repo.build_force}',
+            in_files   = {},
+            out_files  = {},
         )
+
+        self.set_up(hancho_aliases)
+        self.hancho.set_up(self)
+        self.log.set_up(self)
+        self.repo.set_up(self)
+        self.script3.set_up(self)
         self.task.set_up(self)
 
+
+# endregion
 # ==================================================================================================
+# region Proxy
 
 # FIXME can we turn this into just another dict and bind methods via types.MethodType?
 
 class HanchoProxy(types.ModuleType):
 
-    def __init__(self, repo : Repo, script : Script, module : types.ModuleType, tree : Defaults):
+    def __init__(self, module : types.ModuleType, scope : Defaults):
         super().__init__("hancho_proxy")
-        self._repo   = repo
-        self._script = script
-        self._module = module
-        self._tree   = tree
+        self._scope   = scope
         self.module  = hancho
 
     @staticmethod
@@ -2322,12 +2301,12 @@ class HanchoProxy(types.ModuleType):
 
         Hancho.init(top_tree)
 
-        root_proxy = load_script(parent_repo = None, new_tree = top_tree)
+        root_proxy = load_script(scope = top_tree)
         return root_proxy
 
     def __getattr__(self, key):
         # Delegate to hancho_aliases so we don't have to duplicate it.
-        if key in hancho_aliases:
+        if hasattr(hancho_aliases, key):
             return getattr(hancho_aliases, key)
         elif key in hancho.__dict__:
             return  hancho.__dict__[key]
@@ -2338,10 +2317,11 @@ class HanchoProxy(types.ModuleType):
         print(Dumper.dump(*args, **kwargs))
 
     def Task(self, *args, **kwargs):
-        task_node = Dict(self._tree.task, *args, kwargs)
-        task_node.set_up(self._tree)
-        task = Task(repo = self._repo, script = self._script, task_scope = task_node)
-        self._script.script_tasks.append(task)
+        task_node = Dict(copy.copy(self._scope.task), *args, kwargs)
+        task_node.set_up(self._scope)
+
+        task = Task(script = task_node.get_up().script3, task_scope = task_node)
+        self._scope.script3.script_tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2359,7 +2339,11 @@ class HanchoProxy(types.ModuleType):
         )
         merge_variants(new_tree, overrides)
 
-        return load_script(None if is_repo else self._repo, new_tree)._module
+        if not is_repo:
+            new_tree.repo = self._scope.repo
+
+        return load_script(new_tree).module
+
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
         return self._load(path, root, False,  *args, **kwargs)
@@ -2368,7 +2352,7 @@ class HanchoProxy(types.ModuleType):
         return self._load(path, root, True, *args, **kwargs)
 
     def build(self) -> int:
-        return hancho_build(self._repo)
+        return hancho_build(self._scope.repo)
 
     class EarlyOut(Exception): pass
     class Fail(Exception): pass
@@ -2393,6 +2377,7 @@ class HanchoProxy(types.ModuleType):
         Log.error(f"  func = {frame.f_code.co_name}\n")
         Log.error(f"  line = {frame.f_lineno}\n")
 
+# endregion
 # ==================================================================================================
 
 def _start():
@@ -2417,27 +2402,27 @@ def _start():
         # Don't leave the last line of the log sitting in line_buffer!
         Log._flush()
 
-# ==================================================================================================
+def load_script(scope : Defaults) -> HanchoProxy:
+    Expander.xip(scope.script3)
 
-def load_script(parent_repo : Repo | None, new_tree : Defaults) -> HanchoProxy:
-    Expander.xip(new_tree.script3)
-
-    path = Path.resolve(new_tree.script3.path)
-    root = Path.resolve(new_tree.script3.root)
+    path = Path.resolve(scope.script3.path)
+    root = Path.resolve(scope.script3.root)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
     # build, which they should be in practice.
-    dupe_key = Dumper.dump(new_tree, print_id = False, tab = 0, color_code = False, depth = 999, width = 999)
+    dupe_key = Dumper.dump(scope, print_id = False, tab = 0, color_code = False, depth = 999, width = 999)
     dupe_key = Dumper.depointer(dupe_key)
     dupe_key = "".join(dupe_key.split())
 
     if "hancho.py" not in path:
         if dupe := Hancho.dedupe.get(dupe_key, None):
-            Log.info(Log.LIME + f"Deduped {"repo" if not parent_repo else "script"} {path}\n")
+            #Log.info(Log.LIME + f"Deduped {"repo" if not parent_repo else "script"} {path}\n")
+            Log.info(Log.LIME + f"Deduped {path}\n")
             return dupe
         else:
-            Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
+            #Log.info(Log.ORANGE + f"Loading {"repo" if not parent_repo else "script"} {path}\n")
+            Log.info(Log.ORANGE + f"Loading {path}\n")
 
     code = None
     if path.endswith(".hancho"):
@@ -2445,26 +2430,22 @@ def load_script(parent_repo : Repo | None, new_tree : Defaults) -> HanchoProxy:
             source = file.read()
             code = compile(source, path, "exec", dont_inherit=True)
 
+    Expander.xip(scope.repo)
 
-
-    repo   = parent_repo or Repo()
-    repo.set_up(new_tree)
-    merge_variants(repo, new_tree.repo)
-    Expander.xip(repo)
-
+    # FIXME Make module a Scope, splice it into the scope tree somewhere
 
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
 
-    proxy  = HanchoProxy(repo, new_tree.script3, module, new_tree)
+    proxy  = HanchoProxy(module, scope)
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
-    module.tree     = new_tree     # type: ignore
+    module.tree     = scope     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
-    Hancho.repos.add(proxy._repo)
+    Hancho.repos.add(proxy._scope.repo)
 
-    repo.repo_scripts.append(new_tree.script3)
+    scope.repo.repo_scripts.append(scope.script3)
 
     if not code or not root:
         return proxy
@@ -2477,8 +2458,6 @@ def load_script(parent_repo : Repo | None, new_tree : Defaults) -> HanchoProxy:
             return proxy
     finally:
         sys.modules["hancho"] = hancho
-
-# ==================================================================================================
 
 def hancho_main() -> int:
 
@@ -2500,12 +2479,11 @@ def hancho_main() -> int:
 
     time_a1 = time.perf_counter()
 
-    top_repo  = Repo()
+    top_repo = top_tree.repo
     top_repo.set_up(top_tree)
     merge_variants(top_repo, top_tree.repo)
-    Expander.xip(top_repo)
 
-    top_proxy = load_script(top_repo, top_tree)
+    top_proxy = load_script(top_tree)
     time_b1 = time.perf_counter()
     Log.info(Log.BLUE + f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
 
@@ -2513,7 +2491,7 @@ def hancho_main() -> int:
     # Start the build
 
     time_a3 = time.perf_counter()
-    result = hancho_build(top_proxy._repo)
+    result = hancho_build(top_proxy._scope.repo)
     time_b3 = time.perf_counter()
     Log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
 
@@ -2546,8 +2524,6 @@ def hancho_main() -> int:
 
     return result
 
-# ==================================================================================================
-
 def hancho_build(top_repo : Repo) -> int:
 
     # ------------------------------------
@@ -2569,7 +2545,7 @@ def hancho_build(top_repo : Repo) -> int:
 
             for repo in Hancho.repos:
                 for task in repo.yield_tasks():
-                    if target in task.task_scope.name:
+                    if target in task._task_scope.name:
                         task.queue_task()
 
     elif top_repo.build_all:
@@ -2594,8 +2570,6 @@ def hancho_build(top_repo : Repo) -> int:
         repo.save_stat_db()
 
     return result
-
-# ==================================================================================================
 
 async def async_run_tasks():
     """Run all tasks until we run out."""

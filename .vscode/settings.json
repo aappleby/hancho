@@ -1,5 +1,5 @@
 {
-  "python.analysis.typeCheckingMode": "basic",
+  //"python.analysis.typeCheckingMode": "basic",
   "python.analysis.autoImportCompletions": true,
   "python.testing.unittestArgs": [
     "-v",
