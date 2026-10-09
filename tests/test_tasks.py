@@ -16,7 +16,7 @@ import hancho as hancho_proxy
 
 # pyright: reportAttributeAccessIssue=false
 
-VERBOSITY = "debug"
+VERBOSITY = "critical"
 
 if os.name == "nt" and "VCINSTALLDIR" not in os.environ:
     print("Tests must run from a Visual Studio developer prompt!", file=sys.stderr)
@@ -148,10 +148,8 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(repr(f"I am runnning in {os.getcwd()}"), repr(task._stdout.strip()))
 
     def test_bad_run_cmd(self):
-        """
-        Trying to run an arbitrary command and use it in a template should report BROKEN if the
-        embedded command is invalid.
-        """
+        # Trying to run an arbitrary command and use it in a template should report BROKEN if the
+        # embedded command is invalid.
         task = hancho.Task(
             desc="Broken run_cmd",
             command=r"echo {run_cmd('This is totally not a valid command')}",
@@ -160,10 +158,8 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(task._error, hancho.module.Task.BROKEN)
 
     def test_unexpandable_command(self):
-        """
-        Commands that have residual braces after expansion should be reported as broken but ONLY
-        if we are in 'strict' mode.
-        """
+        #Commands that have residual braces after expansion should be reported as broken but ONLY
+        #if we are in 'strict' mode.
         task = hancho.Task(
             desc="Unexpandable command",
             command=r"echo Hello {missing} world!",
@@ -172,9 +168,7 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(task._error, hancho.module.Task.BROKEN)
 
     def test_garbage_command(self):
-        """
-        Non-existent command line commands should cause Hancho to fail the build.
-        """
+        # Non-existent command line commands should cause Hancho to fail the build.
         garbage_task = hancho.Task(
             command="aklsjdflksjdlfkjldfk",
         )
@@ -182,17 +176,13 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(garbage_task._error, hancho.module.Task.FAILED)
 
     def test_missing_command(self):
-        """
-        Tasks with no commands are fine, they can still be used to group and coordinate other
-        tasks.
-        """
+        # Tasks with no commands are fine, they can still be used to group and coordinate other
+        # tasks.
         hancho.Task(not_a_command="echo test_missing_command")
         self.run_tasks(0)
 
     def test_task_collision(self):
-        """
-        If multiple distinct commands generate the same output file, that's an error.
-        """
+        # If multiple distinct commands generate the same output file, that's an error.
         hancho.Task(
             command = lambda task : (os.utime(src, None) for src in task.config.out_obj),
             in_src=__file__,
@@ -217,7 +207,7 @@ class TestTasks(unittest.TestCase):
             hancho.Task(
                 command=[
                     lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task.node.out_obj),
+                    lambda task : force_touch(task.task_scope.out_obj),
                 ],
                 in_src=[],
                 out_obj="result.txt",
@@ -238,7 +228,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.01)
             compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
-                command = lambda task : shutil.copy(task.node.in_src, task.node.out_obj),
+                command = lambda task : shutil.copy(task.task_scope.in_src, task.task_scope.out_obj),
                 in_src=None,
                 out_obj="{swapext(in_src, '.o')}",
             )
@@ -269,7 +259,7 @@ class TestTasks(unittest.TestCase):
                 #command="sleep 0.1 && touch {out_obj}",
                 command = [
                     lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task.node.out_obj),
+                    lambda task : force_touch(task.task_scope.out_obj),
                 ],
                 in_temp=dummy,
                 in_src="src/test.cpp",
@@ -327,7 +317,7 @@ class TestTasks(unittest.TestCase):
         # We should fail if an input is missing
         task = hancho.Task(
             desc="Should fail due to missing input",
-            command = lambda task : force_touch(task.node.out_obj),
+            command = lambda task : force_touch(task.task_scope.out_obj),
             in_src="src/does_not_exist.txt",
             out_obj="missing_src.txt",
         )
@@ -338,7 +328,7 @@ class TestTasks(unittest.TestCase):
         # We should fail if a dependency is missing even if it's not used by the command.
         task = hancho.Task(
             desc="Missing dep should fail",
-            command = lambda task : force_touch(task.node.out_obj),
+            command = lambda task : force_touch(task.task_scope.out_obj),
             in_src="src/test.cpp",
             in_dep=["missing_dep.txt"],
             out_obj="result.txt",
@@ -355,7 +345,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
-            command = lambda task : shutil.copy(task.node.in_src, task.node.out_obj),
+            command = lambda task : shutil.copy(task.task_scope.in_src, task.task_scope.out_obj),
             in_src=os.path.abspath("src/foo.c"),
             out_obj="{swapext(in_src, '.o')}",
         )
@@ -369,7 +359,7 @@ class TestTasks(unittest.TestCase):
     def test_does_create_output(self):
         # Output files should appear in build/ by default
         hancho.Task(
-            command = lambda task : force_touch(task.node.out_obj),
+            command = lambda task : force_touch(task.task_scope.out_obj),
             in_src=[],
             out_obj="result.txt",
         )
@@ -459,7 +449,7 @@ class TestTasks(unittest.TestCase):
         self.reinit("--flarpy=flarp.txt")
 
         def callback(task):
-            return force_touch(task.node.out_file)
+            return force_touch(task.task_scope.out_file)
 
         hancho.Task(
             name = "test_arbitrary_flags",
@@ -474,7 +464,7 @@ class TestTasks(unittest.TestCase):
 
     def test_sync_command(self):
         def sync_command(task):
-            force_touch(task.node.out_obj)
+            force_touch(task.task_scope.out_obj)
 
         hancho.Task(
             name="result.txt",
@@ -491,7 +481,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a lambda",
-            command=lambda task: force_touch(task.node.out_obj),
+            command=lambda task: force_touch(task.task_scope.out_obj),
             in_src=[],
             out_obj="{name}",
         )
@@ -502,7 +492,7 @@ class TestTasks(unittest.TestCase):
     def _est_sync_callback(self):
         def sync_callback(task):
             time.sleep(0.1)
-            force_touch(task.node.out_file)
+            force_touch(task.task_scope.out_file)
 
         hancho.Task(command=sync_callback, out_file="test_sync_callback.txt")
         self.assertFalse(Path("build/test_sync_callback.txt").exists())
@@ -522,7 +512,7 @@ class TestTasks(unittest.TestCase):
     def test_async_callback(self):
         async def async_callback(task):
             await asyncio.sleep(0.1)
-            force_touch(task.node.out_file)
+            force_touch(task.task_scope.out_file)
 
         hancho.Task(command=async_callback, out_file="test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
@@ -549,13 +539,13 @@ class TestTasks(unittest.TestCase):
         )
         task_that_passes = hancho.Task(
             desc="task that passes",
-            command = lambda task : force_touch(task.node.out_obj),
+            command = lambda task : force_touch(task.task_scope.out_obj),
             in_src=[],
             out_obj="pass_result.txt",
         )
         should_be_cancelled = hancho.Task(
             desc="should be cancelled",
-            command = lambda task : force_touch(task.node.out_obj),
+            command = lambda task : force_touch(task.task_scope.out_obj),
             in_src=[task_that_fails, task_that_passes],
             out_obj="should_not_be_created.txt",
         )
@@ -585,7 +575,7 @@ class TestTasks(unittest.TestCase):
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
-            hancho.Task(command = lambda task : force_touch(task.node.out_obj), in_src=[], out_obj="dummy.txt")
+            hancho.Task(command = lambda task : force_touch(task.task_scope.out_obj), in_src=[], out_obj="dummy.txt")
             return []
 
         hancho.Task(command=callback, in_src=[], out_obj=[])
@@ -629,7 +619,7 @@ class TestTasks(unittest.TestCase):
         hancho.Task(
             desc="********** I am the slow task, I eat all the cores **********",
             command=[
-                lambda task : force_touch(task.node.out_obj),
+                lambda task : force_touch(task.task_scope.out_obj),
                 lambda task : time.sleep(0.3)
             ],
             job_size=os.cpu_count(),
@@ -674,14 +664,14 @@ class TestTasks(unittest.TestCase):
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task.node.in_file, task.node.out_file),
+                command = lambda task : shutil.copy(task.task_scope.in_file, task.task_scope.out_file),
                 in_file="data/dummy.txt",
                 out_file="blerp/sherp",
             )
             task2 = hancho.Task(
                 name="task2",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task.node.in_file, task.node.out_file),
+                command = lambda task : shutil.copy(task.task_scope.in_file, task.task_scope.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
                 force=True,

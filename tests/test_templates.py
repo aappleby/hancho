@@ -62,10 +62,10 @@ class TestTemplates(unittest.TestCase):
         d2 = Dict(a = "bar")
         b = Dict(c = "{a}")
 
-        hancho.link(b, d1)
+        b.set_up(d1)
         self.assertEqual("foo", Expander._expand("{c}", b))
 
-        hancho.link(b, d2)
+        b.set_up(d2)
         self.assertEqual("bar", Expander._expand("{c}", b))
 
     def test_mutual_cycle(self):

@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 #!/usr/bin/python3
 # ruff: noqa: RUF012 C408
-#region Header
+# region Header
 
 """
 Hancho v1.0.0 @ 2026-06-05 - A simple, pleasant build system.
@@ -49,21 +49,22 @@ from enum import Enum
 from functools import wraps
 from typing import Any, TypeGuard, cast
 
-#endregion
+# endregion
 # ==================================================================================================
-#region constants
+# region constants
 
 # Just a sanity check that we haven't accidentally imported the 'real' hancho twice.
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
+# FIXME this is a bad idea and we should remove it later
 old_vars = vars
-def vars(v):
+def vars(v) -> abc.MutableMapping:
     return v if Utils.is_mapping(v) else old_vars(v)
 
-#endregion
+# endregion
 # ==================================================================================================
-#region Utils
+# region Utils
 
 class Utils:
 
@@ -165,18 +166,22 @@ class Utils:
         return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
 
     @staticmethod
-    def is_sequence(v) -> TypeGuard[abc.Sequence]:
+    def is_sequence(v) -> TypeGuard[abc.MutableSequence]:
         if isinstance(v, (str, bytes, bytearray)):
             return False
-        return isinstance(v, abc.Sequence)
+        return isinstance(v, abc.MutableSequence)
 
     @staticmethod
-    def is_set(v) -> TypeGuard[abc.Set]:
-        return isinstance(v, abc.Set)
+    def is_set(v) -> TypeGuard[abc.MutableSet]:
+        return isinstance(v, abc.MutableSet)
 
     @staticmethod
     def is_mapping(v) -> TypeGuard[abc.MutableMapping]:
         return isinstance(v, abc.MutableMapping)
+
+    @staticmethod
+    def is_node(v) -> TypeGuard[Scope]:
+        return isinstance(v, Scope)
 
     @staticmethod
     def yield_values(variant) -> Any:
@@ -324,9 +329,9 @@ class Utils:
 
     MISSING : Any = Missing()
 
-#endregion
+# endregion
 # ==================================================================================================
-#region Log
+# region Log
 
 class Log:
 
@@ -519,9 +524,9 @@ class Log:
 
 Log.reset()
 
-#endregion
+# endregion
 # ==================================================================================================
-#region Path
+# region Path
 
 class Path:
     # These functions wrap the os.path.* functions so that they work on arbitrary trees
@@ -596,9 +601,9 @@ class Path:
             return os.path.normpath(os.path.join(x, y))
         return Utils.cross_join(join, lhs, rhs, *args)
 
-#endregion
+# endregion
 # ==================================================================================================
-#region parse_flags
+# region parse_flags
 
 def parse_flags(*argv) -> Dict:
 
@@ -719,126 +724,116 @@ def parse_flags(*argv) -> Dict:
     flags = Dict(argv_flags, opt_file, mystery_flags)
     return flags
 
-#endregion
+# endregion
 # ==================================================================================================
 # region mergey stuffs
 
-
 def merge_variants(
-    lhs: Node | abc.MutableMapping,
-    rhs: Node | abc.MutableMapping,
+    lhs: Scope,
+    rhs: abc.Mapping,
     merge_dicts: bool = True,
     merge_lists: bool = True,
     keep_lhs: bool = True,
     keep_rhs: bool = True,
 ):
-    if rhs is None:
-        return lhs
+    lvars = vars(lhs)
+    rvars = vars(rhs)
 
-    lhs = vars(lhs)
-    rhs = vars(rhs)
+    # Prune lhs keys if needed
+    if not keep_lhs:
+        for key in lvars:
+            if key not in rvars:
+                del lvars[key]
 
-    lkeys = lhs.keys()
-    rkeys = rhs.keys()
-    keys = list(lhs) + [r for r in rhs if r not in lhs]
-
-    for key in keys:
-        if key == "_up":
+    # Merge all lhs+rhs pairs
+    for key in lvars:
+        if key not in rvars:
             continue
 
-        if key in lkeys and key not in rkeys and not keep_lhs:
-            continue
-        if key not in lkeys and key in rkeys and not keep_rhs:
-            continue
+        lhs2 = lvars.get(key)
+        rhs2 = rvars.get(key)
 
-        lhs2 = lhs.get(key)
-        rhs2 = rhs.get(key)
-        dst2 = None
-
-        if Utils.is_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_dicts:
+        if lhs2 is rhs2:
+            pass
+        elif Utils.is_node(lhs2) and Utils.is_mapping(rhs2) and merge_dicts:
             merge_variants(lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
-            dst2 = lhs2
         elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_lists:
-            dst2 = [*lhs2, *rhs2]
+            lvars[key] = [*lhs2, *rhs2]
         elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_lists:
-            dst2 = lhs2 | rhs2
+            lvars[key] = lhs2 | rhs2
         elif rhs2 is not None:
-            dst2 = rhs2
-        else:
-            dst2 = lhs2
+            lvars[key] = rhs2
 
-        lhs[key] = dst2
+    # Save rhs keys if needed
+    if keep_rhs:
+        for key in rvars:
+            if key not in lvars:
+                lvars[key] = rvars[key]
 
 # endregion
 # ==================================================================================================
-#region Dict
+# region Scope
 
-def link(src, dst):
-    # This can't be in Dict as we want to link both dicts and arbitrary objects.
-    dst_cursor = dst
-    while(dst_cursor):
-        dst_up = get_up(dst_cursor)
-        if dst_up == src:
-            raise AttributeError("bad linky")
-        dst_cursor = dst_up
+class Scope:
+    def __init__(self):
+        self.set_up(None)
 
-    #print(f"{src} -> {dst}")
-    object.__setattr__(src, "_up", dst)
+    def get_up(self) -> Scope | None:
+        return object.__getattribute__(self, "_up")
 
-def get_up(src : Dict | Node) -> Dict | Node | None:
-    try:
-        return object.__getattribute__(src, "_up")
-    except AttributeError:
-        return None
+    def set_up(self, up : Scope | None):
+        # Check that we're not going to create a loop.
+        cursor = up
+        while(cursor):
+            if cursor is self:
+                raise AttributeError("bad linky")
+            cursor = cursor.get_up()
+        object.__setattr__(self, "_up", up)
 
+# endregion
+# ==================================================================================================
+# region Dict
 
-class Node:
-    pass
-
-
-class Dict(Node, abc.MutableMapping):
+class Dict(Scope, abc.MutableMapping):
     """
     This class extends 'dict' in a couple ways -
+    1. Dicts can be used as scopes during template expansion.
     1. Dict supports "foo.bar" attribute access in addition to "foo['bar']"
     2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
-    3. When merging Dicts, the rightmost not-None value of an attribute will be kept.
-    4. If two attributes have the same name:
-        If they are both dicts, we recursively merge them.
-        If they are both lists, we concatenate them.
-        Otherwise rightmost non-None wins.
-
-    NOTE - This _must_ have an _up pointer, otherwise we can't expand things like "hancho.somefunction(var_on_task)"
-    because 'hancho' doesn't resolve inside task and 'var_on_task' doesn't resolve at the top level of the dict
-
+    3. When merging Dicts, if two attributes have the same name:
+        - If they are both dicts, we recursively merge them.
+        - If they are both lists, we concatenate them.
+        - Otherwise rightmost non-None wins.
     """
 
     @staticmethod
-    def dictify(d : dict):
-        new_d = Dict.__new__(Dict)
-        object.__setattr__(new_d, "_dict", d)
+    def dictify(v):
+        if isinstance(v, dict):
+            v = Dict.wrap({k2 : Dict.dictify(v2) for k2, v2 in v.items()})
+            # can't do this version since we may be inside the dict constructor
+            #v = Dict(**{k2 : Dict.dictify(v2) for k2, v2 in v.items()})
+        elif isinstance(v, list):
+            v = [Dict.dictify(v2) for v2 in v]
+        elif isinstance(v, set):
+            v = {Dict.dictify(v2) for v2 in v}
+        elif isinstance(v, tuple):
+            v = tuple(Dict.dictify(v2) for v2 in v)
+        return v
 
-        for k,v in new_d.items():
-            if isinstance(v, dict):
-                new_d[k] = Dict.dictify(v)
-            elif isinstance(v, list):
-                for i, v2 in enumerate(v):
-                    if isinstance(v2, dict):
-                        v[i] = Dict.dictify(v2)
-        return new_d
-
-
-
-    def __init__(self, *args : dict[str, Any] | Dict, **kwargs : Any):
+    def __init__(self, *args : abc.Mapping, **kwargs : Any):
+        super().__init__()
         self._dict : dict
         object.__setattr__(self, "_dict", {})
         self.update(*args, **kwargs)
 
+    @staticmethod
+    def wrap(d : dict):
+        result = Dict.__new__(Dict)
+        Scope.__init__(result)
+        object.__setattr__(result, "_dict", d)
+        return result
+
     # ==============================================================================================
-
-    # FIXME this is colliding with something in MutableMapping
-
-    #def update(self, other: abc.Mapping[Any, Any] | abc.Iterable[Tuple[Any, Any]] = ..., **kwargs: Any) -> None:
-    #    pass
 
     def update(self, *args, **kwargs):
         all_things = [*args, kwargs]
@@ -865,27 +860,8 @@ class Dict(Node, abc.MutableMapping):
     # ==============================================================================================
     # region Dunders
 
-#    def __reduce_ex__(self, protocol):
-#        raise BaseException("don't copy Dicts")
-#        return super().__reduce_ex__(protocol)
-
-#    def __repr__(self):
-#        return Dumper.dump(self)
-
     def __repr__(self):
         return Dumper.dump(self)
-
-#    def __dump__(self, key, opts, seen):
-#        prefix = Dumper._dump_prefix(key, self, opts)
-#
-#        if id(self) in seen:
-#            return prefix + "<ref loop>"
-#        seen.add(id(self))
-#
-#        items = list(self.items())
-#        result = Dumper._dump_items(key, prefix, "{", items, "}", opts, set(seen))
-#
-#        return result
 
     # endregion
     # ==============================================================================================
@@ -934,19 +910,12 @@ class Dict(Node, abc.MutableMapping):
     # endregion
     # ==============================================================================================
 
-    def walk(self, key : str, check_up : bool) -> Dict | Node:
+    def walk(self, key : str, check_up : bool) -> Scope:
         cursor = self
-        #while key not in cursor:
         while True:
-            if isinstance(cursor, Dict):
-                if key in cursor:
-                    break
-            elif isinstance(cursor, Node):
-                if hasattr(cursor, key):
-                    break
-            else:
-                raise TypeError(f"Don't know how to search a {type(cursor)}")
-            if check_up and (up := get_up(cursor)):
+            if key in vars(cursor):
+                break
+            if check_up and (up := cursor.get_up()):
                 cursor = up
             else:
                 raise KeyError(key)
@@ -958,26 +927,21 @@ class Dict(Node, abc.MutableMapping):
         if key == "_dict":
             return _dict
         if key == "_up":
-            return get_up(self)
+            return self.get_up()
 
         owner = self.walk(key, check_up)
 
         if isinstance(owner, Dict):
             return owner._dict[key]
-        elif isinstance(owner, Node):
+        elif isinstance(owner, Scope):
             return getattr(owner, key)
         else:
             raise KeyError(key)
 
     def internal_set(self, key, val):
-        if key == "_dict":
-            object.__setattr__(self, key, val)
-            return
-
         self._dict[key] = val
-
-        if hasattr(val, "_up"):
-            object.__setattr__(val, "_up", self)
+        if isinstance(val, Scope):
+            val.set_up(self)
 
     def internal_del(self, key):
         del self._dict[key]
@@ -1004,6 +968,7 @@ class Data(Dict):
 # ==================================================================================================
 # region Expander
 
+# FIXME this should probably inherit from Scope
 class Expander(abc.Mapping):
     # Hancho's text expansion system.
     #
@@ -1025,18 +990,18 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    #region instance methods
+    # region instance methods
 
-    def __init__(self, tree : Dict | Node):
-        self.tree : Dict | Node
-        object.__setattr__(self, "tree", tree)
+    def __init__(self, scope : Scope):
+        self.scope : Scope
+        object.__setattr__(self, "scope", scope)
 
     @classmethod
-    def wrap(cls, tree : Dict | Node):
-        if isinstance(tree, Expander):
-            return tree
+    def wrap(cls, scope : Scope):
+        if isinstance(scope, Expander):
+            return scope
         else:
-            return Expander(tree)
+            return Expander(scope)
 
     # ====================================
 
@@ -1050,21 +1015,21 @@ class Expander(abc.Mapping):
         return self.internal_get(key, check_up = True)
 
     def __iter__(self):
-        return vars(self.tree).__iter__()
+        return vars(self.scope).__iter__()
 
     def __len__(self):
-        return vars(self.tree).__len__()
+        return vars(self.scope).__len__()
 
     # ====================================
 
     def internal_get(self, key : str, check_up : bool = False):
 
-        cursor = self.tree
+        cursor = self.scope
         result = Utils.MISSING
 
         keys = vars(cursor)
         while key not in keys:
-            if check_up and (up := get_up(cursor)): # type: ignore
+            if check_up and (up := cursor.get_up()): # type: ignore
                 trace_up(cursor, up, "get", key)
                 cursor = up
                 keys = vars(cursor)
@@ -1075,14 +1040,14 @@ class Expander(abc.Mapping):
         result = getattr(cursor, key)
         trace_end(cursor, key, result)
 
-        if isinstance(result, (Dict, Node)):
+        if isinstance(result, Scope):
             # have to do this so that "read nested c first" resolves in the dest dict first
             result = Expander.wrap(result)
         else:
             result = Expander._expand(result, cursor)
         return result
 
-    #endregion
+    # endregion
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
     # having to do regex stuff every time.
@@ -1109,10 +1074,10 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     @classmethod
-    def xip(cls, tree : Dict | Node):
+    def xip(cls, scope : Scope):
         # FIXME this is messy
 
-        tree_vars = vars(tree)
+        tree_vars = vars(scope)
 
         for key, val in tree_vars.items():
             if key == "_up":
@@ -1120,14 +1085,14 @@ class Expander(abc.Mapping):
             if isinstance(val, Dict):
                 cls.xip(val)
             else:
-                tree_vars[cast(str, key)] = Expander._expand(val, tree)
+                tree_vars[cast(str, key)] = Expander._expand(val, scope)
 
-        return tree
+        return scope
 
     @classmethod
-    def _expand(cls, var : Any, tree : Dict | Node) -> Any:
-        if isinstance(tree, Expander):
-            tree = tree.tree
+    def _expand(cls, var : Any, scope : Scope) -> Any:
+        if isinstance(scope, Expander):
+            scope = scope.scope
 
         # Bail out if we've recursed too many times.
         old_depth = Expander.cv_depth.get()
@@ -1141,18 +1106,18 @@ class Expander(abc.Mapping):
                 old_var = var
 
                 if isinstance(var, Expander):
-                    var = var.tree
+                    var = var.scope
 
                 if var is Utils.MISSING:
                     raise AssertionError("Tried to expand a sentinel value")
                 elif Utils.is_mapping(var):
                     result = type(var)()
                     for k, v in var.items():
-                        v2 = Expander._expand(v, tree)
+                        v2 = Expander._expand(v, scope)
                         result[k] = v2 # type: ignore
                     return result
                 elif Utils.is_sequence(var) or Utils.is_set(var):
-                    return type(var)(Expander._expand(v, tree) for v in var) # type: ignore
+                    return type(var)(Expander._expand(v, scope) for v in var) # type: ignore
                 elif not isinstance(var, str):
                     return var
 
@@ -1162,16 +1127,16 @@ class Expander(abc.Mapping):
                     return var
 
                 if len(blocks) == 1 and isinstance(blocks[0], Expander.Macro):
-                    var = Expander._eval_macro(blocks[0], tree) # type: ignore
+                    var = Expander._eval_macro(blocks[0], scope) # type: ignore
                 else:
                     try:
-                        trace_start(tree, "expand", var)
+                        trace_start(scope, "expand", var)
                         for i, b in enumerate(blocks):
                             if isinstance(b, Expander.Macro):
-                                blocks[i] = Expander._expand(b, tree)
+                                blocks[i] = Expander._expand(b, scope)
                         var = "".join(Utils.stringify(b) for b in blocks)
                     finally:
-                        trace_end(tree, old_var, var)
+                        trace_end(scope, old_var, var)
 
 
         finally:
@@ -1194,7 +1159,7 @@ class Expander(abc.Mapping):
 
 
     @classmethod
-    def _eval_macro(cls, var : Expander.Macro, tree : Dict | Node) -> Any:
+    def _eval_macro(cls, var : Expander.Macro, scope : Scope) -> Any:
         # Bail out if we've done too many evals already.
         old_evals = Expander.cv_evals.get()
         if old_evals >= Expander.MAX_EVALS:
@@ -1204,17 +1169,18 @@ class Expander(abc.Mapping):
         old_var = var
 
         try:
-            trace_start(tree, "eval", var)
-            var = eval(var[1:-1], {}, Expander.wrap(tree))
+            trace_start(scope, "eval", var)
+            var = eval(var[1:-1], {}, Expander.wrap(scope))
         except RecursionError:
             raise
-        except Exception as ex:
-            Log.critical(f"##########\neval failed because >{ex}<\n##########\n")
+        except Exception as ex:  # noqa: F841
+            # Anything you put here will be super spammy
+            #Log.critical(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         except BaseException:
             raise
         finally:
-            trace_end(tree, old_var, var)
+            trace_end(scope, old_var, var)
 
         return var
 
@@ -1446,7 +1412,7 @@ class Dumper:
         if prefix: prefix += " = "
         return prefix
 
-#endregion
+# endregion
 # ==================================================================================================
 # region Tracer
 
@@ -1465,15 +1431,15 @@ def trace_start(tree, action, arg):
 
 # ==================================================================================================
 
-def trace_up(tree, up, action, arg):
+def trace_up(scope, up, action, arg):
     if not Hancho.trace:
         return
 
-    if isinstance(tree, Expander):
-        tree = tree.tree
+    if isinstance(scope, Expander):
+        scope = scope.scope
 
-    tree_color = Utils.obj_to_ansi_color(tree)
-    tree_tag   = Utils.instance_tag(tree)
+    tree_color = Utils.obj_to_ansi_color(scope)
+    tree_tag   = Utils.instance_tag(scope)
     up_color   = Utils.obj_to_ansi_color(up)
     up_tag     = Utils.instance_tag(up)
 
@@ -1481,15 +1447,15 @@ def trace_up(tree, up, action, arg):
 
 # ==================================================================================================
 
-def trace_end(tree, arg, result):
+def trace_end(scope, arg, result):
     if not Hancho.trace:
         return
     Log.dedent()
 
     if isinstance(result, Expander):
-        result = result.tree
+        result = result.scope
 
-    tree_color   = Utils.obj_to_ansi_color(tree)
+    tree_color   = Utils.obj_to_ansi_color(scope)
     result_color = Log.RESET
     result_type  = type(result)
 
@@ -1502,7 +1468,7 @@ def trace_end(tree, arg, result):
     else:
         Log.info(f"{result_color}{result!r}\n")
 
-#endregion
+# endregion
 # ==================================================================================================
 # region Runner
 
@@ -1582,8 +1548,9 @@ class Hancho:
 
 # endregion
 # ==================================================================================================
+# region Repo
 
-class Repo(Node):
+class Repo(Scope):
     def __init__(self):
         super().__init__()
         self.name        = "<repo>"
@@ -1603,124 +1570,125 @@ class Repo(Node):
         for script in self.repo_scripts:
             yield from script.script_tasks
 
-# ==============================================================================================
-# region stat stuff
+    def check_stat(self, filename : str, command = None):
+        repo = self
+        if not Path.exists(filename):
+            Hancho.build_reasons["file missing"] += 1
+            return f"File missing: {filename}"
 
-def check_stat(repo, filename : str, command = None):
-    if not Path.exists(filename):
-        Hancho.build_reasons["file missing"] += 1
-        return f"File missing: {filename}"
+        if filename not in repo.repo_stat_db:
+            Hancho.build_reasons["stat missing"] += 1
+            return f"Stat missing: {filename}"
 
-    if filename not in repo.repo_stat_db:
-        Hancho.build_reasons["stat missing"] += 1
-        return f"Stat missing: {filename}"
+        old_stat = repo.repo_stat_db[filename]
+        new_stat = Utils.get_stats(filename, command)
 
-    old_stat = repo.repo_stat_db[filename]
-    new_stat = Utils.get_stats(filename, command)
+        try:
+            old_ns = old_stat['st_mtime_ns']
+            new_ns = new_stat['st_mtime_ns']
 
-    try:
-        old_ns = old_stat['st_mtime_ns']
-        new_ns = new_stat['st_mtime_ns']
+            if old_ns != new_ns:
+                Hancho.build_reasons["mtime mismatch"] += 1
+                return f"Mtime mismatch {old_ns} != {new_ns} for : {filename}"
+        except Exception as err:
+            print(err)
+            traceback.print_exc()
+            raise err
 
-        if old_ns != new_ns:
-            Hancho.build_reasons["mtime mismatch"] += 1
-            return f"Mtime mismatch {old_ns} != {new_ns} for : {filename}"
-    except Exception as err:
-        print(err)
-        traceback.print_exc()
-        raise err
+        if old_stat['st_size'] != new_stat['st_size']:
+            Hancho.build_reasons["size mismatch"] += 1
+            return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
 
-    if old_stat['st_size'] != new_stat['st_size']:
-        Hancho.build_reasons["size mismatch"] += 1
-        return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
+        if old_stat['hash'] != new_stat['hash']:
+            Hancho.build_reasons["hash mismatch"] += 1
+            return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
 
-    if old_stat['hash'] != new_stat['hash']:
-        Hancho.build_reasons["hash mismatch"] += 1
-        return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
+        if command is not None and old_stat['command'] != new_stat['command']:
+            Hancho.build_reasons["command changed"] += 1
+            return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
 
-    if command is not None and old_stat['command'] != new_stat['command']:
-        Hancho.build_reasons["command changed"] += 1
-        return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
-
-    # Does not need to rebuild based on file stats / hash
-    Hancho.build_reasons["*hash match"] += 1
-    return ""
+        # Does not need to rebuild based on file stats / hash
+        Hancho.build_reasons["*hash match"] += 1
+        return ""
 
 
-def load_stat_db(repo):
-    stat_db_path = os.path.join(repo.build_dir, 'hancho.json')
+    def load_stat_db(self):
+        repo = self
+        stat_db_path = os.path.join(repo.build_dir, 'hancho.json')
 
-    if os.path.isfile(stat_db_path):
-        with open(stat_db_path) as contents:
-            Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-            repo.repo_stat_db = json.load(contents)
-    else:
-        Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
-        repo.repo_stat_db = {}
+        if os.path.isfile(stat_db_path):
+            with open(stat_db_path) as contents:
+                Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
+                repo.repo_stat_db = json.load(contents)
+        else:
+            Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
+            repo.repo_stat_db = {}
 
-def save_stat_db(repo):
-    if repo.dry_run:
-        return
+    def save_stat_db(self):
+        repo = self
+        if repo.dry_run:
+            return
 
-    stat_db = {}
+        stat_db = {}
 
-    # FIXME we could probably save a little work if we didn't always re-stat every input and
-    # output, but this is safe for now.
+        # FIXME we could probably save a little work if we didn't always re-stat every input and
+        # output, but this is safe for now.
 
-    # ------------------------------------
-    # Gather stats for all input files in all tasks.
+        # ------------------------------------
+        # Gather stats for all input files in all tasks.
 
-    for task in repo.yield_tasks():
-        if not task._complete:
-            continue
+        for task in repo.yield_tasks():
+            if not task._complete:
+                continue
 
-        for file in Utils.yield_values(task.in_files):
-            stat_db[file] = Utils.get_stats(file)
+            for file in Utils.yield_values(task.in_files):
+                stat_db[file] = Utils.get_stats(file)
 
-        in_depfile = task.node.in_depfile
-        if in_depfile:
-            stat_db[in_depfile] = Utils.get_stats(in_depfile)
-            deplines = Utils.load_depfile(task.node.in_depfile, task.node.depformat, task.node.cwd)
-            for file in deplines:
-                stat_db[file] = Utils.get_stats(file) # type: ignore
+            in_depfile = task.task_scope.in_depfile
+            if in_depfile:
+                stat_db[in_depfile] = Utils.get_stats(in_depfile)
+                deplines = Utils.load_depfile(task.task_scope.in_depfile, task.task_scope.depformat, task.task_scope.cwd)
+                for file in deplines:
+                    stat_db[file] = Utils.get_stats(file) # type: ignore
 
-    # We gather stats from output files in a second pass so that their .command fields
-    # overwrite any blank ones from the first pass.
+        # We gather stats from output files in a second pass so that their .command fields
+        # overwrite any blank ones from the first pass.
 
-    for task in repo.yield_tasks():
-        if not task._complete:
-            continue
+        for task in repo.yield_tasks():
+            if not task._complete:
+                continue
 
-        for file in Utils.yield_values(task.out_files):
-            stat_db[file] = Utils.get_stats(file, task.node.command)
+            for file in Utils.yield_values(task.out_files):
+                stat_db[file] = Utils.get_stats(file, task.task_scope.command)
 
-    stat_db_path = Path.join(repo.build_dir, 'hancho.json')
-    Utils.save_json(stat_db, stat_db_path)
+        stat_db_path = Path.join(repo.build_dir, 'hancho.json')
+        Utils.save_json(stat_db, stat_db_path)
 
-    # ------------------------------------
-    # And do the same for compile_commands.json with a slightly different format.
+        # ------------------------------------
+        # And do the same for compile_commands.json with a slightly different format.
 
-    comp_db = {}
+        comp_db = {}
 
-    for task in repo.yield_tasks():
-        if not task._complete:
-            continue
+        for task in repo.yield_tasks():
+            if not task._complete:
+                continue
 
-        for file in Utils.yield_values(task.in_files):
-            # Haven't tested this in an IDE, but I think it matches the spec.
-            comp_db[file] = {
-                "directory" : task.node.cwd,
-                "command"   : Utils.commands_to_string(task.node.command),
-                "file"      : file,
-            }
+            for file in Utils.yield_values(task.in_files):
+                # Haven't tested this in an IDE, but I think it matches the spec.
+                comp_db[file] = {
+                    "directory" : task.task_scope.cwd,
+                    "command"   : Utils.commands_to_string(task.task_scope.command),
+                    "file"      : file,
+                }
 
-    comp_db_path = Path.join(repo.build_dir, 'compile_commands.json')
-    Utils.save_json(list(comp_db.values()), comp_db_path)
+        comp_db_path = Path.join(repo.build_dir, 'compile_commands.json')
+        Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # endregion
 # ==================================================================================================
+# region Script
 
-class Script(Node):
+class Script(Scope):
     def __init__(self):
         super().__init__()
         self.name  = "<script>"
@@ -1728,20 +1696,23 @@ class Script(Node):
         self.root  = '{dirname(path)}'
         self.script_tasks = []
 
+# endregion
 # ==================================================================================================
 # region Task
 
-class Task:
+# FIXME not actually using this as a scope yet
+
+class Task(Scope):
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(self, repo : Repo, script : Script, task_node : Dict):
+    def __init__(self, repo : Repo, script : Script, task_scope : Dict):
         self._repo   = repo
         self._script = script
-        self.node    = task_node
+        self.task_scope   = task_scope
 
         # Build scripts also may need to see the complete list of inputs/outputs to a task in
         # addition to the individual in_/out_ fields, so these are public.
@@ -1817,7 +1788,7 @@ class Task:
             self.create_aio_task()
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
-        for v in [v for v in Utils.yield_values(self.node) if isinstance(v, Task)]:
+        for v in [v for v in Utils.yield_values(self.task_scope) if isinstance(v, Task)]:
             v.queue_task()
 
     # ==================================================================================================
@@ -1868,9 +1839,9 @@ class Task:
         self.expand_task()
 
         # If there's a depfile from a previous build, load it so we can use it below.
-        if self.node.in_depfile:
+        if self.task_scope.in_depfile:
             self._old_deplines = Utils.load_depfile(
-                self.node.in_depfile, self.node.depformat, self.node.cwd
+                self.task_scope.in_depfile, self.task_scope.depformat, self.task_scope.cwd
             )
 
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -1885,21 +1856,21 @@ class Task:
         # Paths updated. See if we need to rebuild our outputs.
         self._reason = self.rebuild_reason()
         if not self._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{self.node.name}' : '{self.node.desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{self.task_scope.name}' : '{self.task_scope.desc}'")
 
         # Wait for enough jobs to free up to run this task.
-        self._cores = await Runner.acquire(self.node.job_size)
+        self._cores = await Runner.acquire(self.task_scope.job_size)
 
         # Run all the task's commands
-        text  = repr(self.node.name) if self.node.name else ""
-        text += " : " if self.node.name and self.node.desc else ""
-        text += repr(self.node.desc) if self.node.desc else ""
+        text  = repr(self.task_scope.name) if self.task_scope.name else ""
+        text += " : " if self.task_scope.name and self.task_scope.desc else ""
+        text += repr(self.task_scope.desc) if self.task_scope.desc else ""
         self.log_task(Log.INFO, Log.TEAL + f"Task {text}\n")
         self.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {self._reason}\n")
 
         time_a = time.perf_counter()
 
-        for command in self.node.command:
+        for command in self.task_scope.command:
             if command is None:
                 continue
             elif callable(command):
@@ -1927,7 +1898,7 @@ class Task:
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for input_task in [v for v in Utils.yield_values(self.node) if isinstance(v, Task)]:
+        for input_task in [v for v in Utils.yield_values(self.task_scope) if isinstance(v, Task)]:
             if input_task._aio_task is None:
                 raise AssertionError("One of a task's input sub-tasks was not started") # pragma: no cover
             try:
@@ -1942,17 +1913,16 @@ class Task:
     # ==================================================================================================
 
     def expand_task(self):
-        node = self.node
+        scope = self.task_scope
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(node, fold = ["hancho", "log", "in_objs", "_up"]) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(scope, fold = ["hancho", "log", "in_objs", "_up"]) + "\n")
 
-        #tree = task._tree
-        build_dir = node.xip("build_dir")
+        build_dir = scope.xip("build_dir")
 
         # Then we expand all io fields and fix their paths.
-        for _field, _files in list(node.items()):
+        for _field, _files in list(scope.items()):
             if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
@@ -1963,12 +1933,12 @@ class Task:
             ]
 
             if files:
-                files = Expander._expand(files, node)
+                files = Expander._expand(files, scope)
                 files = Utils.flatten(files)
                 files = self.fix_paths(_field, files, build_dir)
                 files = files[0] if len(files) == 1 else files
 
-                node[_field] = files
+                scope[_field] = files
 
                 if _field == "in_depfile":
                     self.in_depfile = cast(str, files)
@@ -1978,10 +1948,10 @@ class Task:
                     self.out_files[_field] = files
 
         # Fields all expanded, we can expand the rest of the task now.
-        Expander.xip(node)
-        node.command = Utils.flatten(node.command)
+        Expander.xip(scope)
+        scope.command = Utils.flatten(scope.command)
 
-        if not node.dry_run:
+        if not scope.dry_run:
             for file in filter(None, self.out_files.values()):
                 os.makedirs(Path.dirname(file), exist_ok=True)
             if self.in_depfile:
@@ -1992,7 +1962,7 @@ class Task:
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(node) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(scope) + "\n")
 
     # ==================================================================================================
 
@@ -2031,11 +2001,11 @@ class Task:
 
         # Check for all task issues that break the build
 
-        if not Path.exists(self.node.cwd):
-            raise Task.BROKEN(f"Task working directory '{self.node.cwd}' does not exist")
+        if not Path.exists(self.task_scope.cwd):
+            raise Task.BROKEN(f"Task working directory '{self.task_scope.cwd}' does not exist")
 
-        if not Path.startswith(self.node.build_dir, repo.root):
-            raise Task.BROKEN(f"The build dir {self.node.build_dir} is not under repo.root {repo.root}")
+        if not Path.startswith(self.task_scope.build_dir, repo.root):
+            raise Task.BROKEN(f"The build dir {self.task_scope.build_dir} is not under repo.root {repo.root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -2045,10 +2015,10 @@ class Task:
         # This means that pre-relative-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(self.node.command, list):
-            for command in self.node.command:
-                if type(command) is not type(self.node.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {self.node.command}")
+        if isinstance(self.task_scope.command, list):
+            for command in self.task_scope.command:
+                if type(command) is not type(self.task_scope.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {self.task_scope.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
@@ -2056,7 +2026,7 @@ class Task:
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if repo.strict:
-            for command in Utils.flatten(self.node.command):
+            for command in Utils.flatten(self.task_scope.command):
                 if not isinstance(command, str):
                     continue
                 out = Expander._split_text(command)
@@ -2066,8 +2036,8 @@ class Task:
         # Check that all build files would end up under build_dir
         for file in Utils.yield_values(self.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, self.node.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self.node.build_dir}")
+            if not Path.startswith(file, self.task_scope.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self.task_scope.build_dir}")
 
         # Check for task collisions
         for file in Utils.yield_values(self.out_files):
@@ -2085,13 +2055,13 @@ class Task:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        if isinstance(self.node.in_depfile, list) and len(self.node.in_depfile) > 1:
-            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.node.in_depfile}")
+        if isinstance(self.task_scope.in_depfile, list) and len(self.task_scope.in_depfile) > 1:
+            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.task_scope.in_depfile}")
 
     # ==================================================================================================
 
     async def run_command(self : Task, command : str):
-        self.log_task(Log.INFO, f"{Path.relpath(self.node.cwd, self._repo.root)}$ {command}\n")
+        self.log_task(Log.INFO, f"{Path.relpath(self.task_scope.cwd, self._repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2102,7 +2072,7 @@ class Task:
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 curly_command,
-                cwd    = self.node.cwd,
+                cwd    = self.task_scope.cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2149,7 +2119,7 @@ class Task:
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
-        with chdir(self.node._up.script3.root): # type: ignore
+        with chdir(self.task_scope._up.script3.root): # type: ignore
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2171,7 +2141,7 @@ class Task:
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if self.node.force:
+        if self.task_scope.force:
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to task.force"
 
@@ -2192,19 +2162,19 @@ class Task:
         # ------------------------------------
 
         for filename in Utils.yield_values(self.in_files):
-            if reason := check_stat(repo, filename):
+            if reason := repo.check_stat(filename):
                 return reason
 
         for filename in self._old_deplines:
-            if reason := check_stat(repo, filename):
+            if reason := repo.check_stat(filename):
                 return reason
 
         for filename in Utils.yield_values(self.out_files):
-            if reason := check_stat(repo, filename, self.node.command):
+            if reason := repo.check_stat(filename, self.task_scope.command):
                 return reason
 
-        if self.node.in_depfile:  # noqa: SIM102
-            if reason := check_stat(repo, self.node.in_depfile):
+        if self.task_scope.in_depfile:  # noqa: SIM102
+            if reason := repo.check_stat(self.task_scope.in_depfile):
                 return reason
 
         Hancho.build_reasons["*task clean"] += 1
@@ -2236,15 +2206,15 @@ class Task:
     # ==================================================================================================
 
     def log_task_exception(self : Task, message, ex = None):
-        node = self.node
+        scope = self.task_scope
         Log.error("========================================\n")
         Log.error(message + "\n")
         Log.error("========================================\n")
         Log.error(f"Script    = {self._script.path}:\n")
-        Log.error(f"Task      = '{node.name}' : '{node.desc}'\n")
+        Log.error(f"Task      = '{scope.name}' : '{scope.desc}'\n")
         Log.error(f"os.getcwd = {os.getcwd()}\n")
-        Log.error(f"task cwd  = {node.cwd}\n")
-        Log.error(f"command   = {node.command}\n")
+        Log.error(f"task cwd  = {scope.cwd}\n")
+        Log.error(f"command   = {scope.command}\n")
         Log.exception(ex)
         Log.error(self.dump_stdout())
         Log.error("========================================\n")
@@ -2273,7 +2243,7 @@ hancho_aliases = Dict(
 
 # ==================================================================================================
 
-class Defaults(Node):
+class Defaults(Scope):
     def __init__(self):
         self._up = hancho_aliases
         self.name = "<defaults>"
@@ -2285,7 +2255,7 @@ class Defaults(Node):
             max_jobs   = os.cpu_count() or 1,
             trace      = False, #True,
         )
-        link(self.hancho, self)
+        self.hancho.set_up(self)
 
         self.log = Dict(
             name       = "<log>",
@@ -2294,7 +2264,7 @@ class Defaults(Node):
             color     = True,
             timestamp = True
         )
-        link(self.log, self)
+        self.log.set_up(self)
 
         self.repo = Dict(
             name        = "<repo>",
@@ -2307,10 +2277,10 @@ class Defaults(Node):
             dry_run     = False,
             strict      = True,
         )
-        link(self.repo, self)
+        self.repo.set_up(self)
 
         self.script3 = Script()
-        link(self.script3, self)
+        self.script3.set_up(self)
 
         self.task = Dict(
             name       = '<no name>',
@@ -2324,7 +2294,7 @@ class Defaults(Node):
             dry_run    = '{repo.dry_run}',
             force      = '{repo.build_force}',
         )
-        link(self.task, self)
+        self.task.set_up(self)
 
 # ==================================================================================================
 
@@ -2369,8 +2339,8 @@ class HanchoProxy(types.ModuleType):
 
     def Task(self, *args, **kwargs):
         task_node = Dict(self._tree.task, *args, kwargs)
-        link(task_node, self._tree)
-        task = Task(repo = self._repo, script = self._script, task_node = task_node)
+        task_node.set_up(self._tree)
+        task = Task(repo = self._repo, script = self._script, task_scope = task_node)
         self._script.script_tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -2423,7 +2393,7 @@ class HanchoProxy(types.ModuleType):
         Log.error(f"  func = {frame.f_code.co_name}\n")
         Log.error(f"  line = {frame.f_lineno}\n")
 
-# ==============================================1665====================================================
+# ==================================================================================================
 
 def _start():
 
@@ -2478,7 +2448,7 @@ def load_script(parent_repo : Repo | None, new_tree : Defaults) -> HanchoProxy:
 
 
     repo   = parent_repo or Repo()
-    link(repo, new_tree)
+    repo.set_up(new_tree)
     merge_variants(repo, new_tree.repo)
     Expander.xip(repo)
 
@@ -2531,7 +2501,7 @@ def hancho_main() -> int:
     time_a1 = time.perf_counter()
 
     top_repo  = Repo()
-    link(top_repo, top_tree)
+    top_repo.set_up(top_tree)
     merge_variants(top_repo, top_tree.repo)
     Expander.xip(top_repo)
 
@@ -2586,7 +2556,7 @@ def hancho_build(top_repo : Repo) -> int:
 
     # Also this is here and not in hancho_main because tests also need to load stats.
     for repo in Hancho.repos:
-        load_stat_db(repo)
+        repo.load_stat_db()
 
     # ------------------------------------
     # Select the set of tasks to run.
@@ -2599,7 +2569,7 @@ def hancho_build(top_repo : Repo) -> int:
 
             for repo in Hancho.repos:
                 for task in repo.yield_tasks():
-                    if target in task.node.name:
+                    if target in task.task_scope.name:
                         task.queue_task()
 
     elif top_repo.build_all:
@@ -2621,7 +2591,7 @@ def hancho_build(top_repo : Repo) -> int:
     # Update stat DBs.
 
     for repo in Hancho.repos:
-        save_stat_db(repo)
+        repo.save_stat_db()
 
     return result
 
@@ -2700,30 +2670,3 @@ if not scratch:
     _start()
 else:
     print("hello")
-
-    class Blah:
-        def __setitem__(self, key, val):
-            print(f"setitem({key}, {val})")
-            setattr(self, key, val)
-
-        def __setattr__(self, key, val):
-            print(f"setattr({key}, {val})")
-            object.__setattr__(self, key, val)
-
-    class Glom:
-        pass
-
-    a : Any = Blah()
-    b : Any = Glom()
-
-    a.foo = 1
-    a.bar = 2
-    a.glom = [4, 5, 6]
-    a.derp = {"a":1, "b":2}
-
-    b.bar = 3
-    b.baz = 4
-    b.glom = [1, 2, 3]
-    b.derp = {"a":3, "c":4}
-
-    update_variant(a, b, merge_dicts = True, merge_lists = True, keep_rhs = True)  # type: ignore # noqa: F821
