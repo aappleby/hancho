@@ -674,7 +674,7 @@ def parse_flags(*argv) -> Dict:
         lhs[parts[-1]] = val
 
     argv_flags = Dict()
-    for k, v in vars(argv_vars).items():
+    for k, v in argv_vars.__dict__.items():
         if v is not None:
             set_by_path(argv_flags, k, v)
 
@@ -730,15 +730,16 @@ def parse_flags(*argv) -> Dict:
 # FIXME need to audit stuff and make it all ignore private ("_blah") fields.
 
 def merge_variants(
-    lhs: Scope,
-    rhs: abc.Mapping | Scope,
-    merge_dicts: bool = True,
-    merge_lists: bool = True,
+    lhs: abc.MutableMapping,
+    rhs: abc.Mapping,
+    merge_mappings: bool = True,
+    merge_sequences: bool = True,
+    merge_sets: bool = True,
     keep_lhs: bool = True,
     keep_rhs: bool = True,
 ):
-    lvars = vars(lhs)
-    rvars = vars(rhs)
+    lvars = lhs if isinstance(lhs, dict) else lhs.__dict__
+    rvars = rhs if isinstance(rhs, dict) else rhs.__dict__
 
     # Prune lhs keys if needed
     if not keep_lhs:
@@ -760,14 +761,15 @@ def merge_variants(
 
         if lhs2 is rhs2:
             pass
-        elif Utils.is_scope(lhs2) and (Utils.is_mapping(rhs2) or Utils.is_scope(rhs2)) and merge_dicts:
-            merge_variants(lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
-        elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_lists:
+        elif isinstance(lhs2, abc.MutableMapping) and isinstance(rhs2, abc.Mapping) and merge_mappings:
+            merge_variants(lhs2, rhs2, merge_mappings, merge_sequences, keep_lhs, keep_rhs)
+        elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
             lvars[key] = [*lhs2, *rhs2]
-        elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_lists:
+        elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_sets:
             lvars[key] = lhs2 | rhs2
         elif rhs2 is not None:
-            lvars[key] = copy.copy(rhs2)
+            #lvars[key] = copy.copy(rhs2)
+            lvars[key] = rhs2
 
     # Save rhs keys if needed
     if keep_rhs:
@@ -775,40 +777,106 @@ def merge_variants(
             if key.startswith("_"):
                 continue
             if key not in lvars:
-                lvars[key] = copy.copy(rvars[key])
+                #lvars[key] = copy.copy(rvars[key])
+                lvars[key] = rvars[key]
+            pass
 
 # endregion
 # ==================================================================================================
 # region Scope
 
-class Scope:
+# The Scope object is the basic building block of our template variable resolution tree.
+# It exposes all "public" attributes (that don't start with an underscore) through a MutableMapping
+# interface, and adjusts __deepcopy__ to only deep-copy public attributes (private attributes are
+# shallow-copied).
+
+class Scope(abc.MutableMapping):
     def __init__(self):
-        object.__setattr__(self, "_up", None)
+        self._up : Scope | None = None
 
-    def has_up(self) -> bool:
-        return hasattr(self, "_up")
+    @staticmethod
+    def _hidden(key):
+        return isinstance(key, str) and key.startswith("_")
 
-    def get_up(self) -> Scope:
-        return object.__getattribute__(self, "_up")
+    def __repr__(self):
+        return Dumper.dump(self)
+
+    def expand(self, template, /, recursive : bool = False):
+        return Expander.expand(template, self, recursive)
+
+    def xip(self, key, /, recursive = True):
+        """Expand-in-place. Replaces a field with its expanded version."""
+        result = self[key]
+        result = self.expand(result, recursive)
+        self[key] = result
+        return result
+
+    # ----------------------------------------
+
+    def get_up(self) -> Any:
+        return self._up
 
     def set_up(self, up : Scope):
         # Check that we're not going to create a loop.
         cursor = up
         while(cursor):
             if cursor is self:
-                raise AttributeError("bad linky")
+                raise AttributeError("Scope.set_up tried to create a circular reference")
             cursor = cursor.get_up()
         object.__setattr__(self, "_up", up)
 
-    # This is here so that the linter doesn't complain about reading unknown fields off a scope.
+    # ----------------------------------------
+
+    def __deepcopy__(self, memo):
+        if id(self) in memo:
+            return memo[id(self)]
+
+        result = type(self).__new__(type(self))
+
+        for k, v in self.__dict__.items():
+            v2 = v if k.startswith("_") else copy.deepcopy(v)
+            result.__dict__[k] = v2
+
+        return result
+
+    # ----------------------------------------
+    # These are here so that the linter doesn't complain about reading/writing unknown fields off a
+    # scope.
+
     def __getattr__(self, key) -> Any:
         return object.__getattribute__(self, key)
+
+    def __setattr__(self, key, val : Any):
+        object.__setattr__(self, key, val)
+
+    # ----------------------------------------
+    # Our MutableMapping interface only exposes public attributes.
+
+    def __getitem__(self, key):
+        if self._hidden(key): raise KeyError(key)
+        return self.__dict__.__getitem__(key)
+
+    def __setitem__(self, key, val):
+        if self._hidden(key): raise KeyError(key)
+        return self.__dict__.__setitem__(key, val)
+
+    def __delitem__(self, key):
+        if self._hidden(key): raise KeyError(key)
+        self.__dict__.__delitem__(key)
+
+    def __len__(self):
+        return sum(1 for _ in self)
+
+    def __iter__(self):
+        for k in self.__dict__:
+            if not k.startswith("_"):
+                yield k
 
 # endregion
 # ==================================================================================================
 # region Dict
 
-class Dict(Scope, abc.MutableMapping):
+class Dict(Scope):
     """
     This class extends 'dict' in a couple ways -
     1. Dicts can be used as scopes during template expansion.
@@ -820,59 +888,22 @@ class Dict(Scope, abc.MutableMapping):
         - Otherwise rightmost non-None wins.
     """
 
-    @staticmethod
-    def dictify(v):
-        if isinstance(v, dict):
-            v = Dict.wrap({k2 : Dict.dictify(v2) for k2, v2 in v.items()})
-            # can't do this version since we may be inside the dict constructor
-            #v = Dict(**{k2 : Dict.dictify(v2) for k2, v2 in v.items()})
-        elif isinstance(v, list):
-            v = [Dict.dictify(v2) for v2 in v]
-        elif isinstance(v, set):
-            v = {Dict.dictify(v2) for v2 in v}
-        elif isinstance(v, tuple):
-            v = tuple(Dict.dictify(v2) for v2 in v)
-        return v
-
     def __init__(self, *args : abc.Mapping, **kwargs : Any):
         super().__init__()
-        self._dict : dict
-        object.__setattr__(self, "_dict", {})
         self.update(*args, **kwargs)
+        for k, v in self.__dict__.items():
+            if not k.startswith("_") and isinstance(v, Scope):
+                v.set_up(self)
 
-    def __deepcopy__(self, memo):
-        if id(self) in memo:
-            return memo[id(self)]
-
-        result = type(self).__new__(type(self))
-        object.__setattr__(result, "_dict", {})
-        object.__setattr__(result, "_up", self._up)
-
-        for k, v in self._dict.items():
-            v2 = copy.deepcopy(v)
-            if isinstance(v2, Scope) and v2.get_up() is self:
-                v2.set_up(result)
-            result._dict[k] = v2
-
-        return result
-
-    @staticmethod
-    def wrap(d : dict):
-        result = Dict.__new__(Dict)
-        Scope.__init__(result)
-        object.__setattr__(result, "_dict", d)
-        object.__setattr__(result, "_up", None)
-        return result
 
     # ==============================================================================================
 
     def update(self, *args, **kwargs):
         all_things = [*args, kwargs]
         for rhs in filter(None, all_things):
-            rhs = Dict.dictify(rhs)
             merge_variants(
                 self, rhs,
-                merge_dicts=True, merge_lists=True,
+                merge_mappings=True, merge_sequences=True,
                 keep_lhs=True, keep_rhs=True)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
@@ -887,105 +918,6 @@ class Dict(Scope, abc.MutableMapping):
             merge_variants(dest, rhs, True, True, True, False)
         return dest
 
-
-    # ==============================================================================================
-    # region Dunders
-
-    def __repr__(self):
-        return Dumper.dump(self)
-
-    # endregion
-    # ==============================================================================================
-    # region MutableMapping interface
-
-    def __getitem__(self, key: str) -> Any:
-        return self.internal_get(key)
-
-    def __setitem__(self, key: str, val: Any):
-        return self.internal_set(key, val)
-
-    def __delitem__(self, key: str):
-        return self.internal_del(key)
-
-    def __iter__(self):
-        return self._dict.__iter__()
-
-    def __len__(self):
-        return self._dict.__len__()
-
-    def __contains__(self, key):
-        return self._dict.__contains__(key)
-
-    # endregion
-    # ==============================================================================================
-    # region Attribute interface
-
-    def __getattr__(self, key: str) -> Any:
-        try:
-            return self.internal_get(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key: str, val: Any):
-        try:
-            return self.internal_set(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __delattr__(self, key: str):
-        try:
-            return self.internal_del(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    # endregion
-    # ==============================================================================================
-
-    def walk(self, key : str, check_up : bool) -> Scope:
-        cursor = self
-        while True:
-            if key in vars(cursor):
-                break
-            if check_up and (up := cursor.get_up()):
-                cursor = up
-            else:
-                raise KeyError(key)
-        return cursor
-
-    def internal_get(self, key, check_up = True):
-        _dict = object.__getattribute__(self, "_dict")
-
-        if key == "_dict":
-            return _dict
-        if key == "_up":
-            return self.get_up()
-
-        owner = self.walk(key, check_up)
-
-        if isinstance(owner, Dict):
-            return owner._dict[key]
-        elif isinstance(owner, Scope):
-            return getattr(owner, key)
-        else:
-            raise KeyError(key)
-
-    def internal_set(self, key, val):
-        self._dict[key] = val
-        if isinstance(val, Scope):
-            val.set_up(self)
-
-    def internal_del(self, key):
-        del self._dict[key]
-
-    def expand(self, template):
-        return Expander._expand(template, self)
-
-    def xip(self, key):
-        """Expand-in-place. Replaces a field with its expanded version."""
-        result = getattr(self, key)
-        result = Expander._expand(result, self)
-        setattr(self, key, result)
-        return result
 
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
@@ -1023,16 +955,15 @@ class Expander(abc.Mapping):
 
     # region instance methods
 
-    def __init__(self, scope : Scope):
+    def __init__(self, scope : Scope, recursive : bool):
         self.scope : Scope
         object.__setattr__(self, "scope", scope)
+        object.__setattr__(self, "recursive", recursive)
 
     @classmethod
-    def wrap(cls, scope : Scope):
-        if isinstance(scope, Expander):
-            return scope
-        else:
-            return Expander(scope)
+    def wrap(cls, scope : Scope, recursive : bool):
+        assert not isinstance(scope, Expander)
+        return Expander(scope, recursive)
 
     # ====================================
 
@@ -1058,7 +989,7 @@ class Expander(abc.Mapping):
         cursor = self.scope
         result = Utils.MISSING
 
-        keys = vars(cursor)
+        keys = cursor.__dict__
         while key not in keys:
             if check_up and (up := cursor.get_up()): # type: ignore
                 trace_up(cursor, up, "get", key)
@@ -1073,9 +1004,9 @@ class Expander(abc.Mapping):
 
         if isinstance(result, Scope):
             # have to do this so that "read nested c first" resolves in the dest dict first
-            result = Expander.wrap(result)
+            result = self.wrap(result, object.__getattribute__(self, 'recursive'))
         else:
-            result = Expander._expand(result, cursor)
+            result = self.expand(result, cursor)
         return result
 
     # endregion
@@ -1105,76 +1036,85 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     @classmethod
-    def xip(cls, scope : Scope):
+    def xip(cls, scope : Scope, /, recursive : bool):
         # FIXME this is messy
 
-        scope_vars = vars(scope)
+        scope_vars = scope.__dict__
 
         for key, val in scope_vars.items():
             if key.startswith("_"):
                 continue
             if isinstance(val, Dict):
-                cls.xip(val)
+                cls.xip(val, recursive)
             else:
-                scope_vars[cast(str, key)] = Expander._expand(val, scope)
+                scope_vars[cast(str, key)] = cls.expand(val, scope, recursive)
 
         return scope
 
     @classmethod
-    def _expand(cls, var : Any, scope : Scope) -> Any:
-        if isinstance(scope, Expander):
+    def expand(cls, var : Any, scope : Scope, /, recursive : bool = False) -> Any:
+        result = cls._expand(var, scope, recursive)
+        assert not isinstance(result, Expander)
+        return result
+
+    @classmethod
+    def _expand(cls, var : Any, scope : Scope, recursive : bool) -> Any:
+        if isinstance(scope, cls):
+            raise AssertionError()
             scope = scope.scope
 
         # Bail out if we've recursed too many times.
-        old_depth = Expander.cv_depth.get()
-        if old_depth > Expander.MAX_DEPTH:
+        old_depth = cls.cv_depth.get()
+        if old_depth > cls.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
-        Expander.cv_depth.set(old_depth + 1)
+        cls.cv_depth.set(old_depth + 1)
 
         try:
             old_var = None
             while old_var != var:
                 old_var = var
 
-                if isinstance(var, Expander):
-                    var = var.scope
-
                 if var is Utils.MISSING:
                     raise AssertionError("Tried to expand a sentinel value")
-                elif Utils.is_mapping(var):
-                    result = type(var)()
+                elif Utils.is_mapping(var) and recursive:
                     for k, v in var.items():
-                        v2 = Expander._expand(v, scope)
-                        result[k] = v2 # type: ignore
-                    return result
-                elif Utils.is_sequence(var) or Utils.is_set(var):
-                    return type(var)(Expander._expand(v, scope) for v in var) # type: ignore
+                        var[k] = cls._expand(v, scope, recursive)
+                    return var
+                elif Utils.is_sequence(var) and recursive:
+                    for i, v in enumerate(var):
+                        var[i] = cls._expand(v, scope, recursive)
+                    return var
+                elif Utils.is_set(var) and recursive:
+                    var = list(var)
+                    for i, v in enumerate(var):
+                        var[i] = cls._expand(v, scope, recursive)
+                    return set(var)
                 elif not isinstance(var, str):
                     return var
 
-                blocks = Expander._split_text(var)
+                blocks = cls._split_text(var)
 
-                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], Expander.Literal)):
+                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], cls.Literal)):
                     return var
 
-                if len(blocks) == 1 and isinstance(blocks[0], Expander.Macro):
-                    var = Expander._eval_macro(blocks[0], scope) # type: ignore
+                if len(blocks) == 1 and isinstance(blocks[0], cls.Macro):
+                    var = cls._eval_macro(blocks[0], scope, recursive) # type: ignore
                 else:
                     try:
                         trace_start(scope, "expand", var)
                         for i, b in enumerate(blocks):
-                            if isinstance(b, Expander.Macro):
-                                blocks[i] = Expander._expand(b, scope)
+                            if isinstance(b, cls.Macro):
+                                blocks[i] = cls._expand(b, scope, recursive)
                         var = "".join(Utils.stringify(b) for b in blocks)
                     finally:
                         trace_end(scope, old_var, var)
 
 
         finally:
-            Expander.cv_depth.set(old_depth)
+            cls.cv_depth.set(old_depth)
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
-                Expander.cv_evals.set(0)
+                cls.cv_evals.set(0)
 
         return var
 
@@ -1190,18 +1130,19 @@ class Expander(abc.Mapping):
 
 
     @classmethod
-    def _eval_macro(cls, var : Expander.Macro, scope : Scope) -> Any:
+    def _eval_macro(cls, var : Expander.Macro, scope : Scope, recursive : bool) -> Any:
         # Bail out if we've done too many evals already.
-        old_evals = Expander.cv_evals.get()
-        if old_evals >= Expander.MAX_EVALS:
+        old_evals = cls.cv_evals.get()
+        if old_evals >= cls.MAX_EVALS:
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: '{var!r}'")
-        Expander.cv_evals.set(old_evals + 1)
+        cls.cv_evals.set(old_evals + 1)
 
         old_var = var
+        result = var
 
         try:
             trace_start(scope, "eval", var)
-            var = eval(var[1:-1], {}, Expander.wrap(scope))
+            result = eval(var[1:-1], {}, cls.wrap(scope, recursive))
         except RecursionError:
             raise
         except Exception as ex:  # noqa: F841
@@ -1211,11 +1152,28 @@ class Expander(abc.Mapping):
         except BaseException:
             raise
         finally:
-            trace_end(scope, old_var, var)
+            trace_end(scope, old_var, result)
 
-        return var
+        if isinstance(result, Expander):
+            result = result.scope
+
+        return result
 
     # ==============================================================================================
+
+    @classmethod
+    def is_macro(cls, text):
+        if not isinstance(text, str):
+            return False
+        blocks = cls._split_text(text)
+        return len(blocks) == 1 and isinstance(blocks[0], cls.Macro)
+
+    @classmethod
+    def is_template(cls, text):
+        if not isinstance(text, str):
+            return False
+        blocks = cls._split_text(text)
+        return len(blocks) > 1
 
     @classmethod
     def _split_text(cls, text : str) -> Blocks:
@@ -1225,7 +1183,7 @@ class Expander(abc.Mapping):
         translate "«»" into "{}" right before we run a command
         """
 
-        out_blocks = Expander.Blocks()
+        out_blocks = cls.Blocks()
         cursor = 0
         idelim = -1
         macros = 0
@@ -1235,14 +1193,14 @@ class Expander(abc.Mapping):
                 idelim = i
             elif c == '}' and idelim >= 0:
                 if cursor < idelim:
-                    out_blocks.append(Expander.Literal(text[cursor:idelim]))
-                out_blocks.append(Expander.Macro(text[idelim:i+1]))
+                    out_blocks.append(cls.Literal(text[cursor:idelim]))
+                out_blocks.append(cls.Macro(text[idelim:i+1]))
                 macros += 1
                 cursor = i + 1
                 idelim = -1
 
         if cursor < len(text):
-            out_blocks.append(Expander.Literal(text[cursor:]))
+            out_blocks.append(cls.Literal(text[cursor:]))
 
         return out_blocks
 
@@ -1559,7 +1517,7 @@ class Hancho:
 
     real_filenames : set[str] = set()
     dedupe : Dict = Dict()
-    repos : set[Repo] = set()
+    repos : list[Repo]
     trace = False
     build_reasons = Counter()
 
@@ -1567,7 +1525,7 @@ class Hancho:
     def init(cls, top_tree : Scope):
         cls.real_filenames = set()
         cls.dedupe = Dict()
-        cls.repos : set[Repo] = set()
+        cls.repos : list[Repo] = []
         cls.trace = top_tree.hancho.trace
 
         con_width = shutil.get_terminal_size().columns
@@ -1594,11 +1552,11 @@ class Repo(Scope):
         self.dry_run     = False
         self.strict      = True
 
-        self.repo_stat_db = {}
-        self.repo_scripts = []
+        self._repo_stat_db = {}
+        self._repo_scripts = []
 
     def yield_tasks(self) -> abc.Iterator[Task]:
-        for script in self.repo_scripts:
+        for script in self._repo_scripts:
             yield from script.script_tasks
 
     def check_stat(self, filename : str, command = None):
@@ -1607,11 +1565,11 @@ class Repo(Scope):
             Hancho.build_reasons["file missing"] += 1
             return f"File missing: {filename}"
 
-        if filename not in repo.repo_stat_db:
+        if filename not in repo._repo_stat_db:
             Hancho.build_reasons["stat missing"] += 1
             return f"Stat missing: {filename}"
 
-        old_stat = repo.repo_stat_db[filename]
+        old_stat = repo._repo_stat_db[filename]
         new_stat = Utils.get_stats(filename, command)
 
         try:
@@ -1650,10 +1608,10 @@ class Repo(Scope):
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
                 Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-                repo.repo_stat_db = json.load(contents)
+                repo._repo_stat_db = json.load(contents)
         else:
             Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
-            repo.repo_stat_db = {}
+            repo._repo_stat_db = {}
 
     def save_stat_db(self):
         repo = self
@@ -1733,7 +1691,7 @@ class Script(Scope):
 
 # FIXME not actually using this as a scope yet
 
-class Task(Scope):
+class Task:
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
@@ -1943,7 +1901,7 @@ class Task(Scope):
             ]
 
             if files:
-                files = Expander._expand(files, scope)
+                files = scope.expand(files, recursive = True)
                 files = Utils.flatten(files)
                 files = self.fix_paths(_field, files, build_dir)
                 files = files[0] if len(files) == 1 else files
@@ -1958,7 +1916,7 @@ class Task(Scope):
                     scope.out_files[_field] = files
 
         # Fields all expanded, we can expand the rest of the task now.
-        Expander.xip(scope)
+        Expander.xip(scope, recursive = True)
         scope.command = Utils.flatten(scope.command)
 
         if not scope.dry_run:
@@ -2033,11 +1991,8 @@ class Task(Scope):
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if repo.strict:
             for command in Utils.flatten(self._task_scope.command):
-                if not isinstance(command, str):
-                    continue
-                out = Expander._split_text(command)
-                if (len(out) > 1) or (len(out) == 1 and isinstance(out[0], Expander.Macro)):
-                    raise Task.BROKEN("STRICT: Command has delimiters in it")
+                if Expander.is_macro(command) or Expander.is_template(command):
+                    raise Task.BROKEN("STRICT: Command not fully expanded")
 
         # Check that all build files would end up under build_dir
         for file in Utils.yield_values(self._task_scope.out_files):
@@ -2118,7 +2073,7 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : abc.Callable):
-        callback_dir = Path.relpath(self._task_scope.script3.root, self._task_scope.repo.root)
+        callback_dir = Path.relpath(self._task_scope.get_up().script3.root, self._task_scope.get_up().repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
@@ -2150,7 +2105,7 @@ class Task(Scope):
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to task.force"
 
-        if self._task_scope.repo.build_force:
+        if self._task_scope.get_up().repo.build_force:
             Hancho.build_reasons["forced"] += 1
             return "Target forced to rebuild due to repo.build_force"
 
@@ -2417,7 +2372,7 @@ def _start():
         Log._flush()
 
 def load_script(scope : Defaults) -> HanchoProxy:
-    Expander.xip(scope.script3)
+    Expander.xip(scope.script3, recursive = True)
 
     path = Path.resolve(scope.script3.path)
     root = Path.resolve(scope.script3.root)
@@ -2444,7 +2399,7 @@ def load_script(scope : Defaults) -> HanchoProxy:
             source = file.read()
             code = compile(source, path, "exec", dont_inherit=True)
 
-    Expander.xip(scope.repo)
+    Expander.xip(scope.repo, recursive = True)
 
     # FIXME Make module a Scope, splice it into the scope tree somewhere
 
@@ -2457,9 +2412,11 @@ def load_script(scope : Defaults) -> HanchoProxy:
     module.tree     = scope     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
-    Hancho.repos.add(proxy.scope.repo)
 
-    scope.repo.repo_scripts.append(scope.script3)
+    if proxy.scope.repo not in Hancho.repos:
+        Hancho.repos.append(proxy.scope.repo)
+
+    scope.repo._repo_scripts.append(scope.script3)
 
     if not code or not root:
         return proxy
@@ -2653,6 +2610,7 @@ async def async_run_tasks():
 # ==================================================================================================
 
 scratch = False
+#scratch = True
 
 if not scratch:
     _start()

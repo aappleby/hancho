@@ -44,11 +44,17 @@ class TestDict(unittest.TestCase):
     def test_recursive_merge(self):
         d1 = {"a": {"x": 1, "y": 2}}
         d2 = {"a": {"y": 3, "z": 4}}
-        merged = Dict(d1, d2)
-        self.assertIsInstance(merged.a, Dict)
-        self.assertEqual(merged.a.x, 1)
-        self.assertEqual(merged.a.y, 3)
-        self.assertEqual(merged.a.z, 4)
+
+        d3 = {}
+        hancho.module.merge_variants(d3, d1) # type: ignore
+        hancho.module.merge_variants(d3, d2) # type: ignore
+
+        self.assertIsInstance(d3, dict)
+        self.assertIsInstance(d3['a'], dict)
+
+        self.assertEqual(d3['a']['x'], 1)
+        self.assertEqual(d3['a']['y'], 3)
+        self.assertEqual(d3['a']['z'], 4)
 
     def test_basic_merging(self):
         # Basic merging should work

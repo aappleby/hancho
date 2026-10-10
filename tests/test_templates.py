@@ -4,7 +4,6 @@
 import os
 import sys
 import unittest
-from typing import cast
 
 sys.path.append("..")
 
@@ -31,29 +30,29 @@ class TestTemplates(unittest.TestCase):
 
     def test_basic_eval(self):
         d = Dict(a = 1, b = 2)
-        self.assertEqual('a', Expander._expand("a", d))
-        self.assertEqual('b', Expander._expand("b", d))
-        self.assertEqual(1, Expander._expand("{a}", d))
-        self.assertEqual(2, Expander._expand("{b}", d))
-        self.assertEqual('1212', Expander._expand("{a}{b}{a}{b}", d))
-        self.assertEqual(1212,Expander._expand("{{a}{b}{a}{b}}", d))
-        self.assertEqual(None, Expander._expand(None, d))
-        self.assertEqual("", Expander._expand("", d))
+        self.assertEqual('a', d.expand("a"))
+        self.assertEqual('b', d.expand("b"))
+        self.assertEqual(1, d.expand("{a}"))
+        self.assertEqual(2, d.expand("{b}"))
+        self.assertEqual('1212', d.expand("{a}{b}{a}{b}"))
+        self.assertEqual(1212, d.expand("{{a}{b}{a}{b}}"))
+        self.assertEqual(None, d.expand(None))
+        self.assertEqual("", d.expand(""))
 
     def test_macro_to_fixed_point(self):
         d = Dict(a = "{b}", b = "{c}", c = "{d}")
-        self.assertEqual("{d}", Expander._expand("{a}", d))
+        self.assertEqual("{d}", d.expand("{a}"))
 
     def test_expand_dict(self):
         d = Dict(a = Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"))
         self.assertEqual(
-            Expander._expand(">{a}<", d),
+            d.expand(">{a}<"),
             ">1 2 x{foo}x{bar}x<"
         )
 
         d = Dict(a = Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"), foo = 3, bar = 4)
         self.assertEqual(
-            Expander._expand(">{a}<", d),
+            d.expand(">{a}<"),
             ">1 2 x3x4x<"
         )
 
@@ -63,45 +62,45 @@ class TestTemplates(unittest.TestCase):
         b = Dict(c = "{a}")
 
         b.set_up(d1)
-        self.assertEqual("foo", Expander._expand("{c}", b))
+        self.assertEqual("foo", b.expand("{c}"))
 
         b.set_up(d2)
-        self.assertEqual("bar", Expander._expand("{c}", b))
+        self.assertEqual("bar", b.expand("{c}"))
 
     def test_mutual_cycle(self):
         # only macros
         d = Dict(a="{b}", b="{a}")
         with self.assertRaises(RecursionError):
-            Expander._expand("{a}", d)
+            d.expand("{a}")
 
         # inside a template
         d = Dict(foo="foo", x="{y}", y="{x}")
         with self.assertRaises(RecursionError):
-            Expander._expand("echo {foo} {x} {foo}", d)
+            d.expand("echo {foo} {x} {foo}")
 
     def test_self_cycle(self):
         # only macro
         d = Dict(a = "{a}")
         with self.assertRaises(RecursionError):
-            Expander._expand("{a}", d)
+            d.expand("{a}")
 
         # inside a template
         d = Dict(a = "x{a}")
         with self.assertRaises(RecursionError):
-            Expander._expand("{a}", d)
+            d.expand("{a}")
 
     def test_expand_big_array(self):
         d = Dict(name = "prefix")
         count = Expander.MAX_EVALS
         templates = [f"{{name}}_{i:04d}" for i in range(count)]
-        expanded = cast(list, Expander._expand(templates, d))
+        expanded = d.expand(templates, recursive = True)
         self.assertEqual(count, len(expanded))
         self.assertEqual(f"prefix_{count//2:04d}", expanded[count//2])
 
         with self.assertRaises(RecursionError):
             count = Expander.MAX_EVALS + 1
             templates = [f"{{name}}_{i:04d}" for i in range(count)]
-            expanded = cast(list, Expander._expand(templates, d))
+            expanded = d.expand(templates, recursive = True)
 
     def test_expand_long_chain_good(self):
         def make_dict(links):
@@ -114,7 +113,7 @@ class TestTemplates(unittest.TestCase):
             return d
 
         chain = make_dict(Expander.MAX_DEPTH-1)
-        self.assertEqual("sentinel", Expander._expand("{k0}", chain))
+        self.assertEqual("sentinel", chain.expand("{k0}"))
 
     def test_expand_long_chain_bad(self):
         def make_dict(links):
@@ -129,14 +128,14 @@ class TestTemplates(unittest.TestCase):
 
         chain = make_dict(Expander.MAX_DEPTH)
         with self.assertRaises(RecursionError):
-            self.assertEqual("sentinel", Expander._expand("{k0}", chain))
+            self.assertEqual("sentinel", chain.expand("{k0}"))
 
     def test_expand_giant_string(self):
         def expand_string(count):
             d = Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
-            return Expander._expand(giant_string, d)
+            return d.expand(giant_string)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
         result = expand_string(Expander.MAX_EVALS)
@@ -152,12 +151,12 @@ class TestTemplates(unittest.TestCase):
             return recursive()
         d = Dict(func = recursive)
         with self.assertRaises(RecursionError):
-            Expander._expand("{func()}", d)
+            d.expand("{func()}")
 
     def test_macro_evals_to_list_of_macros(self):
         # If a macro evals to a list of macros, the nested macros _shoud_ be auto-expanded
         d = Dict(a=["{b}","{b}"], b="x")
-        e = Expander._expand("{a}", d)
+        e = d.expand("{a}", recursive = True)
         self.assertEqual(["x","x"], e)
 
     def test_template_expands_to_template(self):
@@ -170,16 +169,16 @@ class TestTemplates(unittest.TestCase):
             baz = "} World!",
             blep = "Template",
         )
-        self.assertEqual("Hello Template World!", Expander._expand("{a}", d.e))
+        self.assertEqual("Hello Template World!", d.e.expand("{a}"))
 
     def test_resolve_in_up_or_self(self):
         # d.bar.qux -> foo -> {baz} -> baz = 3
         d = Dict(foo = "{baz}", bar = Dict(qux = "{foo}", baz = 2), baz = 3)
-        self.assertEqual(3, Expander._expand("{qux}", d.bar))
+        self.assertEqual(3, d.bar.expand("{qux}"))
 
         # d.bar.qux -> foo -> {baz} -> (fail expansion and goback to d) -> {baz} = 3
         d = Dict(foo = "{baz}", bar = Dict(qux = "{foo}", baz = 2))
-        self.assertEqual(2, Expander._expand("{qux}", d.bar))
+        self.assertEqual(2, d.bar.expand("{qux}"))
 
     def test_template_to_macro(self):
         # template expands to macro, macro refers to something in up, thing in up is a template -
@@ -202,17 +201,16 @@ class TestTemplates(unittest.TestCase):
         d = Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_map = _map)
 
         # Scalar types should pass through unchanged.
-        self.assertIs(_number, Expander._expand("{x_number}", d))
-        self.assertIs(_text,   Expander._expand("{x_text}", d))
-        self.assertIs(_func,   Expander._expand("{x_func}", d))
+        self.assertIs(_number, d.expand("{x_number}"))
+        self.assertIs(_text,   d.expand("{x_text}"))
+        self.assertIs(_func,   d.expand("{x_func}"))
 
-        # Containers should get copied.
-        _tuple2 = cast(list, Expander._expand("{x_tuple}", d))
-        self.assertIsNot(_tuple, _tuple2)
+        _tuple2 = d.expand("{x_tuple}")
+        self.assertIs(_tuple, _tuple2)
         self.assertEqual(_tuple, _tuple2)
 
-        _map2 = cast(dict, Expander._expand("{x_map}", d))
-        self.assertIsNot(_map,    _map2)
+        _map2 = d.expand("{x_map}")
+        self.assertIs(_map,    _map2)
         self.assertEqual(_number, _map2["1"])
         self.assertEqual(_text,   _map2["2"])
         self.assertEqual(_func,   _map2["3"])
@@ -221,47 +219,47 @@ class TestTemplates(unittest.TestCase):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in
         # the nested context.
         d = Dict(a = Dict(b = "{c}", c = 10), c = 20)
-        result = Expander._expand("{a.b}", d)
+        result = d.expand("{a.b}")
         self.assertEqual(result, 10)
 
     def test_TEFINAE(self):
         # TEFINAE - Text Expansion Failure Is Not An Error
         d = Dict(a = 1)
-        self.assertEqual("{missing}", Expander._expand("{missing}", d))
-        self.assertEqual("1 {missing}", Expander._expand("{a} {missing}", d))
-        self.assertEqual("{a + missing}", Expander._expand("{a + missing}", d))
+        self.assertEqual("{missing}", d.expand("{missing}"))
+        self.assertEqual("1 {missing}", d.expand("{a} {missing}"))
+        self.assertEqual("{a + missing}", d.expand("{a + missing}"))
 
     def test_template_nones(self):
         # Nones should turn into empty strings
         d = Dict(a = None, b = "x{a}y")
-        self.assertEqual(Expander._expand("{a}", d), None)
-        self.assertEqual(Expander._expand("{b}", d), 'xy')
+        self.assertEqual(d.expand("{a}"), None)
+        self.assertEqual(d.expand("{b}"), 'xy')
 
     def test_flatten_lists(self):
         # Lists should be flattened before joining with spaces
         d = Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
-        self.assertEqual('flags', Expander._expand("flags", d))
-        self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], Expander._expand("{flags}", d))
-        self.assertEqual("flags = 'a b c d e f'", Expander._expand("flags = '{flags}'", d))
+        self.assertEqual('flags', d.expand("flags"))
+        self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], d.expand("{flags}"))
+        self.assertEqual("flags = 'a b c d e f'", d.expand("flags = '{flags}'"))
 
     def test_templates_with_escaped_char_proxies(self):
         # Testing escape sequences in templates is annoying. Double-check that we can use proxies
         # to build strings with escape sequences.
         d = Dict(a=1, bs="\\", lb="{", rb="}")
-        self.assertEqual(Expander._expand(r"{lb}a{rb}", d), 1)
-        self.assertEqual(Expander._expand(r"{bs}{lb}a{bs}{rb}", d), r"\{a\}")
+        self.assertEqual(d.expand(r"{lb}a{rb}"), 1)
+        self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
 
     def test_expand_failed_to_terminate1(self):
         # Single recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(flarp="asdf {flarp}")
-            Expander._expand("{flarp}", bad_dict)
+            bad_dict.expand("{flarp}")
 
     def test_expand_failed_to_terminate2(self):
         # Double recursion
         with self.assertRaises(RecursionError):
             bad_dict = Dict(foo="asdf {bar}", bar="qwer {foo}")
-            Expander._expand("{foo}", bad_dict)
+            bad_dict.expand("{foo}")
 
     def test_expand_failed_to_terminate3(self):
         # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
@@ -269,12 +267,12 @@ class TestTemplates(unittest.TestCase):
         with self.assertRaises(RecursionError):
             subthing = Dict(foo="{subthing.foo} x")
             bad_dict = Dict(command="{subthing.foo}", subthing=subthing)
-            Expander._expand("{command}", bad_dict)
+            bad_dict.expand("{command}")
 
     def test_expand_nested_list(self):
         d = Dict(a = 1, b = 2, c = 3)
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
-        r = Expander._expand(v, d)
+        r = d.expand(v, recursive = True)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self):
@@ -285,20 +283,20 @@ class TestTemplates(unittest.TestCase):
             test_multi_eval = "it works!"
         )
 
-        self.assertEqual(Expander._expand("c", d),         "c")
-        self.assertEqual(Expander._expand("{c}", d),       "'  test_multi_eval   '.strip() ")
-        self.assertEqual(Expander._expand("{{c}}", d),     "test_multi_eval")
-        self.assertEqual(Expander._expand("{{{c}}}", d),   "it works!")
-        self.assertEqual(Expander._expand("{{{{c}}}}", d), "{it works!}")
+        self.assertEqual(d.expand("c"),         "c")
+        self.assertEqual(d.expand("{c}"),       "'  test_multi_eval   '.strip() ")
+        self.assertEqual(d.expand("{{c}}"),     "test_multi_eval")
+        self.assertEqual(d.expand("{{{c}}}"),   "it works!")
+        self.assertEqual(d.expand("{{{{c}}}}"), "{it works!}")
 
     def test_embedded_eval(self):
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
-        self.assertEqual('1 + 1', Expander._expand("{foo}", d))
-        self.assertEqual('1 + 1 2 + 2', Expander._expand("{foo} {bar}", d))
+        self.assertEqual('1 + 1', d.expand("{foo}"))
+        self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}"))
         d = Dict(foo = "1 + 1", bar = "{baz}", baz = "\"2 + 2\"")
-        self.assertEqual('1 + 1', Expander._expand("{foo}", d))
-        self.assertEqual('\"2 + 2\"', Expander._expand("{bar}", d))
-        self.assertEqual('1 + 1 \"2 + 2\"', Expander._expand("{foo} {bar}", d))
+        self.assertEqual('1 + 1', d.expand("{foo}"))
+        self.assertEqual('\"2 + 2\"', d.expand("{bar}"))
+        self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}"))
 
 #    # FIXME broken
 #    def _test_inline_script(self):
