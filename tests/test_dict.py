@@ -13,6 +13,8 @@ Dict = hancho.Dict
 
 # --------------------------------------------------------------------------------------------------
 
+# FIXME add public/private tests
+
 class TestDict(unittest.TestCase):
 
     def test_basic_access(self):

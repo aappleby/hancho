@@ -63,6 +63,15 @@ old_vars = vars
 def vars(v) -> abc.MutableMapping:
     return v if Utils.is_mapping(v) else old_vars(v)
 
+def public(scope):
+    yield from filter(is_public, scope)
+
+def is_public(key):
+    return not key.startswith("_")
+
+def is_private(key):
+    return key.startswith("_")
+
 # endregion
 # ==================================================================================================
 # region Utils
@@ -733,57 +742,52 @@ def parse_flags(*argv) -> Dict:
 
 # FIXME need to audit stuff and make it all ignore private ("_blah") fields.
 
+# When merging Dicts, if two attributes have the same name:
+#     - If they are both dicts, we recursively merge them.
+#     - If they are both lists, we concatenate them.
+#     - Otherwise rightmost non-None wins.
+
+
 def merge_variants(
     lhs: Any,
     rhs: Any,
+    *,
+    merge_private: bool = False,
     merge_mappings: bool = True,
     merge_sequences: bool = True,
     merge_sets: bool = True,
     keep_lhs: bool = True,
     keep_rhs: bool = True,
 ):
-    lvars = lhs if isinstance(lhs, dict) else lhs.__dict__
-    rvars = rhs if isinstance(rhs, dict) else rhs.__dict__
+    ldict = lhs if isinstance(lhs, dict) else lhs.__dict__
+    rdict = rhs if isinstance(rhs, dict) else rhs.__dict__
+    lkeys = [k for k in ldict if is_public(k) or merge_private]
+    rkeys = [k for k in rdict if is_public(k) or merge_private]
 
     # Prune lhs keys if needed
-    if not keep_lhs:
-        for key in lvars:
-            if key.startswith("_"):
-                continue
-            if key not in rvars:
-                del lvars[key]
+    for key in (k for k in lkeys if k not in rkeys and not keep_lhs):
+        del ldict[key]
 
     # Merge all lhs+rhs pairs
-    for key in lvars:
-        if key.startswith("_"):
-            continue
-        if key not in rvars:
-            continue
+    for key in (k for k in lkeys if k in rkeys):
 
-        lhs2 = lvars.get(key)
-        rhs2 = rvars.get(key)
+        lhs2 = ldict.get(key)
+        rhs2 = rdict.get(key)
 
         if lhs2 is rhs2:
             pass
         elif isinstance(lhs2, abc.MutableMapping) and isinstance(rhs2, abc.Mapping) and merge_mappings:
-            merge_variants(lhs2, rhs2, merge_mappings, merge_sequences, keep_lhs, keep_rhs)
+            merge_variants(lhs2, rhs2)
         elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
-            lvars[key] = [*lhs2, *rhs2]
+            ldict[key] = [*lhs2, *rhs2]
         elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_sets:
-            lvars[key] = lhs2 | rhs2
+            ldict[key] = lhs2 | rhs2
         elif rhs2 is not None:
-            #lvars[key] = copy.copy(rhs2)
-            lvars[key] = rhs2
+            ldict[key] = rhs2
 
     # Save rhs keys if needed
-    if keep_rhs:
-        for key in rvars:
-            if key.startswith("_"):
-                continue
-            if key not in lvars:
-                #lvars[key] = copy.copy(rvars[key])
-                lvars[key] = rvars[key]
-            pass
+    for key in (k for k in rkeys if k not in lkeys and keep_rhs):
+        ldict[key] = rdict[key]
 
 # endregion
 # ==================================================================================================
@@ -797,10 +801,6 @@ def merge_variants(
 class Scope(abc.MutableMapping):
     def __init__(self):
         self._up : Scope | None = None
-
-    @staticmethod
-    def _hidden(key):
-        return isinstance(key, str) and key.startswith("_")
 
     def __repr__(self):
         return Dumper.dump(self)
@@ -838,7 +838,7 @@ class Scope(abc.MutableMapping):
         result = type(self).__new__(type(self))
 
         for k, v in self.__dict__.items():
-            v2 = v if k.startswith("_") else copy.deepcopy(v)
+            v2 = v if is_private(k) else copy.deepcopy(v)
             result.__dict__[k] = v2
 
         return result
@@ -857,24 +857,22 @@ class Scope(abc.MutableMapping):
     # Our MutableMapping interface only exposes public attributes.
 
     def __getitem__(self, key):
-        if self._hidden(key): raise KeyError(key)
+        if is_private(key): raise KeyError(key)
         return self.__dict__.__getitem__(key)
 
     def __setitem__(self, key, val):
-        if self._hidden(key): raise KeyError(key)
+        if is_private(key): raise KeyError(key)
         return self.__dict__.__setitem__(key, val)
 
     def __delitem__(self, key):
-        if self._hidden(key): raise KeyError(key)
+        if is_private(key): raise KeyError(key)
         self.__dict__.__delitem__(key)
 
     def __len__(self):
         return sum(1 for _ in self)
 
     def __iter__(self):
-        for k in self.__dict__:
-            if not k.startswith("_"):
-                yield k
+        yield from filter(is_public, self.__dict__)
 
 # endregion
 # ==================================================================================================
@@ -882,33 +880,21 @@ class Scope(abc.MutableMapping):
 
 class Dict(Scope):
     """
-    This class extends 'dict' in a couple ways -
-    1. Dicts can be used as scopes during template expansion.
-    1. Dict supports "foo.bar" attribute access in addition to "foo['bar']"
-    2. Dict supports "merging" instances by passing them (and any additional key-value pairs) in via the constructor.
-    3. When merging Dicts, if two attributes have the same name:
-        - If they are both dicts, we recursively merge them.
-        - If they are both lists, we concatenate them.
-        - Otherwise rightmost non-None wins.
+    Scope wrapper that smooshes everything passed into its constructor into the dict and then
+    connects child->self _up pointers.
     """
-
     def __init__(self, *args : abc.Mapping, **kwargs : Any):
         super().__init__()
-        self.update(*args, **kwargs)
-        for k, v in self.__dict__.items():
-            if not k.startswith("_") and isinstance(v, Scope):
-                v.set_up(self)
 
-
-    # ==============================================================================================
-
-    def update(self, *args, **kwargs):
         all_things = [*args, kwargs]
         for rhs in filter(None, all_things):
-            merge_variants(
-                self, rhs,
-                merge_mappings=True, merge_sequences=True,
-                keep_lhs=True, keep_rhs=True)
+            merge_variants(self, rhs)
+
+        for v in self.__dict__.values():
+            if isinstance(v, Scope):
+                v.set_up(self)
+
+    # ==============================================================================================
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -919,7 +905,7 @@ class Dict(Scope):
     def fill(self : Dict, *args : Dict, **kwargs):
         dest = Dict(self)
         for rhs in (*args, kwargs):
-            merge_variants(dest, rhs, True, True, True, False)
+            merge_variants(dest, rhs)
         return dest
 
 
@@ -966,8 +952,8 @@ class Expander(abc.Mapping):
 
     @classmethod
     def wrap(cls, scope : Scope, recursive : bool):
-        assert not isinstance(scope, Expander)
-        return Expander(scope, recursive)
+        assert not isinstance(scope, cls)
+        return cls(scope, recursive)
 
     # ====================================
 
@@ -1041,31 +1027,25 @@ class Expander(abc.Mapping):
 
     @classmethod
     def xip(cls, scope : Scope, /, recursive : bool):
-        # FIXME this is messy
-
-        scope_vars = scope.__dict__
-
-        for key, val in scope_vars.items():
-            if key.startswith("_"):
+        for key, val in scope.__dict__.items():
+            if is_private(key):
                 continue
             if isinstance(val, Dict):
                 cls.xip(val, recursive)
             else:
-                scope_vars[cast(str, key)] = cls.expand(val, scope, recursive)
-
+                scope.__dict__[key] = cls.expand(val, scope, recursive)
         return scope
 
     @classmethod
     def expand(cls, var : Any, scope : Scope, /, recursive : bool = False) -> Any:
         result = cls._expand(var, scope, recursive)
-        assert not isinstance(result, Expander)
+        assert not isinstance(result, cls)
         return result
 
     @classmethod
     def _expand(cls, var : Any, scope : Scope, recursive : bool) -> Any:
         if isinstance(scope, cls):
             raise AssertionError()
-            scope = scope.scope
 
         # Bail out if we've recursed too many times.
         old_depth = cls.cv_depth.get()
@@ -1158,7 +1138,7 @@ class Expander(abc.Mapping):
         finally:
             trace_end(scope, old_var, result)
 
-        if isinstance(result, Expander):
+        if isinstance(result, cls):
             result = result.scope
 
         return result
@@ -1409,18 +1389,18 @@ class Dumper:
 # ==================================================================================================
 # region Tracer
 
-def trace_start(tree, action, arg):
+def trace_start(scope, action, arg):
     if not Hancho.trace:
         return
 
-    if isinstance(tree, Expander):
-        tree = tree.tree
+    if isinstance(scope, Expander):
+        scope = scope.scope
 
-    tree_color = Utils.obj_to_ansi_color(tree)
-    tree_tag   = Utils.instance_tag(tree)
+    scope_color = Utils.obj_to_ansi_color(scope)
+    scope_tag   = Utils.instance_tag(scope)
 
-    Log.info(f"{tree_color}┌ {tree_tag}{Log.RESET}.{action}({arg!r})\n")
-    Log.indent(tree_color)
+    Log.info(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r})\n")
+    Log.indent(scope_color)
 
 # ==================================================================================================
 
@@ -1431,12 +1411,12 @@ def trace_up(scope, up, action, arg):
     if isinstance(scope, Expander):
         scope = scope.scope
 
-    tree_color = Utils.obj_to_ansi_color(scope)
-    tree_tag   = Utils.instance_tag(scope)
+    scope_color = Utils.obj_to_ansi_color(scope)
+    scope_tag   = Utils.instance_tag(scope)
     up_color   = Utils.obj_to_ansi_color(up)
     up_tag     = Utils.instance_tag(up)
 
-    Log.info(f"{tree_color}┌ {tree_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
+    Log.info(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
 
 # ==================================================================================================
 
@@ -1448,14 +1428,14 @@ def trace_end(scope, arg, result):
     if isinstance(result, Expander):
         result = result.scope
 
-    tree_color   = Utils.obj_to_ansi_color(scope)
+    scope_color   = Utils.obj_to_ansi_color(scope)
     result_color = Log.RESET
     result_type  = type(result)
 
     if Utils.is_mapping(result):
         result_color = Utils.obj_to_ansi_color(result)
 
-    Log.info(f"{tree_color}└ {arg!r} : {result_type.__name__}{Log.RESET} = ")
+    Log.info(f"{scope_color}└ {arg!r} : {result_type.__name__}{Log.RESET} = ")
     if not Utils.is_scalar(result):
         Log.info(f"{result_color}{Utils.instance_tag(result)}\n")
     else:
@@ -1526,15 +1506,15 @@ class Hancho:
     build_reasons = Counter()
 
     @classmethod
-    def init(cls, top_tree : Scope):
+    def init(cls, top_scope : Scope):
         cls.real_filenames = set()
         cls.dedupe = Dict()
         cls.repos : list[Repo] = []
-        cls.trace = top_tree.hancho.trace
+        cls.trace = top_scope.hancho.trace
 
         con_width = shutil.get_terminal_size().columns
-        log = top_tree.log
-        hancho = top_tree.hancho
+        log = top_scope.log
+        hancho = top_scope.hancho
         Log.reset(log.level, log.wrap, log.color, log.timestamp, con_width)
         Utils.reset()
         Runner.reset(hancho.max_jobs, hancho.max_errors)
@@ -1908,7 +1888,6 @@ class Task(Scope):
 
 
 
-            old_files = files
 
 
             files = [v for v in files if v != ""]
@@ -1962,10 +1941,7 @@ class Task(Scope):
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
-        try:
-            file = Path.join(self._task_scope.get_up().script3.root, file)
-        except:
-            file = Path.join(self._task_scope.get_up().script3.root, file)
+        file = Path.join(self._task_scope.get_up().script3.root, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -2282,15 +2258,15 @@ class HanchoProxy(types.ModuleType):
     def init_for_testing(file : str, *args) -> HanchoProxy:
         flags = parse_flags(*args)
 
-        top_tree = Defaults()
-        merge_variants(top_tree, flags)
-        top_tree.script3.name = "<name>"
-        top_tree.script3.path = file
-        top_tree.script3.root = os.path.dirname(file)
+        top_scope = Defaults()
+        merge_variants(top_scope, flags)
+        top_scope.script3.name = "<name>"
+        top_scope.script3.path = file
+        top_scope.script3.root = os.path.dirname(file)
 
-        Hancho.init(top_tree)
+        Hancho.init(top_scope)
 
-        root_proxy = load_script(scope = top_tree)
+        root_proxy = load_script(scope = top_scope)
         return root_proxy
 
     def __getattr__(self, key):
@@ -2320,18 +2296,18 @@ class HanchoProxy(types.ModuleType):
         if root is None:
             root = Path.dirname(path)
 
-        new_tree = Defaults()
+        new_top_scope = Defaults()
         overrides = Dict(
             *args,
             kwargs,
             script3 = Dict(path = path, root = root)
         )
-        merge_variants(new_tree, overrides)
+        merge_variants(new_top_scope, overrides)
 
         if not is_repo:
-            new_tree.repo = self.scope.repo
+            new_top_scope.repo = self.scope.repo
 
-        return load_script(new_tree).module
+        return load_script(new_top_scope).module
 
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
@@ -2429,7 +2405,7 @@ def load_script(scope : Defaults) -> HanchoProxy:
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
-    module.tree     = scope     # type: ignore
+    module.scope    = scope     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
 
@@ -2629,10 +2605,18 @@ async def async_run_tasks():
 
 # ==================================================================================================
 
-scratch = False
-#scratch = True
-
-if not scratch:
+if 'scratch' not in sys.argv:
     _start()
 else:
-    print("hello")
+    a = Dict(foo = 1, _bar = 2)
+    print(a)
+    print(len(a))
+    print(vars(a))
+    print(a.items())
+    print(a.keys())
+    print(a.values())
+    for key in a: print(key)
+
+    print()
+    print(a.__dict__)
+    print(a._bar)
