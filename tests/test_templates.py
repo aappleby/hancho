@@ -197,23 +197,16 @@ class TestTemplates(unittest.TestCase):
         _text="hello world"
         _func = lambda x : x + 1  # noqa: E731
         _tuple = (_number, _text, _func)
+        _list = [1, 2, 3]
         _map = Dict({"1" : _number, "2" : _text, "3" : _func})
-        d = Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_map = _map)
+        d = Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_list = _list, x_map = _map)
 
-        # Scalar types should pass through unchanged.
         self.assertIs(_number, d.expand("{x_number}"))
         self.assertIs(_text,   d.expand("{x_text}"))
         self.assertIs(_func,   d.expand("{x_func}"))
-
-        _tuple2 = d.expand("{x_tuple}")
-        self.assertIs(_tuple, _tuple2)
-        self.assertEqual(_tuple, _tuple2)
-
-        _map2 = d.expand("{x_map}")
-        self.assertIs(_map,    _map2)
-        self.assertEqual(_number, _map2["1"])
-        self.assertEqual(_text,   _map2["2"])
-        self.assertEqual(_func,   _map2["3"])
+        self.assertIs(_tuple,  d.expand("{x_tuple}"))
+        self.assertIs(_list,   d.expand("{x_list}"))
+        self.assertIs(_map,    d.expand("{x_map}"))
 
     def test_read_nested_c_first(self):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in

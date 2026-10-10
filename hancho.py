@@ -1894,11 +1894,13 @@ class Task:
             if not _field.startswith("in_") and not _field.startswith("out_"):
                 continue
 
-            files = [
-                val._task_scope.out_files if isinstance(val, Task) else val
-                for val in Utils.yield_values(_files)
-                if val
-            ]
+            files = Utils.flatten(_files)
+
+            files = [v for v in files if v != ""]
+
+            for i, f in enumerate(files):
+                if isinstance(f, Task):
+                    files[i] = f._task_scope.out_files
 
             if files:
                 files = scope.expand(files, recursive = True)
@@ -1909,7 +1911,7 @@ class Task:
                 scope[_field] = files
 
                 if _field == "in_depfile":
-                    scope.in_depfile = cast(str, files)
+                    scope.in_depfile = files
                 elif _field.startswith("in_"):
                     scope.in_files[_field] = files
                 elif _field.startswith("out_"):
