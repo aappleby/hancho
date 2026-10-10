@@ -181,7 +181,7 @@ class Utils:
         return isinstance(v, abc.MutableMapping)
 
     @staticmethod
-    def is_node(v) -> TypeGuard[Scope]:
+    def is_scope(v) -> TypeGuard[Scope]:
         return isinstance(v, Scope)
 
     @staticmethod
@@ -760,7 +760,7 @@ def merge_variants(
 
         if lhs2 is rhs2:
             pass
-        elif Utils.is_node(lhs2) and Utils.is_mapping(rhs2) and merge_dicts:
+        elif Utils.is_scope(lhs2) and (Utils.is_mapping(rhs2) or Utils.is_scope(rhs2)) and merge_dicts:
             merge_variants(lhs2, rhs2, merge_dicts, merge_lists, keep_lhs, keep_rhs)
         elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_lists:
             lvars[key] = [*lhs2, *rhs2]
@@ -840,11 +840,28 @@ class Dict(Scope, abc.MutableMapping):
         object.__setattr__(self, "_dict", {})
         self.update(*args, **kwargs)
 
+    def __deepcopy__(self, memo):
+        if id(self) in memo:
+            return memo[id(self)]
+
+        result = type(self).__new__(type(self))
+        object.__setattr__(result, "_dict", {})
+        object.__setattr__(result, "_up", self._up)
+
+        for k, v in self._dict.items():
+            v2 = copy.deepcopy(v)
+            if isinstance(v2, Scope) and v2.get_up() is self:
+                v2.set_up(result)
+            result._dict[k] = v2
+
+        return result
+
     @staticmethod
     def wrap(d : dict):
         result = Dict.__new__(Dict)
         Scope.__init__(result)
         object.__setattr__(result, "_dict", d)
+        object.__setattr__(result, "_up", None)
         return result
 
     # ==============================================================================================
@@ -1724,11 +1741,8 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(self, script : Script, task_scope : Dict):
-        # FIXME something weird going on here with copies, we should _not_ be copying _up!
         task_scope2 = copy.deepcopy(task_scope)
-
-
-        self._repo   = task_scope.get_up().repo
+        self._repo   = task_scope2.get_up().repo
         self._task_scope = task_scope2
 
         self._enabled = False
@@ -2286,7 +2300,7 @@ class HanchoProxy(types.ModuleType):
 
     def __init__(self, module : types.ModuleType, scope : Defaults):
         super().__init__("hancho_proxy")
-        self._scope   = scope
+        self.scope   = scope
         self.module  = hancho
 
     @staticmethod
@@ -2317,11 +2331,11 @@ class HanchoProxy(types.ModuleType):
         print(Dumper.dump(*args, **kwargs))
 
     def Task(self, *args, **kwargs):
-        task_node = Dict(copy.copy(self._scope.task), *args, kwargs)
-        task_node.set_up(self._scope)
+        task_node = Dict(copy.copy(self.scope.task), *args, kwargs)
+        task_node.set_up(self.scope)
 
         task = Task(script = task_node.get_up().script3, task_scope = task_node)
-        self._scope.script3.script_tasks.append(task)
+        self.scope.script3.script_tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2340,7 +2354,7 @@ class HanchoProxy(types.ModuleType):
         merge_variants(new_tree, overrides)
 
         if not is_repo:
-            new_tree.repo = self._scope.repo
+            new_tree.repo = self.scope.repo
 
         return load_script(new_tree).module
 
@@ -2352,7 +2366,7 @@ class HanchoProxy(types.ModuleType):
         return self._load(path, root, True, *args, **kwargs)
 
     def build(self) -> int:
-        return hancho_build(self._scope.repo)
+        return hancho_build(self.scope.repo)
 
     class EarlyOut(Exception): pass
     class Fail(Exception): pass
@@ -2443,7 +2457,7 @@ def load_script(scope : Defaults) -> HanchoProxy:
     module.tree     = scope     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
-    Hancho.repos.add(proxy._scope.repo)
+    Hancho.repos.add(proxy.scope.repo)
 
     scope.repo.repo_scripts.append(scope.script3)
 
@@ -2491,7 +2505,7 @@ def hancho_main() -> int:
     # Start the build
 
     time_a3 = time.perf_counter()
-    result = hancho_build(top_proxy._scope.repo)
+    result = hancho_build(top_proxy.scope.repo)
     time_b3 = time.perf_counter()
     Log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
 
