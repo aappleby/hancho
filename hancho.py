@@ -789,6 +789,10 @@ def merge_variants(
     for key in (k for k in rkeys if k not in lkeys and keep_rhs):
         ldict[key] = rdict[key]
 
+def merge_args(lhs, *args, **kwargs):
+    for rhs in filter(None, [*args, kwargs]):
+        merge_variants(lhs, rhs)
+
 # endregion
 # ==================================================================================================
 # region Scope
@@ -801,6 +805,14 @@ def merge_variants(
 class Scope(abc.MutableMapping):
     def __init__(self):
         self._up : Scope | None = None
+
+        #for rhs in filter(None, [*args, kwargs]):
+        #    merge_variants(self, rhs)
+#        merge_args(self, *args, **kwargs)
+
+#        for v in self.__dict__.values():
+#            if isinstance(v, Scope):
+#                v.set_up(self)
 
     def __repr__(self):
         return Dumper.dump(self)
@@ -885,11 +897,7 @@ class Dict(Scope):
     """
     def __init__(self, *args : abc.Mapping, **kwargs : Any):
         super().__init__()
-
-        all_things = [*args, kwargs]
-        for rhs in filter(None, all_things):
-            merge_variants(self, rhs)
-
+        merge_args(self, *args, **kwargs)
         for v in self.__dict__.values():
             if isinstance(v, Scope):
                 v.set_up(self)
@@ -1524,7 +1532,7 @@ class Hancho:
 # region Repo
 
 class Repo(Scope):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
         self.name        = "<repo>"
         self.root        = '{script3.root}'
@@ -1538,6 +1546,7 @@ class Repo(Scope):
 
         self._repo_stat_db = {}
         self._repo_scripts = []
+        merge_args(self, *args, **kwargs)
 
     def yield_tasks(self) -> abc.Iterator[Task]:
         for script in self._repo_scripts:
@@ -1662,7 +1671,7 @@ class Repo(Scope):
 # region Script
 
 class Script(Scope):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
         self.name  = "<script>"
         self.path  = os.path.abspath("build.hancho")
@@ -2174,7 +2183,7 @@ class Task(Scope):
 # region Aliases
 
 class Aliases(Scope):
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
         self.name     = "<aliases>"
         self.dump     = Dumper.print
@@ -2189,6 +2198,7 @@ class Aliases(Scope):
         self.relpath  = Path.relpath
         self.resolve  = Path.resolve
         self.swapext  = Path.swapext
+        merge_args(self, *args, **kwargs)
 
 hancho_aliases = Aliases()
 
@@ -2197,8 +2207,8 @@ hancho_aliases = Aliases()
 # region Defaults
 
 class Defaults(Scope):
-    def __init__(self):
-
+    def __init__(self, *args, **kwargs):
+        super().__init__()
         self.name = "<defaults>"
 
         self.hancho = Dict(
@@ -2239,7 +2249,7 @@ class Defaults(Scope):
         self.repo.set_up(self)
         self.script3.set_up(self)
         self.task.set_up(self)
-
+        merge_args(self, *args, **kwargs)
 
 # endregion
 # ==================================================================================================
@@ -2257,12 +2267,8 @@ class HanchoProxy(types.ModuleType):
     @staticmethod
     def init_for_testing(file : str, *args) -> HanchoProxy:
         flags = parse_flags(*args)
-
-        top_scope = Defaults()
-        merge_variants(top_scope, flags)
-        top_scope.script3.name = "<name>"
-        top_scope.script3.path = file
-        top_scope.script3.root = os.path.dirname(file)
+        script = dict(name = "<name>", path = file, root = os.path.dirname(file))
+        top_scope = Defaults(flags, script3 = script)
 
         Hancho.init(top_scope)
 
@@ -2296,13 +2302,12 @@ class HanchoProxy(types.ModuleType):
         if root is None:
             root = Path.dirname(path)
 
-        new_top_scope = Defaults()
         overrides = Dict(
             *args,
             kwargs,
             script3 = Dict(path = path, root = root)
         )
-        merge_variants(new_top_scope, overrides)
+        new_top_scope = Defaults(overrides)
 
         if not is_repo:
             new_top_scope.repo = self.scope.repo
@@ -2429,11 +2434,9 @@ def load_script(scope : Defaults) -> HanchoProxy:
 def hancho_main() -> int:
 
     flags = parse_flags(*sys.argv)
-    top_tree = Defaults()
-    merge_variants(top_tree, flags)
-    top_tree.name = "<top>"
+    top_scope = Defaults(flags, name = "<top>")
 
-    Hancho.init(top_tree)
+    Hancho.init(top_scope)
 
     Log.info(Log.LIME + f"Command line : {" ".join(sys.argv)}\n")
     if Hancho.trace:
@@ -2446,11 +2449,7 @@ def hancho_main() -> int:
 
     time_a1 = time.perf_counter()
 
-    top_repo = top_tree.repo
-    top_repo.set_up(top_tree)
-    merge_variants(top_repo, top_tree.repo)
-
-    top_proxy = load_script(top_tree)
+    top_proxy = load_script(top_scope)
     time_b1 = time.perf_counter()
     Log.info(Log.BLUE + f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
 
