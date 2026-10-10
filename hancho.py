@@ -178,6 +178,10 @@ class Utils:
 
     @staticmethod
     def is_mapping(v) -> TypeGuard[abc.MutableMapping]:
+        # FIXME Forcing tasks to _not_ be mappings so we don't recurse inside them in various
+        # places.
+        if isinstance(v, Task):
+            return False
         return isinstance(v, abc.MutableMapping)
 
     @staticmethod
@@ -730,8 +734,8 @@ def parse_flags(*argv) -> Dict:
 # FIXME need to audit stuff and make it all ignore private ("_blah") fields.
 
 def merge_variants(
-    lhs: abc.MutableMapping,
-    rhs: abc.Mapping,
+    lhs: Any,
+    rhs: Any,
     merge_mappings: bool = True,
     merge_sequences: bool = True,
     merge_sets: bool = True,
@@ -1691,7 +1695,7 @@ class Script(Scope):
 
 # FIXME not actually using this as a scope yet
 
-class Task:
+class Task(Scope):
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
@@ -1700,7 +1704,11 @@ class Task:
 
     def __init__(self, script : Script, task_scope : Dict):
         task_scope2 = copy.deepcopy(task_scope)
+
+        merge_variants(self, task_scope2)
+
         self._repo   = task_scope2.get_up().repo
+
         self._task_scope = task_scope2
 
         self._enabled = False
@@ -1887,20 +1895,27 @@ class Task:
             self.log_task(Log.DEBUG, "Task before expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(scope, fold = ["hancho", "log", "in_objs", "_up"]) + "\n")
 
-        build_dir = scope.xip("build_dir")
+        build_dir = scope.expand("{build_dir}")
 
         # Then we expand all io fields and fix their paths.
-        for _field, _files in list(scope.items()):
-            if not _field.startswith("in_") and not _field.startswith("out_"):
-                continue
+        io_fields = [k for k in scope if k.startswith("in_") or k.startswith("out_")]
 
-            files = Utils.flatten(_files)
+        for _field in io_fields:
+            # if task is a scope, then flattening in_files produces an array of the _attributes_
+            # of the task instead of the out_files.
+
+            files = Utils.flatten(scope[_field])
+
+
+
+            old_files = files
+
 
             files = [v for v in files if v != ""]
-
             for i, f in enumerate(files):
                 if isinstance(f, Task):
                     files[i] = f._task_scope.out_files
+
 
             if files:
                 files = scope.expand(files, recursive = True)
@@ -1947,7 +1962,10 @@ class Task:
             return {k:self.fix_paths(field, f, build_dir) for k, f in file}
 
         # Join script_cwd with the filename to produce an absolute path.
-        file = Path.join(self._task_scope.get_up().script3.root, file)
+        try:
+            file = Path.join(self._task_scope.get_up().script3.root, file)
+        except:
+            file = Path.join(self._task_scope.get_up().script3.root, file)
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.

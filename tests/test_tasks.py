@@ -16,7 +16,7 @@ import hancho as hancho_proxy
 
 # pyright: reportAttributeAccessIssue=false
 
-VERBOSITY = "critical"
+VERBOSITY = "debug"
 
 if os.name == "nt" and "VCINSTALLDIR" not in os.environ:
     print("Tests must run from a Visual Studio developer prompt!", file=sys.stderr)
