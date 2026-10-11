@@ -169,15 +169,18 @@ class TestTemplates(unittest.TestCase):
             baz = "} World!",
             blep = "Template",
         )
+        d.e.set_up(d)
         self.assertEqual("Hello Template World!", d.e.expand("{a}"))
 
     def test_resolve_in_up_or_self(self):
         # d.bar.qux -> foo -> {baz} -> baz = 3
         d = Dict(foo = "{baz}", bar = Dict(qux = "{foo}", baz = 2), baz = 3)
+        d.bar.set_up(d)
         self.assertEqual(3, d.bar.expand("{qux}"))
 
         # d.bar.qux -> foo -> {baz} -> (fail expansion and goback to d) -> {baz} = 3
         d = Dict(foo = "{baz}", bar = Dict(qux = "{foo}", baz = 2))
+        d.bar.set_up(d)
         self.assertEqual(2, d.bar.expand("{qux}"))
 
     def test_template_to_macro(self):
