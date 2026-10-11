@@ -1622,13 +1622,13 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task._task_scope.in_files):
+            for file in Utils.yield_values(task.in_files):
                 stat_db[file] = Utils.get_stats(file)
 
-            in_depfile = task._task_scope.in_depfile
+            in_depfile = task.in_depfile
             if in_depfile:
                 stat_db[in_depfile] = Utils.get_stats(in_depfile)
-                deplines = Utils.load_depfile(task._task_scope.in_depfile, task._task_scope.depformat, task._task_scope.cwd)
+                deplines = Utils.load_depfile(task.in_depfile, task.depformat, task.cwd)
                 for file in deplines:
                     stat_db[file] = Utils.get_stats(file) # type: ignore
 
@@ -1639,8 +1639,8 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task._task_scope.out_files):
-                stat_db[file] = Utils.get_stats(file, task._task_scope.command)
+            for file in Utils.yield_values(task.out_files):
+                stat_db[file] = Utils.get_stats(file, task.command)
 
         stat_db_path = Path.join(repo.build_dir, 'hancho.json')
         Utils.save_json(stat_db, stat_db_path)
@@ -1654,11 +1654,11 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task._task_scope.in_files):
+            for file in Utils.yield_values(task.in_files):
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
-                    "directory" : task._task_scope.cwd,
-                    "command"   : Utils.commands_to_string(task._task_scope.command),
+                    "directory" : task.cwd,
+                    "command"   : Utils.commands_to_string(task.command),
                     "file"      : file,
                 }
 
@@ -1693,7 +1693,6 @@ class Task(Scope):
 
     def __init__(self, task_scope : Dict):
         task_scope = copy.deepcopy(task_scope)
-        merge_variants(self, task_scope)
 
         self._repo   = task_scope.get_up().repo
         self._task_scope = task_scope
@@ -1806,9 +1805,9 @@ class Task(Scope):
         self.expand_task(self._task_scope)
 
         # If there's a depfile from a previous build, load it so we can use it below.
-        if self._task_scope.in_depfile:
+        if self.in_depfile:
             self._old_deplines = Utils.load_depfile(
-                self._task_scope.in_depfile, self._task_scope.depformat, self._task_scope.cwd
+                self.in_depfile, self.depformat, self.cwd
             )
 
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -1817,27 +1816,27 @@ class Task(Scope):
 
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if self._task_scope.get_up().repo.dry_run:
+        if self.get_up().repo.dry_run:
             return
 
         # Paths updated. See if we need to rebuild our outputs.
         self._reason = self.rebuild_reason()
         if not self._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: '{self._task_scope.name}' : '{self._task_scope.desc}'")
+            raise Task.SKIPPED(f"Task is up-to-date: '{self.name}' : '{self.desc}'")
 
         # Wait for enough jobs to free up to run this task.
-        self._cores = await Runner.acquire(self._task_scope.job_size)
+        self._cores = await Runner.acquire(self.job_size)
 
         # Run all the task's commands
-        text  = repr(self._task_scope.name) if self._task_scope.name else ""
-        text += " : " if self._task_scope.name and self._task_scope.desc else ""
-        text += repr(self._task_scope.desc) if self._task_scope.desc else ""
+        text  = repr(self.name) if self.name else ""
+        text += " : " if self.name and self.desc else ""
+        text += repr(self.desc) if self.desc else ""
         self.log_task(Log.INFO, Log.TEAL + f"Task {text}\n")
         self.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {self._reason}\n")
 
         time_a = time.perf_counter()
 
-        for command in self._task_scope.command:
+        for command in self.command:
             if command is None:
                 continue
             elif callable(command):
@@ -1851,12 +1850,12 @@ class Task(Scope):
 
         # See if the task wrote all its output files
 
-        for file in Utils.yield_values(self._task_scope.out_files):
+        for file in Utils.yield_values(self.out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         # And we're done
-        return self._task_scope.out_files
+        return self.out_files
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -1875,64 +1874,61 @@ class Task(Scope):
                 self._error = Task.CANCELLED(f"Task {hex(id(self))} is cancelled")
                 raise self._error from ex
 
-    def expand_task(self, scope):
+    def expand_task(self, task_scope):
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(scope, fold = ["hancho", "log", "in_objs", "_up"]) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(task_scope, fold = ["hancho", "log", "in_objs", "_up"]) + "\n")
 
-        build_dir = scope.expand("{build_dir}")
+        build_dir = task_scope.expand("{build_dir}")
 
         # Then we expand all io fields and fix their paths.
-        io_fields = [k for k in scope if k.startswith("in_") or k.startswith("out_")]
+        io_fields = [k for k in task_scope if k.startswith("in_") or k.startswith("out_")]
 
         for _field in io_fields:
             # if task is a scope, then flattening in_files produces an array of the _attributes_
             # of the task instead of the out_files.
 
-            files = Utils.flatten(scope[_field])
-
-
-
-
-
+            files = Utils.flatten(task_scope[_field])
             files = [v for v in files if v != ""]
             for i, f in enumerate(files):
                 if isinstance(f, Task):
                     files[i] = f._task_scope.out_files
 
-
             if files:
-                files = scope.expand(files, recursive = True)
+                files = task_scope.expand(files, recursive = True)
                 files = Utils.flatten(files)
                 files = self.fix_paths(_field, files, build_dir)
                 files = files[0] if len(files) == 1 else files
 
-                scope[_field] = files
+                task_scope[_field] = files
 
                 if _field == "in_depfile":
-                    scope.in_depfile = files
+                    task_scope.in_depfile = files
                 elif _field.startswith("in_"):
-                    scope.in_files[_field] = files
+                    task_scope.in_files[_field] = files
                 elif _field.startswith("out_"):
-                    scope.out_files[_field] = files
+                    task_scope.out_files[_field] = files
 
         # Fields all expanded, we can expand the rest of the task now.
-        Expander.xip(scope, recursive = True)
-        scope.command = Utils.flatten(scope.command)
+        Expander.xip(task_scope, recursive = True)
+        task_scope.command = Utils.flatten(task_scope.command)
 
-        if not scope.dry_run:
-            for file in filter(None, self._task_scope.out_files.values()):
+        merge_variants(self, task_scope)
+        self.set_up(task_scope.get_up())
+
+        if not task_scope.dry_run:
+            for file in filter(None, self.out_files.values()):
                 os.makedirs(Path.dirname(file), exist_ok=True)
-            if self._task_scope.in_depfile:
-                if isinstance(self._task_scope.in_depfile, list):
+            if self.in_depfile:
+                if isinstance(self.in_depfile, list):
                     raise Task.BROKEN("in_depfile can't be a list")
-                os.makedirs(Path.dirname(self._task_scope.in_depfile), exist_ok=True)
+                os.makedirs(Path.dirname(self.in_depfile), exist_ok=True)
 
 
         if Log.log_level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(scope) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(task_scope) + "\n")
 
     def fix_paths(self : Task, field : str, file : (str | list | set | tuple | abc.Mapping), build_dir : str):
         """
@@ -1967,11 +1963,11 @@ class Task(Scope):
 
         # Check for all task issues that break the build
 
-        if not Path.exists(self._task_scope.cwd):
-            raise Task.BROKEN(f"Task working directory '{self._task_scope.cwd}' does not exist")
+        if not Path.exists(self.cwd):
+            raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
 
-        if not Path.startswith(self._task_scope.build_dir, repo.root):
-            raise Task.BROKEN(f"The build dir {self._task_scope.build_dir} is not under repo.root {repo.root}")
+        if not Path.startswith(self.build_dir, repo.root):
+            raise Task.BROKEN(f"The build dir {self.build_dir} is not under repo.root {repo.root}")
 
         # In order to provide the least amount of bafflement to users, CLI commands execute
         # from task_cwd (which is usually the root of the repo, the most common cwd)
@@ -1981,10 +1977,10 @@ class Task(Scope):
         # This means that pre-relative-ified paths can only be rel'd to one of the two cwds, not both.
         # And that means we disallow mixed cli/callback command lists.
 
-        if isinstance(self._task_scope.command, list):
-            for command in self._task_scope.command:
-                if type(command) is not type(self._task_scope.command[0]):
-                    raise Task.BROKEN(f"Commands aren't the same type: {self._task_scope.command}")
+        if isinstance(self.command, list):
+            for command in self.command:
+                if type(command) is not type(self.command[0]):
+                    raise Task.BROKEN(f"Commands aren't the same type: {self.command}")
 
                 # Check that task's commands are either strings or callables.
                 if not isinstance(command, str) and not callable(command) and command is not None:
@@ -1992,18 +1988,18 @@ class Task(Scope):
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if repo.strict:
-            for command in Utils.flatten(self._task_scope.command):
+            for command in Utils.flatten(self.command):
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN("STRICT: Command not fully expanded")
 
         # Check that all build files would end up under build_dir
-        for file in Utils.yield_values(self._task_scope.out_files):
+        for file in Utils.yield_values(self.out_files):
             assert Path.isabs(file)
-            if not Path.startswith(file, self._task_scope.build_dir):
-                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self._task_scope.build_dir}")
+            if not Path.startswith(file, self.build_dir):
+                raise Task.BROKEN(f"Path error, output file {file} is not under build dir {self.build_dir}")
 
         # Check for task collisions
-        for file in Utils.yield_values(self._task_scope.out_files):
+        for file in Utils.yield_values(self.out_files):
             real_file = cast(str, Path.abspath(file))
             if real_file in Hancho.real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
@@ -2011,15 +2007,15 @@ class Task(Scope):
 
             # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
-        for file in Utils.yield_values(self._task_scope.in_files):
+        for file in Utils.yield_values(self.in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")  # pragma: no cover
             if not Path.exists(file) and not repo.dry_run:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        if isinstance(self._task_scope.in_depfile, list) and len(self._task_scope.in_depfile) > 1:
-            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self._task_scope.in_depfile}")
+        if isinstance(self.in_depfile, list) and len(self.in_depfile) > 1:
+            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.in_depfile}")
 
     async def run_command(self : Task, command : str):
         repo = self._task_scope.get_up().repo
