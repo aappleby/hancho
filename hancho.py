@@ -1544,12 +1544,12 @@ class Repo(Scope):
         self.dry_run     = False
         self.strict      = True
 
-        self._repo_stat_db = {}
-        self._repo_scripts = []
+        self._stat_db = {}
+        self._scripts = []
         merge_args(self, *args, **kwargs)
 
     def yield_tasks(self) -> abc.Iterator[Task]:
-        for script in self._repo_scripts:
+        for script in self._scripts:
             yield from script.script_tasks
 
     def check_stat(self, filename : str, command = None):
@@ -1558,11 +1558,11 @@ class Repo(Scope):
             Hancho.build_reasons["file missing"] += 1
             return f"File missing: {filename}"
 
-        if filename not in repo._repo_stat_db:
+        if filename not in repo._stat_db:
             Hancho.build_reasons["stat missing"] += 1
             return f"Stat missing: {filename}"
 
-        old_stat = repo._repo_stat_db[filename]
+        old_stat = repo._stat_db[filename]
         new_stat = Utils.get_stats(filename, command)
 
         try:
@@ -1593,7 +1593,6 @@ class Repo(Scope):
         Hancho.build_reasons["*hash match"] += 1
         return ""
 
-
     def load_stat_db(self):
         repo = self
         stat_db_path = os.path.join(repo.build_dir, 'hancho.json')
@@ -1601,10 +1600,10 @@ class Repo(Scope):
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
                 Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-                repo._repo_stat_db = json.load(contents)
+                repo._stat_db = json.load(contents)
         else:
             Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
-            repo._repo_stat_db = {}
+            repo._stat_db = {}
 
     def save_stat_db(self):
         repo = self
@@ -1677,6 +1676,7 @@ class Script(Scope):
         self.path  = os.path.abspath("build.hancho")
         self.root  = '{dirname(path)}'
         self.script_tasks = []
+        merge_args(self, *args, **kwargs)
 
 # endregion
 # ==================================================================================================
@@ -1691,15 +1691,12 @@ class Task(Scope):
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(self, script : Script, task_scope : Dict):
-        task_scope2 = copy.deepcopy(task_scope)
+    def __init__(self, task_scope : Dict):
+        task_scope = copy.deepcopy(task_scope)
+        merge_variants(self, task_scope)
 
-        merge_variants(self, task_scope2)
-
-        self._repo   = task_scope2.get_up().repo
-
-        self._task_scope = task_scope2
-
+        self._repo   = task_scope.get_up().repo
+        self._task_scope = task_scope
         self._enabled = False
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -2262,7 +2259,8 @@ class HanchoProxy(types.ModuleType):
     def __init__(self, module : types.ModuleType, scope : Defaults):
         super().__init__("hancho_proxy")
         self.scope   = scope
-        self.module  = hancho
+        self.hancho  = hancho
+        self.module2 = module
 
     @staticmethod
     def init_for_testing(file : str, *args) -> HanchoProxy:
@@ -2272,14 +2270,15 @@ class HanchoProxy(types.ModuleType):
 
         Hancho.init(top_scope)
 
-        root_proxy = load_script(scope = top_scope)
+        root_proxy = load_script(top_scope = top_scope)
         return root_proxy
 
     def __getattr__(self, key):
-        # Delegate to hancho_aliases so we don't have to duplicate it.
         if hasattr(hancho_aliases, key):
+            # Delegate to hancho_aliases so we don't have to duplicate it.
             return getattr(hancho_aliases, key)
         elif key in hancho.__dict__:
+            # And if the key isn't there, check the Hancho module itself.
             return  hancho.__dict__[key]
         else:
             raise AttributeError(key)
@@ -2288,11 +2287,12 @@ class HanchoProxy(types.ModuleType):
         print(Dumper.dump(*args, **kwargs))
 
     def Task(self, *args, **kwargs):
-        task_node = Dict(copy.copy(self.scope.task), *args, kwargs)
-        task_node.set_up(self.scope)
+        task_scope = Dict(copy.deepcopy(self.scope.task), *args, kwargs)
+        task_scope.set_up(self.scope)
 
-        task = Task(script = task_node.get_up().script3, task_scope = task_node)
+        task = Task(task_scope = task_scope)
         self.scope.script3.script_tasks.append(task)
+
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2312,7 +2312,7 @@ class HanchoProxy(types.ModuleType):
         if not is_repo:
             new_top_scope.repo = self.scope.repo
 
-        return load_script(new_top_scope).module
+        return load_script(new_top_scope).module2
 
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
@@ -2372,16 +2372,16 @@ def _start():
         # Don't leave the last line of the log sitting in line_buffer!
         Log._flush()
 
-def load_script(scope : Defaults) -> HanchoProxy:
-    Expander.xip(scope.script3, recursive = True)
+def load_script(top_scope : Defaults) -> HanchoProxy:
+    Expander.xip(top_scope.script3, recursive = True)
 
-    path = Path.resolve(scope.script3.path)
-    root = Path.resolve(scope.script3.root)
+    path = Path.resolve(top_scope.script3.path)
+    root = Path.resolve(top_scope.script3.root)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
     # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
     # build, which they should be in practice.
-    dupe_key = Dumper.dump(scope, print_id = False, tab = 0, color_code = False, depth = 999, width = 999)
+    dupe_key = Dumper.dump(top_scope, print_id = False, tab = 0, color_code = False, depth = 999, width = 999)
     dupe_key = Dumper.depointer(dupe_key)
     dupe_key = "".join(dupe_key.split())
 
@@ -2400,24 +2400,24 @@ def load_script(scope : Defaults) -> HanchoProxy:
             source = file.read()
             code = compile(source, path, "exec", dont_inherit=True)
 
-    Expander.xip(scope.repo, recursive = True)
+    Expander.xip(top_scope.repo, recursive = True)
 
     # FIXME Make module a Scope, splice it into the scope tree somewhere
 
     module = types.ModuleType(os.path.basename(path) if path else "<no path>")
 
-    proxy  = HanchoProxy(module, scope)
+    proxy  = HanchoProxy(module, top_scope)
 
     module.__file__ = path
     module.hancho   = proxy   # type: ignore
-    module.scope    = scope     # type: ignore
+    module.scope    = top_scope     # type: ignore
 
     Hancho.dedupe[dupe_key] = proxy
 
     if proxy.scope.repo not in Hancho.repos:
         Hancho.repos.append(proxy.scope.repo)
 
-    scope.repo._repo_scripts.append(scope.script3)
+    top_scope.repo._scripts.append(top_scope.script3)
 
     if not code or not root:
         return proxy
@@ -2448,7 +2448,6 @@ def hancho_main() -> int:
     # Load and exec top script
 
     time_a1 = time.perf_counter()
-
     top_proxy = load_script(top_scope)
     time_b1 = time.perf_counter()
     Log.info(Log.BLUE + f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")

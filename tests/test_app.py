@@ -90,7 +90,7 @@ class TestApp(unittest.TestCase):
     def test_indentation(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         Log.info("line1\n")
-        Log.indent(hancho.module.Utils.hex_to_ansi(0xFFFFFFFF))
+        Log.indent(hancho.hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         Log.info("line2\n")
         Log.dedent()
         Log.info("line3\n")
@@ -126,7 +126,7 @@ class TestApp(unittest.TestCase):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
 
         Log.info("┌ one\n")
-        Log.indent(hancho.module.Utils.hex_to_ansi(0xFFFFFFFF))
+        Log.indent(hancho.hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         Log.info("boop\n")
         Log.dedent()
         Log.info("└ two\n")

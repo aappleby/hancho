@@ -48,8 +48,8 @@ class TestDict(unittest.TestCase):
         d2 = {"a": {"y": 3, "z": 4}}
 
         d3 = {}
-        hancho.module.merge_variants(d3, d1) # type: ignore
-        hancho.module.merge_variants(d3, d2) # type: ignore
+        hancho.hancho.merge_variants(d3, d1) # type: ignore
+        hancho.hancho.merge_variants(d3, d2) # type: ignore
 
         self.assertIsInstance(d3, dict)
         self.assertIsInstance(d3['a'], dict)
