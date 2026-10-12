@@ -807,8 +807,8 @@ class Scope(abc.MutableMapping):
         self._up : Scope | None = None
         merge_args(self, *args, **kwargs)
 
-    def __repr__(self):
-        return Dumper.dump(self)
+#    def __repr__(self):
+#        return Dumper.dump(self)
 
     def expand(self, template, /, recursive : bool = False):
         return Expander.expand(template, self, recursive)
@@ -967,10 +967,10 @@ class Expander(abc.Mapping):
         return self.internal_get(key, check_up = True)
 
     def __iter__(self):
-        return vars(self.scope).__iter__()
+        return self.scope.__iter__()
 
     def __len__(self):
-        return vars(self.scope).__len__()
+        return self.scope.__len__()
 
     # ====================================
 
@@ -1294,6 +1294,9 @@ class Dumper:
 
     @classmethod
     def _dump_scalar(cls, key, val : Any, opts, seen : set):
+        if id(val) in seen:
+            return cls._dump_prefix(key, val, opts) + "<ref loop>"
+        seen.add(id(val))
         return cls._dump_prefix(key, val, opts) + repr(val)
 
     @classmethod
@@ -1686,7 +1689,6 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(self, task_scope : Dict, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.name       = '<no name>'
         self.desc       = '<no desc>'
         self.command : str | list = ""
@@ -1699,12 +1701,20 @@ class Task(Scope):
         self.force      = '{repo.build_force}'
         self.in_files   = {}
         self.out_files  = {}
-        for d in [*args, kwargs]:
-            merge_variants(self, d)
+        super().__init__(*args, **kwargs)
+        #for d in [*args, kwargs]:
+        #    merge_variants(self, d)
+
+        # FIXME why do we have to deepcopy this?
         task_scope = copy.deepcopy(task_scope)
 
         self._repo   = task_scope.get_up().repo
+
+        # FIXME we want to get rid of this and make this task object also the task scope...
         self._task_scope = task_scope
+
+        # ----------------------------------------
+
         self._enabled = False
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -1767,8 +1777,10 @@ class Task(Scope):
             self.create_aio_task()
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
-        for v in [v for v in Utils.yield_values(self._task_scope) if isinstance(v, Task)]:
-            v.queue_task()
+        # FIXME we should pull all the upstream tasks out earlier or something
+        for _, v in self._task_scope.items():
+            if isinstance(v, Task):
+                v.queue_task()
 
     async def task_top(self):
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
@@ -2171,8 +2183,8 @@ class Task(Scope):
         Log.error("========================================\n")
         Log.error(message + "\n")
         Log.error("========================================\n")
-        Log.error(f"Script    = {self._task_scope.get_up().script.path}:\n")
-        Log.error(f"Task      = '{scope.name}' : '{scope.desc}'\n")
+        Log.error(f"Script    = {scope.get_up().script.path}:\n")
+        Log.error(f"Task      = {scope.name!r} : {scope.desc!r}\n")
         Log.error(f"os.getcwd = {os.getcwd()}\n")
         Log.error(f"task cwd  = {scope.cwd}\n")
         Log.error(f"command   = {scope.command}\n")
@@ -2261,12 +2273,9 @@ class Defaults(Scope):
 
 class HanchoProxy(Scope, types.ModuleType):
 
-    def __init__(self, module : types.ModuleType, scope : Scope):
-        Scope.__init__(self)
-        types.ModuleType.__init__(self, "hancho_proxy")
-        self.scope   = scope
-        self.hancho  = hancho
-        self.module2 = module
+    def __init__(self, name : str, *args, **kwargs):
+        types.ModuleType.__init__(self, name)
+        Scope.__init__(self, *args, **kwargs)
 
     @staticmethod
     def init_for_testing(file : str, *args) -> HanchoProxy:
@@ -2314,7 +2323,7 @@ class HanchoProxy(Scope, types.ModuleType):
         if not is_repo:
             new_top_scope.repo = self.scope.repo
 
-        return load_script(new_top_scope).module2
+        return load_script(new_top_scope)
 
 
     def load(self, path, root = None, *args, **kwargs) -> types.ModuleType:
@@ -2406,13 +2415,12 @@ def load_script(top_scope : Scope) -> HanchoProxy:
 
     # FIXME Make module a Scope, splice it into the scope tree somewhere
 
-    module = types.ModuleType(os.path.basename(path) if path else "<no path>")
+    mod_name = os.path.basename(path) if path else "<no path>"
 
-    proxy  = HanchoProxy(module, top_scope)
-
-    module.__file__ = path
-    module.hancho   = proxy   # type: ignore
-    module.scope    = top_scope     # type: ignore
+    proxy  = HanchoProxy(mod_name, top_scope)
+    proxy.__file__ = path
+    proxy.hancho = hancho
+    proxy.scope    = top_scope     # type: ignore
 
     Hancho._dedupe[dupe_key] = proxy
 
@@ -2428,7 +2436,7 @@ def load_script(top_scope : Scope) -> HanchoProxy:
     try:
         with chdir(root), Log.indenter(Log.ORANGE):
             sys.modules["hancho"] = proxy
-            exec(code, module.__dict__)
+            exec(code, proxy.__dict__)
             return proxy
     finally:
         sys.modules["hancho"] = hancho

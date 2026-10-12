@@ -56,7 +56,7 @@ class TestTasks(unittest.TestCase):
             __file__,
             f"--log.level={VERBOSITY}",
             "--log.wrap=True",
-            "--hancho.trace=True",
+            #"--hancho.trace=True",
             *argv
         )
 
