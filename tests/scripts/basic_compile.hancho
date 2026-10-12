@@ -1,0 +1,28 @@
+# pyright: reportAttributeAccessIssue=false
+import hancho
+
+compile_cpp = hancho.Dict(
+    name       = "compile_cpp",
+    desc       = "Compiling C++ {in_src} -> {out_obj}",
+    command    = "g++ -MMD -c {in_src} -o {out_obj}",
+    in_src     = None,
+    in_depfile = "{swapext(out_obj, '.d')}",
+    out_obj    = "{swapext(in_src, '.o')}",
+)
+
+hello_o = hancho.Task(
+    compile_cpp,
+    in_src = "src/main.cpp"
+)
+
+link_cpp_bin = dict(
+    name     = "link_cpp_bin",
+    command  = "g++ -Wl,--start-group {in_objs} -Wl,--end-group -o {out_bin}",
+    in_objs  = None,
+)
+
+hello = hancho.Task(
+    link_cpp_bin,
+    in_objs = hello_o,
+    out_bin = "hello_world",
+)

@@ -7,7 +7,7 @@ import unittest
 
 sys.path.append("..")
 
-import hancho as hancho_proxy
+import hancho
 from hancho import Dict, Expander
 
 VERBOSITY = "critical"
@@ -21,8 +21,8 @@ VERBOSITY = "critical"
 def setUpModule():
     os.chdir(os.path.dirname(__file__))
 
-    global hancho
-    hancho = hancho_proxy.init_for_testing(__file__, f"--log.level={VERBOSITY}")
+    global hancho2
+    hancho2 = hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}")
 
 ####################################################################################################
 

@@ -9,7 +9,7 @@ import textwrap
 import unittest
 from io import StringIO
 
-import hancho as hancho_proxy
+import hancho
 from hancho import Dumper, Log, Utils
 
 VERBOSITY = "critical"
@@ -43,17 +43,13 @@ class TestApp(unittest.TestCase):
         sys.stdout = StringIO()
 
     def reinit(self, *argv):
-        global hancho
-        hancho = hancho_proxy.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
+        hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
         sys.stdout.seek(0)
         sys.stdout.truncate(0)
 
     def tearDown(self):
         sys.stdout = self.old_stdout
         sys.stdout.flush()
-
-    def test_foo(self):
-        pass
 
     def test_we_can_show_help(self):
         cmd = [sys.executable, "../hancho.py", "--help"]
@@ -90,7 +86,7 @@ class TestApp(unittest.TestCase):
     def test_indentation(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         Log.info("line1\n")
-        Log.indent(hancho.hancho.Utils.hex_to_ansi(0xFFFFFFFF))
+        Log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         Log.info("line2\n")
         Log.dedent()
         Log.info("line3\n")
@@ -126,7 +122,7 @@ class TestApp(unittest.TestCase):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
 
         Log.info("┌ one\n")
-        Log.indent(hancho.hancho.Utils.hex_to_ansi(0xFFFFFFFF))
+        Log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         Log.info("boop\n")
         Log.dedent()
         Log.info("└ two\n")
