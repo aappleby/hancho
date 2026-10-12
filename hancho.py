@@ -58,10 +58,8 @@ from typing import Any, TypeGuard, cast
 hancho = sys.modules[__name__]
 sys.modules["hancho"] = hancho
 
-# FIXME this is a bad idea and we should remove it later
-old_vars = vars
-def vars(v) -> abc.MutableMapping:
-    return v if Utils.is_mapping(v) else old_vars(v)
+def new_vars(v) -> abc.MutableMapping:
+    return v if Utils.is_mut_mapping(v) else vars(v)
 
 def public(scope):
     yield from filter(is_public, scope)
@@ -173,20 +171,44 @@ class Utils:
 
     @staticmethod
     def is_scalar(v):
+        if type(v) is object: return True
         return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
 
     @staticmethod
-    def is_sequence(v) -> TypeGuard[abc.MutableSequence]:
+    def is_mut_scalar(v):
+        if type(v) is object: return True
+        return not (Utils.is_mut_sequence(v) or Utils.is_mut_mapping(v) or Utils.is_mut_set(v))
+
+    @staticmethod
+    def is_sequence(v) -> TypeGuard[abc.Sequence]:
+        if isinstance(v, (str, bytes, bytearray)):
+            return False
+        return isinstance(v, abc.Sequence)
+
+    @staticmethod
+    def is_mut_sequence(v) -> TypeGuard[abc.MutableSequence]:
         if isinstance(v, (str, bytes, bytearray)):
             return False
         return isinstance(v, abc.MutableSequence)
 
     @staticmethod
-    def is_set(v) -> TypeGuard[abc.MutableSet]:
+    def is_set(v) -> TypeGuard[abc.Set]:
+        return isinstance(v, abc.Set)
+
+    @staticmethod
+    def is_mut_set(v) -> TypeGuard[abc.MutableSet]:
         return isinstance(v, abc.MutableSet)
 
     @staticmethod
-    def is_mapping(v) -> TypeGuard[abc.MutableMapping]:
+    def is_mapping(v) -> TypeGuard[abc.Mapping]:
+        # FIXME Forcing tasks to _not_ be mappings so we don't recurse inside them in various
+        # places.
+        if isinstance(v, Task):
+            return False
+        return isinstance(v, abc.Mapping)
+
+    @staticmethod
+    def is_mut_mapping(v) -> TypeGuard[abc.MutableMapping]:
         # FIXME Forcing tasks to _not_ be mappings so we don't recurse inside them in various
         # places.
         if isinstance(v, Task):
@@ -776,7 +798,7 @@ def merge_variants(
 
         if lhs2 is rhs2:
             pass
-        elif isinstance(lhs2, abc.MutableMapping) and isinstance(rhs2, abc.Mapping) and merge_mappings:
+        elif Utils.is_mut_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_mappings:
             merge_variants(lhs2, rhs2)
         elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
             ldict[key] = [*lhs2, *rhs2]
@@ -984,7 +1006,8 @@ class Expander(abc.Mapping):
             if check_up and (up := cursor.get_up()): # type: ignore
                 trace_up(cursor, up, "get", key)
                 cursor = up
-                keys = vars(cursor)
+                # FIXME did this really need to be vars?
+                keys = new_vars(cursor)
             else:
                 raise KeyError(key)
 
@@ -1060,15 +1083,15 @@ class Expander(abc.Mapping):
 
                 if var is Utils.MISSING:
                     raise AssertionError("Tried to expand a sentinel value")
-                elif Utils.is_mapping(var) and recursive:
+                elif Utils.is_mut_mapping(var) and recursive:
                     for k, v in var.items():
                         var[k] = cls._expand(v, scope, recursive)
                     return var
-                elif Utils.is_sequence(var) and recursive:
+                elif Utils.is_mut_sequence(var) and recursive:
                     for i, v in enumerate(var):
                         var[i] = cls._expand(v, scope, recursive)
                     return var
-                elif Utils.is_set(var) and recursive:
+                elif Utils.is_mut_set(var) and recursive:
                     var = list(var)
                     for i, v in enumerate(var):
                         var[i] = cls._expand(v, scope, recursive)
@@ -1279,21 +1302,33 @@ class Dumper:
 
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
+        if type(val) is object:
+            pass
+
         if key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts, seen)
         elif inspect.isroutine(val) or inspect.isclass(val) or inspect.ismodule(val) or isinstance(val, Enum):
             return cls._dump_scalar(key, val, opts, seen)
-        elif Utils.is_sequence(val) or Utils.is_mapping(val):
+        elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
             return cls._dump_vector(key, val, val, opts, seen)
         elif hasattr(val, "__dict__"):
             return cls._dump_vector(key, val, val.__dict__, opts, seen)
+        elif Utils.is_scalar(val):
+            return cls._dump_scalar(key, val, opts, seen)
         else:
+            print("???")
             return cls._dump_scalar(key, val, opts, seen)
 
     @classmethod
     def _dump_scalar(cls, key, val : Any, opts, seen : set):
+        # FIXME how else can we verify that this is really a scalar?
+        scalars = (int, float, str, bool, types.NoneType, object)
+        if type(val) not in scalars:
+            msg = f"Trying to dump {key}:{type(val)}={val}, but it's not a scalar"
+            raise TypeError(msg)
+
         if id(val) in seen:
             return cls._dump_prefix(key, val, opts) + "<ref loop>"
         seen.add(id(val))
@@ -2619,7 +2654,6 @@ else:
     a = Dict(foo = 1, _bar = 2)
     print(a)
     print(len(a))
-    print(vars(a))
     print(a.items())
     print(a.keys())
     print(a.values())

@@ -110,9 +110,9 @@ class TestDict(unittest.TestCase):
             return d
 
         def check_all_items(d):
-            if hancho.Utils.is_mapping(d):
+            if hancho.Utils.is_mut_mapping(d):
                 for v in d.values(): check_all_items(v)
-            elif hancho.Utils.is_sequence(d) or hancho.Utils.is_set(d):
+            elif hancho.Utils.is_mut_sequence(d) or hancho.Utils.is_mut_set(d):
                 for v in d: check_all_items(v)
             else:
                 self.assertNotEqual(d, "SENTINEL")
