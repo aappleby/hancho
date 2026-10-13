@@ -756,7 +756,9 @@ def parse_flags(*argv) -> Dict:
     # ------------------------------------
     # Merge 'em all and we're done.
 
-    flags = Dict(argv_flags, opt_file, mystery_flags)
+    flags = Dict(hancho = Dict(), log = Dict(), repo = Dict(), script = Dict(), task = Dict())
+    flags.update(argv_flags, opt_file, mystery_flags)
+
     return flags
 
 # endregion
@@ -876,6 +878,10 @@ class Scope(abc.MutableMapping):
                 raise AttributeError("Scope.set_up tried to create a circular reference")
             cursor = cursor.get_up()
         object.__setattr__(self, "_up", up)
+
+    def link(self, *args : Scope):
+        for a in args:
+            a.set_up(self)
 
     # ----------------------------------------
 
@@ -1515,33 +1521,26 @@ class Runner:
 
 # endregion
 # ==================================================================================================
-# region Hancho
+# region Project
 
-# FIXME this should be merged with top_scope
 class Project(Scope):
-    # Just a container for global stuff.
+    # FIXME this should be merged with top_scope
 
-    def init(self, top_scope, log, hancho):
+    def init(self, top_scope, hancho):
         super().__init__()
         self.top_scope = top_scope
+        self.top_repo : Repo
         self.name       = "<hancho>",
         self.root       = os.path.dirname(__file__),
         self.max_errors = 0,
         self.max_jobs   = os.cpu_count() or 1,
         self._trace      = False, #True,
 
-        self.top_repo : Repo
-
         self._real_filenames = set()
         self._dedupe = Dict()
         self._repos : list[Repo] = []
         self._build_reasons = Counter()
         self._trace = hancho.trace
-
-        con_width = shutil.get_terminal_size().columns
-        Log.reset(log.level, log.wrap, log.color, log.timestamp, con_width)
-        Utils.reset()
-        Runner.reset(hancho.max_jobs, hancho.max_errors)
 
 top_project : Project
 
@@ -2097,15 +2096,14 @@ class Aliases(Scope):
 # FIXME can we turn this into just another dict and bind methods via types.MethodType?
 # FIXME or maybe this should merge with Script
 
-class Script(Scope, types.ModuleType):
+class Script(Scope):
 
     def __init__(self, name : str):
         Scope.__init__(self)
-        types.ModuleType.__init__(self, name)
+        #types.ModuleType.__init__(self, name)
         self.name  = name
         self.path  = os.path.abspath("build.hancho")
         self.root  = '{dirname(path)}'
-        self.project = top_project
 
         self._aliases = Aliases()
 
@@ -2147,6 +2145,7 @@ class Script(Scope, types.ModuleType):
 
         mod_name = os.path.basename(new_top_scope.script.path) if new_top_scope.script.path else "<no path>"
         script  = Script(mod_name)
+        script.project = top_project
 
         Expander.xip(new_top_scope.script, recursive = True)
         new_top_scope.script.path = Path.resolve(new_top_scope.script.path)
@@ -2190,26 +2189,28 @@ class Script(Scope, types.ModuleType):
 
 @staticmethod
 def init_for_testing(path : str, *args) -> Script:
+    flags = parse_flags(*args)
+
+    init_log(flags.pop('log'))
+
     path  = Path.resolve(path)
     root  = os.path.dirname(path)
-    flags = parse_flags(*args)
     top_project = create_project("<testing>", path, root, flags)
-    top_scope = top_project.top_scope
-    #Expander.xip(top_scope.repo, recursive = True)
 
     mod_name = os.path.basename(path) if path else "<no path>"
-    script2  = Script(mod_name)
+    top_script  = Script(mod_name)
+    top_script.project = top_project
 
-    script2.__file__ = top_scope.script.path
-    script2.hancho = hancho
-    script2.scope    = top_scope     # type: ignore
-    if script2.scope.repo not in top_project._repos:
-        top_project._repos.append(script2.scope.repo)
-    top_scope.repo._scripts.append(top_scope.script)
+    top_script.__file__ = top_project.top_scope.script.path
+    top_script.hancho = hancho
+    top_script.scope    = top_project.top_scope     # type: ignore
+    if top_script.scope.repo not in top_project._repos:
+        top_project._repos.append(top_script.scope.repo)
+    top_project.top_scope.repo._scripts.append(top_project.top_scope.script)
 
-    load_script(script2, top_scope)
+    load_script(top_script, top_project.top_scope)
 
-    return script2
+    return top_script
 
 
 # endregion
@@ -2352,7 +2353,7 @@ class Repo(Script):
 
 # endregion
 # ==================================================================================================
-
+# region _start
 def _start():
 
     # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
@@ -2373,7 +2374,9 @@ def _start():
         # Don't leave the last line of the log sitting in line_buffer!
         Log._flush()
 
+#endregion
 # ==================================================================================================
+# region load_script
 
 def load_script(script2, top_scope : Scope):
     path = top_scope.script.path
@@ -2415,42 +2418,44 @@ def load_script(script2, top_scope : Scope):
     finally:
         sys.modules["hancho"] = hancho
 
+# endregion
 # ==================================================================================================
+# region create_project
+
+def init_log(log_flags):
+    default_log = Dict(
+        name      = "<log>",
+        level     = "info",
+        wrap      = False,
+        color     = True,
+        timestamp = True
+    )
+    log_scope = Dict(default_log, log_flags)
+    Log.reset(
+        log_scope.level,
+        log_scope.wrap,
+        log_scope.color,
+        log_scope.timestamp,
+        shutil.get_terminal_size().columns
+    )
 
 def create_project(name, path, root, flags):
-    global top_project
-    top_project = Project()
+
 
     top_scope = Dict(name = name)
     aliases = Aliases()
-    top_scope.set_up(aliases)
+    aliases.link(top_scope)
 
-    top_scope.hancho = Dict(
+    default_project = Dict(
         name       = "<hancho>",
         root       = os.path.dirname(__file__),
         max_errors = 0,
         max_jobs   = os.cpu_count() or 1,
         trace      = False, #True,
     )
-    top_scope.hancho.set_up(top_scope)
 
-    top_scope.log = Dict(
-        name       = "<log>",
-        level     = "info",
-        wrap      = False,
-        color     = True,
-        timestamp = True
-    )
-    top_scope.log.set_up(top_scope)
 
-    top_scope.repo = Repo()
-    top_scope.repo.set_up(top_scope)
-
-    top_scope.script = Dict(name  = name, path  = path, root  = root)
-    top_scope.script.set_up(top_scope)
-    top_scope.script._tasks = []
-
-    top_scope.task = Dict(
+    default_task = Dict(
         name       = '<no name>',
         desc       = '<no desc>',
         command    = None,
@@ -2465,7 +2470,21 @@ def create_project(name, path, root, flags):
         out_files  = {},
     )
 
-    top_scope.task.set_up(top_scope)
+
+    top_scope.hancho = Dict(default_project, flags.hancho)
+    top_scope.repo   = Repo(flags.repo)
+    top_scope.script = Dict(name  = name, path  = path, root  = root)
+    top_scope.script._tasks = []
+
+    top_scope.link(top_scope.hancho, top_scope.repo, top_scope.script)
+
+    global top_project
+    top_project = Project()
+    top_project.init(top_scope, top_scope.hancho)
+    top_project.hancho = top_scope.hancho
+
+
+    top_scope.task = Dict(default_task, flags.task)
 
     top_scope.update(flags)
 
@@ -2473,17 +2492,29 @@ def create_project(name, path, root, flags):
     top_scope.script.path = Path.resolve(top_scope.script.path)
     top_scope.script.root = Path.resolve(top_scope.script.root)
 
-    top_project.init(top_scope, top_scope.log, top_scope.hancho)
+
+
+    Utils.reset()
+
+    Runner.reset(
+        top_scope.hancho.max_jobs,
+        top_scope.hancho.max_errors
+    )
+
 
     return top_project
 
+# endregion
 # ==================================================================================================
 
+# region hancho_main
 def hancho_main() -> int:
-    path  = Path.abspath("build.hancho")
-    root  = Path.dirname(path)
     flags = parse_flags(*sys.argv)
 
+    init_log(flags.pop('log'))
+
+    path  = Path.abspath("build.hancho")
+    root  = Path.dirname(path)
     top_project = create_project("<top_project>", path, root, flags)
     top_scope = top_project.top_scope
 
@@ -2493,14 +2524,16 @@ def hancho_main() -> int:
     print_stats()
     print_passfail()
     return result
+# endregion
 
-# ==================================================================================================
-
+# region main_load
 def main_load(top_project, top_scope):
     time_a1 = time.perf_counter()
 
     mod_name = os.path.basename(top_scope.script.path) if top_scope.script.path else "<no path>"
     script2  = Script(mod_name)
+    script2.project = top_project
+
     #Expander.xip(top_scope.repo, recursive = True)
 
     script2.__file__ = top_scope.script.path
@@ -2528,6 +2561,9 @@ def print_intro():
         Log.info("Trace mode on\n")
     if Log.log_level <= Log.DEBUG:
         Log.info("Debug mode on\n")
+# endregion
+
+# region print_stats
 
 def print_stats():
     task_count = 0
@@ -2555,8 +2591,9 @@ def print_passfail():
     else:
         Log.info(Log.BLUE + "BUILD CLEAN\n")
 
-# ==================================================================================================
+# endregion
 
+# region hancho_build
 def hancho_build(top_project, top_repo : Repo) -> int:
 
     # ------------------------------------
@@ -2603,9 +2640,9 @@ def hancho_build(top_project, top_repo : Repo) -> int:
         repo.save_stat_db()
 
     return result
+#endregion
 
-# ==================================================================================================
-
+# region async_run_tasks
 async def async_run_tasks():
     """Run all tasks until we run out."""
 
@@ -2670,8 +2707,7 @@ async def async_run_tasks():
         await asyncio.gather(*Runner.live_aio_tasks, return_exceptions=True)
 
     return 1 if Runner.tasks_failed or Runner.tasks_broken else 0
-
-# ==================================================================================================
+#endregion
 
 if 'scratch' not in sys.argv:
     _start()
