@@ -763,13 +763,10 @@ def parse_flags(*argv) -> Dict:
 # ==================================================================================================
 # region mergey stuffs
 
-# FIXME need to audit stuff and make it all ignore private ("_blah") fields.
-
 # When merging Dicts, if two attributes have the same name:
 #     - If they are both dicts, we recursively merge them.
 #     - If they are both lists, we concatenate them.
 #     - Otherwise rightmost non-None wins.
-
 
 def merge_variants(
     lhs: Any,
@@ -851,6 +848,18 @@ class Scope(abc.MutableMapping):
         self[key] = result
         return result
 
+    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+    # only keys that were already in lhs. For example, if you have a Dict that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+    def fill(self, *args : Dict, **kwargs):
+        dest = type(self)()
+        for rhs in (*args, kwargs):
+            merge_variants(dest, rhs, keep_rhs = False)
+        return dest
+
     # ----------------------------------------
 
     def get_up(self) -> Any:
@@ -913,32 +922,8 @@ class Scope(abc.MutableMapping):
     def __iter__(self):
         yield from filter(is_public, self.__dict__)
 
-# endregion
-# ==================================================================================================
-# region Dict
-
 class Dict(Scope):
-    """
-    Scope wrapper that smooshes everything passed into its constructor into the dict and then
-    connects child->self _up pointers.
-    """
-    def __init__(self, *args : abc.Mapping, **kwargs : Any):
-        super().__init__(*args, **kwargs)
-
-    # ==============================================================================================
-
-    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-    # only keys that were already in lhs. For example, if you have a Dict that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-    def fill(self : Dict, *args : Dict, **kwargs):
-        dest = Dict(self)
-        for rhs in (*args, kwargs):
-            merge_variants(dest, rhs)
-        return dest
-
+    pass
 
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
@@ -1426,7 +1411,7 @@ class Dumper:
 # region Tracer
 
 def trace_start(scope, action, arg):
-    if not Hancho._trace:
+    if not top_project._trace:
         return
 
     if isinstance(scope, Expander):
@@ -1441,7 +1426,7 @@ def trace_start(scope, action, arg):
 # ==================================================================================================
 
 def trace_up(scope, up, action, arg):
-    if not Hancho._trace:
+    if not top_project._trace:
         return
 
     if isinstance(scope, Expander):
@@ -1457,7 +1442,7 @@ def trace_up(scope, up, action, arg):
 # ==================================================================================================
 
 def trace_end(scope, arg, result):
-    if not Hancho._trace:
+    if not top_project._trace:
         return
     Log.dedent()
 
@@ -1533,175 +1518,32 @@ class Runner:
 # region Hancho
 
 # FIXME this should be merged with top_scope
-class Hancho(Scope):
+class Project(Scope):
     # Just a container for global stuff.
 
-    _trace = False
-
-    _real_filenames : set[str] = set()
-    _dedupe : Dict = Dict()
-    _repos : list[Repo]
-    _build_reasons = Counter()
-
-    def __init__(self, *args, **kwargs):
+    def init(self, top_scope, log, hancho):
         super().__init__()
+        self.top_scope = top_scope
         self.name       = "<hancho>",
         self.root       = os.path.dirname(__file__),
         self.max_errors = 0,
         self.max_jobs   = os.cpu_count() or 1,
         self._trace      = False, #True,
-        self.update(*args, **kwargs)
 
-    @classmethod
-    def init(cls, log, hancho):
-        cls._real_filenames = set()
-        cls._dedupe = Dict()
-        cls._repos : list[Repo] = []
-        cls._trace = hancho.trace
+        self.top_repo : Repo
+
+        self._real_filenames = set()
+        self._dedupe = Dict()
+        self._repos : list[Repo] = []
+        self._build_reasons = Counter()
+        self._trace = hancho.trace
 
         con_width = shutil.get_terminal_size().columns
         Log.reset(log.level, log.wrap, log.color, log.timestamp, con_width)
         Utils.reset()
         Runner.reset(hancho.max_jobs, hancho.max_errors)
 
-# endregion
-# ==================================================================================================
-# region Repo
-
-class Repo(Scope):
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        self.name        = "<repo>"
-        self.root        = Path.dirname(Path.abspath("build.hancho"))
-        self.build_dir   = "{join(root, 'build', build_tag)}"
-        self.build_tag   = ''
-        self.targets     = []
-        self.build_force = False
-        self.build_all   = False
-        self.dry_run     = False
-        self.strict      = True
-
-        self._stat_db = {}
-        self._scripts = []
-
-        self.update(*args, **kwargs)
-
-    def yield_tasks(self) -> abc.Iterator[Task]:
-        for script in self._scripts:
-            yield from script._tasks
-
-    def check_stat(self, filename : str, command = None):
-        repo = self
-        if not Path.exists(filename):
-            Hancho._build_reasons["file missing"] += 1
-            return f"File missing: {filename}"
-
-        if filename not in repo._stat_db:
-            Hancho._build_reasons["stat missing"] += 1
-            return f"Stat missing: {filename}"
-
-        old_stat = repo._stat_db[filename]
-        new_stat = Utils.get_stats(filename, command)
-
-        try:
-            old_ns = old_stat['st_mtime_ns']
-            new_ns = new_stat['st_mtime_ns']
-
-            if old_ns != new_ns:
-                Hancho._build_reasons["mtime mismatch"] += 1
-                return f"Mtime mismatch {old_ns} != {new_ns} for : {filename}"
-        except Exception as err:
-            print(err)
-            traceback.print_exc()
-            raise err
-
-        if old_stat['st_size'] != new_stat['st_size']:
-            Hancho._build_reasons["size mismatch"] += 1
-            return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
-
-        if old_stat['hash'] != new_stat['hash']:
-            Hancho._build_reasons["hash mismatch"] += 1
-            return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
-
-        if command is not None and old_stat['command'] != new_stat['command']:
-            Hancho._build_reasons["command changed"] += 1
-            return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
-
-        # Does not need to rebuild based on file stats / hash
-        Hancho._build_reasons["*hash match"] += 1
-        return ""
-
-    def load_stat_db(self):
-        repo = self
-        stat_db_path = os.path.join(repo.build_dir, 'hancho.json')
-
-        if os.path.isfile(stat_db_path):
-            with open(stat_db_path) as contents:
-                Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-                repo._stat_db = json.load(contents)
-        else:
-            Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
-            repo._stat_db = {}
-
-    def save_stat_db(self):
-        repo = self
-        if repo.dry_run:
-            return
-
-        stat_db = {}
-
-        # FIXME we could probably save a little work if we didn't always re-stat every input and
-        # output, but this is safe for now.
-
-        # ------------------------------------
-        # Gather stats for all input files in all tasks.
-
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
-
-            for file in Utils.yield_values(task.in_files):
-                stat_db[file] = Utils.get_stats(file)
-
-            in_depfile = task.in_depfile
-            if in_depfile:
-                stat_db[in_depfile] = Utils.get_stats(in_depfile)
-                deplines = Utils.load_depfile(task.in_depfile, task.depformat, task.cwd)
-                for file in deplines:
-                    stat_db[file] = Utils.get_stats(file) # type: ignore
-
-        # We gather stats from output files in a second pass so that their .command fields
-        # overwrite any blank ones from the first pass.
-
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
-
-            for file in Utils.yield_values(task.out_files):
-                stat_db[file] = Utils.get_stats(file, task.command)
-
-        stat_db_path = Path.join(repo.build_dir, 'hancho.json')
-        Utils.save_json(stat_db, stat_db_path)
-
-        # ------------------------------------
-        # And do the same for compile_commands.json with a slightly different format.
-
-        comp_db = {}
-
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
-
-            for file in Utils.yield_values(task.in_files):
-                # Haven't tested this in an IDE, but I think it matches the spec.
-                comp_db[file] = {
-                    "directory" : task.cwd,
-                    "command"   : Utils.commands_to_string(task.command),
-                    "file"      : file,
-                }
-
-        comp_db_path = Path.join(repo.build_dir, 'compile_commands.json')
-        Utils.save_json(list(comp_db.values()), comp_db_path)
+top_project : Project
 
 # endregion
 # ==================================================================================================
@@ -2056,9 +1898,9 @@ class Task(Scope):
         # Check for task collisions
         for file in Utils.yield_values(self.out_files):
             real_file = cast(str, Path.abspath(file))
-            if real_file in Hancho._real_filenames:
+            if real_file in top_project._real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            Hancho._real_filenames.add(real_file)
+            top_project._real_filenames.add(real_file)
 
             # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
@@ -2155,21 +1997,21 @@ class Task(Scope):
         # Check the trivial reasons to rebuild
 
         if self.force:
-            Hancho._build_reasons["forced"] += 1
+            top_project._build_reasons["forced"] += 1
             return "Target forced to rebuild due to task.force"
 
         if self.get_up().repo.build_force:
-            Hancho._build_reasons["forced"] += 1
+            top_project._build_reasons["forced"] += 1
             return "Target forced to rebuild due to repo.build_force"
 
         has_input = any(Utils.yield_values(self.in_files))
         if not has_input:
-            Hancho._build_reasons["no inputs"] += 1
+            top_project._build_reasons["no inputs"] += 1
             return "Always rebuild a target with no inputs"
 
         has_output = any(Utils.yield_values(self.out_files))
         if not has_output:
-            Hancho._build_reasons["no outputs"] += 1
+            top_project._build_reasons["no outputs"] += 1
             return "Always rebuild a target with no outputs"
 
         # ------------------------------------
@@ -2190,7 +2032,7 @@ class Task(Scope):
             if reason := repo.check_stat(self.in_depfile):
                 return reason
 
-        Hancho._build_reasons["*task clean"] += 1
+        top_project._build_reasons["*task clean"] += 1
         return ""
 
     def dump_stdout(self : Task) -> str:
@@ -2260,9 +2102,10 @@ class Script(Scope, types.ModuleType):
     def __init__(self, name : str):
         Scope.__init__(self)
         types.ModuleType.__init__(self, name)
-        self.name  = "<script>"
+        self.name  = name
         self.path  = os.path.abspath("build.hancho")
         self.root  = '{dirname(path)}'
+        self.project = top_project
 
         self._aliases = Aliases()
 
@@ -2320,7 +2163,7 @@ class Script(Scope, types.ModuleType):
         return self._load(path, root, True, *args, **kwargs)
 
     def build(self) -> int:
-        return hancho_build(self.scope.repo)
+        return hancho_build(self.project, self.scope.repo)
 
     class EarlyOut(Exception): pass
     class Fail(Exception): pass
@@ -2347,26 +2190,165 @@ class Script(Scope, types.ModuleType):
 
 @staticmethod
 def init_for_testing(path : str, *args) -> Script:
-    root = os.path.dirname(path)
+    path  = Path.resolve(path)
+    root  = os.path.dirname(path)
+    flags = parse_flags(*args)
+    top_project = create_project("<testing>", path, root, flags)
+    top_scope = top_project.top_scope
+    #Expander.xip(top_scope.repo, recursive = True)
 
     mod_name = os.path.basename(path) if path else "<no path>"
     script2  = Script(mod_name)
 
-    flags = parse_flags(*args)
-    top_scope = create_top_scope("<testing>", path, root, flags)
-    Expander.xip(top_scope.repo, recursive = True)
-
     script2.__file__ = top_scope.script.path
     script2.hancho = hancho
     script2.scope    = top_scope     # type: ignore
-    if script2.scope.repo not in Hancho._repos:
-        Hancho._repos.append(script2.scope.repo)
+    if script2.scope.repo not in top_project._repos:
+        top_project._repos.append(script2.scope.repo)
     top_scope.repo._scripts.append(top_scope.script)
 
     load_script(script2, top_scope)
 
     return script2
 
+
+# endregion
+# ==================================================================================================
+# region Repo
+
+class Repo(Script):
+    def __init__(self, *args, **kwargs):
+        super().__init__(name = "<repo>")
+        self.root        = Path.dirname(Path.abspath("build.hancho"))
+        self.build_dir   = "{join(root, 'build', build_tag)}"
+        self.build_tag   = ''
+        self.targets     = []
+        self.build_force = False
+        self.build_all   = False
+        self.dry_run     = False
+        self.strict      = True
+
+        self._stat_db = {}
+        self._scripts = []
+
+        self.update(*args, **kwargs)
+
+    def yield_tasks(self) -> abc.Iterator[Task]:
+        for script in self._scripts:
+            yield from script._tasks
+
+    def check_stat(self, filename : str, command = None):
+        repo = self
+        if not Path.exists(filename):
+            top_project._build_reasons["file missing"] += 1
+            return f"File missing: {filename}"
+
+        if filename not in repo._stat_db:
+            top_project._build_reasons["stat missing"] += 1
+            return f"Stat missing: {filename}"
+
+        old_stat = repo._stat_db[filename]
+        new_stat = Utils.get_stats(filename, command)
+
+        try:
+            old_ns = old_stat['st_mtime_ns']
+            new_ns = new_stat['st_mtime_ns']
+
+            if old_ns != new_ns:
+                top_project._build_reasons["mtime mismatch"] += 1
+                return f"Mtime mismatch {old_ns} != {new_ns} for : {filename}"
+        except Exception as err:
+            print(err)
+            traceback.print_exc()
+            raise err
+
+        if old_stat['st_size'] != new_stat['st_size']:
+            top_project._build_reasons["size mismatch"] += 1
+            return f"Size mismatch {old_stat['st_size']} != {new_stat['st_size']} for : {filename}"
+
+        if old_stat['hash'] != new_stat['hash']:
+            top_project._build_reasons["hash mismatch"] += 1
+            return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
+
+        if command is not None and old_stat['command'] != new_stat['command']:
+            top_project._build_reasons["command changed"] += 1
+            return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
+
+        # Does not need to rebuild based on file stats / hash
+        top_project._build_reasons["*hash match"] += 1
+        return ""
+
+    def load_stat_db(self):
+        repo = self
+        stat_db_path = os.path.join(repo.build_dir, 'hancho.json')
+
+        if os.path.isfile(stat_db_path):
+            with open(stat_db_path) as contents:
+                Log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
+                repo._stat_db = json.load(contents)
+        else:
+            Log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
+            repo._stat_db = {}
+
+    def save_stat_db(self):
+        repo = self
+        if repo.dry_run:
+            return
+
+        stat_db = {}
+
+        # FIXME we could probably save a little work if we didn't always re-stat every input and
+        # output, but this is safe for now.
+
+        # ------------------------------------
+        # Gather stats for all input files in all tasks.
+
+        for task in repo.yield_tasks():
+            if not task._complete:
+                continue
+
+            for file in Utils.yield_values(task.in_files):
+                stat_db[file] = Utils.get_stats(file)
+
+            in_depfile = task.in_depfile
+            if in_depfile:
+                stat_db[in_depfile] = Utils.get_stats(in_depfile)
+                deplines = Utils.load_depfile(task.in_depfile, task.depformat, task.cwd)
+                for file in deplines:
+                    stat_db[file] = Utils.get_stats(file) # type: ignore
+
+        # We gather stats from output files in a second pass so that their .command fields
+        # overwrite any blank ones from the first pass.
+
+        for task in repo.yield_tasks():
+            if not task._complete:
+                continue
+
+            for file in Utils.yield_values(task.out_files):
+                stat_db[file] = Utils.get_stats(file, task.command)
+
+        stat_db_path = Path.join(repo.build_dir, 'hancho.json')
+        Utils.save_json(stat_db, stat_db_path)
+
+        # ------------------------------------
+        # And do the same for compile_commands.json with a slightly different format.
+
+        comp_db = {}
+
+        for task in repo.yield_tasks():
+            if not task._complete:
+                continue
+
+            for file in Utils.yield_values(task.in_files):
+                # Haven't tested this in an IDE, but I think it matches the spec.
+                comp_db[file] = {
+                    "directory" : task.cwd,
+                    "command"   : Utils.commands_to_string(task.command),
+                    "file"      : file,
+                }
+
+        comp_db_path = Path.join(repo.build_dir, 'compile_commands.json')
+        Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # endregion
 # ==================================================================================================
@@ -2405,7 +2387,7 @@ def load_script(script2, top_scope : Scope):
     dupe_key = "".join(dupe_key.split())
 
     if "hancho.py" not in path:
-        if dupe := Hancho._dedupe.get(dupe_key, None):
+        if dupe := top_project._dedupe.get(dupe_key, None):
             Log.info(Log.LIME + f"Deduped {path}\n")
             return dupe
         else:
@@ -2418,7 +2400,7 @@ def load_script(script2, top_scope : Scope):
             code = compile(source, path, "exec", dont_inherit=True)
 
 
-    Hancho._dedupe[dupe_key] = script2
+    top_project._dedupe[dupe_key] = script2
 
 
     if not code or not root:
@@ -2435,7 +2417,10 @@ def load_script(script2, top_scope : Scope):
 
 # ==================================================================================================
 
-def create_top_scope(name, path, root, flags):
+def create_project(name, path, root, flags):
+    global top_project
+    top_project = Project()
+
     top_scope = Dict(name = name)
     aliases = Aliases()
     top_scope.set_up(aliases)
@@ -2488,42 +2473,41 @@ def create_top_scope(name, path, root, flags):
     top_scope.script.path = Path.resolve(top_scope.script.path)
     top_scope.script.root = Path.resolve(top_scope.script.root)
 
-    Hancho.init(top_scope.log, top_scope.hancho)
+    top_project.init(top_scope, top_scope.log, top_scope.hancho)
 
-    return top_scope
+    return top_project
 
 # ==================================================================================================
 
 def hancho_main() -> int:
+    path  = Path.abspath("build.hancho")
+    root  = Path.dirname(path)
     flags = parse_flags(*sys.argv)
 
-    path  = os.path.abspath("build.hancho")
-    root  = '{dirname(path)}'
-
-    top_scope = create_top_scope("<main>", path, root, flags)
+    top_project = create_project("<top_project>", path, root, flags)
+    top_scope = top_project.top_scope
 
     print_intro()
-
-    top_script = main_load(top_scope)
-    result = main_build(top_script)
+    top_script = main_load(top_project, top_scope)
+    result = main_build(top_project, top_script)
     print_stats()
     print_passfail()
     return result
 
 # ==================================================================================================
 
-def main_load(top_scope):
+def main_load(top_project, top_scope):
     time_a1 = time.perf_counter()
 
     mod_name = os.path.basename(top_scope.script.path) if top_scope.script.path else "<no path>"
     script2  = Script(mod_name)
-    Expander.xip(top_scope.repo, recursive = True)
+    #Expander.xip(top_scope.repo, recursive = True)
 
     script2.__file__ = top_scope.script.path
     script2.hancho = hancho
     script2.scope    = top_scope     # type: ignore
-    if script2.scope.repo not in Hancho._repos:
-        Hancho._repos.append(script2.scope.repo)
+    if script2.scope.repo not in top_project._repos:
+        top_project._repos.append(script2.scope.repo)
     top_scope.repo._scripts.append(top_scope.script)
 
     load_script(script2, top_scope)
@@ -2531,23 +2515,23 @@ def main_load(top_scope):
     Log.info(Log.BLUE + f"Loading scripts took {time_b1 - time_a1:8.6f} seconds\n")
     return script2
 
-def main_build(top_script):
+def main_build(top_project, top_script):
     time_a3 = time.perf_counter()
-    result = hancho_build(top_script.scope.repo)
+    result = hancho_build(top_project, top_script.scope.repo)
     time_b3 = time.perf_counter()
     Log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
     return result
 
 def print_intro():
     Log.info(Log.LIME + f"Command line : {" ".join(sys.argv)}\n")
-    if Hancho._trace:
+    if top_project._trace:
         Log.info("Trace mode on\n")
     if Log.log_level <= Log.DEBUG:
         Log.info("Debug mode on\n")
 
 def print_stats():
     task_count = 0
-    for repo in Hancho._repos:
+    for repo in top_project._repos:
         task_count += len(list(repo.yield_tasks()))
 
     Log.debug(f"Tasks created:    {task_count}\n")
@@ -2573,14 +2557,14 @@ def print_passfail():
 
 # ==================================================================================================
 
-def hancho_build(top_repo : Repo) -> int:
+def hancho_build(top_project, top_repo : Repo) -> int:
 
     # ------------------------------------
     # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
     # get the old path), but _before_ we build any tasks.
 
     # Also this is here and not in hancho_main because tests also need to load stats.
-    for repo in Hancho._repos:
+    for repo in top_project._repos:
         repo.load_stat_db()
 
     # ------------------------------------
@@ -2592,13 +2576,13 @@ def hancho_build(top_repo : Repo) -> int:
             # NOTE - We match task.task_params.name, _not_ the expanded task._name.
             # This is because the task _has not initialized yet_, so we have no config.name.
 
-            for repo in Hancho._repos:
+            for repo in top_project._repos:
                 for task in repo.yield_tasks():
                     if target in task._task_scope.name:
                         task.queue_task()
 
     elif top_repo.build_all:
-        for repo in Hancho._repos:
+        for repo in top_project._repos:
             for task in repo.yield_tasks():
                 task.queue_task()
 
@@ -2615,7 +2599,7 @@ def hancho_build(top_repo : Repo) -> int:
     # ------------------------------------
     # Update stat DBs.
 
-    for repo in Hancho._repos:
+    for repo in top_project._repos:
         repo.save_stat_db()
 
     return result
@@ -2628,7 +2612,7 @@ async def async_run_tasks():
     # ------------------------------------
     # Create asyncio tasks for all enabled Hancho tasks.
 
-    for repo in Hancho._repos:
+    for repo in top_project._repos:
         for task in repo.yield_tasks():
             if task._enabled:
                 task.create_aio_task()
