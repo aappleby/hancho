@@ -10,7 +10,7 @@ import unittest
 from io import StringIO
 
 import hancho
-from hancho import Dumper, Log, Utils
+from hancho import Dumper, Log, Project, Utils
 
 VERBOSITY = "critical"
 
@@ -43,7 +43,9 @@ class TestApp(unittest.TestCase):
         sys.stdout = StringIO()
 
     def reinit(self, *argv):
-        hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
+        project : Project = hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
+        self.log : Log = project._log
+
         sys.stdout.seek(0)
         sys.stdout.truncate(0)
 
@@ -64,19 +66,19 @@ class TestApp(unittest.TestCase):
 
     def test_verbosities(self):
         self.reinit("--log.level=debug")
-        self.assertEqual(Log.DEBUG, Log.log_level)
+        self.assertEqual(self.log.DEBUG, self.log.level)
 
         self.reinit("--log.level=info")
-        self.assertEqual(Log.INFO, Log.log_level)
+        self.assertEqual(self.log.INFO, self.log.level)
 
         self.reinit("--log.level=warning")
-        self.assertEqual(Log.WARNING, Log.log_level)
+        self.assertEqual(self.log.WARNING, self.log.level)
 
         self.reinit("--log.level=error")
-        self.assertEqual(Log.ERROR, Log.log_level)
+        self.assertEqual(self.log.ERROR, self.log.level)
 
         self.reinit("--log.level=critical")
-        self.assertEqual(Log.CRITICAL, Log.log_level)
+        self.assertEqual(self.log.CRITICAL, self.log.level)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger
         #cmd = [sys.executable, "../hancho.py", "--log.level=boo"]
@@ -85,11 +87,11 @@ class TestApp(unittest.TestCase):
 
     def test_indentation(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
-        Log.info("line1\n")
-        Log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
-        Log.info("line2\n")
-        Log.dedent()
-        Log.info("line3\n")
+        self.log.info("line1\n")
+        self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
+        self.log.info("line2\n")
+        self.log.dedent()
+        self.log.info("line3\n")
         self.assertEqual('line1\n│ line2\nline3\n', sys.stdout.getvalue())
 
     def test_nothing(self):
@@ -97,36 +99,36 @@ class TestApp(unittest.TestCase):
 
     def test_no_color(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
-        Log.info("this should _not_ be blue\n")
+        self.log.info("this should _not_ be blue\n")
         self.assertEqual("this should _not_ be blue\n", sys.stdout.getvalue())
         self.assertNotIn("\x1B", sys.stdout.getvalue())
 
     def test_newlines(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
-        Log.info("one")
-        Log.info("two")
-        Log.info("three")
-        Log.info("four\n")
+        self.log.info("one")
+        self.log.info("two")
+        self.log.info("three")
+        self.log.info("four\n")
         self.assertEqual('onetwothreefour\n', sys.stdout.getvalue())
 
     def test_flush(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
-        Log.info("one")
-        Log.info("two")
-        Log.info("three")
+        self.log.info("one")
+        self.log.info("two")
+        self.log.info("three")
         self.assertEqual('', sys.stdout.getvalue())
-        Log._flush()
+        self.log._flush()
         self.assertEqual('onetwothree\n', sys.stdout.getvalue())
 
     def test_indent_dedent(self):
         self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
 
-        Log.info("┌ one\n")
-        Log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
-        Log.info("boop\n")
-        Log.dedent()
-        Log.info("└ two\n")
-        Log.info("soop\n")
+        self.log.info("┌ one\n")
+        self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
+        self.log.info("boop\n")
+        self.log.dedent()
+        self.log.info("└ two\n")
+        self.log.info("soop\n")
 
         text = '┌ one\n│ boop\n└ two\nsoop\n'
         self.assertEqual(text, sys.stdout.getvalue())

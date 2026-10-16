@@ -12,14 +12,6 @@
       "module"  : "unittest",
       "args"    : ["tests.test_tasks.TestTasks.test_dry_run", "-vvv"],
       "preLaunchTask": "Wipe build",
-
-
-      "variablePresentation": {
-          "special":   "group",
-          "function":  "inline",
-          "class":     "group",
-          "protected": "inline"
-      },
     },
 
     {
@@ -38,13 +30,6 @@
       "cwd"     : "${workspaceFolder}/scratch",
       "args"    : ["-D"],
       //"preLaunchTask": "Wipe build",
-
-      //"variablePresentation": {
-      //    "function": "hide",
-      //    "special": "hide",
-      //    "class": "hide",
-      //    "protected": "group",
-      //},
     },
 
     {
@@ -53,14 +38,11 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-D", "-V", "-t=true"],
+      "args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
       //"args"    : ["-D", "-V"],
       //"preLaunchTask": "Wipe build",
-
-      "variablePresentation": {
-        "special": "hide",
-        "function": "hide",
-      }
+      "console": "internalConsole",
+      "externalConsole": true
     },
 
     {
