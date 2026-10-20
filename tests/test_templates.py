@@ -22,7 +22,7 @@ def setUpModule():
     os.chdir(os.path.dirname(__file__))
 
     global hancho2
-    hancho2 = hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}")
+    hancho2 = hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}", f"--file={__file__}")
 
 ####################################################################################################
 
@@ -59,13 +59,12 @@ class TestTemplates(unittest.TestCase):
     def test_read_from_up(self):
         d1 = Dict(a = "foo")
         d2 = Dict(a = "bar")
-        b = Dict(c = "{a}")
+        b = Dict(_up2 = d1, c = "{a}")
 
-        b.set_up(d1)
         self.assertEqual("foo", b.expand("{c}"))
 
-        b.set_up(d2)
-        self.assertEqual("bar", b.expand("{c}"))
+        c = Dict(_up2 = d2, c = "{a}")
+        self.assertEqual("bar", c.expand("{c}"))
 
     def test_mutual_cycle(self):
         # only macros
@@ -161,26 +160,26 @@ class TestTemplates(unittest.TestCase):
 
     def test_template_expands_to_template(self):
         d = Dict(
-            e = Dict(
-                a = "{foo}{bar}{baz}",
-            ),
             foo = "Hello {",
             bar = "blep",
             baz = "} World!",
             blep = "Template",
         )
-        d.e.set_up(d)
-        self.assertEqual("Hello Template World!", d.e.expand("{a}"))
+        e = Dict(
+            _up2 = d,
+            a = "{foo}{bar}{baz}",
+        )
+        self.assertEqual("Hello Template World!", e.expand("{a}"))
 
     def test_resolve_in_up_or_self(self):
-        # d.bar.qux -> foo -> {baz} -> baz = 3
-        d = Dict(foo = "{baz}", bar = Dict(qux = "{foo}", baz = 2), baz = 3)
-        d.bar.set_up(d)
+        d = Dict(foo = "{baz}", baz = 2)
+        bar = Dict(_up2 = d, qux = "{foo}", baz = 3)
+        d.bar = bar
         self.assertEqual(3, d.bar.expand("{qux}"))
 
-        # d.bar.qux -> foo -> {baz} -> (fail expansion and goback to d) -> {baz} = 3
-        d = Dict(foo = "{baz}", bar = Dict(qux = "{foo}", baz = 2))
-        d.bar.set_up(d)
+        d = Dict(foo = "{baz}", baz = 2)
+        bar = Dict(_up2 = d, qux = "{foo}")
+        d.bar = bar
         self.assertEqual(2, d.bar.expand("{qux}"))
 
     def test_template_to_macro(self):

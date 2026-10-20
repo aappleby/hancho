@@ -6,12 +6,24 @@
   "configurations": [
 
     {
+      "name"    : "Debug scratch/build.hancho",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program" : "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/scratch",
+      "console" : "internalConsole",
+      //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
+      //"args"    : ["-ltrace", "--log.width=999"],
+      "args"    : ["-ltrace", "--log.width=120"],
+    },
+
+    {
       "name"    : "Debug one test",
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "args"    : ["tests.test_tasks.TestTasks.test_dry_run", "-vvv"],
-      "preLaunchTask": "Wipe build",
+      "console" : "internalConsole",
+      "args"    : ["tests.test_app.TestApp.test_verbosities", "-vvv"],
     },
 
     {
@@ -19,7 +31,7 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "preLaunchTask": "Wipe build",
+      "console" : "internalConsole",
     },
 
     {
@@ -28,21 +40,8 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/scratch/build.py",
       "cwd"     : "${workspaceFolder}/scratch",
+      "console" : "internalConsole",
       "args"    : ["-D"],
-      //"preLaunchTask": "Wipe build",
-    },
-
-    {
-      "name"    : "Debug scratch/build.hancho",
-      "type"    : "debugpy",
-      "request" : "launch",
-      "program" : "${workspaceFolder}/hancho.py",
-      "cwd"     : "${workspaceFolder}/scratch",
-      "args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
-      //"args"    : ["-D", "-V"],
-      //"preLaunchTask": "Wipe build",
-      "console": "internalConsole",
-      "externalConsole": true
     },
 
     {
@@ -51,9 +50,9 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/tricks",
+      "console" : "internalConsole",
       "args"    : ["-s=trick4_codegen_pipeline.hancho"],
       //"args"    : ["--trace"],
-      "preLaunchTask": "Wipe build",
     },
 
 
@@ -63,9 +62,9 @@
       "request" : "launch",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/examples/hello_world",
+      "console" : "internalConsole",
       "args"    : ["--verbose"],
       //"args"    : ["--trace"],
-      //"preLaunchTask": "Wipe build",
     },
 
     {
@@ -75,8 +74,8 @@
       "module"  : "hancho",
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
+      "console" : "internalConsole",
       "args"    : ["-D"],
-      //"preLaunchTask": "Wipe build",
     },
 
     {
@@ -86,8 +85,8 @@
       //"module"  : "hancho",
       "program" : "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/examples/subrepos",
+      "console" : "internalConsole",
       "args"    : ["-D"],
-      "preLaunchTask": "Wipe build",
     },
 
     {
@@ -99,7 +98,7 @@
       "args": ["discover"],
       "cwd": "${workspaceFolder}/tests",
       "env": { "PYTHONPATH": "${workspaceFolder}" },
-      "preLaunchTask": "Wipe build",
+      "console" : "internalConsole",
     },
 
     {
@@ -108,8 +107,8 @@
       "request": "launch",
       "program": "${workspaceFolder}/hancho.py",
       "cwd": "${workspaceFolder}/..",
+      "console" : "internalConsole",
       //"args": ["--force", "-j1"],
-      "preLaunchTask": "Wipe build",
     },
   ]
 }

@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 """Template file for creating new test cases"""
 
-import doctest
 import os
 import subprocess
 import sys
@@ -9,13 +8,8 @@ import textwrap
 import unittest
 from io import StringIO
 
+sys.path.append("..")
 import hancho
-from hancho import Dumper, Log, Project, Utils
-
-VERBOSITY = "critical"
-
-def dump(text, **kwargs):
-    return Dumper.depointer(Dumper.dump(text, **kwargs))
 
 # the hancho references hit this and it's bogus because of the weird way hancho intercepts
 # attributes
@@ -23,35 +17,71 @@ def dump(text, **kwargs):
 
 # FIXME we need some tests that run hancho as if it were launched from the command line
 
-####################################################################################################
+VERBOSITY = "critical"
 
 def setUpModule():
-    os.chdir(os.path.dirname(__file__))
+    #print("setUpModule")
+    pass
 
-def load_tests(loader, tests, ignore):
-    doctests = doctest.DocTestSuite(optionflags=doctest.ELLIPSIS | doctest.NORMALIZE_WHITESPACE)
-    tests.addTests(doctests)
-    return tests
+
+def tearDownModule():
+    #print("tearDownModule")
+    pass
 
 ####################################################################################################
 # High level tests that don't belong in one of the other test suites
 
 class TestApp(unittest.TestCase):
-    def setUp(self):
+    @classmethod
+    def setUpClass(cls):
+        #print("setUpClass")
+        pass
+
+    def setUp(self, *args):
+        #print("setUp")
+        os.chdir(os.path.dirname(__file__))
         self.maxDiff = 99999
-        self.old_stdout = sys.stdout
-        sys.stdout = StringIO()
+        self.stdout = StringIO()
 
-    def reinit(self, *argv):
-        project : Project = hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}", *argv)
-        self.log : Log = project._log
+        options =[
+            #f"--log.level={VERBOSITY}",
+            "--log.level=info",
+            "--log.wrap=False",
+            "--log.color=False",
+            "--log.timestamp=False",
+            "--log.width=9999",
+        ]
 
-        sys.stdout.seek(0)
-        sys.stdout.truncate(0)
+        self.script : hancho.Script = hancho.init_for_testing(__file__, *options, *args)
+        self.log : hancho.Log = hancho.cv.log
+        self.log._stdout = self.stdout
 
     def tearDown(self):
-        sys.stdout = self.old_stdout
-        sys.stdout.flush()
+        #print("tearDown")
+        pass
+
+    @classmethod
+    def tearDownClass(cls):
+        #print("tearDownClass")
+        pass
+
+    # ----------------------------------------------------------------------------------------------
+
+    def test_log_redirection(self):
+        # Our default verbosity is 'critical', so these should appear in the log.
+        self.log.critical("This is a message\n")
+        self.log.critical("This is another message\n")
+        self.log._flush()
+        self.assertEqual("This is a message\nThis is another message\n", self.stdout.getvalue())
+
+        # If we clear the log and print the same thing at 'trace' level they should not appear.
+        self.stdout.seek(0)
+        self.stdout.truncate(0)
+
+        self.log.trace("This is a message\n")
+        self.log.trace("This is another message\n")
+        self.log._flush()
+        self.assertEqual("", self.stdout.getvalue())
 
     def test_we_can_show_help(self):
         cmd = [sys.executable, "../hancho.py", "--help"]
@@ -65,19 +95,19 @@ class TestApp(unittest.TestCase):
 #        self.assertEqual(12, script.globals.foo)
 
     def test_verbosities(self):
-        self.reinit("--log.level=debug")
+        self.setUp("--log.level=debug")
         self.assertEqual(self.log.DEBUG, self.log.level)
 
-        self.reinit("--log.level=info")
+        self.setUp("--log.level=info")
         self.assertEqual(self.log.INFO, self.log.level)
 
-        self.reinit("--log.level=warning")
+        self.setUp("--log.level=warning")
         self.assertEqual(self.log.WARNING, self.log.level)
 
-        self.reinit("--log.level=error")
+        self.setUp("--log.level=error")
         self.assertEqual(self.log.ERROR, self.log.level)
 
-        self.reinit("--log.level=critical")
+        self.setUp("--log.level=critical")
         self.assertEqual(self.log.CRITICAL, self.log.level)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger
@@ -86,43 +116,34 @@ class TestApp(unittest.TestCase):
         #self.assertIn("invalid choice: 'boo'", result.stderr)
 
     def test_indentation(self):
-        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         self.log.info("line1\n")
         self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         self.log.info("line2\n")
         self.log.dedent()
         self.log.info("line3\n")
-        self.assertEqual('line1\n│ line2\nline3\n', sys.stdout.getvalue())
-
-    def test_nothing(self):
-        pass
+        self.assertEqual('line1\n│ line2\nline3\n', self.stdout.getvalue())
 
     def test_no_color(self):
-        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         self.log.info("this should _not_ be blue\n")
-        self.assertEqual("this should _not_ be blue\n", sys.stdout.getvalue())
-        self.assertNotIn("\x1B", sys.stdout.getvalue())
+        self.assertEqual("this should _not_ be blue\n", self.stdout.getvalue())
+        self.assertNotIn("\x1B", self.stdout.getvalue())
 
     def test_newlines(self):
-        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         self.log.info("one")
         self.log.info("two")
         self.log.info("three")
         self.log.info("four\n")
-        self.assertEqual('onetwothreefour\n', sys.stdout.getvalue())
+        self.assertEqual('onetwothreefour\n', self.stdout.getvalue())
 
     def test_flush(self):
-        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
         self.log.info("one")
         self.log.info("two")
         self.log.info("three")
-        self.assertEqual('', sys.stdout.getvalue())
+        self.assertEqual('', self.stdout.getvalue())
         self.log._flush()
-        self.assertEqual('onetwothree\n', sys.stdout.getvalue())
+        self.assertEqual('onetwothree\n', self.stdout.getvalue())
 
     def test_indent_dedent(self):
-        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
-
         self.log.info("┌ one\n")
         self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         self.log.info("boop\n")
@@ -131,10 +152,11 @@ class TestApp(unittest.TestCase):
         self.log.info("soop\n")
 
         text = '┌ one\n│ boop\n└ two\nsoop\n'
-        self.assertEqual(text, sys.stdout.getvalue())
+        self.assertEqual(text, self.stdout.getvalue())
 
     def test_dumper(self):
-        self.reinit("--log.level=info", "--log.color=False", "--log.time=False")
+        def dump(text, **kwargs):
+            return hancho.Dumper.depointer(hancho.Dumper.dump(text, **kwargs))
 
         def check(value, expected, **kwargs):
             result = dump(value, **kwargs)
@@ -183,9 +205,4 @@ class TestApp(unittest.TestCase):
         #check(contextvars.Context(), ":Context@0x... = {}")
         #check(print, ":builtin_function_or_method@0x... = <built-in function print>")
 
-    def test_weave(self):
-        a = ["a", "b", "c"]
-        b = ["1", "2", "3"]
-        c = Utils.weave(a, b)
-        self.assertEqual(['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'c1', 'c2', 'c3'], c)
-#
+

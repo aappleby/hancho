@@ -51,8 +51,8 @@ def force_touch(filename, append_text = None):
 class TestTasks(unittest.TestCase):
 
     def reinit(self, *argv):
-        global hancho2
-        hancho2 = hancho.init_for_testing(
+        global dummy_script
+        dummy_script = hancho.init_for_testing(
             __file__,
             f"--log.level={VERBOSITY}",
             "--log.wrap=True",
@@ -75,27 +75,27 @@ class TestTasks(unittest.TestCase):
         sys.stdout.flush()
 
     def run_tasks(self, expected):
-        result = hancho2.build()
+        result = dummy_script.build()
         self.assertEqual(result, expected)
 
     def test_none(self):
         pass
 
     def test_trivial(self):
-        hancho2.Task(command="echo test_run_tasks_zero")
+        dummy_script.Task(command="echo test_run_tasks_zero")
         self.run_tasks(0)
 
     # ----------------------------------------------------------------------------------------------
 
     def test_run_tasks_nonzero(self):
         # If any task fails, we should get -1 from run_tasks.
-        bad_task = hancho2.Task(command="echo test_run_tasks_zero && (exit 255)")
+        bad_task = dummy_script.Task(command="echo test_run_tasks_zero && (exit 255)")
         self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.FAILED) #type:ignore
 
     def test_run_tasks_zero(self):
         # If all tasks are OK, we should get 0 from run_tasks.
-        good_task = hancho2.Task(command="echo test_run_tasks_zero")
+        good_task = dummy_script.Task(command="echo test_run_tasks_zero")
         self.run_tasks(0)
         self.assertIsNone(good_task._error)
 
@@ -104,7 +104,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.1)
             raise asyncio.CancelledError()
 
-        hancho2.Task(command=asyncio_cancelled, out_file="asyncio_cancelled.txt")
+        dummy_script.Task(command=asyncio_cancelled, out_file="asyncio_cancelled.txt")
         self.assertEqual(0, hancho.Runner.tasks_cancelled)
         self.run_tasks(0)
         self.assertEqual(1, hancho.Runner.tasks_cancelled)
@@ -112,7 +112,7 @@ class TestTasks(unittest.TestCase):
     # ----------------------------------------------------------------------------------------------
 
     def test_good_build_path(self):
-        good_task = hancho2.Task(
+        good_task = dummy_script.Task(
             command="echo {in_src} >> {out_obj}",
             in_src="src/foo.c",
             out_obj="{build_dir}/narp/foo.o",
@@ -123,7 +123,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/narp/foo.o").exists())
 
     def test_bad_build_path(self):
-        bad_task = hancho2.Task(
+        bad_task = dummy_script.Task(
             desc="This task has a bad path for out_obj",
             command="echo {in_src} >> {out_obj}",
             in_src="src/foo.c",
@@ -140,7 +140,7 @@ class TestTasks(unittest.TestCase):
 
         command = r"echo I am runnning in {run_cmd('pwd')}" if os.name == 'posix' else r"echo I am runnning in {run_cmd('cd')}"
 
-        task = hancho2.Task(
+        task = dummy_script.Task(
             desc="Testing run_cmd",
             command=command,
         )
@@ -150,7 +150,7 @@ class TestTasks(unittest.TestCase):
     def test_bad_run_cmd(self):
         # Trying to run an arbitrary command and use it in a template should report BROKEN if the
         # embedded command is invalid.
-        task = hancho2.Task(
+        task = dummy_script.Task(
             desc="Broken run_cmd",
             command=r"echo {run_cmd('This is totally not a valid command')}",
         )
@@ -160,7 +160,7 @@ class TestTasks(unittest.TestCase):
     def test_unexpandable_command(self):
         #Commands that have residual braces after expansion should be reported as broken but ONLY
         #if we are in 'strict' mode.
-        task = hancho2.Task(
+        task = dummy_script.Task(
             desc="Unexpandable command",
             command=r"echo Hello {missing} world!",
         )
@@ -169,7 +169,7 @@ class TestTasks(unittest.TestCase):
 
     def test_garbage_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
-        garbage_task = hancho2.Task(
+        garbage_task = dummy_script.Task(
             command="aklsjdflksjdlfkjldfk",
         )
         self.run_tasks(1)
@@ -178,17 +178,17 @@ class TestTasks(unittest.TestCase):
     def test_missing_command(self):
         # Tasks with no commands are fine, they can still be used to group and coordinate other
         # tasks.
-        hancho2.Task(not_a_command="echo test_missing_command")
+        dummy_script.Task(not_a_command="echo test_missing_command")
         self.run_tasks(0)
 
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.
-        hancho2.Task(
+        dummy_script.Task(
             command = lambda task : (os.utime(src, None) for src in task.config.out_obj),
             in_src=__file__,
             out_obj="colliding_output.txt",
         )
-        task2 = hancho2.Task(
+        task2 = dummy_script.Task(
             command = lambda task : force_touch(task.config.out_obj),
             in_src=__file__,
             out_obj="colliding_output.txt",
@@ -204,10 +204,10 @@ class TestTasks(unittest.TestCase):
 
         def run():
             self.reinit()
-            hancho2.Task(
+            dummy_script.Task(
                 command=[
                     lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task._task_scope.out_obj),
+                    lambda task : force_touch(task.out_obj),
                 ],
                 in_src=[],
                 out_obj="result.txt",
@@ -226,13 +226,13 @@ class TestTasks(unittest.TestCase):
         def run():
             self.reinit()
             time.sleep(0.01)
-            compile = hancho2.Dict(
+            compile = hancho.Dict(
                 desc="test_input_changed {in_src}",
-                command = lambda task : shutil.copy(task._task_scope.in_src, task._task_scope.out_obj),
+                command = lambda task : shutil.copy(task.in_src, task.out_obj),
                 in_src=None,
                 out_obj="{swapext(in_src, '.o')}",
             )
-            hancho2.Task(compile, in_src="src/test.cpp")
+            dummy_script.Task(compile, in_src="src/test.cpp")
             self.run_tasks(0)
             return mtime_ns("build/src/test.o")
 
@@ -254,12 +254,12 @@ class TestTasks(unittest.TestCase):
 
         def run():
             self.reinit()
-            hancho2.Task(
+            dummy_script.Task(
                 desc="test_dep_changed {in_src}",
                 #command="sleep 0.1 && touch {out_obj}",
                 command = [
                     lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task._task_scope.out_obj),
+                    lambda task : force_touch(task.out_obj),
                 ],
                 in_temp=dummy,
                 in_src="src/test.cpp",
@@ -280,7 +280,7 @@ class TestTasks(unittest.TestCase):
 
     def test_command_changed(self):
         self.reinit("--hancho.max_errors=999")
-        hancho2.Task(
+        dummy_script.Task(
             command="echo foo{in_src} > {out_txt}",
             in_src = "src/test.cpp",
             out_txt="test_command_changed.txt",
@@ -291,7 +291,7 @@ class TestTasks(unittest.TestCase):
         mtime1 = mtime_ns("build/test_command_changed.txt")
 
         self.reinit("--hancho.max_errors=999")
-        hancho2.Task(
+        dummy_script.Task(
             command="echo foo{in_src} > {out_txt}",
             in_src = "src/test.cpp",
             out_txt="test_command_changed.txt",
@@ -300,7 +300,7 @@ class TestTasks(unittest.TestCase):
         mtime2 = mtime_ns("build/test_command_changed.txt")
 
         self.reinit("--hancho.max_errors=999")
-        hancho2.Task(
+        dummy_script.Task(
             command="echo bar{in_src} > {out_txt}",
             in_src = "src/test.cpp",
             out_txt="test_command_changed.txt",
@@ -315,9 +315,9 @@ class TestTasks(unittest.TestCase):
 
     def test_missing_input(self):
         # We should fail if an input is missing
-        task = hancho2.Task(
+        task = dummy_script.Task(
             desc="Should fail due to missing input",
-            command = lambda task : force_touch(task._task_scope.out_obj),
+            command = lambda task : force_touch(task.out_obj),
             in_src="src/does_not_exist.txt",
             out_obj="missing_src.txt",
         )
@@ -326,9 +326,9 @@ class TestTasks(unittest.TestCase):
 
     def test_missing_dep(self):
         # We should fail if a dependency is missing even if it's not used by the command.
-        task = hancho2.Task(
+        task = dummy_script.Task(
             desc="Missing dep should fail",
-            command = lambda task : force_touch(task._task_scope.out_obj),
+            command = lambda task : force_touch(task.out_obj),
             in_src="src/test.cpp",
             in_dep=["missing_dep.txt"],
             out_obj="result.txt",
@@ -342,10 +342,10 @@ class TestTasks(unittest.TestCase):
         # If input filenames are absolute paths, we should still end up with build files under
         # build_root.
 
-        hancho2.Task(
+        dummy_script.Task(
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
-            command = lambda task : shutil.copy(task._task_scope.in_src, task._task_scope.out_obj),
+            command = lambda task : shutil.copy(task.in_src, task.out_obj),
             in_src=os.path.abspath("src/foo.c"),
             out_obj="{swapext(in_src, '.o')}",
         )
@@ -358,8 +358,8 @@ class TestTasks(unittest.TestCase):
 
     def test_does_create_output(self):
         # Output files should appear in build/ by default
-        hancho2.Task(
-            command = lambda task : force_touch(task._task_scope.out_obj),
+        dummy_script.Task(
+            command = lambda task : force_touch(task.out_obj),
             in_src=[],
             out_obj="result.txt",
         )
@@ -369,7 +369,7 @@ class TestTasks(unittest.TestCase):
 
     def test_doesnt_create_output(self):
         # Having a file mentioned in out_obj should not magically create it
-        bad_task = hancho2.Task(
+        bad_task = dummy_script.Task(
             command="echo test_doesnt_create_output >> {out_txt}",
             in_src=[],
             out_txt="blarp.txt",
@@ -397,14 +397,14 @@ class TestTasks(unittest.TestCase):
         def run():
             self.reinit("--hancho.max_errors=999")
             time.sleep(0.01)
-            compile = hancho2.Tool(
+            compile = hancho.Tool(
                 desc="test_header_changed {in_src}",
                 command=command,
                 in_depfile="{swapext(out_obj, '.d')}",
                 out_obj="{swapext(in_src, '.o')}",
                 depformat=depformat,
             )
-            hancho2.Task(compile, in_src="src/test.cpp")
+            dummy_script.Task(compile, in_src="src/test.cpp")
             self.run_tasks(0)
             return mtime_ns("build/src/test.o")
 
@@ -419,13 +419,13 @@ class TestTasks(unittest.TestCase):
 
     def test_multiple_depfiles(self):
         # Creating a task with multiple depfile inputs should fail.
-        bad_task = hancho2.Task(command="echo test_multiple_depfiles", in_depfile=["foo.txt", "bar.txt"])
+        bad_task = dummy_script.Task(command="echo test_multiple_depfiles", in_depfile=["foo.txt", "bar.txt"])
         self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
-        hancho2.Task(
+        dummy_script.Task(
             command=[
                 "echo foo > {out_foo}",
                 "echo bar > {out_bar}",
@@ -449,9 +449,9 @@ class TestTasks(unittest.TestCase):
         self.reinit("--flarpy=flarp.txt")
 
         def callback(task):
-            return force_touch(task._task_scope.out_file)
+            return force_touch(task.out_file)
 
-        hancho2.Task(
+        dummy_script.Task(
             name = "test_arbitrary_flags",
             desc = "yes it's a test case",
             command = callback,
@@ -464,9 +464,9 @@ class TestTasks(unittest.TestCase):
 
     def test_sync_command(self):
         def sync_command(task):
-            force_touch(task._task_scope.out_obj)
+            force_touch(task.out_obj)
 
-        hancho2.Task(
+        dummy_script.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a sync function",
             command=sync_command,
@@ -478,10 +478,10 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/result.txt"))
 
     def test_lambda_command(self):
-        hancho2.Task(
+        dummy_script.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a lambda",
-            command=lambda task: force_touch(task._task_scope.out_obj),
+            command=lambda task: force_touch(task.out_obj),
             in_src=[],
             out_obj="{name}",
         )
@@ -489,12 +489,12 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
-    def _est_sync_callback(self):
+    def test_sync_callback(self):
         def sync_callback(task):
             time.sleep(0.1)
-            force_touch(task._task_scope.out_file)
+            force_touch(task.out_file)
 
-        hancho2.Task(command=sync_callback, out_file="test_sync_callback.txt")
+        dummy_script.Task(command=sync_callback, out_file="test_sync_callback.txt")
         self.assertFalse(Path("build/test_sync_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_sync_callback.txt").exists())
@@ -504,7 +504,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.1)
             raise ValueError("I do not like value.")
 
-        task = hancho2.Task(command=sync_callback_raises, out_file="test_sync_callback_raises.txt")
+        task = dummy_script.Task(command=sync_callback_raises, out_file="test_sync_callback_raises.txt")
         self.run_tasks(1)
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_sync_callback_raises.txt").exists())
@@ -512,9 +512,9 @@ class TestTasks(unittest.TestCase):
     def test_async_callback(self):
         async def async_callback(task):
             await asyncio.sleep(0.1)
-            force_touch(task._task_scope.out_file)
+            force_touch(task.out_file)
 
-        hancho2.Task(command=async_callback, out_file="test_async_callback.txt")
+        dummy_script.Task(command=async_callback, out_file="test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
@@ -524,28 +524,28 @@ class TestTasks(unittest.TestCase):
             await asyncio.sleep(0.1)
             raise ValueError("I do not like value.")
 
-        task = hancho2.Task(command=async_callback_raises, out_file="test_async_callback_raises.txt")
+        task = dummy_script.Task(command=async_callback_raises, out_file="test_async_callback_raises.txt")
         self.run_tasks(1)
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_async_callback_raises.txt").exists())
 
     def test_cancellation(self):
         # A task that receives a cancellation exception should not run.
-        task_that_fails = hancho2.Task(
+        task_that_fails = dummy_script.Task(
             desc="task that fails",
             command="(exit 255)",
             in_src=[],
             out_obj="fail_result.txt",
         )
-        task_that_passes = hancho2.Task(
+        task_that_passes = dummy_script.Task(
             desc="task that passes",
-            command = lambda task : force_touch(task._task_scope.out_obj),
+            command = lambda task : force_touch(task.out_obj),
             in_src=[],
             out_obj="pass_result.txt",
         )
-        should_be_cancelled = hancho2.Task(
+        should_be_cancelled = dummy_script.Task(
             desc="should be cancelled",
-            command = lambda task : force_touch(task._task_scope.out_obj),
+            command = lambda task : force_touch(task.out_obj),
             in_src=[task_that_fails, task_that_passes],
             out_obj="should_not_be_created.txt",
         )
@@ -565,7 +565,7 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
     def test_no_mixed_commands(self):
-        bad_task = hancho2.Task(
+        bad_task = dummy_script.Task(
             command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
         )
 
@@ -575,10 +575,10 @@ class TestTasks(unittest.TestCase):
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
-            hancho2.Task(command = lambda task : force_touch(task._task_scope.out_obj), in_src=[], out_obj="dummy.txt")
+            dummy_script.Task(command = lambda task : force_touch(task.out_obj), in_src=[], out_obj="dummy.txt")
             return []
 
-        hancho2.Task(command=callback, in_src=[], out_obj=[])
+        dummy_script.Task(command=callback, in_src=[], out_obj=[])
 
         self.assertFalse(Path("build/dummy.txt").exists())
         self.run_tasks(0)
@@ -589,7 +589,7 @@ class TestTasks(unittest.TestCase):
     def test_tons_of_tasks(self):
         # We should be able to queue up 1000+ tasks at once.
         for i in range(1000):
-            hancho2.Task(
+            dummy_script.Task(
                 desc="I am task {index}",
                 command="echo {index} > {out_obj}",
                 in_src=[],
@@ -607,7 +607,7 @@ class TestTasks(unittest.TestCase):
         # another batch of 100 tasks that use random numbers of cores.
 
         for i in range(100):
-            hancho2.Task(
+            dummy_script.Task(
                 desc="I am task {index}, I use {job_size} cores",
                 command="(exit 0)",
                 in_src=[],
@@ -616,10 +616,10 @@ class TestTasks(unittest.TestCase):
                 index=i,
             )
 
-        hancho2.Task(
+        dummy_script.Task(
             desc="********** I am the slow task, I eat all the cores **********",
             command=[
-                lambda task : force_touch(task._task_scope.out_obj),
+                lambda task : force_touch(task.out_obj),
                 lambda task : time.sleep(0.3)
             ],
             job_size=os.cpu_count(),
@@ -628,7 +628,7 @@ class TestTasks(unittest.TestCase):
         )
 
         for i in range(100):
-            hancho2.Task(
+            dummy_script.Task(
                 desc="I am task {index}, I use {job_size} cores",
                 command="(exit 0)",
                 in_src=[],
@@ -642,12 +642,12 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/slow_result.txt").exists())
 
     def test_dry_run(self):
-        self.reinit("--hancho.max_errors=999", "--repo.dry_run=True")
-        task1 = hancho2.Task(
+        self.reinit("--max_errors=999", "--build_dry=True")
+        task1 = dummy_script.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
         )
-        hancho2.Task(
+        dummy_script.Task(
             command = "cp {in_file} {out_file}",
             in_file = task1,
             out_file = "dry_stuff/test2.txt"
@@ -656,25 +656,23 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertFalse(Path("build").exists())
 
-    # FIXME - Why was the second task "always rebuilding"?
-    # ...because "build_force" is true
     def test_dependency_skipped(self):
         def run():
-            self.reinit("--hancho.max_jobs=1")
-            task1 = hancho2.Task(
+            self.reinit("--max_jobs=1")
+            task1 = dummy_script.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task._task_scope.in_file, task._task_scope.out_file),
+                command = lambda task : shutil.copy(task.in_file, task.out_file),
                 in_file="data/dummy.txt",
                 out_file="blerp/sherp",
             )
-            task2 = hancho2.Task(
+            task2 = dummy_script.Task(
                 name="task2",
                 #command="cp {in_file} {out_file}",
-                command = lambda task : shutil.copy(task._task_scope.in_file, task._task_scope.out_file),
+                command = lambda task : shutil.copy(task.in_file, task.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
-                force=True,
+                build_force=True,
             )
             self.run_tasks(0)
             return (task1, task2)
@@ -703,9 +701,7 @@ class TestTasks(unittest.TestCase):
         mtime1b = mtime_ns("build/blerp/sherp")
         mtime2b = mtime_ns("build/blerp/nerp")
         self.assertEqual(mtime1a, mtime1b) # first task clean, should be skipped
-
-        # Test failing here
-        self.assertLess(mtime2a, mtime2b)  # second task always rebuilds and the skipped task shouldn't stop it.
+        self.assertLess (mtime2a, mtime2b)  # second task always rebuilds and the skipped task shouldn't stop it.
 
         self.assertEqual(hancho.Runner.tasks_finished, 1)
         self.assertEqual(hancho.Runner.tasks_broken, 0)
