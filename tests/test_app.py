@@ -41,7 +41,6 @@ class TestApp(unittest.TestCase):
         #print("setUp")
         os.chdir(os.path.dirname(__file__))
         self.maxDiff = 99999
-        self.stdout = StringIO()
 
         options =[
             #f"--log.level={VERBOSITY}",
@@ -52,9 +51,9 @@ class TestApp(unittest.TestCase):
             "--log.width=9999",
         ]
 
-        self.script : hancho.Script = hancho.init_for_testing(__file__, *options, *args)
+        self.stdout = StringIO()
+        self.script : hancho.Script = hancho.init_for_testing(__file__, self.stdout, [*options, *args])
         self.log : hancho.Log = hancho.cv.log
-        self.log._stdout = self.stdout
 
     def tearDown(self):
         #print("tearDown")
@@ -160,7 +159,7 @@ class TestApp(unittest.TestCase):
 
         def check(value, expected, **kwargs):
             result = dump(value, **kwargs)
-            print(result)
+            #print(result)
             expected = textwrap.dedent(expected).strip()
             self.assertEqual(expected, result)
 

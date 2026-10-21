@@ -43,6 +43,7 @@ import textwrap
 import time
 import traceback
 import types
+import typing
 from collections import Counter, abc, defaultdict
 from contextlib import chdir, contextmanager, suppress
 from contextvars import ContextVar
@@ -498,6 +499,9 @@ class Utils:
 class ContextGlobals:
     def __init__(self):
         object.__setattr__(self, '_ctx', ContextVar('globals'))
+        self.reset()
+
+    def reset(self):
         self._ctx.set({})
 
     def set(self, mapping):
@@ -545,14 +549,14 @@ class Log:
     ERROR    = 40
     CRITICAL = 50
 
-    def __init__(self, flags : Flags):
+    def __init__(self, flags : Flags, stdout):
 
         self.level :int        = cast(int, getattr(Log, flags.log.find('level', 'info').upper()))
         self.wrap : bool       = flags.log.find('wrap', False)
         self.color : bool      = flags.log.find('color', True)
         self.timestamp : bool  = flags.log.find('timestamp', True)
         self.width : int       = flags.log.find('width', shutil.get_terminal_size().columns)
-        self.stdout            = flags.log.find('stdout')
+        #self.stdout            = flags.log.find('stdout')
 
         assert type(self.level) is int
 
@@ -561,10 +565,10 @@ class Log:
         self._line_buffer   = ""
         self._match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if isinstance(self.stdout, str):
-            self._stdout = open(self.stdout, "w")  # noqa: SIM115
+        if isinstance(stdout, str):
+            self._stdout = open(stdout, "w")  # noqa: SIM115
         else:
-            self._stdout = self.stdout
+            self._stdout = stdout
 
     def indent(self, ansi_color : str = RESET):
         self._indent_stack.append(f"{ansi_color}│{Log.RESET} ")
@@ -880,14 +884,6 @@ class Scope:
         self._up2 = _up2
         self._name2 = _name2
 
-    # FIXME I had an infinite loop when printing scopes or something but i forgot how I triggered
-    # it :/
-    #def __repr__(self):
-    #    return Dumper.dump(self)
-    #
-    #def __dump__(self, opts, seen):
-    #    pass
-
     def find(self, key, default = MISSING) -> Any:
         """Walk the _up2 chain until we find the key or run out of scopes."""
 
@@ -953,6 +949,8 @@ class Scope:
     # method... UNLESS it is explicitly set to INHERIT
 
     def __getattr__(self, key) -> Any:
+        if key == "command":
+            print("skldflskjdfs;ldkfjsldkjfsdlkaj;dlksaj;dfkj")
         result = object.__getattribute__(self, key)
         if result is INHERIT:
             return self.find(key)
@@ -1012,6 +1010,10 @@ class Dict(Scope, abc.Mapping):
 
 class Tool(Dict):
     # Tool is just an alias for Dict to make build scripts more readable.
+
+    def __call__(self, *args, **kwargs):
+        return cv.script.Task(self, *args, **kwargs)
+
     pass
 
 class Data(Dict):
@@ -1171,7 +1173,7 @@ def parse_flags(*argv) -> Flags:
     # ------------------------------------
     # Before we leave, set up the initial cv.log so we can log messages during startup.
 
-    cv.log = Log(flags)
+    cv.log = Log(flags, sys.stdout)
 
     if loaded_opts:
         cv.log.info(f"Loaded options file {opt_file_name!r}\n")
@@ -1472,6 +1474,7 @@ class Dumper:
         #types.BuiltinFunctionType : "<builtin>",
         #types.ModuleType          : "<module>",
         types.GeneratorType       : "<generator>",
+        type                      : "type",
     }
 
     # These types don't need a type annotation when dumped.
@@ -1558,7 +1561,7 @@ class Dumper:
             return val.__dump__(key, opts, seen)
         elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
             return cls._dump_vector(key, val, val, opts, seen)
-        elif hasattr(val, "__dict__"):
+        elif hasattr(val, "__dict__") and type(val) not in Dumper.opaque_types:
             return cls._dump_vector(key, val, val.__dict__, opts, seen)
         else:
             return cls._dump_scalar(key, val, opts, seen)
@@ -1583,6 +1586,9 @@ class Dumper:
     @classmethod
     def _dump_vector(cls, key, val, contents, opts, seen : set):
         prefix = cls._dump_prefix(key, val, opts, force_type = False)
+
+        if key == 'Dumper':
+            pass
 
         if (vid := hex(id(val))) in seen:
             return prefix + "<ref loop>"
@@ -1829,11 +1835,11 @@ class Project(Scope):
         self._build_reasons = Counter()
         self._runner = Runner()
 
-    @contextmanager
-    def activate(self):
-        token = cv._ctx.set(Dict(log = cv.log))
-        yield
-        cv._ctx.reset(token)
+#    @contextmanager
+#    def activate(self):
+#        token = cv._ctx.set(Dict(log = cv.log))
+#        yield
+#        cv._ctx.reset(token)
 
 # endregion
 # ==================================================================================================
@@ -1849,9 +1855,14 @@ class Task(Scope):
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(self, script : Script, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
+        script = cv.script
+
+        assert isinstance(script, Script)
+
         super().__init__(_name2 = "task", _up2 = script)
 
+        self.name    : str       = "<no name>"
         self.name    : str       = "<no name>"
         self.desc    : str       = "<no desc>"
         self.command : tree[str | task_callback] = []
@@ -1865,6 +1876,9 @@ class Task(Scope):
         self.job_size    : int   = INHERIT
 
         self.update(*args, **kwargs)
+
+        if not isinstance(self.command, list):
+            self.command = [self.command]
 
         # We can't expand here like Repo/Script/Project because we have to wait on our input tasks
         # once the build is started.
@@ -1913,8 +1927,10 @@ class Task(Scope):
         self._cores = 0
         self._complete = False
 
-    #def __repr__(self):
-    #    return Dumper.dump(self)
+        cv.script._tasks.append(self)
+        # Auto-start the task if it was created dynamically during the build.
+        if Utils.in_event_loop():
+            self.queue_task()
 
     def __dump__(self, key, opts : Dumper.Opts, seen):
         new_fold = [*opts.fold, contextvars.Context, asyncio.Task]
@@ -2215,7 +2231,7 @@ class Task(Scope):
         if project.find('strict'):
             for command in self._commands:
                 if Expander.is_macro(command) or Expander.is_template(command):
-                    raise Task.BROKEN("STRICT: Command not fully expanded")
+                    raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
 
         io_fields = [k for k in self if k.startswith("in_") or k.startswith("out_")]
         for field_name in io_fields:
@@ -2449,8 +2465,6 @@ aliases = Aliases(
 
 class Script(Scope):
 
-    Dict = Dict
-
     def __init__(self, repo : Repo, *args, **kwargs):
         super().__init__(_name2 = "script", _up2 = repo)
 
@@ -2464,39 +2478,45 @@ class Script(Scope):
 
         # The Python module loading machinery looks for this field, but it can be None.
         self.__spec__ = None
-
         self._tasks = []
 
-    #def __getattr__(self, key):
-    #    result = hancho.__dict__[key]
-    #    return result
+        # If we want something to appear in a script's global scope, it _must_ be in this object's
+        # dict
+        self.Dict = Dict
+        self.Task = Task
+        self.Tool = Tool
+        self.Dumper = Dumper
+
+
+    # This doesn't really work, inside exec() the script's dict is the globals and reading/writing
+    # doesn't trigger these
+#    def __getattr__(self, key):
+#        result = hancho.__dict__[key]
+#        return result
+#
+#    def __getitem__(self, key):
+#        return hancho.__dict__[key]
 
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
-    # We intercept hancho.Task so we can add it to this script's task list and start it if it was
-    # dynamically created.
-    def Task(self, *args, **kwargs):
-        task = Task(self, *args, **kwargs)
-
-        self._tasks.append(task)
-
-        # Auto-start the task if it was created dynamically during the build.
-        if Utils.in_event_loop():
-            task.queue_task()
-        return task
-
-    def load_script(self, path, root = None, *args, **kwargs):
-        name = os.path.splitext(os.path.basename(path))[0]
+    def script(self, path, root = None, *args, **kwargs):
+        #name = os.path.splitext(os.path.basename(path))[0]
         if root is None:
             root = os.path.dirname(path)
-        return load_script(name, path, root, self.project, self.repo, *args, **kwargs)
+        return load_script(path, root, *args, is_repo = False, **kwargs)
 
-    def load_repo(self, path, root = None, *args, **kwargs) -> Script:
-        name = os.path.splitext(os.path.basename(path))[0]
+    def include(self, path, root = None, *args, **kwargs):
+        #name = os.path.splitext(os.path.basename(path))[0]
         if root is None:
             root = os.path.dirname(path)
-        return load_script(name, path, root, self.project, self.repo, True, *args, **kwargs)
+        return load_script(path, root, *args, is_repo = False, **kwargs)
+
+    def repo(self, path, root = None, *args, **kwargs) -> Script:
+        #name = os.path.splitext(os.path.basename(path))[0]
+        if root is None:
+            root = os.path.dirname(path)
+        return load_script(path, root, *args, is_repo = True, **kwargs)
 
     def build(self):
         project = self.find("project")
@@ -2508,26 +2528,31 @@ class Script(Scope):
     class Abort(Exception): pass
 
     def fail(self, message):
-        self._log_script_error(sys._getframe(1), "failed", message)
+        _log_script_error(sys._getframe(1), "failed", message)
         raise self.Fail()
 
     def abort(self, message):
-        self._log_script_error(sys._getframe(1), "aborted", message)
+        _log_script_error(sys._getframe(1), "aborted", message)
         raise self.Abort()
 
     def earlyout(self, message = ""):
-        self._log_script_error(sys._getframe(1), "exited early", message)
+        _log_script_error(sys._getframe(1), "exited early", message)
         raise self.EarlyOut()
 
-    def _log_script_error(self, frame, condition, message):
-        cv.log.error(f"Script {condition}:\n")
-        cv.log.error(f"  text = '{message}'\n")
-        cv.log.error(f"  file = {frame.f_code.co_filename}\n")
-        cv.log.error(f"  func = {frame.f_code.co_name}\n")
-        cv.log.error(f"  line = {frame.f_lineno}\n")
+def _log_script_error(frame, condition, message):
+    cv.log.error(f"Script {condition}:\n")
+    cv.log.error(f"  text = '{message}'\n")
+    cv.log.error(f"  file = {frame.f_code.co_filename}\n")
+    cv.log.error(f"  func = {frame.f_code.co_name}\n")
+    cv.log.error(f"  line = {frame.f_lineno}\n")
 
-@staticmethod
-def init_for_testing(path : str, *args) -> Script:
+
+def reset():
+    cv._ctx.reset()
+    pass
+
+def init_for_testing(file : str, stdout : str | typing.TextIO, args) -> Script:
+    path = Path._resolve(file, strict = True)
     flags = parse_flags(*args)
 
     flags.path = path
@@ -2537,13 +2562,20 @@ def init_for_testing(path : str, *args) -> Script:
     flags.root = Expander.expand(flags.root, flags)
     flags.root = Path._resolve(flags.root, strict = True)
 
-    project = Project(flags)
     Utils.reset(flags)
     Runner.reset(flags)
 
-    script = load_script("<testing>", flags.path, flags.root, project, repo = None, is_repo = True)
+    log = Log(flags, stdout)
+    project = Project(flags)
+    repo = Repo(project)
 
-    return script
+    cv.reset()
+    cv.log     = log
+    cv.project = project
+    cv.repo    = repo
+    cv.script  = load_script(flags.path, flags.root, is_repo = True)
+
+    return cv.script
 
 
 # endregion
@@ -2716,49 +2748,61 @@ def _start():
 # ==================================================================================================
 # region load_script
 
-def load_script(name : str, path : str, root : str, project : Project, repo : Repo | None, is_repo : bool, *args, **kwargs) -> Script:
+def load_script(path : str, root : str, is_repo : bool, *args, **kwargs) -> Script:
     assert path == Path.resolve(path)
     assert root == Path.resolve(root)
 
-    if is_repo or repo is None:
-        repo = Repo(project)
-        project._repos.append(repo)
+    if is_repo:
+        repo = Repo(cv.project)
+        script_type = 'repo'
+        cv.project._repos.append(repo)
+    else:
+        repo = cv.repo
+        script_type = 'script'
 
     script = Script(repo, *args, **kwargs)
     repo._scripts.append(script)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
-    # deduped. This relies on __repr__ and the fields read by Dumper.dump being stable during a
-    # build, which they should be in practice.
+    # deduped. This relies on the fields read by Dumper.dump being stable during a build,
+    # which they should be in practice.
     dupe_key = Dumper.any_to_key(script)
 
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
     assert " _" not in dupe_key
 
-    script_type = 'repo' if is_repo else 'script'
 
-    if dupe := project._dedupe.find(dupe_key, None):
-        cv.log.info(Log.LIME + f"Deduped {script_type} {script.path}\n")
+    if dupe := cv.project._dedupe.find(dupe_key, None):
+        cv.log.debug(Log.LIME + f"Deduped {script_type} {script.path}\n")
         return dupe
     else:
-        cv.log.info(Log.ORANGE + f"Loading {script_type} {script.path}\n")
+        cv.log.debug(Log.ORANGE + f"Loading {script_type} {script.path}\n")
 
-    project._dedupe[dupe_key] = script
+    cv.project._dedupe[dupe_key] = script
+
+    if not script.path.endswith(".hancho"):
+        return script
 
     code = None
     with open(script.path, encoding="utf-8") as file:
         source = file.read()
         code = compile(source, script.path, "exec", dont_inherit=True)
 
-    if not path.endswith(".hancho"):
-        return script
-
     try:
-        with chdir(script.root), cv.log.indenter(Log.ORANGE):
-            # FIXME does this _really_ need to be moduletype?
-            sys.modules["hancho"] = cast(types.ModuleType, script)
-            exec(code, script.__dict__)
-            return script
+
+        new_ctx = Dict(
+            cv._ctx.get(),
+            project = cv.project,
+            repo = repo,
+            script = script
+        )
+
+        with cv._ctx.set(new_ctx):  # noqa: SIM117
+            with chdir(script.root), cv.log.indenter(Log.ORANGE):
+                # FIXME does this _really_ need to be moduletype?
+                sys.modules["hancho"] = cast(types.ModuleType, script)
+                exec(code, script.__dict__)
+                return script
     finally:
         sys.modules["hancho"] = hancho
 
@@ -2774,8 +2818,15 @@ def hancho_main(flags) -> int:
     cv.log.debug("Debug mode on\n")
 
     # We expand these manually because we need to *resolve* 'path' _before_ we *expand* 'root'.
-    flags.xip("path")
-    flags.xip("root")
+
+    flags.path = Expander.expand(flags.path, flags, recursive = True)
+    flags.root = Expander.expand(flags.root, flags, recursive = True)
+
+    flags.path = Path._resolve(flags.path, strict = True)
+    flags.root = Path._resolve(flags.root, strict = True)
+
+    #flags.xip("path")
+    #flags.xip("root")
 
     project = Project(flags)
 
@@ -2784,7 +2835,12 @@ def hancho_main(flags) -> int:
     Utils.reset(flags)
     Runner.reset(flags)
 
-    with project.activate():
+    new_ctx = Dict(
+        log = cv.log,
+        project = project
+    )
+
+    with cv._ctx.set(new_ctx):
         project_load(project)
         project_build(project)
         project_stats(project)
@@ -2805,53 +2861,17 @@ def project_load(project : Project, *args, **kwargs):
     project.root = Path._resolve(project.root, strict = True)
 
 
-    name = os.path.splitext(os.path.basename(project.path))[0] if project.path else "????"
+    #name = os.path.splitext(os.path.basename(project.path))[0] if project.path else "????"
 
-    _ = load_script(name, project.path, project.root, project, None, True, *args, **kwargs)
+    _ = load_script(project.path, project.root, *args, is_repo = True, **kwargs)
 
     time_b1 = time.perf_counter()
     cv.log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
 
 def project_build(project) -> int:
     time_a3 = time.perf_counter()
-    result = hancho_build(project)
-    time_b3 = time.perf_counter()
-    cv.log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
-    project._result = result
-    return result
 
-def project_stats(project):
-    task_count = 0
-    for repo in project._repos:
-        task_count += len(list(repo.yield_tasks()))
-
-    # FIXME all the stats should move to Project
-    cv.log.debug(f"Tasks created:    {task_count}\n")
-    cv.log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
-    cv.log.debug(f"Tasks started:    {Runner.tasks_started}\n")
-    cv.log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
-    cv.log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
-    cv.log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
-    cv.log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-    cv.log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-    cv.log.debug(f"Mtime calls:      {Utils.stat_calls}\n")
-    cv.log.debug(f"Hash calls:       {Utils.hash_calls}\n")
-    cv.log.debug(f"Hash bytes:       {Utils.hash_bytes}\n")
-    cv.log.debug(f"Hash time:        {Utils.hash_time:8.6f}\n")
-
-def project_passfail(project):
-    if project._runner.tasks_failed or project._runner.tasks_broken:
-        cv.log.error(Log.RED + "BUILD FAILED\n")
-    elif Runner.tasks_finished:
-        cv.log.info(Log.GREEN + "BUILD PASSED\n")
-    else:
-        cv.log.info(Log.BLUE + "BUILD CLEAN\n")
-
-# endregion
-# ==================================================================================================
-# region hancho_build
-
-def hancho_build(project) -> int:
+    #result = hancho_build(project)
 
     # ------------------------------------
     # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
@@ -2893,7 +2913,85 @@ def hancho_build(project) -> int:
     for repo in project._repos:
         repo.save_stat_db()
 
+    time_b3 = time.perf_counter()
+    cv.log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+    project._result = result
     return result
+
+def project_stats(project):
+    task_count = 0
+    for repo in project._repos:
+        task_count += len(list(repo.yield_tasks()))
+
+    # FIXME all the stats should move to Project
+    cv.log.debug(f"Tasks created:    {task_count}\n")
+    cv.log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
+    cv.log.debug(f"Tasks started:    {Runner.tasks_started}\n")
+    cv.log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
+    cv.log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
+    cv.log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
+    cv.log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+    cv.log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
+    cv.log.debug(f"Mtime calls:      {Utils.stat_calls}\n")
+    cv.log.debug(f"Hash calls:       {Utils.hash_calls}\n")
+    cv.log.debug(f"Hash bytes:       {Utils.hash_bytes}\n")
+    cv.log.debug(f"Hash time:        {Utils.hash_time:8.6f}\n")
+
+def project_passfail(project):
+    if project._runner.tasks_failed or project._runner.tasks_broken:
+        cv.log.error(Log.RED + "BUILD FAILED\n")
+    elif Runner.tasks_finished:
+        cv.log.info(Log.GREEN + "BUILD PASSED\n")
+    else:
+        cv.log.info(Log.BLUE + "BUILD CLEAN\n")
+
+# endregion
+# ==================================================================================================
+# region hancho_build
+
+#def hancho_build(project) -> int:
+#
+#    # ------------------------------------
+#    # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
+#    # get the old path), but _before_ we build any tasks.
+#
+#    # Also this is here and not in hancho_main because tests also need to load stats.
+#    for repo in project._repos:
+#        repo.load_stat_db()
+#
+#    # ------------------------------------
+#    # Select the set of tasks to run.
+#
+#    if project.targets:
+#        for target in project.targets:
+#            # Enable all tasks whose name contains any of the targets
+#            for repo in project._repos:
+#                for task in repo.yield_tasks():
+#                    if target in task.name:
+#                        task.queue_task()
+#
+#    elif project.find('build_all'):
+#        for repo in project._repos:
+#            for task in repo.yield_tasks():
+#                task.queue_task()
+#
+#    else:
+#        # Enable all tasks in the top repo
+#        for task in project._repos[0].yield_tasks():
+#            task.queue_task()
+#
+#    # ------------------------------------
+#    # Run the tasks.
+#
+#    result = asyncio.run(async_run_tasks(project))
+#
+#    # ------------------------------------
+#    # Update stat DBs.
+#
+#    for repo in project._repos:
+#        repo.save_stat_db()
+#
+#    return result
 
 # endregion
 # ==================================================================================================

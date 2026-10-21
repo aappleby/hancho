@@ -2,11 +2,13 @@ import hancho
 
 # pyright: reportAttributeAccessIssue=false
 
-tools_base  = hancho.load("tools/tools_base.hancho")
-tools_base  = hancho.load("tools/tools_base.hancho")
+hancho.Dumper.dprint(hancho)
 
-tools_fpga  = hancho.load("tools/tools_fpga.hancho")
-tools_riscv = hancho.load("tools/tools_riscv.hancho")
-tools_wasm  = hancho.load("tools/tools_wasm.hancho")
-
-hancho.load("examples/examples.hancho")
+tools_base  = hancho.include("tools/tools_base.hancho")
+#tools_base  = hancho.include("tools/tools_base.hancho")
+#
+#tools_fpga  = hancho.include("tools/tools_fpga.hancho")
+#tools_riscv = hancho.include("tools/tools_riscv.hancho")
+#tools_wasm  = hancho.include("tools/tools_wasm.hancho")
+#
+#hancho.script("examples/examples.hancho")

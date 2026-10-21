@@ -22,7 +22,7 @@ def setUpModule():
     os.chdir(os.path.dirname(__file__))
 
     global hancho2
-    hancho2 = hancho.init_for_testing(__file__, f"--log.level={VERBOSITY}", f"--file={__file__}")
+    hancho2 = hancho.init_for_testing(__file__, sys.stdout, [f"--log.level={VERBOSITY}", f"--file={__file__}"])
 
 ####################################################################################################
 
