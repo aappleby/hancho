@@ -43,17 +43,28 @@ class TestApp(unittest.TestCase):
         self.maxDiff = 99999
 
         options =[
-            #f"--log.level={VERBOSITY}",
-            "--log.level=info",
-            "--log.wrap=False",
-            "--log.color=False",
-            "--log.timestamp=False",
-            "--log.width=9999",
+            #f"--log_level={VERBOSITY}",
+            "--log_level=info",
+            "--log_wrap=False",
+            "--log_color=False",
+            "--log_timestamp=False",
+            "--log_width=9999",
         ]
 
         self.stdout = StringIO()
-        self.script : hancho.Script = hancho.init_for_testing(__file__, self.stdout, [*options, *args])
+        self.script: hancho.Script = hancho.init_for_testing(
+            name   = "TestApp",
+            file   = __file__,
+            root   = os.getcwd(),
+            stdout = self.stdout,
+            args   = [*options, *args]
+        )
         self.log : hancho.Log = hancho.cv.log
+        self.clear_stdout()
+
+    def clear_stdout(self):
+        self.stdout.truncate(0)
+        self.stdout.seek(0)
 
     def tearDown(self):
         #print("tearDown")
@@ -94,23 +105,23 @@ class TestApp(unittest.TestCase):
 #        self.assertEqual(12, script.globals.foo)
 
     def test_verbosities(self):
-        self.setUp("--log.level=debug")
+        self.setUp("--log_level=debug")
         self.assertEqual(self.log.DEBUG, self.log.level)
 
-        self.setUp("--log.level=info")
+        self.setUp("--log_level=info")
         self.assertEqual(self.log.INFO, self.log.level)
 
-        self.setUp("--log.level=warning")
+        self.setUp("--log_level=warning")
         self.assertEqual(self.log.WARNING, self.log.level)
 
-        self.setUp("--log.level=error")
+        self.setUp("--log_level=error")
         self.assertEqual(self.log.ERROR, self.log.level)
 
-        self.setUp("--log.level=critical")
+        self.setUp("--log_level=critical")
         self.assertEqual(self.log.CRITICAL, self.log.level)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger
-        #cmd = [sys.executable, "../hancho.py", "--log.level=boo"]
+        #cmd = [sys.executable, "../hancho.py", "--log_level=boo"]
         #result = subprocess.run(cmd, capture_output=True, text=True)
         #self.assertIn("invalid choice: 'boo'", result.stderr)
 
@@ -189,19 +200,3 @@ class TestApp(unittest.TestCase):
         }
         """
         check(thing1, expected, print_id = False)
-
-        #expected = """
-        #{
-        #    a = 1,
-        #    b = [2, 'two'],
-        #    c = (3, 3, 3),
-        #    d:object@0x... = <object object at 0x...>,
-        #    e = 'foobar',
-        #    f:Blarp@0x... = {}
-        #}
-        #"""
-        #check(thing1, expected, print_id = True)
-        #check(contextvars.Context(), ":Context@0x... = {}")
-        #check(print, ":builtin_function_or_method@0x... = <built-in function print>")
-
-

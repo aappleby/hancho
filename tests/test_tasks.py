@@ -51,9 +51,16 @@ class TestTasks(unittest.TestCase):
         VERBOSITY = "critical"
 
         self.script = hancho.init_for_testing(
-            __file__,
-            sys.stdout,
-            [f"--log.level={VERBOSITY}", "--log.wrap=True", "--max_errors=999", *args],
+            name   = "TestTasks",
+            file   =  __file__,
+            root   = os.getcwd(),
+            stdout = sys.stdout,
+            args   = [
+                f"--log_level={VERBOSITY}",
+                "--log_wrap=True",
+                "--max_errors=999",
+                *args
+            ],
         )
 
     def tearDown(self):
@@ -187,24 +194,24 @@ class TestTasks(unittest.TestCase):
         # A rule with no inputs should always rebuild
         # This test is flaky without the "sleep 0.1" because of filesystem mtime granularity
 
-        #def run():
+        def run():
             self.reset()
-            #self.script.Task(
-            #    command=[
-            #        lambda task : time.sleep(0.1),
-            #        lambda task : force_touch(task.out_obj),
-            #    ],
-            #    in_src=[],
-            #    out_obj="result.txt",
-            #)
-            #self.run_tasks(0)
-            #return mtime_ns("build/result.txt")
+            self.script.Task(
+                command=[
+                    lambda task : time.sleep(0.1),
+                    lambda task : force_touch(task.out_obj),
+                ],
+                in_src=[],
+                out_obj="result.txt",
+            )
+            self.run_tasks(0)
+            return mtime_ns("build/result.txt")
 
-        #mtime1 = run()
-#        mtime2 = run()
-#        mtime3 = run()
-#        self.assertLess(mtime1, mtime2)
-#        self.assertLess(mtime2, mtime3)
+        mtime1 = run()
+        mtime2 = run()
+        self.assertLess(mtime1, mtime2)
+        mtime3 = run()
+        self.assertLess(mtime2, mtime3)
 
     def test_input_changed(self):
         # Changing a source file should trigger a rebuild

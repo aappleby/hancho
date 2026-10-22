@@ -110,7 +110,7 @@ def dprint(*args, **kwargs):
 class Utils:
 
     @classmethod
-    def reset(cls, flags : Flags):
+    def reset(cls):
         cls.stat_calls : int = 0
         cls.hash_calls : int = 0
         cls.hash_bytes : int = 0
@@ -353,8 +353,8 @@ class Utils:
     @staticmethod
     def instance_tag(obj):
         result = ""
-        if isinstance(obj, Scope) and '_name2' in obj and obj._name2 is not None:
-            result += obj._name2
+        if isinstance(obj, Scope) and '_name' in obj and obj._name is not None:
+            result += obj._name
             result += ":"
         result += type(obj).__name__
         result += "@"
@@ -362,10 +362,11 @@ class Utils:
         return result
 
     @classmethod
-    def commands_to_string(cls, commands : tree[str | abc.Callable]):
-        blah = Utils.flatten_tree(commands)
-        commands = cast(list[str | abc.Callable], blah)
-        return '; '.join([c.__name__ if callable(c) else c for c in commands])
+    def commands_to_string_list(cls, commands: tree[str | abc.Callable] | None):
+        if commands is None: return []
+        commands = Utils.flatten_tree(commands)
+        command_str = [c.__name__ if callable(c) else c for c in commands]
+        return command_str
 
     @staticmethod
     def tree_map[X, Y, **P](func: abc.Callable[Concatenate[Any, P], Y]) -> abc.Callable[Concatenate[tree[X], P], tree[Y]]:
@@ -430,7 +431,7 @@ class Utils:
         _hash = cls.hash_file(file)
         _stat = os.stat(file)
 
-        command_str = Utils.commands_to_string(command) if command is not None else ""
+        command_str = cls.commands_to_string_list(command)
 
         stat = {
             "hash": _hash,
@@ -502,16 +503,17 @@ class ContextGlobals:
         self.reset()
 
     def reset(self):
-        self._ctx.set({})
+        return self._ctx.set({})
 
-    def set(self, mapping):
-        return self._ctx.set(mapping)
+    def update(self, *args, **kwargs):
+        new_ctx = Dict(self._ctx.get(), *args, **kwargs)
+        return self._ctx.set(new_ctx)
 
     def __getattr__(self, key):
         return self._ctx.get()[key]
 
     def __setattr__(self, key, val):
-        self._ctx.get()[key] = val
+        raise KeyError(f"{key}:{val}")
 
 cv = ContextGlobals()
 
@@ -549,14 +551,13 @@ class Log:
     ERROR    = 40
     CRITICAL = 50
 
-    def __init__(self, flags : Flags, stdout):
+    def __init__(self, stdout):
 
-        self.level :int        = cast(int, getattr(Log, flags.log.find('level', 'info').upper()))
-        self.wrap : bool       = flags.log.find('wrap', False)
-        self.color : bool      = flags.log.find('color', True)
-        self.timestamp : bool  = flags.log.find('timestamp', True)
-        self.width : int       = flags.log.find('width', shutil.get_terminal_size().columns)
-        #self.stdout            = flags.log.find('stdout')
+        self.level :int        = cast(int, getattr(Log, cv.flags.find('log_level', 'info').upper()))
+        self.wrap : bool       = cv.flags.find('log_wrap', False)
+        self.color : bool      = cv.flags.find('log_color', True)
+        self.timestamp : bool  = cv.flags.find('log_timestamp', True)
+        self.width : int       = cv.flags.find('log_width', shutil.get_terminal_size().columns)
 
         assert type(self.level) is int
 
@@ -879,16 +880,17 @@ def merge_args(lhs, *args, **kwargs):
 
 #class Scope(abc.MutableMapping):
 class Scope:
-    def __init__(self, *, _name2, _up2):
-        # If you ask a scope to find _name2, it returns _itself_.
-        self._up2 = _up2
-        self._name2 = _name2
+    def __init__(self, *, _name, _id, _up2):
+        # If you ask a scope to find _id, it returns _itself_.
+        self._name = _name
+        self._id   = _id
+        self._up2  = _up2
 
     def find(self, key, default = MISSING) -> Any:
         """Walk the _up2 chain until we find the key or run out of scopes."""
 
-        # If you ask a scope to find _name2, it returns _itself_.
-        if key == self._name2:
+        # If you ask a scope to find _id, it returns _itself_.
+        if key == self._id:
             return self
 
         result = self.__dict__.get(key, INHERIT)
@@ -949,8 +951,6 @@ class Scope:
     # method... UNLESS it is explicitly set to INHERIT
 
     def __getattr__(self, key) -> Any:
-        if key == "command":
-            print("skldflskjdfs;ldkfjsldkjfsdlkaj;dlksaj;dfkj")
         result = object.__getattribute__(self, key)
         if result is INHERIT:
             return self.find(key)
@@ -1001,7 +1001,11 @@ class Scope:
 
 class Dict(Scope, abc.Mapping):
     def __init__(self, *args, **kwargs):
-        super().__init__(_name2 = kwargs.pop('_name2', "<none>"), _up2   = kwargs.pop('_up2', None))
+        super().__init__(
+            _name = kwargs.pop('_name', "<none>"),
+            _id   = kwargs.pop('_id',   "<none>"),
+            _up2  = kwargs.pop('_up2',  None)
+        )
         self.update(*args, **kwargs)
 
     def expand(self, template, recursive : bool = False) -> Any:
@@ -1026,7 +1030,7 @@ class Data(Dict):
 
 class Flags(Dict):
     def __init__(self, *args, **kwargs):
-        super().__init__(_name2 = 'flags', _up2 = aliases)
+        super().__init__(_id = 'flags', _up2 = aliases)
 
         self.file        = "build.hancho"
         self.name        = "{join(split(root)[-1], basename(file))}"
@@ -1038,7 +1042,6 @@ class Flags(Dict):
         self.build_dir   = "build"
         self.build_dry   = False
         self.build_force = False
-        #self.build_root  = '{join(repo.root, repo.build_dir, repo.build_tag, relpath(script.root, repo.root))}'
         self.build_root  = '{join(repo.root, repo.build_dir, repo.build_tag)}'
         self.build_tag   = ""
         self.cwd         = "{script.root}"
@@ -1054,7 +1057,7 @@ class Flags(Dict):
         self.update(*args, **kwargs)
 
         self.log    = Dict(
-            _name2    = "log",
+            _id       = "log",
             color     = True,
             level     = "info",
             timestamp = True,
@@ -1107,29 +1110,29 @@ def parse_flags(*argv) -> Flags:
     parser.add_argument(      "--strict",        type=str_to_bool, help="Strict mode, slightly more error checking to catch footguns.")
     parser.add_argument(      "--max_errors",    type=int,         help="The maximum number of task errors we tolerate before abandoning the build")
     parser.add_argument('-j', "--max_jobs",      type=int,         help="Run a maximum of N jobs in parallel.")
-    parser.add_argument('-l', "--log.level",     choices=levels,   help="Select verbosity level.")
-    parser.add_argument('-w', "--log.wrap",      type=str_to_bool, help="Wrap lines around the console instead of clipping them")
-    parser.add_argument('-c', "--log.color",     type=str_to_bool, help="Use color in the log for better readability")
-    parser.add_argument(      "--log.timestamp", type=str_to_bool, help="Timestamp each log line")
-    parser.add_argument(      "--log.width",     type=int,         help="Max width (in characters) of the log if not wrapping lines")
-    parser.add_argument(      "--log.stdout",    type=str,         help="Redirect stdout to the given file")
+    parser.add_argument('-l', "--log_level",     choices=levels,   help="Select verbosity level.")
+    parser.add_argument('-w', "--log_wrap",      type=str_to_bool, help="Wrap lines around the console instead of clipping them")
+    parser.add_argument('-c', "--log_color",     type=str_to_bool, help="Use color in the log for better readability")
+    parser.add_argument(      "--log_timestamp", type=str_to_bool, help="Timestamp each log line")
+    parser.add_argument(      "--log_width",     type=int,         help="Max width (in characters) of the log if not wrapping lines")
+    parser.add_argument(      "--log_stdout",    type=str,         help="Redirect stdout to the given file")
 
     # fmt: on
 
-    flags = Flags()
+    flag_dict = Dict()
     (argv_vars, unrecognized) = parser.parse_known_args(argv if argv else [])
 
     # ------------------------------------
     # Load flags from opt_file if present
 
     opt_file_name = argv_vars.__dict__.pop("project.opts", None)
-    loaded_opts = False
+    #loaded_opts = False
     if opt_file_name and os.path.exists(opt_file_name):
         with open(opt_file_name) as f:
             try:
                 opt_file = json.load(f)
-                loaded_opts = True
-                flags.update(opt_file)
+                #loaded_opts = True
+                flag_dict.update(opt_file)
             except Exception as _:
                 cv.log.error(f"Opt file {opt_file_name!r} invalid!\n")
                 traceback.print_exc()
@@ -1147,7 +1150,7 @@ def parse_flags(*argv) -> Flags:
 
     for k, v in argv_vars.__dict__.items():
         if v is not None:
-            set_by_path(flags, k, v)
+            set_by_path(flag_dict, k, v)
 
     # ------------------------------------
     # Unrecognized command line flags also become config fields if they are flag-like.
@@ -1168,19 +1171,9 @@ def parse_flags(*argv) -> Flags:
                 with suppress(NameError, ValueError, SyntaxError):
                     val = ast.literal_eval(val)
 
-            set_by_path(flags, key, val)
+            set_by_path(flag_dict, key, val)
 
-    # ------------------------------------
-    # Before we leave, set up the initial cv.log so we can log messages during startup.
-
-    cv.log = Log(flags, sys.stdout)
-
-    if loaded_opts:
-        cv.log.info(f"Loaded options file {opt_file_name!r}\n")
-
-    # ------------------------------------
-
-    return flags
+    return Flags(flag_dict)
 
 # endregion
 # ==================================================================================================
@@ -1766,9 +1759,9 @@ def trace_end(scope : Scope, action : str, arg, result):
 class Runner:
 
     @classmethod
-    def reset(cls, flags : Flags):
-        cls.max_jobs   = flags.find('max_jobs')
-        cls.max_errors = flags.find('max_errors')
+    def reset(cls):
+        cls.max_jobs   = cv.flags.find('max_jobs')
+        cls.max_errors = cv.flags.find('max_errors')
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
@@ -1815,12 +1808,16 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(self, flags : Flags, *args, **kwargs):
-        super().__init__(_name2 = "project", _up2 = flags)
+    def __init__(self, name : str, path : str, root : str, *args, **kwargs):
+        super().__init__(
+            _name = name,
+            _id   = "project",
+            _up2  = cv.flags
+        )
 
-        self.name : str = INHERIT
-        self.path : str = INHERIT
-        self.root : str = INHERIT
+        self.name : str = name
+        self.path : str = path
+        self.root : str = root
         self.targets : list[str] = INHERIT
 
         self.update(*args, **kwargs)
@@ -1834,12 +1831,6 @@ class Project(Scope):
         self._repos : list[Repo] = []
         self._build_reasons = Counter()
         self._runner = Runner()
-
-#    @contextmanager
-#    def activate(self):
-#        token = cv._ctx.set(Dict(log = cv.log))
-#        yield
-#        cv._ctx.reset(token)
 
 # endregion
 # ==================================================================================================
@@ -1856,11 +1847,11 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(self, *args, **kwargs):
-        script = cv.script
-
-        assert isinstance(script, Script)
-
-        super().__init__(_name2 = "task", _up2 = script)
+        super().__init__(
+            _name = "<unexpanded task>",
+            _id   = "task",
+            _up2  = cv.script
+        )
 
         self.name    : str       = "<no name>"
         self.name    : str       = "<no name>"
@@ -1976,11 +1967,11 @@ class Task(Scope):
         for input_task in self._input_tasks:
                 input_task.queue_task()
 
-    async def task_top(self):
+    async def task_top(self) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
         try:
-            return await self.task_main()
+            await self.task_main()
 
         except asyncio.CancelledError as ex:
             self.log_task(Log.DEBUG, f"<asyncio.CancelledError {ex}>\n")
@@ -2005,7 +1996,7 @@ class Task(Scope):
         finally:
             Runner.release(self._cores)
 
-        raise self._error
+        return self._out_files
 
     async def task_main(self):
         # Await all tasks in our input fields and then flatten them.
@@ -2070,14 +2061,11 @@ class Task(Scope):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         # And we're done
-        return self._out_files
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
-
-        pass
 
         for input_task in self._input_tasks:
             if not isinstance(input_task, Task):
@@ -2086,17 +2074,10 @@ class Task(Scope):
             if input_task._aio_task is None:
                 raise AssertionError("One of a task's input sub-tasks was not started")
 
-            try:
-                await input_task._aio_task
-                pass
-            except Task.SKIPPED:
-                # This input task didn't need to rebuild.
-                pass
-            except Exception as ex:
-                self._error = Task.CANCELLED(f"Task {hex(id(self))} is cancelled")
-                raise self._error from ex
+            await input_task._aio_task
 
-        pass
+            if not isinstance(input_task._error, (Task.SKIPPED, types.NoneType)):
+                raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
 
@@ -2147,6 +2128,11 @@ class Task(Scope):
         # IO fields all expanded, we can expand the rest of the task now.
         Expander.xip(self, recursive = True)
         self._commands = Utils.flatten_tree(self.command)
+
+        # Now that expansion is done, update our scope's _name/_id so we are more readable in
+        # dumps.
+        self._name = self.name
+        self._id   = "task"
 
         if not self.build_dry:
             for files in self._out_files.values():
@@ -2369,18 +2355,18 @@ class Task(Scope):
         # ------------------------------------
 
         for filename in Utils.yield_values(self._in_files):
-            if reason := repo.check_stat(filename):
+            if reason := repo.check_stats(filename, []):
                 return reason
 
         for filename in self._old_deplines:
-            if reason := repo.check_stat(filename):
+            if reason := repo.check_stats(filename, []):
                 return reason
 
         for filename in Utils.yield_values(self._out_files):
-            if reason := repo.check_stat(filename, self.command):
+            if reason := repo.check_stats(filename, self.command):
                 return reason
 
-        if self.in_depfile and (reason := repo.check_stat(self.in_depfile)):
+        if self.in_depfile and (reason := repo.check_stats(self.in_depfile, [])):
             return reason
 
         project._build_reasons["*task clean"] += 1
@@ -2428,10 +2414,11 @@ class Aliases(Dict):
     pass
 
 aliases = Aliases(
-    _name2   = "aliases",
+    _id      = "aliases",
 
     getcwd   = os.getcwd,
 
+    dprint   = dprint,
     dump     = Dumper.dprint,
 
     flatten  = Utils.flatten_tree,
@@ -2449,7 +2436,7 @@ aliases = Aliases(
     swapext  = Path.swapext,
 
     hancho = Dict(
-        _name2 = "hancho",
+        _id    = "hancho",
         _up2   = hancho,
         path   = Path.resolve(__file__),
         root   = os.path.dirname(__file__)
@@ -2465,12 +2452,16 @@ aliases = Aliases(
 
 class Script(Scope):
 
-    def __init__(self, repo : Repo, *args, **kwargs):
-        super().__init__(_name2 = "script", _up2 = repo)
+    def __init__(self, name, path, root, repo : Repo, *args, **kwargs):
+        super().__init__(
+            _name = name,
+            _id   = "script",
+            _up2  = repo
+        )
 
-        self.name = INHERIT
-        self.path = INHERIT
-        self.root = INHERIT
+        self.name = name
+        self.path = path
+        self.root = root
         self.build_root = '{join(repo.build_root, relpath(script.root, repo.root))}'
 
         self.update(*args, **kwargs)
@@ -2487,36 +2478,25 @@ class Script(Scope):
         self.Tool = Tool
         self.Dumper = Dumper
 
-
-    # This doesn't really work, inside exec() the script's dict is the globals and reading/writing
-    # doesn't trigger these
-#    def __getattr__(self, key):
-#        result = hancho.__dict__[key]
-#        return result
-#
-#    def __getitem__(self, key):
-#        return hancho.__dict__[key]
-
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
-    def script(self, path, root = None, *args, **kwargs):
-        #name = os.path.splitext(os.path.basename(path))[0]
+    def load(self, file, root, is_repo, *args, **kwargs):
+        path = Path._resolve(file, strict = True)
         if root is None:
             root = os.path.dirname(path)
-        return load_script(path, root, *args, is_repo = False, **kwargs)
+        name = os.path.join(os.path.split(root)[-1], os.path.basename(file))
+        root = Path._resolve(root, strict = True)
+        return load_script(name, path, root, *args, is_repo = is_repo, **kwargs)
 
-    def include(self, path, root = None, *args, **kwargs):
-        #name = os.path.splitext(os.path.basename(path))[0]
-        if root is None:
-            root = os.path.dirname(path)
-        return load_script(path, root, *args, is_repo = False, **kwargs)
+    def script(self, file, root = None, *args, **kwargs):
+        return self.load(file, root, False, *args, **kwargs)
 
-    def repo(self, path, root = None, *args, **kwargs) -> Script:
-        #name = os.path.splitext(os.path.basename(path))[0]
-        if root is None:
-            root = os.path.dirname(path)
-        return load_script(path, root, *args, is_repo = True, **kwargs)
+    def include(self, file, root = None, *args, **kwargs):
+        return self.load(file, root, False, *args, **kwargs)
+
+    def repo(self, file, root = None, *args, **kwargs) -> Script:
+        return self.load(file, root, True, *args, **kwargs)
 
     def build(self):
         project = self.find("project")
@@ -2547,33 +2527,36 @@ def _log_script_error(frame, condition, message):
     cv.log.error(f"  line = {frame.f_lineno}\n")
 
 
-def reset():
-    cv._ctx.reset()
-    pass
+#def reset():
+#    cv._ctx.reset()
+#    pass
 
-def init_for_testing(file : str, stdout : str | typing.TextIO, args) -> Script:
-    path = Path._resolve(file, strict = True)
-    flags = parse_flags(*args)
-
-    flags.path = path
-
-    flags.path = Expander.expand(flags.path, flags)
-    flags.path = Path._resolve(flags.path, strict = True)
-    flags.root = Expander.expand(flags.root, flags)
-    flags.root = Path._resolve(flags.root, strict = True)
-
-    Utils.reset(flags)
-    Runner.reset(flags)
-
-    log = Log(flags, stdout)
-    project = Project(flags)
-    repo = Repo(project)
-
+def init_for_testing(*, name, file : str, root : str, stdout : str | typing.TextIO, args) -> Script:
     cv.reset()
-    cv.log     = log
-    cv.project = project
-    cv.repo    = repo
-    cv.script  = load_script(flags.path, flags.root, is_repo = True)
+    flags = parse_flags(
+        f"--name={name}",
+        f"--file={file}",
+        f"--root={root}",
+        *args
+    )
+    cv.update(flags = flags)
+    cv.update(log = Log(stdout))
+
+    Utils.reset()
+    Runner.reset()
+
+    # ------------------------------------
+
+    test_name = cv.flags.name
+    test_path = Path._resolve(cv.flags.file, strict = True)
+    test_root = Path._resolve(cv.flags.root, strict = True)
+
+    # ------------------------------------
+
+    project = Project(test_name, test_path, test_root)
+    cv.update(project = project)
+    script  = load_script(test_name, test_path, test_root, is_repo = True)
+    cv.update(repo = script, script = script)
 
     return cv.script
 
@@ -2583,12 +2566,16 @@ def init_for_testing(file : str, stdout : str | typing.TextIO, args) -> Script:
 # region Repo
 
 class Repo(Scope):
-    def __init__(self, project : Project, *args, **kwargs):
-        super().__init__(_name2 = "repo", _up2 = project)
+    def __init__(self, name : str, path : str, root : str, *args, **kwargs):
+        super().__init__(
+            _name = name,
+            _id   = "repo",
+            _up2  = cv.project
+        )
 
-        self.name = INHERIT
-        self.path = INHERIT
-        self.root = INHERIT
+        self.name = name
+        self.path = path
+        self.root = root
         self.build_root = INHERIT
 
         self.update(*args, **kwargs)
@@ -2601,7 +2588,7 @@ class Repo(Scope):
         for script in self._scripts:
             yield from script._tasks
 
-    def check_stat(self, filename : str, command = None):
+    def check_stats(self, filename : str, command : list):
         repo = self
         project = self.find('project')
 
@@ -2635,9 +2622,12 @@ class Repo(Scope):
             project._build_reasons["hash mismatch"] += 1
             return f"Hash mismatch {old_stat['hash']} -> {new_stat['hash']} for : {filename}"
 
-        if command is not None and old_stat['command'] != new_stat['command']:
+        old_command = old_stat['command']
+        new_command = Utils.commands_to_string_list(command)
+
+        if old_command != new_command:
             project._build_reasons["command changed"] += 1
-            return f"Command used to generate file has changed : {filename!r} : {old_stat['command']!r} : {new_stat['command']!r}"
+            return f"Command used to generate file has changed : {filename!r}\n : {old_command!r}n : {command!r}"
 
         # Does not need to rebuild based on file stats / hash
         project._build_reasons["*hash match"] += 1
@@ -2649,10 +2639,10 @@ class Repo(Scope):
 
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
-                cv.log.info(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
+                cv.log.debug(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
                 repo._stat_db = json.load(contents)
         else:
-            cv.log.info(Log.ORANGE + f"No stat db for {repo.root}\n")
+            cv.log.debug(Log.ORANGE + f"No stat db for {repo.root}\n")
             repo._stat_db = {}
 
     def save_stat_db(self):
@@ -2660,19 +2650,25 @@ class Repo(Scope):
         if repo.find('build_dry'):
             return
 
+        stat_db_path = Path.join(repo.build_root, 'hancho.json')
+        cv.log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
+
         stat_db = {}
 
         # FIXME we could probably save a little work if we didn't always re-stat every input and
         # output, but this is safe for now.
 
         # ------------------------------------
-        # Gather stats for all input files in all tasks.
+        # Gather stats for all _input_ files in all tasks.
 
         for task in repo.yield_tasks():
             if not task._complete:
                 continue
 
             for file in Utils.yield_values(task._in_files):
+                stat_db[file] = Utils.get_stats(file)
+
+            for file in Utils.yield_values(task._out_files):
                 stat_db[file] = Utils.get_stats(file)
 
             in_depfile = cast(str, task.in_depfile)
@@ -2682,17 +2678,22 @@ class Repo(Scope):
                 for file in deplines:
                     stat_db[file] = Utils.get_stats(file)
 
-        # We gather stats from output files in a second pass so that their .command fields
-        # overwrite any blank ones from the first pass.
+        # ------------------------------------
+        # Fill in the .command field for all our _output_ files.
+        # We do this in a second pass because if a file is both an input and an output, we don't
+        # want to accidentally overwrite the command with []
+        # during "stat_db[file] = Utils.get_stats(file)"
 
         for task in repo.yield_tasks():
             if not task._complete:
                 continue
 
-            for file in Utils.yield_values(task._out_files):
-                stat_db[file] = Utils.get_stats(file, task.command)
+            command_list = Utils.commands_to_string_list(task.command)
 
-        stat_db_path = Path.join(repo.build_root, 'hancho.json')
+            for file in Utils.yield_values(task._out_files):
+                if file in stat_db:
+                    stat_db[file]['command'] = command_list
+
         Utils.save_json(stat_db, stat_db_path)
 
         # ------------------------------------
@@ -2704,11 +2705,13 @@ class Repo(Scope):
             if not task._complete:
                 continue
 
+            command_list = Utils.commands_to_string_list(task.command)
+
             for file in Utils.yield_values(task._in_files):
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
                     "directory" : task.cwd,
-                    "command"   : Utils.commands_to_string(task.command),
+                    "command"   : command_list,
                     "file"      : file,
                 }
 
@@ -2723,7 +2726,9 @@ def _start():
 
     # Parse flags and set up initial global log so we can print messages while starting the
     # project.
-    flags = parse_flags(*sys.argv)
+    cv.reset()
+    cv.update(flags = parse_flags(*sys.argv))
+    cv.update(log = Log(sys.stdout))
 
     # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
     # we failed to catch an exception during load/build. The 'except' clause should catch
@@ -2732,7 +2737,7 @@ def _start():
     try:
         sys.modules["hancho"] = sys.modules[__name__]
         if __name__ == "__main__":
-            sys.exit(hancho_main(flags))
+            sys.exit(hancho_main())
     except Exception:
         cv.log.critical("Hancho hit an unhandled exception:\n")
         cv.log.critical(traceback.format_exc())
@@ -2748,19 +2753,19 @@ def _start():
 # ==================================================================================================
 # region load_script
 
-def load_script(path : str, root : str, is_repo : bool, *args, **kwargs) -> Script:
+def load_script(name : str, path : str, root : str, is_repo : bool, *args, **kwargs) -> Script:
     assert path == Path.resolve(path)
     assert root == Path.resolve(root)
 
     if is_repo:
-        repo = Repo(cv.project)
+        repo = Repo(name, path, root, cv.project)
         script_type = 'repo'
         cv.project._repos.append(repo)
     else:
         repo = cv.repo
         script_type = 'script'
 
-    script = Script(repo, *args, **kwargs)
+    script = Script(name, path, root, repo, *args, **kwargs)
     repo._scripts.append(script)
 
     # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2810,7 +2815,7 @@ def load_script(path : str, root : str, is_repo : bool, *args, **kwargs) -> Scri
 # ==================================================================================================
 # region hancho_main
 
-def hancho_main(flags) -> int:
+def hancho_main() -> int:
 
     # Flag parser should've set the initial log up for us.
     cv.log.info(f"Command line : {" ".join(sys.argv)}\n")
@@ -2819,29 +2824,24 @@ def hancho_main(flags) -> int:
 
     # We expand these manually because we need to *resolve* 'path' _before_ we *expand* 'root'.
 
-    flags.path = Expander.expand(flags.path, flags, recursive = True)
-    flags.root = Expander.expand(flags.root, flags, recursive = True)
+    cv.flags.xip('name')
+    cv.flags.xip('path')
+    cv.flags.xip('root')
 
-    flags.path = Path._resolve(flags.path, strict = True)
-    flags.root = Path._resolve(flags.root, strict = True)
+    cv.flags.path = Path._resolve(cv.flags.path, strict = True)
+    cv.flags.root = Path._resolve(cv.flags.root, strict = True)
 
-    #flags.xip("path")
-    #flags.xip("root")
+    project = Project(cv.flags.name, cv.flags.path, cv.flags.root)
 
-    project = Project(flags)
+    Utils.reset()
+    Runner.reset()
 
-    #Dumper.dprint(project, dump_private = True)
+    with cv.update(project = project):
+        time_a1 = time.perf_counter()
+        load_script(project.name, project.path, project.root, is_repo = True)
+        time_b1 = time.perf_counter()
+        cv.log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
 
-    Utils.reset(flags)
-    Runner.reset(flags)
-
-    new_ctx = Dict(
-        log = cv.log,
-        project = project
-    )
-
-    with cv._ctx.set(new_ctx):
-        project_load(project)
         project_build(project)
         project_stats(project)
         project_passfail(project)
@@ -2849,24 +2849,6 @@ def hancho_main(flags) -> int:
     return project._result
 
 # ========================================
-
-def project_load(project : Project, *args, **kwargs):
-    time_a1 = time.perf_counter()
-
-
-    project.path = Expander.expand(project.path, project)
-    project.path = Path._resolve(project.path, strict = True)
-
-    project.root = Expander.expand(project.root, project)
-    project.root = Path._resolve(project.root, strict = True)
-
-
-    #name = os.path.splitext(os.path.basename(project.path))[0] if project.path else "????"
-
-    _ = load_script(project.path, project.root, *args, is_repo = True, **kwargs)
-
-    time_b1 = time.perf_counter()
-    cv.log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
 
 def project_build(project) -> int:
     time_a3 = time.perf_counter()
@@ -2947,54 +2929,6 @@ def project_passfail(project):
 
 # endregion
 # ==================================================================================================
-# region hancho_build
-
-#def hancho_build(project) -> int:
-#
-#    # ------------------------------------
-#    # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
-#    # get the old path), but _before_ we build any tasks.
-#
-#    # Also this is here and not in hancho_main because tests also need to load stats.
-#    for repo in project._repos:
-#        repo.load_stat_db()
-#
-#    # ------------------------------------
-#    # Select the set of tasks to run.
-#
-#    if project.targets:
-#        for target in project.targets:
-#            # Enable all tasks whose name contains any of the targets
-#            for repo in project._repos:
-#                for task in repo.yield_tasks():
-#                    if target in task.name:
-#                        task.queue_task()
-#
-#    elif project.find('build_all'):
-#        for repo in project._repos:
-#            for task in repo.yield_tasks():
-#                task.queue_task()
-#
-#    else:
-#        # Enable all tasks in the top repo
-#        for task in project._repos[0].yield_tasks():
-#            task.queue_task()
-#
-#    # ------------------------------------
-#    # Run the tasks.
-#
-#    result = asyncio.run(async_run_tasks(project))
-#
-#    # ------------------------------------
-#    # Update stat DBs.
-#
-#    for repo in project._repos:
-#        repo.save_stat_db()
-#
-#    return result
-
-# endregion
-# ==================================================================================================
 # region async_run_tasks
 
 async def async_run_tasks(project : Project):
@@ -3016,32 +2950,32 @@ async def async_run_tasks(project : Project):
     while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
         finished_aio_task : asyncio.Task | None = None
 
-        try:
-            done = await Runner.aio_done_queue.get()
-            finished_aio_task = cast(asyncio.Task, done)
-            _ = finished_aio_task.result()
-            Runner.tasks_finished += 1
-        except asyncio.CancelledError:
-            Runner.tasks_cancelled += 1
-        except Task.CANCELLED:
-            Runner.tasks_cancelled += 1
-        except Task.BROKEN:
-            Runner.tasks_broken += 1
-        except Task.FAILED:
-            Runner.tasks_failed += 1
-        except Task.SKIPPED:
-            getattr(finished_aio_task, 'hancho_task')._complete = True  # noqa: B009
-            Runner.tasks_skipped += 1
-        except BaseException as ex:
-            cv.log.warning(f"Weird exception {type(ex)} >{ex}< at {time.perf_counter()}\n")
-            cv.log.exception(ex)
-            Runner.tasks_failed += 1
-        else:
-            # If _none_ of the above exceptions fired, 2261we mark the task as complete.
-            getattr(finished_aio_task, 'hancho_task')._complete = True  # noqa: B009
-        finally:
-            if finished_aio_task is not None:
-                Runner.live_aio_tasks.discard(finished_aio_task)
+        done = await Runner.aio_done_queue.get()
+        finished_aio_task = cast(asyncio.Task, done)
+        task = finished_aio_task.hancho_task # type: ignore
+
+        match type(task._error):
+            case types.NoneType:
+                task._complete = True
+                Runner.tasks_finished += 1
+            case asyncio.CancelledError:
+                Runner.tasks_cancelled += 1
+            case Task.CANCELLED:
+                Runner.tasks_cancelled += 1
+            case Task.BROKEN:
+                Runner.tasks_broken += 1
+            case Task.FAILED:
+                Runner.tasks_failed += 1
+            case Task.SKIPPED:
+                task._complete = True
+                Runner.tasks_skipped += 1
+            case _:
+                cv.log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
+                cv.log.exception(task._error)
+                Runner.tasks_failed += 1
+
+        if finished_aio_task is not None:
+            Runner.live_aio_tasks.discard(finished_aio_task)
 
     failures = Runner.tasks_broken + Runner.tasks_failed
     if failures > Runner.max_errors:
@@ -3069,4 +3003,4 @@ async def async_run_tasks(project : Project):
 if 'scratch' not in sys.argv:
     _start()
 else:
-    flags = parse_flags()
+    pass

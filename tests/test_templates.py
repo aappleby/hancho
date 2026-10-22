@@ -7,7 +7,6 @@ import unittest
 
 sys.path.append("..")
 
-import hancho
 from hancho import Dict, Expander
 
 VERBOSITY = "critical"
@@ -15,14 +14,6 @@ VERBOSITY = "critical"
 # the hancho references hit this and it's bogus because of the weird way hancho intercepts
 # attributes
 # pyright: reportAttributeAccessIssue=false
-
-####################################################################################################
-
-def setUpModule():
-    os.chdir(os.path.dirname(__file__))
-
-    global hancho2
-    hancho2 = hancho.init_for_testing(__file__, sys.stdout, [f"--log.level={VERBOSITY}", f"--file={__file__}"])
 
 ####################################################################################################
 

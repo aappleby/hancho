@@ -24,6 +24,19 @@
         "reveal": "never",
         "panel": "shared"
       }
+    },
+
+    {
+      "label": "Wipe Scratch",
+      "type": "shell",
+      "command": "find . -type d -name build -prune -exec rm -rf {} +",
+      "options": {
+        "cwd": "${workspaceFolder}/scratch"
+      },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
     }
   ]
 }

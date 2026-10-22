@@ -18,7 +18,6 @@ def setUpModule():
 
 class TestRepos(unittest.TestCase):
     def setUp(self):
-        #hancho.init(["--log.level=critical"]) # type: ignore
         sys.stdout.flush()
 
     def tearDown(self):
@@ -31,7 +30,7 @@ class TestRepos(unittest.TestCase):
     def _test_sticky_hancho(self):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
         #result = subprocess.run(
-        #    [sys.executable, "../hancho.py", "--log.level=critical", "-f", "sticky_hancho1.hancho"],
+        #    [sys.executable, "../hancho.py", "--log_level=critical", "-f", "sticky_hancho1.hancho"],
         #    cwd=os.path.dirname(__file__),
         #)
         #self.assertEqual(0, result.returncode)

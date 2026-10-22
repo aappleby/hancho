@@ -13,8 +13,9 @@
       "cwd"     : "${workspaceFolder}/scratch",
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
-      //"args"    : ["-ltrace", "--log.width=999"],
-      "args"    : ["-ltrace", "--log.width=120"],
+      //"args"    : ["-ltrace", "--log_width=999"],
+      "args"    : ["-ltrace", "--log_width=999"],
+      //"preLaunchTask": "Wipe Scratch"
     },
 
     {
@@ -75,7 +76,7 @@
       //"program" : "${workspaceFolder}/hancho.py",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       "console" : "internalConsole",
-      "args"    : ["-D"],
+      "args"    : ["-ltrace"],
     },
 
     {
