@@ -43,11 +43,11 @@ class TestTasks(unittest.TestCase):
         self.reset(*args)
 
     def tearDown(self):
-        hancho.cv.log._flush()
+        hancho.cg.log._flush()
 
     def reset(self, *args):
 
-        self.script = hancho.init_for_testing(
+        self.script = hancho.Script.init_for_testing(
             name   = "TestTasks",
             file   =  __file__,
             root   = os.getcwd(),

@@ -27,14 +27,14 @@ class TestApp(unittest.TestCase):
         ]
 
         self.stdout = io.StringIO()
-        self.script: hancho.Script = hancho.init_for_testing(
+        self.script = hancho.Script.init_for_testing(
             name   = "TestApp",
             file   = __file__,
             root   = os.getcwd(),
             stdout = self.stdout,
             args   = [*options, *args]
         )
-        self.log : hancho.Log = hancho.cv.log
+        self.log : hancho.Log = hancho.cg.log
         self.clear_stdout()
 
     def clear_stdout(self):

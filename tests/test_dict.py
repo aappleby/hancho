@@ -1,5 +1,4 @@
 import os
-import sys
 import unittest
 
 import hancho
@@ -10,12 +9,8 @@ import hancho
 # --------------------------------------------------------------------------------------------------
 
 class TestDict(unittest.TestCase):
-    def setUp(self):
+    def setUp(self, *args):
         os.chdir(os.path.dirname(__file__))
-        sys.stdout.flush()
-
-    def tearDown(self):
-        sys.stdout.flush()
 
     def test_basic_access(self):
         d = hancho.Dict({"a": 1, "b": 2})
@@ -48,8 +43,8 @@ class TestDict(unittest.TestCase):
         d2 = {"a": {"y": 3, "z": 4}}
 
         d3 = {}
-        hancho.merge_variants(d3, d1) # type: ignore
-        hancho.merge_variants(d3, d2) # type: ignore
+        hancho.Utils.merge_variants(d3, d1) # type: ignore
+        hancho.Utils.merge_variants(d3, d2) # type: ignore
 
         self.assertIsInstance(d3, dict)
         self.assertIsInstance(d3['a'], dict)
