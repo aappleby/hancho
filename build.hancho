@@ -1,7 +1,5 @@
 import hancho
 
-# pyright: reportAttributeAccessIssue=false
-
 #hancho.Dumper.dprint(hancho)
 
 tools_base  = hancho.include("tools/tools_base.hancho")
@@ -12,3 +10,6 @@ tools_base  = hancho.include("tools/tools_base.hancho")
 #tools_wasm  = hancho.include("tools/tools_wasm.hancho")
 #
 #hancho.script("examples/examples.hancho")
+
+
+hancho.Task(command = "echo Hello World")

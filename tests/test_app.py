@@ -1,49 +1,24 @@
-#!/usr/bin/python3
-"""Template file for creating new test cases"""
-
+import io
 import os
 import subprocess
 import sys
 import textwrap
 import unittest
-from io import StringIO
 
-sys.path.append("..")
 import hancho
-
-# the hancho references hit this and it's bogus because of the weird way hancho intercepts
-# attributes
-# pyright: reportAttributeAccessIssue=false
 
 # FIXME we need some tests that run hancho as if it were launched from the command line
 
-VERBOSITY = "critical"
-
-def setUpModule():
-    #print("setUpModule")
-    pass
-
-
-def tearDownModule():
-    #print("tearDownModule")
-    pass
-
-####################################################################################################
-# High level tests that don't belong in one of the other test suites
+# --------------------------------------------------------------------------------------------------
 
 class TestApp(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        #print("setUpClass")
-        pass
-
     def setUp(self, *args):
         #print("setUp")
         os.chdir(os.path.dirname(__file__))
         self.maxDiff = 99999
 
         options =[
-            #f"--log_level={VERBOSITY}",
+            # We use 'info' here because we're capturing the log to a StringIO
             "--log_level=info",
             "--log_wrap=False",
             "--log_color=False",
@@ -51,7 +26,7 @@ class TestApp(unittest.TestCase):
             "--log_width=9999",
         ]
 
-        self.stdout = StringIO()
+        self.stdout = io.StringIO()
         self.script: hancho.Script = hancho.init_for_testing(
             name   = "TestApp",
             file   = __file__,
@@ -69,13 +44,6 @@ class TestApp(unittest.TestCase):
     def tearDown(self):
         #print("tearDown")
         pass
-
-    @classmethod
-    def tearDownClass(cls):
-        #print("tearDownClass")
-        pass
-
-    # ----------------------------------------------------------------------------------------------
 
     def test_log_redirection(self):
         # Our default verbosity is 'critical', so these should appear in the log.
@@ -200,3 +168,8 @@ class TestApp(unittest.TestCase):
         }
         """
         check(thing1, expected, print_id = False)
+
+# --------------------------------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    unittest.main(verbosity=999)

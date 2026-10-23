@@ -56,11 +56,9 @@ from typing import Any, ClassVar, Concatenate, TypeGuard, cast
 # ==================================================================================================
 # region constants
 
-hancho = sys.modules[__name__]
-sys.modules["hancho"] = hancho
-
 type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
 type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
+type task_callback = abc.Callable[[Task], Any]
 
 # The above needs to be sequence/set/mapping in order for this to typecheck:
 # a : str = "foo"
@@ -69,6 +67,9 @@ type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mappi
 # d : tree[str] = c
 
 type item[T] = tuple[int | str | None, T]
+
+cv : ContextGlobals
+aliases : Aliases
 
 class Sentinel:
     def __init__(self, name):     self.name = name
@@ -88,10 +89,9 @@ MISSING : Any = Sentinel("MISSING")
 # fields come from during expansion.
 INHERIT : Any = Sentinel("INHERIT")
 
-def public(scope):
-    yield from filter(is_public, scope)
-
 def is_public(key):
+    if not isinstance(key, str):
+        breakpoint()
     return key is None or not key.startswith("_")
 
 def is_private(key):
@@ -505,6 +505,8 @@ class ContextGlobals:
     def reset(self):
         return self._ctx.set({})
 
+    # Update creates a whole new Dict so that if anyone was holding a reference to the old Dict
+    # their copy will remain unchanged.
     def update(self, *args, **kwargs):
         new_ctx = Dict(self._ctx.get(), *args, **kwargs)
         return self._ctx.set(new_ctx)
@@ -512,10 +514,10 @@ class ContextGlobals:
     def __getattr__(self, key):
         return self._ctx.get()[key]
 
+    # We do _not_ allow incrementally modifying a context, as doing so could allow inadvertent
+    # modification of a context already captured by an earlier task.
     def __setattr__(self, key, val):
         raise KeyError(f"{key}:{val}")
-
-cv = ContextGlobals()
 
 # endregion
 # ==================================================================================================
@@ -880,14 +882,14 @@ def merge_args(lhs, *args, **kwargs):
 
 #class Scope(abc.MutableMapping):
 class Scope:
-    def __init__(self, *, _name, _id, _up2):
+    def __init__(self, *, _name, _id, _up):
         # If you ask a scope to find _id, it returns _itself_.
         self._name = _name
         self._id   = _id
-        self._up2  = _up2
+        self._up  = _up
 
     def find(self, key, default = MISSING) -> Any:
-        """Walk the _up2 chain until we find the key or run out of scopes."""
+        """Walk the _up chain until we find the key or run out of scopes."""
 
         # If you ask a scope to find _id, it returns _itself_.
         if key == self._id:
@@ -896,8 +898,8 @@ class Scope:
         result = self.__dict__.get(key, INHERIT)
         if result is not INHERIT:
             return result
-        if self._up2 is not None:
-            return self._up2.find(key, default)
+        if self._up is not None:
+            return self._up.find(key, default)
         if default is not MISSING:
             return default
         raise KeyError(key)
@@ -947,7 +949,7 @@ class Scope:
     # These are here so that the linter doesn't complain about reading/writing unknown fields off a
     # scope.
 
-    # I don't think we want to walk _up2 for attribute accesses, we need at least one "raw" access
+    # I don't think we want to walk _up for attribute accesses, we need at least one "raw" access
     # method... UNLESS it is explicitly set to INHERIT
 
     def __getattr__(self, key) -> Any:
@@ -969,7 +971,7 @@ class Scope:
 
     # ----------------------------------------
     # Scope is _not_ a mapping, but it implements the core of MutableMapping so that it only
-    # exposes public fields and traverses _up2 if a key is not in the current scope.
+    # exposes public fields and traverses _up if a key is not in the current scope.
 
     def __contains__(self, key : str) -> bool:
         return key in self.__dict__
@@ -1004,7 +1006,7 @@ class Dict(Scope, abc.Mapping):
         super().__init__(
             _name = kwargs.pop('_name', "<none>"),
             _id   = kwargs.pop('_id',   "<none>"),
-            _up2  = kwargs.pop('_up2',  None)
+            _up   = kwargs.pop('_up',   None)
         )
         self.update(*args, **kwargs)
 
@@ -1024,13 +1026,17 @@ class Data(Dict):
     # Same thing
     pass
 
+class Aliases(Dict):
+    # Same thing
+    pass
+
 # endregion
 # ==================================================================================================
 # region parse_flags
 
 class Flags(Dict):
     def __init__(self, *args, **kwargs):
-        super().__init__(_id = 'flags', _up2 = aliases)
+        super().__init__(_id = 'flags', _up = aliases)
 
         self.file        = "build.hancho"
         self.name        = "{join(split(root)[-1], basename(file))}"
@@ -1054,17 +1060,15 @@ class Flags(Dict):
         self.tool        = None
         self.stdout      = sys.stdout
 
+        self.log_level     = "info",
+        self.log_wrap      = False,
+        self.log_color     = True,
+        self.log_timestamp = True,
+        self.log_width     = shutil.get_terminal_size().columns,
+        self.log_stdout    = self.stdout
+
         self.update(*args, **kwargs)
 
-        self.log    = Dict(
-            _id       = "log",
-            color     = True,
-            level     = "info",
-            timestamp = True,
-            width     = shutil.get_terminal_size().columns,
-            wrap      = False,
-            stdout    = self.stdout
-        )
 
 
 def parse_flags(*argv) -> Flags:
@@ -1604,7 +1608,7 @@ class Dumper:
             raise AssertionError(f"Don't know what to do with {type(val)}")
 
         if isinstance(val, Scope):
-            items = [x for x in items if x[0] != '_up2']
+            items = [x for x in items if x[0] != '_up']
         if not opts.dump_private:
             items = [x for x in items if is_public(x[0])]
             items.append(("<private fields are hidden>", MISSING))
@@ -1812,7 +1816,7 @@ class Project(Scope):
         super().__init__(
             _name = name,
             _id   = "project",
-            _up2  = cv.flags
+            _up  = cv.flags
         )
 
         self.name : str = name
@@ -1850,7 +1854,7 @@ class Task(Scope):
         super().__init__(
             _name = "<unexpanded task>",
             _id   = "task",
-            _up2  = cv.script
+            _up  = cv.script
         )
 
         self.name    : str       = "<no name>"
@@ -2083,7 +2087,7 @@ class Task(Scope):
 
         if cv.log.level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
-            #self.log_task(Log.DEBUG, Dumper.dump(self, dump_private=False, fold = ["hancho", "log", "in_objs", "_up2", "script", "_aio_context"]) + "\n")
+            #self.log_task(Log.DEBUG, Dumper.dump(self, dump_private=False, fold = ["hancho", "log", "in_objs", "_up", "script", "_aio_context"]) + "\n")
             #self.log_task(Log.DEBUG, Dumper.dump(self, dump_private=False) + "\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = False) + "\n")
 
@@ -2404,14 +2408,9 @@ class Task(Scope):
         cv.log.error(self.dump_stdout())
         cv.log.error("========================================\n")
 
-task_callback = abc.Callable[[Task], Any]
-
 # endregion
 # ==================================================================================================
 # region Aliases
-
-class Aliases(Dict):
-    pass
 
 aliases = Aliases(
     _id      = "aliases",
@@ -2434,13 +2433,6 @@ aliases = Aliases(
     split    = Path.split,
     join     = Path.join,
     swapext  = Path.swapext,
-
-    hancho = Dict(
-        _id    = "hancho",
-        _up2   = hancho,
-        path   = Path.resolve(__file__),
-        root   = os.path.dirname(__file__)
-    )
 )
 
 # endregion
@@ -2456,7 +2448,7 @@ class Script(Scope):
         super().__init__(
             _name = name,
             _id   = "script",
-            _up2  = repo
+            _up  = repo
         )
 
         self.name = name
@@ -2508,38 +2500,36 @@ class Script(Scope):
     class Abort(Exception): pass
 
     def fail(self, message):
-        _log_script_error(sys._getframe(1), "failed", message)
+        self._log_script_error(sys._getframe(1), "failed", message)
         raise self.Fail()
 
     def abort(self, message):
-        _log_script_error(sys._getframe(1), "aborted", message)
+        self._log_script_error(sys._getframe(1), "aborted", message)
         raise self.Abort()
 
     def earlyout(self, message = ""):
-        _log_script_error(sys._getframe(1), "exited early", message)
+        self._log_script_error(sys._getframe(1), "exited early", message)
         raise self.EarlyOut()
 
-def _log_script_error(frame, condition, message):
-    cv.log.error(f"Script {condition}:\n")
-    cv.log.error(f"  text = '{message}'\n")
-    cv.log.error(f"  file = {frame.f_code.co_filename}\n")
-    cv.log.error(f"  func = {frame.f_code.co_name}\n")
-    cv.log.error(f"  line = {frame.f_lineno}\n")
-
-
-#def reset():
-#    cv._ctx.reset()
-#    pass
+    def _log_script_error(self, frame, condition, message):
+        cv.log.error(f"Script {condition}:\n")
+        cv.log.error(f"  text = '{message}'\n")
+        cv.log.error(f"  file = {frame.f_code.co_filename}\n")
+        cv.log.error(f"  func = {frame.f_code.co_name}\n")
+        cv.log.error(f"  line = {frame.f_lineno}\n")
 
 def init_for_testing(*, name, file : str, root : str, stdout : str | typing.TextIO, args) -> Script:
-    cv.reset()
     flags = parse_flags(
         f"--name={name}",
         f"--file={file}",
         f"--root={root}",
         *args
     )
+
+    global cv
+    cv = ContextGlobals()
     cv.update(flags = flags)
+    # This can't happen until after cv.flags is set.
     cv.update(log = Log(stdout))
 
     Utils.reset()
@@ -2570,7 +2560,7 @@ class Repo(Scope):
         super().__init__(
             _name = name,
             _id   = "repo",
-            _up2  = cv.project
+            _up  = cv.project
         )
 
         self.name = name
@@ -2724,20 +2714,30 @@ class Repo(Scope):
 
 def _start():
 
-    # Parse flags and set up initial global log so we can print messages while starting the
-    # project.
-    cv.reset()
-    cv.update(flags = parse_flags(*sys.argv))
-    cv.update(log = Log(sys.stdout))
-
     # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
     # we failed to catch an exception during load/build. The 'except' clause should catch
     # Exception and not BaseException so ctrl-c doesn't get misinterpreted as a Hancho bug.
 
+    flags = parse_flags(*sys.argv)
+
+    global cv
+    cv = ContextGlobals()
+    cv.update(flags = flags)
+    cv.update(
+        hancho = Dict(
+            _name  = "hancho",
+            _id    = "hancho",
+            _up    = sys.modules[__name__],
+            path   = Path.resolve(__file__),
+            root   = os.path.dirname(__file__)
+        )
+    )
+    cv.update(log = Log(sys.stdout))
+
     try:
-        sys.modules["hancho"] = sys.modules[__name__]
-        if __name__ == "__main__":
-            sys.exit(hancho_main())
+        result = hancho_main()
+        return result
+
     except Exception:
         cv.log.critical("Hancho hit an unhandled exception:\n")
         cv.log.critical(traceback.format_exc())
@@ -2776,7 +2776,6 @@ def load_script(name : str, path : str, root : str, is_repo : bool, *args, **kwa
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
     assert " _" not in dupe_key
 
-
     if dupe := cv.project._dedupe.find(dupe_key, None):
         cv.log.debug(Log.LIME + f"Deduped {script_type} {script.path}\n")
         return dupe
@@ -2793,23 +2792,19 @@ def load_script(name : str, path : str, root : str, is_repo : bool, *args, **kwa
         source = file.read()
         code = compile(source, script.path, "exec", dont_inherit=True)
 
+    old_mod = sys.modules.get("hancho", None)
+
     try:
-
-        new_ctx = Dict(
-            cv._ctx.get(),
-            project = cv.project,
-            repo = repo,
-            script = script
-        )
-
-        with cv._ctx.set(new_ctx):  # noqa: SIM117
-            with chdir(script.root), cv.log.indenter(Log.ORANGE):
-                # FIXME does this _really_ need to be moduletype?
-                sys.modules["hancho"] = cast(types.ModuleType, script)
-                exec(code, script.__dict__)
-                return script
+        with chdir(script.root), cv.update(repo = repo, script = script), cv.log.indenter(Log.ORANGE):
+            # FIXME does this _really_ need to be moduletype?
+            sys.modules["hancho"] = cast(types.ModuleType, script)
+            exec(code, script.__dict__)
+            return script
     finally:
-        sys.modules["hancho"] = hancho
+        if old_mod is None:
+            del sys.modules["hancho"]
+        else:
+            sys.modules["hancho"] = cast(types.ModuleType, old_mod)
 
 # endregion
 # ==================================================================================================
@@ -3000,7 +2995,5 @@ async def async_run_tasks(project : Project):
 #endregion
 # ==================================================================================================
 
-if 'scratch' not in sys.argv:
-    _start()
-else:
-    pass
+if __name__ == "__main__":
+    sys.exit(_start())

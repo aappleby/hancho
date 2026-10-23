@@ -1,23 +1,21 @@
-#!/usr/bin/python3
-"""Test cases for Hancho's script loader/runner"""
-
+import os
+import sys
 import unittest
 
 import hancho
 
 # --------------------------------------------------------------------------------------------------
 
-class TestScript(unittest.TestCase):
+class TestScripts(unittest.TestCase):
+    def setUp(self):
+        os.chdir(os.path.dirname(__file__))
+        sys.stdout.flush()
 
-    def test_none(self):
-        pass
+    def tearDown(self):
+        sys.stdout.flush()
 
-    def test_basic(self):
+    def test_trivial(self):
         self.assertIsNotNone(hancho)
-        #print(hancho)
-        #print(dir(hancho))
-        #print(hancho.Task)
-
 
 # --------------------------------------------------------------------------------------------------
 

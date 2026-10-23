@@ -1,4 +1,3 @@
-# pyright: reportAttributeAccessIssue=false
 import hancho
 
 compile_cpp = hancho.Dict(

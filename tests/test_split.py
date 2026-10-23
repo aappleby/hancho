@@ -1,30 +1,28 @@
-#!/usr/bin/env python3
 import os
 import sys
 import unittest
 
 import hancho
 
-# pyright: reportAttributeAccessIssue=false
+# FIXME test a nested dict using different delimiters than the parent dict
 
-####################################################################################################
-
-def setUpModule():
-    os.chdir(os.path.dirname(__file__))
+# --------------------------------------------------------------------------------------------------
 
 def split(template):
     return hancho.Expander._split_text(template)
 
-####################################################################################################
-
-# FIXME test a nested dict using different delimiters than the parent dict
+# --------------------------------------------------------------------------------------------------
 
 class TestSplit(unittest.TestCase):
     def setUp(self):
+        os.chdir(os.path.dirname(__file__))
         sys.stdout.flush()
 
     def tearDown(self):
         sys.stdout.flush()
+
+    def test_trivial(self):
+        self.assertIsNotNone(hancho)
 
     def test_hash_matches_str(self):
         self.assertEqual(hash("a"), hash("a"))
@@ -103,8 +101,7 @@ class TestSplit(unittest.TestCase):
 #        self.assertEqual(split(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
 #        self.assertEqual(split(r"a \\\{a\\\} a"), [r"a \\\{a\\\} a"])
 
-
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     unittest.main(verbosity=999)

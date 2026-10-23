@@ -6,6 +6,17 @@
   "configurations": [
 
     {
+      "name"    : "Debug hancho.py",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "module"  : "hancho",
+      //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
+      "console" : "internalConsole",
+      "args"    : ["-ltrace"],
+      "preLaunchTask": "wipe_workspace_build"
+    },
+
+    {
       "name"    : "Debug scratch/build.hancho",
       "type"    : "debugpy",
       "request" : "launch",
@@ -15,7 +26,7 @@
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
       //"args"    : ["-ltrace", "--log_width=999"],
       "args"    : ["-ltrace", "--log_width=999"],
-      //"preLaunchTask": "Wipe Scratch"
+      //"preLaunchTask": "wipe_scratch_build"
     },
 
     {
@@ -66,17 +77,6 @@
       "console" : "internalConsole",
       "args"    : ["--verbose"],
       //"args"    : ["--trace"],
-    },
-
-    {
-      "name"    : "Debug hancho.py",
-      "type"    : "debugpy",
-      "request" : "launch",
-      "module"  : "hancho",
-      //"program" : "${workspaceFolder}/hancho.py",
-      //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
-      "console" : "internalConsole",
-      "args"    : ["-ltrace"],
     },
 
     {

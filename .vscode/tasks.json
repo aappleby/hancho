@@ -14,7 +14,8 @@
 //      }
 //    },
     {
-      "label": "Wipe build",
+      // Wipe all build directories in the workspace
+      "label": "wipe_workspace_build",
       "type": "shell",
       "command": "find . -type d -name build -prune -exec rm -rf {} +",
       "options": {
@@ -27,7 +28,8 @@
     },
 
     {
-      "label": "Wipe Scratch",
+      // Wipe all build directories in /scratch
+      "label": "wipe_scratch_build",
       "type": "shell",
       "command": "find . -type d -name build -prune -exec rm -rf {} +",
       "options": {

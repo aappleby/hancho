@@ -1,33 +1,24 @@
-#!/usr/bin/python3
-"""Template file for creating new test cases"""
-
 import os
 import sys
 import unittest
 
-#import subprocess
-#import hancho
+import hancho
 
-####################################################################################################
-
-
-def setUpModule():
-    os.chdir(os.path.dirname(__file__))
-
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 
 class TestRepos(unittest.TestCase):
     def setUp(self):
+        os.chdir(os.path.dirname(__file__))
         sys.stdout.flush()
 
     def tearDown(self):
         sys.stdout.flush()
 
-    def test_none(self):
-        pass
+    def test_trivial(self):
+        self.assertIsNotNone(hancho)
 
     # FIXME
-    def _test_sticky_hancho(self):
+    #def _test_sticky_hancho(self):
         # Objects stuck to the hancho module should be visible from all loaded scripts and repos.
         #result = subprocess.run(
         #    [sys.executable, "../hancho.py", "--log_level=critical", "-f", "sticky_hancho1.hancho"],
@@ -90,10 +81,7 @@ class TestRepos(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
 
-
-
-
-####################################################################################################
+# --------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
     unittest.main(verbosity=999)

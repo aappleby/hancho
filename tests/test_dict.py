@@ -1,32 +1,32 @@
-#!/usr/bin/python3
-"""Test cases for Hancho's Dict class"""
-
-import copy
+import os
+import sys
 import unittest
-from collections import abc
 
 import hancho
 
 # FIXME test fill()
-
-Dict = hancho.Dict
+# FIXME add public/private tests
 
 # --------------------------------------------------------------------------------------------------
 
-# FIXME add public/private tests
-
 class TestDict(unittest.TestCase):
+    def setUp(self):
+        os.chdir(os.path.dirname(__file__))
+        sys.stdout.flush()
+
+    def tearDown(self):
+        sys.stdout.flush()
 
     def test_basic_access(self):
-        d = Dict({"a": 1, "b": 2})
+        d = hancho.Dict({"a": 1, "b": 2})
         self.assertEqual(d.a, 1)
         self.assertEqual(d["b"], 2)
 
-        d = Dict({"a": 1}, {"b": 2})
+        d = hancho.Dict({"a": 1}, {"b": 2})
         self.assertEqual(d.a, 1)
         self.assertEqual(d["b"], 2)
 
-        d = Dict(a = 1, b = 2)
+        d = hancho.Dict(a = 1, b = 2)
         self.assertEqual(d.a, 1)
         self.assertEqual(d["b"], 2)
 
@@ -38,7 +38,7 @@ class TestDict(unittest.TestCase):
     def test_merge_rightmost_wins(self):
         d1 = {"a": 1, "b": 2}
         d2 = {"b": 3, "c": 4}
-        merged = Dict(d1, d2)
+        merged = hancho.Dict(d1, d2)
         self.assertEqual(merged.a, 1)
         self.assertEqual(merged.b, 3)
         self.assertEqual(merged.c, 4)
@@ -48,8 +48,8 @@ class TestDict(unittest.TestCase):
         d2 = {"a": {"y": 3, "z": 4}}
 
         d3 = {}
-        hancho.hancho.merge_variants(d3, d1) # type: ignore
-        hancho.hancho.merge_variants(d3, d2) # type: ignore
+        hancho.merge_variants(d3, d1) # type: ignore
+        hancho.merge_variants(d3, d2) # type: ignore
 
         self.assertIsInstance(d3, dict)
         self.assertIsInstance(d3['a'], dict)
@@ -60,39 +60,39 @@ class TestDict(unittest.TestCase):
 
     def test_basic_merging(self):
         # Basic merging should work
-        r = Dict()
+        r = hancho.Dict()
         self.assertEqual(0, len(r))
-        r = Dict({}, {}, {})
+        r = hancho.Dict({}, {}, {})
         self.assertEqual(0, len(r))
-        r = Dict({}, {"bar": None})
+        r = hancho.Dict({}, {"bar": None})
         self.assertEqual(1, len(r))
         self.assertEqual(None, r.bar)
 
-        r = Dict({}, {"bar" : 3})
+        r = hancho.Dict({}, {"bar" : 3})
         self.assertEqual(1, len(r))
         self.assertEqual(3, r.bar)
 
     def test_right_overrides_left(self):
         # Right side should always override left side if right val is not None
-        a = Dict({"bar": None}, {"bar": 3})
+        a = hancho.Dict({"bar": None}, {"bar": 3})
         self.assertEqual(3, a.bar)
-        b = Dict({"bar": 2}, {"bar": 3})
+        b = hancho.Dict({"bar": 2}, {"bar": 3})
         self.assertEqual(3, b.bar)
-        c = Dict({"bar": 4}, {"bar": None})
+        c = hancho.Dict({"bar": 4}, {"bar": None})
         self.assertEqual(4, c.bar)
 
     def test_none_doesnt_override(self):
         # Right side should _not_ override left side if its val is None
-        r = Dict({"bar": 2}, {"bar": None})
+        r = hancho.Dict({"bar": 2}, {"bar": None})
         self.assertEqual(2, r.bar)
-        r = Dict({'a': 1}, a = None)
+        r = hancho.Dict({'a': 1}, a = None)
         self.assertEqual(1, r.a)
-        r = sorted(Dict({'a': 1}, b = 2, c = 3).items())
+        r = sorted(hancho.Dict({'a': 1}, b = 2, c = 3).items())
         self.assertEqual([('a', 1), ('b', 2), ('c', 3)], r)
 
     def test_empty_dict_doesnt_override(self):
         # Empty right side should not clobber left side
-        d = Dict({"bar": 2}, {})
+        d = hancho.Dict({"bar": 2}, {})
         self.assertEqual(1, len(d))
         self.assertEqual(2, d.bar)
 
