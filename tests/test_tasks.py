@@ -67,26 +67,26 @@ class TestTasks(unittest.TestCase):
     def test_trivial(self):
         self.assertIsNotNone(hancho)
 
-    # ----------------------------------------------------------------------------------------------
-
-    def test_run_tasks_nonzero(self):
-        # If any task fails, we should get -1 from run_tasks.
-        bad_task = self.script.Task(command="echo test_run_tasks_zero && (exit 255)")
-        self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, self.script.Task.FAILED) #type:ignore
-
-    def test_run_tasks_zero(self):
+    def test_basic(self):
         # If all tasks are OK, we should get 0 from run_tasks.
-        good_task = self.script.Task(command="echo test_run_tasks_zero")
+        good_task = hancho.Task(command="echo test_run_tasks_zero")
         self.run_tasks(0)
         self.assertIsNone(good_task._error)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def test_run_failing_command(self):
+        # If any task fails, we should get -1 from run_tasks.
+        bad_task = hancho.Task(command="echo test_run_tasks_zero && (exit 255)")
+        self.run_tasks(1)
+        self.assertIsInstance(bad_task._error, hancho.Task.FAILED) #type:ignore
 
     def test_asyncio_cancelled(self):
         def asyncio_cancelled(_):
             time.sleep(0.1)
             raise asyncio.CancelledError()
 
-        self.script.Task(command=asyncio_cancelled, out_file="asyncio_cancelled.txt")
+        hancho.Task(command=asyncio_cancelled, out_file="asyncio_cancelled.txt")
         self.assertEqual(0, hancho.Runner.tasks_cancelled)
         self.run_tasks(0)
         self.assertEqual(1, hancho.Runner.tasks_cancelled)
@@ -94,10 +94,10 @@ class TestTasks(unittest.TestCase):
     # ----------------------------------------------------------------------------------------------
 
     def test_good_build_path(self):
-        good_task = self.script.Task(
+        good_task = hancho.Task(
             command="echo {in_src} >> {out_obj}",
             in_src="src/foo.c",
-            out_obj="{build_dir}/narp/foo.o",
+            out_obj="{build_root}/narp/foo.o",
         )
         self.assertFalse(Path("build/narp/foo.o").exists())
         self.run_tasks(0)
@@ -105,14 +105,14 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/narp/foo.o").exists())
 
     def test_bad_build_path(self):
-        bad_task = self.script.Task(
+        bad_task = hancho.Task(
             desc="This task has a bad path for out_obj",
             command="echo {in_src} >> {out_obj}",
             in_src="src/foo.c",
             out_obj="../../../foo.o",
         )
         self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
 
     # ----------------------------------------------------------------------------------------------
@@ -122,7 +122,7 @@ class TestTasks(unittest.TestCase):
 
         command = r"echo I am runnning in {run_cmd('pwd')}" if os.name == 'posix' else r"echo I am runnning in {run_cmd('cd')}"
 
-        task = self.script.Task(
+        task = hancho.Task(
             desc="Testing run_cmd",
             command=command,
         )
@@ -132,51 +132,51 @@ class TestTasks(unittest.TestCase):
     def test_bad_run_cmd(self):
         # Trying to run an arbitrary command and use it in a template should report BROKEN if the
         # embedded command is invalid.
-        task = self.script.Task(
+        task = hancho.Task(
             desc="Broken run_cmd",
             command=r"echo {run_cmd('This is totally not a valid command')}",
         )
         self.run_tasks(1)
-        self.assertIsInstance(task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_unexpandable_command(self):
         #Commands that have residual braces after expansion should be reported as broken but ONLY
         #if we are in 'strict' mode.
-        task = self.script.Task(
+        task = hancho.Task(
             desc="Unexpandable command",
             command=r"echo Hello {missing} world!",
         )
         self.run_tasks(1)
-        self.assertIsInstance(task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_garbage_command(self):
         # Non-existent command line commands should cause Hancho to fail the build.
-        garbage_task = self.script.Task(
+        garbage_task = hancho.Task(
             command="aklsjdflksjdlfkjldfk",
         )
         self.run_tasks(1)
-        self.assertIsInstance(garbage_task._error, self.script.Task.FAILED)
+        self.assertIsInstance(garbage_task._error, hancho.Task.FAILED)
 
     def test_missing_command(self):
         # Tasks with no commands are fine, they can still be used to group and coordinate other
         # tasks.
-        self.script.Task(not_a_command="echo test_missing_command")
+        hancho.Task(not_a_command="echo test_missing_command")
         self.run_tasks(0)
 
     def test_task_collision(self):
         # If multiple distinct commands generate the same output file, that's an error.
-        self.script.Task(
+        hancho.Task(
             command = lambda task : (os.utime(src, None) for src in task.config.out_obj),
             in_src=__file__,
             out_obj="colliding_output.txt",
         )
-        task2 = self.script.Task(
+        task2 = hancho.Task(
             command = lambda task : force_touch(task.config.out_obj),
             in_src=__file__,
             out_obj="colliding_output.txt",
         )
         self.run_tasks(1)
-        self.assertIsInstance(task2._error, self.script.Task.BROKEN)
+        self.assertIsInstance(task2._error, hancho.Task.BROKEN)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -186,7 +186,7 @@ class TestTasks(unittest.TestCase):
 
         def run():
             self.reset()
-            self.script.Task(
+            hancho.Task(
                 command=[
                     lambda task : time.sleep(0.1),
                     lambda task : force_touch(task.out_obj),
@@ -214,7 +214,7 @@ class TestTasks(unittest.TestCase):
                 in_src=None,
                 out_obj="{swapext(in_src, '.o')}",
             )
-            self.script.Task(compile, in_src="src/test.cpp")
+            hancho.Task(compile, in_src="src/test.cpp")
             self.run_tasks(0)
             return mtime_ns("build/src/test.o")
 
@@ -237,7 +237,7 @@ class TestTasks(unittest.TestCase):
 
         def run():
             self.reset()
-            self.script.Task(
+            hancho.Task(
                 desc="test_dep_changed {in_src}",
                 #command="sleep 0.1 && touch {out_obj}",
                 command = [
@@ -263,7 +263,7 @@ class TestTasks(unittest.TestCase):
 
     def test_command_changed(self):
         self.reset()
-        self.script.Task(
+        hancho.Task(
             command="echo foo{in_src} > {out_txt}",
             in_src = "src/test.cpp",
             out_txt="test_command_changed.txt",
@@ -274,7 +274,7 @@ class TestTasks(unittest.TestCase):
         mtime1 = mtime_ns("build/test_command_changed.txt")
 
         self.reset()
-        self.script.Task(
+        hancho.Task(
             command="echo foo{in_src} > {out_txt}",
             in_src = "src/test.cpp",
             out_txt="test_command_changed.txt",
@@ -283,7 +283,7 @@ class TestTasks(unittest.TestCase):
         mtime2 = mtime_ns("build/test_command_changed.txt")
 
         self.reset()
-        self.script.Task(
+        hancho.Task(
             command="echo bar{in_src} > {out_txt}",
             in_src = "src/test.cpp",
             out_txt="test_command_changed.txt",
@@ -298,18 +298,18 @@ class TestTasks(unittest.TestCase):
 
     def test_missing_input(self):
         # We should fail if an input is missing
-        task = self.script.Task(
+        task = hancho.Task(
             desc="Should fail due to missing input",
             command = lambda task : force_touch(task.out_obj),
             in_src="src/does_not_exist.txt",
             out_obj="missing_src.txt",
         )
         self.run_tasks(1)
-        self.assertIsInstance(task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     def test_missing_dep(self):
         # We should fail if a dependency is missing even if it's not used by the command.
-        task = self.script.Task(
+        task = hancho.Task(
             desc="Missing dep should fail",
             command = lambda task : force_touch(task.out_obj),
             in_src="src/test.cpp",
@@ -317,7 +317,7 @@ class TestTasks(unittest.TestCase):
             out_obj="result.txt",
         )
         self.run_tasks(1)
-        self.assertIsInstance(task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(task._error, hancho.Task.BROKEN)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -325,7 +325,7 @@ class TestTasks(unittest.TestCase):
         # If input filenames are absolute paths, we should still end up with build files under
         # build_root.
 
-        self.script.Task(
+        hancho.Task(
             desc="In_src is absolute path",
             #command="cp {in_src} {out_obj}",
             command = lambda task : shutil.copy(task.in_src, task.out_obj),
@@ -341,7 +341,7 @@ class TestTasks(unittest.TestCase):
 
     def test_does_create_output(self):
         # Output files should appear in build/ by default
-        self.script.Task(
+        hancho.Task(
             command = lambda task : force_touch(task.out_obj),
             in_src=[],
             out_obj="result.txt",
@@ -352,7 +352,7 @@ class TestTasks(unittest.TestCase):
 
     def test_doesnt_create_output(self):
         # Having a file mentioned in out_obj should not magically create it
-        bad_task = self.script.Task(
+        bad_task = hancho.Task(
             command="echo test_doesnt_create_output >> {out_txt}",
             in_src=[],
             out_txt="blarp.txt",
@@ -361,7 +361,7 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertFalse(os.path.exists("build/blarp.txt"))
         self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, self.script.Task.FAILED)
+        self.assertIsInstance(bad_task._error, hancho.Task.FAILED)
         self.assertFalse(os.path.exists("build/result.txt"))
         self.assertTrue(os.path.exists("build/blarp.txt"))
 
@@ -402,13 +402,13 @@ class TestTasks(unittest.TestCase):
 
     def test_multiple_depfiles(self):
         # Creating a task with multiple depfile inputs should fail.
-        bad_task = self.script.Task(command="echo test_multiple_depfiles", in_depfile=["foo.txt", "bar.txt"])
+        bad_task = hancho.Task(command="echo test_multiple_depfiles", in_depfile=["foo.txt", "bar.txt"])
         self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_multiple_commands(self):
         # Rules with arrays of commands should run all of them
-        self.script.Task(
+        hancho.Task(
             command=[
                 "echo foo > {out_foo}",
                 "echo bar > {out_bar}",
@@ -434,12 +434,12 @@ class TestTasks(unittest.TestCase):
         def callback(task):
             return force_touch(task.out_file)
 
-        self.script.Task(
+        hancho.Task(
             name = "test_arbitrary_flags",
             desc = "yes it's a test case",
             command = callback,
             in_files=[],
-            out_file="{flarpy}",
+            out_file="{flags.flarpy}",
         )
         self.assertFalse(os.path.exists("build/flarp.txt"))
         self.run_tasks(0)
@@ -449,7 +449,7 @@ class TestTasks(unittest.TestCase):
         def sync_command(task):
             force_touch(task.out_obj)
 
-        self.script.Task(
+        hancho.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a sync function",
             command=sync_command,
@@ -461,7 +461,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(os.path.exists("build/result.txt"))
 
     def test_lambda_command(self):
-        self.script.Task(
+        hancho.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a lambda",
             command=lambda task: force_touch(task.out_obj),
@@ -477,7 +477,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.1)
             force_touch(task.out_file)
 
-        self.script.Task(command=sync_callback, out_file="test_sync_callback.txt")
+        hancho.Task(command=sync_callback, out_file="test_sync_callback.txt")
         self.assertFalse(Path("build/test_sync_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_sync_callback.txt").exists())
@@ -487,7 +487,7 @@ class TestTasks(unittest.TestCase):
             time.sleep(0.1)
             raise ValueError("I do not like value.")
 
-        task = self.script.Task(command=sync_callback_raises, out_file="test_sync_callback_raises.txt")
+        task = hancho.Task(command=sync_callback_raises, out_file="test_sync_callback_raises.txt")
         self.run_tasks(1)
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_sync_callback_raises.txt").exists())
@@ -497,7 +497,7 @@ class TestTasks(unittest.TestCase):
             await asyncio.sleep(0.1)
             force_touch(task.out_file)
 
-        self.script.Task(command=async_callback, out_file="test_async_callback.txt")
+        hancho.Task(command=async_callback, out_file="test_async_callback.txt")
         self.assertFalse(Path("build/test_async_callback.txt").exists())
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
@@ -507,26 +507,26 @@ class TestTasks(unittest.TestCase):
             await asyncio.sleep(0.1)
             raise ValueError("I do not like value.")
 
-        task = self.script.Task(command=async_callback_raises, out_file="test_async_callback_raises.txt")
+        task = hancho.Task(command=async_callback_raises, out_file="test_async_callback_raises.txt")
         self.run_tasks(1)
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_async_callback_raises.txt").exists())
 
     def test_cancellation(self):
         # A task that receives a cancellation exception should not run.
-        task_that_fails = self.script.Task(
+        task_that_fails = hancho.Task(
             desc="task that fails",
             command="(exit 255)",
             in_src=[],
             out_obj="fail_result.txt",
         )
-        task_that_passes = self.script.Task(
+        task_that_passes = hancho.Task(
             desc="task that passes",
             command = lambda task : force_touch(task.out_obj),
             in_src=[],
             out_obj="pass_result.txt",
         )
-        should_be_cancelled = self.script.Task(
+        should_be_cancelled = hancho.Task(
             desc="should be cancelled",
             command = lambda task : force_touch(task.out_obj),
             in_src=[task_that_fails, task_that_passes],
@@ -535,9 +535,9 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/pass_result.txt"))
         self.run_tasks(1)
 
-        self.assertIsInstance(task_that_fails._error, self.script.Task.FAILED)
+        self.assertIsInstance(task_that_fails._error, hancho.Task.FAILED)
         self.assertIsNone(task_that_passes._error)
-        self.assertIsInstance(should_be_cancelled._error, self.script.Task.CANCELLED)
+        self.assertIsInstance(should_be_cancelled._error, hancho.Task.CANCELLED)
 
         self.assertEqual(1, hancho.Runner.tasks_cancelled)
         self.assertEqual(1, hancho.Runner.tasks_failed)
@@ -548,20 +548,20 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
     def test_no_mixed_commands(self):
-        bad_task = self.script.Task(
+        bad_task = hancho.Task(
             command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
         )
 
         self.run_tasks(1)
-        self.assertIsInstance(bad_task._error, self.script.Task.BROKEN)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
     def test_task_creates_task(self):
         # Tasks using callbacks can create new tasks when they run.
         def callback(task):
-            self.script.Task(command = lambda task : force_touch(task.out_obj), in_src=[], out_obj="dummy.txt")
+            hancho.Task(command = lambda task : force_touch(task.out_obj), in_src=[], out_obj="dummy.txt")
             return []
 
-        self.script.Task(command=callback, in_src=[], out_obj=[])
+        hancho.Task(command=callback, in_src=[], out_obj=[])
 
         self.assertFalse(Path("build/dummy.txt").exists())
         self.run_tasks(0)
@@ -572,7 +572,7 @@ class TestTasks(unittest.TestCase):
     def test_tons_of_tasks(self):
         # We should be able to queue up 1000+ tasks at once.
         for i in range(1000):
-            self.script.Task(
+            hancho.Task(
                 desc="I am task {index}",
                 command="echo {index} > {out_obj}",
                 in_src=[],
@@ -590,7 +590,7 @@ class TestTasks(unittest.TestCase):
         # another batch of 100 tasks that use random numbers of cores.
 
         for i in range(100):
-            self.script.Task(
+            hancho.Task(
                 desc="I am task {index}, I use {job_size} cores",
                 command="(exit 0)",
                 in_src=[],
@@ -599,7 +599,7 @@ class TestTasks(unittest.TestCase):
                 index=i,
             )
 
-        self.script.Task(
+        hancho.Task(
             desc="********** I am the slow task, I eat all the cores **********",
             command=[
                 lambda task : force_touch(task.out_obj),
@@ -611,7 +611,7 @@ class TestTasks(unittest.TestCase):
         )
 
         for i in range(100):
-            self.script.Task(
+            hancho.Task(
                 desc="I am task {index}, I use {job_size} cores",
                 command="(exit 0)",
                 in_src=[],
@@ -626,11 +626,11 @@ class TestTasks(unittest.TestCase):
 
     def test_dry_run(self):
         self.reset("--build_dry=True")
-        task1 = self.script.Task(
+        task1 = hancho.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
         )
-        self.script.Task(
+        hancho.Task(
             command = "cp {in_file} {out_file}",
             in_file = task1,
             out_file = "dry_stuff/test2.txt"
@@ -642,14 +642,14 @@ class TestTasks(unittest.TestCase):
     def test_dependency_skipped(self):
         def run():
             self.reset("--max_jobs=1")
-            task1 = self.script.Task(
+            task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
                 command = lambda task : shutil.copy(task.in_file, task.out_file),
                 in_file="data/dummy.txt",
                 out_file="blerp/sherp",
             )
-            task2 = self.script.Task(
+            task2 = hancho.Task(
                 name="task2",
                 #command="cp {in_file} {out_file}",
                 command = lambda task : shutil.copy(task.in_file, task.out_file),
@@ -677,7 +677,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(hancho.Runner.tasks_skipped, 0)
 
         (task1, task2) = run()
-        self.assertTrue(isinstance(task1._error, self.script.Task.SKIPPED))
+        self.assertTrue(isinstance(task1._error, hancho.Task.SKIPPED))
         #self.assertTrue(task2._error is None)
         self.assertTrue(Path("build/blerp/sherp").exists())
         self.assertTrue(Path("build/blerp/nerp").exists())

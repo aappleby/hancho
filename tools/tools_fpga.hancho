@@ -68,7 +68,7 @@ def verilator(*, in_sv, **kwargs):
             tools_base.compile_cpp,
             in_src  = "/usr/local/share/verilator/include/verilated.cpp",
             out_obj = "verilated.o",
-            build_dir = "{build_root}/verilator",
+            build_root = "{repo.build_root}/verilator",
         )
 
     if not verilated_threads_o:
@@ -76,7 +76,7 @@ def verilator(*, in_sv, **kwargs):
             tools_base.compile_cpp,
             in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
             out_obj = "verilated_threads.o",
-            build_dir = "{build_root}/verilator",
+            build_root = "{repo.build_root}/verilator",
         )
 
     verilated = hancho.Task(
