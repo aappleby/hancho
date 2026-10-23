@@ -65,6 +65,7 @@ def is_public(key):
 
 def is_private(key):
     if not isinstance(key, str) and key is not None:
+        print(f"key is {type(key)}={key}")
         breakpoint()
     return key is not None and key.startswith("_")
 
@@ -1162,9 +1163,9 @@ class Flags(Dict):
 
 # endregion
 # ==================================================================================================
-# region Globals
+# region ContextGlobals
 
-class Globals(Scope):
+class ContextGlobals(Scope):
     def __init__(cg, *args, **kwargs):
         #super().__init__(_name = "globals", _id = "globals", _up = None)
         object.__setattr__(cg, "_name", "globals")
@@ -1173,8 +1174,8 @@ class Globals(Scope):
         object.__setattr__(cg, "_ctx",  ContextVar("globals"))
         cg._ctx.set(Dict(*args, **kwargs))
 
-#    def reset2(cg):
-#       return cg._ctx.set(Dict())
+    def reset(cg):
+       return cg._ctx.set(Dict())
 
     # Update creates a whole new Dict so that if anyone was holding a reference to the old Dict
     # their copy will remain unchanged.
@@ -1580,12 +1581,14 @@ class Dumper:
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
         if opts.cur_depth > 0 and (key in opts.fold or type(val) in opts.fold):
-                return f"{key}:{type(val).__name__} = {Log.BLUE}<folded>"
+                return f"{key}:{type(val).__name__} = {Log.BLUE}<folded>{Log.RESET}"
 
         if key is not None and is_private(key) and not opts.dump_private:
             return ""
         elif key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
+        elif val is sys.modules[__name__]:
+            return cls._dump_prefix(key, val, opts) + "<hancho module>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts, seen)
         elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
@@ -1639,13 +1642,20 @@ class Dumper:
         else:
             raise AssertionError(f"Don't know what to do with {type(val)}")
 
-        if isinstance(val, Scope):
-            items = [x for x in items if x[0] != "_up"]
-        if not opts.dump_private:
-            items = [x for x in items if is_public(x[0])]
-            items.append(("<private fields are hidden>", Sentinel.MISSING))
+        items2 = []
+        any_private = False
 
-        return cls._dump_items(key, prefix, ld, items, rd, opts, set(seen))
+        for x in items:
+            if x[0] == "_up" and isinstance(x[1], Scope):
+                items2.append((x[0], "<parent scope>"))
+            elif is_public(x[0]) or opts.dump_private:
+                items2.append(x)
+            else:
+                any_private = True
+        if any_private:
+            items2.append(("<private fields are hidden>", Sentinel.MISSING))
+
+        return cls._dump_items(key, prefix, ld, items2, rd, opts, set(seen))
 
     @classmethod
     def _dump_items(cls, key, prefix, ld, items : list[item[Any]], rd, opts, seen : set):
@@ -1736,6 +1746,7 @@ class Tracer:
 
     @staticmethod
     def start(scope : Scope, action : str, arg):
+        if cg.log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
 
@@ -1746,13 +1757,13 @@ class Tracer:
         if action == "range":
             indent_color = Log.WHITE
             cg.log.trace(f"{indent_color}┌─── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
-            cg.log.indent(indent_color)
         else:
             cg.log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg!r})\n")
-            cg.log.indent(indent_color)
+        cg.log.indent(indent_color)
 
     @staticmethod
     def up(scope, up, action, arg):
+        if cg.log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
 
@@ -1765,10 +1776,11 @@ class Tracer:
 
     @staticmethod
     def end(scope : Scope, action : str, arg, result):
-        cg.log.dedent()
+        if cg.log.level > Log.TRACE: return
         if isinstance(result, Expander):
             result = result.scope
 
+        cg.log.dedent()
         scope_tag   = Utils.instance_tag(scope)
         scope_color   = Utils.obj_to_ansi_color(scope)
         indent_color = scope_color
@@ -2737,6 +2749,7 @@ class Script(Scope):
         script.path = path
         script.root = root
         script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
+        script.hancho = sys.modules[__name__]
 
         script.update(*args, **kwargs)
 
@@ -2751,40 +2764,18 @@ class Script(Scope):
         path = Path._resolve(file, strict = True)
         if root is None:
             root = os.path.dirname(path)
-        name = os.path.join(os.path.split(root)[-1], os.path.basename(file))
         root = Path._resolve(root, strict = True)
-        return Script._load(name, path, root, *args, is_repo = is_repo, **kwargs)
+        name = os.path.join(os.path.split(root)[-1], os.path.basename(file))
 
-    def script(script, file, root = None, *args, **kwargs):
-        return script.load(file, root, False, *args, **kwargs)
+        if is_repo:
+            repo = Repo(name, path, root)
+            cg.project._repos.append(repo)
+        else:
+            repo = cg.repo
 
-    def include(script, file, root = None, *args, **kwargs):
-        return script.load(file, root, False, *args, **kwargs)
-
-    def repo(script, file, root = None, *args, **kwargs) -> Script:
-        return script.load(file, root, True, *args, **kwargs)
-
-    def build(script):
-        project = script.find("project")
-        return project.build()
+        return Script._load(name, path, root, repo, *args, **kwargs)
 
     # ----------------------------------------
-
-    class EarlyOut(Exception): pass
-    class Fail(Exception): pass
-    class Abort(Exception): pass
-
-    def fail(script, message):
-        script._log_script_error(sys._getframe(1), "failed", message)
-        raise script.Fail()
-
-    def abort(script, message):
-        script._log_script_error(sys._getframe(1), "aborted", message)
-        raise script.Abort()
-
-    def earlyout(script, message = ""):
-        script._log_script_error(sys._getframe(1), "exited early", message)
-        raise script.EarlyOut()
 
     def _log_script_error(script, frame, condition, message):
         cg.log.error(f"Script {condition}:\n")
@@ -2833,19 +2824,21 @@ class Script(Scope):
             source = file.read()
             code = compile(source, script.path, "exec", dont_inherit=True)
 
-        old_mod = sys.modules.get("hancho", None)
+        #old_mod = sys.modules.get("hancho", None)
 
         try:
             with chdir(script.root), cg.update(repo = repo, script = script), cg.log.indenter(Log.ORANGE):
                 # FIXME does this _really_ need to be moduletype?
-                sys.modules["hancho"] = cast(types.ModuleType, script)
+                #sys.modules["hancho"] = cast(types.ModuleType, script)
                 exec(code, script.__dict__)
+                del script.__dict__['__builtins__']
                 return script
         finally:
-            if old_mod is None:
-                del sys.modules["hancho"]
-            else:
-                sys.modules["hancho"] = cast(types.ModuleType, old_mod)
+            pass
+            #if old_mod is None:
+            #    del sys.modules["hancho"]
+            #else:
+            #    sys.modules["hancho"] = cast(types.ModuleType, old_mod)
 
     @staticmethod
     def init_for_testing(*, name, file : str, root : str, stdout : str | typing.TextIO, args) -> Script:
@@ -2954,8 +2947,40 @@ def main():
 
 #endregion
 # ==================================================================================================
+# region User API
 
-cg = Globals()
+cg = ContextGlobals()
+
+class EarlyOut(Exception): pass
+class Fail(Exception): pass
+class Abort(Exception): pass
+
+def script(file, root = None, *args, **kwargs):
+    return cg.script.load(file, root, False, *args, **kwargs)
+
+def include(file, root = None, *args, **kwargs):
+    return cg.script.load(file, root, False, *args, **kwargs)
+
+def repo(file, root = None, *args, **kwargs) -> Script:
+    return cg.script.load(file, root, True, *args, **kwargs)
+
+def build():
+    return cg.project.build()
+
+def fail(script, message):
+    cg.script._log_script_error(sys._getframe(1), "failed", message)
+    raise Fail(message)
+
+def abort(script, message):
+    cg.script._log_script_error(sys._getframe(1), "aborted", message)
+    raise Abort(message)
+
+def earlyout(script, message = ""):
+    cg.script._log_script_error(sys._getframe(1), "exited early", message)
+    raise EarlyOut(message)
+
+# endregion
+# ==================================================================================================
 
 if __name__ == "__main__":
     sys.exit(main())

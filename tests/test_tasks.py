@@ -54,6 +54,7 @@ class TestTasks(unittest.TestCase):
             stdout = sys.stdout,
             args   = [
                 "--log_level=critical",
+                #"--log_level=trace",
                 "--log_wrap=True",
                 "--max_errors=999",
                 *args
@@ -61,7 +62,7 @@ class TestTasks(unittest.TestCase):
         )
 
     def run_tasks(self, expected):
-        result = self.script.build()
+        result = hancho.build()
         self.assertEqual(result, expected)
 
     def test_trivial(self):

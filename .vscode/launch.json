@@ -12,7 +12,7 @@
       "module"  : "hancho",
       //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       "console" : "internalConsole",
-      "args"    : ["-ltrace"],
+      "args"    : ["-ldebug"],
       "preLaunchTask": "wipe_workspace_build"
     },
 

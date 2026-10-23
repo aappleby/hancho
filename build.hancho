@@ -1,6 +1,11 @@
-import hancho
+#import hancho
 
 #hancho.Dumper.dprint(hancho)
+
+#print(hancho)
+#print(type(hancho))
+#print(dir(hancho))
+#print(hancho.__dict__)
 
 tools_base  = hancho.include("tools/tools_base.hancho")
 #tools_base  = hancho.include("tools/tools_base.hancho")
@@ -12,4 +17,4 @@ tools_base  = hancho.include("tools/tools_base.hancho")
 #hancho.script("examples/examples.hancho")
 
 
-hancho.Task(command = "echo Hello World")
+#blep = hancho.Task(command = "echo Hello World")
