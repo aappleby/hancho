@@ -2661,10 +2661,7 @@ class Script(Scope):
         log.error(f"  line = {frame.f_lineno}\n")
 
     @staticmethod
-    def _load(script : Script, project : Project, repo : Repo) -> tuple[Repo, Script]:
-
-        log = cg.log
-
+    def get_dupe(project, script) -> tuple[str, Script | None]:
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on the fields read by Dumper.dump being stable during a build,
         # which they should be in practice.
@@ -2674,10 +2671,21 @@ class Script(Scope):
         assert " _" not in dupe_key
 
         if dupe := project._dedupe.get(dupe_key, None):
-            log.debug(Log.LIME + f"Deduped {script.path}\n")
+            cg.log.debug(Log.LIME + f"Deduped {script.path}\n")
+            return (dupe_key, dupe)
+
+        return (dupe_key, None)
+
+    @staticmethod
+    def _load(script : Script, project : Project, repo : Repo) -> tuple[Repo, Script]:
+
+        log = cg.log
+
+        dupe_key, dupe = Script.get_dupe(project, script)
+        if dupe:
             return (repo, dupe)
-        else:
-            log.debug(Log.ORANGE + f"Loading {script.path}\n")
+
+        log.debug(Log.ORANGE + f"Loading {script.path}\n")
 
         repo._scripts.append(script)
         project._dedupe[dupe_key] = script
