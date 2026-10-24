@@ -1,4 +1,4 @@
-#import hancho
+import hancho
 
 #hancho.Dumper.dprint(hancho)
 
@@ -21,4 +21,4 @@ blep = hancho.Task(
     out_txt = "blep.txt"
 )
 
-hancho.Dumper.dprint(hancho.cg.keys())
+#hancho.Dumper.dprint(hancho.cg.keys())

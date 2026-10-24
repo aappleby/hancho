@@ -4,8 +4,6 @@ import unittest
 
 import hancho
 
-expand = hancho.Expander.expand
-
 # --------------------------------------------------------------------------------------------------
 
 class TestTemplates(unittest.TestCase):

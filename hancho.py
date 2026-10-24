@@ -855,42 +855,25 @@ class Path:
 # ==================================================================================================
 # region Scope
 
+# A Scope is just some mapping-like object that can be used in template expansion.
+# Note that it only exposes _public_ fields through iter/len
+
+# FIXME this breaks if we do Scope(abc.Mapping)?
+
 class Scope:
+    def get(scope, key, default = None):
+        return scope.__dict__.get(key, default)
+
     def expand(scope, template, recursive : bool = False) -> Any:
-        return Expander.expand(template, scope, recursive)
+        return Expander._expand(template, scope, recursive)
 
-    # ----------------------------------------
-    # These are here so that the linter doesn't complain about reading/writing unknown fields off a
-    # scope.
-
-    def __getattr__(scope, key) -> Any:
-        result = object.__getattribute__(scope, key)
-        return result
-
-    def __setattr__(scope, key, val : Any):
-        object.__setattr__(scope, key, val)
-
-    # ----------------------------------------
-    # Scope is _not_ a mapping, but it implements the core of MutableMapping so that it only
-    # exposes public fields.
-
-    def __contains__(scope, key : str) -> bool:
-        return key in scope.__dict__
+    def __contains__(scope, key) -> bool:
+        return is_public(key) and key in scope.__dict__
 
     def __getitem__(scope, key : str) -> Any:
         if is_private(key):
             raise KeyError(key)
         return scope.__dict__[key]
-
-    def __setitem__(scope, key, val):
-        if is_private(key):
-            raise KeyError(key)
-        scope.__dict__[key] = val
-
-    def __delitem__(scope, key):
-        if is_private(key):
-            raise KeyError(key)
-        del scope.__dict__[key]
 
     def __len__(scope):
         return sum(1 for _ in scope)
@@ -899,13 +882,24 @@ class Scope:
         yield from filter(is_public, scope.__dict__)
 
 # ====================================
+# A Dict is a Scope that can be used as an abc.MutableMapping.
 
-class Dict(Scope, abc.Mapping):
+class Dict(Scope, abc.MutableMapping):
+
     def __init__(self, *args, **kwargs):
         Utils.merge_variants(self, *args, **kwargs)
 
+    def __setitem__(scope, key, val):
+        scope.__dict__[key] = val
+
+    def __delitem__(scope, key):
+        del scope.__dict__[key]
+
+
+# ====================================
+# A Tool is just a callable alias for Dict to make build scripts more readable.
+
 class Tool(Dict):
-    # Tool is just a callable alias for Dict to make build scripts more readable.
     def __call__(self, *args, **kwargs):
         return Task(self, *args, **kwargs)
 
@@ -913,7 +907,7 @@ class Tool(Dict):
 # ==================================================================================================
 # region Flags
 
-class Flags:
+class Flags(Scope):
     def __init__(flags, *args, **kwargs):
         flags.name        = "flags"
         flags.file        = "build.hancho"
@@ -1048,7 +1042,7 @@ class Flags:
 # ==================================================================================================
 # region ContextGlobals
 
-class ContextGlobals:
+class ContextGlobals(Scope):
     def __init__(cg, *args, **kwargs):
         object.__setattr__(cg, "name", "globals")
         object.__setattr__(cg, "_ctx",  ContextVar("globals"))
@@ -1087,9 +1081,9 @@ class ContextGlobals:
 # ==================================================================================================
 # region Expander
 
-# Expander _is_ a mapping, but is _not_ a scope.
+# Expander _must_ be a mapping in order to go in eval()
 
-class Expander(abc.Mapping):
+class Expander(Scope, abc.Mapping):
     # Hancho's text expansion system.
     #
     # WARNING - Again, Hancho is NOT A SANDBOX. Expander is the part that evaluates the arbitrary
@@ -1110,7 +1104,7 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(expander, scope, recursive : bool):
+    def __init__(expander, scope : Scope, recursive : bool):
         expander.scope = scope
         expander.recursive = recursive
 
@@ -1120,6 +1114,7 @@ class Expander(abc.Mapping):
         return cls(scope, recursive)
 
     # ====================================
+    # Expander _must_ implement __getattr__ so that macros like {script.foo} work.
 
     def __getattr__(expander, key) -> Any:
         try:
@@ -1127,22 +1122,22 @@ class Expander(abc.Mapping):
         except KeyError as ex:
             raise AttributeError from ex
 
+    # ====================================
+
     def __getitem__(expander, key : str) -> Any:
         return expander.internal_get(key)
 
     def __iter__(expander):
-        return expander.scope.__iter__()
+        raise AssertionError()
 
     def __len__(expander):
-        return expander.scope.__len__()
+        raise AssertionError()
 
     # ====================================
 
     @staticmethod
     def scope_walk(scope, key : str, default = Sentinel.MISSING) -> Any:
-        sdict = scope if isinstance(scope, dict) else scope.__dict__
-
-        if (result := sdict.get(key, Sentinel.MISSING)) is not Sentinel.MISSING:
+        if (result := scope.get(key, Sentinel.MISSING)) is not Sentinel.MISSING:
             return result
         elif key in cg:
             return cg[key]
@@ -1161,7 +1156,7 @@ class Expander(abc.Mapping):
             # have to do this so that "read nested c first" resolves in the dest dict first
             result = expander.wrap(result, object.__getattribute__(expander, "recursive"))
         else:
-            result = Expander.expand(result, expander.scope, recursive = True)
+            result = expander.scope.expand(result, recursive = True)
 
         Tracer.end(expander.scope, "get", key, result)
         return result
@@ -1189,12 +1184,6 @@ class Expander(abc.Mapping):
     MAX_EVALS = 300
 
     # ==============================================================================================
-
-    @classmethod
-    def expand(cls, var : Any, scope, /, recursive : bool = False) -> Any:
-        result = cls._expand(var, scope, recursive)
-        assert not isinstance(result, cls)
-        return result
 
     @classmethod
     def _expand(cls, var : Any, scope, recursive : bool) -> Any:
@@ -1799,7 +1788,7 @@ class Runner:
 # ==================================================================================================
 # region Project
 
-class Project:
+class Project(Scope):
     def __init__(project, name : str, path : str, root : str, targets : list[str], *args, **kwargs):
         project.name : str = name
         project.path : str = path
@@ -1807,9 +1796,6 @@ class Project:
         project.targets : list[str] = targets
 
         Utils.merge_variants(project, *args, **kwargs)
-
-        assert project.path == Path.resolve(project.path)
-        assert project.root == Path.resolve(project.root)
 
         project._real_filenames = set()
         project._dedupe = Dict()
@@ -1902,7 +1888,7 @@ class Project:
 # ==================================================================================================
 # region Repo
 
-class Repo:
+class Repo(Scope):
     def __init__(repo, name : str, path : str, root : str, *args, **kwargs):
         repo.name = name
         repo.path = path
@@ -1910,8 +1896,6 @@ class Repo:
         repo.build_root = "{join(root, flags.build_dir, flags.build_tag)}"
 
         Utils.merge_variants(repo, *args, **kwargs)
-
-        repo.build_root = Expander.expand(repo.build_root, repo, True)
 
         repo._stat_db = {}
         repo._scripts = []
@@ -2055,7 +2039,7 @@ class Repo:
 
 # FIXME get() should call eval or something? a lot of these task fields should delegate to script
 
-class Task:
+class Task(Scope):
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
@@ -2078,13 +2062,11 @@ class Task:
 
         Utils.merge_variants(task, *args, **kwargs)
 
+        # ----------------------------------------
+
         if not isinstance(task.command, list):
             task.command = [task.command]
 
-        # We can't expand here like Repo/Script/Project because we have to wait on our input tasks
-        # once the build is started.
-
-        # ----------------------------------------
         # These two have to be dicts so that downstream tasks can pick named outputs from it if
         # needed.
         task._in_files : dict[str, list[str]]  = {}
@@ -2094,6 +2076,7 @@ class Task:
         task._enabled = False
 
         task._input_tasks = []
+        # FIXME why can't this be task?
         public_values = list(Utils.yield_public_values(task.__dict__))
         for t in public_values:
             if isinstance(t, Task):
@@ -2303,8 +2286,8 @@ class Task:
 
         # We eval these first because we need them for filename expansion
 
-        script_root = Expander.expand("{script.root}", task)
-        build_root  = Expander.expand("{build_root}", task)
+        script_root = task.expand("{script.root}")
+        build_root  = task.expand("{build_root}")
 
         Tracer.start(task, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
@@ -2328,7 +2311,7 @@ class Task:
             files : list[str] = list(yield_files(file_tree))
 
             if files:
-                files = Expander.expand(files, task, recursive = True)
+                files = task.expand(files, recursive = True)
                 files = task.fix_paths(field_name, files, script_root, build_root)
                 setattr(task, field_name, files[0] if len(files) == 1 else files)
 
@@ -2624,13 +2607,29 @@ class Script(Scope):
         script.path = path
         script.root = root
         script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
-        script.hancho = sys.modules[__name__]
+
+        # FIXME - do we want to force users to import hancho? so they get type
+        # checking and stuff?
+        #script.hancho = sys.modules[__name__]
 
         Utils.merge_variants(script, *args, **kwargs)
 
         # The Python module loading machinery looks for this field, but it can be None.
         script.__spec__ = None
         script._tasks = []
+        script._module_dict = {}
+
+    # Script exposes all globals that were set while exec'ing the scripts modules
+    # through getitem/getattr
+
+    def __getitem__(self, key):
+        return self._module_dict[key]
+
+    def __getattr__(self, key):
+        try:
+            return self._module_dict[key]
+        except KeyError as err:
+            raise AttributeError(key) from err
 
     def dump(script, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
@@ -2639,7 +2638,7 @@ class Script(Scope):
         project = cg.project
         repo = cg.repo
 
-        file = Expander.expand(file, script, True)
+        file = script.expand(file)
 
         path = Path._resolve(file, strict = True)
         if root is None:
@@ -2696,8 +2695,9 @@ class Script(Scope):
             code = compile(source, script.path, "exec", dont_inherit=True)
 
         with chdir(script.root), cg.update(repo = repo, script = script), log.indenter(Log.ORANGE):
-            exec(code, script.__dict__)
-            del script.__dict__['__builtins__']
+            #exec(code, script.__dict__)
+            exec(code, script._module_dict)
+            #del script.__dict__['__builtins__']
             return script
 
     @staticmethod
@@ -2751,10 +2751,10 @@ def main():
 
     # We expand these manually because we need to *resolve* 'path' _before_ we *expand* 'root'.
 
-    flags.name = Expander.expand(flags.name, flags)
-    flags.path = Expander.expand(flags.path, flags)
+    flags.name = flags.expand(flags.name)
+    flags.path = flags.expand(flags.path)
     flags.path = Path._resolve(flags.path, strict = True)
-    flags.root = Expander.expand(flags.root, flags)
+    flags.root = flags.expand(flags.root)
     flags.root = Path._resolve(flags.root, strict = True)
 
     project = Project(flags.name, flags.path, flags.root, flags.targets)
