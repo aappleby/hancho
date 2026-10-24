@@ -801,6 +801,8 @@ class Path:
 
     @staticmethod
     def relpath(lhs, rhs):
+        log = cg.log
+
         if isinstance(rhs, (list, tuple, set)):
             return [Path.relpath(lhs, rh) for rh in rhs]
 
@@ -813,7 +815,7 @@ class Path:
         try:
             prefix = os.path.commonpath([lhs, rhs])
         except Exception:
-            cg.log.error(f"Commonpath failed for {lhs} and {rhs}\n")
+            log.error(f"Commonpath failed for {lhs} and {rhs}\n")
             raise
 
         if lhs == rhs:
@@ -1008,7 +1010,7 @@ class Flags:
                     opt_file = json.load(f)
                     Utils.merge_variant(flag_dict, opt_file)
                 except Exception as _:
-                    cg.log.error(f"Opt file {opt_file_name!r} invalid!\n")
+                    print(f"Opt file {opt_file_name!r} invalid!\n")
                     traceback.print_exc()
 
         # ------------------------------------
@@ -1114,8 +1116,8 @@ class Expander(abc.Mapping):
     # expanded an outer Dict, and things will still Just Work.
 
     def __init__(expander, scope : Scope, recursive : bool):
-        object.__setattr__(expander, "scope", scope)
-        object.__setattr__(expander, "recursive", recursive)
+        expander.scope = scope
+        expander.recursive = recursive
 
     @classmethod
     def wrap(cls, scope : Scope, recursive : bool):
@@ -1162,8 +1164,9 @@ class Expander(abc.Mapping):
         raise KeyError(key)
 
     def internal_get(expander, key : str):
+        log = cg.log
 
-        Tracer.start(expander.scope, "get", key)
+        Tracer.start(log, expander.scope, "get", key)
         result = Expander.scope_walk(expander.scope, key)
 
         if isinstance(result, Scope):
@@ -1172,7 +1175,7 @@ class Expander(abc.Mapping):
         else:
             result = Expander.expand(result, expander.scope, recursive = True)
 
-        Tracer.end(expander.scope, "get", key, result)
+        Tracer.end(log, expander.scope, "get", key, result)
         return result
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1200,13 +1203,13 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     @classmethod
-    def expand(cls, var : Any, scope : Scope, /, recursive : bool = False) -> Any:
+    def expand(cls, var : Any, scope, /, recursive : bool = False) -> Any:
         result = cls._expand(var, scope, recursive)
         assert not isinstance(result, cls)
         return result
 
     @classmethod
-    def _expand(cls, var : Any, scope : Scope, recursive : bool) -> Any:
+    def _expand(cls, var : Any, scope, recursive : bool) -> Any:
         # Bail out if we've recursed too many times.
         old_depth = cls.cv_depth.get()
         if old_depth > cls.MAX_DEPTH:
@@ -1254,8 +1257,9 @@ class Expander(abc.Mapping):
                     continue
 
                 # Otherwise we're doing a template expansion.
+                log = cg.log
                 try:
-                    Tracer.start(scope, "expand", var)
+                    Tracer.start(log, scope, "expand", var)
                     for i, b in enumerate(blocks):
                         if isinstance(b, cls.Macro):
                             blocks[i] = cls._expand(b, scope, recursive)
@@ -1269,7 +1273,7 @@ class Expander(abc.Mapping):
                     if not isinstance(var, str):
                         return var
                 finally:
-                    Tracer.end(scope, "expand", old_var, var)
+                    Tracer.end(log, scope, "expand", old_var, var)
 
         finally:
             cls.cv_depth.set(old_depth)
@@ -1290,7 +1294,9 @@ class Expander(abc.Mapping):
     # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
     @classmethod
-    def _eval_macro(cls, var : str, scope : Scope, recursive : bool) -> Any:
+    def _eval_macro(cls, var : str, scope, recursive : bool) -> Any:
+        log = cg.log
+
         # Bail out if we've done too many evals already.
         old_evals = cls.cv_evals.get()
         if old_evals >= cls.MAX_EVALS:
@@ -1299,7 +1305,7 @@ class Expander(abc.Mapping):
 
         result = var
         try:
-            Tracer.start(scope, "eval", var[1:-1])
+            Tracer.start(log, scope, "eval", var[1:-1])
             result = eval(var[1:-1], {}, cls.wrap(scope, recursive))
         except RecursionError:
             raise
@@ -1309,7 +1315,7 @@ class Expander(abc.Mapping):
             #dprint(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         finally:
-            Tracer.end(scope, "eval", var[1:-1], result)
+            Tracer.end(log, scope, "eval", var[1:-1], result)
             pass
 
         if isinstance(result, Expander):
@@ -1629,8 +1635,8 @@ class Dumper:
 class Tracer:
 
     @staticmethod
-    def start(scope : Scope, action : str, arg):
-        if cg.log.level > Log.TRACE: return
+    def start(log : Log, scope : Scope, action : str, arg):
+        if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
 
@@ -1640,14 +1646,14 @@ class Tracer:
 
         if action == "range":
             indent_color = Log.WHITE
-            cg.log.trace(f"{indent_color}┌─── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
+            log.trace(f"{indent_color}┌─── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
         else:
-            cg.log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg!r})\n")
-        cg.log.indent(indent_color)
+            log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg!r})\n")
+        log.indent(indent_color)
 
     @staticmethod
-    def up(scope, up, action, arg):
-        if cg.log.level > Log.TRACE: return
+    def up(log, scope, up, action, arg):
+        if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
 
@@ -1656,22 +1662,22 @@ class Tracer:
         up_color   = Utils.obj_to_ansi_color(up)
         up_tag     = Utils.instance_tag(up)
 
-        cg.log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
+        log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
 
     @staticmethod
-    def end(scope : Scope, action : str, arg, result):
-        if cg.log.level > Log.TRACE: return
+    def end(log, scope : Scope, action : str, arg, result):
+        if log.level > Log.TRACE: return
         if isinstance(result, Expander):
             result = result.scope
 
-        cg.log.dedent()
+        log.dedent()
         scope_tag   = Utils.instance_tag(scope)
         scope_color   = Utils.obj_to_ansi_color(scope)
         indent_color = scope_color
 
         if action == "range":
             indent_color = Log.WHITE
-            cg.log.trace(f"{indent_color}└─── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
+            log.trace(f"{indent_color}└─── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
         else:
             result_color = Log.RESET
             result_type  = type(result)
@@ -1679,11 +1685,11 @@ class Tracer:
             if Utils.is_mapping(result):
                 result_color = Utils.obj_to_ansi_color(result)
 
-            cg.log.trace(f"{indent_color}└ {scope_color}{arg!r}:{result_type.__name__}{Log.RESET} = ")
+            log.trace(f"{indent_color}└ {scope_color}{arg!r}:{result_type.__name__}{Log.RESET} = ")
             if not Utils.is_scalar(result):
-                cg.log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
+                log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
             else:
-                cg.log.trace(f"{result_color}{result!r}\n")
+                log.trace(f"{result_color}{result!r}\n")
 
 # endregion
 # ==================================================================================================
@@ -1737,7 +1743,7 @@ class Runner:
             cls.core_sem.release()
 
     @staticmethod
-    async def async_run_tasks(project : Project):
+    async def async_run_tasks(log : Log, project : Project):
         """Run all tasks until we run out."""
 
         # ------------------------------------
@@ -1751,7 +1757,7 @@ class Runner:
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        cg.log.info(Log.BLUE + "Running tasks...\n")
+        log.info(Log.BLUE + "Running tasks...\n")
 
         while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
             finished_aio_task : asyncio.Task | None = None
@@ -1776,8 +1782,8 @@ class Runner:
                     task._complete = True
                     Runner.tasks_skipped += 1
                 case _:
-                    cg.log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
-                    cg.log.exception(task._error)
+                    log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
+                    log.exception(task._error)
                     Runner.tasks_failed += 1
 
             if finished_aio_task is not None:
@@ -1785,10 +1791,10 @@ class Runner:
 
         failures = Runner.tasks_broken + Runner.tasks_failed
         if failures > Runner.max_errors:
-            cg.log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
+            log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            cg.log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
+            log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
 
             # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
             # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
@@ -1827,7 +1833,7 @@ class Project(Scope):
         project._build_reasons = Counter()
         project._runner = Runner()
 
-    def build(project) -> int:
+    def build(project, log, flags) -> int:
         time_a3 = time.perf_counter()
 
         #result = hancho_build(project)
@@ -1851,7 +1857,7 @@ class Project(Scope):
                         if target in task.name:
                             task.queue_task()
 
-        elif cg.flags.build_all:
+        elif flags.build_all:
             for repo in project._repos:
                 for task in repo.yield_tasks():
                     task.queue_task()
@@ -1864,7 +1870,7 @@ class Project(Scope):
         # ------------------------------------
         # Run the tasks.
 
-        result = asyncio.run(Runner.async_run_tasks(project))
+        result = asyncio.run(Runner.async_run_tasks(log, project))
 
         # ------------------------------------
         # Update stat DBs.
@@ -1873,40 +1879,40 @@ class Project(Scope):
             repo.save_stat_db()
 
         time_b3 = time.perf_counter()
-        cg.log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+        log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
         project._result = result
         return result
 
-    def stats(project):
+    def stats(project, log):
         task_count = 0
         for repo in project._repos:
             task_count += len(list(repo.yield_tasks()))
 
         # FIXME all the stats should move to Project
-        cg.log.debug(f"Tasks created:    {task_count}\n")
-        cg.log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
-        cg.log.debug(f"Tasks started:    {Runner.tasks_started}\n")
-        cg.log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
-        cg.log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
-        cg.log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
-        cg.log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        cg.log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        cg.log.debug(f"Mtime calls:      {Utils.stat_calls}\n")
-        cg.log.debug(f"Hash calls:       {Utils.hash_calls}\n")
-        cg.log.debug(f"Hash bytes:       {Utils.hash_bytes}\n")
-        cg.log.debug(f"Hash time:        {Utils.hash_time:8.6f}\n")
+        log.debug(f"Tasks created:    {task_count}\n")
+        log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
+        log.debug(f"Tasks started:    {Runner.tasks_started}\n")
+        log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
+        log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
+        log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
+        log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+        log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
+        log.debug(f"Mtime calls:      {Utils.stat_calls}\n")
+        log.debug(f"Hash calls:       {Utils.hash_calls}\n")
+        log.debug(f"Hash bytes:       {Utils.hash_bytes}\n")
+        log.debug(f"Hash time:        {Utils.hash_time:8.6f}\n")
 
-        cg.log.debug("Rebuild reasons:\n")
+        log.debug("Rebuild reasons:\n")
         for reason, count in project._build_reasons.items():
-            cg.log.debug(f"{reason:17} {count}\n")
+            log.debug(f"{reason:17} {count}\n")
 
-    def passfail(project):
+    def passfail(project, log):
         if project._runner.tasks_failed or project._runner.tasks_broken:
-            cg.log.error(Log.RED + "BUILD FAILED\n")
+            log.error(Log.RED + "BUILD FAILED\n")
         elif Runner.tasks_finished:
-            cg.log.info(Log.GREEN + "BUILD PASSED\n")
+            log.info(Log.GREEN + "BUILD PASSED\n")
         else:
-            cg.log.info(Log.BLUE + "BUILD CLEAN\n")
+            log.info(Log.BLUE + "BUILD CLEAN\n")
 
 # endregion
 # ==================================================================================================
@@ -1975,23 +1981,26 @@ class Repo(Scope):
         return ""
 
     def load_stat_db(repo):
+        log = cg.log
         stat_db_path = os.path.join(repo.build_root, 'hancho.json')
 
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
-                cg.log.debug(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
+                log.debug(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
                 repo._stat_db = json.load(contents)
         else:
-            cg.log.debug(Log.ORANGE + f"No stat db for {repo.root}\n")
+            log.debug(Log.ORANGE + f"No stat db for {repo.root}\n")
             repo._stat_db = {}
 
     def save_stat_db(repo):
-        repo = repo
-        if cg.flags.build_dry:
+        log = cg.log
+        flags = cg.flags
+
+        if flags.build_dry:
             return
 
         stat_db_path = Path.join(repo.build_root, "hancho.json")
-        cg.log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
+        log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
 
         stat_db = {}
 
@@ -2073,12 +2082,13 @@ class Task(Scope):
 
     def __init__(task, *args, **kwargs):
         super().__init__()
+        script = cg.script
 
         task.name        = "<no name>"
         task.name        = "<no name>"
         task.desc        = "<no desc>"
         task.command     = []
-        task.build_force = cg.flags.build_force
+        task.build_force = "{flags.build_force}"
         task.build_root  = "{script.build_root}"
         task.cwd         = "{script.root}"
         task.depformat   = "gcc" if os.name == "posix" else "msvc"
@@ -2136,7 +2146,7 @@ class Task(Scope):
         task._cores = 0
         task._complete = False
 
-        cg.script._tasks.append(task)
+        script._tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
             task.queue_task()
@@ -2187,27 +2197,30 @@ class Task(Scope):
     async def task_top(task) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
+        script = cg.script
+        log = cg.log
+
         try:
             await task.task_main()
 
         except asyncio.CancelledError as ex:
-            task.log_task(Log.DEBUG, f"<asyncio.CancelledError {ex}>\n")
+            task.log_task(log, Log.DEBUG, f"<asyncio.CancelledError {ex}>\n")
             task._error = ex
 
         except Task.BROKEN as ex:
-            task.log_task_exception("Task broken!", ex)
+            task.log_task_exception(script, log, "Task broken!", ex)
             task._error = ex
 
         except Task.FAILED as ex:
-            task.log_task_exception("Task failed!", ex)
+            task.log_task_exception(script, log, "Task failed!", ex)
             task._error = ex
 
         except Task.SKIPPED as ex:
-            task.log_task(Log.DEBUG, str(ex) + "\n")
+            task.log_task(log, Log.DEBUG, str(ex) + "\n")
             task._error = ex
 
         except Exception as ex:
-            task.log_task_exception("Task threw an exception!", ex)
+            task.log_task_exception(script, log, "Task threw an exception!", ex)
             task._error = ex
 
         finally:
@@ -2216,18 +2229,22 @@ class Task(Scope):
         return task._out_files
 
     async def task_main(task):
+        log = cg.log
+        flags = cg.flags
+        project = cg.project
+
         # Await all tasks in our input fields and then flatten them.
         await task.await_inputs()
 
         # We're ready to run
         Runner.tasks_started += 1
         task._task_id = Runner.tasks_started
-        task.log_task(Log.DEBUG, Utils.instance_tag(task) + " starting\n")
+        task.log_task(log, Log.DEBUG, Utils.instance_tag(task) + " starting\n")
 
         # Expand all mandatory fields in the raw config and fix raw file paths.
-        Tracer.start(task, "range", "expand_task")
+        Tracer.start(log, task, "range", "expand_task")
         task.expand_task()
-        Tracer.end(task, "range", "expand_task", None)
+        Tracer.end(log, task, "range", "expand_task", None)
 
         # If there's a depfile from a previous build, load it so we can use it below.
         if task.in_depfile:
@@ -2239,11 +2256,11 @@ class Task(Scope):
 
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if cg.flags.build_dry:
+        if flags.build_dry:
             return
 
         # Paths updated. See if we need to rebuild our outputs.
-        task._reason = task.rebuild_reason(cg.project._build_reasons)
+        task._reason = task.rebuild_reason(project._build_reasons)
         if not task._reason:
             raise Task.SKIPPED(f"Task is up-to-date: {task.name} : {task.desc}")
 
@@ -2254,8 +2271,8 @@ class Task(Scope):
         text  = repr(task.name) if task.name else ""
         text += " : " if task.name and task.desc else ""
         text += repr(task.desc) if task.desc else ""
-        task.log_task(Log.INFO,  Log.TEAL + f"Task {text}\n")
-        task.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {task._reason}\n")
+        task.log_task(log, Log.INFO,  Log.TEAL + f"Task {text}\n")
+        task.log_task(log, Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {task._reason}\n")
 
         time_a = time.perf_counter()
 
@@ -2269,7 +2286,7 @@ class Task(Scope):
 
         time_b = time.perf_counter()
 
-        task.log_task(Log.DEBUG, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
+        task.log_task(log, Log.DEBUG, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
 
         # See if the task wrote all its output files
         for file in Utils.yield_values(task._out_files):
@@ -2296,16 +2313,19 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(task))} is cancelled due to {input_task._error}")
 
     def expand_task(task):
-        if cg.log.level <= Log.DEBUG:
-            task.log_task(Log.DEBUG, "Task before expand:\n")
-            task.log_task(Log.DEBUG, Dumper.dump(task, fold=[Task], dump_private = False) + "\n")
+        log = cg.log
+        flags = cg.flags
+
+        if log.level <= Log.DEBUG:
+            task.log_task(log, Log.DEBUG, "Task before expand:\n")
+            task.log_task(log, Log.DEBUG, Dumper.dump(task, fold=[Task], dump_private = False) + "\n")
 
         # We eval these first because we need them for filename expansion
 
         script_root = Expander.expand("{script.root}", task)
         build_root  = Expander.expand("{build_root}", task)
 
-        Tracer.start(task, "range", "expand io fields")
+        Tracer.start(log, task, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
         io_fields = [k for k in task if k.startswith("in_") or k.startswith("out_")]
 
@@ -2338,28 +2358,28 @@ class Task(Scope):
                     task._in_files[field_name] = files
                 elif field_name.startswith("out_"):
                     task._out_files[field_name] = files
-        Tracer.end(task, "range", "expand io fields", None)
+        Tracer.end(log, task, "range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
-        Tracer.start(task, "range", "expand_task")
+        Tracer.start(log, task, "range", "expand_task")
         ex = Expander(task, True)
         for key in task:
             task[key] = ex[key]
-        Tracer.end(task, "range", "expand_task", None)
+        Tracer.end(log, task, "range", "expand_task", None)
 
         task._commands = Utils.flatten_tree(task.command)
 
-        if not cg.flags.build_dry:
+        if not flags.build_dry:
             for files in task._out_files.values():
                 for file in files:
                     os.makedirs(os.path.dirname(file), exist_ok=True)
             if task.in_depfile:
                 os.makedirs(os.path.dirname(task.in_depfile), exist_ok=True)
 
-        if cg.log.level <= Log.DEBUG:
-            task.log_task(Log.DEBUG, "Task after expand:\n")
-            task.log_task(Log.DEBUG, Dumper.dump(task, fold=[Task], dump_private = False) + "\n")
+        if log.level <= Log.DEBUG:
+            task.log_task(log, Log.DEBUG, "Task after expand:\n")
+            task.log_task(log, Log.DEBUG, Dumper.dump(task, fold=[Task], dump_private = False) + "\n")
 
     def fix_paths(task : Task, field : str, files : list[str], script_root : str, build_root : str) -> list[str]:
         return [task.fix_path(field, f, script_root, build_root) for f in files]
@@ -2391,13 +2411,17 @@ class Task(Scope):
         return file
 
     def sanity_check(task):
+        repo = cg.repo
+        flags = cg.flags
+        project = cg.project
+
         # Check for all task issues that break the build
 
         if not Path.exists(task.cwd):
             raise Task.BROKEN(f"Task working directory '{task.cwd}' does not exist")
 
-        if not Path._startswith(task.build_root, cg.repo.root):
-            raise Task.BROKEN(f"The build root {task.build_root} is not under repo.root {cg.repo.root}")
+        if not Path._startswith(task.build_root, repo.root):
+            raise Task.BROKEN(f"The build root {task.build_root} is not under repo.root {repo.root}")
 
         # Check that task's commands are either strings or callables.
         for command in task._commands:
@@ -2417,7 +2441,7 @@ class Task(Scope):
                 raise Task.BROKEN(f"Commands aren't the same type: {task.command}")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if cg.flags.strict:
+        if flags.strict:
             for command in task._commands:
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
@@ -2440,16 +2464,16 @@ class Task(Scope):
         # Check for task collisions
         for file in Utils.yield_values(task._out_files):
             real_file = cast(str, Path.abspath(file))
-            if real_file in cg.project._real_filenames:
+            if real_file in project._real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            cg.project._real_filenames.add(real_file)
+            project._real_filenames.add(real_file)
 
         # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
         for file in Utils.yield_values(task._in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")
-            if not Path.exists(file) and not cg.flags.build_dry:
+            if not Path.exists(file) and not flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -2457,7 +2481,10 @@ class Task(Scope):
             raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task.in_depfile}")
 
     async def run_command(task : Task, command : str):
-        task.log_task(Log.INFO, f"{Path.relpath(task.cwd, cg.repo.root)}$ {command}\n")
+        repo = cg.repo
+        log = cg.log
+
+        task.log_task(log, Log.INFO, f"{Path.relpath(task.cwd, repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2505,16 +2532,20 @@ class Task(Scope):
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
         if (task._stdout or task._stderr):
-            task.log_task(Log.DEBUG, task.dump_stdout())
+            task.log_task(log, Log.DEBUG, task.dump_stdout())
 
     async def call_callback(task : Task, command : task_callback):
-        callback_dir = Path.relpath(cg.script.root, cg.repo.root)
-        task.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
+        script = cg.script
+        repo = cg.repo
+        log = cg.log
+
+        callback_dir = Path.relpath(script.root, repo.root)
+        task.log_task(log, Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
 
-        with chdir(cg.script.root):
+        with chdir(script.root):
             result = command(task)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2524,6 +2555,8 @@ class Task(Scope):
 
     def rebuild_reason(task, build_reasons) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
+
+        repo = cg.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2545,18 +2578,18 @@ class Task(Scope):
         # ------------------------------------
 
         for filename in Utils.yield_values(task._in_files):
-            if reason := cg.repo.check_stats(filename, [], build_reasons):
+            if reason := repo.check_stats(filename, [], build_reasons):
                 return reason
 
         for filename in task._old_deplines:
-            if reason := cg.repo.check_stats(filename, [], build_reasons):
+            if reason := repo.check_stats(filename, [], build_reasons):
                 return reason
 
         for filename in Utils.yield_values(task._out_files):
-            if reason := cg.repo.check_stats(filename, task.command, build_reasons):
+            if reason := repo.check_stats(filename, task.command, build_reasons):
                 return reason
 
-        if task.in_depfile and (reason := cg.repo.check_stats(task.in_depfile, [], build_reasons)):
+        if task.in_depfile and (reason := repo.check_stats(task.in_depfile, [], build_reasons)):
             return reason
 
         build_reasons["*task clean"] += 1
@@ -2574,25 +2607,25 @@ class Task(Scope):
             result += "----------------------------------------\n"
         return result
 
-    def log_task(task : Task, level : int, message : str):
+    def log_task(task : Task, log : Log, level : int, message : str):
         # Log helper that adds the [ NN/ XX] tag before the log line.
         for line in message.splitlines(keepends=True):
-            if not cg.log._line_buffer:
-                cg.log._log(level, f"[{task._task_id:3d}/{Runner.tasks_enabled:3d}] ")
-            cg.log._log(level, line)
+            if not log._line_buffer:
+                log._log(level, f"[{task._task_id:3d}/{Runner.tasks_enabled:3d}] ")
+            log._log(level, line)
 
-    def log_task_exception(task : Task, message, ex = None):
-        cg.log.error("========================================\n")
-        cg.log.error(message + "\n")
-        cg.log.error("========================================\n")
-        cg.log.error(f"Script    = {cg.script.path}:\n")
-        cg.log.error(f"Task      = {task.name!r} : {task.desc!r}\n")
-        cg.log.error(f"os.getcwd = {os.getcwd()}\n")
-        cg.log.error(f"task cwd  = {task.cwd}\n")
-        cg.log.error(f"command   = {task.command}\n")
-        cg.log.exception(ex)
-        cg.log.error(task.dump_stdout())
-        cg.log.error("========================================\n")
+    def log_task_exception(task : Task, script, log : Log, message, ex = None):
+        log.error("========================================\n")
+        log.error(message + "\n")
+        log.error("========================================\n")
+        log.error(f"Script    = {script.path}:\n")
+        log.error(f"Task      = {task.name!r} : {task.desc!r}\n")
+        log.error(f"os.getcwd = {os.getcwd()}\n")
+        log.error(f"task cwd  = {task.cwd}\n")
+        log.error(f"command   = {task.command}\n")
+        log.exception(ex)
+        log.error(task.dump_stdout())
+        log.error("========================================\n")
 
 # endregion
 # ==================================================================================================
@@ -2622,6 +2655,9 @@ class Script(Scope):
         dprint(Dumper.dump(*args, **kwargs))
 
     def load(script, file, root, is_repo, *args, **kwargs):
+        project = cg.project
+        repo = cg.repo
+
         file = Expander.expand(file, script, True)
 
         path = Path._resolve(file, strict = True)
@@ -2632,26 +2668,25 @@ class Script(Scope):
 
         if is_repo:
             repo = Repo(name, path, root)
-            cg.project._repos.append(repo)
-        else:
-            repo = cg.repo
+            project._repos.append(repo)
 
-        return Script._load(name, path, root, repo, *args, **kwargs)
+        return Script._load(name, path, root, project, repo, *args, **kwargs)
 
     # ----------------------------------------
 
-    def _log_script_error(script, frame, condition, message):
-        cg.log.error(f"Script {condition}:\n")
-        cg.log.error(f"  text = '{message}'\n")
-        cg.log.error(f"  file = {frame.f_code.co_filename}\n")
-        cg.log.error(f"  func = {frame.f_code.co_name}\n")
-        cg.log.error(f"  line = {frame.f_lineno}\n")
+    def _log_script_error(script, log, frame, condition, message):
+        log.error(f"Script {condition}:\n")
+        log.error(f"  text = '{message}'\n")
+        log.error(f"  file = {frame.f_code.co_filename}\n")
+        log.error(f"  func = {frame.f_code.co_name}\n")
+        log.error(f"  line = {frame.f_lineno}\n")
 
     @staticmethod
-    def _load(name : str, path : str, root : str, repo : Repo, *args, **kwargs) -> Script:
+    def _load(name : str, path : str, root : str, project : Project, repo : Repo, *args, **kwargs) -> Script:
         assert path == Path.resolve(path)
         assert root == Path.resolve(root)
 
+        log = cg.log
         script = Script(name, path, root, *args, **kwargs)
 
         # Dedupe the load - only scripts with identical real paths and identical configs are
@@ -2662,14 +2697,14 @@ class Script(Scope):
         # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
         assert " _" not in dupe_key
 
-        if dupe := cg.project._dedupe.get(dupe_key, None):
-            cg.log.debug(Log.LIME + f"Deduped {script.path}\n")
+        if dupe := project._dedupe.get(dupe_key, None):
+            log.debug(Log.LIME + f"Deduped {script.path}\n")
             return dupe
         else:
-            cg.log.debug(Log.ORANGE + f"Loading {script.path}\n")
+            log.debug(Log.ORANGE + f"Loading {script.path}\n")
 
         repo._scripts.append(script)
-        cg.project._dedupe[dupe_key] = script
+        project._dedupe[dupe_key] = script
 
         if not script.path.endswith(".hancho"):
             return script
@@ -2679,7 +2714,7 @@ class Script(Scope):
             source = file.read()
             code = compile(source, script.path, "exec", dont_inherit=True)
 
-        with chdir(script.root), cg.update(repo = repo, script = script), cg.log.indenter(Log.ORANGE):
+        with chdir(script.root), cg.update(repo = repo, script = script), log.indenter(Log.ORANGE):
             exec(code, script.__dict__)
             del script.__dict__['__builtins__']
             return script
@@ -2714,10 +2749,10 @@ class Script(Scope):
         project._repos.append(repo)
         cg.update(repo = repo)
 
-        script  = Script._load(test_name, test_path, test_root, repo)
+        script  = Script._load(test_name, test_path, test_root, project, repo)
         cg.update(script = script)
 
-        return cg.script
+        return script
 
 # endregion
 # ==================================================================================================
@@ -2751,13 +2786,13 @@ def main():
     cg.update(project = project, repo = repo)
 
     time_a1 = time.perf_counter()
-    Script._load(project.name, project.path, project.root, repo)
+    Script._load(project.name, project.path, project.root, project, repo)
     time_b1 = time.perf_counter()
     log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
 
-    project.build()
-    project.stats()
-    project.passfail()
+    project.build(log, flags)
+    project.stats(log)
+    project.passfail(log)
 
     log._flush()
     return project._result
@@ -2826,18 +2861,18 @@ def repo(file, root = None, *args, **kwargs) -> Script:
     return cg.script.load(file, root, True, *args, **kwargs)
 
 def build():
-    return cg.project.build()
+    return cg.project.build(cg.log, cg.flags)
 
 def fail(message):
-    cg.script._log_script_error(sys._getframe(1), "failed", message)
+    cg.script._log_script_error(cg.log, sys._getframe(1), "failed", message)
     raise Fail(message)
 
 def abort(message):
-    cg.script._log_script_error(sys._getframe(1), "aborted", message)
+    cg.script._log_script_error(cg.log, sys._getframe(1), "aborted", message)
     raise Abort(message)
 
 def earlyout(message = ""):
-    cg.script._log_script_error(sys._getframe(1), "exited early", message)
+    cg.script._log_script_error(cg.log, sys._getframe(1), "exited early", message)
     raise EarlyOut(message)
 
 # endregion
