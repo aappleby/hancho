@@ -354,10 +354,10 @@ class Utils:
         return result
 
     @classmethod
-    def commands_to_string_list(cls, commands: tree[str | abc.Callable] | None):
+    def commands_to_string_list(cls, commands: tree[str | abc.Callable] | None) -> list[str]:
         if commands is None: return []
         commands = Utils.flatten_tree(commands)
-        command_str = [c.__name__ if callable(c) else c for c in commands]
+        command_str = [c.__name__ if callable(c) else str(c) for c in commands]
         return command_str
 
     @staticmethod
@@ -417,19 +417,19 @@ class Utils:
         return digest
 
     @classmethod
-    def get_stats(cls, file : str, command : tree[str | abc.Callable] | None = None) -> dict:
+    def get_stats(cls, file : str, commands : tree[str | abc.Callable] | None = None) -> dict:
         cls.stat_calls += 1
 
         _hash = cls.hash_file(file)
         _stat = os.stat(file)
 
-        command_str = cls.commands_to_string_list(command)
+        commands_str = cls.commands_to_string_list(commands)
 
         stat = {
             "hash": _hash,
             "st_size": _stat.st_size,
             "st_mtime_ns": _stat.st_mtime_ns,
-            "command": command_str
+            "commands": commands_str
         }
 
         return stat
@@ -1900,7 +1900,7 @@ class Repo(Scope):
         for script in repo._scripts:
             yield from script._tasks
 
-    def check_stats(repo, filename : str, command : list, build_reasons):
+    def check_stats(repo, filename : str, commands : list, build_reasons):
         if not Path.exists(filename):
             build_reasons["file missing"] += 1
             return f"File missing: {filename}"
@@ -1910,7 +1910,7 @@ class Repo(Scope):
             return f"Stat missing: {filename}"
 
         old_stat = repo._stat_db[filename]
-        new_stat = Utils.get_stats(filename, command)
+        new_stat = Utils.get_stats(filename, commands)
 
         try:
             old_ns = old_stat["st_mtime_ns"]
@@ -1931,12 +1931,12 @@ class Repo(Scope):
             build_reasons["hash mismatch"] += 1
             return f"Hash mismatch {old_stat["hash"]} -> {new_stat["hash"]} for : {filename}"
 
-        old_command = old_stat["command"]
-        new_command = Utils.commands_to_string_list(command)
+        old_commands = old_stat["commands"]
+        new_commands = Utils.commands_to_string_list(commands)
 
-        if old_command != new_command:
+        if old_commands != new_commands:
             build_reasons["command changed"] += 1
-            return f"Command used to generate file has changed : {filename!r}\n : {old_command!r}n : {command!r}"
+            return f"Command used to generate file has changed : {filename!r}\n : {old_commands!r}n : {commands!r}"
 
         # Does not need to rebuild based on file stats / hash
         build_reasons["*hash match"] += 1
@@ -2004,7 +2004,7 @@ class Repo(Scope):
 
             for file in Utils.yield_values(task._out_files):
                 if file in stat_db:
-                    stat_db[file]["command"] = command_list
+                    stat_db[file]["commands"] = command_list
 
         Utils.save_json(stat_db, stat_db_path)
 
@@ -2023,7 +2023,7 @@ class Repo(Scope):
                 # Haven't tested this in an IDE, but I think it matches the spec.
                 comp_db[file] = {
                     "directory" : task.cwd,
-                    "command"   : command_list,
+                    "command"   : '; '.join(command_list),
                     "file"      : file,
                 }
 
@@ -2648,7 +2648,12 @@ class Script(Scope):
 
         new_script = Script(name, path, root, *args, **kwargs)
 
+        dupe_key, dupe = Script.get_dupe(project, script)
+        if dupe:
+            return dupe
+
         _, new_script = Script._load(script, project, repo)
+
         return new_script
 
     # ----------------------------------------
