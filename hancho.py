@@ -2633,8 +2633,6 @@ class Script(Scope):
     def load(script, file, root, is_repo, *args, **kwargs):
         project = cg.project
         repo = cg.repo
-        log = cg.log
-
 
         file = script.expand(file)
 
@@ -2648,7 +2646,8 @@ class Script(Scope):
             repo = Repo(name, path, root)
             project._repos.append(repo)
 
-        return Script._load(name, path, root, project, repo, *args, **kwargs)
+        _, new_script = Script._load(name, path, root, project, repo, *args, **kwargs)
+        return new_script
 
     # ----------------------------------------
 
@@ -2660,7 +2659,7 @@ class Script(Scope):
         log.error(f"  line = {frame.f_lineno}\n")
 
     @staticmethod
-    def _load(name : str, path : str, root : str, project : Project, repo : Repo, *args, **kwargs) -> Script:
+    def _load(name : str, path : str, root : str, project : Project, repo : Repo, *args, **kwargs) -> tuple[Repo, Script]:
         assert path == Path.resolve(path)
         assert root == Path.resolve(root)
 
@@ -2677,7 +2676,7 @@ class Script(Scope):
 
         if dupe := project._dedupe.get(dupe_key, None):
             log.debug(Log.LIME + f"Deduped {script.path}\n")
-            return dupe
+            return (repo, dupe)
         else:
             log.debug(Log.ORANGE + f"Loading {script.path}\n")
 
@@ -2685,7 +2684,7 @@ class Script(Scope):
         project._dedupe[dupe_key] = script
 
         if not script.path.endswith(".hancho"):
-            return script
+            return (repo, script)
 
         code = None
         with open(script.path, encoding="utf-8") as file:
@@ -2696,7 +2695,7 @@ class Script(Scope):
             #exec(code, script.__dict__)
             exec(code, script._module_dict)
             #del script.__dict__['__builtins__']
-            return script
+            return (repo, script)
 
     @staticmethod
     def init_for_testing(*, name, file : str, root : str, stdout : str | typing.TextIO, args) -> Script:
@@ -2730,10 +2729,10 @@ class Script(Scope):
         project._repos.append(repo)
         cg.update(repo = repo)
 
-        script  = Script._load(test_name, test_path, test_root, project, repo)
-        cg.update(script = script)
+        _, new_script = Script._load(test_name, test_path, test_root, project, repo)
+        cg.update(script = new_script)
 
-        return script
+        return new_script
 
 # endregion
 # ==================================================================================================
@@ -2769,7 +2768,7 @@ def main():
     cg.update(project = project, repo = repo)
 
     time_a1 = time.perf_counter()
-    Script._load(project.name, project.path, project.root, project, repo)
+    _, _ = Script._load(project.name, project.path, project.root, project, repo)
     time_b1 = time.perf_counter()
     log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
 
