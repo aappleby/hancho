@@ -1110,12 +1110,12 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(expander, scope : Scope, recursive : bool):
+    def __init__(expander, scope, recursive : bool):
         expander.scope = scope
         expander.recursive = recursive
 
     @classmethod
-    def wrap(cls, scope : Scope, recursive : bool):
+    def wrap(cls, scope, recursive : bool):
         assert not isinstance(scope, cls)
         return cls(scope, recursive)
 
@@ -1618,7 +1618,7 @@ class Dumper:
 class Tracer:
 
     @staticmethod
-    def start(scope : Scope, action : str, arg):
+    def start(scope, action : str, arg):
         log = cg.log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
@@ -1650,7 +1650,7 @@ class Tracer:
         log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
 
     @staticmethod
-    def end(scope : Scope, action : str, arg, result):
+    def end(scope, action : str, arg, result):
         log = cg.log
         if log.level > Log.TRACE: return
         if isinstance(result, Expander):
@@ -2055,7 +2055,7 @@ class Repo:
 
 # FIXME get() should call eval or something? a lot of these task fields should delegate to script
 
-class Task(Scope):
+class Task:
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
@@ -2063,7 +2063,6 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(task, *args, **kwargs):
-        super().__init__()
         script = cg.script
 
         task.name        = "<no name>"
@@ -2309,7 +2308,7 @@ class Task(Scope):
 
         Tracer.start(task, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
-        io_fields = [k for k in task if k.startswith("in_") or k.startswith("out_")]
+        io_fields = [k for k in task.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
         for field_name in io_fields:
             # if task is a scope, then flattening in_files produces an array of the _attributes_
@@ -2325,13 +2324,13 @@ class Task(Scope):
                     else:
                         yield x
 
-            file_tree = cast(branch[str | Task], task[field_name])
+            file_tree = cast(branch[str | Task], getattr(task, field_name))
             files : list[str] = list(yield_files(file_tree))
 
             if files:
                 files = Expander.expand(files, task, recursive = True)
                 files = task.fix_paths(field_name, files, script_root, build_root)
-                task[field_name] = files[0] if len(files) == 1 else files
+                setattr(task, field_name, files[0] if len(files) == 1 else files)
 
                 if field_name == "in_depfile":
                     if len(files) > 1:
@@ -2346,8 +2345,8 @@ class Task(Scope):
 
         Tracer.start(task, "range", "expand_task")
         ex = Expander(task, True)
-        for key in task:
-            task[key] = ex[key]
+        for key in task.__dict__:
+            setattr(task, key, ex[key])
         Tracer.end(task, "range", "expand_task", None)
 
         task._commands = Utils.flatten_tree(task.command)
@@ -2428,10 +2427,10 @@ class Task(Scope):
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
 
-        io_fields = [k for k in task if k.startswith("in_") or k.startswith("out_")]
+        io_fields = [k for k in task.__dict__ if k.startswith("in_") or k.startswith("out_")]
         for field_name in io_fields:
             if field_name.startswith("out_"):
-                files = task[field_name]
+                files = getattr(task, field_name)
                 for file in Utils.yield_values(files):
                     if not Path._startswith(file, task.build_root):
                         raise Task.BROKEN(f"Path error, output file {field_name}:{file} is not under build root {task.build_root}")
