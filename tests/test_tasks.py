@@ -46,12 +46,12 @@ class TestTasks(unittest.TestCase):
         hancho.cg.log._flush()
 
     def reset(self, *args):
-        self.script = hancho.Script.init_for_testing(
+        self.script = hancho.create_test_script(
             name   = "TestTasks",
             file   =  __file__,
             root   = os.getcwd(),
             stdout = sys.stdout,
-            args   = [
+            extra_flags = [
                 "--log_level=critical",
                 #"--log_level=trace",
                 "--log_wrap=True",

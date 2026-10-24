@@ -1,5 +1,7 @@
 import hancho
 
+print("in hancho/build.hancho")
+
 #hancho.Dumper.dprint(hancho)
 
 #print(hancho)

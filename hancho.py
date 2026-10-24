@@ -59,6 +59,7 @@ from typing import Any, ClassVar, Concatenate, TypeGuard, cast
 
 def is_public(key):
     if not isinstance(key, str) and key is not None:
+        print(f"key is {type(key)}={key}")
         breakpoint()
     return key is None or not key.startswith("_")
 
@@ -758,17 +759,22 @@ class Path:
     # These functions wrap the os.path.* functions so that they work on arbitrary trees
 
     @staticmethod
-    def _resolve(path, strict):
+    def _resolve(path):
         """
         This tries to convert a path containing potential env variable references and stuff into a
         real path.
         """
         path = os.path.expandvars(path)
         path = pathlib.Path(path).expanduser()
-        path = path.resolve(strict = strict)
+        path = path.resolve(strict = True)
         return str(path)
 
-    resolve  = Utils.tree_map(lambda path : Path._resolve(path, strict = True))
+    @staticmethod
+    def _is_resolved(path):
+        return path == Path._resolve(path)
+
+    resolve     = Utils.tree_map(lambda path : Path._resolve(path))
+    is_resolved = Utils.tree_map(lambda path : Path._is_resolved(path))
 
     abspath  = Utils.tree_map(os.path.abspath)
     normpath = Utils.tree_map(os.path.normpath)
@@ -912,11 +918,10 @@ class Tool(Dict):
 
 class Flags(Scope):
     def __init__(flags, *args, **kwargs):
-        flags.name        = "flags"
+        flags.name        = "build"
         flags.file        = "build.hancho"
-        flags.name        = "{join(split(flags.root)[-1], basename(flags.file))}"
-        flags.path        = "{resolve(flags.file)}"
-        flags.root        = "{dirname(flags.path)}"
+        flags.root        = os.getcwd()
+
         flags.targets     = []
 
         flags.build_dir   = "build"
@@ -935,6 +940,10 @@ class Flags(Scope):
         flags.log_width     = shutil.get_terminal_size().columns
 
         Utils.merge_variants(flags, *args, **kwargs)
+
+        flags.name = flags.expand(flags.name)
+        flags.path = Path._resolve(flags.expand(flags.file))
+        flags.root = Path._resolve(flags.expand(flags.root))
 
     @staticmethod
     def parse(*argv) -> Flags:
@@ -1045,40 +1054,34 @@ class Flags(Scope):
 # ==================================================================================================
 # region ContextGlobals
 
-class ContextGlobals(Scope):
-    def __init__(cg, *args, **kwargs):
-        object.__setattr__(cg, "name", "globals")
-        object.__setattr__(cg, "_ctx",  ContextVar("globals"))
-        cg._ctx.set(Dict(*args, **kwargs))
+class ContextGlobals:
+    def __init__(self):
+        self.name : str
+        self._ctx : ContextVar[Script | Dict]
 
-    def keys(cg):
-        return cg._ctx.get().keys()
+        object.__setattr__(self, "name", "script_globals")
+        object.__setattr__(self, "_ctx",  ContextVar("script_globals"))
 
-    def reset(cg, *args, **kwargs):
-       return cg._ctx.set(Dict(*args, **kwargs))
+    def get(self) -> Script | Dict:
+        return self._ctx.get()
 
-    def update(cg, *args, **kwargs):
-        return cg.reset(cg._ctx.get(), *args, **kwargs)
+    def set(self, script : Script | Dict):
+       return self._ctx.set(script)
 
-    def __contains__(cg, key):
-        return cg._ctx.get().__contains__(key)
+    def __contains__(self, key):
+        return self._ctx.get().__contains__(key)
 
-    def __getattr__(cg, key):
-        try:
-            return cg.__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
+    def __getattr__(self, key):
+        return getattr(self._ctx.get(), key)
 
-    def __setattr__(cg, key, val):
-        raise AttributeError(f"can't write {key}:{val}")
+    def __getitem__(self, key):
+        return self._ctx.get()[key]
 
-    def __getitem__(cg, key):
-        return cg._ctx.get()[key]
+    def __setattr__(self, key, val):
+        raise AttributeError("Script fields cannot be written through ContextGlobals")
 
-    # We do _not_ allow incrementally modifying a context, as doing so could allow inadvertent
-    # modification of a context already captured by an earlier task.
-    def __setitem__(cg, key, val):
-        raise KeyError(f"can't write {key}:{val}")
+    def __setitem__(self, key, val):
+        raise KeyError("Script fields cannot be written through ContextGlobals")
 
 # endregion
 # ==================================================================================================
@@ -1422,7 +1425,6 @@ class Dumper:
     @classmethod
     def dump(
         cls,
-        #key,
         val,
         cur_depth=0,
         max_depth=3,
@@ -1450,9 +1452,7 @@ class Dumper:
         if opts.cur_depth > 0 and (key in opts.fold or type(val) in opts.fold):
                 return f"{key}:{type(val).__name__} = {Log.BLUE}<folded>{Log.RESET}"
 
-        if key is not None and is_private(key) and not opts.dump_private:
-            return ""
-        elif key == "__builtins__":
+        if key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif val is sys.modules[__name__]:
             return cls._dump_prefix(key, val, opts) + "<hancho module>"
@@ -1509,11 +1509,12 @@ class Dumper:
         else:
             raise AssertionError(f"Don't know what to do with {type(val)}")
 
+        dump_private = opts.dump_private
         items2 = []
         any_private = False
 
         for x in items:
-            if is_public(x[0]) or opts.dump_private:
+            if is_public(x[0]) or dump_private:
                 items2.append(x)
             else:
                 any_private = True
@@ -1806,6 +1807,20 @@ class Project(Scope):
         project._build_reasons = Counter()
         project._runner = Runner()
 
+#    def get_dupe(project, script) -> tuple[str, Script | None]:
+#        # Dedupe the load - only scripts with identical real paths and identical configs are
+#        # deduped. This relies on the fields read by Dumper.dump being stable during a build,
+#        # which they should be in practice.
+#        dupe_key = Dumper.any_to_key([script.path, script.root, script._params])
+#
+#        # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
+#
+#        if dupe := project._dedupe.get(dupe_key, None):
+#            cg.log.debug(Log.LIME + f"Deduped {script.path}\n")
+#            return (dupe_key, dupe)
+#
+#        return (dupe_key, None)
+
     def build(project, log, flags) -> int:
         time_a3 = time.perf_counter()
 
@@ -1838,8 +1853,9 @@ class Project(Scope):
         # ------------------------------------
         # Update stat DBs.
 
-        for repo in project._repos:
-            repo.save_stat_db()
+        if not flags.build_dry:
+            for repo in project._repos:
+                repo.save_stat_db(log)
 
         time_b3 = time.perf_counter()
         log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
@@ -1882,7 +1898,7 @@ class Project(Scope):
 # region Repo
 
 class Repo(Scope):
-    def __init__(repo, name : str, path : str, root : str, *args, **kwargs):
+    def __init__(repo, name : str, path : str, root : str, log : Log, *args, **kwargs):
         repo.name = name
         repo.path = path
         repo.root = root
@@ -1893,7 +1909,7 @@ class Repo(Scope):
         repo._stat_db = {}
         repo._scripts = []
 
-        repo.load_stat_db()
+        repo.load_stat_db(log)
 
 
     def yield_tasks(repo) -> abc.Iterator[Task]:
@@ -1942,9 +1958,7 @@ class Repo(Scope):
         build_reasons["*hash match"] += 1
         return ""
 
-    def load_stat_db(repo):
-        log = cg.log
-
+    def load_stat_db(repo, log):
         stat_db_path = repo.expand("{join(build_root, 'hancho.json')}")
 
         if os.path.isfile(stat_db_path):
@@ -1955,13 +1969,7 @@ class Repo(Scope):
             log.debug(Log.ORANGE + f"Stat db not found: {stat_db_path}\n")
             repo._stat_db = {}
 
-    def save_stat_db(repo):
-        log = cg.log
-        flags = cg.flags
-
-        if flags.build_dry:
-            return
-
+    def save_stat_db(repo, log):
         stat_db_path = repo.expand("{join(build_root, 'hancho.json')}")
         log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
 
@@ -2071,17 +2079,6 @@ class Task(Scope):
         task._commands : list[str | task_callback] = []
         task._enabled = False
 
-        task._input_tasks = []
-        # FIXME why can't this be task?
-        public_values = list(Utils.yield_public_values(task.__dict__))
-        for t in public_values:
-            if isinstance(t, Task):
-                if t is not task:
-                    task._input_tasks.append(t)
-                else:
-                    pass
-
-
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
         task._aio_task : asyncio.Task | None = None
@@ -2105,6 +2102,28 @@ class Task(Scope):
         task._stderr : str = ""
         task._cores = 0
         task._complete = False
+
+        # ----------------------------------------
+        # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
+        # we need to queue up input tasks before this task starts (and then expands everything else)
+
+        for k, v in task.__dict__.items():
+            if k.startswith("in_"):  # noqa: SIM102
+                if isinstance(v, str):
+                    v = Expander._expand(v, task, recursive = True)
+                    task.__dict__[k] = v
+
+        # ----------------------------------------
+        # Add all input fields that are tasks to _input_tasks so we can await them later.
+
+        input_tasks = []
+        for v in Utils.yield_values(task.__dict__):
+            if isinstance(v, Task):
+                assert v is not task
+                input_tasks.append(v)
+        task._input_tasks = input_tasks
+
+        # ----------------------------------------
 
         script._tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
@@ -2152,7 +2171,7 @@ class Task(Scope):
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
         # FIXME we should pull all the upstream tasks out earlier or something
         for input_task in task._input_tasks:
-                input_task.queue_task()
+            input_task.queue_task()
 
     async def task_top(task) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
@@ -2323,9 +2342,9 @@ class Task(Scope):
         # IO fields all expanded, we can expand the rest of the task now.
 
         Tracer.start(task, "range", "expand_task")
-        ex = Expander(task, True)
-        for key in task.__dict__:
-            setattr(task, key, ex[key])
+        for key, val in task.__dict__.items():
+            if is_public(key):
+                setattr(task, key, Expander._expand(val, task, recursive = True))
         Tracer.end(task, "range", "expand_task", None)
 
         task._commands = Utils.flatten_tree(task.command)
@@ -2594,67 +2613,72 @@ class Task(Scope):
 # This is not a types.ModuleType, but it still works fine as one. Making it a ModuleType is a bit
 # annoying to work with.
 
+# globals = flags, log, project, repo, script
+
 class Script(Scope):
 
-    def __init__(script, name, path, root, *args, **kwargs):
+    def __init__(script : Script, flags : Flags, log : Log, project : Project, repo : Repo, name : str, path : str, root : str, *args, **kwargs):
         super().__init__()
-
-        script.name = name
-        script.path = path
-        script.root = root
-        script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
         # FIXME - do we want to force users to import hancho? so they get type
         # checking and stuff?
-        #script.hancho = sys.modules[__name__]
+
+        script.hancho  = sys.modules[__name__]
+        script.flags   = flags
+        script.log     = log
+        script.project = project
+        script.repo    = repo
+        script.script  = script
+
+        script.name       = name
+        script.path       = path
+        script.root       = root
+        script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
         Utils.merge_variants(script, *args, **kwargs)
 
-        # The Python module loading machinery looks for this field, but it can be None.
-        script.__spec__ = None
-        script._tasks = []
-        script._module_dict = {}
+        script.name       = script.expand(script.name)
+        script.path       = Path._resolve(script.expand(script.path)) # this should be before resolve/expand root
+        script.root       = Path._resolve(script.expand(script.root))
+        script.build_root = script.expand(script.build_root) # build_root doesn't exist yet, don't resolve
+
+        script.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
+        script._tasks      = []
 
     # Script exposes all globals that were set while exec'ing the scripts modules
     # through getitem/getattr
 
     def __getitem__(self, key):
-        return self._module_dict[key]
+        return self.__dict__[key]
 
     def __getattr__(self, key):
         try:
-            return self._module_dict[key]
+            return self.__dict__[key]
         except KeyError as err:
             raise AttributeError(key) from err
 
     def dump(script, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
-    def load(script, file, root, is_repo, *args, **kwargs):
-        project = cg.project
-        repo = cg.repo
-
-        file = script.expand(file)
-
-        path = Path._resolve(file, strict = True)
-        if root is None:
-            root = os.path.dirname(path)
-        root = Path._resolve(root, strict = True)
-        name = os.path.join(os.path.split(root)[-1], os.path.basename(file))
-
-        if is_repo:
-            repo = Repo(name, path, root)
-            project._repos.append(repo)
-
-        new_script = Script(name, path, root, *args, **kwargs)
-
-        dupe_key, dupe = Script.get_dupe(project, script)
-        if dupe:
-            return dupe
-
-        _, new_script = Script._load(script, project, repo)
-
-        return new_script
+#    @staticmethod
+#    def load2(*args, flags : Flags, log : Log, project : Project, repo : Repo, name : str, path : str, root : str, **kwargs) -> Script:
+#        assert Path._is_resolved(path)
+#        assert Path._is_resolved(root)
+#
+#        # ------------------------------------
+#
+#        script = Script(flags, log, project, repo, name, path, root, *args, **kwargs)
+#
+#        if dupe := project._dedupe.get(dedupe_key, None):
+#            return dupe
+#        else:
+#            project._dedupe[dedupe_key] = script
+#
+#        repo._scripts.append(script)
+#
+#        # we do _not exec here, as dummy test scripts have nothing to exec.
+#
+#        return script
 
     # ----------------------------------------
 
@@ -2665,88 +2689,68 @@ class Script(Scope):
         log.error(f"  func = {frame.f_code.co_name}\n")
         log.error(f"  line = {frame.f_lineno}\n")
 
-    @staticmethod
-    def get_dupe(project, script) -> tuple[str, Script | None]:
-        # Dedupe the load - only scripts with identical real paths and identical configs are
-        # deduped. This relies on the fields read by Dumper.dump being stable during a build,
-        # which they should be in practice.
-        dupe_key = Dumper.any_to_key(script)
-
-        # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
-        assert " _" not in dupe_key
-
-        if dupe := project._dedupe.get(dupe_key, None):
-            cg.log.debug(Log.LIME + f"Deduped {script.path}\n")
-            return (dupe_key, dupe)
-
-        return (dupe_key, None)
-
-    @staticmethod
-    def _load(script : Script, project : Project, repo : Repo) -> tuple[Repo, Script]:
+    def exec(script : Script):
+        assert script.path.endswith(".hancho")
 
         log = cg.log
-
-        dupe_key, dupe = Script.get_dupe(project, script)
-        if dupe:
-            return (repo, dupe)
-
-        log.debug(Log.ORANGE + f"Loading {script.path}\n")
-
-        repo._scripts.append(script)
-        project._dedupe[dupe_key] = script
-
-        if not script.path.endswith(".hancho"):
-            return (repo, script)
+        log.debug(Log.ORANGE + f"Script.exec({script.path})\n")
 
         code = None
         with open(script.path, encoding="utf-8") as file:
             source = file.read()
             code = compile(source, script.path, "exec", dont_inherit=True)
 
-        with chdir(script.root), cg.update(repo = repo, script = script), log.indenter(Log.ORANGE):
-            #exec(code, script.__dict__)
-            exec(code, script._module_dict)
-            #del script.__dict__['__builtins__']
-            return (repo, script)
+        with chdir(script.root), cg.set(script), log.indenter(Log.ORANGE):
+            exec(code, script.__dict__)
 
-    @staticmethod
-    def init_for_testing(*, name, file : str, root : str, stdout : str | typing.TextIO, args) -> Script:
-        flags = Flags.parse(
-            f"--name={name}",
-            f"--file={file}",
-            f"--root={root}",
-            *args
-        )
+        if "__builtins__" in script.__dict__:
+            del script.__dict__["__builtins__"]
 
-        log = Log(flags, stdout)
-        cg.reset(hancho = sys.modules[__name__], flags = flags, log = log)
+        log.debug(Log.ORANGE + f"Script.exec({script.path}) done\n")
 
-        Utils.reset()
-        Runner.reset(flags)
+# endregion
+# ==================================================================================================
+# region main
 
-        # ------------------------------------
+def create_test_script(*, name, file : str, root : str, stdout : str | typing.TextIO, extra_flags) -> Script:
+    flags = Flags.parse(
+        f"--name={name}",
+        f"--file={file}",
+        f"--root={root}",
+        *extra_flags
+    )
+    Utils.reset()
+    Runner.reset(flags)
 
-        test_name = flags.name
-        test_path = Path._resolve(flags.file, strict = True)
-        test_root = Path._resolve(flags.root, strict = True)
+    log = Log(flags, stdout)
+    log.debug(Log.ORANGE + f"create_test_script {flags.path}\n")
 
-        # ------------------------------------
+    args = ()
+    kwargs = {}
 
-        log.debug(Log.ORANGE + f"Loading {test_path}\n")
+    # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
+    dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
+    assert " _" not in dedupe_key
 
-        project = Project(test_name, test_path, test_root, [])
-        cg.update(project = project)
+    project = Project(flags.name, flags.path, flags.root, flags.targets)
 
-        repo = Repo(test_name, test_path, test_root)
-        project._repos.append(repo)
-        cg.update(repo = repo)
+    cg.set(Dict(
+        flags   = flags,
+        log     = log,
+        project = project,
+    ))
 
-        test_script = Script(test_name, test_path, test_root)
+    repo = Repo(flags.name, flags.path, flags.root, log)
+    project._repos.append(repo)
 
-        _, new_script = Script._load(test_script, project, repo)
-        cg.update(script = new_script)
+    script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
+    repo._scripts.append(script)
+    project._dedupe[dedupe_key] = script
 
-        return new_script
+    # do _not_ exec the dummy script
+    cg.set(script)
+
+    return script
 
 # endregion
 # ==================================================================================================
@@ -2754,40 +2758,51 @@ class Script(Scope):
 
 def main():
     flags = Flags.parse(*sys.argv)
-    log = Log(flags, sys.stdout)
-
-    log.info(f"Command line : {" ".join(sys.argv)}\n")
-    log.trace("Trace mode on\n")
-    log.debug("Debug mode on\n")
-
-    cg.reset(hancho = sys.modules[__name__], flags = flags, log = log)
-
-    # We expand these manually because we need to *resolve* 'path' _before_ we *expand* 'root'.
-
-    flags.name = flags.expand(flags.name)
-    flags.path = flags.expand(flags.path)
-    flags.path = Path._resolve(flags.path, strict = True)
-    flags.root = flags.expand(flags.root)
-    flags.root = Path._resolve(flags.root, strict = True)
-
-    log.debug(Log.ORANGE + f"Loading {flags.root}\n")
-
-    project = Project(flags.name, flags.path, flags.root, flags.targets)
-    repo = Repo(project.name, project.path, project.root)
-    project._repos.append(repo)
 
     Utils.reset()
     Runner.reset(flags)
 
-    cg.update(project = project, repo = repo)
+    log = Log(flags, sys.stdout)
+    log.info(f"Command line : {" ".join(sys.argv)}\n")
+    log.trace("Trace mode on\n")
+    log.debug("Debug mode on\n")
+    log.debug(Log.ORANGE + f"main() loading {flags.path}\n")
+
+
+    args = ()
+    kwargs = {}
+
+    # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
+    dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
+    assert " _" not in dedupe_key
+
+    # ------------------------------------
 
     time_a1 = time.perf_counter()
 
-    new_script = Script(flags.name, flags.path, flags.root)
+    project = Project(flags.name, flags.path, flags.root, flags.targets)
 
-    _, _ = Script._load(new_script, project, repo)
+    cg.set(Dict(
+        flags   = flags,
+        log     = log,
+        project = project,
+    ))
+
+    repo = Repo(flags.name, flags.path, flags.root, log)
+    project._repos.append(repo)
+
+    script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
+    project._dedupe[dedupe_key] = script
+    repo._scripts.append(script)
+
+    script.exec()
+
     time_b1 = time.perf_counter()
     log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
+
+    # ------------------------------------
+
+    cg.set(script)
 
     project.build(log, flags)
     project.stats(log)
@@ -2839,7 +2854,7 @@ aliases = Dict(
     swapext  = Path.swapext,
 )
 
-cg = ContextGlobals(hancho = sys.modules[__name__])
+cg = ContextGlobals()
 
 path = __file__
 root = os.path.dirname(path)
@@ -2851,16 +2866,88 @@ class Fail(Exception): pass
 class Abort(Exception): pass
 
 def script(file, root = None, *args, **kwargs):
-    script = cg.script
-    return script.load(file, root, False, *args, **kwargs)
+    old_script = cg.get()
+    flags   = old_script.flags
+    log     = old_script.log
+    project = old_script.project
+    repo    = old_script.repo
 
+    path = Path._resolve(cg.script.expand(file))
+    root = Path._resolve(cg.script.expand(root or os.path.dirname(path)))
+    name = os.path.basename(path)
+
+    dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
+    assert " _" not in dedupe_key
+
+    if dupe := project._dedupe.get(dedupe_key, None):
+        log.debug(Log.LIME + f"Deduped script('{path}')\n")
+        return dupe
+    else:
+        log.debug(Log.ORANGE + f"Loading script({path})\n")
+
+    script = Script(flags, log, project, repo, name, path, root)
+    project._dedupe[dedupe_key] = script
+    repo._scripts.append(script)
+
+    script.exec()
+    return script
+
+# FIXME this should just exec the included script using the __dict__ of old_script
 def include(file, root = None, *args, **kwargs):
-    script = cg.script
-    return script.load(file, root, False, *args, **kwargs)
+    old_script = cg.get()
+    flags   = old_script.flags
+    log     = old_script.log
+    project = old_script.project
+    repo    = old_script.repo
+
+    path = Path._resolve(cg.script.expand(file))
+    root = Path._resolve(cg.script.expand(root or os.path.dirname(path)))
+    name = os.path.basename(path)
+
+    dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
+    assert " _" not in dedupe_key
+
+    if dupe := project._dedupe.get(dedupe_key, None):
+        log.debug(Log.LIME + f"Deduped include('{path}')\n")
+        return dupe
+    else:
+        log.debug(Log.ORANGE + f"Loading include({path})\n")
+
+    script = Script(flags, log, project, repo, name, path, root)
+    project._dedupe[dedupe_key] = script
+    repo._scripts.append(script)
+
+    script.exec()
+    return script
 
 def repo(file, root = None, *args, **kwargs) -> Script:
-    script = cg.script
-    return script.load(file, root, True, *args, **kwargs)
+    old_script = cg.get()
+    flags   = old_script.flags
+    log     = old_script.log
+    project = old_script.project
+
+    path = Path._resolve(cg.script.expand(file))
+    root = Path._resolve(cg.script.expand(root or os.path.dirname(path)))
+    name = os.path.basename(path)
+
+    dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
+    assert " _" not in dedupe_key
+
+    if dupe := project._dedupe.get(dedupe_key, None):
+        log.debug(Log.LIME + f"Deduped repo('{path}')\n")
+        return dupe
+    else:
+        log.debug(Log.ORANGE + f"Loading repo({path})\n")
+
+    new_repo = Repo(name, path, root, log)
+    project._repos.append(new_repo)
+
+    script = Script(flags, log, project, new_repo, name, path, root)
+    project._dedupe[dedupe_key] = script
+    new_repo._scripts.append(script)
+
+    script.exec()
+    return script
 
 def build():
     log = cg.log

@@ -35,7 +35,7 @@
       "request" : "launch",
       "module"  : "unittest",
       "console" : "internalConsole",
-      "args"    : ["tests.test_tasks.TestTasks.test_good_build_path", "-vvv"],
+      "args"    : ["tests.test_tasks.TestTasks.test_cancellation", "-vvv"],
     },
 
     {

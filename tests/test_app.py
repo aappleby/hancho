@@ -27,12 +27,12 @@ class TestApp(unittest.TestCase):
         ]
 
         self.stdout = io.StringIO()
-        self.script = hancho.Script.init_for_testing(
+        self.script = hancho.create_test_script(
             name   = "TestApp",
             file   = __file__,
             root   = os.getcwd(),
             stdout = self.stdout,
-            args   = [*options, *args]
+            extra_flags = [*options, *args]
         )
         self.log : hancho.Log = hancho.cg.log
         self.clear_stdout()
