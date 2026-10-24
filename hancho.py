@@ -2852,27 +2852,39 @@ class Fail(Exception): pass
 class Abort(Exception): pass
 
 def script(file, root = None, *args, **kwargs):
-    return cg.script.load(file, root, False, *args, **kwargs)
+    script = cg.script
+    return script.load(file, root, False, *args, **kwargs)
 
 def include(file, root = None, *args, **kwargs):
-    return cg.script.load(file, root, False, *args, **kwargs)
+    script = cg.script
+    return script.load(file, root, False, *args, **kwargs)
 
 def repo(file, root = None, *args, **kwargs) -> Script:
-    return cg.script.load(file, root, True, *args, **kwargs)
+    script = cg.script
+    return script.load(file, root, True, *args, **kwargs)
 
 def build():
-    return cg.project.build(cg.log, cg.flags)
+    log = cg.log
+    flags = cg.flags
+    project = cg.project
+    return project.build(log, flags)
 
 def fail(message):
-    cg.script._log_script_error(cg.log, sys._getframe(1), "failed", message)
+    log = cg.log
+    script = cg.script
+    script._log_script_error(log, sys._getframe(1), "failed", message)
     raise Fail(message)
 
 def abort(message):
-    cg.script._log_script_error(cg.log, sys._getframe(1), "aborted", message)
+    log = cg.log
+    script = cg.script
+    script._log_script_error(log, sys._getframe(1), "aborted", message)
     raise Abort(message)
 
 def earlyout(message = ""):
-    cg.script._log_script_error(cg.log, sys._getframe(1), "exited early", message)
+    log = cg.log
+    script = cg.script
+    script._log_script_error(log, sys._getframe(1), "exited early", message)
     raise EarlyOut(message)
 
 # endregion
