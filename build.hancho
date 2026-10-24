@@ -8,13 +8,17 @@
 #print(hancho.__dict__)
 
 tools_base  = hancho.include("tools/tools_base.hancho")
-#tools_base  = hancho.include("tools/tools_base.hancho")
-#
-#tools_fpga  = hancho.include("tools/tools_fpga.hancho")
+tools_fpga  = hancho.include("tools/tools_fpga.hancho")
 #tools_riscv = hancho.include("tools/tools_riscv.hancho")
 #tools_wasm  = hancho.include("tools/tools_wasm.hancho")
 #
 #hancho.script("examples/examples.hancho")
 
 
-#blep = hancho.Task(command = "echo Hello World")
+blep = hancho.Task(
+    command = "cp {in_txt} {out_txt}",
+    in_txt = "build.hancho",
+    out_txt = "blep.txt"
+)
+
+hancho.Dumper.dprint(hancho.cg.keys())
