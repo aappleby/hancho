@@ -844,9 +844,6 @@ class Path:
 # region Scope
 
 class Scope:
-    def __init__(scope, *, _up = None):
-        scope._up  = _up
-
     def expand(scope, template, recursive : bool = False) -> Any:
         return Expander.expand(template, scope, recursive)
 
@@ -876,7 +873,7 @@ class Scope:
 
     # ----------------------------------------
     # Scope is _not_ a mapping, but it implements the core of MutableMapping so that it only
-    # exposes public fields and traverses _up if a key is not in the current scope.
+    # exposes public fields.
 
     def __contains__(scope, key : str) -> bool:
         return key in scope.__dict__
@@ -906,7 +903,6 @@ class Scope:
 
 class Dict(Scope, abc.Mapping):
     def __init__(self, *args, **kwargs):
-        super().__init__(_up   = kwargs.pop("_up",   None))
         Utils.merge_variants(self, *args, **kwargs)
 
 class Tool(Dict):
@@ -1145,15 +1141,10 @@ class Expander(abc.Mapping):
 
     @staticmethod
     def scope_walk(scope, key : str, default = Sentinel.MISSING) -> Any:
-        """Walk the _up chain until we find the key or run out of scopes."""
-
         sdict = scope if isinstance(scope, dict) else scope.__dict__
-        result = sdict.get(key, Sentinel.MISSING)
 
-        if result is not Sentinel.MISSING:
+        if (result := sdict.get(key, Sentinel.MISSING)) is not Sentinel.MISSING:
             return result
-        elif (up := sdict.get('_up', None)) is not None:
-            return Expander.scope_walk(up, key, default)
         elif key in cg:
             return cg[key]
         elif key in aliases:
@@ -1164,9 +1155,7 @@ class Expander(abc.Mapping):
         raise KeyError(key)
 
     def internal_get(expander, key : str):
-        log = cg.log
-
-        Tracer.start(log, expander.scope, "get", key)
+        Tracer.start(expander.scope, "get", key)
         result = Expander.scope_walk(expander.scope, key)
 
         if isinstance(result, Scope):
@@ -1175,7 +1164,7 @@ class Expander(abc.Mapping):
         else:
             result = Expander.expand(result, expander.scope, recursive = True)
 
-        Tracer.end(log, expander.scope, "get", key, result)
+        Tracer.end(expander.scope, "get", key, result)
         return result
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1257,9 +1246,8 @@ class Expander(abc.Mapping):
                     continue
 
                 # Otherwise we're doing a template expansion.
-                log = cg.log
                 try:
-                    Tracer.start(log, scope, "expand", var)
+                    Tracer.start(scope, "expand", var)
                     for i, b in enumerate(blocks):
                         if isinstance(b, cls.Macro):
                             blocks[i] = cls._expand(b, scope, recursive)
@@ -1273,7 +1261,7 @@ class Expander(abc.Mapping):
                     if not isinstance(var, str):
                         return var
                 finally:
-                    Tracer.end(log, scope, "expand", old_var, var)
+                    Tracer.end(scope, "expand", old_var, var)
 
         finally:
             cls.cv_depth.set(old_depth)
@@ -1295,8 +1283,6 @@ class Expander(abc.Mapping):
 
     @classmethod
     def _eval_macro(cls, var : str, scope, recursive : bool) -> Any:
-        log = cg.log
-
         # Bail out if we've done too many evals already.
         old_evals = cls.cv_evals.get()
         if old_evals >= cls.MAX_EVALS:
@@ -1305,7 +1291,7 @@ class Expander(abc.Mapping):
 
         result = var
         try:
-            Tracer.start(log, scope, "eval", var[1:-1])
+            Tracer.start(scope, "eval", var[1:-1])
             result = eval(var[1:-1], {}, cls.wrap(scope, recursive))
         except RecursionError:
             raise
@@ -1315,7 +1301,7 @@ class Expander(abc.Mapping):
             #dprint(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         finally:
-            Tracer.end(log, scope, "eval", var[1:-1], result)
+            Tracer.end(scope, "eval", var[1:-1], result)
             pass
 
         if isinstance(result, Expander):
@@ -1536,9 +1522,7 @@ class Dumper:
         any_private = False
 
         for x in items:
-            if x[0] == "_up" and isinstance(x[1], Scope):
-                items2.append((x[0], "<parent scope>"))
-            elif is_public(x[0]) or opts.dump_private:
+            if is_public(x[0]) or opts.dump_private:
                 items2.append(x)
             else:
                 any_private = True
@@ -1635,7 +1619,8 @@ class Dumper:
 class Tracer:
 
     @staticmethod
-    def start(log : Log, scope : Scope, action : str, arg):
+    def start(scope : Scope, action : str, arg):
+        log = cg.log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
@@ -1652,7 +1637,8 @@ class Tracer:
         log.indent(indent_color)
 
     @staticmethod
-    def up(log, scope, up, action, arg):
+    def up(scope, up, action, arg):
+        log = cg.log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
@@ -1665,7 +1651,8 @@ class Tracer:
         log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
 
     @staticmethod
-    def end(log, scope : Scope, action : str, arg, result):
+    def end(scope : Scope, action : str, arg, result):
+        log = cg.log
         if log.level > Log.TRACE: return
         if isinstance(result, Expander):
             result = result.scope
@@ -2242,9 +2229,9 @@ class Task(Scope):
         task.log_task(log, Log.DEBUG, Utils.instance_tag(task) + " starting\n")
 
         # Expand all mandatory fields in the raw config and fix raw file paths.
-        Tracer.start(log, task, "range", "expand_task")
+        Tracer.start(task, "range", "expand_task")
         task.expand_task()
-        Tracer.end(log, task, "range", "expand_task", None)
+        Tracer.end(task, "range", "expand_task", None)
 
         # If there's a depfile from a previous build, load it so we can use it below.
         if task.in_depfile:
@@ -2325,7 +2312,7 @@ class Task(Scope):
         script_root = Expander.expand("{script.root}", task)
         build_root  = Expander.expand("{build_root}", task)
 
-        Tracer.start(log, task, "range", "expand io fields")
+        Tracer.start(task, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
         io_fields = [k for k in task if k.startswith("in_") or k.startswith("out_")]
 
@@ -2358,15 +2345,15 @@ class Task(Scope):
                     task._in_files[field_name] = files
                 elif field_name.startswith("out_"):
                     task._out_files[field_name] = files
-        Tracer.end(log, task, "range", "expand io fields", None)
+        Tracer.end(task, "range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
-        Tracer.start(log, task, "range", "expand_task")
+        Tracer.start(task, "range", "expand_task")
         ex = Expander(task, True)
         for key in task:
             task[key] = ex[key]
-        Tracer.end(log, task, "range", "expand_task", None)
+        Tracer.end(task, "range", "expand_task", None)
 
         task._commands = Utils.flatten_tree(task.command)
 

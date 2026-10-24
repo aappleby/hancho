@@ -34,16 +34,6 @@ class TestTemplates(unittest.TestCase):
             ">1 2 x3x4x<"
         )
 
-    def test_read_from_up(self):
-        d1 = hancho.Dict(a = "foo")
-        d2 = hancho.Dict(a = "bar")
-        b = hancho.Dict(_up = d1, c = "{a}")
-
-        self.assertEqual("foo", b.expand("{c}"))
-
-        c = hancho.Dict(_up = d2, c = "{a}")
-        self.assertEqual("bar", c.expand("{c}"))
-
     def test_mutual_cycle(self):
         # only macros
         d = hancho.Dict(a="{b}", b="{a}")
@@ -138,27 +128,14 @@ class TestTemplates(unittest.TestCase):
 
     def test_template_expands_to_template(self):
         d = hancho.Dict(
+            a = "{foo}{bar}{baz}",
+
             foo = "Hello {",
             bar = "blep",
             baz = "} World!",
             blep = "Template",
         )
-        e = hancho.Dict(
-            _up = d,
-            a = "{foo}{bar}{baz}",
-        )
-        self.assertEqual("Hello Template World!", e.expand("{a}"))
-
-    def test_resolve_in_up_or_self(self):
-        d = hancho.Dict(foo = "{baz}", baz = 2)
-        bar = hancho.Dict(_up = d, qux = "{foo}", baz = 3)
-        d.bar = bar
-        self.assertEqual(3, d.bar.expand("{qux}"))
-
-        d = hancho.Dict(foo = "{baz}", baz = 2)
-        bar = hancho.Dict(_up = d, qux = "{foo}")
-        d.bar = bar
-        self.assertEqual(2, d.bar.expand("{qux}"))
+        self.assertEqual("Hello Template World!", d.expand("{a}"))
 
     def test_template_to_macro(self):
         # template expands to macro, macro refers to something in up, thing in up is a template -
