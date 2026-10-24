@@ -2646,7 +2646,9 @@ class Script(Scope):
             repo = Repo(name, path, root)
             project._repos.append(repo)
 
-        _, new_script = Script._load(name, path, root, project, repo, *args, **kwargs)
+        new_script = Script(name, path, root, *args, **kwargs)
+
+        _, new_script = Script._load(script, project, repo)
         return new_script
 
     # ----------------------------------------
@@ -2659,12 +2661,9 @@ class Script(Scope):
         log.error(f"  line = {frame.f_lineno}\n")
 
     @staticmethod
-    def _load(name : str, path : str, root : str, project : Project, repo : Repo, *args, **kwargs) -> tuple[Repo, Script]:
-        assert path == Path.resolve(path)
-        assert root == Path.resolve(root)
+    def _load(script : Script, project : Project, repo : Repo) -> tuple[Repo, Script]:
 
         log = cg.log
-        script = Script(name, path, root, *args, **kwargs)
 
         # Dedupe the load - only scripts with identical real paths and identical configs are
         # deduped. This relies on the fields read by Dumper.dump being stable during a build,
@@ -2729,7 +2728,9 @@ class Script(Scope):
         project._repos.append(repo)
         cg.update(repo = repo)
 
-        _, new_script = Script._load(test_name, test_path, test_root, project, repo)
+        test_script = Script(test_name, test_path, test_root)
+
+        _, new_script = Script._load(test_script, project, repo)
         cg.update(script = new_script)
 
         return new_script
@@ -2768,7 +2769,10 @@ def main():
     cg.update(project = project, repo = repo)
 
     time_a1 = time.perf_counter()
-    _, _ = Script._load(project.name, project.path, project.root, project, repo)
+
+    new_script = Script(flags.name, flags.path, flags.root)
+
+    _, _ = Script._load(new_script, project, repo)
     time_b1 = time.perf_counter()
     log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
 
