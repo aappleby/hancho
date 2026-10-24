@@ -34,7 +34,7 @@ Dict @ 0x788c818610e0 {
 |```weave```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
 |```ext```        | Replaces a filename's extension.|
 |```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
-|```hancho.dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho.dir}/base_rules.hancho")```|
+|```hancho.dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho.root}/base_rules.hancho")```|
 |```glob```       | Python's ```glob.glob```|
 |```re```         | Python's ```re``` regular expression module|
 |```path```       | Python's ```os.path``` module|
@@ -72,12 +72,6 @@ hancho: BUILD CLEAN
 ```
 
 Build scripts loaded this way get a _deep copy_ of the loader's ```hancho``` object, which can be used to pass arbitrary data into another build script.
-
-```py
-# stuff.hancho
-print(f"hancho.options = {hancho.options}")
-print(f"hancho.Context.thing = {hancho.Context.thing}")
-```
 
 ```py
 # build.hancho

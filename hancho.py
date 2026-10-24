@@ -345,7 +345,7 @@ class Utils:
     @staticmethod
     def instance_tag(obj):
         result = ""
-        if hasattr(obj, "name"):
+        if hasattr(obj, "name") and obj.name is not None:
             result += obj.name
             result += ":"
         result += type(obj).__name__
@@ -869,6 +869,9 @@ class Scope:
 
     def __contains__(scope, key) -> bool:
         return is_public(key) and key in scope.__dict__
+
+    def __getattr__(scope, key) -> Any:
+        return object.__getattribute__(scope, key)
 
     def __getitem__(scope, key : str) -> Any:
         if is_private(key):
@@ -1806,16 +1809,6 @@ class Project(Scope):
     def build(project, log, flags) -> int:
         time_a3 = time.perf_counter()
 
-        #result = hancho_build(project)
-
-        # ------------------------------------
-        # This must happen _after_ all repos are loaded (so that if they change repo_root we don't
-        # get the old path), but _before_ we build any tasks.
-
-        # Also this is here and not in hancho_main because tests also need to load stats.
-        for repo in project._repos:
-            repo.load_stat_db()
-
         # ------------------------------------
         # Select the set of tasks to run.
 
@@ -1824,7 +1817,7 @@ class Project(Scope):
                 # Enable all tasks whose name contains any of the targets
                 for repo in project._repos:
                     for task in repo.yield_tasks():
-                        if target in task.name:
+                        if task.name is not None and target in task.name:
                             task.queue_task()
 
         elif flags.build_all:
@@ -1900,6 +1893,9 @@ class Repo(Scope):
         repo._stat_db = {}
         repo._scripts = []
 
+        repo.load_stat_db()
+
+
     def yield_tasks(repo) -> abc.Iterator[Task]:
         for script in repo._scripts:
             yield from script._tasks
@@ -1948,14 +1944,15 @@ class Repo(Scope):
 
     def load_stat_db(repo):
         log = cg.log
-        stat_db_path = os.path.join(repo.build_root, 'hancho.json')
+
+        stat_db_path = repo.expand("{join(build_root, 'hancho.json')}")
 
         if os.path.isfile(stat_db_path):
             with open(stat_db_path) as contents:
                 log.debug(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
                 repo._stat_db = json.load(contents)
         else:
-            log.debug(Log.ORANGE + f"No stat db for {repo.root}\n")
+            log.debug(Log.ORANGE + f"Stat db not found: {stat_db_path}\n")
             repo._stat_db = {}
 
     def save_stat_db(repo):
@@ -1965,7 +1962,7 @@ class Repo(Scope):
         if flags.build_dry:
             return
 
-        stat_db_path = Path.join(repo.build_root, "hancho.json")
+        stat_db_path = repo.expand("{join(build_root, 'hancho.json')}")
         log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
 
         stat_db = {}
@@ -2030,7 +2027,7 @@ class Repo(Scope):
                     "file"      : file,
                 }
 
-        comp_db_path = Path.join(repo.build_root, "compile_commands.json")
+        comp_db_path = repo.expand("{join(build_root, 'compile_commands.json')}")
         Utils.save_json(list(comp_db.values()), comp_db_path)
 
 # endregion
@@ -2049,8 +2046,7 @@ class Task(Scope):
     def __init__(task, *args, **kwargs):
         script = cg.script
 
-        task.name        = "<no name>"
-        task.name        = "<no name>"
+        task.name        = None
         task.desc        = "<no desc>"
         task.command     = []
         task.build_force = "{flags.build_force}"
@@ -2637,6 +2633,8 @@ class Script(Scope):
     def load(script, file, root, is_repo, *args, **kwargs):
         project = cg.project
         repo = cg.repo
+        log = cg.log
+
 
         file = script.expand(file)
 
@@ -2710,7 +2708,7 @@ class Script(Scope):
         )
 
         log = Log(flags, stdout)
-        cg.reset(flags = flags, log = log)
+        cg.reset(hancho = sys.modules[__name__], flags = flags, log = log)
 
         Utils.reset()
         Runner.reset(flags)
@@ -2722,6 +2720,8 @@ class Script(Scope):
         test_root = Path._resolve(flags.root, strict = True)
 
         # ------------------------------------
+
+        log.debug(Log.ORANGE + f"Loading {test_path}\n")
 
         project = Project(test_name, test_path, test_root, [])
         cg.update(project = project)
@@ -2747,7 +2747,7 @@ def main():
     log.trace("Trace mode on\n")
     log.debug("Debug mode on\n")
 
-    cg.reset(flags = flags, log = log)
+    cg.reset(hancho = sys.modules[__name__], flags = flags, log = log)
 
     # We expand these manually because we need to *resolve* 'path' _before_ we *expand* 'root'.
 
@@ -2756,6 +2756,8 @@ def main():
     flags.path = Path._resolve(flags.path, strict = True)
     flags.root = flags.expand(flags.root)
     flags.root = Path._resolve(flags.root, strict = True)
+
+    log.debug(Log.ORANGE + f"Loading {flags.root}\n")
 
     project = Project(flags.name, flags.path, flags.root, flags.targets)
     repo = Repo(project.name, project.path, project.root)
@@ -2821,7 +2823,7 @@ aliases = Dict(
     swapext  = Path.swapext,
 )
 
-cg = ContextGlobals()
+cg = ContextGlobals(hancho = sys.modules[__name__])
 
 path = __file__
 root = os.path.dirname(path)
