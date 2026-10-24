@@ -345,8 +345,8 @@ class Utils:
     @staticmethod
     def instance_tag(obj):
         result = ""
-        if name := obj.__dict__.get("name", None):
-            result += name
+        if hasattr(obj, "name"):
+            result += obj.name
             result += ":"
         result += type(obj).__name__
         result += "@"
@@ -541,6 +541,18 @@ class Utils:
     def merge_variants(lhs, *args, **kwargs):
         for rhs in [*args, kwargs]:
             Utils.merge_variant(lhs, rhs)
+
+
+    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+    # only keys that were already in lhs. For example, if you have a Dict that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+    #
+    #
+    #def fill(scope, *args, **kwargs):
+    #    for rhs in (*args, kwargs):
+    #        Utils.merge_variant(scope, rhs, keep_rhs = False)
 
 
 # endregion
@@ -846,19 +858,6 @@ class Path:
 class Scope:
     def expand(scope, template, recursive : bool = False) -> Any:
         return Expander.expand(template, scope, recursive)
-
-    def update(scope, *args, **kwargs):
-        Utils.merge_variants(scope, *args, **kwargs)
-
-    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-    # only keys that were already in lhs. For example, if you have a Dict that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-    def fill(scope, *args, **kwargs):
-        for rhs in (*args, kwargs):
-            Utils.merge_variant(scope, rhs, keep_rhs = False)
 
     # ----------------------------------------
     # These are here so that the linter doesn't complain about reading/writing unknown fields off a
@@ -1800,16 +1799,14 @@ class Runner:
 # ==================================================================================================
 # region Project
 
-class Project(Scope):
+class Project:
     def __init__(project, name : str, path : str, root : str, targets : list[str], *args, **kwargs):
-        super().__init__()
-
         project.name : str = name
         project.path : str = path
         project.root : str = root
         project.targets : list[str] = targets
 
-        project.update(*args, **kwargs)
+        Utils.merge_variants(project, *args, **kwargs)
 
         assert project.path == Path.resolve(project.path)
         assert project.root == Path.resolve(project.root)
@@ -1905,10 +1902,8 @@ class Project(Scope):
 # ==================================================================================================
 # region Repo
 
-class Repo(Scope):
+class Repo:
     def __init__(repo, name : str, path : str, root : str, *args, **kwargs):
-        super().__init__()
-
         repo.name = name
         repo.path = path
         repo.root = root
@@ -2632,7 +2627,7 @@ class Script(Scope):
         script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
         script.hancho = sys.modules[__name__]
 
-        script.update(*args, **kwargs)
+        Utils.merge_variants(script, *args, **kwargs)
 
         # The Python module loading machinery looks for this field, but it can be None.
         script.__spec__ = None

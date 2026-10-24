@@ -46,7 +46,6 @@ class TestTasks(unittest.TestCase):
         hancho.cg.log._flush()
 
     def reset(self, *args):
-
         self.script = hancho.Script.init_for_testing(
             name   = "TestTasks",
             file   =  __file__,

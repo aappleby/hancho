@@ -1,10 +1,29 @@
+import os
+import sys
 import unittest
 
 import hancho
 
+expand = hancho.Expander.expand
+
 # --------------------------------------------------------------------------------------------------
 
 class TestTemplates(unittest.TestCase):
+
+    def setUp(self, *args):
+        self.script = hancho.Script.init_for_testing(
+            name   = "TestTemplates",
+            file   =  __file__,
+            root   = os.getcwd(),
+            stdout = sys.stdout,
+            args   = [
+                "--log_level=critical",
+                #"--log_level=trace",
+                "--log_wrap=True",
+                "--max_errors=999",
+                *args
+            ],
+        )
 
     def test_basic_eval(self):
         d = hancho.Dict(a = 1, b = 2)
