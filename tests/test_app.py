@@ -34,7 +34,7 @@ class TestApp(unittest.TestCase):
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
-        self.log : hancho.Log = hancho.cg.log
+        self.log = self.script.log
         self.clear_stdout()
 
     def clear_stdout(self):

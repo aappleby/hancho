@@ -24,8 +24,8 @@
       "cwd"     : "${workspaceFolder}/scratch",
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
-      //"args"    : ["-ltrace", "--log_width=999"],
-      "args"    : ["-ltrace", "--log_width=999"],
+      //"args"    : ["-ltrace", "--log_width=120"],
+      "args"    : ["-ldebug", "--log_width=120"],
       //"preLaunchTask": "wipe_scratch_build"
     },
 
@@ -35,7 +35,8 @@
       "request" : "launch",
       "module"  : "unittest",
       "console" : "internalConsole",
-      "args"    : ["tests.test_tasks.TestTasks.test_cancellation", "-vvv"],
+      "args"    : ["tests.test_tasks.TestTasks.test_input_changed", "-vvv"],
+      "preLaunchTask" : "wipe_test_build",
     },
 
     {

@@ -39,6 +39,20 @@
         "reveal": "never",
         "panel": "shared"
       }
+    },
+
+    {
+      // Wipe all build directories in /scratch
+      "label": "wipe_test_build",
+      "type": "shell",
+      "command": "find . -type d -name build -prune -exec rm -rf {} +",
+      "options": {
+        "cwd": "${workspaceFolder}/tests"
+      },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
     }
   ]
 }

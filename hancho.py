@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+#!/usr/bin/python3
 
 # region Header
 
@@ -43,9 +44,9 @@ import time
 import traceback
 import types
 import typing
+from abc import ABCMeta
 from collections import Counter, abc, defaultdict
 from contextlib import chdir, contextmanager, suppress
-from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from functools import partial, wraps
@@ -83,6 +84,7 @@ type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | 
 type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
 type task_callback = abc.Callable[[Task], Any]
 type item[T] = tuple[int | str | None, T]
+type command_type = str | list[str] | task_callback
 
 # endregion
 # ==================================================================================================
@@ -90,19 +92,22 @@ type item[T] = tuple[int | str | None, T]
 
 class Sentinel:
     def __init__(sentinel, name):     sentinel.name = name
-    def __repr__(sentinel):           return sentinel.name
+    def __repr__(sentinel):           return Log.VIOLET + sentinel.name + Log.RESET
     def __bool__(sentinel):           return False
     def __copy__(sentinel):           return sentinel
     def __deepcopy__(sentinel, memo): return sentinel
     def __reduce__(sentinel):         return sentinel.name
     def __dump__(sentinel, key, opts, seen):
         new_opts = dataclasses.replace(opts, print_id = False)
-        return Dumper._dump_prefix(key, sentinel, new_opts) + Log.VIOLET + repr(sentinel) + Log.RESET
+        return Dumper._dump_prefix(key, sentinel, new_opts) + repr(sentinel)
 
     MISSING : Any
+    FOLDED : Any
 
 # Marks a function argument as "not present" for when None would be a valid value.
 Sentinel.MISSING = Sentinel("MISSING")
+# Placeholder for items we don't want to show in a dump
+Sentinel.FOLDED  = Sentinel("FOLDED")
 
 # endregion
 # ==================================================================================================
@@ -112,10 +117,7 @@ class Utils:
 
     @classmethod
     def reset(cls):
-        cls.stat_calls : int = 0
-        cls.hash_calls : int = 0
-        cls.hash_bytes : int = 0
-        cls.hash_time  : float = 0
+        pass
 
     @staticmethod
     def hex_to_ansi(hex):
@@ -355,11 +357,15 @@ class Utils:
         return result
 
     @classmethod
-    def commands_to_string_list(cls, commands: tree[str | abc.Callable] | None) -> list[str]:
-        if commands is None: return []
-        commands = Utils.flatten_tree(commands)
-        command_str = [c.__name__ if callable(c) else str(c) for c in commands]
-        return command_str
+    def command_to_string(cls, command: command_type) -> str:
+        if isinstance(command, str):
+            return command
+        elif isinstance(command, list):
+            return "; ".join(command)
+        elif callable(command):
+            return command.__name__
+        else:
+            raise TypeError(type(command))
 
     @staticmethod
     def tree_map[X, Y, **P](func: abc.Callable[Concatenate[Any, P], Y]) -> abc.Callable[Concatenate[tree[X], P], tree[Y]]:
@@ -407,35 +413,6 @@ class Utils:
         return wrapper
 
     @classmethod
-    def hash_file(cls, abs_path, h = 0):
-        Utils.hash_calls += 1
-        time_a = time.perf_counter()
-        with open(abs_path, "rb") as f:
-            Utils.hash_bytes += os.fstat(f.fileno()).st_size
-            digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=8)).hexdigest()
-        time_b = time.perf_counter()
-        Utils.hash_time += time_b - time_a
-        return digest
-
-    @classmethod
-    def get_stats(cls, file : str, commands : tree[str | abc.Callable] | None = None) -> dict:
-        cls.stat_calls += 1
-
-        _hash = cls.hash_file(file)
-        _stat = os.stat(file)
-
-        commands_str = cls.commands_to_string_list(commands)
-
-        stat = {
-            "hash": _hash,
-            "st_size": _stat.st_size,
-            "st_mtime_ns": _stat.st_mtime_ns,
-            "commands": commands_str
-        }
-
-        return stat
-
-    @classmethod
     @contextmanager
     def write_and_swap(cls, filename):
         """
@@ -452,39 +429,16 @@ class Utils:
             os.replace(temp_filename, filename)
 
     @classmethod
+    def load_json(cls, path):
+        with open(path) as contents:
+            return json.load(contents)
+
+    @classmethod
     def save_json(cls, variant, path):
         os.makedirs(os.path.dirname(path), exist_ok = True)
         with cls.write_and_swap(path) as file:
             json.dump(variant, file, indent=4, default=lambda x: x.__dict__)
             file.write("\n")
-
-    @classmethod
-    def load_depfile(cls, filename : str, format : str, task_cwd : str) -> list[str]:
-        if not os.path.isfile(filename):
-            return []
-
-        with open(filename, encoding="utf-8") as depcontents:
-            deplines3 = None
-            if format == "msvc":
-                # MSVC /sourceDependencies
-                deplines3 = json.load(depcontents)["Data"]["Includes"]
-            elif format == "gcc":
-                # GCC -MMD
-                # NOTE: This does not handle filenames with escaped spaces in them, but I don't
-                # want to write a whole .d parser yet.
-                deplines0 = depcontents.read()
-                deplines1 = re.sub(r"\\\s*\n", "", deplines0)
-                deplines2 = deplines1.split()
-                deplines3 = [d for d in deplines2 if d[-1] != ":"]
-            else:
-                raise Task.BROKEN(f"Invalid depfile format {format}")
-
-        # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
-        deplines4 : list[str] = [cast(str, Path.join(task_cwd, d)) for d in deplines3]
-
-        deplines5 = [d for d in deplines4 if not d.startswith("/usr")]
-
-        return deplines5
 
     # When merging Dicts, if two attributes have the same name:
     #     - If they are both dicts, we recursively merge them.
@@ -504,7 +458,7 @@ class Utils:
         keep_rhs: bool = True,
     ):
         if rhs is None:
-            return
+            return lhs
 
         ldict = lhs if isinstance(lhs, dict) else lhs.__dict__
         rdict = rhs if isinstance(rhs, dict) else rhs.__dict__
@@ -534,9 +488,9 @@ class Utils:
 
         # Save rhs keys if needed
         for key in (k for k in rkeys if k not in lkeys and keep_rhs):
-            pass
             ldict[key] = rdict[key]
-            pass
+
+        return lhs
 
     @staticmethod
     def merge_variants(lhs, *args, **kwargs):
@@ -554,7 +508,6 @@ class Utils:
     #def fill(scope, *args, **kwargs):
     #    for rhs in (*args, kwargs):
     #        Utils.merge_variant(scope, rhs, keep_rhs = False)
-
 
 # endregion
 # ==================================================================================================
@@ -617,47 +570,41 @@ class Log:
         log._indent_stack.pop()
 
     @contextmanager
-    def indenter(log, ansi_color : str = RESET):
-        log.indent(ansi_color)
+    def indenter(log, level, ansi_color : str = RESET):
+        log_level = log.level
+        if level >= log_level:
+            log.indent(ansi_color)
         yield
-        log.dedent()
+        if level >= log_level:
+            log.dedent()
 
     def trace(log, text):
         # Traces do their own color coding
-        log._log(Log.TRACE, text)
+        log._log(Log.TRACE, "", text)
 
     def debug(log, text):
-        log._log(Log.DEBUG, Log.GRAY3 + text)
+        log._log(Log.DEBUG, Log.GRAY3, text)
 
     def info(log, text):
-        log._log(Log.INFO, text)
+        log._log(Log.INFO, "", text)
 
     def warning(log, text):
-        log._log(Log.WARNING, Log.YELLOW + text)
+        log._log(Log.WARNING, Log.YELLOW, text)
 
     def error(log, text):
-        log._log(Log.ERROR, Log.ORANGE + text)
+        log._log(Log.ERROR, Log.ORANGE, text)
 
     def critical(log, text):
-        log._log(Log.CRITICAL, Log.RED + text)
+        log._log(Log.CRITICAL, Log.RED, text)
 
-    def exception(log, ex):
-        if ex is None:
+    def _log(log, log_level : int, color : str, text : Any):
+        if isinstance(text, list):
+            for t in text:
+                log._log(log_level, color, t)
             return
-        tb = traceback.extract_tb(ex.__traceback__)
-        if tb:
-            frame = tb[-1]
-            log.error("exception:\n")
-            log.error(f"  type = {type(ex)}\n")
-            log.error(f"  text = {ex}\n")
-            log.error(f"  file = {frame.filename}\n")
-            log.error(f"  func = {frame.name}\n")
-            log.error(f"  line = {frame.lineno}\n")
-            log.error(traceback.format_exc() + "\n")
-        else:
-            log.error(f"Could not extract traceback from {ex}!")
+        elif not isinstance(text, str):
+            text = repr(text) + "\n"
 
-    def _log(log, log_level : int, text : str):
         if log_level < log.level:
             return
         if not isinstance(text, str) or len(text) == 0:
@@ -669,6 +616,8 @@ class Log:
             if log._line_buffer == "":
                 log._line_buffer += f"[{time.perf_counter() - log._time_origin:8.3f}] " if log.timestamp else ""
                 log._line_buffer += "".join(log._indent_stack)
+
+            log._line_buffer += color
 
             if line[-1] == "\n":
                 log._line_buffer += line[:-1]
@@ -819,8 +768,6 @@ class Path:
 
     @staticmethod
     def relpath(lhs, rhs):
-        log = cg.log
-
         if isinstance(rhs, (list, tuple, set)):
             return [Path.relpath(lhs, rh) for rh in rhs]
 
@@ -829,12 +776,7 @@ class Path:
         if not os.path.isabs(rhs):
             rhs = os.path.abspath(rhs)
 
-        prefix = ""
-        try:
-            prefix = os.path.commonpath([lhs, rhs])
-        except Exception:
-            log.error(f"Commonpath failed for {lhs} and {rhs}\n")
-            raise
+        prefix = os.path.commonpath([lhs, rhs])
 
         if lhs == rhs:
             result = "."
@@ -859,7 +801,7 @@ class Path:
 
 # endregion
 # ==================================================================================================
-# region Scope
+# region Scope/Dict/Tool
 
 # A Scope is just some mapping-like object that can be used in template expansion.
 # Note that it only exposes _public_ fields through iter/len
@@ -890,6 +832,15 @@ class Scope:
     def __iter__(scope):
         yield from filter(is_public, scope.__dict__)
 
+    def __dump__(self, key, opts : Dumper.Opts, seen):
+        new_fold = [*opts.fold, contextvars.Context, asyncio.Task, Project, Repo, Script, Flags, Log, aliases]
+        new_opts = dataclasses.replace(opts, fold = new_fold)
+        return Dumper._dump_vector(key, self, self.__dict__, new_opts, seen)
+
+    # This makes traces hard to read because we unfold _every_ scope that we read
+    #def __repr__(self):
+    #    return Dumper.dump(self)
+
 # ====================================
 # A Dict is a Scope that can be used as an abc.MutableMapping.
 
@@ -903,7 +854,6 @@ class Dict(Scope, abc.MutableMapping):
 
     def __delitem__(scope, key):
         del scope.__dict__[key]
-
 
 # ====================================
 # A Tool is just a callable alias for Dict to make build scripts more readable.
@@ -921,7 +871,6 @@ class Flags(Scope):
         flags.name        = "build"
         flags.file        = "build.hancho"
         flags.root        = os.getcwd()
-
         flags.targets     = []
 
         flags.build_dir   = "build"
@@ -975,7 +924,7 @@ class Flags(Scope):
             if v.lower() in ("no", "false", "f", "n", "0"): return False
             raise argparse.ArgumentTypeError("Not a bool")
 
-        parser.add_argument("project.targets", nargs="*", help="The names or partial names of targets to build")
+        parser.add_argument("targets", nargs="*", help="The names or partial names of targets to build")
 
         parser.add_argument("-o", "--opts",          type=str,         help="File containing JSON that will be used as additional options")
         parser.add_argument(      "--name",          type=str,         help="Name of the whole build project, if you don't want it to be <project>")
@@ -1052,39 +1001,6 @@ class Flags(Scope):
 
 # endregion
 # ==================================================================================================
-# region ContextGlobals
-
-class ContextGlobals:
-    def __init__(self):
-        self.name : str
-        self._ctx : ContextVar[Script | Dict]
-
-        object.__setattr__(self, "name", "script_globals")
-        object.__setattr__(self, "_ctx",  ContextVar("script_globals"))
-
-    def get(self) -> Script | Dict:
-        return self._ctx.get()
-
-    def set(self, script : Script | Dict):
-       return self._ctx.set(script)
-
-    def __contains__(self, key):
-        return self._ctx.get().__contains__(key)
-
-    def __getattr__(self, key):
-        return getattr(self._ctx.get(), key)
-
-    def __getitem__(self, key):
-        return self._ctx.get()[key]
-
-    def __setattr__(self, key, val):
-        raise AttributeError("Script fields cannot be written through ContextGlobals")
-
-    def __setitem__(self, key, val):
-        raise KeyError("Script fields cannot be written through ContextGlobals")
-
-# endregion
-# ==================================================================================================
 # region Expander
 
 # Expander _must_ be a mapping in order to go in eval()
@@ -1145,8 +1061,8 @@ class Expander(Scope, abc.Mapping):
     def scope_walk(scope, key : str, default = Sentinel.MISSING) -> Any:
         if (result := scope.get(key, Sentinel.MISSING)) is not Sentinel.MISSING:
             return result
-        elif key in cg:
-            return cg[key]
+        elif key in current_script.get():
+            return current_script.get()[key]
         elif key in aliases:
             return aliases[key]
         elif default is not Sentinel.MISSING:
@@ -1449,11 +1365,12 @@ class Dumper:
 
     @classmethod
     def _dump_to_str(cls, key, val : Any, opts, seen : set):
-        if opts.cur_depth > 0 and (key in opts.fold or type(val) in opts.fold):
-                return f"{key}:{type(val).__name__} = {Log.BLUE}<folded>{Log.RESET}"
-
-        if key == "__builtins__":
+        if opts.cur_depth > 0 and (key in opts.fold or val in opts.fold or type(val) in opts.fold):
+            return cls._dump_prefix(key, val, opts) + str(Sentinel.FOLDED)
+        elif key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
+        elif isinstance(val, (type, types.FunctionType)):
+            return cls._dump_scalar(key, val, opts, seen)
         elif val is sys.modules[__name__]:
             return cls._dump_prefix(key, val, opts) + "<hancho module>"
         elif hasattr(type(val), "__dump__"):
@@ -1474,7 +1391,7 @@ class Dumper:
         #    raise TypeError(msg)
 
         if isinstance(val, Sentinel):
-            breakpoint()
+            raise TypeError("Sentinels are not scalars")
 
         if (vid := hex(id(val))) in seen:
             return cls._dump_prefix(key, val, opts) + "<ref loop>"
@@ -1519,7 +1436,7 @@ class Dumper:
             else:
                 any_private = True
         if any_private:
-            items2.append(("<private fields are hidden>", Sentinel.MISSING))
+            items2.append(("<private fields>", Sentinel.FOLDED))
 
         return cls._dump_items(key, prefix, ld, items2, rd, opts, set(seen))
 
@@ -1538,7 +1455,8 @@ class Dumper:
             try:
                 return prefix + cls._dump_items_flat(key, ld, items, rd, dataclasses.replace(opts, flat = True), set(seen))
             except Dumper.LineTooLong:
-                return prefix + cls._dump_items_deep(key, ld, items, rd, opts, set(seen))
+                rhs = cls._dump_items_deep(key, ld, items, rd, opts, set(seen))
+                return prefix + rhs
 
     @classmethod
     def _dump_items_flat(cls, key, ld, items : list[item[Any]], rd, opts, seen : set):
@@ -1557,8 +1475,7 @@ class Dumper:
         result = ld + "\n"
 
         if opts.cur_depth == opts.max_depth:
-            #return ld + "..." + rd
-            return "<folded>"
+            return str(Sentinel.FOLDED)
         opts = dataclasses.replace(opts, cur_depth = opts.cur_depth + 1)
 
         opts.indent_stack2.append(" ")
@@ -1579,8 +1496,18 @@ class Dumper:
     @classmethod
     def _dump_prefix(cls, key, val, opts, force_type = False):
         prefix = ""
-        if key: prefix += f"{key}"
-        if (type(val) not in Dumper.base_types) or force_type:
+        if key:
+            prefix += f"{key}"
+        elif isinstance(val, (ABCMeta, abc.Callable, types.ModuleType)):
+            prefix += val.__name__
+        elif hasattr(val, 'name') and val.name is not None:
+            prefix += val.name
+        elif isinstance(val, abc.Mapping) and 'name' in val and val['name'] is not None:
+            prefix += val['name']
+
+        if isinstance(val, type):
+            prefix += ":type"
+        elif (type(val) not in Dumper.base_types) or force_type:
             prefix += ":"
             prefix += type(val).__name__
             if opts.print_id: prefix += "@" + Utils.hex_tag(val)
@@ -1601,6 +1528,7 @@ class Dumper:
 
         key = Dumper.depointer(key)
         key = "".join(key.split())
+        key = repr(key)
         return key
 
 
@@ -1608,11 +1536,14 @@ class Dumper:
 # ==================================================================================================
 # region Tracer
 
+# ┌─
+# └─
+
 class Tracer:
 
     @staticmethod
     def start(scope, action : str, arg):
-        log = cg.log
+        log = current_script.get().log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
@@ -1623,14 +1554,14 @@ class Tracer:
 
         if action == "range":
             indent_color = Log.WHITE
-            log.trace(f"{indent_color}┌─── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
+            log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
         else:
             log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg!r})\n")
         log.indent(indent_color)
 
     @staticmethod
     def up(scope, up, action, arg):
-        log = cg.log
+        log = current_script.get().log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
@@ -1644,7 +1575,7 @@ class Tracer:
 
     @staticmethod
     def end(scope, action : str, arg, result):
-        log = cg.log
+        log = current_script.get().log
         if log.level > Log.TRACE: return
         if isinstance(result, Expander):
             result = result.scope
@@ -1736,7 +1667,7 @@ class Runner:
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        log.info(Log.BLUE + "Running tasks...\n")
+        log.debug("Running tasks...\n")
 
         while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
             finished_aio_task : asyncio.Task | None = None
@@ -1746,9 +1677,14 @@ class Runner:
             task = finished_aio_task.hancho_task # type: ignore
 
             match type(task._error):
+
                 case types.NoneType:
                     task._complete = True
-                    Runner.tasks_finished += 1
+                    if task._skipped:
+                        Runner.tasks_skipped += 1
+                    else:
+                        Runner.tasks_finished += 1
+
                 case asyncio.CancelledError:
                     Runner.tasks_cancelled += 1
                 case Task.CANCELLED:
@@ -1757,12 +1693,8 @@ class Runner:
                     Runner.tasks_broken += 1
                 case Task.FAILED:
                     Runner.tasks_failed += 1
-                case Task.SKIPPED:
-                    task._complete = True
-                    Runner.tasks_skipped += 1
                 case _:
                     log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
-                    log.exception(task._error)
                     Runner.tasks_failed += 1
 
             if finished_aio_task is not None:
@@ -1793,250 +1725,266 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(project, name : str, path : str, root : str, targets : list[str], *args, **kwargs):
-        project.name : str = name
-        project.path : str = path
-        project.root : str = root
-        project.targets : list[str] = targets
+    def __init__(self, flags, log, name : str, path : str, root : str, targets : list[str], *args, **kwargs):
+        self.name : str = name
+        self.path : str = path
+        self.root : str = root
+        self.targets : list[str] = targets
 
-        Utils.merge_variants(project, *args, **kwargs)
+        self.flags = flags
+        self.log   = log
 
-        project._real_filenames = set()
-        project._dedupe = Dict()
-        project._repos : list[Repo] = []
-        project._build_reasons = Counter()
-        project._runner = Runner()
+        Utils.merge_variants(self, *args, **kwargs)
 
-#    def get_dupe(project, script) -> tuple[str, Script | None]:
-#        # Dedupe the load - only scripts with identical real paths and identical configs are
-#        # deduped. This relies on the fields read by Dumper.dump being stable during a build,
-#        # which they should be in practice.
-#        dupe_key = Dumper.any_to_key([script.path, script.root, script._params])
-#
-#        # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
-#
-#        if dupe := project._dedupe.get(dupe_key, None):
-#            cg.log.debug(Log.LIME + f"Deduped {script.path}\n")
-#            return (dupe_key, dupe)
-#
-#        return (dupe_key, None)
+        self._real_filenames = set()
+        self._dedupe = Dict()
+        self._repos : list[Repo] = []
+        #self._build_reasons = Counter()
+        self._runner = Runner()
 
-    def build(project, log, flags) -> int:
+    def build(self) -> int:
         time_a3 = time.perf_counter()
 
         # ------------------------------------
         # Select the set of tasks to run.
 
-        if project.targets:
-            for target in project.targets:
+        if self.targets:
+            for target in self.targets:
                 # Enable all tasks whose name contains any of the targets
-                for repo in project._repos:
+                for repo in self._repos:
                     for task in repo.yield_tasks():
                         if task.name is not None and target in task.name:
                             task.queue_task()
 
-        elif flags.build_all:
-            for repo in project._repos:
+        elif self.flags.build_all:
+            for repo in self._repos:
                 for task in repo.yield_tasks():
                     task.queue_task()
 
         else:
             # Enable all tasks in the top repo
-            for task in project._repos[0].yield_tasks():
+            for task in self._repos[0].yield_tasks():
                 task.queue_task()
 
         # ------------------------------------
         # Run the tasks.
 
-        result = asyncio.run(Runner.async_run_tasks(log, project))
+        result = asyncio.run(Runner.async_run_tasks(self.log, self))
 
         # ------------------------------------
         # Update stat DBs.
 
-        if not flags.build_dry:
-            for repo in project._repos:
-                repo.save_stat_db(log)
+        if not self.flags.build_dry:
+            for repo in self._repos:
+                repo.save_stat_db()
 
         time_b3 = time.perf_counter()
-        log.info(Log.GREEN + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
-        project._result = result
+        self.log.debug(f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+        self._result = result
         return result
 
-    def stats(project, log):
+    def stats(self):
         task_count = 0
-        for repo in project._repos:
+        for repo in self._repos:
             task_count += len(list(repo.yield_tasks()))
 
         # FIXME all the stats should move to Project
-        log.debug(f"Tasks created:    {task_count}\n")
-        log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
-        log.debug(f"Tasks started:    {Runner.tasks_started}\n")
-        log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
-        log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
-        log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
-        log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        log.debug(f"Mtime calls:      {Utils.stat_calls}\n")
-        log.debug(f"Hash calls:       {Utils.hash_calls}\n")
-        log.debug(f"Hash bytes:       {Utils.hash_bytes}\n")
-        log.debug(f"Hash time:        {Utils.hash_time:8.6f}\n")
+        self.log.debug(f"Tasks created:    {task_count}\n")
+        self.log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
+        self.log.debug(f"Tasks started:    {Runner.tasks_started}\n")
+        self.log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
+        self.log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
+        self.log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
+        self.log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+        self.log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
+        self.log.debug(f"Mtime calls:      {Repo.stat_calls}\n")
+        self.log.debug(f"Hash calls:       {Repo.hash_calls}\n")
+        self.log.debug(f"Hash bytes:       {Repo.hash_bytes}\n")
+        self.log.debug(f"Hash time:        {Repo.hash_time:8.6f}\n")
 
-        log.debug("Rebuild reasons:\n")
-        for reason, count in project._build_reasons.items():
-            log.debug(f"{reason:17} {count}\n")
+        #log.debug("Rebuild reasons:\n")
+        #for reason, count in project._build_reasons.items():
+        #    log.debug(f"{reason:17} {count}\n")
 
-    def passfail(project, log):
-        if project._runner.tasks_failed or project._runner.tasks_broken:
-            log.error(Log.RED + "BUILD FAILED\n")
+    def passfail(self):
+        if self._runner.tasks_failed or self._runner.tasks_broken:
+            self.log.error(Log.RED + "BUILD FAILED\n")
         elif Runner.tasks_finished:
-            log.info(Log.GREEN + "BUILD PASSED\n")
+            self.log.info(Log.GREEN + "BUILD PASSED\n")
         else:
-            log.info(Log.BLUE + "BUILD CLEAN\n")
+            self.log.info(Log.BLUE + "BUILD CLEAN\n")
+
+# endregion
+# ==================================================================================================
+# region Stat
+
+class Stat:
+    def __init__(self):
+        self.cwd : str
+        self.directory : str
+        self.file : str
+        self.arguments : list[str]
+        self.command : str | list[str] | abc.Callable
+        self.output : str
+        self.hash : str
+        self.st_size : int
+        self.st_mtime_ns : int
 
 # endregion
 # ==================================================================================================
 # region Repo
 
 class Repo(Scope):
-    def __init__(repo, name : str, path : str, root : str, log : Log, *args, **kwargs):
-        repo.name = name
-        repo.path = path
-        repo.root = root
-        repo.build_root = "{join(root, flags.build_dir, flags.build_tag)}"
 
-        Utils.merge_variants(repo, *args, **kwargs)
-
-        repo._stat_db = {}
-        repo._scripts = []
-
-        repo.load_stat_db(log)
+    @classmethod
+    def reset(cls):
+        cls.stat_calls : int = 0
+        cls.hash_calls : int = 0
+        cls.hash_bytes : int = 0
+        cls.hash_time  : float = 0
 
 
-    def yield_tasks(repo) -> abc.Iterator[Task]:
-        for script in repo._scripts:
-            yield from script._tasks
+    def __init__(self, flags, log, project, name : str, path : str, root : str, *args, **kwargs):
+        self.name = name
+        self.path = path
+        self.root = root
+        self.log  = log
+        self.build_root = "{join(root, flags.build_dir, flags.build_tag)}"
 
-    def check_stats(repo, filename : str, commands : list, build_reasons):
-        if not Path.exists(filename):
-            build_reasons["file missing"] += 1
-            return f"File missing: {filename}"
+        self.flags   = flags
+        self.log     = log
+        self.project = project
 
-        if filename not in repo._stat_db:
-            build_reasons["stat missing"] += 1
-            return f"Stat missing: {filename}"
+        Utils.merge_variants(self, *args, **kwargs)
 
-        old_stat = repo._stat_db[filename]
-        new_stat = Utils.get_stats(filename, commands)
+        self._scripts = []
+        self._stat_db : dict[str, dict] = {}
 
-        try:
-            old_ns = old_stat["st_mtime_ns"]
-            new_ns = new_stat["st_mtime_ns"]
-
-            if old_ns != new_ns:
-                build_reasons["mtime mismatch"] += 1
-                return f"Mtime mismatch {old_ns} != {new_ns} for : {filename}"
-        except Exception as err:
-            traceback.print_exc()
-            raise err
-
-        if old_stat["st_size"] != new_stat["st_size"]:
-            build_reasons["size mismatch"] += 1
-            return f"Size mismatch {old_stat["st_size"]} != {new_stat["st_size"]} for : {filename}"
-
-        if old_stat["hash"] != new_stat["hash"]:
-            build_reasons["hash mismatch"] += 1
-            return f"Hash mismatch {old_stat["hash"]} -> {new_stat["hash"]} for : {filename}"
-
-        old_commands = old_stat["commands"]
-        new_commands = Utils.commands_to_string_list(commands)
-
-        if old_commands != new_commands:
-            build_reasons["command changed"] += 1
-            return f"Command used to generate file has changed : {filename!r}\n : {old_commands!r}n : {commands!r}"
-
-        # Does not need to rebuild based on file stats / hash
-        build_reasons["*hash match"] += 1
-        return ""
-
-    def load_stat_db(repo, log):
-        stat_db_path = repo.expand("{join(build_root, 'hancho.json')}")
+        stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
 
         if os.path.isfile(stat_db_path):
-            with open(stat_db_path) as contents:
-                log.debug(Log.ORANGE + f"Loading stat_db {stat_db_path}\n")
-                repo._stat_db = json.load(contents)
+            log.debug(f"Loading stat_db {stat_db_path}\n")
+            json_stats = Utils.load_json(stat_db_path)
+            for file, json_stat in json_stats.items():
+                self._stat_db[file] = json_stat
         else:
-            log.debug(Log.ORANGE + f"Stat db not found: {stat_db_path}\n")
-            repo._stat_db = {}
+            log.debug(f"Stat db not found: {stat_db_path}\n")
 
-    def save_stat_db(repo, log):
-        stat_db_path = repo.expand("{join(build_root, 'hancho.json')}")
-        log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
+    @classmethod
+    def load_depfile(cls, filename : str, format : str, task_cwd : str) -> list[str]:
+        # The contents of the C dependencies file are RELATIVE TO THE WORKING DIRECTORY
+        # NOTE: This does not handle filenames with escaped spaces in them, but I don't want to
+        # write a whole .d parser yet.
 
-        stat_db = {}
+        if not os.path.isfile(filename):
+            return []
 
-        # FIXME we could probably save a little work if we didn't always re-stat every input and
-        # output, but this is safe for now.
+        with open(filename, encoding="utf-8") as depcontents:
+            if format == "msvc":
+                raw_deplines = json.load(depcontents)["Data"]["Includes"]
+            elif format == "gcc":
+                raw_deplines = re.sub(r"\\\s*\n", "", depcontents.read()).split()
+            else:
+                raise Task.BROKEN(f"Invalid depfile format {format}")
 
-        # ------------------------------------
-        # Gather stats for all _input_ files in all tasks.
-
-        for task in repo.yield_tasks():
-            if not task._complete:
+        deplines = []
+        for d in raw_deplines:
+            d = os.path.join(task_cwd, d)
+            if not d.startswith(task_cwd) or d.endswith(":"):
                 continue
+            deplines.append(d)
 
-            for file in Utils.yield_values(task._in_files):
-                stat_db[file] = Utils.get_stats(file)
+        return deplines
 
-            for file in Utils.yield_values(task._out_files):
-                stat_db[file] = Utils.get_stats(file)
 
-            in_depfile = cast(str, task.in_depfile)
-            if in_depfile:
-                stat_db[in_depfile] = Utils.get_stats(in_depfile)
-                deplines = Utils.load_depfile(in_depfile, task.depformat, task.cwd)
-                for file in deplines:
-                    stat_db[file] = Utils.get_stats(file)
+    def save_stat_db(self):
+        stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
+        self.log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
+        Utils.save_json(self._stat_db, stat_db_path)
 
-        # ------------------------------------
-        # Fill in the .command field for all our _output_ files.
-        # We do this in a second pass because if a file is both an input and an output, we don't
-        # want to accidentally overwrite the command with []
-        # during "stat_db[file] = Utils.get_stats(file)"
+#    def save_comp_db(self):
+#        # Haven't tested this in an IDE, but I think it matches the spec.
+#        comp_db_path = self.expand("{join(build_root, 'compile_commands.json')}")
+#        self.log.debug(Log.ORANGE + f"Saving comp_db {comp_db_path}\n")
+#
+#        comp_db = []
+#        for file, stat in self._stat_db.items():
+#            comp_db.append({
+#                "directory" : stat.cwd,
+#                "command"   : Utils.command_to_string(stat.command),
+#                "file"      : Path.relpath(file, stat.cwd),
+#            })
+#        Utils.save_json(comp_db, comp_db_path)
 
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
+    def yield_tasks(self) -> abc.Iterator[Task]:
+        for script in self._scripts:
+            yield from script._tasks
 
-            command_list = Utils.commands_to_string_list(task.command)
+    @classmethod
+    def hash_file(cls, abs_path, h = 0):
+        Repo.hash_calls += 1
+        time_a = time.perf_counter()
+        with open(abs_path, "rb") as f:
+            Repo.hash_bytes += os.fstat(f.fileno()).st_size
+            digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=16)).hexdigest()
+        time_b = time.perf_counter()
+        Repo.hash_time += time_b - time_a
+        return digest
 
-            for file in Utils.yield_values(task._out_files):
-                if file in stat_db:
-                    stat_db[file]["commands"] = command_list
+    def get_stat(self, file : str) -> dict:
+        self.stat_calls += 1
 
-        Utils.save_json(stat_db, stat_db_path)
+        _hash = self.hash_file(file)
+        _stat = os.stat(file)
 
-        # ------------------------------------
-        # And do the same for compile_commands.json with a slightly different format.
+        stat = {
+            "hash": _hash,
+            "st_size": _stat.st_size,
+            "st_mtime_ns": _stat.st_mtime_ns,
+        }
 
-        comp_db = {}
+        return stat
 
-        for task in repo.yield_tasks():
-            if not task._complete:
-                continue
+    def update_stat(self, file, command):
+        new_stat = self.get_stat(file)
+        new_stat['command'] = Dumper.depointer(repr(command))
+        if file in self._stat_db:
+            Utils.merge_variant(self._stat_db[file], new_stat)
+        else:
+            self._stat_db[file] = new_stat
 
-            command_list = Utils.commands_to_string_list(task.command)
+    def stat_changed2(self, file) -> str | None:
+        if file not in self._stat_db:
+            return f"Stat missing for {file}"
 
-            for file in Utils.yield_values(task._in_files):
-                # Haven't tested this in an IDE, but I think it matches the spec.
-                comp_db[file] = {
-                    "directory" : task.cwd,
-                    "command"   : '; '.join(command_list),
-                    "file"      : file,
-                }
+        old_stat = self._stat_db[file]
+        new_stat = self.get_stat(file)
 
-        comp_db_path = repo.expand("{join(build_root, 'compile_commands.json')}")
-        Utils.save_json(list(comp_db.values()), comp_db_path)
+        if old_stat["st_mtime_ns"] != new_stat["st_mtime_ns"]:
+            return f"Mtime mismatch for {file}"
+
+        if old_stat["st_size"] != new_stat["st_size"]:
+            return f"Size mismatch for {file}"
+
+        if old_stat["hash"] != new_stat["hash"]:
+            return f"Hash mismatch for {file}"
+
+        return None
+
+        #return (
+        #    (old_stat["st_mtime_ns"] != new_stat["st_mtime_ns"])
+        #    or (old_stat["st_size"] != new_stat["st_size"])
+        #    or (old_stat["hash"] != new_stat["hash"])
+        #)
+
+    def command_changed(self, file, command):
+        old_command = self._stat_db[file]['command']
+        #new_command = Utils.command_to_string(command)
+        new_command = Dumper.depointer(repr(command))
+        #print()
+        #print(old_command)
+        #print(new_command)
+        return old_command != new_command
 
 # endregion
 # ==================================================================================================
@@ -2051,235 +1999,241 @@ class Task(Scope):
     class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
-    def __init__(task, *args, **kwargs):
-        script = cg.script
+    def __init__(self, *args, **kwargs):
+        self.name        = None
+        self.desc        = "<no desc>"
+        self.command : str | list[str] | task_callback = ""
+        self.build_force = "{flags.build_force}"
+        self.build_root  = "{script.build_root}"
+        self.cwd         = "{script.root}"
+        self.depformat   = "gcc" if os.name == "posix" else "msvc"
+        self.in_depfile  = None
+        self.job_size    = 1
 
-        task.name        = None
-        task.desc        = "<no desc>"
-        task.command     = []
-        task.build_force = "{flags.build_force}"
-        task.build_root  = "{script.build_root}"
-        task.cwd         = "{script.root}"
-        task.depformat   = "gcc" if os.name == "posix" else "msvc"
-        task.in_depfile  = None
-        task.job_size    = 1
+        script = current_script.get()
 
-        Utils.merge_variants(task, *args, **kwargs)
+        self.flags   = script.flags
+        self.log     = script.log
+        self.project = script.project
+        self.repo    = script.repo
+        self.script  = script.script
+
+        Utils.merge_variants(self, *args, **kwargs)
 
         # ----------------------------------------
+        # Private fields
 
-        if not isinstance(task.command, list):
-            task.command = [task.command]
+        self._enabled = False
 
         # These two have to be dicts so that downstream tasks can pick named outputs from it if
         # needed.
-        task._in_files : dict[str, list[str]]  = {}
-        task._out_files : dict[str, list[str]] = {}
-
-        task._commands : list[str | task_callback] = []
-        task._enabled = False
+        self._in_files : dict[str, list[str]]  = {}
+        self._out_files : dict[str, list[str]] = {}
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
-        task._aio_task : asyncio.Task | None = None
+        self._aio_task : asyncio.Task | None = None
 
         # We remember the aio context we were in when this task was created so that we can return
         # to it when the task starts.
-        task._aio_context = contextvars.copy_context()
-
-        # Input dependencies read from the source.o.d file.
-        task._old_deplines = []
-
-        # Why this task rebuilt, or "" if it did not need to rebuild.
-        task._reason = ""
+        self._aio_context = contextvars.copy_context()
 
         # The "return value" for the task as a whole, or "None" if the task was successful.
-        task._error : BaseException | None = None
+        self._error : BaseException | None = None
+
+        self._skipped = False
 
         # Bookkeeping stuff
-        task._task_id : int = -1
-        task._stdout : str = ""
-        task._stderr : str = ""
-        task._cores = 0
-        task._complete = False
+        self._task_id : int = -1
+        self._stdout : str = ""
+        self._stderr : str = ""
+        self._cores = 0
+        self._complete = False
+        self._deplines = []
+
+        self.script._tasks.append(self)
 
         # ----------------------------------------
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
         # we need to queue up input tasks before this task starts (and then expands everything else)
 
-        for k, v in task.__dict__.items():
+        for k, v in self.__dict__.items():
             if k.startswith("in_"):  # noqa: SIM102
                 if isinstance(v, str):
-                    v = Expander._expand(v, task, recursive = True)
-                    task.__dict__[k] = v
+                    v = Expander._expand(v, self, recursive = True)
+                    self.__dict__[k] = v
 
         # ----------------------------------------
         # Add all input fields that are tasks to _input_tasks so we can await them later.
 
         input_tasks = []
-        for v in Utils.yield_values(task.__dict__):
+        for v in Utils.yield_values(self.__dict__):
             if isinstance(v, Task):
-                assert v is not task
+                assert v is not self
                 input_tasks.append(v)
-        task._input_tasks = input_tasks
+        self._input_tasks = input_tasks
 
         # ----------------------------------------
 
-        script._tasks.append(task)
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
-            task.queue_task()
+            self.queue_task()
 
-    def __dump__(task, key, opts : Dumper.Opts, seen):
-        new_fold = [*opts.fold, contextvars.Context, asyncio.Task]
-        new_opts = dataclasses.replace(opts, fold = new_fold)
-        return Dumper._dump_vector(key, task, task.__dict__, new_opts, seen)
-
-    # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
-    # Dicts make deep copies and we want dicts to store Tasks, so we work around it by making
-    # Tasks just return themselves when copied.
-
-    def __copy__(task):
+    def __copy__(self):
+        # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
         raise AssertionError()
 
-    def __deepcopy__(task, _):
+    def __deepcopy__(self, _):
         raise AssertionError()
 
-    # ==================================================================================================
-
-    def create_aio_task(task):
+    def create_aio_task(self):
         assert Utils.in_event_loop()
 
-        if task._aio_task is None:
-            t = asyncio.create_task(task.task_top(), context=task._aio_context)
-            setattr(t, "hancho_task", task)  # noqa: B010
+        if self._aio_task is None:
+            t = asyncio.create_task(self.task_top(), context=self._aio_context)
+            setattr(t, "hancho_task", self)  # noqa: B010
             Runner.live_aio_tasks.add(t)
             t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
-            task._aio_task = t
+            self._aio_task = t
 
-    def queue_task(task):
-        if task._enabled:
+    def queue_task(self):
+        if self._enabled:
             return
 
-        task._enabled = True
+        self._enabled = True
         Runner.tasks_enabled += 1
 
         # If this task was dynamically created during the build, add it to asyncio immediately.
         if Utils.in_event_loop():
-            task.create_aio_task()
+            self.create_aio_task()
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
         # FIXME we should pull all the upstream tasks out earlier or something
-        for input_task in task._input_tasks:
+        for input_task in self._input_tasks:
             input_task.queue_task()
 
-    async def task_top(task) -> dict | None:
+    async def task_top(self) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
-        script = cg.script
-        log = cg.log
-
         try:
-            await task.task_main()
-
-        except asyncio.CancelledError as ex:
-            task.log_task(log, Log.DEBUG, f"<asyncio.CancelledError {ex}>\n")
-            task._error = ex
-
-        except Task.BROKEN as ex:
-            task.log_task_exception(script, log, "Task broken!", ex)
-            task._error = ex
-
-        except Task.FAILED as ex:
-            task.log_task_exception(script, log, "Task failed!", ex)
-            task._error = ex
-
-        except Task.SKIPPED as ex:
-            task.log_task(log, Log.DEBUG, str(ex) + "\n")
-            task._error = ex
-
-        except Exception as ex:
-            task.log_task_exception(script, log, "Task threw an exception!", ex)
-            task._error = ex
-
+            await self.task_main()
+        except Task.SKIPPED as _:
+            self._skipped = True
+        except (Exception) as ex:
+            self._error = ex
         finally:
-            Runner.release(task._cores)
+            Runner.release(self._cores)
 
-        return task._out_files
+        if self._error:
+            #print("================")
+            self.log_task(Log.ERROR, traceback.format_exception(self._error))
+            if (self._stdout or self._stderr):
+                self.log_task(Log.ERROR, self.dump_stdout())
+            #print("================")
+            #self.log_task(Log.ERROR, traceback.format_exception(self._error))
 
-    async def task_main(task):
-        log = cg.log
-        flags = cg.flags
-        project = cg.project
+        return self._out_files
 
+    async def task_main(self):
+        # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
-        await task.await_inputs()
 
+        await self.await_inputs()
+
+        # ------------------------------------
         # We're ready to run
+
         Runner.tasks_started += 1
-        task._task_id = Runner.tasks_started
-        task.log_task(log, Log.DEBUG, Utils.instance_tag(task) + " starting\n")
+        self._task_id = Runner.tasks_started
+        self.log_task(Log.DEBUG, Utils.instance_tag(self) + " starting\n")
 
+        # ------------------------------------
         # Expand all mandatory fields in the raw config and fix raw file paths.
-        Tracer.start(task, "range", "expand_task")
-        task.expand_task()
-        Tracer.end(task, "range", "expand_task", None)
 
-        # If there's a depfile from a previous build, load it so we can use it below.
-        if task.in_depfile:
-            task._old_deplines = Utils.load_depfile(task.in_depfile, task.depformat, task.cwd)
+        Tracer.start(self, "range", "expand_task")
+        self.expand_task()
+        Tracer.end(self, "range", "expand_task", None)
 
+        # ------------------------------------
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
         # commands.
-        task.sanity_check()
 
+        self.sanity_check()
+
+        # ------------------------------------
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
-        if flags.build_dry:
+
+        if self.flags.build_dry:
             return
 
+        # ------------------------------------
         # Paths updated. See if we need to rebuild our outputs.
-        task._reason = task.rebuild_reason(project._build_reasons)
-        if not task._reason:
-            raise Task.SKIPPED(f"Task is up-to-date: {task.name} : {task.desc}")
 
+        if self.in_depfile:
+            self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
+
+        reason = self.rebuild_reason()
+        if not reason:
+            raise Task.SKIPPED(f"Skipping clean task {self.name}")
+
+        # ------------------------------------
         # Wait for enough jobs to free up to run this task.
-        task._cores = await Runner.acquire(task.job_size)
 
-        # Run all the task's commands
-        text  = repr(task.name) if task.name else ""
-        text += " : " if task.name and task.desc else ""
-        text += repr(task.desc) if task.desc else ""
-        task.log_task(log, Log.INFO,  Log.TEAL + f"Task {text}\n")
-        task.log_task(log, Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {task._reason}\n")
+        self._cores = await Runner.acquire(self.job_size)
+
+        # ------------------------------------
+        # Print what we're about to run
+
+        text  = repr(self.name) if self.name else ""
+        text += " : " if self.name and self.desc else ""
+        text += repr(self.desc) if self.desc else ""
+        self.log_task(Log.INFO,  Log.TEAL + f"Task {text}\n")
+        self.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {reason}\n")
+
+        # ------------------------------------
+        # Run all the commands
 
         time_a = time.perf_counter()
 
-        for command in task._commands:
-            if command is None:
-                continue
-            elif callable(command):
-                await task.call_callback(command)
-            else:
-                await task.run_command(command)
+        if isinstance(self.command, str):
+            await self.run_command(self.command)
+        elif isinstance(self.command, list):
+            for command in self.command:
+                await self.run_command(command)
+        elif isinstance(self.command, abc.Callable):
+            await self.call_callback(self.command)
+        elif self.command is not None:
+            raise TypeError(type(self.command))
 
         time_b = time.perf_counter()
 
-        task.log_task(log, Log.DEBUG, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
+        self.log_task(Log.DEBUG, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
 
+        # ------------------------------------
         # See if the task wrote all its output files
-        for file in Utils.yield_values(task._out_files):
+
+        for file in Utils.yield_values(self._out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
+        # ------------------------------------
+        # Update the repo stat db
+
+        for file in Utils.yield_values([self._in_files, self._deplines]):
+            self.repo.update_stat(file, None)
+
+        for file in Utils.yield_values(self._out_files):
+            self.repo.update_stat(file, self.command)
+
         # And we're done
 
-    async def await_inputs(task):
+    async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for input_task in task._input_tasks:
+        for input_task in self._input_tasks:
             if not isinstance(input_task, Task):
                 raise TypeError(f"Input task is not a task, it's a {type(input_task)!r}")
 
@@ -2289,24 +2243,21 @@ class Task(Scope):
             await input_task._aio_task
 
             if not isinstance(input_task._error, (Task.SKIPPED, types.NoneType)):
-                raise Task.CANCELLED(f"Task {hex(id(task))} is cancelled due to {input_task._error}")
+                raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
-    def expand_task(task):
-        log = cg.log
-        flags = cg.flags
-
-        if log.level <= Log.DEBUG:
-            task.log_task(log, Log.DEBUG, "Task before expand:\n")
-            task.log_task(log, Log.DEBUG, Dumper.dump(task, fold=[Task], dump_private = False) + "\n")
+    def expand_task(self):
+        if self.log.level <= Log.DEBUG:
+            self.log_task(Log.DEBUG, "Task before expand:\n")
+            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = False) + "\n")
 
         # We eval these first because we need them for filename expansion
 
-        script_root = task.expand("{script.root}")
-        build_root  = task.expand("{build_root}")
+        script_root = self.expand("{script.root}")
+        build_root  = self.expand("{build_root}")
 
-        Tracer.start(task, "range", "expand io fields")
+        Tracer.start(self, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
-        io_fields = [k for k in task.__dict__ if k.startswith("in_") or k.startswith("out_")]
+        io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
         for field_name in io_fields:
             # if task is a scope, then flattening in_files produces an array of the _attributes_
@@ -2322,48 +2273,47 @@ class Task(Scope):
                     else:
                         yield x
 
-            file_tree = cast(branch[str | Task], getattr(task, field_name))
+            file_tree = cast(branch[str | Task], getattr(self, field_name))
             files : list[str] = list(yield_files(file_tree))
 
             if files:
-                files = task.expand(files, recursive = True)
-                files = task.fix_paths(field_name, files, script_root, build_root)
-                setattr(task, field_name, files[0] if len(files) == 1 else files)
+                files = self.expand(files, recursive = True)
+                files = self.fix_paths(field_name, files, script_root, build_root)
+                setattr(self, field_name, files[0] if len(files) == 1 else files)
 
                 if field_name == "in_depfile":
                     if len(files) > 1:
                         raise Task.BROKEN("in_depfile can't be a list")
                 elif field_name.startswith("in_"):
-                    task._in_files[field_name] = files
+                    self._in_files[field_name] = files
                 elif field_name.startswith("out_"):
-                    task._out_files[field_name] = files
-        Tracer.end(task, "range", "expand io fields", None)
+                    self._out_files[field_name] = files
+
+        Tracer.end(self, "range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
-        Tracer.start(task, "range", "expand_task")
-        for key, val in task.__dict__.items():
+        Tracer.start(self, "range", "expand_task")
+        for key, val in self.__dict__.items():
             if is_public(key):
-                setattr(task, key, Expander._expand(val, task, recursive = True))
-        Tracer.end(task, "range", "expand_task", None)
+                setattr(self, key, Expander._expand(val, self, recursive = True))
+        Tracer.end(self, "range", "expand_task", None)
 
-        task._commands = Utils.flatten_tree(task.command)
-
-        if not flags.build_dry:
-            for files in task._out_files.values():
+        if not self.flags.build_dry:
+            for files in self._out_files.values():
                 for file in files:
                     os.makedirs(os.path.dirname(file), exist_ok=True)
-            if task.in_depfile:
-                os.makedirs(os.path.dirname(task.in_depfile), exist_ok=True)
+            if self.in_depfile:
+                os.makedirs(os.path.dirname(self.in_depfile), exist_ok=True)
 
-        if log.level <= Log.DEBUG:
-            task.log_task(log, Log.DEBUG, "Task after expand:\n")
-            task.log_task(log, Log.DEBUG, Dumper.dump(task, fold=[Task], dump_private = False) + "\n")
+        if self.log.level <= Log.DEBUG:
+            self.log_task(Log.DEBUG, "Task after expand:\n")
+            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = False) + "\n")
 
-    def fix_paths(task : Task, field : str, files : list[str], script_root : str, build_root : str) -> list[str]:
-        return [task.fix_path(field, f, script_root, build_root) for f in files]
+    def fix_paths(self, field : str, files : list[str], script_root : str, build_root : str) -> list[str]:
+        return [self.fix_path(field, f, script_root, build_root) for f in files]
 
-    def fix_path(task : Task, field : str, file : str, script_root : str, build_root : str) -> str:
+    def fix_path(self, field : str, file : str, script_root : str, build_root : str) -> str:
         """
         Input and output file paths in .hancho scripts are declared relative to the directory the
         script is in (stored in the config under 'script_cwd').
@@ -2389,81 +2339,96 @@ class Task(Scope):
 
         return file
 
-    def sanity_check(task):
-        repo = cg.repo
-        flags = cg.flags
-        project = cg.project
-
+    def sanity_check(self):
         # Check for all task issues that break the build
 
-        if not Path.exists(task.cwd):
-            raise Task.BROKEN(f"Task working directory '{task.cwd}' does not exist")
+        if not Path.exists(self.cwd):
+            raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
 
-        if not Path._startswith(task.build_root, repo.root):
-            raise Task.BROKEN(f"The build root {task.build_root} is not under repo.root {repo.root}")
+        if not Path._startswith(self.build_root, self.repo.root):
+            raise Task.BROKEN(f"The build root {self.build_root} is not under repo.root {self.repo.root}")
 
-        # Check that task's commands are either strings or callables.
-        for command in task._commands:
-            if not isinstance(command, str) and not callable(command) and command is not None:
-                raise Task.BROKEN(f"Command {command} is not a string or a callable?")
-
-        # In order to provide the least amount of bafflement to users, CLI commands execute
-        # from task_cwd (which is usually the root of the repo, the most common cwd)
-        # and callbacks execute from dir(script_path) (because you expect to be in the same
-        # directory as the script when the callback is firing).
-
-        # This means that pre-relative-ified paths can only be rel'd to one of the two cwds, not both.
-        # And that means we disallow mixed cli/callback command lists.
-
-        for command in task._commands:
-            if type(command) is not type(task._commands[0]):
-                raise Task.BROKEN(f"Commands aren't the same type: {task.command}")
+        if isinstance(self.command, list):
+            for command in Utils.yield_values(self.command):
+                if not isinstance(command, str):
+                    raise Task.BROKEN(f"Command is not a list of strings: {self.command}")
+        elif not isinstance(self.command, (str, abc.Callable)):
+            raise Task.BROKEN(f"Command is not a string or callable: {self.command}")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if flags.strict:
-            for command in task._commands:
+        if self.flags.strict:
+            for command in Utils.yield_values(self.command):
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
 
-        io_fields = [k for k in task.__dict__ if k.startswith("in_") or k.startswith("out_")]
+        io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
         for field_name in io_fields:
             if field_name.startswith("out_"):
-                files = getattr(task, field_name)
+                files = getattr(self, field_name)
                 for file in Utils.yield_values(files):
-                    if not Path._startswith(file, task.build_root):
-                        raise Task.BROKEN(f"Path error, output file {field_name}:{file} is not under build root {task.build_root}")
+                    if not Path._startswith(file, self.build_root):
+                        raise Task.BROKEN(f"Path error, output file {field_name}:{file} is not under build root {self.build_root}")
 
 
         # Check that all build files would end up under build_root
-        for file in Utils.yield_values(task._out_files):
+        for file in Utils.yield_values(self._out_files):
             assert Path.isabs(file)
-            if not Path._startswith(file, task.build_root):
-                raise Task.BROKEN(f"Path error, output file _out_files:{file} is not under build root {task.build_root}")
+            if not Path._startswith(file, self.build_root):
+                raise Task.BROKEN(f"Path error, output file _out_files:{file} is not under build root {self.build_root}")
 
         # Check for task collisions
-        for file in Utils.yield_values(task._out_files):
+        for file in Utils.yield_values(self._out_files):
             real_file = cast(str, Path.abspath(file))
-            if real_file in project._real_filenames:
+            if real_file in self.project._real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            project._real_filenames.add(real_file)
+            self.project._real_filenames.add(real_file)
 
         # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
-        for file in Utils.yield_values(task._in_files):
+        for file in Utils.yield_values(self._in_files):
             if not Path.isabs(file):
                 raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")
-            if not Path.exists(file) and not flags.build_dry:
+            if not Path.exists(file) and not self.flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
-        if isinstance(task.in_depfile, list) and len(task.in_depfile) > 1:
-            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {task.in_depfile}")
+        if isinstance(self.in_depfile, list) and len(self.in_depfile) > 1:
+            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.in_depfile}")
 
-    async def run_command(task : Task, command : str):
-        repo = cg.repo
-        log = cg.log
+    def rebuild_reason(self) -> str:
+        """Figures out why we have to run a Task, or returns "" if we don't."""
 
-        task.log_task(log, Log.INFO, f"{Path.relpath(task.cwd, repo.root)}$ {command}\n")
+        # ------------------------------------
+        # Check the trivial reasons to rebuild
+
+        if self.build_force:
+            return "Task forced to rebuild"
+
+        if not any(Utils.yield_values(self._in_files)):
+            return "Always rebuild a task with no inputs"
+
+        if not any(Utils.yield_values(self._out_files)):
+            return "Always rebuild a task with no outputs"
+
+        # ------------------------------------
+        # Check for file modifications
+
+        all_files = [self._in_files, self._out_files, self._deplines]
+
+        for file in Utils.yield_values(all_files):
+            if not os.path.isfile(file):
+                return f"File missing: {file!r}"
+            if reason := self.repo.stat_changed2 (file):
+                return reason
+
+        for file in Utils.yield_values(self._out_files):
+            if self.repo.command_changed(file, self.command):
+                return f"Command mismatch for {file!r}"
+
+        return ""
+
+    async def run_command(self : Task, command : str):
+        self.log_task(Log.INFO, f"{Path.relpath(self.cwd, self.repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2474,7 +2439,7 @@ class Task(Scope):
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
                 curly_command,
-                cwd    = task.cwd,
+                cwd    = self.cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
                 start_new_session = True
@@ -2502,109 +2467,57 @@ class Task(Scope):
             # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
-        task._stdout = stdout_data.decode(errors="replace")
-        task._stderr = stderr_data.decode(errors="replace")
+        self._stdout = stdout_data.decode(errors="replace")
+        self._stderr = stderr_data.decode(errors="replace")
 
         if proc.returncode == 2:
             raise Task.BROKEN("Command return code was 2 : bash error")
         elif proc.returncode:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
-        if (task._stdout or task._stderr):
-            task.log_task(log, Log.DEBUG, task.dump_stdout())
+        if (self._stdout or self._stderr):
+            self.log_task(Log.DEBUG, self.dump_stdout())
 
-    async def call_callback(task : Task, command : task_callback):
-        script = cg.script
-        repo = cg.repo
-        log = cg.log
-
-        callback_dir = Path.relpath(script.root, repo.root)
-        task.log_task(log, Log.INFO, f"{callback_dir}$ {command}\n")
+    async def call_callback(self : Task, command : task_callback):
+        callback_dir = Path.relpath(self.script.root, self.repo.root)
+        self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
 
-        with chdir(script.root):
-            result = command(task)
+        with chdir(self.script.root):
+            result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
         # but apparently that's just how Python waitables work.
         if inspect.isawaitable(result):
             result = await result
 
-    def rebuild_reason(task, build_reasons) -> str:
-        """Figures out why we have to run a Task, or returns "" if we don't."""
-
-        repo = cg.repo
-
-        # ------------------------------------
-        # Check the trivial reasons to rebuild
-
-        if task.build_force:
-            build_reasons["forced"] += 1
-            return "Target forced to rebuild"
-
-        has_input = any(Utils.yield_values(task._in_files))
-        if not has_input:
-            build_reasons["no inputs"] += 1
-            return "Always rebuild a target with no inputs"
-
-        has_output = any(Utils.yield_values(task._out_files))
-        if not has_output:
-            build_reasons["no outputs"] += 1
-            return "Always rebuild a target with no outputs"
-
-        # ------------------------------------
-
-        for filename in Utils.yield_values(task._in_files):
-            if reason := repo.check_stats(filename, [], build_reasons):
-                return reason
-
-        for filename in task._old_deplines:
-            if reason := repo.check_stats(filename, [], build_reasons):
-                return reason
-
-        for filename in Utils.yield_values(task._out_files):
-            if reason := repo.check_stats(filename, task.command, build_reasons):
-                return reason
-
-        if task.in_depfile and (reason := repo.check_stats(task.in_depfile, [], build_reasons)):
-            return reason
-
-        build_reasons["*task clean"] += 1
-        return ""
-
-    def dump_stdout(task : Task) -> str:
+    def dump_stdout(self : Task) -> str:
         result = ""
-        if task._stdout:
+        if self._stdout:
             result += "---------------- Stdout ----------------\n"
-            result += task._stdout.strip() + "\n"
-        if task._stderr:
+            result += self._stdout.strip() + "\n"
+        if self._stderr:
             result += "---------------- Stderr ----------------\n"
-            result += task._stderr.strip() + "\n"
-        if task._stdout or task._stderr:
+            result += self._stderr.strip() + "\n"
+        if self._stdout or self._stderr:
             result += "----------------------------------------\n"
         return result
 
-    def log_task(task : Task, log : Log, level : int, message : str):
+    def log_task(self : Task, level : int, message : str | list[str]):
         # Log helper that adds the [ NN/ XX] tag before the log line.
-        for line in message.splitlines(keepends=True):
-            if not log._line_buffer:
-                log._log(level, f"[{task._task_id:3d}/{Runner.tasks_enabled:3d}] ")
-            log._log(level, line)
 
-    def log_task_exception(task : Task, script, log : Log, message, ex = None):
-        log.error("========================================\n")
-        log.error(message + "\n")
-        log.error("========================================\n")
-        log.error(f"Script    = {script.path}:\n")
-        log.error(f"Task      = {task.name!r} : {task.desc!r}\n")
-        log.error(f"os.getcwd = {os.getcwd()}\n")
-        log.error(f"task cwd  = {task.cwd}\n")
-        log.error(f"command   = {task.command}\n")
-        log.exception(ex)
-        log.error(task.dump_stdout())
-        log.error("========================================\n")
+        color = Log.YELLOW if level > Log.INFO else ""
+
+        all_lines = []
+        for chunk in Utils.yield_values(message):
+            all_lines.extend(chunk.splitlines(keepends = True))
+
+        for line in all_lines:
+            if not self.log._line_buffer:
+                self.log._log(level, "", f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
+            self.log._log(level, color, line)
 
 # endregion
 # ==================================================================================================
@@ -2612,8 +2525,6 @@ class Task(Scope):
 
 # This is not a types.ModuleType, but it still works fine as one. Making it a ModuleType is a bit
 # annoying to work with.
-
-# globals = flags, log, project, repo, script
 
 class Script(Scope):
 
@@ -2623,17 +2534,18 @@ class Script(Scope):
         # FIXME - do we want to force users to import hancho? so they get type
         # checking and stuff?
 
+        script.name       = name
+        script.path       = path
+        script.root       = root
+        script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
+
         script.hancho  = sys.modules[__name__]
         script.flags   = flags
         script.log     = log
         script.project = project
         script.repo    = repo
         script.script  = script
-
-        script.name       = name
-        script.path       = path
-        script.root       = root
-        script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
+        script.aliases = aliases
 
         Utils.merge_variants(script, *args, **kwargs)
 
@@ -2651,66 +2563,35 @@ class Script(Scope):
     def __getitem__(self, key):
         return self.__dict__[key]
 
-    def __getattr__(self, key):
-        try:
-            return self.__dict__[key]
-        except KeyError as err:
-            raise AttributeError(key) from err
+    def __getattr__(self, key) -> Any:
+        return object.__getattribute__(self, key)
 
-    def dump(script, *args, **kwargs):
+    def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
-#    @staticmethod
-#    def load2(*args, flags : Flags, log : Log, project : Project, repo : Repo, name : str, path : str, root : str, **kwargs) -> Script:
-#        assert Path._is_resolved(path)
-#        assert Path._is_resolved(root)
-#
-#        # ------------------------------------
-#
-#        script = Script(flags, log, project, repo, name, path, root, *args, **kwargs)
-#
-#        if dupe := project._dedupe.get(dedupe_key, None):
-#            return dupe
-#        else:
-#            project._dedupe[dedupe_key] = script
-#
-#        repo._scripts.append(script)
-#
-#        # we do _not exec here, as dummy test scripts have nothing to exec.
-#
-#        return script
+    def exec(self : Script):
+        assert self.path.endswith(".hancho")
 
-    # ----------------------------------------
+        self.log.debug(Log.ORANGE + f"script {self.path}\n")
 
-    def _log_script_error(script, log, frame, condition, message):
-        log.error(f"Script {condition}:\n")
-        log.error(f"  text = '{message}'\n")
-        log.error(f"  file = {frame.f_code.co_filename}\n")
-        log.error(f"  func = {frame.f_code.co_name}\n")
-        log.error(f"  line = {frame.f_lineno}\n")
+        with self.log.indenter(Log.DEBUG, Log.ORANGE):
+            code = None
+            with open(self.path, encoding="utf-8") as file:
+                source = file.read()
+                code = compile(source, self.path, "exec", dont_inherit=True)
 
-    def exec(script : Script):
-        assert script.path.endswith(".hancho")
+            with chdir(self.root), current_script.set(self):
+                exec(code, self.__dict__)
 
-        log = cg.log
-        log.debug(Log.ORANGE + f"Script.exec({script.path})\n")
+            if "__builtins__" in self.__dict__:
+                del self.__dict__["__builtins__"]
 
-        code = None
-        with open(script.path, encoding="utf-8") as file:
-            source = file.read()
-            code = compile(source, script.path, "exec", dont_inherit=True)
-
-        with chdir(script.root), cg.set(script), log.indenter(Log.ORANGE):
-            exec(code, script.__dict__)
-
-        if "__builtins__" in script.__dict__:
-            del script.__dict__["__builtins__"]
-
-        log.debug(Log.ORANGE + f"Script.exec({script.path}) done\n")
+        #self.log.debug(Log.ORANGE + f"└─ script {self.path} done\n")
+        #self.log.debug(Log.ORANGE + f"└─ script done\n")
 
 # endregion
 # ==================================================================================================
-# region main
+# region create_test_script
 
 def create_test_script(*, name, file : str, root : str, stdout : str | typing.TextIO, extra_flags) -> Script:
     flags = Flags.parse(
@@ -2720,6 +2601,7 @@ def create_test_script(*, name, file : str, root : str, stdout : str | typing.Te
         *extra_flags
     )
     Utils.reset()
+    Repo.reset()
     Runner.reset(flags)
 
     log = Log(flags, stdout)
@@ -2728,27 +2610,24 @@ def create_test_script(*, name, file : str, root : str, stdout : str | typing.Te
     args = ()
     kwargs = {}
 
+    current_script.set(Dict(flags = flags, log = log))
+
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
     assert " _" not in dedupe_key
 
-    project = Project(flags.name, flags.path, flags.root, flags.targets)
+    project = Project(flags, log, flags.name, flags.path, flags.root, flags.targets)
 
-    cg.set(Dict(
-        flags   = flags,
-        log     = log,
-        project = project,
-    ))
-
-    repo = Repo(flags.name, flags.path, flags.root, log)
+    repo = Repo(flags, log, project, flags.name, flags.path, flags.root)
     project._repos.append(repo)
 
     script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
     repo._scripts.append(script)
     project._dedupe[dedupe_key] = script
 
+    current_script.set(script)
+
     # do _not_ exec the dummy script
-    cg.set(script)
 
     return script
 
@@ -2760,17 +2639,20 @@ def main():
     flags = Flags.parse(*sys.argv)
 
     Utils.reset()
+    Repo.reset()
     Runner.reset(flags)
 
+    # ┌─
+    # └─
+
     log = Log(flags, sys.stdout)
-    log.info(f"Command line : {" ".join(sys.argv)}\n")
+    log.debug(f"Command line : {" ".join(sys.argv)}\n")
     log.trace("Trace mode on\n")
     log.debug("Debug mode on\n")
-    log.debug(Log.ORANGE + f"main() loading {flags.path}\n")
-
-
     args = ()
     kwargs = {}
+
+    current_script.set(Dict(flags = flags, log = log))
 
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
@@ -2780,33 +2662,33 @@ def main():
 
     time_a1 = time.perf_counter()
 
-    project = Project(flags.name, flags.path, flags.root, flags.targets)
+    project = Project(flags, log, flags.name, flags.path, flags.root, flags.targets)
 
-    cg.set(Dict(
-        flags   = flags,
-        log     = log,
-        project = project,
-    ))
+    log.debug(Log.ORANGE + f"project {project.path}\n")
+    with log.indenter(Log.DEBUG, Log.ORANGE):
 
-    repo = Repo(flags.name, flags.path, flags.root, log)
-    project._repos.append(repo)
+        repo = Repo(flags, log, project, flags.name, flags.path, flags.root)
+        project._repos.append(repo)
 
-    script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
-    project._dedupe[dedupe_key] = script
-    repo._scripts.append(script)
+        log.debug(Log.ORANGE + f"repo {repo.path}\n")
+        with log.indenter(Log.DEBUG, Log.ORANGE):
+            script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
+            project._dedupe[dedupe_key] = script
+            repo._scripts.append(script)
+            script.exec()
+        #log.debug(Log.ORANGE + f"└─ repo loading took {{time_b1 - time_a1:8.6f}} seconds\n")
+        #log.debug(Log.ORANGE + "└─ repo done\n")
 
-    script.exec()
+        time_b1 = time.perf_counter()
 
-    time_b1 = time.perf_counter()
-    log.info(Log.BLUE + f"Loading project took {time_b1 - time_a1:8.6f} seconds\n")
+    #log.debug(Log.ORANGE + "└─ project done\n")
+    log.debug(f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
 
-    cg.set(script)
-
-    project.build(log, flags)
-    project.stats(log)
-    project.passfail(log)
+    project.build()
+    project.stats()
+    project.passfail()
 
     log._flush()
     return project._result
@@ -2833,6 +2715,7 @@ def _start():
 # region User API
 
 aliases = Dict(
+    name     = "aliases",
     Dict     = Dict,
     Task     = Task,
     Tool     = Tool,
@@ -2854,26 +2737,22 @@ aliases = Dict(
     swapext  = Path.swapext,
 )
 
-cg = ContextGlobals()
+current_script = contextvars.ContextVar("current_script")
 
 path = __file__
 root = os.path.dirname(path)
 
 sys.modules["hancho"] = sys.modules[__name__]
 
-class EarlyOut(Exception): pass
-class Fail(Exception): pass
-class Abort(Exception): pass
-
 def script(file, root = None, *args, **kwargs):
-    old_script = cg.get()
+    old_script = current_script.get()
     flags   = old_script.flags
     log     = old_script.log
     project = old_script.project
     repo    = old_script.repo
 
-    path = Path._resolve(cg.script.expand(file))
-    root = Path._resolve(cg.script.expand(root or os.path.dirname(path)))
+    path = Path._resolve(old_script.expand(file))
+    root = Path._resolve(old_script.expand(root or os.path.dirname(path)))
     name = os.path.basename(path)
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
@@ -2882,8 +2761,8 @@ def script(file, root = None, *args, **kwargs):
     if dupe := project._dedupe.get(dedupe_key, None):
         log.debug(Log.LIME + f"Deduped script('{path}')\n")
         return dupe
-    else:
-        log.debug(Log.ORANGE + f"Loading script({path})\n")
+    #else:
+    #    log.debug(Log.ORANGE + f"Loading script({path})\n")
 
     script = Script(flags, log, project, repo, name, path, root)
     project._dedupe[dedupe_key] = script
@@ -2894,14 +2773,14 @@ def script(file, root = None, *args, **kwargs):
 
 # FIXME this should just exec the included script using the __dict__ of old_script
 def include(file, root = None, *args, **kwargs):
-    old_script = cg.get()
+    old_script = current_script.get()
     flags   = old_script.flags
     log     = old_script.log
     project = old_script.project
     repo    = old_script.repo
 
-    path = Path._resolve(cg.script.expand(file))
-    root = Path._resolve(cg.script.expand(root or os.path.dirname(path)))
+    path = Path._resolve(old_script.expand(file))
+    root = Path._resolve(old_script.expand(root or os.path.dirname(path)))
     name = os.path.basename(path)
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
@@ -2910,8 +2789,8 @@ def include(file, root = None, *args, **kwargs):
     if dupe := project._dedupe.get(dedupe_key, None):
         log.debug(Log.LIME + f"Deduped include('{path}')\n")
         return dupe
-    else:
-        log.debug(Log.ORANGE + f"Loading include({path})\n")
+    #else:
+    #    log.debug(Log.ORANGE + f"Loading include({path})\n")
 
     script = Script(flags, log, project, repo, name, path, root)
     project._dedupe[dedupe_key] = script
@@ -2921,13 +2800,14 @@ def include(file, root = None, *args, **kwargs):
     return script
 
 def repo(file, root = None, *args, **kwargs) -> Script:
-    old_script = cg.get()
+    old_script = current_script.get()
+
     flags   = old_script.flags
     log     = old_script.log
     project = old_script.project
 
-    path = Path._resolve(cg.script.expand(file))
-    root = Path._resolve(cg.script.expand(root or os.path.dirname(path)))
+    path = Path._resolve(old_script.expand(file))
+    root = Path._resolve(old_script.expand(root or os.path.dirname(path)))
     name = os.path.basename(path)
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
@@ -2936,42 +2816,21 @@ def repo(file, root = None, *args, **kwargs) -> Script:
     if dupe := project._dedupe.get(dedupe_key, None):
         log.debug(Log.LIME + f"Deduped repo('{path}')\n")
         return dupe
-    else:
-        log.debug(Log.ORANGE + f"Loading repo({path})\n")
+    #else:
+    #    log.debug(Log.ORANGE + f"Loading repo({path})\n")
 
-    new_repo = Repo(name, path, root, log)
-    project._repos.append(new_repo)
+    repo = Repo(flags, log, project, name, path, root)
+    project._repos.append(repo)
 
-    script = Script(flags, log, project, new_repo, name, path, root)
+    script = Script(flags, log, project, repo, name, path, root)
     project._dedupe[dedupe_key] = script
-    new_repo._scripts.append(script)
+    repo._scripts.append(script)
 
     script.exec()
     return script
 
 def build():
-    log = cg.log
-    flags = cg.flags
-    project = cg.project
-    return project.build(log, flags)
-
-def fail(message):
-    log = cg.log
-    script = cg.script
-    script._log_script_error(log, sys._getframe(1), "failed", message)
-    raise Fail(message)
-
-def abort(message):
-    log = cg.log
-    script = cg.script
-    script._log_script_error(log, sys._getframe(1), "aborted", message)
-    raise Abort(message)
-
-def earlyout(message = ""):
-    log = cg.log
-    script = cg.script
-    script._log_script_error(log, sys._getframe(1), "exited early", message)
-    raise EarlyOut(message)
+    return current_script.get().project.build()
 
 # endregion
 # ==================================================================================================

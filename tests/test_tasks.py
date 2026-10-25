@@ -43,7 +43,7 @@ class TestTasks(unittest.TestCase):
         self.reset(*args)
 
     def tearDown(self):
-        hancho.cg.log._flush()
+        self.script.log._flush()
 
     def reset(self, *args):
         self.script = hancho.create_test_script(
@@ -54,6 +54,7 @@ class TestTasks(unittest.TestCase):
             extra_flags = [
                 "--log_level=critical",
                 #"--log_level=trace",
+                #"--log_level=debug",
                 "--log_wrap=True",
                 "--max_errors=999",
                 *args

@@ -1,35 +1,51 @@
-⊞ :Dict@0x15E0
-├─⊟ repo:Dict@0x2F70
-│ ├── name = '<repo>',
-│ ├── root = '/home/aappleby/repos/hancho/scratch',
-│ ├── build_dir = '/home/aappleby/repos/hancho/scratch/build',
-│ ├── build_tag = '',
-│ ├── targets = [],
-│ ├─⊟ targets = [],
-│ │ ├── thing1
-│ │ ├── thing1
-│ │ └── thing3
-│ ├── build_force = False,
-│ ├── build_all = False,
-│ ├── dry_run = False,
-│ └── strict = True
-├─⊟ script:Dict@0xE710
-│ ├── name = '<script>',
-│ ├── path = '/home/aappleby/repos/hancho/scratch/build.hancho',
-│ └── root = '/home/aappleby/repos/hancho/scratch'
-├─⊟ task:Dict@0xAB10
-│ ├── name = '<no name>',
-│ ├── desc = '<no desc>',
-│ ├── command = None,
-│ ├── cwd = '{repo.root}',
-│ ├── in_depfile = '',
-│ ├── depformat = 'gcc',
-│ ├── job_size = 1,
-│ ├── build_dir = '{join(repo.build_dir, relpath(script.root, repo.root))}',
-│ ├── dry_run = '{repo.dry_run}',
-│ └── force = '{repo.build_force}'
-├─⊞ flarp
-└── name = '<top>'
+┌┬┐
+├┼┤
+└┴┘
+│─
+
+┌┄┐
+┆ ┆
+└┄┘
+
+╭╮
+╰╯
+
+╱╳╲
+╲╳╱
+
+├──╸:Dict@0x15E0
+├──╸sdlkfsldkfjs = laksdlfjaksd
+├──┬── repo:Dict@0x2F70
+│  ├── name = '<repo>',
+│  ├── root = '/home/aappleby/repos/hancho/scratch',
+│  ├── build_dir = '/home/aappleby/repos/hancho/scratch/build',
+│  ├── build_tag = '',
+│  ├── targets = [],
+│  ├──┬── targets = [],
+│  │  ├── thing1
+│  │  ├── thing1
+│  │  ╰── thing3
+│  ├── build_force = False,
+│  ├── build_all = False,
+│  ├── dry_run = False,
+│  ╰── strict = True
+├──┬── script:Dict@0xE710
+│  ├── name = '<script>',
+│  ├── path = '/home/aappleby/repos/hancho/scratch/build.hancho',
+│  ╰── root = '/home/aappleby/repos/hancho/scratch'
+├──┬── task:Dict@0xAB10
+│  ├── name = '<no name>',
+│  ├── desc = '<no desc>',
+│  ├── command = None,
+│  ├── cwd = '{repo.root}',
+│  ├── in_depfile = '',
+│  ├── depformat = 'gcc',
+│  ├── job_size = 1,
+│  ├── build_dir = '{join(repo.build_dir, relpath(script.root, repo.root))}',
+│  ├── dry_run = '{repo.dry_run}',
+│  ╰── force = '{repo.build_force}'
+├── flarp
+╰── name = '<top>'
 
 
 ⊕⊖⊗⊘⊙⊚⊛⊜⊝⦿
@@ -84,3 +100,51 @@
 
 
 ┬
+
+
+⊞⊟⊠⊡
+
+
+⊟ project /home/aappleby/repos/hancho/scratch/build.hancho
+├─ Loading stat_db /home/aappleby/repos/hancho/scratch/build/hancho.json
+╰─⊟ repo /home/aappleby/repos/hancho/scratch/build.hancho
+  ╰─⊟ script /home/aappleby/repos/hancho/scratch/build.hancho
+    ├─⊡ lksdjfs
+    ├─⊟ script /home/aappleby/repos/hancho/tools/tools_base.hancho
+    ╰─⊟ script /home/aappleby/repos/hancho/tools/tools_fpga.hancho
+      │ Deduped include('/home/aappleby/repos/hancho/tools/tools_base.hancho')
+
+┌┬┐
+├┼┤
+└┴┘
+│─
+
+┌─┬┐
+│ ││
+├─┼┤
+└─┴┘
+
+┌┄┐
+┆ ┆
+└┄┘
+
+╭╮
+╰╯
+
+╱╳╲
+╲╳╱
+
+
+
+Official Unicode Consortium code chart (PDF)
+       0 1 2 3 4 5 6 7 8 9 A B C D E F
+U+250x ─ ━ │ ┃ ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ┌ ┍ ┎ ┏
+U+251x ┐ ┑ ┒ ┓ └ ┕ ┖ ┗ ┘ ┙ ┚ ┛ ├ ┝ ┞ ┟
+U+252x ┠ ┡ ┢ ┣ ┤ ┥ ┦ ┧ ┨ ┩ ┪ ┫ ┬ ┭ ┮ ┯
+U+253x ┰ ┱ ┲ ┳ ┴ ┵ ┶ ┷ ┸ ┹ ┺ ┻ ┼ ┽ ┾ ┿
+U+254x ╀ ╁ ╂ ╃ ╄ ╅ ╆ ╇ ╈ ╉ ╊ ╋ ╌ ╍ ╎ ╏
+U+255x ═ ║ ╒ ╓ ╔ ╕ ╖ ╗ ╘ ╙ ╚ ╛ ╜ ╝ ╞ ╟
+U+256x ╠ ╡ ╢ ╣ ╤ ╥ ╦ ╧ ╨ ╩ ╪ ╫ ╬ ╭ ╮ ╯
+U+257x ╰ ╱ ╲ ╳ ╴ ╵ ╶ ╷ ╸ ╹ ╺ ╻ ╼ ╽ ╾ ╿
+Notes
+1.^As of Unicode version 18.0
