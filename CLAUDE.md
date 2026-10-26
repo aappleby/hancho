@@ -150,12 +150,11 @@ Roughly, in `Task.task_main` / `task_init`:
    command (a typo guard).
 5. Decide whether to rebuild (`rebuild_reason`): forced rebuild; no inputs or no outputs
    (always rebuild); a missing output; any input/loaded-script/`hancho.py`/depfile entry
-   newer than the oldest output. Empty reason -> `Task.SKIPPED`.
+   newer than the oldest output. Empty reason -> task._skipped = True
 6. Acquire cores from the job pool, then run each command in order.
 
-Task outcome exceptions: `SKIPPED` (up to date), `CANCELLED` (a dependency failed or build
-aborted), `FAILED` (command/exception at runtime), `BROKEN` (misconfigured task, caught
-during init).
+Task outcome exceptions: `CANCELLED` (a dependency failed or build aborted), `FAILED`
+(command/exception at runtime), `BROKEN` (misconfigured task, caught during init).
 
 ### The job pool / Runner
 - `Runner` owns all tasks and an asyncio `Semaphore` sized to `max_jobs`

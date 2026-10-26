@@ -35,7 +35,7 @@
       "request" : "launch",
       "module"  : "unittest",
       "console" : "internalConsole",
-      "args"    : ["tests.test_tasks.TestTasks.test_input_changed", "-vvv"],
+      "args"    : ["tests.test_tasks.TestTasks.test_jobs", "-vvv"],
       "preLaunchTask" : "wipe_test_build",
     },
 

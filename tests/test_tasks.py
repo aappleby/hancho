@@ -53,8 +53,8 @@ class TestTasks(unittest.TestCase):
             stdout = sys.stdout,
             extra_flags = [
                 "--log_level=critical",
-                #"--log_level=trace",
                 #"--log_level=debug",
+                #"--log_level=trace",
                 "--log_wrap=True",
                 "--max_errors=999",
                 *args
@@ -188,10 +188,7 @@ class TestTasks(unittest.TestCase):
         def run():
             self.reset()
             hancho.Task(
-                command=[
-                    lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task.out_obj),
-                ],
+                command= lambda task : (time.sleep(0.1), force_touch(task.out_obj)),
                 in_src=[],
                 out_obj="result.txt",
             )
@@ -241,10 +238,7 @@ class TestTasks(unittest.TestCase):
             hancho.Task(
                 desc="test_dep_changed {in_src}",
                 #command="sleep 0.1 && touch {out_obj}",
-                command = [
-                    lambda task : time.sleep(0.1),
-                    lambda task : force_touch(task.out_obj),
-                ],
+                command = lambda task : (time.sleep(0.1),force_touch(task.out_obj)),
                 in_temp=dummy,
                 in_src="src/test.cpp",
                 out_obj="result.txt",
@@ -602,10 +596,7 @@ class TestTasks(unittest.TestCase):
 
         hancho.Task(
             desc="********** I am the slow task, I eat all the cores **********",
-            command=[
-                lambda task : force_touch(task.out_obj),
-                lambda task : time.sleep(0.3)
-            ],
+            command=lambda task : (force_touch(task.out_obj), time.sleep(0.3)),
             job_size=os.cpu_count(),
             in_src=[],
             out_obj="slow_result.txt",
@@ -678,8 +669,8 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(hancho.Runner.tasks_skipped, 0)
 
         (task1, task2) = run()
-        self.assertTrue(isinstance(task1._error, hancho.Task.SKIPPED))
-        #self.assertTrue(task2._error is None)
+        self.assertTrue(task1._skipped)
+        self.assertTrue(task2._error is None)
         self.assertTrue(Path("build/blerp/sherp").exists())
         self.assertTrue(Path("build/blerp/nerp").exists())
         mtime1b = mtime_ns("build/blerp/sherp")

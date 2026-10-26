@@ -1947,9 +1947,10 @@ class Repo(Scope):
 
     def update_stat(self, file, command):
         new_stat = self.get_stat(file)
-        new_stat['command'] = Dumper.depointer(repr(command))
+        new_stat['command'] = Dumper.depointer(repr(command)) if command is not None else None
         if file in self._stat_db:
-            Utils.merge_variant(self._stat_db[file], new_stat)
+            old_stat = self._stat_db[file]
+            self._stat_db[file] = Utils.merge_variant(old_stat, new_stat)
         else:
             self._stat_db[file] = new_stat
 
@@ -1979,11 +1980,7 @@ class Repo(Scope):
 
     def command_changed(self, file, command):
         old_command = self._stat_db[file]['command']
-        #new_command = Utils.command_to_string(command)
         new_command = Dumper.depointer(repr(command))
-        #print()
-        #print(old_command)
-        #print(new_command)
         return old_command != new_command
 
 # endregion
@@ -1996,7 +1993,6 @@ class Task(Scope):
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
-    class SKIPPED(Exception):   pass
     class BROKEN(Exception):    pass
 
     def __init__(self, *args, **kwargs):
@@ -2117,9 +2113,7 @@ class Task(Scope):
 
         try:
             await self.task_main()
-        except Task.SKIPPED as _:
-            self._skipped = True
-        except (Exception) as ex:
+        except (Exception, asyncio.CancelledError) as ex:
             self._error = ex
         finally:
             Runner.release(self._cores)
@@ -2175,7 +2169,8 @@ class Task(Scope):
 
         reason = self.rebuild_reason()
         if not reason:
-            raise Task.SKIPPED(f"Skipping clean task {self.name}")
+            self._skipped = True
+            return
 
         # ------------------------------------
         # Wait for enough jobs to free up to run this task.
@@ -2220,6 +2215,10 @@ class Task(Scope):
         # ------------------------------------
         # Update the repo stat db
 
+        # Reload the depfile post-build so we pick up new deps
+        if self.in_depfile:
+            self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
+
         for file in Utils.yield_values([self._in_files, self._deplines]):
             self.repo.update_stat(file, None)
 
@@ -2242,7 +2241,7 @@ class Task(Scope):
 
             await input_task._aio_task
 
-            if not isinstance(input_task._error, (Task.SKIPPED, types.NoneType)):
+            if input_task._error is not None:
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
