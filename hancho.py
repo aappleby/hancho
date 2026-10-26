@@ -1,6 +1,5 @@
 #!/usr/bin/python3
-#!/usr/bin/python3
-
+# ruff: noqa: F401
 # region Header
 
 """
@@ -538,6 +537,7 @@ class Log:
 
     TRACE    = 0
     DEBUG    = 10
+    VERBOSE  = 15
     INFO     = 20
     WARNING  = 30
     ERROR    = 40
@@ -584,6 +584,9 @@ class Log:
 
     def debug(log, text):
         log._log(Log.DEBUG, Log.GRAY3, text)
+
+    def verbose(log, text):
+        log._log(Log.VERBOSE, Log.GRAY4, text)
 
     def info(log, text):
         log._log(Log.INFO, "", text)
@@ -917,7 +920,7 @@ class Flags(Scope):
         # ------------------------------------
         # fmt: off
 
-        levels = ["trace", "debug", "info", "warning", "error", "critical"]
+        levels = ["trace", "debug", "verbose", "info", "warning", "error", "critical"]
 
         def str_to_bool(v):
             if v.lower() in ("yes", "true", "t", "y", "1"): return True
@@ -1667,7 +1670,7 @@ class Runner:
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        log.debug("Running tasks...\n")
+        log.verbose("Running tasks...\n")
 
         while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
             finished_aio_task : asyncio.Task | None = None
@@ -1779,7 +1782,7 @@ class Project(Scope):
                 repo.save_stat_db()
 
         time_b3 = time.perf_counter()
-        self.log.debug(f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+        self.log.verbose(f"Build took {time_b3 - time_a3:8.6f} seconds\n")
         self._result = result
         return result
 
@@ -1789,22 +1792,22 @@ class Project(Scope):
             task_count += len(list(repo.yield_tasks()))
 
         # FIXME all the stats should move to Project
-        self.log.debug(f"Tasks created:    {task_count}\n")
-        self.log.debug(f"Tasks enabled:    {Runner.tasks_enabled}\n")
-        self.log.debug(f"Tasks started:    {Runner.tasks_started}\n")
-        self.log.debug(f"Tasks finished:   {Runner.tasks_finished}\n")
-        self.log.debug(f"Tasks broken:     {Runner.tasks_broken}\n")
-        self.log.debug(f"Tasks failed:     {Runner.tasks_failed}\n")
-        self.log.debug(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        self.log.debug(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        self.log.debug(f"Mtime calls:      {Repo.stat_calls}\n")
-        self.log.debug(f"Hash calls:       {Repo.hash_calls}\n")
-        self.log.debug(f"Hash bytes:       {Repo.hash_bytes}\n")
-        self.log.debug(f"Hash time:        {Repo.hash_time:8.6f}\n")
+        self.log.verbose(f"Tasks created:    {task_count}\n")
+        self.log.verbose(f"Tasks enabled:    {Runner.tasks_enabled}\n")
+        self.log.verbose(f"Tasks started:    {Runner.tasks_started}\n")
+        self.log.verbose(f"Tasks finished:   {Runner.tasks_finished}\n")
+        self.log.verbose(f"Tasks broken:     {Runner.tasks_broken}\n")
+        self.log.verbose(f"Tasks failed:     {Runner.tasks_failed}\n")
+        self.log.verbose(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+        self.log.verbose(f"Tasks skipped:    {Runner.tasks_skipped}\n")
+        self.log.verbose(f"Mtime calls:      {Repo.stat_calls}\n")
+        self.log.verbose(f"Hash calls:       {Repo.hash_calls}\n")
+        self.log.verbose(f"Hash bytes:       {Repo.hash_bytes}\n")
+        self.log.verbose(f"Hash time:        {Repo.hash_time:8.6f}\n")
 
-        #log.debug("Rebuild reasons:\n")
+        #log.verbose("Rebuild reasons:\n")
         #for reason, count in project._build_reasons.items():
-        #    log.debug(f"{reason:17} {count}\n")
+        #    log.verbose(f"{reason:17} {count}\n")
 
     def passfail(self):
         if self._runner.tasks_failed or self._runner.tasks_broken:
@@ -1863,12 +1866,12 @@ class Repo(Scope):
         stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
 
         if os.path.isfile(stat_db_path):
-            log.debug(f"Loading stat_db {stat_db_path}\n")
+            log.verbose(f"Loading stat_db {stat_db_path}\n")
             json_stats = Utils.load_json(stat_db_path)
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            log.debug(f"Stat db not found: {stat_db_path}\n")
+            log.verbose(Log.ORANGE + f"Stat db not found: {stat_db_path}\n")
 
     @classmethod
     def load_depfile(cls, filename : str, format : str, task_cwd : str) -> list[str]:
@@ -1899,13 +1902,13 @@ class Repo(Scope):
 
     def save_stat_db(self):
         stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
-        self.log.debug(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
+        self.log.verbose(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
         Utils.save_json(self._stat_db, stat_db_path)
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
 #        comp_db_path = self.expand("{join(build_root, 'compile_commands.json')}")
-#        self.log.debug(Log.ORANGE + f"Saving comp_db {comp_db_path}\n")
+#        self.log.verbose(Log.ORANGE + f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
 #        for file, stat in self._stat_db.items():
@@ -2139,7 +2142,6 @@ class Task(Scope):
 
         Runner.tasks_started += 1
         self._task_id = Runner.tasks_started
-        self.log_task(Log.DEBUG, Utils.instance_tag(self) + " starting\n")
 
         # ------------------------------------
         # Expand all mandatory fields in the raw config and fix raw file paths.
@@ -2184,7 +2186,7 @@ class Task(Scope):
         text += " : " if self.name and self.desc else ""
         text += repr(self.desc) if self.desc else ""
         self.log_task(Log.INFO,  Log.TEAL + f"Task {text}\n")
-        self.log_task(Log.DEBUG, Log.GRAY2 + f"Task rebuilding because: {reason}\n")
+        self.log_task(Log.VERBOSE, Log.GRAY2 + f"Task rebuilding because: {reason}\n")
 
         # ------------------------------------
         # Run all the commands
@@ -2203,7 +2205,7 @@ class Task(Scope):
 
         time_b = time.perf_counter()
 
-        self.log_task(Log.DEBUG, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
+        self.log_task(Log.VERBOSE, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
 
         # ------------------------------------
         # See if the task wrote all its output files
@@ -2571,9 +2573,9 @@ class Script(Scope):
     def exec(self : Script):
         assert self.path.endswith(".hancho")
 
-        self.log.debug(Log.ORANGE + f"script {self.path}\n")
+        self.log.verbose(Log.ORANGE + f"script {self.path}\n")
 
-        with self.log.indenter(Log.DEBUG, Log.ORANGE):
+        with self.log.indenter(Log.VERBOSE, Log.ORANGE):
             code = None
             with open(self.path, encoding="utf-8") as file:
                 source = file.read()
@@ -2584,9 +2586,6 @@ class Script(Scope):
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
-
-        #self.log.debug(Log.ORANGE + f"└─ script {self.path} done\n")
-        #self.log.debug(Log.ORANGE + f"└─ script done\n")
 
 # endregion
 # ==================================================================================================
@@ -2604,7 +2603,7 @@ def create_test_script(*, name, file : str, root : str, stdout : str | typing.Te
     Runner.reset(flags)
 
     log = Log(flags, stdout)
-    log.debug(Log.ORANGE + f"create_test_script {flags.path}\n")
+    log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
     args = ()
     kwargs = {}
@@ -2645,9 +2644,10 @@ def main():
     # └─
 
     log = Log(flags, sys.stdout)
-    log.debug(f"Command line : {" ".join(sys.argv)}\n")
-    log.trace("Trace mode on\n")
+    log.verbose(f"Command line : {" ".join(sys.argv)}\n")
+    log.verbose("Verbose mode on\n")
     log.debug("Debug mode on\n")
+    log.trace("Trace mode on\n")
     args = ()
     kwargs = {}
 
@@ -2663,25 +2663,22 @@ def main():
 
     project = Project(flags, log, flags.name, flags.path, flags.root, flags.targets)
 
-    log.debug(Log.ORANGE + f"project {project.path}\n")
-    with log.indenter(Log.DEBUG, Log.ORANGE):
+    log.verbose(Log.ORANGE + f"project {project.path}\n")
+    with log.indenter(Log.VERBOSE, Log.ORANGE):
 
         repo = Repo(flags, log, project, flags.name, flags.path, flags.root)
         project._repos.append(repo)
 
-        log.debug(Log.ORANGE + f"repo {repo.path}\n")
-        with log.indenter(Log.DEBUG, Log.ORANGE):
+        log.verbose(Log.ORANGE + f"repo {repo.path}\n")
+        with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
             script.exec()
-        #log.debug(Log.ORANGE + f"└─ repo loading took {{time_b1 - time_a1:8.6f}} seconds\n")
-        #log.debug(Log.ORANGE + "└─ repo done\n")
 
         time_b1 = time.perf_counter()
 
-    #log.debug(Log.ORANGE + "└─ project done\n")
-    log.debug(f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
+    log.verbose(f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
 
@@ -2758,10 +2755,8 @@ def script(file, root = None, *args, **kwargs):
     assert " _" not in dedupe_key
 
     if dupe := project._dedupe.get(dedupe_key, None):
-        log.debug(Log.LIME + f"Deduped script('{path}')\n")
+        log.verbose(Log.LIME + f"Deduped script('{path}')\n")
         return dupe
-    #else:
-    #    log.debug(Log.ORANGE + f"Loading script({path})\n")
 
     script = Script(flags, log, project, repo, name, path, root)
     project._dedupe[dedupe_key] = script
@@ -2770,33 +2765,21 @@ def script(file, root = None, *args, **kwargs):
     script.exec()
     return script
 
-# FIXME this should just exec the included script using the __dict__ of old_script
-def include(file, root = None, *args, **kwargs):
-    old_script = current_script.get()
-    flags   = old_script.flags
-    log     = old_script.log
-    project = old_script.project
-    repo    = old_script.repo
+def include(file):
+    script = current_script.get()
+    path = Path._resolve(script.expand(file))
 
-    path = Path._resolve(old_script.expand(file))
-    root = Path._resolve(old_script.expand(root or os.path.dirname(path)))
-    name = os.path.basename(path)
+    code = None
+    with open(path, encoding="utf-8") as file:
+        source = file.read()
+        code = compile(source, path, "exec", dont_inherit=True)
 
-    dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
-    assert " _" not in dedupe_key
+        script.log.verbose(Log.ORANGE + f"include {path}\n")
+        with script.log.indenter(Log.VERBOSE, Log.ORANGE):
+            exec(code, script.__dict__)
 
-    if dupe := project._dedupe.get(dedupe_key, None):
-        log.debug(Log.LIME + f"Deduped include('{path}')\n")
-        return dupe
-    #else:
-    #    log.debug(Log.ORANGE + f"Loading include({path})\n")
-
-    script = Script(flags, log, project, repo, name, path, root)
-    project._dedupe[dedupe_key] = script
-    repo._scripts.append(script)
-
-    script.exec()
-    return script
+        if "__builtins__" in script.__dict__:
+            del script.__dict__["__builtins__"]
 
 def repo(file, root = None, *args, **kwargs) -> Script:
     old_script = current_script.get()
@@ -2813,10 +2796,8 @@ def repo(file, root = None, *args, **kwargs) -> Script:
     assert " _" not in dedupe_key
 
     if dupe := project._dedupe.get(dedupe_key, None):
-        log.debug(Log.LIME + f"Deduped repo('{path}')\n")
+        log.verbose(Log.LIME + f"Deduped repo('{path}')\n")
         return dupe
-    #else:
-    #    log.debug(Log.ORANGE + f"Loading repo({path})\n")
 
     repo = Repo(flags, log, project, name, path, root)
     project._repos.append(repo)
