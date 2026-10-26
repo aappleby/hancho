@@ -528,6 +528,10 @@ class Log:
     YELLOW  = Utils.hex_to_ansi(0xCCCC66)
     ORANGE  = Utils.hex_to_ansi(0xCC9966)
 
+    DBLUE   = Utils.hex_to_ansi(0x5555AA)
+    DRED    = Utils.hex_to_ansi(0xAA5555)
+    DGREEN  = Utils.hex_to_ansi(0x55AA55)
+
     GRAY1   = Utils.hex_to_ansi(0x333333)
     GRAY2   = Utils.hex_to_ansi(0x666666)
     GRAY3   = Utils.hex_to_ansi(0x999999)
@@ -564,7 +568,7 @@ class Log:
             log._stdout = stdout
 
     def indent(log, ansi_color : str = RESET):
-        log._indent_stack.append(f"{ansi_color}│{Log.RESET} ")
+        log._indent_stack.append(f"{ansi_color}│{Log.RESET}")
 
     def dedent(log):
         log._indent_stack.pop()
@@ -1074,7 +1078,7 @@ class Expander(Scope, abc.Mapping):
         raise KeyError(key)
 
     def internal_get(expander, key : str):
-        Tracer.start(expander.scope, "get", key)
+        Tracer.trace_start(expander.scope, "get", key)
         result = Expander.scope_walk(expander.scope, key)
 
         if isinstance(result, Scope):
@@ -1083,7 +1087,7 @@ class Expander(Scope, abc.Mapping):
         else:
             result = expander.scope.expand(result, recursive = True)
 
-        Tracer.end(expander.scope, "get", key, result)
+        Tracer.trace_end(expander.scope, "get", key, result)
         return result
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1160,7 +1164,7 @@ class Expander(Scope, abc.Mapping):
 
                 # Otherwise we're doing a template expansion.
                 try:
-                    Tracer.start(scope, "expand", var)
+                    Tracer.trace_start(scope, "expand", var)
                     for i, b in enumerate(blocks):
                         if isinstance(b, cls.Macro):
                             blocks[i] = cls._expand(b, scope, recursive)
@@ -1174,7 +1178,7 @@ class Expander(Scope, abc.Mapping):
                     if not isinstance(var, str):
                         return var
                 finally:
-                    Tracer.end(scope, "expand", old_var, var)
+                    Tracer.trace_end(scope, "expand", old_var, var)
 
         finally:
             cls.cv_depth.set(old_depth)
@@ -1204,7 +1208,7 @@ class Expander(Scope, abc.Mapping):
 
         result = var
         try:
-            Tracer.start(scope, "eval", var[1:-1])
+            Tracer.trace_start(scope, "eval", var[1:-1])
             result = eval(var[1:-1], {}, cls.wrap(scope, recursive))
         except RecursionError:
             raise
@@ -1214,7 +1218,7 @@ class Expander(Scope, abc.Mapping):
             #dprint(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         finally:
-            Tracer.end(scope, "eval", var[1:-1], result)
+            Tracer.trace_end(scope, "eval", var[1:-1], result)
             pass
 
         if isinstance(result, Expander):
@@ -1545,7 +1549,7 @@ class Dumper:
 class Tracer:
 
     @staticmethod
-    def start(scope, action : str, arg):
+    def trace_start(scope, action : str, arg):
         log = current_script.get().log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
@@ -1557,13 +1561,13 @@ class Tracer:
 
         if action == "range":
             indent_color = Log.WHITE
-            log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
+            log.trace(f"{indent_color}┌── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
         else:
-            log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg!r})\n")
+            log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
         log.indent(indent_color)
 
     @staticmethod
-    def up(scope, up, action, arg):
+    def trace_up(scope, up, action, arg):
         log = current_script.get().log
         if log.level > Log.TRACE: return
         if isinstance(scope, Expander):
@@ -1574,10 +1578,10 @@ class Tracer:
         up_color   = Utils.obj_to_ansi_color(up)
         up_tag     = Utils.instance_tag(up)
 
-        log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg!r}) -> {up_color}{up_tag}\n")
+        log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
 
     @staticmethod
-    def end(scope, action : str, arg, result):
+    def trace_end(scope, action : str, arg, result):
         log = current_script.get().log
         if log.level > Log.TRACE: return
         if isinstance(result, Expander):
@@ -1590,7 +1594,7 @@ class Tracer:
 
         if action == "range":
             indent_color = Log.WHITE
-            log.trace(f"{indent_color}└─── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
+            log.trace(f"{indent_color}└── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
         else:
             result_color = Log.RESET
             result_type  = type(result)
@@ -1598,7 +1602,7 @@ class Tracer:
             if Utils.is_mapping(result):
                 result_color = Utils.obj_to_ansi_color(result)
 
-            log.trace(f"{indent_color}└ {scope_color}{arg!r}:{result_type.__name__}{Log.RESET} = ")
+            log.trace(f"{indent_color}└ {scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
             if not Utils.is_scalar(result):
                 log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
             else:
@@ -1782,7 +1786,7 @@ class Project(Scope):
                 repo.save_stat_db()
 
         time_b3 = time.perf_counter()
-        self.log.verbose(f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+        self.log.verbose(Log.DBLUE + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
         self._result = result
         return result
 
@@ -1792,18 +1796,18 @@ class Project(Scope):
             task_count += len(list(repo.yield_tasks()))
 
         # FIXME all the stats should move to Project
-        self.log.verbose(f"Tasks created:    {task_count}\n")
-        self.log.verbose(f"Tasks enabled:    {Runner.tasks_enabled}\n")
-        self.log.verbose(f"Tasks started:    {Runner.tasks_started}\n")
-        self.log.verbose(f"Tasks finished:   {Runner.tasks_finished}\n")
-        self.log.verbose(f"Tasks broken:     {Runner.tasks_broken}\n")
-        self.log.verbose(f"Tasks failed:     {Runner.tasks_failed}\n")
-        self.log.verbose(f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        self.log.verbose(f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        self.log.verbose(f"Mtime calls:      {Repo.stat_calls}\n")
-        self.log.verbose(f"Hash calls:       {Repo.hash_calls}\n")
-        self.log.verbose(f"Hash bytes:       {Repo.hash_bytes}\n")
-        self.log.verbose(f"Hash time:        {Repo.hash_time:8.6f}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks created:    {task_count}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks enabled:    {Runner.tasks_enabled}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks started:    {Runner.tasks_started}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks finished:   {Runner.tasks_finished}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks broken:     {Runner.tasks_broken}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+        self.log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
+        self.log.verbose(Log.DBLUE + f"Mtime calls:      {Repo.stat_calls}\n")
+        self.log.verbose(Log.DBLUE + f"Hash calls:       {Repo.hash_calls}\n")
+        self.log.verbose(Log.DBLUE + f"Hash bytes:       {Repo.hash_bytes}\n")
+        self.log.verbose(Log.DBLUE + f"Hash time:        {Repo.hash_time:8.6f}\n")
 
         #log.verbose("Rebuild reasons:\n")
         #for reason, count in project._build_reasons.items():
@@ -1811,7 +1815,7 @@ class Project(Scope):
 
     def passfail(self):
         if self._runner.tasks_failed or self._runner.tasks_broken:
-            self.log.error(Log.RED + "BUILD FAILED\n")
+            self.log.error("BUILD FAILED\n")
         elif Runner.tasks_finished:
             self.log.info(Log.GREEN + "BUILD PASSED\n")
         else:
@@ -1871,7 +1875,7 @@ class Repo(Scope):
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            log.verbose(Log.ORANGE + f"Stat db not found: {stat_db_path}\n")
+            log.verbose(Log.DRED + f"Stat db not found: {stat_db_path}\n")
 
     @classmethod
     def load_depfile(cls, filename : str, format : str, task_cwd : str) -> list[str]:
@@ -1902,13 +1906,13 @@ class Repo(Scope):
 
     def save_stat_db(self):
         stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
-        self.log.verbose(Log.ORANGE + f"Saving stat_db {stat_db_path}\n")
+        self.log.verbose(Log.DGREEN + f"Saving stat_db {stat_db_path}\n")
         Utils.save_json(self._stat_db, stat_db_path)
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
 #        comp_db_path = self.expand("{join(build_root, 'compile_commands.json')}")
-#        self.log.verbose(Log.ORANGE + f"Saving comp_db {comp_db_path}\n")
+#        self.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
 #        for file, stat in self._stat_db.items():
@@ -2146,9 +2150,9 @@ class Task(Scope):
         # ------------------------------------
         # Expand all mandatory fields in the raw config and fix raw file paths.
 
-        Tracer.start(self, "range", "expand_task")
+        Tracer.trace_start(self, "range", "expand_task")
         self.expand_task()
-        Tracer.end(self, "range", "expand_task", None)
+        Tracer.trace_end(self, "range", "expand_task", None)
 
         # ------------------------------------
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -2185,8 +2189,8 @@ class Task(Scope):
         text  = repr(self.name) if self.name else ""
         text += " : " if self.name and self.desc else ""
         text += repr(self.desc) if self.desc else ""
-        self.log_task(Log.INFO,  Log.TEAL + f"Task {text}\n")
-        self.log_task(Log.VERBOSE, Log.GRAY2 + f"Task rebuilding because: {reason}\n")
+        self.log_task(Log.INFO, Log.YELLOW + f"Task {text}: {Log.DBLUE + reason}\n")
+        #self.log_task(Log.VERBOSE, Log.DBLUE + f"{reason}\n")
 
         # ------------------------------------
         # Run all the commands
@@ -2205,7 +2209,7 @@ class Task(Scope):
 
         time_b = time.perf_counter()
 
-        self.log_task(Log.VERBOSE, Log.GRAY2 + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
+        self.log_task(Log.VERBOSE, Log.VIOLET + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
 
         # ------------------------------------
         # See if the task wrote all its output files
@@ -2256,7 +2260,7 @@ class Task(Scope):
         script_root = self.expand("{script.root}")
         build_root  = self.expand("{build_root}")
 
-        Tracer.start(self, "range", "expand io fields")
+        Tracer.trace_start(self, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
         io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
@@ -2290,15 +2294,15 @@ class Task(Scope):
                 elif field_name.startswith("out_"):
                     self._out_files[field_name] = files
 
-        Tracer.end(self, "range", "expand io fields", None)
+        Tracer.trace_end(self, "range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
-        Tracer.start(self, "range", "expand_task")
+        Tracer.trace_start(self, "range", "expand everything else")
         for key, val in self.__dict__.items():
             if is_public(key):
                 setattr(self, key, Expander._expand(val, self, recursive = True))
-        Tracer.end(self, "range", "expand_task", None)
+        Tracer.trace_end(self, "range", "expand everything else", None)
 
         if not self.flags.build_dry:
             for files in self._out_files.values():
@@ -2416,20 +2420,26 @@ class Task(Scope):
 
         all_files = [self._in_files, self._out_files, self._deplines]
 
+
         for file in Utils.yield_values(all_files):
             if not os.path.isfile(file):
-                return f"File missing: {file!r}"
+                rel_file = Path.relpath(file, self.repo.root)
+                return f"File missing: {rel_file!r}"
             if reason := self.repo.stat_changed2 (file):
                 return reason
 
         for file in Utils.yield_values(self._out_files):
             if self.repo.command_changed(file, self.command):
-                return f"Command mismatch for {file!r}"
+                rel_file = Path.relpath(file, self.repo.root)
+                return f"Command mismatch for {rel_file!r}"
 
         return ""
 
     async def run_command(self : Task, command : str):
-        self.log_task(Log.INFO, f"{Path.relpath(self.cwd, self.repo.root)}$ {command}\n")
+
+        # Prints the cwd and command about to run
+        # some/folder$ g++ blah blah blah
+        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, self.repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2644,10 +2654,10 @@ def main():
     # └─
 
     log = Log(flags, sys.stdout)
-    log.verbose(f"Command line : {" ".join(sys.argv)}\n")
-    log.verbose("Verbose mode on\n")
-    log.debug("Debug mode on\n")
-    log.trace("Trace mode on\n")
+    log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    log.debug(Log.GRAY3 + "Debug mode on\n")
+    log.trace(Log.GRAY3 + "Trace mode on\n")
     args = ()
     kwargs = {}
 
@@ -2678,7 +2688,7 @@ def main():
 
         time_b1 = time.perf_counter()
 
-    log.verbose(f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
+    log.verbose(Log.DBLUE + f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
 
@@ -2755,7 +2765,7 @@ def script(file, root = None, *args, **kwargs):
     assert " _" not in dedupe_key
 
     if dupe := project._dedupe.get(dedupe_key, None):
-        log.verbose(Log.LIME + f"Deduped script('{path}')\n")
+        log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
         return dupe
 
     script = Script(flags, log, project, repo, name, path, root)

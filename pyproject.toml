@@ -5,12 +5,15 @@
 [tool.ruff]
 line-length = 100
 target-version = "py312"   # the file uses PEP 695 syntax (type X[T] / def f[T]), which is 3.12+
+exclude = ["*.hancho"]
+
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "ISC"]
 ignore = ["E501", "E701"]
 
 [tool.pyright]
+exclude = ["*.hancho"]
 reportUnknownMemberType = "none"
 reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
