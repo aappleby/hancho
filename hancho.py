@@ -54,8 +54,6 @@ from typing import Any, ClassVar, Concatenate, TypeIs, cast
 
 #from functools import partial, wraps
 
-# pyright: reportSelfClsParameterName=false
-
 # endregion
 # ==================================================================================================
 # region Constants and globals
@@ -98,15 +96,15 @@ type command_type = str | list[str] | task_callback
 # region Sentinel
 
 class Sentinel:
-    def __init__(sentinel, name):     sentinel.name = name
-    def __repr__(sentinel):           return Log.VIOLET + sentinel.name + Log.RESET
-    def __bool__(sentinel):           return False
-    def __copy__(sentinel):           return sentinel
-    def __deepcopy__(sentinel, memo): return sentinel
-    def __reduce__(sentinel):         return sentinel.name
-    def __dump__(sentinel, key, opts, seen):
+    def __init__(self, name):     self.name = name
+    def __repr__(self):           return Log.VIOLET + self.name + Log.RESET
+    def __bool__(self):           return False
+    def __copy__(self):           return self
+    def __deepcopy__(self, memo): return self
+    def __reduce__(self):         return self.name
+    def __dump__(self, key, opts, seen):
         new_opts = dataclasses.replace(opts, print_id = False)
-        return Dumper._dump_prefix(key, sentinel, new_opts) + repr(sentinel)
+        return Dumper._dump_prefix(key, self, new_opts) + repr(self)
 
     MISSING : Any
     FOLDED : Any
@@ -517,72 +515,72 @@ class Log:
     ERROR    = 40
     CRITICAL = 50
 
-    def __init__(log, flags, stdout):
+    def __init__(self, flags, stdout):
 
-        log.level :int        = cast(int, getattr(Log, flags.log_level.upper()))
-        log.wrap : bool       = flags.log_wrap
-        log.color : bool      = flags.log_color
-        log.timestamp : bool  = flags.log_timestamp
-        log.width : int       = flags.log_width
+        self.level :int        = cast(int, getattr(Log, flags.log_level.upper()))
+        self.wrap : bool       = flags.log_wrap
+        self.color : bool      = flags.log_color
+        self.timestamp : bool  = flags.log_timestamp
+        self.width : int       = flags.log_width
 
-        assert type(log.level) is int
+        assert type(self.level) is int
 
-        log._time_origin   = time.perf_counter()
-        log._indent_stack  = []
-        log._line_buffer   = ""
-        log._match_escapes = re.compile(r"(\x1B.*?m)")
+        self._time_origin   = time.perf_counter()
+        self._indent_stack  = []
+        self._line_buffer   = ""
+        self._match_escapes = re.compile(r"(\x1B.*?m)")
 
         if isinstance(stdout, str):
-            log._stdout = open(stdout, "w")  # noqa: SIM115
+            self._stdout = open(stdout, "w")  # noqa: SIM115
         else:
-            log._stdout = stdout
+            self._stdout = stdout
 
-    def indent(log, ansi_color : str = RESET):
-        log._indent_stack.append(f"{ansi_color}│{Log.RESET}")
+    def indent(self, ansi_color : str = RESET):
+        self._indent_stack.append(f"{ansi_color}│{Log.RESET}")
 
-    def dedent(log):
-        log._indent_stack.pop()
+    def dedent(self):
+        self._indent_stack.pop()
 
     @contextmanager
-    def indenter(log, level, ansi_color : str = RESET):
-        log_level = log.level
+    def indenter(self, level, ansi_color : str = RESET):
+        log_level = self.level
         if level >= log_level:
-            log.indent(ansi_color)
+            self.indent(ansi_color)
         yield
         if level >= log_level:
-            log.dedent()
+            self.dedent()
 
-    def trace(log, text):
+    def trace(self, text):
         # Traces do their own color coding
-        log._log(Log.TRACE, "", text)
+        self._log(Log.TRACE, "", text)
 
-    def debug(log, text):
-        log._log(Log.DEBUG, Log.GRAY3, text)
+    def debug(self, text):
+        self._log(Log.DEBUG, Log.GRAY3, text)
 
-    def verbose(log, text):
-        log._log(Log.VERBOSE, Log.GRAY4, text)
+    def verbose(self, text):
+        self._log(Log.VERBOSE, Log.GRAY4, text)
 
-    def info(log, text):
-        log._log(Log.INFO, "", text)
+    def info(self, text):
+        self._log(Log.INFO, "", text)
 
-    def warning(log, text):
-        log._log(Log.WARNING, Log.YELLOW, text)
+    def warning(self, text):
+        self._log(Log.WARNING, Log.YELLOW, text)
 
-    def error(log, text):
-        log._log(Log.ERROR, Log.ORANGE, text)
+    def error(self, text):
+        self._log(Log.ERROR, Log.ORANGE, text)
 
-    def critical(log, text):
-        log._log(Log.CRITICAL, Log.RED, text)
+    def critical(self, text):
+        self._log(Log.CRITICAL, Log.RED, text)
 
-    def _log(log, log_level : int, color : str, text : Any):
+    def _log(self, log_level : int, color : str, text : Any):
         if isinstance(text, list):
             for t in text:
-                log._log(log_level, color, t)
+                self._log(log_level, color, t)
             return
         elif not isinstance(text, str):
             text = repr(text) + "\n"
 
-        if log_level < log.level:
+        if log_level < self.level:
             return
         if not isinstance(text, str) or len(text) == 0:
             return
@@ -590,40 +588,40 @@ class Log:
         # FIXME str.partition might be easier here
         lines = text.splitlines(keepends=True)
         for line in lines:
-            if log._line_buffer == "":
-                log._line_buffer += f"[{time.perf_counter() - log._time_origin:8.3f}] " if log.timestamp else ""
-                log._line_buffer += "".join(log._indent_stack)
+            if self._line_buffer == "":
+                self._line_buffer += f"[{time.perf_counter() - self._time_origin:8.3f}] " if self.timestamp else ""
+                self._line_buffer += "".join(self._indent_stack)
 
-            log._line_buffer += color
+            self._line_buffer += color
 
             if line[-1] == "\n":
-                log._line_buffer += line[:-1]
-                log._line_buffer += Log.RESET
-                log._line_buffer += "\n"
-                log._flush()
+                self._line_buffer += line[:-1]
+                self._line_buffer += Log.RESET
+                self._line_buffer += "\n"
+                self._flush()
             else:
-                log._line_buffer += line
-                log._line_buffer += Log.RESET
+                self._line_buffer += line
+                self._line_buffer += Log.RESET
 
-    def _flush(log):
+    def _flush(self):
         # Dumps the line buffer to stdout and then clears it.
-        if log._line_buffer:
+        if self._line_buffer:
             # If we want a non-colorized log, strip color codes from the line.
-            if not log.color:
-                log._line_buffer = re.sub(log._match_escapes, "", log._line_buffer)
+            if not self.color:
+                self._line_buffer = re.sub(self._match_escapes, "", self._line_buffer)
 
             # If the line wasn't finished (because we're exiting the app), stick a newline on it.
-            if log._line_buffer[-1] != "\n":
-                log._line_buffer += "\n"
+            if self._line_buffer[-1] != "\n":
+                self._line_buffer += "\n"
 
-            if not log.wrap:
-                _ = log.width
-                log._line_buffer = log._clip_printable(log._line_buffer, log.width)
+            if not self.wrap:
+                _ = self.width
+                self._line_buffer = self._clip_printable(self._line_buffer, self.width)
 
-            log._stdout.write(log._line_buffer)
-            log._line_buffer = ""
+            self._stdout.write(self._line_buffer)
+            self._line_buffer = ""
 
-    def _clip_printable(log, text : str, width : int) -> str:
+    def _clip_printable(self, text : str, width : int) -> str:
         """
         Clips a string with embedded escape codes (such as ANSI color codes) so that it fits in
         "width" without breaking the escape codes.
@@ -640,7 +638,7 @@ class Log:
             text = text[:-1]
 
         # Split the text using the escape sequences as separators.
-        chunks = log._match_escapes.split(text)
+        chunks = self._match_escapes.split(text)
 
         # Even chunks are printable text, odd chunks are escape sequences.
         # If the printable characters fit on the line, we don't need to clip.
@@ -847,28 +845,47 @@ class Path:
 # FIXME this breaks if we do Scope(abc.Mapping)?
 
 class Scope:
-    def get(scope, key, default = None):
-        return scope.__dict__.get(key, default)
+    def __init__(self, *, _up : Scope | None):
+        self._up : Scope | None
+        self.__dict__['_up'] = _up
 
-    def expand(scope, template, recursive : bool = False) -> Any:
-        return Expander._expand(template, scope, recursive)
+    def find(self, key : str, default = Sentinel.MISSING) -> Any:
+        cursor = self
+        while cursor:
+            if key in cursor.__dict__:
+                return cursor.__dict__[key]
+            cursor = cursor.get("_up", None)
 
-    def __contains__(scope, key) -> bool:
-        return is_public(key) and key in scope.__dict__
+        if default is not Sentinel.MISSING:
+            return default
 
-    def __getattr__(scope, key) -> Any:
-        return object.__getattribute__(scope, key)
+        raise KeyError(key)
 
-    def __getitem__(scope, key : str) -> Any:
+    def get(self, key, default = None):
+        return self.__dict__.get(key, default)
+
+    def expand(self, template, recursive : bool = False) -> Any:
+        return Expander._expand(template, self, recursive)
+
+    def __contains__(self, key) -> bool:
+        return is_public(key) and key in self.__dict__
+
+    def __getattr__(self, key) -> Any:
+        try:
+            return self.__dict__[key]
+        except KeyError as ex:
+            raise AttributeError from ex
+
+    def __getitem__(self, key : str) -> Any:
         if is_private(key):
             raise KeyError(key)
-        return scope.__dict__[key]
+        return self.__dict__[key]
 
-    def __len__(scope):
-        return sum(1 for _ in scope)
+    def __len__(self):
+        return sum(1 for _ in self)
 
-    def __iter__(scope):
-        yield from filter(is_public, scope.__dict__)
+    def __iter__(self):
+        yield from filter(is_public, self.__dict__)
 
     def __dump__(self, key, opts : Dumper.Opts, seen):
         new_fold = [*opts.fold, contextvars.Context, asyncio.Task, Project, Repo, Script, Flags, Log, builtins]
@@ -885,13 +902,14 @@ class Scope:
 class Dict(Scope, abc.MutableMapping):
 
     def __init__(self, *args, **kwargs):
+        super().__init__(_up = kwargs.pop('_up', None))
         Utils.merge_variants(self, *args, **kwargs)
 
-    def __setitem__(scope, key, val):
-        scope.__dict__[key] = val
+    def __setitem__(self, key, val):
+        self.__dict__[key] = val
 
-    def __delitem__(scope, key):
-        del scope.__dict__[key]
+    def __delitem__(self, key):
+        del self.__dict__[key]
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -918,40 +936,42 @@ class Tool(Dict):
 # region Flags
 
 class Flags(Scope):
-    def __init__(flags, *args, **kwargs):
-        flags.name        = "build"
-        flags.file        = "build.hancho"
-        flags.root : str  = "{dirname(path)}"
-        flags.targets     = []
+    def __init__(self, *args, **kwargs):
+        super().__init__(_up = builtins)
 
-        flags.build_dir   = "build"
-        flags.build_tag   = ""
-        flags.build_force = False
-        flags.build_all   = False
-        flags.build_dry   = False
+        self.name        = "build"
+        self.file        = "build.hancho"
+        self.root : str  = "{dirname(path)}"
+        self.targets     = []
 
-        flags.strict      = True
-        flags.max_errors  = 0
-        flags.max_jobs    = os.cpu_count() or 1
-        flags.log_level     = "info"
-        flags.log_wrap      = False
-        flags.log_color     = True
-        flags.log_timestamp = True
+        self.build_dir   = "build"
+        self.build_tag   = ""
+        self.build_force = False
+        self.build_all   = False
+        self.build_dry   = False
+
+        self.strict      = True
+        self.max_errors  = 0
+        self.max_jobs    = os.cpu_count() or 1
+        self.log_level     = "info"
+        self.log_wrap      = False
+        self.log_color     = True
+        self.log_timestamp = True
         #flags.log_width     = shutil.get_terminal_size().columns
-        flags.log_width = 160
+        self.log_width = 160
 
-        Utils.merge_variants(flags, *args, **kwargs)
+        Utils.merge_variants(self, *args, **kwargs)
 
-        flags.path = Path.resolve(flags.file)
-        flags.name = flags.expand(flags.name)
-        flags.file = flags.expand(flags.file)
-        flags.root = flags.expand(flags.root)
+        self.path = Path.resolve(self.file)
+        self.name = self.expand(self.name)
+        self.file = self.expand(self.file)
+        self.root = self.expand(self.root)
 
 
-        if flags.root is None:
-            flags.root = Path.dirname(flags.path)
+        if self.root is None:
+            self.root = Path.dirname(self.path)
         else:
-            flags.root = Path.resolve(flags.root)
+            self.root = Path.resolve(self.root)
 
 
     @staticmethod
@@ -1086,9 +1106,9 @@ class Expander(Scope, abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(expander, scope : Scope, recursive : bool):
-        expander.scope = scope
-        expander.recursive = recursive
+    def __init__(self, scope : Scope, recursive : bool):
+        self.scope = scope
+        self.recursive = recursive
 
     @classmethod
     def wrap(cls, scope, recursive : bool):
@@ -1098,49 +1118,37 @@ class Expander(Scope, abc.Mapping):
     # ====================================
     # Expander _must_ implement __getattr__ so that macros like {script.foo} work.
 
-    def __getattr__(expander, key) -> Any:
+    def __getattr__(self, key) -> Any:
         try:
-            return expander.internal_get(key)
+            return self.internal_get(key)
         except KeyError as ex:
             raise AttributeError from ex
 
     # ====================================
 
-    def __getitem__(expander, key : str) -> Any:
-        return expander.internal_get(key)
+    def __getitem__(self, key : str) -> Any:
+        return self.internal_get(key)
 
-    def __iter__(expander):
+    def __iter__(self):
         raise AssertionError()
 
-    def __len__(expander):
+    def __len__(self):
         raise AssertionError()
 
     # ====================================
 
-    @staticmethod
-    def scope_walk(scope, key : str, default = Sentinel.MISSING) -> Any:
-        if (result := scope.get(key, Sentinel.MISSING)) is not Sentinel.MISSING:
-            return result
-        elif key in current_script.get():
-            return current_script.get()[key]
-        elif key in builtins:
-            return builtins[key]
-        elif default is not Sentinel.MISSING:
-            return default
+    def internal_get(self, key : str):
+        Tracer.trace_start(self.scope, "get", key)
 
-        raise KeyError(key)
-
-    def internal_get(expander, key : str):
-        Tracer.trace_start(expander.scope, "get", key)
-        result = Expander.scope_walk(expander.scope, key)
+        result = self.scope.find(key)
 
         if isinstance(result, Scope):
             # have to do this so that "read nested c first" resolves in the dest dict first
-            result = expander.wrap(result, object.__getattribute__(expander, "recursive"))
+            result = self.wrap(result, object.__getattribute__(self, "recursive"))
         else:
-            result = expander.scope.expand(result, recursive = True)
+            result = self.scope.expand(result, recursive = True)
 
-        Tracer.trace_end(expander.scope, "get", key, result)
+        Tracer.trace_end(self.scope, "get", key, result)
         return result
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1786,6 +1794,7 @@ class Runner:
 
 class Project(Scope):
     def __init__(self, flags, log, name : str, path : str, root : str, targets : list[str], *args, **kwargs):
+        super().__init__(_up = flags)
         self.name : str = name
         self.path : str = path
         self.root : str = root
@@ -1908,6 +1917,7 @@ class Repo(Scope):
 
 
     def __init__(self, flags, log, project, name : str, path : str, root : str, *args, **kwargs):
+        super().__init__(_up = project)
         self.name = name
         self.path = path
         self.root = root
@@ -2059,6 +2069,9 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(self, *args, **kwargs):
+        script = current_script.get()
+
+        super().__init__(_up = script)
         self.name        = None
         self.desc        = "<no desc>"
         self.command : str | list[str] | task_callback = ""
@@ -2069,7 +2082,6 @@ class Task(Scope):
         self.in_depfile  = None
         self.job_size    = 1
 
-        script = current_script.get()
 
         self.flags   = script.flags
         self.log     = script.log
@@ -2619,10 +2631,7 @@ class Task(Scope):
 class Script(Scope):
 
     def __init__(self : Script, flags : Flags, log : Log, project : Project, repo : Repo, name : str, path : str, root : str, *args, **kwargs):
-        super().__init__()
-
-        # FIXME - do we want to force users to import hancho? so they get type
-        # checking and stuff?
+        super().__init__(_up = repo)
 
         self.name       = name
         self.path       = path
@@ -2658,6 +2667,9 @@ class Script(Scope):
 
     def __getattr__(self, key) -> Any:
         return object.__getattribute__(self, key)
+
+    def __contains__(self, key):
+        return key in self.__dict__
 
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
