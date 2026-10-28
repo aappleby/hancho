@@ -94,14 +94,14 @@ Field naming drives dependency tracking:
 Templates look like Python f-strings but are lazier and more powerful (see the `Expander`
 region):
 - A `{...}` span is `eval`'d as a Python expression. The namespace is a `ChainMap` of the
-  task's own config, the global config, and a set of **aliases**.
+  task's own config, the global config, and a set of **builtins**.
 - Expansion is **recursive** - the result of one expansion is itself expanded, up to
   `MAX_STEPS` (currently 100) as an infinite-loop tripwire.
 - **TEFINAE - "Template Expansion Failure Is Not An Error."** If a macro can't be evaluated
   (e.g. it references a field that doesn't exist *in this context yet*), it is returned
   **unchanged** rather than throwing. This is deliberate: nested Dicts can carry templates
   that only resolve once merged into an outer context.
-- Aliases available inside `{...}` (and as `hancho.<name>`): path helpers `basename`,
+- Builtins available inside `{...}` (and as `hancho.<name>`): path helpers `basename`,
   `swapext`, `abspath`, `resolve`, `relpath`, plus `path` (= `os.path`), `flatten`, `weave`,
   `run_cmd`, and the loaders `load` / `repo`. Example: `out_obj = "{swapext(in_src, '.o')}"`.
 - `Tree[T]` (`T | list[Tree[T]]`): many fields accept arbitrarily nested lists. Most

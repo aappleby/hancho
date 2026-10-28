@@ -770,7 +770,9 @@ class Path:
     def split(p : str) -> tuple[str, str] : return os.path.split(p)
 
     @staticmethod
-    def join(*p : str) -> str : return os.path.join(*p)
+    def join(*p : str) -> str :
+        result = os.path.join(*p)
+        return os.path.normpath(result)
 
     @staticmethod
     def exists(p : str) -> bool : return os.path.exists(p)
@@ -869,7 +871,7 @@ class Scope:
         yield from filter(is_public, scope.__dict__)
 
     def __dump__(self, key, opts : Dumper.Opts, seen):
-        new_fold = [*opts.fold, contextvars.Context, asyncio.Task, Project, Repo, Script, Flags, Log, aliases]
+        new_fold = [*opts.fold, contextvars.Context, asyncio.Task, Project, Repo, Script, Flags, Log, builtins]
         new_opts = dataclasses.replace(opts, fold = new_fold)
         return Dumper._dump_vector(key, self, self.__dict__, new_opts, seen)
 
@@ -935,8 +937,8 @@ class Flags(Scope):
         flags.log_wrap      = False
         flags.log_color     = True
         flags.log_timestamp = True
-        flags.log_width     = shutil.get_terminal_size().columns
-        #flags.log_width = 120
+        #flags.log_width     = shutil.get_terminal_size().columns
+        flags.log_width = 160
 
         Utils.merge_variants(flags, *args, **kwargs)
 
@@ -1121,8 +1123,8 @@ class Expander(Scope, abc.Mapping):
             return result
         elif key in current_script.get():
             return current_script.get()[key]
-        elif key in aliases:
-            return aliases[key]
+        elif key in builtins:
+            return builtins[key]
         elif default is not Sentinel.MISSING:
             return default
 
@@ -1265,7 +1267,7 @@ class Expander(Scope, abc.Mapping):
             raise
         except Exception as ex:
             _ = ex
-            # If you uncomment this line, things will be super spammy.
+            # If you uncomment this line, things will be super spammy.4
             #dprint(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         finally:
@@ -2322,7 +2324,7 @@ class Task(Scope):
     def expand_task(self):
         if self.log.level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = False) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
         # We eval these first because we need them for filename expansion
 
@@ -2359,7 +2361,8 @@ class Task(Scope):
                     if len(files) > 1:
                         raise Task.BROKEN("in_depfile can't be a list")
                 elif field_name.startswith("in_"):
-                    self._in_files[field_name] = [Path.resolve(Path.join(self_cwd, file)) for file in files]
+                    # If we're in a dry run, we can't necessarily resolve all the input files
+                    self._in_files[field_name] = [Path.join(self_cwd, file) for file in files]
                 elif field_name.startswith("out_"):
                     self._out_files[field_name] = [os.path.abspath(file) for file in files]
 
@@ -2382,7 +2385,7 @@ class Task(Scope):
 
         if self.log.level <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = False) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
     def fix_paths(self, field : str, files : list[str], script_root : str, build_root : str) -> list[str]:
         return [self.fix_path(field, f, script_root, build_root) for f in files]
@@ -2632,7 +2635,7 @@ class Script(Scope):
         self.project = project
         self.repo    = repo
         self.script  = self
-        self.aliases = aliases
+        self.builtins = builtins
 
         Utils.merge_variants(self, *args, **kwargs)
 
@@ -2723,6 +2726,18 @@ def create_test_script(*, name, file : str, root : str, stdout : str | typing.Te
 # region main
 
 def main():
+    log = Log(
+        Dict(
+            log_level="critical",
+            log_wrap = False,
+            log_color = False,
+            log_timestamp = True,
+            log_width = shutil.get_terminal_size().columns,
+        ),
+        stdout = sys.stdout
+    )
+    current_script.set(Dict(log = log))
+
     flags = Flags.parse(*sys.argv)
 
     Utils.reset()
@@ -2799,8 +2814,8 @@ def _start():
 # ==================================================================================================
 # region User API
 
-aliases = Dict(
-    name     = "aliases",
+builtins = Dict(
+    name     = "builtins",
     Dict     = Dict,
     Task     = Task,
     Tool     = Tool,

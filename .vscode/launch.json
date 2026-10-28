@@ -33,9 +33,8 @@
       "type"    : "debugpy",
       "request" : "launch",
       "module"  : "unittest",
-      "console" : "internalConsole",
-      "args"    : ["tests.test_tasks.TestTasks.test_jobs", "-vvv"],
-      "preLaunchTask" : "wipe_test_build",
+      "args"    : ["discover", "-s", "tests", "-k", "${input:testName}"],
+      "console" : "internalConsole"
     },
 
     {
@@ -100,5 +99,13 @@
       "console" : "internalConsole",
       //"args": ["--force", "-j1"],
     },
+  ],
+  "inputs": [
+    {
+      "id": "testName",
+      "type": "promptString",
+      "description": "Enter test method or class name pattern (e.g., test_good_build_path)",
+      "default": "test_good_build_path"
+    }
   ]
 }

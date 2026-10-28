@@ -81,8 +81,8 @@
 ┌ <script>@0xE710.eval('{dirname(path)}')
 │ ┌ <script>@0xE710.get('dirname') -> <top>@0x15E0
 │ ┌ <top>@0x15E0.get('dirname') -> <mid>@0x31E0
-│ ┌ <mid>@0x31E0.get('dirname') -> <aliases>@0x7070
-│ ┌ <aliases>@0x7070.get('dirname')
+│ ┌ <mid>@0x31E0.get('dirname') -> <builtins>@0x7070
+│ ┌ <builtins>@0x7070.get('dirname')
 │ └ 'dirname' : function = <function dirname at 0x72af524338a0>
 │ ┌ <script>@0xE710.get('path')
 │ └ 'path' : str = '/home/aappleby/repos/hancho/scratch/build.hancho'
@@ -91,8 +91,8 @@
 ⊜ <script>@0xE710.eval('{dirname(path)}')
 ├─⊙ <script>@0xE710.get('dirname') -> <top>@0x15E0
 │ └─⊙ <top>@0x15E0.get('dirname') -> <mid>@0x31E0
-│   └─⊙ <mid>@0x31E0.get('dirname') -> <aliases>@0x7070
-│     └─⊙ <aliases>@0x7070.get('dirname')
+│   └─⊙ <mid>@0x31E0.get('dirname') -> <builtins>@0x7070
+│     └─⊙ <builtins>@0x7070.get('dirname')
 │       └─⦿ 'dirname' : function = <function dirname at 0x72af524338a0>
 ├─⊙ <script>@0xE710.get('path')
 │ └─⦿ 'path' : str = '/home/aappleby/repos/hancho/scratch/build.hancho'
