@@ -1,24 +1,21 @@
 # You'll need to run "sudo apt-get install libgtk-3-dev" to compile this example.
-import hancho
 
-tools_base = hancho.load("{hancho.root}/tools/tools_base.hancho")
+tools_base = hancho.script("{hancho.root}/tools/tools_base.hancho")
 
-gtk_flags = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
-gtk_incs  = hancho.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
-gtk_libs  = hancho.run_cmd('pkg-config gtk+-3.0 --libs')
+gtk_flags = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+gtk_incs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+gtk_libs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --libs')
 
 gtk_incs = [name[2:] for name in gtk_incs.split()]
 gtk_libs = [name[2:] for name in gtk_libs.split()]
 
-main_o = hancho.Task(
-    tools_base.compile_cpp,
+main_o = tools_base.compile_cpp(
     in_src    = "main.c",
     cpp_flags = gtk_flags,
     includes  = gtk_incs,
 )
 
-main = hancho.Task(
-    tools_base.link_cpp_bin,
+main = tools_base.link_cpp_bin(
     in_objs  = main_o,
     out_bin  = "hello_gtk",
     sys_libs = gtk_libs,

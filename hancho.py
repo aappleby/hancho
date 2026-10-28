@@ -28,6 +28,7 @@ import asyncio
 import colorsys
 import contextvars
 import dataclasses
+import functools
 import hashlib
 import inspect
 import json
@@ -48,8 +49,10 @@ from collections import Counter, abc, defaultdict
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
-from functools import partial, wraps
-from typing import Any, ClassVar, Concatenate, TypeGuard, cast
+from itertools import product
+from typing import Any, ClassVar, Concatenate, TypeIs, cast
+
+#from functools import partial, wraps
 
 # pyright: reportSelfClsParameterName=false
 
@@ -79,8 +82,13 @@ def dprint(*args, **kwargs):
 # c : list[str] = ["bar"]
 # d : tree[str] = c
 
+
+type container[T] = abc.Sequence[T] | abc.Set[T] | abc.Mapping[str, T]
+#type branch[LEAF] = LEAF | container[branch[LEAF]]
+#type tree[LEAF]   = container[branch[LEAF]]
 type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
 type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
+
 type task_callback = abc.Callable[[Task], Any]
 type item[T] = tuple[int | str | None, T]
 type command_type = str | list[str] | task_callback
@@ -128,7 +136,7 @@ class Utils:
     def stringify(variant : Any) -> str:
         """Converts any type into a template-compatible string."""
         result = ""
-        for v in Utils.yield_values(variant):
+        for v in Utils.yield_leaves(variant):
             if isinstance(v, Task):
                 raise AssertionError("We should never be stringifying tasks, something is broken")
             if result:
@@ -144,39 +152,107 @@ class Utils:
         except RuntimeError:
             return False
 
+    # ------------------------------------
+    # yield leaves from a tree
+
     @staticmethod
-    def yield_cross_join[T](*args: tree[T]) -> abc.Iterator[list[T]]:
-        if len(args) == 0:
-            return
-        elif len(args) == 1:
-            x = args[0]
-            yield list(Utils.yield_leaves(x))
+    def yield_leaves[T](branch : branch[T]) -> abc.Iterator[T]:
+        if Utils.is_sequence(branch) or Utils.is_set(branch):
+            for v in branch:
+                yield from Utils.yield_leaves(v)
+        elif Utils.is_mapping(branch):
+            for v in branch.values():
+                yield from Utils.yield_leaves(v)
         else:
-            lhs = list(Utils.yield_leaves(args[0]))
-            rhs = list(Utils.yield_cross_join(*args[1:]))
-            for lhs2 in lhs:
-                for rhs2 in rhs:
-                    yield [lhs2, *rhs2]
+            yield cast(T, branch)
 
     @staticmethod
-    def cross_join[T](
-        reduce: abc.Callable[[T, T], T], lhs: tree[T], rhs: tree[T], *args: tree[T]
-    ) -> list[T]:
-        """
-        This function does a "cross join" in the database sense, every line in lhs will be joined
-        to every line in rhs (and this will be repeated with *args if present). This is useful for
-        adding prefixes / suffixes to a bunch of strings, or generating all possible combinations
-        of two sets of options, et cetera.
-        """
+    def flatten_tree[T](tree : tree[T]) -> list[T]:
+        result = list(Utils.yield_leaves(tree))
+        return result
 
-        lhs2 = Utils.flatten_tree(lhs)
-        rhs2 = Utils.cross_join(reduce, rhs, *args) if len(args) > 0 else Utils.flatten_tree(rhs)
+    # ------------------------------------
+    # yield key-value pairs from a key-value pair
 
-        return [reduce(lh, rh) for lh in lhs2 for rh in rhs2]
+    @staticmethod
+    def yield_items_from_item[T](item : item[T] | None, seen : set | None = None) -> abc.Iterator[item[T]]:
+        if item is None:
+            return
+
+        if seen is None: seen = set()
+        if (vid := hex(id(item[1]))) in seen: return
+        seen.add(vid)
+
+        if Utils.is_mapping(item[1]):
+            for item2 in item[1].items():
+                yield from Utils.yield_items_from_item(item2)
+        elif Utils.is_sequence(item[1]) or Utils.is_set(item[1]):
+            t = item[1]
+            for item2 in enumerate(t):
+                yield from Utils.yield_items_from_item(item2)
+        else:
+            yield item
+
+    # yield key-any pairs from a variant
+    @staticmethod
+    def yield_items(variant : Any) -> abc.Iterator[item[Any]]:
+        if variant is None:
+            return
+        yield from Utils.yield_items_from_item((None, variant))
+
+    @staticmethod
+    def yield_unique_values(variant : Any, seen : set | None = None) -> abc.Iterator[Any]:
+        if variant is None:
+            return
+
+        if seen is None: seen = set()
+        if (vid := hex(id(variant))) in seen: return
+        seen.add(vid)
+
+        if Utils.is_mapping(variant):
+            for v2 in variant.values():
+                yield from Utils.yield_unique_values(v2, seen)
+        elif Utils.is_sequence(variant) or Utils.is_set(variant):
+            for v2 in variant:
+                yield from Utils.yield_unique_values(v2, seen)
+        else:
+            yield variant
+
+    @staticmethod
+    def yield_public_values(variant, seen = None) -> Any:
+        if seen is None: seen = set()
+        if (vid := hex(id(variant))) in seen: return
+        seen.add(vid)
+
+        if Utils.is_mapping(variant):
+            for k, v  in variant.items():
+                if is_public(k):
+                    yield from Utils.yield_public_values(v, seen)
+        elif Utils.is_sequence(variant) or Utils.is_set(variant):
+            for v in variant:
+                yield from Utils.yield_public_values(v, seen)
+        else:
+            yield variant
+
+    @staticmethod
+    def yield_cross_join[T](*args: tree[T]) -> abc.Iterator[tuple[T, ...]]:
+        return product(*(Utils.yield_leaves(a) for a in args))
+
+    @staticmethod
+    def cross_join[T](lhs_t : tree[T], *args: tree[T]) -> list[tuple[T, ...]]:
+        return list(Utils.yield_cross_join(lhs_t, *args))
+
+    @staticmethod
+    def yield_cross_join_reduce[T,U](reduce: abc.Callable[[T|U, T], U], *args: tree[T]) -> abc.Iterator[U]:
+        yield from (functools.reduce(reduce, t) for t in Utils.yield_cross_join(*args)) # type: ignore
+
+    @staticmethod
+    def cross_join_reduce[T](reduce: abc.Callable[[T, T], T], *args: tree[T]) -> list[T]:
+        return list(Utils.yield_cross_join_reduce(reduce, *args))
 
     @staticmethod
     def weave(lhs : tree[str], rhs : tree[str], *args : tree[str]) -> list[str]:
-        return Utils.cross_join(lambda x, y: x + y, lhs, rhs, *args)
+        return Utils.cross_join_reduce(lambda x, y: x + y, lhs, rhs, *args)
 
     @staticmethod
     def obj_to_float(obj) -> float:
@@ -219,124 +295,30 @@ class Utils:
         return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
 
     @staticmethod
-    def is_sequence(v : Any) -> TypeGuard[abc.Sequence[Any]]:
+    def is_sequence(v : Any) -> typing.TypeIs[abc.Sequence[Any]]:
         return isinstance(v, abc.Sequence) and not isinstance(v, (str, bytes, bytearray))
 
     @staticmethod
-    def is_mut_sequence(v) -> TypeGuard[abc.MutableSequence[Any]]:
+    def is_mut_sequence(v) -> typing.TypeIs[abc.MutableSequence[Any]]:
         if isinstance(v, (str, bytes, bytearray)):
             return False
         return isinstance(v, abc.MutableSequence)
 
     @staticmethod
-    def is_set(v) -> TypeGuard[abc.Set]:
+    def is_set(v) -> typing.TypeIs[abc.Set]:
         return isinstance(v, abc.Set)
 
     @staticmethod
-    def is_mut_set(v) -> TypeGuard[abc.MutableSet[Any]]:
+    def is_mut_set(v) -> typing.TypeIs[abc.MutableSet[Any]]:
         return isinstance(v, abc.MutableSet)
 
     @staticmethod
-    def is_mapping(v : Any) -> TypeGuard[abc.Mapping[Any, Any]]:
+    def is_mapping(v : Any) -> typing.TypeIs[abc.Mapping[Any, Any]]:
         return isinstance(v, abc.Mapping)
 
     @staticmethod
-    def is_mut_mapping(v) -> TypeGuard[abc.MutableMapping[Any, Any]]:
+    def is_mut_mapping(v) -> typing.TypeIs[abc.MutableMapping[Any, Any]]:
         return isinstance(v, abc.MutableMapping)
-
-    # ------------------------------------
-    # yield leaves from a tree
-
-    @staticmethod
-    def yield_leaves[T](branch : branch[T] | None, seen : set | None = None) -> abc.Iterator[T]:
-        if branch is None:
-            return
-        if seen is None: seen = set()
-        if (vid := hex(id(branch))) in seen: return
-        seen.add(vid)
-
-        if isinstance(branch, (abc.Sequence, abc.Set)):
-            if isinstance(branch, (str, bytes, bytearray)):
-                yield cast(T, branch)
-            else:
-                for v in branch:
-                    yield from Utils.yield_leaves(v, seen)
-        elif isinstance (branch, abc.Mapping):
-            for v in branch.values():
-                yield from Utils.yield_leaves(v, seen)
-        else:
-            yield branch
-
-    @staticmethod
-    def flatten_tree[T](tree : tree[T]) -> list[T]:
-        result = list(Utils.yield_leaves(tree))
-        return result
-
-    # ------------------------------------
-    # yield key-value pairs from a key-value pair
-
-    @staticmethod
-    def yield_items_from_item[T](item : item[T] | None, seen : set | None = None) -> abc.Iterator[item[T]]:
-        if item is None:
-            return
-
-        if seen is None: seen = set()
-        if (vid := hex(id(item[1]))) in seen: return
-        seen.add(vid)
-
-        if Utils.is_mapping(item[1]):
-            for item2 in item[1].items():
-                yield from Utils.yield_items_from_item(item2)
-        elif Utils.is_sequence(item[1]) or Utils.is_set(item[1]):
-            t = item[1]
-            for item2 in enumerate(t):
-                yield from Utils.yield_items_from_item(item2)
-        else:
-            yield item
-
-    # yield key-any pairs from a variant
-    @staticmethod
-    def yield_items(variant : Any) -> abc.Iterator[item[Any]]:
-        if variant is None:
-            return
-        yield from Utils.yield_items_from_item((None, variant))
-
-    @staticmethod
-    def yield_values(variant : Any, seen : set | None = None) -> abc.Iterator[Any]:
-        if variant is None:
-            return
-
-        if seen is None: seen = set()
-        if (vid := hex(id(variant))) in seen: return
-        seen.add(vid)
-
-        if Utils.is_mapping(variant):
-            for v2 in variant.values():
-                yield from Utils.yield_values(v2)
-        elif Utils.is_sequence(variant) or Utils.is_set(variant):
-            for v2 in variant:
-                yield from Utils.yield_values(v2)
-        else:
-            yield variant
-
-        #for item in Utils.yield_items(variant):
-        #    yield item[1]
-
-    @staticmethod
-    def yield_public_values(variant, seen = None) -> Any:
-        if seen is None: seen = set()
-        if (vid := hex(id(variant))) in seen: return
-        seen.add(vid)
-
-        if Utils.is_mapping(variant):
-            for k, v  in variant.items():
-                if is_public(k):
-                    yield from Utils.yield_public_values(v, seen)
-        elif Utils.is_sequence(variant) or Utils.is_set(variant):
-            for v in variant:
-                yield from Utils.yield_public_values(v, seen)
-        else:
-            yield variant
 
     # ------------------------------------
 
@@ -377,7 +359,7 @@ class Utils:
                 constructor = obj.__dict__["_make"]
             elif isinstance(obj, defaultdict):
                 # Default dict special case
-                constructor = partial(type(obj), obj.default_factory)
+                constructor = functools.partial(type(obj), obj.default_factory)
             else:
                 # Everything else
                 constructor = type(obj)
@@ -394,22 +376,22 @@ class Utils:
                 result = func(obj, *args, **kwargs)
             return result
 
-        @wraps(func)
+        @functools.wraps(func)
         def apply2(obj: tree[X], *args : P.args, **kwargs : P.kwargs) -> tree[Y]:
             result = apply1(obj, {}, *args, **kwargs)
             return cast(tree[Y], result)
 
-        return apply2
+        return staticmethod(apply2)
 
     @staticmethod
     def tree_all(func):
         """Turns a predicate into one that can be applied to arbitrarily nested containers."""
 
-        @wraps(func)
+        @functools.wraps(func)
         def wrapper(variant, *args, **kwargs):
-            return all(func(v, *args, **kwargs) for v in Utils.yield_values(variant))
+            return all(func(v, *args, **kwargs) for v in Utils.yield_leaves(variant))
 
-        return wrapper
+        return staticmethod(wrapper)
 
     @classmethod
     @contextmanager
@@ -495,18 +477,6 @@ class Utils:
     def merge_variants(lhs, *args, **kwargs):
         for rhs in [*args, kwargs]:
             Utils.merge_variant(lhs, rhs)
-
-
-    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-    # only keys that were already in lhs. For example, if you have a Dict that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-    #
-    #
-    #def fill(scope, *args, **kwargs):
-    #    for rhs in (*args, kwargs):
-    #        Utils.merge_variant(scope, rhs, keep_rhs = False)
 
 # endregion
 # ==================================================================================================
@@ -712,40 +682,32 @@ class Log:
 # region Path
 
 class Path:
-    # These functions wrap the os.path.* functions so that they work on arbitrary trees
 
     @staticmethod
-    def _resolve(path):
+    def resolve(path):
         """
         This tries to convert a path containing potential env variable references and stuff into a
         real path.
         """
         path = os.path.expandvars(path)
         path = pathlib.Path(path).expanduser()
-        path = path.resolve(strict = True)
+        try:
+            path = path.resolve(strict = True)
+        except Exception as _:
+            current_script.get().log.error(f"Path.resolve() failed for {path}")
+            raise
         return str(path)
 
     @staticmethod
-    def _is_resolved(path):
-        return path == Path._resolve(path)
-
-    resolve     = Utils.tree_map(lambda path : Path._resolve(path))
-    is_resolved = Utils.tree_map(lambda path : Path._is_resolved(path))
-
-    abspath  = Utils.tree_map(os.path.abspath)
-    normpath = Utils.tree_map(os.path.normpath)
-    basename = Utils.tree_map(os.path.basename)
-    dirname  = Utils.tree_map(os.path.dirname)
+    def isresolved(p):
+        try:
+            return p == Path.resolve(p)
+        except Exception:
+            return False
 
     @staticmethod
-    def swapext_scalar(p : str, new_ext : str):
+    def swapext(p : str, new_ext : str):
         return os.path.splitext(p)[0] + new_ext
-    swapext  = Utils.tree_map(swapext_scalar)
-
-    isabs    = Utils.tree_all(os.path.isabs)
-    isfile   = Utils.tree_all(os.path.isfile)
-    isdir    = Utils.tree_all(os.path.isdir)
-    exists   = Utils.tree_all(os.path.exists)
 
     # WARNING - Both "startswith" and "relpath" below can throw ValueError if there's a mix of
     # abs/rel paths, or if the paths are on different volumes in Windows. We don't handle this yet,
@@ -753,19 +715,13 @@ class Path:
     # macro expansion trace and the macro will be returned unexpanded. Using "commonpath" here is
     # probably worth it though, as it handles some annoying edge cases.
 
-    #startswith = Utils.tree_all(lambda p, parent : os.path.commonpath([p, parent]) == parent)
-
     @staticmethod
-    def _startswith(path : str, prefix : str):
+    def startswith(path : str, prefix : str):
         try:
             common = os.path.commonpath([path, prefix])
             return common == prefix
         except Exception as ex:
             raise ex
-
-    @staticmethod
-    def startswith(variant : tree[str], prefix : str):
-        return all(Path._startswith(path, prefix) for path in Utils.yield_leaves(variant))
 
     # Generating relative paths in the presence of symlinks doesn't work with either
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
@@ -774,9 +730,62 @@ class Path:
     # path, which we can do with "commonpath" and "removeprefix".
 
     @staticmethod
-    def relpath(lhs, rhs):
+    def relpath(lhs : str, rhs : str) -> str:
+        lhs = os.path.abspath(lhs)
+        rhs = os.path.abspath(rhs)
+
+        prefix = os.path.commonpath([lhs, rhs])
+
+        if lhs == rhs:
+            result = "."
+        elif prefix != rhs:
+            result = lhs
+        else:
+            result = lhs.removeprefix(prefix + os.sep)
+
+        return result
+
+    @staticmethod
+    def isabs(p : str) -> bool : return os.path.isabs(p)
+
+    @staticmethod
+    def isfile(p : str) -> bool : return os.path.isfile(p)
+
+    @staticmethod
+    def isdir(p : str) -> bool : return os.path.isdir(p)
+
+    @staticmethod
+    def abspath(p : str) -> str : return os.path.abspath(p)
+
+    @staticmethod
+    def normpath(p : str) -> str : return os.path.normpath(p)
+
+    @staticmethod
+    def basename(p : str) -> str : return os.path.basename(p)
+
+    @staticmethod
+    def dirname(p : str) -> str : return os.path.dirname(p)
+
+    @staticmethod
+    def split(p : str) -> tuple[str, str] : return os.path.split(p)
+
+    @staticmethod
+    def join(*p : str) -> str : return os.path.join(*p)
+
+    @staticmethod
+    def exists(p : str) -> bool : return os.path.exists(p)
+
+
+
+    # ==============================================================================================
+    # These functions wrap the os.path.* functions so that they work on arbitrary trees
+
+    @staticmethod
+    def relpath_t(lhs, rhs) -> tree[str]:
         if isinstance(rhs, (list, tuple, set)):
-            return [Path.relpath(lhs, rh) for rh in rhs]
+            return [Path.relpath_t(lhs, rh) for rh in rhs]
+            #result = [Path.relpath(lhs, rh) for rh in Utils.yield_leaves(rhs)]
+            #return cast(list[str], result)
 
         if not os.path.isabs(lhs):
             lhs = os.path.abspath(lhs)
@@ -794,16 +803,36 @@ class Path:
 
         return result
 
-    @staticmethod
-    def split(path):
-        return os.path.split(path)
+    startswith_t = Utils.tree_all(startswith)
 
-    @staticmethod
-    def join(*args: tree[str]) -> list[str] | str:
-        lists  = list(Utils.yield_cross_join(*args))
-        joined = [os.path.join(*cross) for cross in lists]
-        normed = [os.path.normpath(path) for path in joined]
-        return normed if len(normed) > 1 else normed[0]
+    #@staticmethod
+    #def startswith_t(variant : tree[str], prefix : str):
+    #    return all(Path.startswith(path, prefix) for path in Utils.yield_leaves(variant))
+
+    #@staticmethod
+    #def join_t(*args: tree[str]) -> list[str] | str:
+    #    lists  = list(Utils.yield_cross_join(*args))
+    #    joined = [Path.join(*cross) for cross in lists]
+    #    normed = [Path.normpath(path) for path in joined]
+    #    return normed if len(normed) > 1 else normed[0]
+
+    resolve_t = Utils.tree_map(lambda path : Path.resolve(path))
+
+    abspath_t  = Utils.tree_map(abspath)
+    normpath_t = Utils.tree_map(normpath)
+    basename_t = Utils.tree_map(basename)
+    dirname_t  = Utils.tree_map(dirname)
+
+    swapext_t  = Utils.tree_map(swapext)
+
+    exists_t   = Utils.tree_all(exists)
+
+    isabs_t    = Utils.tree_all(isabs)
+    isfile_t   = Utils.tree_all(isfile)
+    isdir_t    = Utils.tree_all(isdir)
+    isresolved_t = Utils.tree_all(isresolved)
+
+
 
 
 # endregion
@@ -862,6 +891,19 @@ class Dict(Scope, abc.MutableMapping):
     def __delitem__(scope, key):
         del scope.__dict__[key]
 
+    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+    # only keys that were already in lhs. For example, if you have a Dict that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+    def fill(self, *args, **kwargs):
+        lhs = Dict(self)
+        for rhs in (*args, kwargs):
+            Utils.merge_variant(lhs, rhs, keep_rhs = False)
+
+
+
 # ====================================
 # A Tool is just a callable alias for Dict to make build scripts more readable.
 
@@ -877,7 +919,7 @@ class Flags(Scope):
     def __init__(flags, *args, **kwargs):
         flags.name        = "build"
         flags.file        = "build.hancho"
-        flags.root        = os.getcwd()
+        flags.root : str  = "{dirname(path)}"
         flags.targets     = []
 
         flags.build_dir   = "build"
@@ -894,12 +936,21 @@ class Flags(Scope):
         flags.log_color     = True
         flags.log_timestamp = True
         flags.log_width     = shutil.get_terminal_size().columns
+        #flags.log_width = 120
 
         Utils.merge_variants(flags, *args, **kwargs)
 
+        flags.path = Path.resolve(flags.file)
         flags.name = flags.expand(flags.name)
-        flags.path = Path._resolve(flags.expand(flags.file))
-        flags.root = Path._resolve(flags.expand(flags.root))
+        flags.file = flags.expand(flags.file)
+        flags.root = flags.expand(flags.root)
+
+
+        if flags.root is None:
+            flags.root = Path.dirname(flags.path)
+        else:
+            flags.root = Path.resolve(flags.root)
+
 
     @staticmethod
     def parse(*argv) -> Flags:
@@ -1783,6 +1834,9 @@ class Project(Scope):
 
         if not self.flags.build_dry:
             for repo in self._repos:
+                for task in repo.yield_tasks():
+                    if task._complete:
+                        task.update_repo_stat_db()
                 repo.save_stat_db()
 
         time_b3 = time.perf_counter()
@@ -2030,7 +2084,7 @@ class Task(Scope):
 
         # These two have to be dicts so that downstream tasks can pick named outputs from it if
         # needed.
-        self._in_files : dict[str, list[str]]  = {}
+        self._in_files :  dict[str, list[str]] = {}
         self._out_files : dict[str, list[str]] = {}
 
         # We don't immediately create an asyncio.Task here because we may not
@@ -2070,7 +2124,7 @@ class Task(Scope):
         # Add all input fields that are tasks to _input_tasks so we can await them later.
 
         input_tasks = []
-        for v in Utils.yield_values(self.__dict__):
+        for v in Utils.yield_leaves(self.__dict__):
             if isinstance(v, Task):
                 assert v is not self
                 input_tasks.append(v)
@@ -2173,9 +2227,14 @@ class Task(Scope):
         if self.in_depfile:
             self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
 
+        text  = repr(self.name) if self.name else ""
+        text += " : " if self.name and self.desc else ""
+        text += repr(self.desc) if self.desc else ""
+
         reason = self.rebuild_reason()
         if not reason:
             self._skipped = True
+            self.log_task(Log.VERBOSE, Log.YELLOW + f"Task {text}: {Log.DGREEN}Clean!\n")
             return
 
         # ------------------------------------
@@ -2186,9 +2245,6 @@ class Task(Scope):
         # ------------------------------------
         # Print what we're about to run
 
-        text  = repr(self.name) if self.name else ""
-        text += " : " if self.name and self.desc else ""
-        text += repr(self.desc) if self.desc else ""
         self.log_task(Log.INFO, Log.YELLOW + f"Task {text}: {Log.DBLUE + reason}\n")
         #self.log_task(Log.VERBOSE, Log.DBLUE + f"{reason}\n")
 
@@ -2197,10 +2253,20 @@ class Task(Scope):
 
         time_a = time.perf_counter()
 
+
+        def fix_cmd(cmd):
+            curlify = str.maketrans({"«" : "{", "»" : "}"})
+            cmd = cmd.translate(curlify)
+            # Hacky way to rel-ify all paths in the command, but bleh
+            #cmd = cmd.replace(self.cwd + "/", "")
+            return cmd
+
         if isinstance(self.command, str):
-            await self.run_command(self.command)
+            command = fix_cmd(self.command)
+            await self.run_command(command)
         elif isinstance(self.command, list):
             for command in self.command:
+                command = fix_cmd(command)
                 await self.run_command(command)
         elif isinstance(self.command, abc.Callable):
             await self.call_callback(self.command)
@@ -2214,24 +2280,27 @@ class Task(Scope):
         # ------------------------------------
         # See if the task wrote all its output files
 
-        for file in Utils.yield_values(self._out_files):
+        for file in Utils.yield_leaves(self._out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
         # ------------------------------------
         # Update the repo stat db
 
-        # Reload the depfile post-build so we pick up new deps
-        if self.in_depfile:
-            self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
-
-        for file in Utils.yield_values([self._in_files, self._deplines]):
-            self.repo.update_stat(file, None)
-
-        for file in Utils.yield_values(self._out_files):
-            self.repo.update_stat(file, self.command)
-
+        # FIXME _don't_ do this, we don't want to update anything until _everything_ is done.
         # And we're done
+
+    def update_repo_stat_db(self):
+        with chdir(self.cwd):
+            # Reload the depfile post-build so we pick up new deps
+            if self.in_depfile:
+                self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
+
+            for file in Utils.yield_leaves([self._in_files, self._deplines]):
+                self.repo.update_stat(file, None)
+
+            for file in Utils.yield_leaves(self._out_files):
+                self.repo.update_stat(file, self.command)
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -2259,6 +2328,7 @@ class Task(Scope):
 
         script_root = self.expand("{script.root}")
         build_root  = self.expand("{build_root}")
+        self_cwd    = self.expand("{cwd}")
 
         Tracer.trace_start(self, "range", "expand io fields")
         # Then we expand all io fields and fix their paths.
@@ -2273,8 +2343,7 @@ class Task(Scope):
                     return
                 for x in Utils.yield_leaves(f):
                     if isinstance(x, Task):
-                        for v in x._out_files.values():
-                            yield from v
+                        yield from Utils.yield_leaves(x._out_files)
                     else:
                         yield x
 
@@ -2290,9 +2359,9 @@ class Task(Scope):
                     if len(files) > 1:
                         raise Task.BROKEN("in_depfile can't be a list")
                 elif field_name.startswith("in_"):
-                    self._in_files[field_name] = files
+                    self._in_files[field_name] = [Path.resolve(Path.join(self_cwd, file)) for file in files]
                 elif field_name.startswith("out_"):
-                    self._out_files[field_name] = files
+                    self._out_files[field_name] = [os.path.abspath(file) for file in files]
 
         Tracer.trace_end(self, "range", "expand io fields", None)
 
@@ -2305,9 +2374,9 @@ class Task(Scope):
         Tracer.trace_end(self, "range", "expand everything else", None)
 
         if not self.flags.build_dry:
-            for files in self._out_files.values():
-                for file in files:
-                    os.makedirs(os.path.dirname(file), exist_ok=True)
+            blah = list(self._out_files.values())
+            for file in Utils.yield_leaves(blah):
+                os.makedirs(os.path.dirname(file), exist_ok=True)
             if self.in_depfile:
                 os.makedirs(os.path.dirname(self.in_depfile), exist_ok=True)
 
@@ -2337,10 +2406,17 @@ class Task(Scope):
         # Note - This will also move "in_depfile" under build_root - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
 
-        if (field.startswith("out_") or field == "in_depfile") and not Path._startswith(file, build_root):
-            file = os.path.relpath(file, script_root)
+        if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(file, build_root):
+            file = Path.relpath(file, script_root)
             file = os.path.join(build_root, file)
             file = os.path.abspath(file)
+
+        cwd = cast(str, self.expand("{cwd}"))
+
+        #print()
+        #print(file)
+        #print()
+        file = Path.relpath(file, cwd)
 
         return file
 
@@ -2350,11 +2426,11 @@ class Task(Scope):
         if not Path.exists(self.cwd):
             raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
 
-        if not Path._startswith(self.build_root, self.repo.root):
+        if not Path.startswith(self.build_root, self.repo.root):
             raise Task.BROKEN(f"The build root {self.build_root} is not under repo.root {self.repo.root}")
 
         if isinstance(self.command, list):
-            for command in Utils.yield_values(self.command):
+            for command in Utils.yield_leaves(self.command):
                 if not isinstance(command, str):
                     raise Task.BROKEN(f"Command is not a list of strings: {self.command}")
         elif not isinstance(self.command, (str, abc.Callable)):
@@ -2362,27 +2438,31 @@ class Task(Scope):
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if self.flags.strict:
-            for command in Utils.yield_values(self.command):
+            for command in Utils.yield_leaves(self.command):
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
 
-        io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
-        for field_name in io_fields:
-            if field_name.startswith("out_"):
-                files = getattr(self, field_name)
-                for file in Utils.yield_values(files):
-                    if not Path._startswith(file, self.build_root):
-                        raise Task.BROKEN(f"Path error, output file {field_name}:{file} is not under build root {self.build_root}")
+#        io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
+#        for field_name in io_fields:
+#            if field_name.startswith("out_"):
+#                files = getattr(self, field_name)
+#                for file in Utils.yield_leaves(files):
+#                    print()
+#                    print(file)
+#                    print(self.build_root)
+#
+#                    if not Path._startswith(Path.abspath(file), self.build_root):
+#                        raise Task.BROKEN(f"Path error, output file {field_name}:{file} is not under build root {self.build_root}")
 
 
         # Check that all build files would end up under build_root
-        for file in Utils.yield_values(self._out_files):
-            assert Path.isabs(file)
-            if not Path._startswith(file, self.build_root):
+        for file in Utils.yield_leaves(self._out_files):
+            #assert Path.isabs(file)
+            if not Path.startswith(Path.abspath(file), self.build_root):
                 raise Task.BROKEN(f"Path error, output file _out_files:{file} is not under build root {self.build_root}")
 
         # Check for task collisions
-        for file in Utils.yield_values(self._out_files):
+        for file in Utils.yield_leaves(self._out_files):
             real_file = cast(str, Path.abspath(file))
             if real_file in self.project._real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
@@ -2390,10 +2470,10 @@ class Task(Scope):
 
         # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
-        for file in Utils.yield_values(self._in_files):
-            if not Path.isabs(file):
-                raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")
-            if not Path.exists(file) and not self.flags.build_dry:
+        for file in Utils.yield_leaves(self._in_files):
+            #if not Path.isabs(file):
+            #    raise Task.BROKEN(f"Somehow we got a non-abs path for an input file - {file}")
+            if not Path.exists(os.path.join(self.cwd, file)) and not self.flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -2409,26 +2489,26 @@ class Task(Scope):
         if self.build_force:
             return "Task forced to rebuild"
 
-        if not any(Utils.yield_values(self._in_files)):
+        if not any(Utils.yield_leaves(self._in_files)):
             return "Always rebuild a task with no inputs"
 
-        if not any(Utils.yield_values(self._out_files)):
+        if not any(Utils.yield_leaves(self._out_files)):
             return "Always rebuild a task with no outputs"
 
         # ------------------------------------
         # Check for file modifications
 
-        all_files = [self._in_files, self._out_files, self._deplines]
+        all_files : tree[str] = [self._in_files, self._out_files, self._deplines]
 
 
-        for file in Utils.yield_values(all_files):
+        for file in Utils.yield_leaves(all_files):
             if not os.path.isfile(file):
                 rel_file = Path.relpath(file, self.repo.root)
                 return f"File missing: {rel_file!r}"
             if reason := self.repo.stat_changed2 (file):
                 return reason
 
-        for file in Utils.yield_values(self._out_files):
+        for file in Utils.yield_leaves(self._out_files):
             if self.repo.command_changed(file, self.command):
                 rel_file = Path.relpath(file, self.repo.root)
                 return f"Command mismatch for {rel_file!r}"
@@ -2443,13 +2523,9 @@ class Task(Scope):
 
         proc = None
         try:
-            # Convert any alt delims into curly braces
-            curlify = str.maketrans({"«" : "{", "»" : "}"})
-            curly_command = command.translate(curlify)
-
             # Create the subprocess via asyncio and then await the result.
             proc = await asyncio.create_subprocess_shell(
-                curly_command,
+                command,
                 cwd    = self.cwd,
                 stdout = asyncio.subprocess.PIPE,
                 stderr = asyncio.subprocess.PIPE,
@@ -2522,7 +2598,7 @@ class Task(Scope):
         color = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
-        for chunk in Utils.yield_values(message):
+        for chunk in Utils.yield_leaves(message):
             all_lines.extend(chunk.splitlines(keepends = True))
 
         for line in all_lines:
@@ -2539,34 +2615,37 @@ class Task(Scope):
 
 class Script(Scope):
 
-    def __init__(script : Script, flags : Flags, log : Log, project : Project, repo : Repo, name : str, path : str, root : str, *args, **kwargs):
+    def __init__(self : Script, flags : Flags, log : Log, project : Project, repo : Repo, name : str, path : str, root : str, *args, **kwargs):
         super().__init__()
 
         # FIXME - do we want to force users to import hancho? so they get type
         # checking and stuff?
 
-        script.name       = name
-        script.path       = path
-        script.root       = root
-        script.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
+        self.name       = name
+        self.path       = path
+        self.root       = root
+        self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
-        script.hancho  = sys.modules[__name__]
-        script.flags   = flags
-        script.log     = log
-        script.project = project
-        script.repo    = repo
-        script.script  = script
-        script.aliases = aliases
+        self.hancho  = sys.modules[__name__]
+        self.flags   = flags
+        self.log     = log
+        self.project = project
+        self.repo    = repo
+        self.script  = self
+        self.aliases = aliases
 
-        Utils.merge_variants(script, *args, **kwargs)
+        Utils.merge_variants(self, *args, **kwargs)
 
-        script.name       = script.expand(script.name)
-        script.path       = Path._resolve(script.expand(script.path)) # this should be before resolve/expand root
-        script.root       = Path._resolve(script.expand(script.root))
-        script.build_root = script.expand(script.build_root) # build_root doesn't exist yet, don't resolve
+        self.name       = self.expand(self.name)
+        self.path       = Path.resolve(self.expand(self.path)) # this should be before resolve/expand root
+        self.root       = Path.resolve(self.expand(self.root))
+        self.build_root = self.expand(self.build_root) # build_root doesn't exist yet, don't resolve
 
-        script.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
-        script._tasks      = []
+        # We add __file__ because some scripts might expect it (see dynamic_dependencies/filelist/build.hancho)
+        self.__file__ = self.path
+
+        self.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
+        self._tasks      = []
 
     # Script exposes all globals that were set while exec'ing the scripts modules
     # through getitem/getattr
@@ -2757,8 +2836,8 @@ def script(file, root = None, *args, **kwargs):
     project = old_script.project
     repo    = old_script.repo
 
-    path = Path._resolve(old_script.expand(file))
-    root = Path._resolve(old_script.expand(root or os.path.dirname(path)))
+    path = Path.resolve(old_script.expand(file))
+    root = Path.resolve(old_script.expand(root or os.path.dirname(path)))
     name = os.path.basename(path)
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
@@ -2768,7 +2847,7 @@ def script(file, root = None, *args, **kwargs):
         log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
         return dupe
 
-    script = Script(flags, log, project, repo, name, path, root)
+    script = Script(flags, log, project, repo, name, path, root, *args, **kwargs)
     project._dedupe[dedupe_key] = script
     repo._scripts.append(script)
 
@@ -2777,7 +2856,7 @@ def script(file, root = None, *args, **kwargs):
 
 def include(file):
     script = current_script.get()
-    path = Path._resolve(script.expand(file))
+    path = Path.resolve(script.expand(file))
 
     code = None
     with open(path, encoding="utf-8") as file:
@@ -2798,8 +2877,8 @@ def repo(file, root = None, *args, **kwargs) -> Script:
     log     = old_script.log
     project = old_script.project
 
-    path = Path._resolve(old_script.expand(file))
-    root = Path._resolve(old_script.expand(root or os.path.dirname(path)))
+    path = Path.resolve(old_script.expand(file))
+    root = Path.resolve(old_script.expand(root or os.path.dirname(path)))
     name = os.path.basename(path)
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
@@ -2812,7 +2891,7 @@ def repo(file, root = None, *args, **kwargs) -> Script:
     repo = Repo(flags, log, project, name, path, root)
     project._repos.append(repo)
 
-    script = Script(flags, log, project, repo, name, path, root)
+    script = Script(flags, log, project, repo, name, path, root, *args, **kwargs)
     project._dedupe[dedupe_key] = script
     repo._scripts.append(script)
 

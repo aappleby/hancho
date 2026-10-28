@@ -1,3 +1,5 @@
+# examples/bazel-cpp-tutorial/stage3/tools_stage3
+
 # Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
 # This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
 
@@ -76,7 +78,7 @@ link_cpp_bin = hancho.Tool(
 def cc_library(*, in_srcs = None, **kwargs):
     objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src = src)
-        for src in hancho.flatten(in_srcs)
+        for src in hancho.Utils.flatten_tree(in_srcs)
     ]
     bin  = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
     return bin
@@ -84,7 +86,7 @@ def cc_library(*, in_srcs = None, **kwargs):
 def cc_binary(*, in_srcs = None, **kwargs):
     objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.flatten(in_srcs)
+        for src in hancho.Utils.flatten_tree(in_srcs)
     ]
     bin = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
     return bin

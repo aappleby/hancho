@@ -9,8 +9,7 @@
       "name"    : "Debug hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
-      "module"  : "hancho",
-      //"cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
+      "program": "${workspaceFolder}/hancho.py",
       "console" : "internalConsole",
       "args"    : ["-ldebug"],
       "preLaunchTask": "wipe_workspace_build"
@@ -20,7 +19,7 @@
       "name"    : "Debug scratch/build.hancho",
       "type"    : "debugpy",
       "request" : "launch",
-      "program" : "${workspaceFolder}/hancho.py",
+      "program": "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/scratch",
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
@@ -61,7 +60,7 @@
       "name"    : "Debug tricks/trick4_codegen_pipeline.hancho",
       "type"    : "debugpy",
       "request" : "launch",
-      "program" : "${workspaceFolder}/hancho.py",
+      "program": "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/tricks",
       "console" : "internalConsole",
       "args"    : ["-s=trick4_codegen_pipeline.hancho"],
@@ -70,25 +69,14 @@
 
 
     {
-      "name"    : "Debug example hello_world",
-      "type"    : "debugpy",
-      "request" : "launch",
-      "program" : "${workspaceFolder}/hancho.py",
-      "cwd"     : "${workspaceFolder}/examples/hello_world",
-      "console" : "internalConsole",
-      "args"    : ["--verbose"],
-      //"args"    : ["--trace"],
-    },
-
-    {
       "name"    : "Debug example",
       "type"    : "debugpy",
       "request" : "launch",
-      //"module"  : "hancho",
-      "program" : "${workspaceFolder}/hancho.py",
-      "cwd"     : "${workspaceFolder}/examples/subrepos",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
       "console" : "internalConsole",
-      "args"    : ["-D"],
+      "args"    : ["--verbose"],
+      //"args"    : ["--trace"],
     },
 
     {

@@ -19,7 +19,7 @@ class TestApp(unittest.TestCase):
 
         options =[
             # We use 'info' here because we're capturing the log to a StringIO
-            "--log_level=info",
+            "--log_level=debug",
             "--log_wrap=False",
             "--log_color=False",
             "--log_timestamp=False",
@@ -66,12 +66,6 @@ class TestApp(unittest.TestCase):
         result = subprocess.run(cmd, capture_output = True, text=True)
         self.assertIn("Hancho is a simple, pleasant build system", result.stdout)
 
-    # FIXME disabling this while we fiddle with what should/should not be ferried between scripts
-#    def _test_script_globals(self):
-#        hancho.foo = 12
-#        script = hancho.cv_script.get()
-#        self.assertEqual(12, script.globals.foo)
-
     def test_verbosities(self):
         self.setUp("--log_level=debug")
         self.assertEqual(self.log.DEBUG, self.log.level)
@@ -99,7 +93,10 @@ class TestApp(unittest.TestCase):
         self.log.info("line2\n")
         self.log.dedent()
         self.log.info("line3\n")
-        self.assertEqual('line1\n│ line2\nline3\n', self.stdout.getvalue())
+        self.assertEqual(
+            repr("line1\n│line2\nline3\n"),
+            repr(self.stdout.getvalue())
+        )
 
     def test_no_color(self):
         self.log.info("this should _not_ be blue\n")
@@ -129,8 +126,10 @@ class TestApp(unittest.TestCase):
         self.log.info("└ two\n")
         self.log.info("soop\n")
 
-        text = '┌ one\n│ boop\n└ two\nsoop\n'
-        self.assertEqual(text, self.stdout.getvalue())
+        self.assertEqual(
+            repr('┌ one\n│boop\n└ two\nsoop\n'),
+            repr(self.stdout.getvalue())
+        )
 
     def test_dumper(self):
         def dump(text, **kwargs):

@@ -7,21 +7,28 @@ from glob import glob
 
 import hancho
 
-dirname = hancho.dirname
+dirname = hancho.Path.dirname
 original_cwd = os.getcwd()
 
 src_files = glob("src/*")
 
-random_touch = hancho.Task(
-    desc = "Touch 3 random files in src/ - {basename(in_src)}",
-    command = lambda task : (os.utime(src, None) for src in task.config.in_src),
-    in_src = random.sample(src_files, 3),
+def touch_in_src(task):
+    for src in task.in_src:
+        #print(src)
+        os.utime(src, None)
+
+touch_inputs = hancho.Tool(
+    desc = "Touch {basename(in_src)}",
+    command = touch_in_src,
+    in_src = None,
 )
 
+random_touch = touch_inputs(in_src = random.sample(src_files, 3))
+
 def generate_filelist(task):
-    c = task.config
-    with chdir(dirname(__file__)), open(c.out_list, "w", encoding="utf-8") as file:
-        for f in random.sample(c.in_src, 3):
+    with chdir(dirname(__file__)), open(task.out_list, "w", encoding="utf-8") as file:
+        for f in random.sample(task.in_src, 3):
+            print(f)
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
@@ -33,15 +40,20 @@ filelist_txt = hancho.Task(
 
 def generate_result(task):
     """Read build/filelist.txt and create a new task to cat those files together into {basename(out_files)}"""
-    c = task.config
-    with chdir(dirname(__file__)), open(c.in_filelist, encoding="utf-8") as file:
+
+    with chdir(dirname(__file__)), open(task.in_filelist, encoding="utf-8") as file:
+
         from_filelist = [f.strip() for f in file.readlines()]
+        print(os.getcwd())
+        print(from_filelist)
+
         new_task = hancho.Task(
             desc      = "Concatenate {basename(in_files)} into {basename(out_files)}",
             command   = "cat {in_files} > {out_files}",
             in_files  = from_filelist,
             in_deps   = [random_touch, filelist_txt],
             out_files = "result.txt",
+            cwd = os.getcwd(),
         )
 
     hancho.Task(

@@ -91,63 +91,6 @@ class TestDict(unittest.TestCase):
         self.assertEqual(1, len(d))
         self.assertEqual(2, d.bar)
 
-
-    # FIXME do we really need this much handling of copy/deepcopy?
-    # It's not even used in any tests except this one.
-#    def _test_copy_and_deep_copy(self):
-#        def set_all_items(d):
-#            if isinstance(d, abc.MutableMapping):
-#                for k, v in list(d.items()): d[k] = set_all_items(v)
-#            elif isinstance(d, abc.MutableSequence):
-#                for i, v in enumerate(d): d[i] = set_all_items(v)
-#            else:
-#                d = "SENTINEL"
-#            return d
-#
-#        def check_all_items(d):
-#            if hancho.Utils.is_mut_mapping(d):
-#                for v in d.values(): check_all_items(v)
-#            elif hancho.Utils.is_mut_sequence(d) or hancho.Utils.is_mut_set(d):
-#                for v in d: check_all_items(v)
-#            else:
-#                self.assertNotEqual(d, "SENTINEL")
-#
-#        with self.assertRaises(AssertionError):
-#            check_all_items("SENTINEL")
-#        with self.assertRaises(AssertionError):
-#            check_all_items(["SENTINEL"])
-#        with self.assertRaises(AssertionError):
-#            check_all_items({"SENTINEL"})
-#        with self.assertRaises(AssertionError):
-#            check_all_items(("SENTINEL",))
-#        with self.assertRaises(AssertionError):
-#            check_all_items({"SENTINEL":"SENTINEL"})
-#
-#        a = Dict(
-#            foo=1,
-#            bar=2,
-#            baz=Dict(q=1,r=2,z=3),
-#            qux=Dict(q=Dict(a=1,b=2,c=3)),
-#            blar = [[1,2,3,[4,5,6,[7]]]],
-#            bulp = (1, 2, 3),
-#            fwen = {1, 2, 3},
-#        )
-#
-#        b = copy.copy(a)
-#        assert a == b
-#        set_all_items(b)
-#        check_all_items(a)
-#
-#        b = copy.deepcopy(a)
-#        assert a == b
-#        set_all_items(b)
-#        check_all_items(a)
-#
-#        b = Dict(a)
-#        assert a == b
-#        set_all_items(b)
-#        check_all_items(a)
-
 # --------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":

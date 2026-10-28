@@ -1,3 +1,5 @@
+# tools/tools_base.hancho
+
 import os
 
 import hancho
@@ -120,7 +122,7 @@ else:
 def cpp_lib(*, in_srcs=None, in_objs=None, **kwargs):
     new_objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=f)
-        for f in hancho.flatten(in_srcs)
+        for f in hancho.Utils.flatten_tree(in_srcs)
     ]
 
     return hancho.Task(link_cpp_lib.fill(kwargs), in_objs = [new_objs, in_objs])
@@ -131,7 +133,7 @@ def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
     new_objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=file)
-        for file in hancho.flatten(in_srcs)
+        for file in hancho.Utils.flatten_tree(in_srcs)
     ]
 
     return hancho.Task(link_cpp_bin.fill(kwargs), in_objs = [new_objs, in_objs, in_libs])
@@ -166,7 +168,7 @@ def cpp_test(*, in_srcs=None, in_objs=None, **kwargs):
 
     new_objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.flatten(in_srcs)
+        for src in hancho.Utils.flatten_tree(in_srcs)
     ]
 
     test_bin = hancho.Task(

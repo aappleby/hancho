@@ -2,8 +2,8 @@
 
 import hancho
 
-base_rules = hancho.load("{hancho.root}/tools/tools_base.hancho")
+base_rules = hancho.script("{hancho.root}/tools/tools_base.hancho")
 
-main_o = hancho.Task(base_rules.compile_cpp, in_src="src/main.cpp")
+main_o = base_rules.compile_cpp(in_src="src/main.cpp")
 
-main_exe = hancho.Task(base_rules.link_cpp_bin, in_objs=main_o, out_bin="app.exe")
+main_exe = base_rules.link_cpp_bin(in_objs=main_o, out_bin="app.exe")

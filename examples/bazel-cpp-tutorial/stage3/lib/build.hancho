@@ -1,8 +1,6 @@
-import hancho
+# examples/bazel-cpp-tutorial/stage3/lib/build.hancho
 
-tools = hancho.tools
-
-hello_time = tools.cc_library(
+hello_time = project.tools.cc_library(
     in_srcs = ["hello-time.cc"],
     out_lib = "hello-time.a",
 )
