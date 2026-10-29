@@ -131,7 +131,7 @@ class TestTasks(unittest.TestCase):
             command=command,
         )
         self.run_tasks(0)
-        self.assertEqual(repr(f"I am runnning in {os.getcwd()}"), repr(task._stdout.strip()))
+        self.assertEqual(repr(f"I am runnning in {os.getcwd()}"), repr(task._stdout_text.strip()))
 
     def test_bad_run_cmd(self):
         # Trying to run an arbitrary command and use it in a template should report BROKEN if the

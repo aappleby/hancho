@@ -65,20 +65,29 @@ class TestApp(unittest.TestCase):
         self.assertIn("Hancho is a simple, pleasant build system", result.stdout)
 
     def test_verbosities(self):
+        self.setUp("--log_level=trace")
+        self.assertEqual("TRACE", self.log.level_str)
+        self.assertEqual(self.log.TRACE, self.log._level_int)
+
         self.setUp("--log_level=debug")
-        self.assertEqual(self.log.DEBUG, self.log.level)
+        self.assertEqual("DEBUG", self.log.level_str)
+        self.assertEqual(self.log.DEBUG, self.log._level_int)
 
         self.setUp("--log_level=info")
-        self.assertEqual(self.log.INFO, self.log.level)
+        self.assertEqual("INFO", self.log.level_str)
+        self.assertEqual(self.log.INFO, self.log._level_int)
 
         self.setUp("--log_level=warning")
-        self.assertEqual(self.log.WARNING, self.log.level)
+        self.assertEqual("WARNING", self.log.level_str)
+        self.assertEqual(self.log.WARNING, self.log._level_int)
 
         self.setUp("--log_level=error")
-        self.assertEqual(self.log.ERROR, self.log.level)
+        self.assertEqual("ERROR", self.log.level_str)
+        self.assertEqual(self.log.ERROR, self.log._level_int)
 
         self.setUp("--log_level=critical")
-        self.assertEqual(self.log.CRITICAL, self.log.level)
+        self.assertEqual("CRITICAL", self.log.level_str)
+        self.assertEqual(self.log.CRITICAL, self.log._level_int)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger
         #cmd = [sys.executable, "../hancho.py", "--log_level=boo"]

@@ -31,6 +31,7 @@ import dataclasses
 import functools
 import hashlib
 import inspect
+import io
 import json
 import os
 import pathlib
@@ -524,25 +525,34 @@ class Log:
     ERROR    = 40
     CRITICAL = 50
 
-    def __init__(self, flags, stdout):
+    def __init__(self, flags):
 
-        self.level :int        = cast(int, getattr(Log, flags.log_level.upper()))
+        #self.level     = "info"
+        #self.wrap      = False
+        #self.color     = True
+        #self.timestamp = True
+        #self.width     = shutil.get_terminal_size().columns
+        #self.stdout    = sys.stdout
+
+        self.level_str : str   = flags.log_level.upper()
         self.wrap : bool       = flags.log_wrap
         self.color : bool      = flags.log_color
         self.timestamp : bool  = flags.log_timestamp
         self.width : int       = flags.log_width
+        self.stdout            = flags.log_stdout
 
-        assert type(self.level) is int
-
+        self._level_int     = getattr(Log, flags.log_level.upper())
         self._time_origin   = time.perf_counter()
         self._indent_stack  = []
         self._line_buffer   = ""
         self._match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if isinstance(stdout, str):
-            self._stdout = open(stdout, "w")  # noqa: SIM115
+        if isinstance(self.stdout, str):
+            self._stdout = open(self.stdout, "w")  # noqa: SIM115
+        elif isinstance(self.stdout, io.TextIOBase):
+            self._stdout = self.stdout
         else:
-            self._stdout = stdout
+            raise ValueError(f"Don't know how to use {self.stdout} as an output")
 
     def indent(self, ansi_color : str = RESET):
         self._indent_stack.append(f"{ansi_color}│{Log.RESET}")
@@ -552,7 +562,7 @@ class Log:
 
     @contextmanager
     def indenter(self, level, ansi_color : str = RESET):
-        log_level = self.level
+        log_level = self._level_int
         if level >= log_level:
             self.indent(ansi_color)
         yield
@@ -589,7 +599,7 @@ class Log:
         elif not isinstance(text, str):
             text = repr(text) + "\n"
 
-        if log_level < self.level:
+        if log_level < self._level_int:
             return
         if not isinstance(text, str) or len(text) == 0:
             return
@@ -979,7 +989,7 @@ class Flags(Scope):
         self.log_color     = True
         self.log_timestamp = True
         self.log_width     = shutil.get_terminal_size().columns
-        #self.log_width = 160
+        self.log_stdout    = sys.stdout
 
         Utils.merge_variants(self, *args, **kwargs)
 
@@ -1044,6 +1054,7 @@ class Flags(Scope):
         parser.add_argument("-c", "--log_color",     type=str_to_bool, help="Use color in the log for better readability")
         parser.add_argument(      "--log_timestamp", type=str_to_bool, help="Timestamp each log line")
         parser.add_argument(      "--log_width",     type=int,         help="Max width (in characters) of the log if not wrapping lines")
+        parser.add_argument(      "--log_stdout",    type=str,         help="Redirect the log's output to this filename")
 
         # fmt: on
 
@@ -1651,7 +1662,7 @@ class Tracer:
     @staticmethod
     def trace_start(scope, action : str, arg):
         log = current_script.get().log
-        if log.level > Log.TRACE: return
+        if log._level_int > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
 
@@ -1670,7 +1681,7 @@ class Tracer:
     @staticmethod
     def trace_up(scope, up, action, arg):
         log = current_script.get().log
-        if log.level > Log.TRACE: return
+        if log._level_int > Log.TRACE: return
         if isinstance(scope, Expander):
             scope = scope.scope
 
@@ -1684,7 +1695,7 @@ class Tracer:
     @staticmethod
     def trace_end(scope, action : str, arg, result):
         log = current_script.get().log
-        if log.level > Log.TRACE: return
+        if log._level_int > Log.TRACE: return
         if isinstance(result, Expander):
             result = result.scope
 
@@ -2155,8 +2166,8 @@ class Task(Scope):
 
         # Bookkeeping stuff
         self._task_id : int = -1
-        self._stdout : str = ""
-        self._stderr : str = ""
+        self._stdout_text : str = ""
+        self._stderr_text : str = ""
         self._cores = 0
         self._complete = False
         self._deplines = []
@@ -2234,7 +2245,7 @@ class Task(Scope):
         if self._error:
             #print("================")
             self.log_task(Log.ERROR, traceback.format_exception(self._error))
-            if (self._stdout or self._stderr):
+            if (self._stdout_text or self._stderr_text):
                 self.log_task(Log.ERROR, self.dump_stdout())
             #print("================")
             #self.log_task(Log.ERROR, traceback.format_exception(self._error))
@@ -2374,7 +2385,7 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        if self.log.level <= Log.DEBUG:
+        if self.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
@@ -2448,7 +2459,7 @@ class Task(Scope):
             if self.in_depfile:
                 os.makedirs(os.path.dirname(self.in_depfile), exist_ok=True)
 
-        if self.log.level <= Log.DEBUG:
+        if self.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
@@ -2577,7 +2588,7 @@ class Task(Scope):
                 start_new_session = True
             )
 
-            (stdout_data, stderr_data) = await proc.communicate()
+            (stdout_text, stderr_text) = await proc.communicate()
 
         except asyncio.CancelledError as ex:
             # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
@@ -2599,15 +2610,15 @@ class Task(Scope):
             # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
-        self._stdout = stdout_data.decode(errors="replace")
-        self._stderr = stderr_data.decode(errors="replace")
+        self._stdout_text = stdout_text.decode(errors="replace")
+        self._stderr_text = stderr_text.decode(errors="replace")
 
         if proc.returncode == 2:
             raise Task.BROKEN("Command return code was 2 : bash error")
         elif proc.returncode:
             raise Task.FAILED(f"Command return code was non-zero : {proc.returncode}")
 
-        if (self._stdout or self._stderr):
+        if (self._stdout_text or self._stderr_text):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback):
@@ -2627,13 +2638,13 @@ class Task(Scope):
 
     def dump_stdout(self : Task) -> str:
         result = ""
-        if self._stdout:
+        if self._stdout_text:
             result += "---------------- Stdout ----------------\n"
-            result += self._stdout.strip() + "\n"
-        if self._stderr:
+            result += self._stdout_text.strip() + "\n"
+        if self._stderr_text:
             result += "---------------- Stderr ----------------\n"
-            result += self._stderr.strip() + "\n"
-        if self._stdout or self._stderr:
+            result += self._stderr_text.strip() + "\n"
+        if self._stdout_text or self._stderr_text:
             result += "----------------------------------------\n"
         return result
 
@@ -2735,18 +2746,19 @@ class Script(Scope):
 # ==================================================================================================
 # region create_test_script
 
-def create_test_script(*, name, file : str, root : str, stdout : str | typing.TextIO, extra_flags) -> Script:
+def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, extra_flags) -> Script:
     flags = Flags.parse_flags(
         f"--name={name}",
         f"--file={file}",
         f"--root={root}",
         *extra_flags
     )
+    flags.log_stdout = stdout
     Utils.reset()
     Repo.reset()
     Runner.reset(flags)
 
-    log = Log(flags, stdout)
+    log = Log(flags)
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
     args = ()
@@ -2785,8 +2797,8 @@ def main():
             log_color = False,
             log_timestamp = True,
             log_width = shutil.get_terminal_size().columns,
-        ),
-        stdout = sys.stdout
+            log_stdout = sys.stdout
+        )
     )
     current_script.set(Dict(log = log))
 
@@ -2799,7 +2811,7 @@ def main():
     # ┌─
     # └─
 
-    log = Log(flags, sys.stdout)
+    log = Log(flags)
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
     log.verbose(Log.GRAY3 + "Verbose mode on\n")
     log.debug(Log.GRAY3 + "Debug mode on\n")
