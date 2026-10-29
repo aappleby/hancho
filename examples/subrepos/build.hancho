@@ -2,7 +2,7 @@
 
 import hancho
 
-myrepo = hancho.repo("myrepo/build.hancho")
+myrepo = hancho.load_repo("myrepo/build.hancho")
 
 main_o = hancho.Task(
     desc = "Compile {basename(out_obj)}",

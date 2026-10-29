@@ -28,7 +28,6 @@ random_touch = touch_inputs(in_src = random.sample(src_files, 3))
 def generate_filelist(task):
     with chdir(dirname(__file__)), open(task.out_list, "w", encoding="utf-8") as file:
         for f in random.sample(task.in_src, 3):
-            print(f)
             file.write(str(f) + "\n")
 
 filelist_txt = hancho.Task(
@@ -44,8 +43,6 @@ def generate_result(task):
     with chdir(dirname(__file__)), open(task.in_filelist, encoding="utf-8") as file:
 
         from_filelist = [f.strip() for f in file.readlines()]
-        print(os.getcwd())
-        print(from_filelist)
 
         new_task = hancho.Task(
             desc      = "Concatenate {basename(in_files)} into {basename(out_files)}",

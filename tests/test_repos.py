@@ -30,7 +30,7 @@ class TestRepos(unittest.TestCase):
 # ----------------------------------------------------------------------------------------------
 
 #    def _test_subrepos1(self):
-#        repo = self.hancho.repo("subrepo")
+#        repo = self.hancho.load_repo("subrepo")
 #        task = repo.task(
 #            command = "cat {rel_source_files} > {rel_build_files}",
 #            source_files = "stuff.txt",

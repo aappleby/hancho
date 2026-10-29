@@ -2,10 +2,10 @@ import hancho
 import os
 import sys
 
-repo.tools = hancho.script("tools_stage3.hancho")
+repo.tools = hancho.load("tools_stage3.hancho")
 
 repo.tools.compile_cpp.includes.append(os.getcwd())
 
-repo.lib  = hancho.script("lib/build.hancho")
-main = hancho.script("main/build.hancho")
+repo.lib  = hancho.load("lib/build.hancho")
+main = hancho.load("main/build.hancho")
 

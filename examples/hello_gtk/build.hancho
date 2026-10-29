@@ -1,6 +1,6 @@
 # You'll need to run "sudo apt-get install libgtk-3-dev" to compile this example.
 
-tools_base = hancho.script("{hancho.root}/tools/tools_base.hancho")
+tools_base = hancho.load("{hancho.root}/tools/tools_base.hancho")
 
 gtk_flags = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
 gtk_incs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')

@@ -53,7 +53,7 @@ in parallel via asyncio, skipping any whose outputs are already up to date.
 - To use Hancho you either run `hancho.py` in a directory containing `build.hancho`, or
   `import hancho` from your own Python and drive it directly.
 - The root script is loaded as a **repo** (see below). It can pull in other scripts with
-  `hancho.load(...)` (same repo) or `hancho.repo(...)` (new subrepo).
+  `hancho.load(...)` (same repo) or `hancho.load_repo(...)` (new subrepo).
 
 ### Config, the `Dict` class, and merging
 Almost everything in Hancho is a `Dict` - a `dict` subclass with three important behaviors:
@@ -112,10 +112,10 @@ region):
 
 ### Repos vs. scripts; deduplication
 - `hancho.load(file)` runs a script **in the same repo** (inherits `repo_dir`).
-- `hancho.repo(file)` runs a script as a **new subrepo** - `repo_dir`/`repo_file`/`this_repo`
+- `hancho.load_repo(file)` runs a script as a **new subrepo** - `repo_dir`/`repo_file`/`this_repo`
   are rebased to that script's directory. Outputs land in that subrepo's own `build/`.
 - Both return the module object, so you can reference another script's tasks:
-  `myrepo = hancho.repo("myrepo/build.hancho"); ... in_obj = [main_o, myrepo.util_o]`.
+  `myrepo = hancho.load_repo("myrepo/build.hancho"); ... in_obj = [main_o, myrepo.util_o]`.
 - **Loading is deduped**: the `Loader` keys modules on `(real path, config dump)`. Loading
   the same script with an identical config returns the same module instead of re-running it.
   This relies on `Dumper.dump` producing stable output (it's also Hancho's
@@ -169,7 +169,7 @@ Task outcome exceptions: `CANCELLED` (a dependency failed or build aborted), `FA
 ### Important config fields (defaults in `Options.root_config`)
 # Hey Claude, this is obsolete
 - `root_dir` / `root_file` - where the build starts (`build.hancho` by default).
-- `repo_dir` / `repo_file` / `this_repo` - the current repo (rebased by `hancho.repo`).
+- `repo_dir` / `repo_file` / `this_repo` - the current repo (rebased by `hancho.load_repo`).
 - `script_dir` / `script_file` / `this_module` - the currently executing script.
 - `task_cwd` - where shell commands run (defaults to `repo_dir`).
 - `repo.build` (`{join(repo_dir, 'build')}`), `build_tag`, `build_root`
@@ -194,7 +194,7 @@ this is also how the test suite resets global state between cases.
 - `hancho.py` - the whole implementation.
 - `examples/` - runnable sample builds. Good reference patterns:
   - `hello_world/` - minimal compile+link with a `Tool`.
-  - `subrepos/` - cross-repo dependencies via `hancho.repo`.
+  - `subrepos/` - cross-repo dependencies via `hancho.load_repo`.
   - `bazel-cpp-tutorial/` - reusable `cc_library`/`cc_binary` rules in a `tools_*.hancho`.
   - `dynamic_dependencies/` - callbacks that generate tasks at build time.
 - `tools/` - sample reusable build tools: `tools_base.hancho` (C++), `tools_wasm.hancho`,

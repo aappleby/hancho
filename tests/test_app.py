@@ -13,7 +13,6 @@ import hancho
 
 class TestApp(unittest.TestCase):
     def setUp(self, *args):
-        #print("setUp")
         os.chdir(os.path.dirname(__file__))
         self.maxDiff = 99999
 
@@ -42,7 +41,6 @@ class TestApp(unittest.TestCase):
         self.stdout.seek(0)
 
     def tearDown(self):
-        #print("tearDown")
         pass
 
     def test_log_redirection(self):
@@ -137,7 +135,6 @@ class TestApp(unittest.TestCase):
 
         def check(value, expected, **kwargs):
             result = dump(value, **kwargs)
-            #print(result)
             expected = textwrap.dedent(expected).strip()
             self.assertEqual(expected, result)
 

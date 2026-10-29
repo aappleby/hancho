@@ -2,4 +2,4 @@
 
 import hancho
 
-hancho.script("filelist/build.hancho")
+hancho.load("filelist/build.hancho")

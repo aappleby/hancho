@@ -56,7 +56,7 @@ class TestTasks(unittest.TestCase):
             stdout = sys.stdout,
             extra_flags = [
                 "--log_level=critical",
-                "--log_level=debug",
+                #"--log_level=debug",
                 #"--log_level=trace",
                 "--log_wrap=True",
                 "--max_errors=999",
@@ -547,7 +547,10 @@ class TestTasks(unittest.TestCase):
 
     def test_no_mixed_commands(self):
         bad_task = hancho.Task(
-            command=["echo test_no_mixed_commands", lambda task: print(f"test_no_mixed_commands {type(task)}")]
+            command = [
+                "echo test_no_mixed_commands",
+                lambda task: print(f"test_no_mixed_commands {type(task)}")
+            ]
         )
 
         self.run_tasks(1)

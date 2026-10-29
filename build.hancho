@@ -1,10 +1,10 @@
 # Top-level Hancho test build script
 
-tools_base  = hancho.script("tools/tools_base.hancho")
-tools_fpga  = hancho.script("tools/tools_fpga.hancho")
-tools_riscv = hancho.script("tools/tools_riscv.hancho")
-tools_wasm  = hancho.script("tools/tools_wasm.hancho")
+tools_base  = hancho.load("tools/tools_base.hancho")
+tools_fpga  = hancho.load("tools/tools_fpga.hancho")
+tools_riscv = hancho.load("tools/tools_riscv.hancho")
+tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
-examples = hancho.script("examples/examples.hancho")
+examples = hancho.load("examples/examples.hancho")
 
 #hancho.Dumper.dprint(hancho.cg.keys())

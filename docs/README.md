@@ -88,11 +88,11 @@ hancho.Context.thing = cat
 hancho: BUILD CLEAN
 ```
 
-If your project uses Git subrepos and your subrepo also builds with Hancho, you can load the subrepo's build script via ```hancho.repo()``` - this will ensure that all of its build targets go in ```build_root/build_tag/subrepo/path-relative-to-subrepo``` instead of getting mixed in with the rest of your build files.
+If your project uses Git subrepos and your subrepo also builds with Hancho, you can load the subrepo's build script via ```hancho.load_repo()``` - this will ensure that all of its build targets go in ```build_root/build_tag/subrepo/path-relative-to-subrepo``` instead of getting mixed in with the rest of your build files.
 
 ```py
 tools_base = hancho.load("{hancho.root}/tools/tools_base.hancho")
-awesomelib = hancho.repo("subrepos/awesomelib/build.hancho")
+awesomelib = hancho.load_repo("subrepos/awesomelib/build.hancho")
 
 hancho.Task(
   tools_base.cpp_binary,
