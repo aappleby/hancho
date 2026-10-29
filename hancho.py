@@ -482,6 +482,11 @@ class Utils:
         return lhs
 
     @staticmethod
+    def fill_variant(lhs, *args, **kwargs):
+        for rhs in [*args, kwargs]:
+            Utils.merge_variant(lhs, rhs, keep_rhs = False)
+
+    @staticmethod
     def merge_variants(lhs, *args, **kwargs):
         for rhs in [*args, kwargs]:
             Utils.merge_variant(lhs, rhs)
@@ -524,35 +529,31 @@ class Log:
     WARNING  = 30
     ERROR    = 40
     CRITICAL = 50
+    QUIET    = 60
 
-    def __init__(self, flags):
+    def __init__(self, *args, **kwargs):
 
-        #self.level     = "info"
-        #self.wrap      = False
-        #self.color     = True
-        #self.timestamp = True
-        #self.width     = shutil.get_terminal_size().columns
-        #self.stdout    = sys.stdout
+        self.log_level     = "info"
+        self.log_wrap      = False
+        self.log_color     = True
+        self.log_timestamp = True
+        self.log_width     = shutil.get_terminal_size().columns
+        self.log_stdout    = sys.stdout
 
-        self.level_str : str   = flags.log_level.upper()
-        self.wrap : bool       = flags.log_wrap
-        self.color : bool      = flags.log_color
-        self.timestamp : bool  = flags.log_timestamp
-        self.width : int       = flags.log_width
-        self.stdout            = flags.log_stdout
+        Utils.fill_variant(self, *args, **kwargs)
 
-        self._level_int     = getattr(Log, flags.log_level.upper())
+        self._level_int     = getattr(Log, self.log_level.upper())
         self._time_origin   = time.perf_counter()
         self._indent_stack  = []
         self._line_buffer   = ""
         self._match_escapes = re.compile(r"(\x1B.*?m)")
 
-        if isinstance(self.stdout, str):
-            self._stdout = open(self.stdout, "w")  # noqa: SIM115
-        elif isinstance(self.stdout, io.TextIOBase):
-            self._stdout = self.stdout
+        if isinstance(self.log_stdout, str):
+            self._stdout = open(self.log_stdout, "w")  # noqa: SIM115
+        elif isinstance(self.log_stdout, io.TextIOBase):
+            self._stdout = self.log_stdout
         else:
-            raise ValueError(f"Don't know how to use {self.stdout} as an output")
+            raise ValueError(f"Don't know how to use {self.log_stdout} as an output")
 
     def indent(self, ansi_color : str = RESET):
         self._indent_stack.append(f"{ansi_color}│{Log.RESET}")
@@ -608,7 +609,7 @@ class Log:
         lines = text.splitlines(keepends=True)
         for line in lines:
             if self._line_buffer == "":
-                self._line_buffer += f"[{time.perf_counter() - self._time_origin:8.3f}] " if self.timestamp else ""
+                self._line_buffer += f"[{time.perf_counter() - self._time_origin:8.3f}] " if self.log_timestamp else ""
                 self._line_buffer += "".join(self._indent_stack)
 
             self._line_buffer += color
@@ -626,16 +627,16 @@ class Log:
         # Dumps the line buffer to stdout and then clears it.
         if self._line_buffer:
             # If we want a non-colorized log, strip color codes from the line.
-            if not self.color:
+            if not self.log_color:
                 self._line_buffer = re.sub(self._match_escapes, "", self._line_buffer)
 
             # If the line wasn't finished (because we're exiting the app), stick a newline on it.
             if self._line_buffer[-1] != "\n":
                 self._line_buffer += "\n"
 
-            if not self.wrap:
-                _ = self.width
-                self._line_buffer = self._clip_printable(self._line_buffer, self.width)
+            if not self.log_wrap:
+                _ = self.log_width
+                self._line_buffer = self._clip_printable(self._line_buffer, self.log_width)
 
             self._stdout.write(self._line_buffer)
             self._line_buffer = ""
@@ -1028,7 +1029,7 @@ class Flags(Scope):
         # ------------------------------------
         # fmt: off
 
-        levels = ["trace", "debug", "verbose", "info", "warning", "error", "critical"]
+        levels = ["trace", "debug", "verbose", "info", "warning", "error", "critical", "quiet"]
 
         def str_to_bool(v):
             if v.lower() in ("yes", "true", "t", "y", "1"): return True
@@ -2753,12 +2754,11 @@ def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, ext
         f"--root={root}",
         *extra_flags
     )
-    flags.log_stdout = stdout
     Utils.reset()
     Repo.reset()
     Runner.reset(flags)
 
-    log = Log(flags)
+    log = Log(flags, log_stdout = stdout)
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
     args = ()
@@ -2790,18 +2790,7 @@ def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, ext
 # region main
 
 def main():
-    log = Log(
-        Dict(
-            log_level="critical",
-            log_wrap = False,
-            log_color = False,
-            log_timestamp = True,
-            log_width = shutil.get_terminal_size().columns,
-            log_stdout = sys.stdout
-        )
-    )
-    current_script.set(Dict(log = log))
-
+    current_script.set(Dict(log = Log()))
     flags = Flags.parse_flags(*sys.argv)
 
     Utils.reset()
