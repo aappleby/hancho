@@ -38,11 +38,9 @@ ld_libs = [
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
-#includes   = []
-
 compile_cpp = hancho.Tool(
     desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
-    command    = "g++ {gcc_flags} {includes} -c {in_src} -o {out_obj}",
+    command    = "g++ {gcc_flags} {weave('-I', includes)} -c {in_src} -o {out_obj}",
     #----------
     gcc_flags  = gcc_flags,
     #----------
@@ -51,9 +49,6 @@ compile_cpp = hancho.Tool(
     out_obj    = "{swapext(in_src, '.o')}",
     includes   = []
 )
-
-#compile_cpp.includes = includes
-
 
 link_cpp_lib = hancho.Tool(
     desc     = "Bundling {basename(out_lib)}",
@@ -76,11 +71,18 @@ link_cpp_bin = hancho.Tool(
 )
 
 def cc_library(*, in_srcs = None, **kwargs):
-    objs = [
-        hancho.Task(compile_cpp.fill(kwargs), in_src = src)
-        for src in hancho.Utils.flatten_tree(in_srcs)
-    ]
-    bin  = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
+#    objs = [
+#        hancho.Task(compile_cpp.fill(kwargs), in_src = src)
+#        for src in hancho.Utils.flatten_tree(in_srcs)
+#    ]
+    objs = []
+    for src in hancho.Utils.flatten_tree(in_srcs):
+        config = compile_cpp.fill(kwargs)
+        t = hancho.Task(config, in_src = src)
+        objs.append(t)
+
+    config2 = link_cpp_lib.fill(kwargs)
+    bin  = hancho.Task(config2, in_objs=objs)
     return bin
 
 def cc_binary(*, in_srcs = None, **kwargs):
@@ -88,5 +90,5 @@ def cc_binary(*, in_srcs = None, **kwargs):
         hancho.Task(compile_cpp.fill(kwargs), in_src=src)
         for src in hancho.Utils.flatten_tree(in_srcs)
     ]
-    bin = hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
+    bin = hancho.Task(link_cpp_bin.fill(kwargs), in_objs=objs)
     return bin

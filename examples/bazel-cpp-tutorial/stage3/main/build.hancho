@@ -1,13 +1,13 @@
 # examples/bazel-cpp-tutorial/stage3/main/build.hancho
 
-hello_greet = project.tools.cc_library(
+hello_greet = repo.tools.cc_library(
     in_srcs = ["hello-greet.cc"],
     in_hdrs = ["hello-greet.h"],
     out_lib = "hello-greet",
 )
 
-hello_world = project.tools.cc_binary(
+hello_world = repo.tools.cc_binary(
     in_srcs = ["hello-world.cc"],
-    in_deps = [hello_greet, project.lib.hello_time],
+    in_deps = [hello_greet, repo.lib.hello_time],
     out_bin = "hello-world",
 )

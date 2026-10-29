@@ -1,6 +1,6 @@
 # examples/bazel-cpp-tutorial/stage3/lib/build.hancho
 
-hello_time = project.tools.cc_library(
+hello_time = repo.tools.cc_library(
     in_srcs = ["hello-time.cc"],
     out_lib = "hello-time.a",
 )

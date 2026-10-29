@@ -72,10 +72,10 @@
       "type"    : "debugpy",
       "request" : "launch",
       "program": "${workspaceFolder}/hancho.py",
-      "cwd"     : "${workspaceFolder}/examples/dynamic_dependencies",
+      "cwd"     : "${workspaceFolder}/examples/bazel-cpp-tutorial/stage3",
       "console" : "internalConsole",
-      "args"    : ["--verbose"],
-      //"args"    : ["--trace"],
+      "args"    : ["--log_level=debug", "--max_jobs=1"],
+      //"args"    : ["-ltrace"],
     },
 
     {

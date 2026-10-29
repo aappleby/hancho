@@ -4,6 +4,8 @@ import unittest
 
 import hancho
 
+#from typing import cast
+
 # --------------------------------------------------------------------------------------------------
 
 class TestTemplates(unittest.TestCase):
@@ -25,29 +27,38 @@ class TestTemplates(unittest.TestCase):
 
     def test_basic_eval(self):
         d = hancho.Dict(a = 1, b = 2)
-        self.assertEqual('a', d.expand("a"))
-        self.assertEqual('b', d.expand("b"))
-        self.assertEqual(1, d.expand("{a}"))
-        self.assertEqual(2, d.expand("{b}"))
-        self.assertEqual('1212', d.expand("{a}{b}{a}{b}"))
-        self.assertEqual(1212, d.expand("{{a}{b}{a}{b}}"))
-        self.assertEqual(None, d.expand(None))
-        self.assertEqual("", d.expand(""))
+        self.assertEqual('a', d.expand("a", recursive2 = False))
+        self.assertEqual('b', d.expand("b", recursive2 = False))
+        self.assertEqual(1, d.expand("{a}", recursive2 = False))
+        self.assertEqual(2, d.expand("{b}", recursive2 = False))
+        self.assertEqual('1212', d.expand("{a}{b}{a}{b}", recursive2 = False))
+        self.assertEqual(1212, d.expand("{{a}{b}{a}{b}}", recursive2 = False))
+        self.assertEqual("", d.expand("", recursive2 = False))
+
+        # Non-strings are not modified by expand()
+        class Dummy:
+            pass
+
+        bad_types = [None, [], {}, (1,2,3), {1,2,3}, object(), Dummy()]
+        for b in bad_types:
+            self.assertIs(b, d.expand(b, recursive2 = False))
+
+
 
     def test_macro_to_fixed_point(self):
         d = hancho.Dict(a = "{b}", b = "{c}", c = "{d}")
-        self.assertEqual("{d}", d.expand("{a}"))
+        self.assertEqual("{d}", d.expand("{a}", recursive2 = False))
 
     def test_expand_dict(self):
         d = hancho.Dict(a = hancho.Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"))
         self.assertEqual(
-            d.expand(">{a}<"),
+            d.expand(">{a}<", recursive2 = False),
             ">1 2 x{foo}x{bar}x<"
         )
 
         d = hancho.Dict(a = hancho.Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"), foo = 3, bar = 4)
         self.assertEqual(
-            d.expand(">{a}<"),
+            d.expand(">{a}<", recursive2 = False),
             ">1 2 x3x4x<"
         )
 
@@ -55,36 +66,38 @@ class TestTemplates(unittest.TestCase):
         # only macros
         d = hancho.Dict(a="{b}", b="{a}")
         with self.assertRaises(RecursionError):
-            d.expand("{a}")
+            d.expand("{a}", recursive2 = False)
 
         # inside a template
         d = hancho.Dict(foo="foo", x="{y}", y="{x}")
         with self.assertRaises(RecursionError):
-            d.expand("echo {foo} {x} {foo}")
+            d.expand("echo {foo} {x} {foo}", recursive2 = False)
 
     def test_self_cycle(self):
         # only macro
         d = hancho.Dict(a = "{a}")
         with self.assertRaises(RecursionError):
-            d.expand("{a}")
+            d.expand("{a}", recursive2 = False)
 
         # inside a template
         d = hancho.Dict(a = "x{a}")
         with self.assertRaises(RecursionError):
-            d.expand("{a}")
+            d.expand("{a}", recursive2 = False)
 
     def test_expand_big_array(self):
+        count = hancho.Expander.MAX_EVALS - 1
         d = hancho.Dict(name = "prefix")
-        count = hancho.Expander.MAX_EVALS
-        templates = [f"{{name}}_{i:04d}" for i in range(count)]
-        expanded = d.expand(templates, recursive = True)
-        self.assertEqual(count, len(expanded))
-        self.assertEqual(f"prefix_{count//2:04d}", expanded[count//2])
+
+        d.big_array = [f"{{name}}_{i:04d}" for i in range(count)]
+
+        expanded = hancho.Expander._expand("hello {big_array}", d, recursive2 = True)
+        expected = " ".join(["hello", *(f"prefix_{i:04d}" for i in range(count))])
+        self.assertEqual(expanded, expected)
 
         with self.assertRaises(RecursionError):
-            count = hancho.Expander.MAX_EVALS + 1
-            templates = [f"{{name}}_{i:04d}" for i in range(count)]
-            expanded = d.expand(templates, recursive = True)
+            count = hancho.Expander.MAX_EVALS
+            d.big_array = [f"{{name}}_{i:04d}" for i in range(count)]
+            expanded = hancho.Expander._expand("hello {big_array}", d, recursive2 = True)
 
     def test_expand_long_chain_good(self):
         def make_dict(links):
@@ -97,7 +110,7 @@ class TestTemplates(unittest.TestCase):
             return d
 
         chain = make_dict(hancho.Expander.MAX_DEPTH-1)
-        self.assertEqual("sentinel", chain.expand("{k0}"))
+        self.assertEqual("sentinel", chain.expand("{k0}", recursive2 = False))
 
     def test_expand_long_chain_bad(self):
         def make_dict(links):
@@ -112,14 +125,14 @@ class TestTemplates(unittest.TestCase):
 
         chain = make_dict(hancho.Expander.MAX_DEPTH)
         with self.assertRaises(RecursionError):
-            self.assertEqual("sentinel", chain.expand("{k0}"))
+            self.assertEqual("sentinel", chain.expand("{k0}", recursive2 = False))
 
     def test_expand_giant_string(self):
         def expand_string(count):
             d = hancho.Dict(name = "foo")
             chunks = [f">{{name}}_{i:02d}<" for i in range(count)]
             giant_string = " ".join(chunks)
-            return d.expand(giant_string)
+            return d.expand(giant_string, recursive2 = False)
 
         # MAX_EVALS should pass, MAX_EVALS+1 should fail.
         result = expand_string(hancho.Expander.MAX_EVALS)
@@ -135,13 +148,21 @@ class TestTemplates(unittest.TestCase):
             return recursive()
         d = hancho.Dict(func = recursive)
         with self.assertRaises(RecursionError):
-            d.expand("{func()}")
+            d.expand("{func()}", recursive2 = False)
 
-    def test_macro_evals_to_list_of_macros(self):
-        # If a macro evals to a list of macros, the nested macros _shoud_ be auto-expanded
+    def test_macro_evals_to_collection(self):
+        # If we expand a macro (_not_ a template) that evals to a collection, we should receive
+        # a reference to the collection and not a copy.
         d = hancho.Dict(a=["{b}","{b}"], b="x")
-        e = d.expand("{a}", recursive = True)
-        self.assertEqual(["x","x"], e)
+        e = d.expand("{a}", recursive2 = False)
+        self.assertIs(e, d.a)
+
+        # If we expand a template that references a collection, we should get a string that also
+        # expands and stringizes the contents of the collection.
+        d = hancho.Dict(a=["{b}","{b}"], b="x")
+        e = d.expand("hello {a}", recursive2 = False)
+        self.assertEqual(e, "hello x x")
+
 
     def test_template_expands_to_template(self):
         d = hancho.Dict(
@@ -152,7 +173,7 @@ class TestTemplates(unittest.TestCase):
             baz = "} World!",
             blep = "Template",
         )
-        self.assertEqual("Hello Template World!", d.expand("{a}"))
+        self.assertEqual("Hello Template World!", d.expand("{a}", recursive2 = False))
 
     def test_template_to_macro(self):
         # template expands to macro, macro refers to something in up, thing in up is a template -
@@ -175,58 +196,63 @@ class TestTemplates(unittest.TestCase):
         _map = hancho.Dict({"1" : _number, "2" : _text, "3" : _func})
         d = hancho.Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_list = _list, x_map = _map)
 
-        self.assertIs(_number, d.expand("{x_number}"))
-        self.assertIs(_text,   d.expand("{x_text}"))
-        self.assertIs(_func,   d.expand("{x_func}"))
-        self.assertIs(_tuple,  d.expand("{x_tuple}"))
-        self.assertIs(_list,   d.expand("{x_list}"))
-        self.assertIs(_map,    d.expand("{x_map}"))
+        # So we have a conundrum in this test. If expansion _does_ copy collections, then "assertIs"
+        # won't work below (but we can still use assertEqual).
+        # if we _don't_ copy collections, then recursive expansion can clobber collections that are
+        # shared between tasks. Hmm.
+
+        self.assertIs(_number, d.expand("{x_number}", recursive2 = False))
+        self.assertIs(_text,   d.expand("{x_text}", recursive2 = False))
+        self.assertIs(_func,   d.expand("{x_func}", recursive2 = False))
+        self.assertIs(_tuple,  d.expand("{x_tuple}", recursive2 = False))
+        self.assertIs(_list,   d.expand("{x_list}", recursive2 = False))
+        self.assertIs(_map,    d.expand("{x_map}", recursive2 = False))
 
     def test_read_nested_c_first(self):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in
         # the nested context.
         d = hancho.Dict(a = hancho.Dict(b = "{c}", c = 10), c = 20)
-        result = d.expand("{a.b}")
+        result = d.expand("{a.b}", recursive2 = False)
         self.assertEqual(result, 10)
 
     def test_TEFINAE(self):
         # TEFINAE - Text Expansion Failure Is Not An Error
         d = hancho.Dict(a = 1)
-        self.assertEqual("{missing}", d.expand("{missing}"))
-        self.assertEqual("1 {missing}", d.expand("{a} {missing}"))
-        self.assertEqual("{a + missing}", d.expand("{a + missing}"))
+        self.assertEqual("{missing}", d.expand("{missing}", recursive2 = False))
+        self.assertEqual("1 {missing}", d.expand("{a} {missing}", recursive2 = False))
+        self.assertEqual("{a + missing}", d.expand("{a + missing}", recursive2 = False))
 
     def test_template_nones(self):
         # Nones should turn into empty strings
         d = hancho.Dict(a = None, b = "x{a}y")
-        self.assertEqual(d.expand("{a}"), None)
-        self.assertEqual(d.expand("{b}"), 'xy')
+        self.assertEqual(d.expand("{a}", recursive2 = False), None)
+        self.assertEqual(d.expand("{b}", recursive2 = False), 'xy')
 
     def test_flatten_lists(self):
         # Lists should be flattened before joining with spaces
         d = hancho.Dict(flags = [[['a'], 'b'], 'c', 'd', ['e', 'f']])
-        self.assertEqual('flags', d.expand("flags"))
-        self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], d.expand("{flags}"))
-        self.assertEqual("flags = 'a b c d e f'", d.expand("flags = '{flags}'"))
+        self.assertEqual('flags', d.expand("flags", recursive2 = False))
+        self.assertEqual([[['a'], 'b'], 'c', 'd', ['e', 'f']], d.expand("{flags}", recursive2 = False))
+        self.assertEqual("flags = 'a b c d e f'", d.expand("flags = '{flags}'", recursive2 = False))
 
     def test_templates_with_escaped_char_proxies(self):
         # Testing escape sequences in templates is annoying. Double-check that we can use proxies
         # to build strings with escape sequences.
         d = hancho.Dict(a=1, bs="\\", lb="{", rb="}")
-        self.assertEqual(d.expand(r"{lb}a{rb}"), 1)
-        self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}"), r"\{a\}")
+        self.assertEqual(d.expand(r"{lb}a{rb}", recursive2 = False), 1)
+        self.assertEqual(d.expand(r"{bs}{lb}a{bs}{rb}", recursive2 = False), r"\{a\}")
 
     def test_expand_failed_to_terminate1(self):
         # Single recursion
         with self.assertRaises(RecursionError):
             bad_dict = hancho.Dict(flarp="asdf {flarp}")
-            bad_dict.expand("{flarp}")
+            bad_dict.expand("{flarp}", recursive2 = False)
 
     def test_expand_failed_to_terminate2(self):
         # Double recursion
         with self.assertRaises(RecursionError):
             bad_dict = hancho.Dict(foo="asdf {bar}", bar="qwer {foo}")
-            bad_dict.expand("{foo}")
+            bad_dict.expand("{foo}", recursive2 = False)
 
     def test_expand_failed_to_terminate3(self):
         # Recursion through 'subthing.foo', which can't be evaluated in 'subthing' and gets re-evaluated
@@ -234,12 +260,12 @@ class TestTemplates(unittest.TestCase):
         with self.assertRaises(RecursionError):
             subthing = hancho.Dict(foo="{subthing.foo} x")
             bad_dict = hancho.Dict(command="{subthing.foo}", subthing=subthing)
-            bad_dict.expand("{command}")
+            bad_dict.expand("{command}", recursive2 = False)
 
     def test_expand_nested_list(self):
         d = hancho.Dict(a = 1, b = 2, c = 3)
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
-        r = d.expand(v, recursive = True)
+        r = d.expand_collection(v)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self):
@@ -250,20 +276,20 @@ class TestTemplates(unittest.TestCase):
             test_multi_eval = "it works!"
         )
 
-        self.assertEqual(d.expand("c"),         "c")
-        self.assertEqual(d.expand("{c}"),       "'  test_multi_eval   '.strip() ")
-        self.assertEqual(d.expand("{{c}}"),     "test_multi_eval")
-        self.assertEqual(d.expand("{{{c}}}"),   "it works!")
-        self.assertEqual(d.expand("{{{{c}}}}"), "{it works!}")
+        self.assertEqual(d.expand("c", recursive2 = False),         "c")
+        self.assertEqual(d.expand("{c}", recursive2 = False),       "'  test_multi_eval   '.strip() ")
+        self.assertEqual(d.expand("{{c}}", recursive2 = False),     "test_multi_eval")
+        self.assertEqual(d.expand("{{{c}}}", recursive2 = False),   "it works!")
+        self.assertEqual(d.expand("{{{{c}}}}", recursive2 = False), "{it works!}")
 
     def test_embedded_eval(self):
         d = hancho.Dict(foo = "1 + 1", bar = "{baz}", baz = "2 + 2")
-        self.assertEqual('1 + 1', d.expand("{foo}"))
-        self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}"))
+        self.assertEqual('1 + 1', d.expand("{foo}", recursive2 = False))
+        self.assertEqual('1 + 1 2 + 2', d.expand("{foo} {bar}", recursive2 = False))
         d = hancho.Dict(foo = "1 + 1", bar = "{baz}", baz = "\"2 + 2\"")
-        self.assertEqual('1 + 1', d.expand("{foo}"))
-        self.assertEqual('\"2 + 2\"', d.expand("{bar}"))
-        self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}"))
+        self.assertEqual('1 + 1', d.expand("{foo}", recursive2 = False))
+        self.assertEqual('\"2 + 2\"', d.expand("{bar}", recursive2 = False))
+        self.assertEqual('1 + 1 \"2 + 2\"', d.expand("{foo} {bar}", recursive2 = False))
 
 #    # FIXME broken
 #    def _test_inline_script(self):

@@ -61,13 +61,15 @@ from typing import Any, ClassVar, Concatenate, TypeIs, cast
 def is_public(key):
     if not isinstance(key, str) and key is not None:
         print(f"key is {type(key)}={key}")
-        breakpoint()
+        #breakpoint()
+        raise ValueError(key)
     return key is None or not key.startswith("_")
 
 def is_private(key):
     if not isinstance(key, str) and key is not None:
         print(f"key is {type(key)}={key}")
-        breakpoint()
+        #breakpoint()
+        raise ValueError(key)
     return key is not None and key.startswith("_")
 
 def dprint(*args, **kwargs):
@@ -249,7 +251,9 @@ class Utils:
         return list(Utils.yield_cross_join_reduce(reduce, *args))
 
     @staticmethod
-    def weave(lhs : tree[str], rhs : tree[str], *args : tree[str]) -> list[str]:
+    def weave(lhs : tree[str] | None, rhs : tree[str] | None, *args : tree[str]) -> list[str]:
+        if lhs is None or rhs is None:
+            return []
         return Utils.cross_join_reduce(lambda x, y: x + y, lhs, rhs, *args)
 
     @staticmethod
@@ -291,6 +295,11 @@ class Utils:
     def is_scalar(v : Any):
         if type(v) is object: return True
         return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
+
+    @staticmethod
+    def is_collection(v : Any):
+        if type(v) is object: return False
+        return (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
 
     @staticmethod
     def is_sequence(v : Any) -> typing.TypeIs[abc.Sequence[Any]]:
@@ -864,8 +873,13 @@ class Scope:
     def get(self, key, default = None):
         return self.__dict__.get(key, default)
 
-    def expand(self, template, recursive : bool = False) -> Any:
-        return Expander._expand(template, self, recursive)
+    def expand(self, template : str, *, recursive2 : bool) -> Any:
+        if not isinstance(template, str):
+            raise TypeError(template)
+        return Expander._expand(template, self, recursive2 = recursive2)
+
+    def expand_collection(self, collection) -> Any:
+        return Expander._expand_collection(collection, self)
 
     def __contains__(self, key) -> bool:
         return is_public(key) and key in self.__dict__
@@ -905,6 +919,12 @@ class Dict(Scope, abc.MutableMapping):
         super().__init__(_up = kwargs.pop('_up', None))
         Utils.merge_variants(self, *args, **kwargs)
 
+    def __getattr__(self, key):
+        super().__getattr__(key)
+
+    def __setattr__(self, key, val):
+        super().__setattr__(key, val)
+
     def __setitem__(self, key, val):
         self.__dict__[key] = val
 
@@ -921,6 +941,7 @@ class Dict(Scope, abc.MutableMapping):
         lhs = Dict(self)
         for rhs in (*args, kwargs):
             Utils.merge_variant(lhs, rhs, keep_rhs = False)
+        return lhs
 
 
 
@@ -957,15 +978,15 @@ class Flags(Scope):
         self.log_wrap      = False
         self.log_color     = True
         self.log_timestamp = True
-        #flags.log_width     = shutil.get_terminal_size().columns
-        self.log_width = 160
+        self.log_width     = shutil.get_terminal_size().columns
+        #self.log_width = 160
 
         Utils.merge_variants(self, *args, **kwargs)
 
         self.path = Path.resolve(self.file)
-        self.name = self.expand(self.name)
-        self.file = self.expand(self.file)
-        self.root = self.expand(self.root)
+        self.name = self.expand(self.name, recursive2 = False)
+        self.file = self.expand(self.file, recursive2 = False)
+        self.root = self.expand(self.root, recursive2 = False)
 
 
         if self.root is None:
@@ -975,7 +996,7 @@ class Flags(Scope):
 
 
     @staticmethod
-    def parse(*argv) -> Flags:
+    def parse_flags(*argv) -> Flags:
 
         if len(argv) > 0 and "hancho.py" in argv[0]:
             argv = argv[1:]
@@ -1085,7 +1106,7 @@ class Flags(Scope):
 
 # Expander _must_ be a mapping in order to go in eval()
 
-class Expander(Scope, abc.Mapping):
+class Expander(abc.Mapping):
     # Hancho's text expansion system.
     #
     # WARNING - Again, Hancho is NOT A SANDBOX. Expander is the part that evaluates the arbitrary
@@ -1106,14 +1127,14 @@ class Expander(Scope, abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(self, scope : Scope, recursive : bool):
+    def __init__(self, scope : Scope, *, recursive2 : bool):
         self.scope = scope
-        self.recursive = recursive
+        self.recursive = recursive2
 
     @classmethod
-    def wrap(cls, scope, recursive : bool):
+    def wrap(cls, scope, *, recursive2 : bool):
         assert not isinstance(scope, cls)
-        return cls(scope, recursive)
+        return cls(scope, recursive2 = recursive2)
 
     # ====================================
     # Expander _must_ implement __getattr__ so that macros like {script.foo} work.
@@ -1138,17 +1159,19 @@ class Expander(Scope, abc.Mapping):
     # ====================================
 
     def internal_get(self, key : str):
-        Tracer.trace_start(self.scope, "get", key)
+        result = None
+        try:
+            Tracer.trace_start(self.scope, "get", key)
+            result = self.scope.find(key)
 
-        result = self.scope.find(key)
-
-        if isinstance(result, Scope):
-            # have to do this so that "read nested c first" resolves in the dest dict first
-            result = self.wrap(result, object.__getattribute__(self, "recursive"))
-        else:
-            result = self.scope.expand(result, recursive = True)
-
-        Tracer.trace_end(self.scope, "get", key, result)
+            if isinstance(result, Scope):
+                # have to do this so that "read nested c first" resolves in the dest dict first
+                #result = self.wrap(result, object.__getattribute__(self, "recursive"))
+                result = self.wrap(result, recursive2 = self.recursive)
+            elif isinstance(result, str):
+                result = self.scope.expand(result, recursive2 = self.recursive)
+        finally:
+            Tracer.trace_end(self.scope, "get", key, result)
         return result
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1170,57 +1193,105 @@ class Expander(Scope, abc.Mapping):
 
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
-    MAX_DEPTH = 30
-    MAX_EVALS = 300
+    MAX_DEPTH : int = 30
+    MAX_EVALS : int = 300
 
     # ==============================================================================================
 
     @classmethod
-    def _expand(cls, var : Any, scope, recursive : bool) -> Any:
+    def xip_collection(cls, var : abc.Collection, scope : Scope) -> Any:
+        if not isinstance(var, abc.Collection):
+            raise TypeError(var)
+        cls._xip_collection(var, scope)
+
+    @classmethod
+    def _xip_collection(cls, var : abc.Collection, scope : Scope) -> Any:
+        if Utils.is_mut_sequence(var):
+            for i, v in enumerate(var):
+                var [i] = cls._xip_collection(v, scope)
+        elif Utils.is_mut_mapping(var):
+            for k, v in var.items():
+                var[k] = cls._xip_collection(v, scope)
+        elif Utils.is_mut_set(var):
+            temp = list(var)
+            var.clear()
+            for v in temp:
+                var.add(cls._xip_collection(v, scope))
+        elif isinstance(var, str):
+            var = cls._expand(var, scope, recursive2 = False)
+        return var
+
+    @classmethod
+    def _expand_collection(cls, var : abc.Collection, scope : Scope) -> Any:
+        if Utils.is_mut_mapping(var):
+            result1 : abc.MutableMapping = type(var)()
+            for k, v in var.items():
+                result1[k] = cls._expand_collection(v, scope)
+            return result1
+        elif Utils.is_mut_sequence(var):
+            result2 : abc.MutableSequence = type(var)()
+            for v in var:
+                result2.append(cls._expand_collection(v, scope))
+            return result2
+        elif Utils.is_mut_set(var):
+            result3 = type(var)()
+            for v in enumerate(var):
+                result3.add(cls._expand_collection(v, scope))
+            return result3
+        elif isinstance(var, str):
+            var = cls._expand(var, scope, recursive2 = False)
+
+        return var
+
+
+    # ==============================================================================================
+
+    @classmethod
+    @contextmanager
+    def expand_deeper(cls):
         # Bail out if we've recursed too many times.
         old_depth = cls.cv_depth.get()
         if old_depth > cls.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
         cls.cv_depth.set(old_depth + 1)
 
-        try:
-            while True:
+        yield
 
-                # Filter out everything we can't expand directly.
-                # This _must_ go inside the while True loop, as we can have macros that expand into
-                # containers that we then need to recurse into.
-                if Utils.is_mut_mapping(var) and recursive:
-                    for k, v in var.items():
-                        var[k] = cls._expand(v, scope, recursive)
-                    return var
-                elif Utils.is_mut_sequence(var) and recursive:
-                    for i, v in enumerate(var):
-                        var[i] = cls._expand(v, scope, recursive)
-                    return var
-                elif Utils.is_mut_set(var) and recursive:
-                    var = list(var)
-                    for i, v in enumerate(var):
-                        var[i] = cls._expand(v, scope, recursive)
-                    return set(var)
-                elif isinstance(var, Sentinel):
-                    # Trying to expand a sentinel is a failure.
-                    raise AssertionError(f"Tried to expand sentinel {var}")
-                elif not isinstance(var, str):
-                    return var
+        cls.cv_depth.set(old_depth)
+        if old_depth == 0:
+            # We just finished an expansion - reset the eval budget
+            cls.cv_evals.set(0)
+
+    @classmethod
+    @contextmanager
+    def eval_deeper(cls):
+        # Bail out if we've done too many evals already.
+        old_evals = cls.cv_evals.get()
+        if old_evals >= cls.MAX_EVALS:
+            raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
+        cls.cv_evals.set(old_evals + 1)
+
+        yield
 
 
+    @classmethod
+    def _expand(cls, var : str, scope, *, recursive2 : bool) -> Any:
+        if not isinstance(var, str):
+            raise TypeError(f"_expand - can't expand a {type(var)}")
+
+        with cls.expand_deeper():
+            old_var = None
+            while isinstance(var, str) and var != old_var:
                 old_var = var
                 blocks = cls._split_text(var)
-                # Stop if we have nothing in the string to expand.
-                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], cls.Literal)):
-                    return var
 
-                # If there's only one macro block, eval it.
+                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], cls.Literal)):
+                    # Stop if we have nothing in the string to expand.
+                    break
+
                 if len(blocks) == 1 and isinstance(block := blocks[0], cls.Macro):
-                    var = cls._eval_macro(block, scope, recursive)
-                    # Stop if we're at a fixed point.
-                    if old_var == var:
-                        return var
+                    # If there's only one macro block, eval it.
+                    var = cls._eval_macro(block, scope, recursive2 = recursive2)
                     continue
 
                 # Otherwise we're doing a template expansion.
@@ -1228,24 +1299,10 @@ class Expander(Scope, abc.Mapping):
                     Tracer.trace_start(scope, "expand", var)
                     for i, b in enumerate(blocks):
                         if isinstance(b, cls.Macro):
-                            blocks[i] = cls._expand(b, scope, recursive)
+                            blocks[i] = cls._expand(b, scope, recursive2 = recursive2)
                     var = "".join(Utils.stringify(b) for b in blocks)
-
-                    # Stop if we're at a fixed point.
-                    if old_var == var:
-                        return var
-
-                    # Stop if we hit a non-string
-                    if not isinstance(var, str):
-                        return var
                 finally:
                     Tracer.trace_end(scope, "expand", old_var, var)
-
-        finally:
-            cls.cv_depth.set(old_depth)
-            if old_depth == 0:
-                # We just finished an expansion - reset the eval budget
-                cls.cv_evals.set(0)
 
         return var
 
@@ -1260,30 +1317,25 @@ class Expander(Scope, abc.Mapping):
     # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
     @classmethod
-    def _eval_macro(cls, var : str, scope, recursive : bool) -> Any:
-        # Bail out if we've done too many evals already.
-        old_evals = cls.cv_evals.get()
-        if old_evals >= cls.MAX_EVALS:
-            raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
-        cls.cv_evals.set(old_evals + 1)
+    def _eval_macro(cls, var : str, scope, *, recursive2 : bool) -> Any:
+        with cls.eval_deeper():
+            result = var
+            try:
+                Tracer.trace_start(scope, "eval", var[1:-1])
+                result = eval(var[1:-1], {}, cls.wrap(scope, recursive2 = recursive2))
+            except RecursionError:
+                raise
+            except Exception as ex:
+                _ = ex
+                # If you uncomment this line, things will be super spammy.4
+                #dprint(f"##########\neval failed because >{ex}<\n##########\n")
+                pass
+            finally:
+                Tracer.trace_end(scope, "eval", var[1:-1], result)
+                pass
 
-        result = var
-        try:
-            Tracer.trace_start(scope, "eval", var[1:-1])
-            result = eval(var[1:-1], {}, cls.wrap(scope, recursive))
-        except RecursionError:
-            raise
-        except Exception as ex:
-            _ = ex
-            # If you uncomment this line, things will be super spammy.4
-            #dprint(f"##########\neval failed because >{ex}<\n##########\n")
-            pass
-        finally:
-            Tracer.trace_end(scope, "eval", var[1:-1], result)
-            pass
-
-        if isinstance(result, Expander):
-            result = result.scope
+            if isinstance(result, Expander):
+                result = result.scope
 
         return result
 
@@ -1624,7 +1676,8 @@ class Tracer:
             indent_color = Log.WHITE
             log.trace(f"{indent_color}┌── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
         else:
-            log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
+            #log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
+            log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
         log.indent(indent_color)
 
     @staticmethod
@@ -1933,7 +1986,7 @@ class Repo(Scope):
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
 
-        stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
+        stat_db_path = self.expand("{join(build_root, 'hancho.json')}", recursive2 = False)
 
         if os.path.isfile(stat_db_path):
             log.verbose(f"Loading stat_db {stat_db_path}\n")
@@ -1971,7 +2024,7 @@ class Repo(Scope):
 
 
     def save_stat_db(self):
-        stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
+        stat_db_path = self.expand("{join(build_root, 'hancho.json')}", recursive2 = False)
         self.log.verbose(Log.DGREEN + f"Saving stat_db {stat_db_path}\n")
         Utils.save_json(self._stat_db, stat_db_path)
 
@@ -2082,7 +2135,6 @@ class Task(Scope):
         self.in_depfile  = None
         self.job_size    = 1
 
-
         self.flags   = script.flags
         self.log     = script.log
         self.project = script.project
@@ -2129,10 +2181,9 @@ class Task(Scope):
         # we need to queue up input tasks before this task starts (and then expands everything else)
 
         for k, v in self.__dict__.items():
-            if k.startswith("in_"):  # noqa: SIM102
-                if isinstance(v, str):
-                    v = Expander._expand(v, self, recursive = True)
-                    self.__dict__[k] = v
+            if k.startswith("in_"):
+                v = Expander._expand_collection(v, self)
+                self.__dict__[k] = v
 
         # ----------------------------------------
         # Add all input fields that are tasks to _input_tasks so we can await them later.
@@ -2218,9 +2269,11 @@ class Task(Scope):
         # ------------------------------------
         # Expand all mandatory fields in the raw config and fix raw file paths.
 
-        Tracer.trace_start(self, "range", "expand_task")
-        self.expand_task()
-        Tracer.trace_end(self, "range", "expand_task", None)
+        try:
+            Tracer.trace_start(self, "range", "expand_task")
+            self.expand_task()
+        finally:
+            Tracer.trace_end(self, "range", "expand_task", None)
 
         # ------------------------------------
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -2340,53 +2393,68 @@ class Task(Scope):
 
         # We eval these first because we need them for filename expansion
 
-        script_root = self.expand("{script.root}")
-        build_root  = self.expand("{build_root}")
-        self_cwd    = self.expand("{cwd}")
+        script_root = self.expand("{script.root}", recursive2 = False)
+        build_root  = self.expand("{build_root}", recursive2 = False)
+        self_cwd    = self.expand("{cwd}", recursive2 = False)
 
-        Tracer.trace_start(self, "range", "expand io fields")
-        # Then we expand all io fields and fix their paths.
-        io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
+        try:
+            Tracer.trace_start(self, "range", "expand io fields")
+            # Then we expand all io fields and fix their paths.
+            io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
-        for field_name in io_fields:
-            # if task is a scope, then flattening in_files produces an array of the _attributes_
-            # of the task instead of the out_files.
+            for field_name in io_fields:
+                # if task is a scope, then flattening in_files produces an array of the _attributes_
+                # of the task instead of the out_files.
 
-            def yield_files(f : branch[str | Task] | None) -> abc.Iterator[str]:
-                if f is None:
-                    return
-                for x in Utils.yield_leaves(f):
-                    if isinstance(x, Task):
-                        yield from Utils.yield_leaves(x._out_files)
-                    else:
-                        yield x
+                def yield_files(f : branch[str | Task] | None) -> abc.Iterator[str]:
+                    if f is None:
+                        return
+                    for x in Utils.yield_leaves(f):
+                        if isinstance(x, Task):
+                            yield from Utils.yield_leaves(x._out_files)
+                        else:
+                            yield x
 
-            file_tree = cast(branch[str | Task], getattr(self, field_name))
-            files : list[str] = list(yield_files(file_tree))
+                file_tree = cast(branch[str | Task], getattr(self, field_name))
+                files : list[str] = list(yield_files(file_tree))
 
-            if files:
-                files = self.expand(files, recursive = True)
-                files = self.fix_paths(field_name, files, script_root, build_root)
-                setattr(self, field_name, files[0] if len(files) == 1 else files)
+                if files:
+                    #files = self.expand(files, recursive = True)
+                    Expander.xip_collection(files, self)
+                    files = self.fix_paths(field_name, files, script_root, build_root)
+                    setattr(self, field_name, files[0] if len(files) == 1 else files)
 
-                if field_name == "in_depfile":
-                    if len(files) > 1:
-                        raise Task.BROKEN("in_depfile can't be a list")
-                elif field_name.startswith("in_"):
-                    # If we're in a dry run, we can't necessarily resolve all the input files
-                    self._in_files[field_name] = [Path.join(self_cwd, file) for file in files]
-                elif field_name.startswith("out_"):
-                    self._out_files[field_name] = [os.path.abspath(file) for file in files]
-
-        Tracer.trace_end(self, "range", "expand io fields", None)
+                    if field_name == "in_depfile":
+                        if len(files) > 1:
+                            raise Task.BROKEN("in_depfile can't be a list")
+                    elif field_name.startswith("in_"):
+                        # If we're in a dry run, we can't necessarily resolve all the input files
+                        self._in_files[field_name] = [Path.join(self_cwd, file) for file in files]
+                    elif field_name.startswith("out_"):
+                        self._out_files[field_name] = [os.path.abspath(file) for file in files]
+        finally:
+            Tracer.trace_end(self, "range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
-        Tracer.trace_start(self, "range", "expand everything else")
-        for key, val in self.__dict__.items():
-            if is_public(key):
-                setattr(self, key, Expander._expand(val, self, recursive = True))
-        Tracer.trace_end(self, "range", "expand everything else", None)
+        # We must NOT expand everything in the task - it could contain references to things like
+        # shared arrays of flags that contain templates, and if we expand it using _this_ task as
+        # a context, all other tasks using the shared data will get incorrectly-expanded values
+
+        if isinstance(self.command, list):
+            Expander.xip_collection(self.command, self)
+        elif isinstance(self.command, str):
+            self.command = Expander._expand(self.command, self, recursive2 = False)
+        elif isinstance(self.command, abc.Callable):
+            pass
+        else:
+            raise TypeError(self.command)
+
+        for key in ["name", "desc", "build_force", "build_root", "cwd", "depformat", "job_size"]:
+            val = self.__dict__[key]
+            # This one should be recursive=false, everything being expanded is a scalar
+            if isinstance(val, str):
+                setattr(self, key, Expander._expand(val, self, recursive2 = False))
 
         if not self.flags.build_dry:
             blah = list(self._out_files.values())
@@ -2410,8 +2478,8 @@ class Task(Scope):
         repo/build, so we need to fix up the paths to match.
         """
 
-        if not isinstance(script_root, str) or not isinstance(file, str):
-            breakpoint()
+        #if not isinstance(script_root, str) or not isinstance(file, str):
+            #breakpoint()
 
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
@@ -2426,7 +2494,7 @@ class Task(Scope):
             file = os.path.join(build_root, file)
             file = os.path.abspath(file)
 
-        cwd = cast(str, self.expand("{cwd}"))
+        cwd = cast(str, self.expand("{cwd}", recursive2 = False))
 
         #print()
         #print(file)
@@ -2648,10 +2716,10 @@ class Script(Scope):
 
         Utils.merge_variants(self, *args, **kwargs)
 
-        self.name       = self.expand(self.name)
-        self.path       = Path.resolve(self.expand(self.path)) # this should be before resolve/expand root
-        self.root       = Path.resolve(self.expand(self.root))
-        self.build_root = self.expand(self.build_root) # build_root doesn't exist yet, don't resolve
+        self.name       = self.expand(self.name, recursive2 = False)
+        self.path       = Path.resolve(self.expand(self.path, recursive2 = False)) # this should be before resolve/expand root
+        self.root       = Path.resolve(self.expand(self.root, recursive2 = False))
+        self.build_root = self.expand(self.build_root, recursive2 = False) # build_root doesn't exist yet, don't resolve
 
         # We add __file__ because some scripts might expect it (see dynamic_dependencies/filelist/build.hancho)
         self.__file__ = self.path
@@ -2696,7 +2764,7 @@ class Script(Scope):
 # region create_test_script
 
 def create_test_script(*, name, file : str, root : str, stdout : str | typing.TextIO, extra_flags) -> Script:
-    flags = Flags.parse(
+    flags = Flags.parse_flags(
         f"--name={name}",
         f"--file={file}",
         f"--root={root}",
@@ -2750,7 +2818,7 @@ def main():
     )
     current_script.set(Dict(log = log))
 
-    flags = Flags.parse(*sys.argv)
+    flags = Flags.parse_flags(*sys.argv)
 
     Utils.reset()
     Repo.reset()

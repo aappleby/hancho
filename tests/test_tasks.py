@@ -11,6 +11,9 @@ from typing import cast
 
 import hancho
 
+# FIXME we need some tests that verify that using a shared data structure in multiple tasks
+# (see gcc_flags) does _not_ modify it even if it contains template stuff.
+
 # --------------------------------------------------------------------------------------------------
 
 def mtime_ns(filename):
@@ -53,7 +56,7 @@ class TestTasks(unittest.TestCase):
             stdout = sys.stdout,
             extra_flags = [
                 "--log_level=critical",
-                #"--log_level=debug",
+                "--log_level=debug",
                 #"--log_level=trace",
                 "--log_wrap=True",
                 "--max_errors=999",
