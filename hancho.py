@@ -2354,7 +2354,7 @@ class Task(Scope):
         # And we're done
 
     def update_repo_stat_db(self):
-        repo = cv_repo.get()
+        repo = cv_globals.repo
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile:
@@ -2494,7 +2494,7 @@ class Task(Scope):
 
     def sanity_check(self):
         # Check for all task issues that break the build
-        repo = cv_repo.get()
+        repo = cv_globals.repo
         flags = cv_flags.get()
         project = cv_project.get()
 
@@ -2542,7 +2542,7 @@ class Task(Scope):
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
 
-        repo = cv_repo.get()
+        repo = cv_globals.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2578,7 +2578,7 @@ class Task(Scope):
 
     async def run_command(self : Task, command : str):
 
-        repo = cv_repo.get()
+        repo = cv_globals.repo
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
@@ -2630,7 +2630,7 @@ class Task(Scope):
 
     async def call_callback(self : Task, command : task_callback):
         script = cv_script.get()
-        repo   = cv_repo.get()
+        repo   = cv_globals.repo
         callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
@@ -2711,7 +2711,7 @@ class Script(Scope):
         self.log = log
 
         # We want users to see the repo object so they can stash things in it.
-        self.repo     = cv_repo.get()
+        self.repo     = cv_globals.repo
 
         # This has to be here as otherwise scripts don't work without an 'import hancho', and we
         # don't want to require that.
@@ -2801,7 +2801,6 @@ def create_test_script(
     cv_globals.update(project = project)
 
     repo    = Repo(_up = project)
-    cv_repo.set(repo)
     cv_globals.update(repo = repo)
 
     script  = Script(_up = repo)
@@ -2890,7 +2889,6 @@ def main():
     with log.indenter(Log.VERBOSE, Log.ORANGE):
 
         repo = Repo(_up = project)
-        cv_repo.set(repo)
         cv_globals.update(repo = repo)
         project._repos.append(repo)
 
@@ -2942,7 +2940,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     old_script = cv_script.get()
     log     = cv_log.get()
     project = cv_project.get()
-    repo    = cv_repo.get()
+    repo    = cv_globals.repo
 
     temp = Dict(
         *args,
@@ -3005,7 +3003,6 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
         return dupe
 
     new_repo = Repo(_up = project)
-    cv_repo.set(new_repo)
     project._repos.append(new_repo)
 
     new_script = Script(*args, _up = new_repo, **kwargs)
@@ -3039,7 +3036,6 @@ cv_script  = contextvars.ContextVar("current_script")
 cv_log     = contextvars.ContextVar("log")
 cv_flags   = contextvars.ContextVar("flags")
 cv_project = contextvars.ContextVar("project")
-cv_repo    = contextvars.ContextVar("repo")
 
 path = __file__
 root = os.path.dirname(path)
