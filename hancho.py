@@ -729,7 +729,6 @@ class Path:
         try:
             path = path.resolve(strict = True)
         except Exception as _:
-            current_script.get().log.error(f"Path.resolve() failed for {path}")
             raise
         return str(path)
 
@@ -882,11 +881,19 @@ class Path:
 # FIXME this breaks if we do Scope(abc.Mapping)?
 
 class Scope:
-    def __init__(self, *, _name = None, _up = None):
+    def __init__(self, *, _name, _up):
         if _name is not None:
             self.__dict__['_name'] = _name
         if _up is not None:
             self.__dict__['_up'] = _up
+
+
+    # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
+    def expand(self, var):
+        return Expander(self, current_script.get().log).expand(var)
+
+    def expand_collection(self, var):
+        return Expander(self, current_script.get().log).expand_collection(var)
 
     def find(self, key : str, default = Sentinel.MISSING) -> Any:
         cursor = self
@@ -905,22 +912,8 @@ class Scope:
     def get(self, key, default = None):
         return self.__dict__.get(key, default)
 
-    def expand(self, template : str) -> Any:
-        if not isinstance(template, str):
-            raise TypeError(template)
-        return Expander._expand(template, self)
-
-    def expand_collection(self, collection) -> Any:
-        return Expander._expand_collection(collection, self)
-
     def __contains__(self, key) -> bool:
         return is_public(key) and key in self.__dict__
-
-    #def __getattr__(self, key) -> Any:
-    #    try:
-    #        return self.__dict__[key]
-    #    except KeyError as ex:
-    #        raise AttributeError from ex
 
     def __getitem__(self, key : str) -> Any:
         if is_private(key):
@@ -939,7 +932,10 @@ class Scope:
 class Dict(Scope, abc.MutableMapping):
 
     def __init__(self, *args, **kwargs):
-        super().__init__()
+        super().__init__(
+            _name = kwargs.pop('_name', None),
+            _up = kwargs.pop('_up', None)
+        )
         Utils.merge_variants(self, *args, **kwargs)
 
     def __getattr__(self, key):
@@ -984,8 +980,8 @@ class Tool(Dict):
 # region Flags
 
 class Flags(Scope):
-    def __init__(self, *args, **kwargs):
-        super().__init__(_name = "flags", _up = builtins)
+    def __init__(self, *, _up):
+        super().__init__(_name = "flags", _up = _up)
 
         self.name        = "<flags>"
         self.file        = "build.hancho"
@@ -1009,15 +1005,7 @@ class Flags(Scope):
         self.log_width     = shutil.get_terminal_size().columns
         self.log_stdout    = sys.stdout
 
-        Utils.merge_variants(self, *args, **kwargs)
-
-        self.name = self.expand(self.name)
-        self.file = self.expand(self.file)
-        self.path = self.expand(self.path)
-        self.root = self.expand(self.root)
-
-    @staticmethod
-    def parse_flags(*argv) -> Flags:
+    def parse_flags(self, *argv) -> None:
 
         if len(argv) > 0 and "hancho.py" in argv[0]:
             argv = argv[1:]
@@ -1120,7 +1108,7 @@ class Flags(Scope):
 
                 set_by_path(flag_dict, key, val)
 
-        return Flags(flag_dict)
+        Utils.merge_variants(self, flag_dict)
 
 # endregion
 # ==================================================================================================
@@ -1149,13 +1137,18 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(self, scope : Scope):
+    def __init__(self, scope : Scope, log : Log):
+        assert not isinstance(scope, Expander)
         self.scope = scope
+        self.log   = log
 
-    @classmethod
-    def wrap(cls, scope):
-        assert not isinstance(scope, cls)
-        return cls(scope)
+        self.scope_tag    = Utils.instance_tag(self.scope)
+        self.scope_color  = Utils.obj_to_ansi_color(self.scope)
+        self.indent_color = self.scope_color
+
+    def wrap(self, scope):
+        assert not isinstance(scope, Expander)
+        return Expander(scope, self.log)
 
     # ====================================
     # Expander _must_ implement __getattr__ so that macros like {script.foo} work.
@@ -1182,17 +1175,16 @@ class Expander(abc.Mapping):
     def internal_get(self, key : str):
         result = None
         try:
-            Tracer.trace_start(self.scope, "get", key)
+            self.trace_start("get", key)
             result = self.scope.find(key)
 
             if isinstance(result, Scope):
                 # have to do this so that "read nested c first" resolves in the dest dict first
-                #result = self.wrap(result, object.__getattribute__(self, "recursive"))
                 result = self.wrap(result)
             elif isinstance(result, str):
-                result = self.scope.expand(result)
+                result = self.expand(result)
         finally:
-            Tracer.trace_end(self.scope, "get", key, result)
+            self.trace_end("get", key, result)
         return result
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
@@ -1212,6 +1204,7 @@ class Expander(abc.Mapping):
     # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
     # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
 
+    # FIXME move the cvs to __init__
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH : int = 30
@@ -1219,93 +1212,89 @@ class Expander(abc.Mapping):
 
     # ==============================================================================================
 
-    @classmethod
-    def xip_collection(cls, var : abc.Collection, scope : Scope) -> Any:
+    def xip_collection(self, var : abc.Collection) -> Any:
         if not isinstance(var, abc.Collection):
             raise TypeError(var)
-        cls._xip_collection(var, scope)
+        self._xip_collection(var)
 
-    @classmethod
-    def _xip_collection(cls, var : abc.Collection, scope : Scope) -> Any:
+    def _xip_collection(self, var : abc.Collection) -> Any:
         if Utils.is_mut_sequence(var):
             for i, v in enumerate(var):
-                var [i] = cls._xip_collection(v, scope)
+                var [i] = self._xip_collection(v)
         elif Utils.is_mut_mapping(var):
             for k, v in var.items():
-                var[k] = cls._xip_collection(v, scope)
+                var[k] = self._xip_collection(v)
         elif Utils.is_mut_set(var):
             temp = list(var)
             var.clear()
             for v in temp:
-                var.add(cls._xip_collection(v, scope))
+                var.add(self._xip_collection(v))
         elif isinstance(var, str):
-            var = cls._expand(var, scope)
+            var = self.expand(var)
         return var
 
-    @classmethod
-    def _expand_collection(cls, var : abc.Collection, scope : Scope) -> Any:
+    def expand_collection(self, var : abc.Collection) -> Any:
         if Utils.is_mut_mapping(var):
             result1 : abc.MutableMapping = type(var)()
             for k, v in var.items():
-                result1[k] = cls._expand_collection(v, scope)
+                result1[k] = self.expand_collection(v)
             return result1
         elif Utils.is_mut_sequence(var):
             result2 : abc.MutableSequence = type(var)()
             for v in var:
-                result2.append(cls._expand_collection(v, scope))
+                result2.append(self.expand_collection(v))
             return result2
         elif Utils.is_mut_set(var):
             result3 = type(var)()
             for v in enumerate(var):
-                result3.add(cls._expand_collection(v, scope))
+                result3.add(self.expand_collection(v))
             return result3
         elif isinstance(var, str):
-            var = cls._expand(var, scope)
+            var = self.expand(var)
 
         return var
 
     # ==============================================================================================
 
-    @classmethod
-    def _expand(cls, var : str, scope) -> Any:
+    def expand(self, var : str) -> Any:
         if not isinstance(var, str):
             raise TypeError(f"_expand - can't expand a {type(var)}")
 
         # Bail out if we've recursed too many times.
-        old_depth = cls.cv_depth.get()
-        if old_depth > cls.MAX_DEPTH:
+        old_depth = self.cv_depth.get()
+        if old_depth > Expander.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
-        cls.cv_depth.set(old_depth + 1)
+        self.cv_depth.set(old_depth + 1)
 
         try:
             old_var = None
             while isinstance(var, str) and var != old_var:
                 old_var = var
-                blocks = cls._split_text(var)
+                blocks = self._split_text(var)
 
-                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], cls.Literal)):
+                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], self.Literal)):
                     # Stop if we have nothing in the string to expand.
                     break
 
-                if len(blocks) == 1 and isinstance(block := blocks[0], cls.Macro):
+                if len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
                     # If there's only one macro block, eval it.
-                    var = cls._eval_macro(block, scope)
+                    var = self._eval_macro(block)
                     continue
 
                 # Otherwise we're doing a template expansion.
                 try:
-                    Tracer.trace_start(scope, "expand", var)
+                    self.trace_start("expand", var)
                     for i, b in enumerate(blocks):
-                        if isinstance(b, cls.Macro):
-                            blocks[i] = cls._expand(b, scope)
+                        if isinstance(b, Expander.Macro):
+                            blocks[i] = self.expand(b)
                     var = "".join(Utils.stringify(b) for b in blocks)
                 finally:
-                    Tracer.trace_end(scope, "expand", old_var, var)
+                    self.trace_end("expand", old_var, var)
         finally:
-            cls.cv_depth.set(old_depth)
+            self.cv_depth.set(old_depth)
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
-                cls.cv_evals.set(0)
+                self.cv_evals.set(0)
 
 
         return var
@@ -1320,18 +1309,17 @@ class Expander(abc.Mapping):
     # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
     # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
-    @classmethod
-    def _eval_macro(cls, var : str, scope) -> Any:
+    def _eval_macro(self, var : str) -> Any:
         # Bail out if we've done too many evals already.
-        old_evals = cls.cv_evals.get()
-        if old_evals >= cls.MAX_EVALS:
+        old_evals = self.cv_evals.get()
+        if old_evals >= self.MAX_EVALS:
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
-        cls.cv_evals.set(old_evals + 1)
+        self.cv_evals.set(old_evals + 1)
 
         result = var
         try:
-            Tracer.trace_start(scope, "eval", var[1:-1])
-            result = eval(var[1:-1], {}, cls.wrap(scope))
+            self.trace_start("eval", var[1:-1])
+            result = eval(var[1:-1], {}, self)
         except RecursionError:
             raise
         except Exception as ex:
@@ -1340,7 +1328,7 @@ class Expander(abc.Mapping):
             #dprint(f"##########\neval failed because >{ex}<\n##########\n")
             pass
         finally:
-            Tracer.trace_end(scope, "eval", var[1:-1], result)
+            self.trace_end("eval", var[1:-1], result)
             pass
 
         if isinstance(result, Expander):
@@ -1400,6 +1388,56 @@ class Expander(abc.Mapping):
 
         return out_blocks
 
+    # ====================================
+    # ┌─
+    # └─
+
+    def trace_start(self, action : str, arg):
+        log = self.log
+        if log._level_int > Log.TRACE: return
+
+        if action == "range":
+            log.trace(f"{Log.WHITE}┌── {self.scope_color}{self.scope_tag}{Log.RESET} begin {arg}\n")
+            log.indent(Log.WHITE)
+        else:
+            #log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
+            log.trace(f"{self.indent_color}{self.scope_color}{self.scope_tag}{Log.RESET}.{action}({arg})\n")
+            log.indent(self.indent_color)
+
+    def trace_up(self, up, action, arg):
+        log = self.log
+        if log._level_int > Log.TRACE: return
+
+        up_color   = Utils.obj_to_ansi_color(up)
+        up_tag     = Utils.instance_tag(up)
+
+        log.trace(f"{self.scope_color}┌ {self.scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
+
+    def trace_end(self, action : str, arg, result):
+        log = self.log
+        if log._level_int > Log.TRACE: return
+        if isinstance(result, Expander):
+            result = result.scope
+
+        log.dedent()
+
+        if action == "range":
+            log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
+            scope_tag}{Log.RESET} end {arg}\n")
+        else:
+            result_color = Log.RESET
+            result_type  = type(result)
+
+            if Utils.is_mapping(result):
+                result_color = Utils.obj_to_ansi_color(result)
+
+            log.trace(f"{self.indent_color}└ {self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
+            if not Utils.is_scalar(result):
+                log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
+            else:
+                log.trace(f"{result_color}{result!r}\n")
+
+
 # endregion
 # ==================================================================================================
 # region Dumper
@@ -1428,8 +1466,9 @@ class Dumper:
     class Opts:
         cur_depth : int = 0
         max_depth : int = 5
-        indent_stack2 : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
-        fold : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
+        indent_stack2 : list[str] = dataclasses.field(default_factory=list)
+        # Any container fields with these names , values, or types will _not_ be dumped
+        fold : list[Any] = dataclasses.field(default_factory=list)
         print_id : bool = True
         color_code : bool = True
         dump_private : bool = True
@@ -1655,79 +1694,9 @@ class Dumper:
 
         key = Dumper.depointer(key)
         key = "".join(key.split())
-        key = repr(key)
+        #key = repr(key)
         return key
 
-
-# endregion
-# ==================================================================================================
-# region Tracer
-
-# ┌─
-# └─
-
-class Tracer:
-
-    @staticmethod
-    def trace_start(scope, action : str, arg):
-        log = current_script.get().log
-        if log._level_int > Log.TRACE: return
-        if isinstance(scope, Expander):
-            scope = scope.scope
-
-        scope_tag    = Utils.instance_tag(scope)
-        scope_color  = Utils.obj_to_ansi_color(scope)
-        indent_color = scope_color
-
-        if action == "range":
-            indent_color = Log.WHITE
-            log.trace(f"{indent_color}┌── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
-        else:
-            #log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
-            log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
-        log.indent(indent_color)
-
-    @staticmethod
-    def trace_up(scope, up, action, arg):
-        log = current_script.get().log
-        if log._level_int > Log.TRACE: return
-        if isinstance(scope, Expander):
-            scope = scope.scope
-
-        scope_color = Utils.obj_to_ansi_color(scope)
-        scope_tag   = Utils.instance_tag(scope)
-        up_color   = Utils.obj_to_ansi_color(up)
-        up_tag     = Utils.instance_tag(up)
-
-        log.trace(f"{scope_color}┌ {scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
-
-    @staticmethod
-    def trace_end(scope, action : str, arg, result):
-        log = current_script.get().log
-        if log._level_int > Log.TRACE: return
-        if isinstance(result, Expander):
-            result = result.scope
-
-        log.dedent()
-        scope_tag   = Utils.instance_tag(scope)
-        scope_color   = Utils.obj_to_ansi_color(scope)
-        indent_color = scope_color
-
-        if action == "range":
-            indent_color = Log.WHITE
-            log.trace(f"{indent_color}└── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
-        else:
-            result_color = Log.RESET
-            result_type  = type(result)
-
-            if Utils.is_mapping(result):
-                result_color = Utils.obj_to_ansi_color(result)
-
-            log.trace(f"{indent_color}└ {scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
-            if not Utils.is_scalar(result):
-                log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
-            else:
-                log.trace(f"{result_color}{result!r}\n")
 
 # endregion
 # ==================================================================================================
@@ -1853,19 +1822,20 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(self, *args, flags, log, name : str, path : str, root : str, targets : list[str], **kwargs):
-        super().__init__(_name = "project", _up = flags)
-        self.name : str = "<project>"
-        self.path : str = path
-        self.root : str = root
-        self.targets : list[str] = targets
-        self.log : Log = log
+    def __init__(self, *args, _up, **kwargs):
+        super().__init__(_name = "project", _up = _up)
+        self.name    = "<project>"
+        self.path    = "{flags.path}"
+        self.root    = "{flags.root}"
+        self.targets = "{flags.targets}"
 
-        Utils.merge_variants(self, *args, **kwargs)
+        Utils.fill_variant(self, *args, **kwargs)
 
-        self.name = self.expand(self.name)
-        self.path = self.expand(self.path)
-        self.root = self.expand(self.root)
+        ex = Expander(self, self.find('log'))
+        self.name = ex.expand(self.name)
+        self.path = ex.expand(self.path)
+        self.root = ex.expand(self.root)
+        self.targets = ex.expand(self.targets)
 
         self._real_filenames = set()
         self._dedupe = Dict()
@@ -1982,32 +1952,38 @@ class Repo(Scope):
         cls.hash_time  : float = 0
 
 
-    def __init__(self, flags, log, project, name : str, path : str, root : str, *args, **kwargs):
-        super().__init__(_name = "repo", _up = project)
-        self.name = "<repo>"
-        self.path = path
-        self.root = root
-        self.build_root = "{join(root, flags.build_dir, flags.build_tag)}"
+    def __init__(self, *args, _up, **kwargs):
+        super().__init__(_name = "repo", _up = _up)
+        self.name         = "<repo>"
+        self.path         = "{project.path}"
+        self.root         = "{project.root}"
+        self.build_root   = "{join(root, flags.build_dir, flags.build_tag)}"
+        self.stat_db_path = "{join(build_root, 'hancho.json')}"
+        self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
-        Utils.merge_variants(self, *args, **kwargs)
+        Utils.fill_variant(self, *args, **kwargs)
 
-        self.name = self.expand(self.name)
-        self.path = self.expand(self.path)
-        self.root = self.expand(self.root)
-        self.build_root = self.expand(self.build_root)
+        log = self.find('log')
+        self._expander = Expander(self, log)
+
+        self.name = self._expander.expand(self.name)
+        self.path = self._expander.expand(self.path)
+        self.root = self._expander.expand(self.root)
+
+        self.build_root   = self._expander.expand(self.build_root)
+        self.stat_db_path = self._expander.expand(self.stat_db_path)
+        self.comp_db_path = self._expander.expand(self.comp_db_path)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
 
-        stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
-
-        if os.path.isfile(stat_db_path):
-            current_script.get().log.verbose(f"Loading stat_db {stat_db_path}\n")
-            json_stats = Utils.load_json(stat_db_path)
+        if os.path.isfile(self.stat_db_path):
+            log.verbose(f"Loading stat_db {self.stat_db_path}\n")
+            json_stats = Utils.load_json(self.stat_db_path)
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            current_script.get().log.verbose(Log.DRED + f"Stat db not found: {stat_db_path}\n")
+            log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
 
     @classmethod
     def load_depfile(cls, filename : str, format : str, task_cwd : str) -> list[str]:
@@ -2037,13 +2013,14 @@ class Repo(Scope):
 
 
     def save_stat_db(self):
-        stat_db_path = self.expand("{join(build_root, 'hancho.json')}")
-        current_script.get().log.verbose(Log.DGREEN + f"Saving stat_db {stat_db_path}\n")
-        Utils.save_json(self._stat_db, stat_db_path)
+        log = self.find('log')
+        log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
+        Utils.save_json(self._stat_db, self.stat_db_path)
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        comp_db_path = self.expand("{join(build_root, 'compile_commands.json')}")
+#        log = self.find('log')
+#        comp_db_path = self._expander._expand("{join(build_root, 'compile_commands.json')}")
 #        self.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
@@ -2135,9 +2112,11 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(self, *args, **kwargs):
-        script = current_script.get()
+        # Ideally, this should be the only reference to current_script we actually need
+        # (well, apart from the global load/repo/include)
+        _up = current_script.get()
+        super().__init__(_name = "task", _up = _up)
 
-        super().__init__(_name = "task", _up = script)
         self.name        = "<task>"
         self.desc        = "<no desc>"
         self.command : str | list[str] | task_callback = ""
@@ -2153,6 +2132,8 @@ class Task(Scope):
         # ----------------------------------------
         # Private fields
 
+        #log = self.find('log')
+        #self._expander = Expander(self, log)
         self._enabled = False
 
         # These two have to be dicts so that downstream tasks can pick named outputs from it if
@@ -2181,7 +2162,7 @@ class Task(Scope):
         self._complete = False
         self._deplines = []
 
-        current_script.get()._tasks.append(self)
+        self.find('script')._tasks.append(self)
 
         # ----------------------------------------
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
@@ -2189,16 +2170,19 @@ class Task(Scope):
 
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                v = Expander._expand_collection(v, self)
+                ex = Expander(self, self.find('log'))
+                v = ex.expand_collection(v)
                 self.__dict__[k] = v
 
         # ----------------------------------------
         # Add all input fields that are tasks to _input_tasks so we can await them later.
 
         input_tasks = []
-        for v in Utils.yield_leaves(self.__dict__):
+        leaves = list(Utils.yield_leaves(self.__dict__))
+        for v in leaves:
             if isinstance(v, Task):
-                assert v is not self
+                if v is self:
+                    assert v is not self
                 input_tasks.append(v)
         self._input_tasks = input_tasks
 
@@ -2277,10 +2261,11 @@ class Task(Scope):
         # Expand all mandatory fields in the raw config and fix raw file paths.
 
         try:
-            Tracer.trace_start(self, "range", "expand_task")
+            #self._expander.trace_start("range", "expand_task")
             self.expand_task()
         finally:
-            Tracer.trace_end(self, "range", "expand_task", None)
+            #self._expander.trace_end("range", "expand_task", None)
+            pass
 
         # ------------------------------------
         # Inputs are ready, templates are expanded, see if everything's sane before we try running
@@ -2292,7 +2277,7 @@ class Task(Scope):
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
 
-        if current_script.get().flags.build_dry:
+        if self.find('flags').build_dry:
             return
 
         # ------------------------------------
@@ -2371,10 +2356,10 @@ class Task(Scope):
                 self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
 
             for file in Utils.yield_leaves([self._in_files, self._deplines]):
-                current_script.get().repo.update_stat(file, None)
+                self.find('repo').update_stat(file, None)
 
             for file in Utils.yield_leaves(self._out_files):
-                current_script.get().repo.update_stat(file, self.command)
+                self.find('repo').update_stat(file, self.command)
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -2394,18 +2379,23 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        if current_script.get().log._level_int <= Log.DEBUG:
+        log = self.find('log')
+        flags = self.find('flags')
+
+        if self.find('log')._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
         # We eval these first because we need them for filename expansion
 
-        script_root = self.expand("{script.root}")
-        build_root  = self.expand("{build_root}")
-        self_cwd    = self.expand("{cwd}")
+        ex = Expander(self, self.find('log'))
+
+        script_root = ex.expand("{script.root}")
+        build_root  = ex.expand("{build_root}")
+        self_cwd    = ex.expand("{cwd}")
 
         try:
-            Tracer.trace_start(self, "range", "expand io fields")
+            ex.trace_start("range", "expand io fields")
             # Then we expand all io fields and fix their paths.
             io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
@@ -2426,8 +2416,7 @@ class Task(Scope):
                 files : list[str] = list(yield_files(file_tree))
 
                 if files:
-                    #files = self.expand(files, recursive = True)
-                    Expander.xip_collection(files, self)
+                    ex.xip_collection(files)
                     files = self.fix_paths(field_name, files, script_root, build_root)
                     setattr(self, field_name, files[0] if len(files) == 1 else files)
 
@@ -2439,7 +2428,7 @@ class Task(Scope):
                     elif field_name.startswith("out_"):
                         self._out_files[field_name] = [Path.join(self_cwd, file) for file in files]
         finally:
-            Tracer.trace_end(self, "range", "expand io fields", None)
+            ex.trace_end("range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
@@ -2448,26 +2437,25 @@ class Task(Scope):
         # a context, all other tasks using the shared data will get incorrectly-expanded values
 
         if isinstance(self.command, list):
-            Expander.xip_collection(self.command, self)
+            ex.xip_collection(self.command)
         elif isinstance(self.command, str):
-            self.command = self.expand(self.command)
+            self.command = ex.expand(self.command)
         elif not isinstance(self.command, abc.Callable):
             raise TypeError(self.command)
 
         for key in ["name", "desc", "build_force", "build_root", "cwd", "depformat", "job_size"]:
             val = self.__dict__[key]
-            # This one should be recursive=false, everything being expanded is a scalar
             if isinstance(val, str):
-                setattr(self, key, Expander._expand(val, self))
+                setattr(self, key, ex.expand(val))
 
-        if not current_script.get().flags.build_dry:
+        if not flags.build_dry:
             blah = list(self._out_files.values())
             for file in Utils.yield_leaves(blah):
                 os.makedirs(os.path.dirname(file), exist_ok=True)
             if self.in_depfile:
                 os.makedirs(os.path.dirname(self.in_depfile), exist_ok=True)
 
-        if current_script.get().log._level_int <= Log.DEBUG:
+        if log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
@@ -2495,19 +2483,22 @@ class Task(Scope):
             file = os.path.join(build_root, file)
             file = os.path.abspath(file)
 
-        cwd = cast(str, self.expand("{cwd}"))
-        file = Path.relpath(file, cwd)
+        assert not Expander.is_template(self.cwd)
+        file = Path.relpath(file, self.cwd)
 
         return file
 
     def sanity_check(self):
         # Check for all task issues that break the build
+        repo = self.find('repo')
+        flags = self.find('flags')
+        project = self.find('project')
 
         if not Path.exists(self.cwd):
             raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
 
-        if not Path.startswith(self.build_root, current_script.get().repo.root):
-            raise Task.BROKEN(f"The build root {self.build_root} is not under repo.root {current_script.get().repo.root}")
+        if not Path.startswith(self.build_root, repo.root):
+            raise Task.BROKEN(f"The build root {self.build_root} is not under repo.root {repo.root}")
 
         if isinstance(self.command, list):
             for command in Utils.yield_leaves(self.command):
@@ -2517,7 +2508,7 @@ class Task(Scope):
             raise Task.BROKEN(f"Command is not a string or callable: {self.command}")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if current_script.get().flags.strict:
+        if flags.strict:
             for command in Utils.yield_leaves(self.command):
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
@@ -2530,14 +2521,14 @@ class Task(Scope):
         # Check for task collisions
         for file in Utils.yield_leaves(self._out_files):
             real_file = cast(str, Path.abspath(file))
-            if real_file in current_script.get().project._real_filenames:
+            if real_file in project._real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            current_script.get().project._real_filenames.add(real_file)
+            project._real_filenames.add(real_file)
 
         # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
         for file in Utils.yield_leaves(self._in_files):
-            if not Path.exists(os.path.join(self.cwd, file)) and not current_script.get().flags.build_dry:
+            if not Path.exists(os.path.join(self.cwd, file)) and not flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -2546,6 +2537,8 @@ class Task(Scope):
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
+
+        repo = self.find('repo')
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2566,14 +2559,14 @@ class Task(Scope):
 
         for file in Utils.yield_leaves(all_files):
             if not os.path.isfile(file):
-                rel_file = Path.relpath(file, current_script.get().repo.root)
+                rel_file = Path.relpath(file, repo.root)
                 return f"File missing: {rel_file!r}"
-            if reason := current_script.get().repo.stat_changed2 (file):
+            if reason := repo.stat_changed2 (file):
                 return reason
 
         for file in Utils.yield_leaves(self._out_files):
-            if current_script.get().repo.command_changed(file, self.command):
-                rel_file = Path.relpath(file, current_script.get().repo.root)
+            if repo.command_changed(file, self.command):
+                rel_file = Path.relpath(file, repo.root)
                 return f"Command mismatch for {rel_file!r}"
 
         # No changes, no reason to rebuild.
@@ -2581,9 +2574,11 @@ class Task(Scope):
 
     async def run_command(self : Task, command : str):
 
+        repo = self.find('repo')
+
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
-        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, current_script.get().repo.root)}$ {command}\n")
+        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2630,13 +2625,15 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback):
-        callback_dir = Path.relpath(current_script.get().script.root, current_script.get().repo.root)
+        script = self.find('script')
+        repo   = self.find('repo')
+        callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
 
-        with chdir(current_script.get().script.root):
+        with chdir(script.root):
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2659,6 +2656,7 @@ class Task(Scope):
     def log_task(self : Task, level : int, message : str | list[str]):
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
+        log = self.find('log')
         color = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
@@ -2666,9 +2664,9 @@ class Task(Scope):
             all_lines.extend(chunk.splitlines(keepends = True))
 
         for line in all_lines:
-            if not current_script.get().log._line_buffer:
-                current_script.get().log._log(level, "", f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
-            current_script.get().log._log(level, color, line)
+            if not log._line_buffer:
+                log._log(level, "", f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
+            log._log(level, color, line)
 
 # endregion
 # ==================================================================================================
@@ -2679,39 +2677,41 @@ class Task(Scope):
 
 class Script(Scope):
 
-    def __init__(self : Script, flags : Flags, log : Log, project : Project, _repo : Repo, name : str, path : str, root : str, *args, **kwargs):
-        super().__init__(_name = "script", _up = _repo)
+    def __init__(self : Script, *args, _up, **kwargs):
+        super().__init__(_name = "script", _up = _up)
 
-        self.name       = "<name>"
-        self.path       = path
-        self.root       = root
+        self.name       = "<script>"
+        self.path       = "{repo.path}"
+        self.root       = "{repo.root}"
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
         # FIXME how many of these do we actually need?
-        self.script  = self
-        self.builtins = builtins
-        self.flags   = flags
-        self.log     = log
-        self.project = project
-        self.repo    = _repo
-        self.hancho  = sys.modules[__name__]
+        # FIXME set these on the dict right before we exec the script?
+        #self.script   = self
+        #self.builtins = builtins
+        #self.flags    = flags
 
         Utils.merge_variants(self, *args, **kwargs)
 
-        self.name       = self.expand(self.name)
-        self.path       = Path.resolve(self.expand(self.path)) # this should be before resolve/expand root
-        self.root       = Path.resolve(self.expand(self.root))
-        self.build_root = self.expand(self.build_root) # build_root doesn't exist yet, don't resolve
+        log = self.find('log')
+        ex = Expander(self, log)
+        self.name       = ex.expand(self.name)
+        self.path       = ex.expand(self.path)
+        self.root       = ex.expand(self.root)
+        self.build_root = ex.expand(self.build_root)
 
-        # These could be aliased at script scope, but 'hancho.load' etc might be more readable in a
-        # file full of other Python.stuff
-        #self.load      = load
-        #self.include   = include
-        #self.load_repo = load_repo
-        #self.Task      = Task
-        #self.Tool      = Tool
-        #self.Dict      = Dict
-        #self.Utils     = Utils
+        # used in tests
+        self.log = log
+
+        # needed for current_script.get().project.build() :/
+        self.project  = self.find('project')
+
+        # We want users to see the repo object so they can stash things in it.
+        self.repo     = self.find('repo')
+
+        # This has to be here as otherwise scripts don't work without an 'import hancho', and we
+        # don't want to require that.
+        self.hancho   = sys.modules[__name__]
 
         # We add __file__ because some scripts might expect it (see dynamic_dependencies/filelist/build.hancho)
         self.__file__ = self.path
@@ -2736,10 +2736,11 @@ class Script(Scope):
 
     def exec(self : Script):
         assert self.path.endswith(".hancho")
+        log = self.find('log')
 
-        self.log.verbose(Log.ORANGE + f"script {self.path}\n")
+        log.verbose(Log.ORANGE + f"script {self.path}\n")
 
-        with self.log.indenter(Log.VERBOSE, Log.ORANGE):
+        with log.indenter(Log.VERBOSE, Log.ORANGE):
             code = None
             with open(self.path, encoding="utf-8") as file:
                 source = file.read()
@@ -2756,35 +2757,28 @@ class Script(Scope):
 # region create_test_script
 
 def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, extra_flags) -> Script:
-    current_script.set(Dict(log = Log()))
-    flags = Flags.parse_flags(
-        f"--name={name}",
-        f"--file={file}",
-        f"--root={root}",
-        *extra_flags
-    )
+    flags = Flags(_up = builtins)
+    flags.parse_flags(f"--name={name}", f"--file={file}", f"--root={root}", *extra_flags)
+
     Utils.reset()
     Repo.reset()
     Runner.reset(flags)
 
-    log = Log(flags, log_stdout = stdout)
-    log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
+    builtins.log = Log(flags, log_stdout = stdout)
+    builtins.log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
     args = ()
     kwargs = {}
-
-    current_script.set(Dict(flags = flags, log = log))
 
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
     assert " _" not in dedupe_key
 
-    project = Project(flags = flags, log = log, name = flags.name, path = flags.path, root = flags.root, targets = flags.targets)
-
-    repo = Repo(flags, log, project, flags.name, flags.path, flags.root)
+    project = Project(_up = flags)
+    repo    = Repo(_up = project, name = name, file = file, root = root)
     project._repos.append(repo)
 
-    script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
+    script = Script(_up = repo, name = name, file = file, root = root)
     repo._scripts.append(script)
     project._dedupe[dedupe_key] = script
 
@@ -2798,26 +2792,52 @@ def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, ext
 # ==================================================================================================
 # region main
 
+class Builtins(Dict):
+    pass
+
+builtins = Builtins(
+    _up      = None,
+    _name    = "builtins",
+    log      = Log(),
+    Dict     = Dict,
+    Task     = Task,
+    Tool     = Tool,
+    Dumper   = Dumper,
+    getcwd   = os.getcwd,
+    dprint   = dprint,
+    dump     = Dumper.dprint,
+    flatten  = Utils.flatten_tree,
+    run_cmd  = Utils.run_cmd,
+    weave    = Utils.weave,
+    resolve  = Path.resolve,
+    abspath  = Path.abspath,
+    normpath = Path.normpath,
+    relpath  = Path.relpath,
+    basename = Path.basename,
+    dirname  = Path.dirname,
+    split    = Path.split,
+    join     = Path.join,
+    swapext  = Path.swapext,
+)
+
 def main():
-    current_script.set(Dict(log = Log()))
-    flags = Flags.parse_flags(*sys.argv)
+    flags = Flags(_up = builtins)
+    flags.parse_flags(*sys.argv)
 
     Utils.reset()
     Repo.reset()
     Runner.reset(flags)
 
-    # ┌─
-    # └─
+    builtins.log = Log(flags)
+    log = builtins.log
 
-    log = Log(flags)
+    log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
     log.verbose(Log.GRAY3 + "Verbose mode on\n")
     log.debug(Log.GRAY3 + "Debug mode on\n")
     log.trace(Log.GRAY3 + "Trace mode on\n")
     args = ()
     kwargs = {}
-
-    current_script.set(Dict(flags = flags, log = log))
 
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
@@ -2827,17 +2847,17 @@ def main():
 
     time_a1 = time.perf_counter()
 
-    project = Project(flags = flags, log = log, name = flags.name, path = flags.path, root = flags.root, targets = flags.targets)
+    project = Project(_up = flags)
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
     with log.indenter(Log.VERBOSE, Log.ORANGE):
 
-        repo = Repo(flags, log, project, flags.name, flags.path, flags.root)
+        repo = Repo(_up = project)
         project._repos.append(repo)
 
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
-            script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
+            script = Script(flags, _up = repo)
             current_script.set(script)
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
@@ -2877,91 +2897,64 @@ def _start():
 # ==================================================================================================
 # region User API
 
-class Builtins(Dict):
-    pass
-
-builtins = Builtins(
-    _up      = None,
-    _name    = "builtins",
-    Dict     = Dict,
-    Task     = Task,
-    Tool     = Tool,
-    Dumper   = Dumper,
-    getcwd   = os.getcwd,
-    dprint   = dprint,
-    dump     = Dumper.dprint,
-    flatten  = Utils.flatten_tree,
-    run_cmd  = Utils.run_cmd,
-    weave    = Utils.weave,
-    resolve  = Path.resolve,
-    abspath  = Path.abspath,
-    normpath = Path.normpath,
-    relpath  = Path.relpath,
-    basename = Path.basename,
-    dirname  = Path.dirname,
-    split    = Path.split,
-    join     = Path.join,
-    swapext  = Path.swapext,
-)
-
-current_script = contextvars.ContextVar("current_script")
-
-path = __file__
-root = os.path.dirname(path)
-
-sys.modules["hancho"] = sys.modules[__name__]
-
-def load(file, root = None, *args, **kwargs):
+def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
     old_script = current_script.get()
-    flags   = old_script.flags
-    log     = old_script.log
-    project = old_script.project
-    repo    = old_script.repo
+    log     = old_script.find('log')
+    project = old_script.find('project')
+    repo    = old_script.find('repo')
 
-    path = Path.resolve(old_script.expand(file))
-    root = Path.resolve(old_script.expand(root or os.path.dirname(path)))
-    name = os.path.basename(path)
+    temp = Dict(
+        *args,
+        _up = old_script,
+        file = file,
+        path = path,
+        root = root,
+        **kwargs
+    )
+    ex = Expander(temp, log)
 
-    dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
+    temp.file = ex.expand(temp.file)
+    temp.path = ex.expand(temp.path)
+    temp.root = ex.expand(temp.root)
+
+    dedupe_key = Dumper.any_to_key([temp.path, temp.root, *args, kwargs])
     assert " _" not in dedupe_key
 
     if dupe := project._dedupe.get(dedupe_key, None):
         log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
         return dupe
 
-    script = Script(flags, log, project, repo, name, path, root, *args, **kwargs)
-    project._dedupe[dedupe_key] = script
-    repo._scripts.append(script)
+    new_script = Script(temp, _up = repo)
+    project._dedupe[dedupe_key] = new_script
+    repo._scripts.append(new_script)
 
-    script.exec()
-    return script
+    new_script.exec()
+    return new_script
 
 def include(file):
-    script = current_script.get()
-    path = Path.resolve(script.expand(file))
+    old_script = current_script.get()
+    path = Path.resolve(old_script._expander._expand(file))
 
     code = None
     with open(path, encoding="utf-8") as file:
         source = file.read()
         code = compile(source, path, "exec", dont_inherit=True)
 
-        script.log.verbose(Log.ORANGE + f"include {path}\n")
-        with script.log.indenter(Log.VERBOSE, Log.ORANGE):
-            exec(code, script.__dict__)
+        old_script.log.verbose(Log.ORANGE + f"include {path}\n")
+        with old_script.log.indenter(Log.VERBOSE, Log.ORANGE):
+            exec(code, old_script.__dict__)
 
-        if "__builtins__" in script.__dict__:
-            del script.__dict__["__builtins__"]
+        if "__builtins__" in old_script.__dict__:
+            del old_script.__dict__["__builtins__"]
 
-def load_repo(file, root = None, *args, **kwargs) -> Script:
+def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     old_script = current_script.get()
+    log        = old_script.find('log')
+    project    = old_script.find('project')
 
-    flags   = old_script.flags
-    log     = old_script.log
-    project = old_script.project
-
-    path = Path.resolve(old_script.expand(file))
-    root = Path.resolve(old_script.expand(root or os.path.dirname(path)))
-    name = os.path.basename(path)
+    ex   = Expander(old_script, old_script.log)
+    path = Path.resolve(ex.expand(file))
+    root = Path.resolve(ex.expand(root))
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
     assert " _" not in dedupe_key
@@ -2970,18 +2963,23 @@ def load_repo(file, root = None, *args, **kwargs) -> Script:
         log.verbose(Log.LIME + f"Deduped repo('{path}')\n")
         return dupe
 
-    repo = Repo(flags, log, project, name, path, root)
-    project._repos.append(repo)
+    new_repo = Repo(_up = project)
+    project._repos.append(new_repo)
 
-    script = Script(flags, log, project, repo, name, path, root, *args, **kwargs)
-    project._dedupe[dedupe_key] = script
-    repo._scripts.append(script)
+    new_script = Script(*args, _up = new_repo, **kwargs)
+    project._dedupe[dedupe_key] = new_script
+    new_repo._scripts.append(new_script)
 
-    script.exec()
-    return script
+    new_script.exec()
+    return new_script
 
 def build():
     return current_script.get().project.build()
+
+current_script = contextvars.ContextVar("current_script")
+path = __file__
+root = os.path.dirname(path)
+sys.modules["hancho"] = sys.modules[__name__]
 
 # endregion
 # ==================================================================================================

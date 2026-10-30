@@ -33,7 +33,7 @@ class TestApp(unittest.TestCase):
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
-        self.log = self.script.log
+        self.log = self.script.find('log')
         self.clear_stdout()
 
     def clear_stdout(self):
