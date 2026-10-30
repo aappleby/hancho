@@ -122,7 +122,7 @@ class CVGlobals:
     def __getattr__(self, key):
         return self._cv.get()[key]
 
-cv_globals = CVGlobals()
+cg = CVGlobals()
 
 # endregion
 # ==================================================================================================
@@ -903,10 +903,10 @@ class Scope:
 
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var):
-        return Expander(self, cv_globals.log).expand(var)
+        return Expander(self, cg.log).expand(var)
 
     def expand_collection(self, var):
-        return Expander(self, cv_globals.log).expand_collection(var)
+        return Expander(self, cg.log).expand_collection(var)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -1781,7 +1781,7 @@ class Runner:
             cls.core_sem.release()
 
     @staticmethod
-    async def async_run_tasks(log : Log, project : Project):
+    async def async_run_tasks(project : Project):
         """Run all tasks until we run out."""
 
         # ------------------------------------
@@ -1795,7 +1795,7 @@ class Runner:
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        log.verbose("Running tasks...\n")
+        cg.log.verbose("Running tasks...\n")
 
         while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
             finished_aio_task : asyncio.Task | None = None
@@ -1822,7 +1822,7 @@ class Runner:
                 case Task.FAILED:
                     Runner.tasks_failed += 1
                 case _:
-                    log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
+                    cg.log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
                     Runner.tasks_failed += 1
 
             if finished_aio_task is not None:
@@ -1830,10 +1830,10 @@ class Runner:
 
         failures = Runner.tasks_broken + Runner.tasks_failed
         if failures > Runner.max_errors:
-            log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
+            cg.log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
+            cg.log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
 
             # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
             # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
@@ -1862,7 +1862,7 @@ class Project(Scope):
 
         self.merge(*args, **kwargs)
 
-        ex = Expander(self, cv_globals.log)
+        ex = Expander(self, cg.log)
         self.name = ex.expand(self.name)
         self.path = ex.expand(self.path)
         self.root = ex.expand(self.root)
@@ -1876,8 +1876,6 @@ class Project(Scope):
 
     def build(self) -> int:
         time_a3 = time.perf_counter()
-        log = cv_globals.log
-        flags = cv_globals.flags
 
         # ------------------------------------
         # Select the set of tasks to run.
@@ -1890,7 +1888,7 @@ class Project(Scope):
                         if task.name is not None and target in task.name:
                             task.queue_task()
 
-        elif flags.build_all:
+        elif cg.flags.build_all:
             for repo in self._repos:
                 for task in repo.yield_tasks():
                     task.queue_task()
@@ -1903,12 +1901,12 @@ class Project(Scope):
         # ------------------------------------
         # Run the tasks.
 
-        result = asyncio.run(Runner.async_run_tasks(log, self))
+        result = asyncio.run(Runner.async_run_tasks(self))
 
         # ------------------------------------
         # Update stat DBs.
 
-        if not flags.build_dry:
+        if not cg.flags.build_dry:
             for repo in self._repos:
                 for task in repo.yield_tasks():
                     if task._complete:
@@ -1916,42 +1914,40 @@ class Project(Scope):
                 repo.save_stat_db()
 
         time_b3 = time.perf_counter()
-        log.verbose(Log.DBLUE + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
+        cg.log.verbose(Log.DBLUE + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
         self._result = result
         return result
 
     def stats(self):
-        log = cv_globals.log
         task_count = 0
         for repo in self._repos:
             task_count += len(list(repo.yield_tasks()))
 
         # FIXME all the stats should move to Project
-        log.verbose(Log.DBLUE + f"Tasks created:    {task_count}\n")
-        log.verbose(Log.DBLUE + f"Tasks enabled:    {Runner.tasks_enabled}\n")
-        log.verbose(Log.DBLUE + f"Tasks started:    {Runner.tasks_started}\n")
-        log.verbose(Log.DBLUE + f"Tasks finished:   {Runner.tasks_finished}\n")
-        log.verbose(Log.DBLUE + f"Tasks broken:     {Runner.tasks_broken}\n")
-        log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
-        log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        log.verbose(Log.DBLUE + f"Mtime calls:      {Repo.stat_calls}\n")
-        log.verbose(Log.DBLUE + f"Hash calls:       {Repo.hash_calls}\n")
-        log.verbose(Log.DBLUE + f"Hash bytes:       {Repo.hash_bytes}\n")
-        log.verbose(Log.DBLUE + f"Hash time:        {Repo.hash_time:8.6f}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks created:    {task_count}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks enabled:    {Runner.tasks_enabled}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks started:    {Runner.tasks_started}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks finished:   {Runner.tasks_finished}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks broken:     {Runner.tasks_broken}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+        cg.log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
+        cg.log.verbose(Log.DBLUE + f"Mtime calls:      {Repo.stat_calls}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash calls:       {Repo.hash_calls}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash bytes:       {Repo.hash_bytes}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash time:        {Repo.hash_time:8.6f}\n")
 
         #log.verbose("Rebuild reasons:\n")
         #for reason, count in project._build_reasons.items():
         #    log.verbose(f"{reason:17} {count}\n")
 
     def passfail(self):
-        log = cv_globals.log
         if self._runner.tasks_failed or self._runner.tasks_broken:
-            log.error("BUILD FAILED\n")
+            cg.log.error("BUILD FAILED\n")
         elif Runner.tasks_finished:
-            log.info(Log.GREEN + "BUILD PASSED\n")
+            cg.log.info(Log.GREEN + "BUILD PASSED\n")
         else:
-            log.info(Log.BLUE + "BUILD CLEAN\n")
+            cg.log.info(Log.BLUE + "BUILD CLEAN\n")
 
 # endregion
 # ==================================================================================================
@@ -1985,7 +1981,6 @@ class Repo(Scope):
 
     def __init__(self, *args, _up, **kwargs):
         super().__init__(_name = "repo", _up = _up)
-        log = cv_globals.log
 
         self.name         = "<repo>"
         self.file         = "{project.file}"
@@ -1997,18 +1992,18 @@ class Repo(Scope):
         self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
         self.merge(*args, **kwargs)
-        Expander(self, log).xip_collection(self.__dict__)
+        Expander(self, cg.log).xip_collection(self.__dict__)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
 
         if os.path.isfile(self.stat_db_path):
-            log.verbose(f"Loading stat_db {self.stat_db_path}\n")
+            cg.log.verbose(f"Loading stat_db {self.stat_db_path}\n")
             json_stats = Utils.load_json(self.stat_db_path)
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
+            cg.log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
 
     @classmethod
     def load_depfile(cls, filename : str, format : str, task_cwd : str) -> list[str]:
@@ -2038,15 +2033,13 @@ class Repo(Scope):
 
 
     def save_stat_db(self):
-        log = cv_globals.log
-        log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
+        cg.log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
         Utils.save_json(self._stat_db, self.stat_db_path)
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        log = cv_globals.log
 #        comp_db_path = self._expander._expand("{join(build_root, 'compile_commands.json')}")
-#        self.log.verbose(f"Saving comp_db {comp_db_path}\n")
+#        cg.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
 #        for file, stat in self._stat_db.items():
@@ -2139,7 +2132,7 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        script = cv_globals.script
+        script = cg.script
         super().__init__(_name = "task", _up = script)
 
         self.name        = "<task>"
@@ -2194,7 +2187,7 @@ class Task(Scope):
 
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex = Expander(self, cv_globals.log)
+                ex = Expander(self, cg.log)
                 v = ex.expand_collection(v)
                 self.__dict__[k] = v
 
@@ -2270,7 +2263,7 @@ class Task(Scope):
         return self._out_files
 
     async def task_main(self):
-        flags = cv_globals.flags
+        flags = cg.flags
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2376,7 +2369,7 @@ class Task(Scope):
         # And we're done
 
     def update_repo_stat_db(self):
-        repo = cv_globals.repo
+        repo = cg.repo
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile:
@@ -2406,11 +2399,10 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        log = cv_globals.log
-        flags = cv_globals.flags
-        ex = Expander(self, log)
+        flags = cg.flags
+        ex = Expander(self, cg.log)
 
-        if log._level_int <= Log.DEBUG:
+        if cg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
@@ -2481,7 +2473,7 @@ class Task(Scope):
             if self.in_depfile:
                 os.makedirs(os.path.dirname(self.in_depfile), exist_ok=True)
 
-        if log._level_int <= Log.DEBUG:
+        if cg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
@@ -2516,9 +2508,9 @@ class Task(Scope):
 
     def sanity_check(self):
         # Check for all task issues that break the build
-        repo = cv_globals.repo
-        flags = cv_globals.flags
-        project = cv_globals.project
+        repo = cg.repo
+        flags = cg.flags
+        project = cg.project
 
         if not Path.exists(self.cwd):
             raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
@@ -2564,7 +2556,7 @@ class Task(Scope):
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
 
-        repo = cv_globals.repo
+        repo = cg.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2600,7 +2592,7 @@ class Task(Scope):
 
     async def run_command(self : Task, command : str):
 
-        repo = cv_globals.repo
+        repo = cg.repo
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
@@ -2651,8 +2643,8 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback):
-        script = cv_globals.script
-        repo   = cv_globals.repo
+        script = cg.script
+        repo   = cg.repo
         callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
@@ -2682,7 +2674,6 @@ class Task(Scope):
     def log_task(self : Task, level : int, message : str | list[str]):
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
-        log = cv_globals.log
         color = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
@@ -2690,9 +2681,9 @@ class Task(Scope):
             all_lines.extend(chunk.splitlines(keepends = True))
 
         for line in all_lines:
-            if not log._line_buffer:
-                log._log(level, "", f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
-            log._log(level, color, line)
+            if not cg.log._line_buffer:
+                cg.log._log(level, "", f"[{self._task_id:3d}/{Runner.tasks_enabled:3d}] ")
+            cg.log._log(level, color, line)
 
 # endregion
 # ==================================================================================================
@@ -2722,18 +2713,17 @@ class Script(Scope):
         self.fill(*args, **kwargs)
         #self.merge(*args, **kwargs)
 
-        log = cv_globals.log
-        ex = Expander(self, log)
+        ex = Expander(self, cg.log)
         self.name       = ex.expand(self.name)
         self.path       = ex.expand(self.path)
         self.root       = ex.expand(self.root)
         self.build_root = ex.expand(self.build_root)
 
         # used in tests
-        self.log = log
+        self.log = cg.log
 
         # We want users to see the repo object so they can stash things in it.
-        self.repo     = cv_globals.repo
+        self.repo     = cg.repo
 
         # This has to be here as otherwise scripts don't work without an 'import hancho', and we
         # don't want to require that.
@@ -2764,19 +2754,18 @@ class Script(Scope):
 
     def exec(self : Script):
         assert self.path.endswith(".hancho")
-        log = cv_globals.log
 
-        log.verbose(Log.ORANGE + f"script {self.path}\n")
+        cg.log.verbose(Log.ORANGE + f"script {self.path}\n")
 
-        with log.indenter(Log.VERBOSE, Log.ORANGE):
+        with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
             code = None
             with open(self.path, encoding="utf-8") as file:
                 source = file.read()
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
-            with chdir(self.root), cv_globals.update(script = self):
-                exec(code, cv_globals._cv.get())
-                Utils.merge(self, cv_globals._cv.get())
+            with chdir(self.root), cg.update(script = self):
+                exec(code, cg._cv.get())
+                Utils.merge(self, cg._cv.get())
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
@@ -2793,7 +2782,7 @@ def create_test_script(
         stdout = sys.stdout,
         extra_flags) -> Script:
 
-    cv_globals.hancho = sys.modules[__name__]
+    cg.hancho = sys.modules[__name__]
 
     flags = Flags(_up = builtins)
 
@@ -2804,7 +2793,7 @@ def create_test_script(
         *extra_flags
     )
 
-    cv_globals.flags = flags
+    cg.flags = flags
 
     Utils.reset()
     Repo.reset()
@@ -2813,17 +2802,17 @@ def create_test_script(
     log = Log(flags, log_stdout = stdout)
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
-    cv_globals.log = log
+    cg.log = log
     builtins.log = log
 
     project = Project(_up = flags)
-    cv_globals.project = project
+    cg.project = project
 
     repo    = Repo(_up = project)
-    cv_globals.repo = repo
+    cg.repo = repo
 
     script  = Script(_up = repo)
-    cv_globals.script = script
+    cg.script = script
 
     project._repos.append(repo)
     repo._scripts.append(script)
@@ -2868,10 +2857,10 @@ builtins = Builtins(
 )
 
 def main():
-    cv_globals.hancho = sys.modules[__name__]
+    cg.hancho = sys.modules[__name__]
     flags = Flags(_up = builtins)
     flags.parse_flags(*sys.argv)
-    cv_globals.flags = flags
+    cg.flags = flags
 
     Utils.reset()
     Repo.reset()
@@ -2879,7 +2868,7 @@ def main():
 
     builtins.log = Log(flags)
     log = builtins.log
-    cv_globals.log = log
+    cg.log = log
 
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
@@ -2898,19 +2887,19 @@ def main():
     time_a1 = time.perf_counter()
 
     project = Project(_up = flags)
-    cv_globals.project = project
+    cg.project = project
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
     with log.indenter(Log.VERBOSE, Log.ORANGE):
 
         repo = Repo(_up = project)
-        cv_globals.repo = repo
+        cg.repo = repo
         project._repos.append(repo)
 
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, _up = repo)
-            cv_globals.script = script
+            cg.script = script
 
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
@@ -2951,10 +2940,9 @@ def _start():
 # region User API
 
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
-    old_script = cv_globals.script
-    log     = cv_globals.log
-    project = cv_globals.project
-    repo    = cv_globals.repo
+    old_script = cg.script
+    project = cg.project
+    repo    = cg.repo
 
     temp = Dict(
         *args,
@@ -2964,7 +2952,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
         root = root,
         **kwargs
     )
-    ex = Expander(temp, log)
+    ex = Expander(temp, cg.log)
 
     temp.file = ex.expand(temp.file)
     temp.path = ex.expand(temp.path)
@@ -2974,7 +2962,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     assert " _" not in dedupe_key
 
     if dupe := project._dedupe.get(dedupe_key, None):
-        log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
+        cg.log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
         return dupe
 
     new_script = Script(temp, _up = repo)
@@ -2985,7 +2973,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     return new_script
 
 def include(file):
-    old_script = cv_globals.script
+    old_script = cg.script
     path = Path.resolve(old_script._expander._expand(file))
 
     code = None
@@ -3001,9 +2989,9 @@ def include(file):
             del old_script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    old_script = cv_globals.script
-    log        = cv_globals.log
-    project    = cv_globals.project
+    old_script = cg.script
+    log        = cg.log
+    project    = cg.project
 
     ex   = Expander(old_script, old_script.log)
     path = Path.resolve(ex.expand(file))
@@ -3027,7 +3015,7 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     return new_script
 
 def build():
-    return cv_globals.project.build()
+    return cg.project.build()
 
 
 path = __file__

@@ -33,7 +33,7 @@ class TestApp(unittest.TestCase):
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
-        self.log = hancho.cv_globals.log
+        self.log = hancho.cg.log
         self.clear_stdout()
 
     def clear_stdout(self):
