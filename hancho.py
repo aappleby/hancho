@@ -2262,7 +2262,6 @@ class Task(Scope):
         return self._out_files
 
     async def task_main(self):
-        flags = cg.flags
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2295,7 +2294,7 @@ class Task(Scope):
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
 
-        if flags.build_dry:
+        if cg.flags.build_dry:
             return
 
         # ------------------------------------
@@ -2368,17 +2367,16 @@ class Task(Scope):
         # And we're done
 
     def update_repo_stat_db(self):
-        repo = cg.repo
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile:
                 self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
 
             for file in Utils.yield_leaves([self._in_files, self._deplines]):
-                repo.update_stat(file, None)
+                cg.repo.update_stat(file, None)
 
             for file in Utils.yield_leaves(self._out_files):
-                repo.update_stat(file, self.command)
+                cg.repo.update_stat(file, self.command)
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -2398,7 +2396,6 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        flags = cg.flags
         ex = Expander(self, cg.log)
 
         if cg.log._level_int <= Log.DEBUG:
@@ -2465,7 +2462,7 @@ class Task(Scope):
             if isinstance(val, str):
                 setattr(self, key, ex.expand(val))
 
-        if not flags.build_dry:
+        if not cg.flags.build_dry:
             blah = list(self._out_files.values())
             for file in Utils.yield_leaves(blah):
                 os.makedirs(os.path.dirname(file), exist_ok=True)
@@ -2507,15 +2504,12 @@ class Task(Scope):
 
     def sanity_check(self):
         # Check for all task issues that break the build
-        repo = cg.repo
-        flags = cg.flags
-        project = cg.project
 
         if not Path.exists(self.cwd):
             raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
 
-        if not Path.startswith(self.build_root, repo.root):
-            raise Task.BROKEN(f"The build root {self.build_root} is not under repo.root {repo.root}")
+        if not Path.startswith(self.build_root, cg.repo.root):
+            raise Task.BROKEN(f"The build root {self.build_root} is not under repo.root {cg.repo.root}")
 
         if isinstance(self.command, list):
             for command in Utils.yield_leaves(self.command):
@@ -2525,7 +2519,7 @@ class Task(Scope):
             raise Task.BROKEN(f"Command is not a string or callable: {self.command}")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if flags.strict:
+        if cg.flags.strict:
             for command in Utils.yield_leaves(self.command):
                 if Expander.is_macro(command) or Expander.is_template(command):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
@@ -2538,14 +2532,14 @@ class Task(Scope):
         # Check for task collisions
         for file in Utils.yield_leaves(self._out_files):
             real_file = cast(str, Path.abspath(file))
-            if real_file in project._real_filenames:
+            if real_file in cg.project._real_filenames:
                 raise Task.BROKEN(f"TaskCollision: Multiple tasks build {real_file}")
-            project._real_filenames.add(real_file)
+            cg.project._real_filenames.add(real_file)
 
         # Check for missing inputs. We have to check build_dry, as the input files may only exist if
         # we're really running tasks.
         for file in Utils.yield_leaves(self._in_files):
-            if not Path.exists(os.path.join(self.cwd, file)) and not flags.build_dry:
+            if not Path.exists(os.path.join(self.cwd, file)) and not cg.flags.build_dry:
                 raise Task.BROKEN(f"Input file missing - {file}")
 
         # Tasks should have at most one depfile.
@@ -2554,8 +2548,6 @@ class Task(Scope):
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
-
-        repo = cg.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2576,14 +2568,14 @@ class Task(Scope):
 
         for file in Utils.yield_leaves(all_files):
             if not os.path.isfile(file):
-                rel_file = Path.relpath(file, repo.root)
+                rel_file = Path.relpath(file, cg.repo.root)
                 return f"File missing: {rel_file!r}"
-            if reason := repo.stat_changed2 (file):
+            if reason := cg.repo.stat_changed2 (file):
                 return reason
 
         for file in Utils.yield_leaves(self._out_files):
-            if repo.command_changed(file, self.command):
-                rel_file = Path.relpath(file, repo.root)
+            if cg.repo.command_changed(file, self.command):
+                rel_file = Path.relpath(file, cg.repo.root)
                 return f"Command mismatch for {rel_file!r}"
 
         # No changes, no reason to rebuild.
@@ -2591,11 +2583,9 @@ class Task(Scope):
 
     async def run_command(self : Task, command : str):
 
-        repo = cg.repo
-
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
-        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, repo.root)}$ {command}\n")
+        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, cg.repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2642,15 +2632,13 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback):
-        script = cg.script
-        repo   = cg.repo
-        callback_dir = Path.relpath(script.root, repo.root)
+        callback_dir = Path.relpath(cg.script.root, cg.repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
 
-        with chdir(script.root):
+        with chdir(cg.script.root):
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2717,12 +2705,6 @@ class Script(Scope):
         self.path       = ex.expand(self.path)
         self.root       = ex.expand(self.root)
         self.build_root = ex.expand(self.build_root)
-
-        # used in tests
-        self.log = cg.log
-
-        # We want users to see the repo object so they can stash things in it.
-        self.repo     = cg.repo
 
         # This has to be here as otherwise scripts don't work without an 'import hancho', and we
         # don't want to require that.
@@ -2939,9 +2921,6 @@ def _start():
 # region User API
 
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
-    project = cg.project
-    repo    = cg.repo
-
     temp = Dict(
         *args,
         _up  = cg.script,
@@ -2959,13 +2938,13 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     dedupe_key = Dumper.any_to_key([temp.path, temp.root, *args, kwargs])
     assert " _" not in dedupe_key
 
-    if dupe := project._dedupe.get(dedupe_key, None):
+    if dupe := cg.project._dedupe.get(dedupe_key, None):
         cg.log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
         return dupe
 
-    new_script = Script(temp, _up = repo)
-    project._dedupe[dedupe_key] = new_script
-    repo._scripts.append(new_script)
+    new_script = Script(temp, _up = cg.repo)
+    cg.project._dedupe[dedupe_key] = new_script
+    cg.repo._scripts.append(new_script)
 
     new_script.exec()
     return new_script
@@ -2987,9 +2966,6 @@ def include(file):
             del cg.script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    log        = cg.log
-    project    = cg.project
-
     ex   = Expander(cg.script, cg.log)
     path = Path.resolve(ex.expand(file))
     root = Path.resolve(ex.expand(root))
@@ -2997,15 +2973,15 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
     assert " _" not in dedupe_key
 
-    if dupe := project._dedupe.get(dedupe_key, None):
-        log.verbose(Log.LIME + f"Deduped repo('{path}')\n")
+    if dupe := cg.project._dedupe.get(dedupe_key, None):
+        cg.log.verbose(Log.LIME + f"Deduped repo('{path}')\n")
         return dupe
 
-    new_repo = Repo(_up = project)
-    project._repos.append(new_repo)
+    new_repo = Repo(_up = cg.project)
+    cg.project._repos.append(new_repo)
 
     new_script = Script(*args, _up = new_repo, **kwargs)
-    project._dedupe[dedupe_key] = new_script
+    cg.project._dedupe[dedupe_key] = new_script
     new_repo._scripts.append(new_script)
 
     new_script.exec()
