@@ -1164,10 +1164,10 @@ class Expander(abc.Mapping):
 
     def __init__(self, scope : Scope):
         assert not isinstance(scope, Expander)
-        self.scope = scope
+        self.exscope = scope
 
-        self.scope_tag    = Utils.instance_tag(self.scope)
-        self.scope_color  = Utils.obj_to_ansi_color(self.scope)
+        self.scope_tag    = Utils.instance_tag(self.exscope)
+        self.scope_color  = Utils.obj_to_ansi_color(self.exscope)
         self.indent_color = self.scope_color
 
     # ====================================
@@ -1198,16 +1198,16 @@ class Expander(abc.Mapping):
             self.trace_start("get", key)
 
             result = Sentinel.MISSING
-            scope = self.scope
+            cursor = self.exscope
 
-            while scope is not None:
-                if scope.get("_name", Sentinel.MISSING) == key:
-                    result = scope
+            while cursor is not None:
+                if cursor.get("_name", Sentinel.MISSING) == key:
+                    result = cursor
                     break
-                if key in scope:
-                    result = scope[key]
+                if key in cursor:
+                    result = cursor[key]
                     break
-                scope = scope.get("_up", None)
+                cursor = cursor.get("_up", None)
 
             if result is Sentinel.MISSING:
                 raise KeyError(key)
@@ -1366,7 +1366,7 @@ class Expander(abc.Mapping):
             pass
 
         if isinstance(result, Expander):
-            result = result.scope
+            result = result.exscope
 
         return result
 
@@ -1448,7 +1448,7 @@ class Expander(abc.Mapping):
     def trace_end(self, action : str, arg, result):
         if cg.log._level_int > Log.TRACE: return
         if isinstance(result, Expander):
-            result = result.scope
+            result = result.exscope
 
         cg.log.dedent()
 
@@ -1873,6 +1873,18 @@ class Project(Scope):
         self._repos : list[Repo] = []
         #self._build_reasons = Counter()
         self._runner = Runner()
+
+    def get_dupe(self, path, root, args, kwargs):
+        key = Dumper.any_to_key([path, root, *args, kwargs])
+        assert " _" not in key
+
+        if dupe := self._dedupe.get(key, None):
+            cg.log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
+            return dupe, key
+        return None, key
+
+    def set_dupe(self, key, new_script):
+        self._dedupe[key] = new_script
 
     def build(self) -> int:
         time_a3 = time.perf_counter()
@@ -2690,12 +2702,6 @@ class Script(Scope):
         self.root       = "{repo.root}"
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
-        # FIXME how many of these do we actually need?
-        # FIXME set these on the dict right before we exec the script?
-        #self.script   = self
-        #self.builtins = builtins
-        #self.flags    = flags
-
         # FIXME merge or fill?
         self.fill(*args, **kwargs)
         #self.merge(*args, **kwargs)
@@ -2706,9 +2712,8 @@ class Script(Scope):
         self.root       = ex.expand(self.root)
         self.build_root = ex.expand(self.build_root)
 
-        # This has to be here as otherwise scripts don't work without an 'import hancho', and we
-        # don't want to require that.
-        self.hancho   = sys.modules[__name__]
+        # Required for templates to resolve {hancho.root}?
+        self.hancho = sys.modules[__name__]
 
         self._globals = Dict()
 
@@ -2717,18 +2722,6 @@ class Script(Scope):
 
         self.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
         self._tasks      = []
-
-    # Script exposes all globals that were set while exec'ing the scripts modules
-    # through getitem/getattr
-
-    def __getitem__(self, key):
-        return self.__dict__[key]
-
-    def __getattr__(self, key) -> Any:
-        return object.__getattribute__(self, key)
-
-    def __contains__(self, key):
-        return key in self.__dict__
 
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
@@ -2798,8 +2791,12 @@ def create_test_script(
     project._repos.append(repo)
     repo._scripts.append(script)
 
-    dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
-    project._dedupe[dedupe_key] = script
+    _, dupe_key = project.get_dupe(path, root, (), {})
+
+    project.set_dupe(dupe_key, script)
+
+    #dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
+    #project._dedupe[dedupe_key] = script
 
     # do _not_ exec the dummy script
 
@@ -2815,6 +2812,7 @@ class Builtins(Dict):
 builtins = Builtins(
     _up      = None,
     _name    = "builtins",
+    hancho   = sys.modules[__name__],
     log      = Log(),
     Dict     = Dict,
     Task     = Task,
@@ -2920,30 +2918,24 @@ def _start():
 # ==================================================================================================
 # region User API
 
-def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
-    temp = Dict(
+def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **kwargs):
+    #ex1 = Expander(cg.script)
+    ex2 = Expander(Dict(_up  = cg.script, file = file2, path = path2, root = root2))
+
+    dupe1, dedupe_key1 = cg.project.get_dupe(ex2.path, ex2.root, args, kwargs)
+    if dupe1:
+        return dupe1
+
+    new_script = Script(
         *args,
-        _up  = cg.script,
-        file = file,
-        path = path,
-        root = root,
+        _up  = cg.repo,
+        file = ex2.file,
+        path = ex2.path,
+        root = ex2.root,
         **kwargs
     )
-    ex = Expander(temp)
 
-    temp.file = ex.expand(temp.file)
-    temp.path = ex.expand(temp.path)
-    temp.root = ex.expand(temp.root)
-
-    dedupe_key = Dumper.any_to_key([temp.path, temp.root, *args, kwargs])
-    assert " _" not in dedupe_key
-
-    if dupe := cg.project._dedupe.get(dedupe_key, None):
-        cg.log.verbose(Log.DGREEN + f"Deduped script('{path}')\n")
-        return dupe
-
-    new_script = Script(temp, _up = cg.repo)
-    cg.project._dedupe[dedupe_key] = new_script
+    cg.project.set_dupe(dedupe_key1, new_script)
     cg.repo._scripts.append(new_script)
 
     new_script.exec()
