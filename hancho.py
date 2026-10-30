@@ -881,10 +881,10 @@ class Scope:
 
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var):
-        return Expander(self, current_script.get().log).expand(var)
+        return Expander(self, cv_log.get()).expand(var)
 
     def expand_collection(self, var):
-        return Expander(self, current_script.get().log).expand_collection(var)
+        return Expander(self, cv_log.get()).expand_collection(var)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -1826,7 +1826,7 @@ class Project(Scope):
 
         self.merge(*args, **kwargs)
 
-        ex = Expander(self, self.find('log'))
+        ex = Expander(self, cv_log.get())
         self.name = ex.expand(self.name)
         self.path = ex.expand(self.path)
         self.root = ex.expand(self.root)
@@ -1840,7 +1840,7 @@ class Project(Scope):
 
     def build(self) -> int:
         time_a3 = time.perf_counter()
-        log = self.find('log')
+        log = cv_log.get()
         flags = self.find('flags')
 
         # ------------------------------------
@@ -1885,7 +1885,7 @@ class Project(Scope):
         return result
 
     def stats(self):
-        log = self.find('log')
+        log = cv_log.get()
         task_count = 0
         for repo in self._repos:
             task_count += len(list(repo.yield_tasks()))
@@ -1909,7 +1909,7 @@ class Project(Scope):
         #    log.verbose(f"{reason:17} {count}\n")
 
     def passfail(self):
-        log = self.find('log')
+        log = cv_log.get()
         if self._runner.tasks_failed or self._runner.tasks_broken:
             log.error("BUILD FAILED\n")
         elif Runner.tasks_finished:
@@ -1949,7 +1949,7 @@ class Repo(Scope):
 
     def __init__(self, *args, _up, **kwargs):
         super().__init__(_name = "repo", _up = _up)
-        log = self.find('log')
+        log = cv_log.get()
 
         self.name         = "<repo>"
         self.file         = "{project.file}"
@@ -2002,13 +2002,13 @@ class Repo(Scope):
 
 
     def save_stat_db(self):
-        log = self.find('log')
+        log = cv_log.get()
         log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
         Utils.save_json(self._stat_db, self.stat_db_path)
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        log = self.find('log')
+#        log = cv_log.get()
 #        comp_db_path = self._expander._expand("{join(build_root, 'compile_commands.json')}")
 #        self.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
@@ -2103,7 +2103,7 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        script = current_script.get()
+        script = cv_script.get()
         super().__init__(_name = "task", _up = script)
 
         self.name        = "<task>"
@@ -2158,7 +2158,7 @@ class Task(Scope):
 
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex = Expander(self, self.find('log'))
+                ex = Expander(self, cv_log.get())
                 v = ex.expand_collection(v)
                 self.__dict__[k] = v
 
@@ -2370,7 +2370,7 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        log = self.find('log')
+        log = cv_log.get()
         flags = self.find('flags')
         ex = Expander(self, log)
 
@@ -2646,7 +2646,7 @@ class Task(Scope):
     def log_task(self : Task, level : int, message : str | list[str]):
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
-        log = self.find('log')
+        log = cv_log.get()
         color = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
@@ -2686,7 +2686,7 @@ class Script(Scope):
         self.fill(*args, **kwargs)
         #self.merge(*args, **kwargs)
 
-        log = self.find('log')
+        log = cv_log.get()
         ex = Expander(self, log)
         self.name       = ex.expand(self.name)
         self.path       = ex.expand(self.path)
@@ -2729,7 +2729,7 @@ class Script(Scope):
 
     def exec(self : Script):
         assert self.path.endswith(".hancho")
-        log = self.find('log')
+        log = cv_log.get()
 
         log.verbose(Log.ORANGE + f"script {self.path}\n")
 
@@ -2739,7 +2739,7 @@ class Script(Scope):
                 source = file.read()
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
-            with chdir(self.root), current_script.set(self):
+            with chdir(self.root), cv_script.set(self), cv_log.set(log):
                 exec(code, self.__dict__)
 
             if "__builtins__" in self.__dict__:
@@ -2772,6 +2772,7 @@ def create_test_script(
 
     builtins.log = Log(flags, log_stdout = stdout)
     builtins.log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
+    cv_log.set(builtins.log)
 
     project = Project(_up = flags)
     repo    = Repo(_up = project)
@@ -2783,7 +2784,7 @@ def create_test_script(
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
     project._dedupe[dedupe_key] = script
 
-    current_script.set(script)
+    cv_script.set(script)
 
     # do _not_ exec the dummy script
 
@@ -2831,6 +2832,7 @@ def main():
 
     builtins.log = Log(flags)
     log = builtins.log
+    cv_log.set(log)
 
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
@@ -2859,7 +2861,8 @@ def main():
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, _up = repo)
-            current_script.set(script)
+            cv_script.set(script)
+
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
             script.exec()
@@ -2899,8 +2902,8 @@ def _start():
 # region User API
 
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
-    old_script = current_script.get()
-    log     = old_script.find('log')
+    old_script = cv_script.get()
+    log     = cv_log.get()
     project = old_script.find('project')
     repo    = old_script.find('repo')
 
@@ -2933,7 +2936,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     return new_script
 
 def include(file):
-    old_script = current_script.get()
+    old_script = cv_script.get()
     path = Path.resolve(old_script._expander._expand(file))
 
     code = None
@@ -2949,8 +2952,8 @@ def include(file):
             del old_script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    old_script = current_script.get()
-    log        = old_script.find('log')
+    old_script = cv_script.get()
+    log        = cv_log.get()
     project    = old_script.find('project')
 
     ex   = Expander(old_script, old_script.log)
@@ -2975,9 +2978,11 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     return new_script
 
 def build():
-    return current_script.get().project.build()
+    return cv_script.get().project.build()
 
-current_script = contextvars.ContextVar("current_script")
+cv_script = contextvars.ContextVar("current_script")
+cv_log = contextvars.ContextVar("log")
+
 path = __file__
 root = os.path.dirname(path)
 sys.modules["hancho"] = sys.modules[__name__]

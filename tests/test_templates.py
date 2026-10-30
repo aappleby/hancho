@@ -24,7 +24,6 @@ class TestTemplates(unittest.TestCase):
                 *args
             ],
         )
-        self.log = self.script.find('log')
 
     def test_basic_eval(self):
         d = hancho.Dict(a = 1, b = 2)
