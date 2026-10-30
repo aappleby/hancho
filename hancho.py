@@ -2851,9 +2851,11 @@ builtins = Builtins(
 )
 
 def main():
+    cv_globals.update(hancho = sys.modules[__name__])
     flags = Flags(_up = builtins)
     flags.parse_flags(*sys.argv)
     cv_flags.set(flags)
+    cv_globals.update(flags = flags)
 
     Utils.reset()
     Repo.reset()
@@ -2862,6 +2864,7 @@ def main():
     builtins.log = Log(flags)
     log = builtins.log
     cv_log.set(log)
+    cv_globals.update(log = log)
 
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
@@ -2881,27 +2884,21 @@ def main():
 
     project = Project(_up = flags)
     cv_project.set(project)
+    cv_globals.update(project = project)
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
     with log.indenter(Log.VERBOSE, Log.ORANGE):
 
         repo = Repo(_up = project)
         cv_repo.set(repo)
+        cv_globals.update(repo = repo)
         project._repos.append(repo)
 
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, _up = repo)
             cv_script.set(script)
-
-            cv_globals.update(
-                hancho  = sys.modules[__name__],
-                flags   = flags,
-                log     = log,
-                project = project,
-                repo    = repo,
-                script  = script,
-            )
+            cv_globals.update(script = script)
 
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
