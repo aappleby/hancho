@@ -2752,18 +2752,9 @@ class Script(Scope):
                 source = file.read()
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
-            new_globals = dict(  # noqa: C408
-                hancho   = sys.modules[__name__],
-                flags    = cv_flags.get(),
-                log      = cv_log.get(),
-                project  = cv_project.get(),
-                repo     = cv_repo.get(),
-                script   = self,
-            )
-
-            with chdir(self.root), cv_script.set(self), cv_log.set(log), cv_globals.update(new_globals):
-                exec(code, new_globals)
-                Utils.merge(self, new_globals)
+            with chdir(self.root), cv_script.set(self), cv_log.set(log), cv_globals.update(script = self):
+                exec(code, cv_globals._cv.get().__dict__)
+                Utils.merge(self, cv_globals._cv.get().__dict__)
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
@@ -2780,6 +2771,8 @@ def create_test_script(
         stdout = sys.stdout,
         extra_flags) -> Script:
 
+    cv_globals.update(hancho = sys.modules[__name__])
+
     flags = Flags(_up = builtins)
 
     flags.parse_flags(
@@ -2790,6 +2783,7 @@ def create_test_script(
     )
 
     cv_flags.set(flags)
+    cv_globals.update(flags = flags)
 
     Utils.reset()
     Repo.reset()
@@ -2799,32 +2793,26 @@ def create_test_script(
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
     cv_log.set(log)
+    cv_globals.update(log = log)
     builtins.log = log
 
     project = Project(_up = flags)
     cv_project.set(project)
+    cv_globals.update(project = project)
 
     repo    = Repo(_up = project)
     cv_repo.set(repo)
+    cv_globals.update(repo = repo)
 
     script  = Script(_up = repo)
     cv_script.set(script)
-
-    cv_globals.update(
-        hancho  = sys.modules[__name__],
-        flags   = flags,
-        log     = log,
-        project = project,
-        repo    = repo,
-        script  = script,
-    )
+    cv_globals.update(script = script)
 
     project._repos.append(repo)
     repo._scripts.append(script)
 
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
     project._dedupe[dedupe_key] = script
-
 
     # do _not_ exec the dummy script
 
