@@ -881,10 +881,10 @@ class Scope:
 
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var):
-        return Expander(self, cv_log.get()).expand(var)
+        return Expander(self, cv_globals.log).expand(var)
 
     def expand_collection(self, var):
-        return Expander(self, cv_log.get()).expand_collection(var)
+        return Expander(self, cv_globals.log).expand_collection(var)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -1840,7 +1840,7 @@ class Project(Scope):
 
         self.merge(*args, **kwargs)
 
-        ex = Expander(self, cv_log.get())
+        ex = Expander(self, cv_globals.log)
         self.name = ex.expand(self.name)
         self.path = ex.expand(self.path)
         self.root = ex.expand(self.root)
@@ -1854,7 +1854,7 @@ class Project(Scope):
 
     def build(self) -> int:
         time_a3 = time.perf_counter()
-        log = cv_log.get()
+        log = cv_globals.log
         flags = cv_globals.flags
 
         # ------------------------------------
@@ -1899,7 +1899,7 @@ class Project(Scope):
         return result
 
     def stats(self):
-        log = cv_log.get()
+        log = cv_globals.log
         task_count = 0
         for repo in self._repos:
             task_count += len(list(repo.yield_tasks()))
@@ -1923,7 +1923,7 @@ class Project(Scope):
         #    log.verbose(f"{reason:17} {count}\n")
 
     def passfail(self):
-        log = cv_log.get()
+        log = cv_globals.log
         if self._runner.tasks_failed or self._runner.tasks_broken:
             log.error("BUILD FAILED\n")
         elif Runner.tasks_finished:
@@ -1963,7 +1963,7 @@ class Repo(Scope):
 
     def __init__(self, *args, _up, **kwargs):
         super().__init__(_name = "repo", _up = _up)
-        log = cv_log.get()
+        log = cv_globals.log
 
         self.name         = "<repo>"
         self.file         = "{project.file}"
@@ -2016,13 +2016,13 @@ class Repo(Scope):
 
 
     def save_stat_db(self):
-        log = cv_log.get()
+        log = cv_globals.log
         log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
         Utils.save_json(self._stat_db, self.stat_db_path)
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        log = cv_log.get()
+#        log = cv_globals.log
 #        comp_db_path = self._expander._expand("{join(build_root, 'compile_commands.json')}")
 #        self.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
@@ -2172,7 +2172,7 @@ class Task(Scope):
 
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex = Expander(self, cv_log.get())
+                ex = Expander(self, cv_globals.log)
                 v = ex.expand_collection(v)
                 self.__dict__[k] = v
 
@@ -2384,7 +2384,7 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        log = cv_log.get()
+        log = cv_globals.log
         flags = cv_globals.flags
         ex = Expander(self, log)
 
@@ -2660,7 +2660,7 @@ class Task(Scope):
     def log_task(self : Task, level : int, message : str | list[str]):
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
-        log = cv_log.get()
+        log = cv_globals.log
         color = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
@@ -2700,7 +2700,7 @@ class Script(Scope):
         self.fill(*args, **kwargs)
         #self.merge(*args, **kwargs)
 
-        log = cv_log.get()
+        log = cv_globals.log
         ex = Expander(self, log)
         self.name       = ex.expand(self.name)
         self.path       = ex.expand(self.path)
@@ -2742,7 +2742,7 @@ class Script(Scope):
 
     def exec(self : Script):
         assert self.path.endswith(".hancho")
-        log = cv_log.get()
+        log = cv_globals.log
 
         log.verbose(Log.ORANGE + f"script {self.path}\n")
 
@@ -2752,7 +2752,7 @@ class Script(Scope):
                 source = file.read()
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
-            with chdir(self.root), cv_log.set(log), cv_globals.update(script = self):
+            with chdir(self.root), cv_globals.update(script = self):
                 exec(code, cv_globals._cv.get())
                 Utils.merge(self, cv_globals._cv.get())
 
@@ -2771,7 +2771,7 @@ def create_test_script(
         stdout = sys.stdout,
         extra_flags) -> Script:
 
-    cv_globals.update(hancho = sys.modules[__name__])
+    cv_globals.hancho = sys.modules[__name__]
 
     flags = Flags(_up = builtins)
 
@@ -2782,7 +2782,7 @@ def create_test_script(
         *extra_flags
     )
 
-    cv_globals.update(flags = flags)
+    cv_globals.flags = flags
 
     Utils.reset()
     Repo.reset()
@@ -2791,18 +2791,17 @@ def create_test_script(
     log = Log(flags, log_stdout = stdout)
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
-    cv_log.set(log)
-    cv_globals.update(log = log)
+    cv_globals.log = log
     builtins.log = log
 
     project = Project(_up = flags)
-    cv_globals.update(project = project)
+    cv_globals.project = project
 
     repo    = Repo(_up = project)
-    cv_globals.update(repo = repo)
+    cv_globals.repo = repo
 
     script  = Script(_up = repo)
-    cv_globals.update(script = script)
+    cv_globals.script = script
 
     project._repos.append(repo)
     repo._scripts.append(script)
@@ -2847,10 +2846,10 @@ builtins = Builtins(
 )
 
 def main():
-    cv_globals.update(hancho = sys.modules[__name__])
+    cv_globals.hancho = sys.modules[__name__]
     flags = Flags(_up = builtins)
     flags.parse_flags(*sys.argv)
-    cv_globals.update(flags = flags)
+    cv_globals.flags = flags
 
     Utils.reset()
     Repo.reset()
@@ -2858,8 +2857,7 @@ def main():
 
     builtins.log = Log(flags)
     log = builtins.log
-    cv_log.set(log)
-    cv_globals.update(log = log)
+    cv_globals.log = log
 
     log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
@@ -2878,19 +2876,19 @@ def main():
     time_a1 = time.perf_counter()
 
     project = Project(_up = flags)
-    cv_globals.update(project = project)
+    cv_globals.project = project
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
     with log.indenter(Log.VERBOSE, Log.ORANGE):
 
         repo = Repo(_up = project)
-        cv_globals.update(repo = repo)
+        cv_globals.repo = repo
         project._repos.append(repo)
 
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, _up = repo)
-            cv_globals.update(script = script)
+            cv_globals.script = script
 
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
@@ -2932,7 +2930,7 @@ def _start():
 
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
     old_script = cv_globals.script
-    log     = cv_log.get()
+    log     = cv_globals.log
     project = cv_globals.project
     repo    = cv_globals.repo
 
@@ -2982,7 +2980,7 @@ def include(file):
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     old_script = cv_globals.script
-    log        = cv_log.get()
+    log        = cv_globals.log
     project    = cv_globals.project
 
     ex   = Expander(old_script, old_script.log)
@@ -3012,7 +3010,7 @@ def build():
 
 class CVGlobals:
     def __init__(self, *args, **kwargs):
-        self._cv = contextvars.ContextVar("CVGlobals")
+        object.__setattr__(self, "_cv", contextvars.ContextVar("CVGlobals"))
         self._cv.set({})
         self.update(*args, **kwargs)
 
@@ -3022,13 +3020,16 @@ class CVGlobals:
             new_dict |= d
         return self._cv.set(new_dict)
 
+    def __setattr__(self, key, val):
+        new_dict = dict(self._cv.get()) | {key:val}
+        #new_dict[key] = val
+        return self._cv.set(new_dict)
+
     def __getattr__(self, key):
         return self._cv.get()[key]
 
 
 cv_globals = CVGlobals()
-
-cv_log     = contextvars.ContextVar("log")
 
 path = __file__
 root = os.path.dirname(path)
