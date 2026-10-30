@@ -94,6 +94,12 @@ type task_callback = abc.Callable[[Task], Any]
 type item[T] = tuple[int | str | None, T]
 type command_type = str | list[str] | task_callback
 
+# These types don't need a type annotation when dumped.
+base_types   = (int, float, complex, bool, str, tuple, types.NoneType, type)
+
+# These types don't get dumped because they're not really dumpable.
+opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task)
+
 # endregion
 # ==================================================================================================
 # region Sentinel
@@ -105,9 +111,6 @@ class Sentinel:
     def __copy__(self):           return self
     def __deepcopy__(self, memo): return self
     def __reduce__(self):         return self.name
-    def __dump__(self, key, opts, seen):
-        new_opts = dataclasses.replace(opts, print_id = False)
-        return Dumper._dump_prefix(key, self, new_opts) + repr(self)
 
     MISSING : Any
     FOLDED : Any
@@ -180,17 +183,23 @@ class Utils:
         if item is None:
             return
 
-        if seen is None: seen = set()
-        if (vid := hex(id(item[1]))) in seen: return
-        seen.add(vid)
+        #key = item[0]
+        val = item[1]
 
-        if Utils.is_mapping(item[1]):
-            for item2 in item[1].items():
+        if seen is None:
+            seen = set()
+
+        if id(val) in seen:
+            return
+        elif not isinstance(val, base_types):
+            seen.add(id(val))
+
+        if Utils.is_mapping(val):
+            for item2 in val.items():
                 yield from Utils.yield_items_from_item(item2)
-        elif Utils.is_sequence(item[1]) or Utils.is_set(item[1]):
-            t = item[1]
-            for item2 in enumerate(t):
-                yield from Utils.yield_items_from_item(item2)
+        elif Utils.is_sequence(item[1]) or Utils.is_set(val):
+            for item2 in enumerate(cast(Any, val)):
+                yield from Utils.yield_items_from_item(item2, seen)
         else:
             yield item
 
@@ -207,8 +216,11 @@ class Utils:
             return
 
         if seen is None: seen = set()
-        if (vid := hex(id(variant))) in seen: return
-        seen.add(vid)
+
+        if id(variant) in seen:
+            return
+        elif not isinstance(variant, base_types):
+            seen.add(id(variant))
 
         if Utils.is_mapping(variant):
             for v2 in variant.values():
@@ -222,8 +234,11 @@ class Utils:
     @staticmethod
     def yield_public_values(variant, seen = None) -> Any:
         if seen is None: seen = set()
-        if (vid := hex(id(variant))) in seen: return
-        seen.add(vid)
+
+        if id(variant) in seen:
+            return
+        elif not isinstance(variant, base_types):
+            seen.add(id(variant))
 
         if Utils.is_mapping(variant):
             for k, v  in variant.items():
@@ -865,9 +880,9 @@ class Path:
 # FIXME this breaks if we do Scope(abc.Mapping)?
 
 class Scope:
-    def __init__(self, *, _up : Scope | None):
-        self._up : Scope | None
-        self.__dict__['_up'] = _up
+    def __init__(self, **kwargs):
+        if '_up' in kwargs:
+            self.__dict__['_up'] = kwargs['_up']
 
     def find(self, key : str, default = Sentinel.MISSING) -> Any:
         cursor = self
@@ -912,14 +927,9 @@ class Scope:
     def __iter__(self):
         yield from filter(is_public, self.__dict__)
 
-    def __dump__(self, key, opts : Dumper.Opts, seen):
-        new_fold = [*opts.fold, contextvars.Context, asyncio.Task, Project, Repo, Script, Flags, Log, builtins]
-        new_opts = dataclasses.replace(opts, fold = new_fold)
-        return Dumper._dump_vector(key, self, self.__dict__, new_opts, seen)
-
     # This makes traces hard to read because we unfold _every_ scope that we read
-    #def __repr__(self):
-    #    return Dumper.dump(self)
+    def __repr__(self):
+        return Dumper.dump(self)
 
 # ====================================
 # A Dict is a Scope that can be used as an abc.MutableMapping.
@@ -927,7 +937,10 @@ class Scope:
 class Dict(Scope, abc.MutableMapping):
 
     def __init__(self, *args, **kwargs):
-        super().__init__(_up = kwargs.pop('_up', None))
+        if '_up' in kwargs:
+            super().__init__(_up = kwargs.pop('_up', None))
+        else:
+            super().__init__()
         Utils.merge_variants(self, *args, **kwargs)
 
     def __getattr__(self, key):
@@ -1404,34 +1417,8 @@ class Dumper:
     middle of a build, the resulting strings should be stable enough to use for deduping.
     """
 
-    # These types don't get dumped because they're not really dumpable.
-    opaque_types : ClassVar[dict[Any, str]] = {
-        #types.BuiltinFunctionType : "<builtin>",
-        #types.ModuleType          : "<module>",
-        types.GeneratorType       : "<generator>",
-        type                      : "type",
-    }
+    seen : contextvars.ContextVar[set] = contextvars.ContextVar("seen")
 
-    # These types don't need a type annotation when dumped.
-    base_types = (
-        Enum,
-        str,
-        Expander.Literal,
-        Expander.Macro,
-        bool,
-        int,
-        float,
-        list,
-        tuple,
-        set,
-        dict,
-        #bytes,
-        #bytearray,
-        range,
-        type(None),
-        Sentinel,
-        *opaque_types.keys(),
-    )
 
     match_pointer : re.Pattern = re.compile(r"0[xX][0-9a-fA-F]{4,16}")
 
@@ -1472,10 +1459,14 @@ class Dumper:
         tab=4,
         indent_level = 0
     ):
-        fold = fold or []
-        indent_stack2 = [" "] * indent_level
-        opts = Dumper.Opts(cur_depth, max_depth, indent_stack2, fold, print_id, color_code, dump_private, tab, len, width, False)
-        return cls._dump_to_str(None, val, opts, set())
+        old_seen = Dumper.seen.get(None)
+        new_seen = set() if old_seen is None else old_seen
+
+        with Dumper.seen.set(new_seen):
+            fold = fold or []
+            indent_stack2 = [" "] * indent_level
+            opts = Dumper.Opts(cur_depth, max_depth, indent_stack2, fold, print_id, color_code, dump_private, tab, len, width, False)
+            return cls._dump_to_str(None, val, opts)
 
     @staticmethod
     def dprint(*args, **kwargs):
@@ -1483,26 +1474,28 @@ class Dumper:
         dprint(result)
 
     @classmethod
-    def _dump_to_str(cls, key, val : Any, opts, seen : set):
+    def _dump_to_str(cls, key, val : Any, opts):
         if opts.cur_depth > 0 and (key in opts.fold or val in opts.fold or type(val) in opts.fold):
             return cls._dump_prefix(key, val, opts) + str(Sentinel.FOLDED)
+        elif key == "_up":
+            return cls._dump_prefix(key, val, opts) + "<up>"
         elif key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
         elif isinstance(val, (type, types.FunctionType)):
-            return cls._dump_scalar(key, val, opts, seen)
+            return cls._dump_scalar(key, val, opts)
         elif val is sys.modules[__name__]:
             return cls._dump_prefix(key, val, opts) + "<hancho module>"
         elif hasattr(type(val), "__dump__"):
-            return val.__dump__(key, opts, seen)
+            return val.__dump__(key, opts)
         elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
-            return cls._dump_vector(key, val, val, opts, seen)
-        elif hasattr(val, "__dict__") and type(val) not in Dumper.opaque_types:
-            return cls._dump_vector(key, val, val.__dict__, opts, seen)
+            return cls._dump_vector(key, val, val, opts)
+        elif hasattr(val, "__dict__") and not isinstance(val, opaque_types):
+            return cls._dump_vector(key, val, val.__dict__, opts)
         else:
-            return cls._dump_scalar(key, val, opts, seen)
+            return cls._dump_scalar(key, val, opts)
 
     @classmethod
-    def _dump_scalar(cls, key, val : Any, opts, seen : set):
+    def _dump_scalar(cls, key, val : Any, opts):
         # FIXME how else can we verify that this is really a scalar?
         #scalars = (int, float, str, bool, types.NoneType, object, types.FunctionType)
         #if type(val) not in scalars:
@@ -1512,22 +1505,27 @@ class Dumper:
         if isinstance(val, Sentinel):
             raise TypeError("Sentinels are not scalars")
 
-        if (vid := hex(id(val))) in seen:
-            return cls._dump_prefix(key, val, opts) + "<ref loop>"
-        seen.add(vid)
+        seen = Dumper.seen.get()
+        if id(val) in seen:
+            return cls._dump_prefix(key, val, opts) + "<deduped>"
+        elif not isinstance(val, base_types):
+            seen.add(id(val))
+
         # FIXME should we always be using repr here?
         return cls._dump_prefix(key, val, opts) + repr(val)
 
     @classmethod
-    def _dump_vector(cls, key, val, contents, opts, seen : set):
-        prefix = cls._dump_prefix(key, val, opts, force_type = False)
+    def _dump_vector(cls, key, val, contents, opts):
+        prefix = cls._dump_prefix(key, val, opts)
 
-        if key == "Dumper":
-            pass
+        if opts.cur_depth == opts.max_depth:
+            return prefix + "<too deep>"
 
-        if (vid := hex(id(val))) in seen:
-            return prefix + "<ref loop>"
-        seen.add(vid)
+        seen = Dumper.seen.get()
+        if id(val) in seen:
+            return cls._dump_prefix(key, val, opts) + "<deduped>"
+        elif not isinstance(val, base_types):
+            seen.add(id(val))
 
         items : list[item[Any]]
         if Utils.is_mapping(contents):
@@ -1557,32 +1555,43 @@ class Dumper:
         if any_private:
             items2.append(("<private fields>", Sentinel.FOLDED))
 
-        return cls._dump_items(key, prefix, ld, items2, rd, opts, set(seen))
+        return cls._dump_items(key, prefix, ld, items2, rd, opts)
 
     @classmethod
-    def _dump_items(cls, key, prefix, ld, items : list[item[Any]], rd, opts, seen : set):
+    def _dump_items(cls, key, prefix, ld, items : list[item[Any]], rd, opts):
         # This slightly odd construct is so that when a deeply nested container doesn't fit on a
         # line, we rewind the callstack back to the topmost container that was not forced to be
         # flat.
+
+        if opts.cur_depth == opts.max_depth:
+            return prefix + "<too deep>"
 
         if key in opts.fold:
             raise AssertionError()
 
         if opts.flat:
-            return prefix + cls._dump_items_flat(key, ld, items, rd, opts, set(seen))
+            return prefix + cls._dump_items_flat(key, ld, items, rd, opts)
         else:
+            # If the dump_items_flat fails, we _must_ roll back the seen set to its
+            # old value.
+            old_contents = list(Dumper.seen.get())
             try:
-                return prefix + cls._dump_items_flat(key, ld, items, rd, dataclasses.replace(opts, flat = True), set(seen))
+                return prefix + cls._dump_items_flat(key, ld, items, rd, dataclasses.replace(opts, flat = True))
             except Dumper.LineTooLong:
-                rhs = cls._dump_items_deep(key, ld, items, rd, opts, set(seen))
+                seen = Dumper.seen.get()
+                seen.clear()
+                seen.update(old_contents)
+                rhs = cls._dump_items_deep(key, ld, items, rd, opts)
                 return prefix + rhs
 
     @classmethod
-    def _dump_items_flat(cls, key, ld, items : list[item[Any]], rd, opts, seen : set):
+    def _dump_items_flat(cls, key, ld, items : list[item[Any]], rd, opts):
         result = ld
 
         for i in range(len(items)):
-            result += cls._dump_to_str(items[i][0], items[i][1], opts, set(seen))
+            key = items[i][0]
+            val = items[i][1]
+            result += cls._dump_to_str(key, val, opts)
             if i < len(items) - 1: result += ", "
             if opts.len + len(result) + len(rd) > opts.width:
                 raise Dumper.LineTooLong()
@@ -1590,11 +1599,9 @@ class Dumper:
         return result + rd
 
     @classmethod
-    def _dump_items_deep(cls, key, ld, items, rd, opts, seen : set):
+    def _dump_items_deep(cls, key, ld, items, rd, opts):
         result = ld + "\n"
 
-        if opts.cur_depth == opts.max_depth:
-            return str(Sentinel.FOLDED)
         opts = dataclasses.replace(opts, cur_depth = opts.cur_depth + 1)
 
         opts.indent_stack2.append(" ")
@@ -1604,7 +1611,9 @@ class Dumper:
         new_opts = dataclasses.replace(opts, len = len(pad) + 1)
 
         for i in range(len(items)):
-            result += pad + cls._dump_to_str(items[i][0], items[i][1], new_opts, set(seen))
+            key = items[i][0]
+            val = items[i][1]
+            result += pad + cls._dump_to_str(key, val, new_opts)
             if i < len(items) - 1: result += ","
             result += "\n"
         opts.indent_stack2.pop()
@@ -1613,7 +1622,7 @@ class Dumper:
         return result + pad + rd
 
     @classmethod
-    def _dump_prefix(cls, key, val, opts, force_type = False):
+    def _dump_prefix(cls, key, val, opts):
         prefix = ""
         if key:
             prefix += f"{key}"
@@ -1626,7 +1635,7 @@ class Dumper:
 
         if isinstance(val, type):
             prefix += ":type"
-        elif (type(val) not in Dumper.base_types) or force_type:
+        elif not isinstance(val, base_types):
             prefix += ":"
             prefix += type(val).__name__
             if opts.print_id: prefix += "@" + Utils.hex_tag(val)
@@ -1852,6 +1861,7 @@ class Project(Scope):
         self.root : str = root
         self.targets : list[str] = targets
 
+        # FIXME how many of these do we actually need?
         self.flags = flags
         self.log   = log
 
@@ -1976,6 +1986,7 @@ class Repo(Scope):
         self.log  = log
         self.build_root = "{join(root, flags.build_dir, flags.build_tag)}"
 
+        # FIXME how many of these do we actually need?
         self.flags   = flags
         self.log     = log
         self.project = project
@@ -2134,6 +2145,7 @@ class Task(Scope):
         self.in_depfile  = None
         self.job_size    = 1
 
+        # FIXME how many of these do we actually need?
         self.flags   = script.flags
         self.log     = script.log
         self.project = script.project
@@ -2680,13 +2692,14 @@ class Script(Scope):
         self.root       = root
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
-        self.hancho  = sys.modules[__name__]
-        self.flags   = flags
-        self.log     = log
-        self.project = project
-        self.repo    = _repo
+        # FIXME how many of these do we actually need?
         self.script  = self
+        self.repo    = _repo
+        self.project = project
+        self.flags   = flags
         self.builtins = builtins
+        self.log     = log
+        self.hancho  = sys.modules[__name__]
 
         Utils.merge_variants(self, *args, **kwargs)
 
@@ -2867,7 +2880,10 @@ def _start():
 # ==================================================================================================
 # region User API
 
-builtins = Dict(
+class Builtins(Dict):
+    pass
+
+builtins = Builtins(
     name     = "builtins",
     Dict     = Dict,
     Task     = Task,

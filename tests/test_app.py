@@ -164,14 +164,14 @@ class TestApp(unittest.TestCase):
         }
 
         expected = """
-        {
+        :dict = {
             a = 1,
-            b = [2, 'two'],
+            b:list = [2, 'two'],
             c = (3, 3, 3),
             d:object = <object object at 0x...>,
             e = 'foobar',
             f:Blarp = {},
-            g = {
+            g:dict = {
                 a = 'laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa'
             }
         }
