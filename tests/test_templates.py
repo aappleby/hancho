@@ -195,11 +195,6 @@ class TestTemplates(unittest.TestCase):
         _map = hancho.Dict({"1" : _number, "2" : _text, "3" : _func})
         d = hancho.Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_list = _list, x_map = _map)
 
-        # So we have a conundrum in this test. If expansion _does_ copy collections, then "assertIs"
-        # won't work below (but we can still use assertEqual).
-        # if we _don't_ copy collections, then recursive expansion can clobber collections that are
-        # shared between tasks. Hmm.
-
         self.assertIs(_number, d.expand("{x_number}"))
         self.assertIs(_text,   d.expand("{x_text}"))
         self.assertIs(_func,   d.expand("{x_func}"))

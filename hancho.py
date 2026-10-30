@@ -911,10 +911,10 @@ class Scope:
 
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var):
-        return Expander(self).expand(var)
+        return Expander(scope = self).expand(var)
 
     def expand_collection(self, var):
-        return Expander(self).expand_collection(var)
+        return Expander(scope = self).expand_collection(var)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -1162,7 +1162,7 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(self, scope : Scope, *args, **kwargs):
+    def __init__(self, *args, scope : Scope, **kwargs):
         assert not isinstance(scope, Expander)
         if args or kwargs:
             self.exscope = Dict(*args, _up = scope, **kwargs)
@@ -1217,7 +1217,7 @@ class Expander(abc.Mapping):
 
             if isinstance(result, Scope):
                 # have to do this so that "read nested c first" resolves in the dest dict first
-                result = Expander(result)
+                result = Expander(scope = result)
             elif isinstance(result, str):
                 result = self.expand(result)
         finally:
@@ -1293,9 +1293,11 @@ class Expander(abc.Mapping):
 
     # ==============================================================================================
 
-    def expand(self, var : str) -> Any:
-        if not isinstance(var, str):
-            raise TypeError(f"_expand - can't expand a {type(var)}")
+    def expand(self, text : str) -> Any:
+        if not isinstance(text, str):
+            raise TypeError(f"_expand - can't expand a {type(text)}")
+
+        var : Any = text
 
         # Bail out if we've recursed too many times.
         old_depth = self.cv_depth.get()
@@ -1316,6 +1318,8 @@ class Expander(abc.Mapping):
                 if len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
                     # If there's only one macro block, eval it.
                     var = self._eval_macro(block)
+                    if isinstance(var, Expander):
+                        var = var.exscope
                     continue
 
                 # Otherwise we're doing a template expansion.
@@ -1367,9 +1371,6 @@ class Expander(abc.Mapping):
         finally:
             self.trace_end("eval", var[1:-1], result)
             pass
-
-        if isinstance(result, Expander):
-            result = result.exscope
 
         return result
 
@@ -1865,7 +1866,7 @@ class Project(Scope):
 
         self.merge(*args, **kwargs)
 
-        ex = Expander(self)
+        ex = Expander(scope = self)
         self.name = ex.expand(self.name)
         self.path = ex.expand(self.path)
         self.root = ex.expand(self.root)
@@ -2007,7 +2008,7 @@ class Repo(Scope):
         self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
         self.merge(*args, **kwargs)
-        Expander(self).xip_collection(self.__dict__)
+        Expander(scope = self).xip_collection(self.__dict__)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
@@ -2053,7 +2054,7 @@ class Repo(Scope):
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        comp_db_path = Expander(self).expand("{join(build_root, 'compile_commands.json')}")
+#        comp_db_path = Expander(scope = self).expand("{join(build_root, 'compile_commands.json')}")
 #        cg.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
@@ -2201,7 +2202,7 @@ class Task(Scope):
 
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex = Expander(self)
+                ex = Expander(scope = self)
                 v = ex.expand_collection(v)
                 self.__dict__[k] = v
 
@@ -2293,10 +2294,10 @@ class Task(Scope):
         # Expand all mandatory fields in the raw config and fix raw file paths.
 
         try:
-            #Expander(self).trace_start("range", "expand_task")
+            #Expander(scope = self).trace_start("range", "expand_task")
             self.expand_task()
         finally:
-            #Expander(self).trace_end("range", "expand_task", None)
+            #Expander(scope = self).trace_end("range", "expand_task", None)
             pass
 
         # ------------------------------------
@@ -2411,7 +2412,7 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        ex = Expander(self)
+        ex = Expander(scope = self)
 
         if cg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
@@ -2709,7 +2710,7 @@ class Script(Scope):
         self.fill(*args, **kwargs)
         #self.merge(*args, **kwargs)
 
-        ex = Expander(self)
+        ex = Expander(scope = self)
         self.name       = ex.expand(self.name)
         self.path       = ex.expand(self.path)
         self.root       = ex.expand(self.root)
@@ -2922,8 +2923,8 @@ def _start():
 # region User API
 
 def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **kwargs):
-    #ex1 = Expander(cg.script)
-    ex2 = Expander(Dict(_up  = cg.script, file = file2, path = path2, root = root2))
+    #ex1 = Expander(scope = cg.script)
+    ex2 = Expander(scope = cg.script, file = file2, path = path2, root = root2)
 
     dupe1, dedupe_key1 = cg.project.get_dupe(ex2.path, ex2.root, args, kwargs)
     if dupe1:
@@ -2945,7 +2946,7 @@ def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **k
     return new_script
 
 def include(file):
-    path = Path.resolve(Expander(cg.script).expand(file))
+    path = Path.resolve(Expander(scope = cg.script).expand(file))
 
     code = None
     with open(path, encoding="utf-8") as file:
@@ -2961,7 +2962,7 @@ def include(file):
             del cg.script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    ex   = Expander(cg.script)
+    ex   = Expander(scope = cg.script)
     path = Path.resolve(ex.expand(file))
     root = Path.resolve(ex.expand(root))
 
