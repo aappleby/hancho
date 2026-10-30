@@ -2132,8 +2132,7 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        script = cg.script
-        super().__init__(_name = "task", _up = script)
+        super().__init__(_name = "task", _up = cg.script)
 
         self.name        = "<task>"
         self.desc        = "<no desc>"
@@ -2179,7 +2178,7 @@ class Task(Scope):
         self._complete = False
         self._deplines = []
 
-        script._tasks.append(self)
+        cg.script._tasks.append(self)
 
         # ----------------------------------------
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
@@ -2940,13 +2939,12 @@ def _start():
 # region User API
 
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
-    old_script = cg.script
     project = cg.project
     repo    = cg.repo
 
     temp = Dict(
         *args,
-        _up = old_script,
+        _up  = cg.script,
         file = file,
         path = path,
         root = root,
@@ -2973,27 +2971,26 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     return new_script
 
 def include(file):
-    old_script = cg.script
-    path = Path.resolve(old_script._expander._expand(file))
+    path = Path.resolve(cg.script._expander._expand(file))
 
     code = None
     with open(path, encoding="utf-8") as file:
         source = file.read()
         code = compile(source, path, "exec", dont_inherit=True)
 
-        old_script.log.verbose(Log.ORANGE + f"include {path}\n")
-        with old_script.log.indenter(Log.VERBOSE, Log.ORANGE):
-            exec(code, old_script.__dict__)
+        cg.script.log.verbose(Log.ORANGE + f"include {path}\n")
+        # FIXME this needs to match new_script.exec()
+        with cg.script.log.indenter(Log.VERBOSE, Log.ORANGE):
+            exec(code, cg.script.__dict__)
 
-        if "__builtins__" in old_script.__dict__:
-            del old_script.__dict__["__builtins__"]
+        if "__builtins__" in cg.script.__dict__:
+            del cg.script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    old_script = cg.script
     log        = cg.log
     project    = cg.project
 
-    ex   = Expander(old_script, old_script.log)
+    ex   = Expander(cg.script, cg.log)
     path = Path.resolve(ex.expand(file))
     root = Path.resolve(ex.expand(root))
 
