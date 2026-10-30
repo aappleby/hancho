@@ -14,6 +14,8 @@ import hancho
 # FIXME we need some tests that verify that using a shared data structure in multiple tasks
 # (see gcc_flags) does _not_ modify it even if it contains template stuff.
 
+cg = hancho.cg
+
 # --------------------------------------------------------------------------------------------------
 
 def mtime_ns(filename):
@@ -46,7 +48,7 @@ class TestTasks(unittest.TestCase):
         self.reset(*args)
 
     def tearDown(self):
-        hancho.cg.log._flush()
+        cg.log._flush()
 
     def reset(self, *args):
         self.script = hancho.create_test_script(

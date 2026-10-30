@@ -100,7 +100,7 @@ base_types   = (int, float, complex, bool, str, tuple, types.NoneType, type)
 # These types don't get dumped because they're not really dumpable.
 opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, types.ModuleType)
 
-default_folds = ["_repos", "_project", "_dedupe", "_scripts", "_expander"]
+default_folds = ["_repos", "_project", "_dedupe", "_scripts"]
 
 # endregion
 # ==================================================================================================
@@ -1170,10 +1170,6 @@ class Expander(abc.Mapping):
         self.scope_color  = Utils.obj_to_ansi_color(self.scope)
         self.indent_color = self.scope_color
 
-    def wrap(self, scope):
-        assert not isinstance(scope, Expander)
-        return Expander(scope)
-
     # ====================================
     # Expander _must_ implement __getattr__ so that macros like {script.foo} work.
 
@@ -1218,7 +1214,7 @@ class Expander(abc.Mapping):
 
             if isinstance(result, Scope):
                 # have to do this so that "read nested c first" resolves in the dest dict first
-                result = self.wrap(result)
+                result = Expander(result)
             elif isinstance(result, str):
                 result = self.expand(result)
         finally:
@@ -2042,7 +2038,7 @@ class Repo(Scope):
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        comp_db_path = self._expander._expand("{join(build_root, 'compile_commands.json')}")
+#        comp_db_path = Expander(self).expand("{join(build_root, 'compile_commands.json')}")
 #        cg.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
@@ -2282,10 +2278,10 @@ class Task(Scope):
         # Expand all mandatory fields in the raw config and fix raw file paths.
 
         try:
-            #self._expander.trace_start("range", "expand_task")
+            #Expander(self).trace_start("range", "expand_task")
             self.expand_task()
         finally:
-            #self._expander.trace_end("range", "expand_task", None)
+            #Expander(self).trace_end("range", "expand_task", None)
             pass
 
         # ------------------------------------
@@ -2954,7 +2950,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     return new_script
 
 def include(file):
-    path = Path.resolve(cg.script._expander._expand(file))
+    path = Path.resolve(Expander(cg.script).expand(file))
 
     code = None
     with open(path, encoding="utf-8") as file:
@@ -2962,9 +2958,9 @@ def include(file):
         code = compile(source, path, "exec", dont_inherit=True)
 
         cg.script.log.verbose(Log.ORANGE + f"include {path}\n")
-        # FIXME this needs to match new_script.exec()
-        with cg.script.log.indenter(Log.VERBOSE, Log.ORANGE):
-            exec(code, cg.script.__dict__)
+
+        exec(code, cg._cv.get())
+        Utils.merge(cg.script, cg._cv.get())
 
         if "__builtins__" in cg.script.__dict__:
             del cg.script.__dict__["__builtins__"]
