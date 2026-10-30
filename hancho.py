@@ -1855,7 +1855,7 @@ class Project(Scope):
     def build(self) -> int:
         time_a3 = time.perf_counter()
         log = cv_log.get()
-        flags = cv_flags.get()
+        flags = cv_globals.flags
 
         # ------------------------------------
         # Select the set of tasks to run.
@@ -2117,7 +2117,7 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        script = cv_script.get()
+        script = cv_globals.script
         super().__init__(_name = "task", _up = script)
 
         self.name        = "<task>"
@@ -2248,7 +2248,7 @@ class Task(Scope):
         return self._out_files
 
     async def task_main(self):
-        flags = cv_flags.get()
+        flags = cv_globals.flags
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2385,7 +2385,7 @@ class Task(Scope):
 
     def expand_task(self):
         log = cv_log.get()
-        flags = cv_flags.get()
+        flags = cv_globals.flags
         ex = Expander(self, log)
 
         if log._level_int <= Log.DEBUG:
@@ -2495,8 +2495,8 @@ class Task(Scope):
     def sanity_check(self):
         # Check for all task issues that break the build
         repo = cv_globals.repo
-        flags = cv_flags.get()
-        project = cv_project.get()
+        flags = cv_globals.flags
+        project = cv_globals.project
 
         if not Path.exists(self.cwd):
             raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
@@ -2629,7 +2629,7 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback):
-        script = cv_script.get()
+        script = cv_globals.script
         repo   = cv_globals.repo
         callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
@@ -2752,9 +2752,9 @@ class Script(Scope):
                 source = file.read()
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
-            with chdir(self.root), cv_script.set(self), cv_log.set(log), cv_globals.update(script = self):
-                exec(code, cv_globals._cv.get().__dict__)
-                Utils.merge(self, cv_globals._cv.get().__dict__)
+            with chdir(self.root), cv_log.set(log), cv_globals.update(script = self):
+                exec(code, cv_globals._cv.get())
+                Utils.merge(self, cv_globals._cv.get())
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
@@ -2782,7 +2782,6 @@ def create_test_script(
         *extra_flags
     )
 
-    cv_flags.set(flags)
     cv_globals.update(flags = flags)
 
     Utils.reset()
@@ -2797,14 +2796,12 @@ def create_test_script(
     builtins.log = log
 
     project = Project(_up = flags)
-    cv_project.set(project)
     cv_globals.update(project = project)
 
     repo    = Repo(_up = project)
     cv_globals.update(repo = repo)
 
     script  = Script(_up = repo)
-    cv_script.set(script)
     cv_globals.update(script = script)
 
     project._repos.append(repo)
@@ -2853,7 +2850,6 @@ def main():
     cv_globals.update(hancho = sys.modules[__name__])
     flags = Flags(_up = builtins)
     flags.parse_flags(*sys.argv)
-    cv_flags.set(flags)
     cv_globals.update(flags = flags)
 
     Utils.reset()
@@ -2882,7 +2878,6 @@ def main():
     time_a1 = time.perf_counter()
 
     project = Project(_up = flags)
-    cv_project.set(project)
     cv_globals.update(project = project)
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
@@ -2895,7 +2890,6 @@ def main():
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, _up = repo)
-            cv_script.set(script)
             cv_globals.update(script = script)
 
             project._dedupe[dedupe_key] = script
@@ -2937,9 +2931,9 @@ def _start():
 # region User API
 
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
-    old_script = cv_script.get()
+    old_script = cv_globals.script
     log     = cv_log.get()
-    project = cv_project.get()
+    project = cv_globals.project
     repo    = cv_globals.repo
 
     temp = Dict(
@@ -2971,7 +2965,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     return new_script
 
 def include(file):
-    old_script = cv_script.get()
+    old_script = cv_globals.script
     path = Path.resolve(old_script._expander._expand(file))
 
     code = None
@@ -2987,9 +2981,9 @@ def include(file):
             del old_script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    old_script = cv_script.get()
+    old_script = cv_globals.script
     log        = cv_log.get()
-    project    = cv_project.get()
+    project    = cv_globals.project
 
     ex   = Expander(old_script, old_script.log)
     path = Path.resolve(ex.expand(file))
@@ -3013,29 +3007,28 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     return new_script
 
 def build():
-    return cv_project.get().build()
+    return cv_globals.project.build()
 
 
 class CVGlobals:
     def __init__(self, *args, **kwargs):
         self._cv = contextvars.ContextVar("CVGlobals")
-        self._cv.set(Dict())
+        self._cv.set({})
         self.update(*args, **kwargs)
 
     def update(self, *args, **kwargs) -> contextvars.Token:
-        new_dict = Dict(self._cv.get(), *args, **kwargs)
+        new_dict = dict(self._cv.get())
+        for d in [*args, kwargs]:
+            new_dict |= d
         return self._cv.set(new_dict)
 
     def __getattr__(self, key):
-        return self._cv.get().__getattr__(key)
+        return self._cv.get()[key]
 
 
 cv_globals = CVGlobals()
 
-cv_script  = contextvars.ContextVar("current_script")
 cv_log     = contextvars.ContextVar("log")
-cv_flags   = contextvars.ContextVar("flags")
-cv_project = contextvars.ContextVar("project")
 
 path = __file__
 root = os.path.dirname(path)
