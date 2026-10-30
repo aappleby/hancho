@@ -83,8 +83,8 @@ def dprint(*args, **kwargs):
 # c : list[str] = ["bar"]
 # d : tree[str] = c
 
-
 type container[T] = abc.Sequence[T] | abc.Set[T] | abc.Mapping[str, T]
+# type inference doesnt' like this
 #type branch[LEAF] = LEAF | container[branch[LEAF]]
 #type tree[LEAF]   = container[branch[LEAF]]
 type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
@@ -102,7 +102,15 @@ opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, ty
 
 default_folds = ["_repos", "_project", "_dedupe", "_scripts", "_expander"]
 
+# endregion
+# ==================================================================================================
+# region CVGlobals
+
 class CVGlobals:
+    """A 'globals()'-type object stored in a contextvar. All modifications replace its entire
+    contents, so that if something is hold a reference to an old global scope it doesn't get
+    modified indirectly."""
+
     def __init__(self, *args, **kwargs):
         object.__setattr__(self, "_cv", contextvars.ContextVar("CVGlobals"))
         self._cv.set({})
@@ -903,10 +911,10 @@ class Scope:
 
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var):
-        return Expander(self, cg.log).expand(var)
+        return Expander(self).expand(var)
 
     def expand_collection(self, var):
-        return Expander(self, cg.log).expand_collection(var)
+        return Expander(self).expand_collection(var)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -1154,10 +1162,9 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(self, scope : Scope, log : Log):
+    def __init__(self, scope : Scope):
         assert not isinstance(scope, Expander)
         self.scope = scope
-        self.log   = log
 
         self.scope_tag    = Utils.instance_tag(self.scope)
         self.scope_color  = Utils.obj_to_ansi_color(self.scope)
@@ -1165,7 +1172,7 @@ class Expander(abc.Mapping):
 
     def wrap(self, scope):
         assert not isinstance(scope, Expander)
-        return Expander(scope, self.log)
+        return Expander(scope)
 
     # ====================================
     # Expander _must_ implement __getattr__ so that macros like {script.foo} work.
@@ -1424,36 +1431,33 @@ class Expander(abc.Mapping):
     # └─
 
     def trace_start(self, action : str, arg):
-        log = self.log
-        if log._level_int > Log.TRACE: return
+        if cg.log._level_int > Log.TRACE: return
 
         if action == "range":
-            log.trace(f"{Log.WHITE}┌── {self.scope_color}{self.scope_tag}{Log.RESET} begin {arg}\n")
-            log.indent(Log.WHITE)
+            cg.log.trace(f"{Log.WHITE}┌── {self.scope_color}{self.scope_tag}{Log.RESET} begin {arg}\n")
+            cg.log.indent(Log.WHITE)
         else:
-            #log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
-            log.trace(f"{self.indent_color}{self.scope_color}{self.scope_tag}{Log.RESET}.{action}({arg})\n")
-            log.indent(self.indent_color)
+            #cg.log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
+            cg.log.trace(f"{self.indent_color}{self.scope_color}{self.scope_tag}{Log.RESET}.{action}({arg})\n")
+            cg.log.indent(self.indent_color)
 
     def trace_up(self, up, action, arg):
-        log = self.log
-        if log._level_int > Log.TRACE: return
+        if cg.log._level_int > Log.TRACE: return
 
         up_color   = Utils.obj_to_ansi_color(up)
         up_tag     = Utils.instance_tag(up)
 
-        log.trace(f"{self.scope_color}┌ {self.scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
+        cg.log.trace(f"{self.scope_color}┌ {self.scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
 
     def trace_end(self, action : str, arg, result):
-        log = self.log
-        if log._level_int > Log.TRACE: return
+        if cg.log._level_int > Log.TRACE: return
         if isinstance(result, Expander):
             result = result.scope
 
-        log.dedent()
+        cg.log.dedent()
 
         if action == "range":
-            log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
+            cg.log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
             scope_tag}{Log.RESET} end {arg}\n")
         else:
             result_color = Log.RESET
@@ -1462,11 +1466,11 @@ class Expander(abc.Mapping):
             if Utils.is_mapping(result):
                 result_color = Utils.obj_to_ansi_color(result)
 
-            log.trace(f"{self.indent_color}└ {self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
+            cg.log.trace(f"{self.indent_color}└ {self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
             if not Utils.is_scalar(result):
-                log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
+                cg.log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
             else:
-                log.trace(f"{result_color}{result!r}\n")
+                cg.log.trace(f"{result_color}{result!r}\n")
 
 
 # endregion
@@ -1862,7 +1866,7 @@ class Project(Scope):
 
         self.merge(*args, **kwargs)
 
-        ex = Expander(self, cg.log)
+        ex = Expander(self)
         self.name = ex.expand(self.name)
         self.path = ex.expand(self.path)
         self.root = ex.expand(self.root)
@@ -1992,7 +1996,7 @@ class Repo(Scope):
         self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
         self.merge(*args, **kwargs)
-        Expander(self, cg.log).xip_collection(self.__dict__)
+        Expander(self).xip_collection(self.__dict__)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
@@ -2186,7 +2190,7 @@ class Task(Scope):
 
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex = Expander(self, cg.log)
+                ex = Expander(self)
                 v = ex.expand_collection(v)
                 self.__dict__[k] = v
 
@@ -2396,7 +2400,7 @@ class Task(Scope):
                 raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {input_task._error}")
 
     def expand_task(self):
-        ex = Expander(self, cg.log)
+        ex = Expander(self)
 
         if cg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
@@ -2700,7 +2704,7 @@ class Script(Scope):
         self.fill(*args, **kwargs)
         #self.merge(*args, **kwargs)
 
-        ex = Expander(self, cg.log)
+        ex = Expander(self)
         self.name       = ex.expand(self.name)
         self.path       = ex.expand(self.path)
         self.root       = ex.expand(self.root)
@@ -2929,7 +2933,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
         root = root,
         **kwargs
     )
-    ex = Expander(temp, cg.log)
+    ex = Expander(temp)
 
     temp.file = ex.expand(temp.file)
     temp.path = ex.expand(temp.path)
@@ -2966,7 +2970,7 @@ def include(file):
             del cg.script.__dict__["__builtins__"]
 
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
-    ex   = Expander(cg.script, cg.log)
+    ex   = Expander(cg.script)
     path = Path.resolve(ex.expand(file))
     root = Path.resolve(ex.expand(root))
 

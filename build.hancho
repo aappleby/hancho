@@ -7,4 +7,3 @@ tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
 examples = hancho.load("examples/examples.hancho")
 
-#hancho.Dumper.dprint(hancho.cg.keys())
