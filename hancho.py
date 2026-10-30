@@ -2795,9 +2795,11 @@ def create_test_script(
     Repo.reset()
     Runner.reset(flags)
 
-    builtins.log = Log(flags, log_stdout = stdout)
-    builtins.log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
-    cv_log.set(builtins.log)
+    log = Log(flags, log_stdout = stdout)
+    log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
+
+    cv_log.set(log)
+    builtins.log = log
 
     project = Project(_up = flags)
     cv_project.set(project)
@@ -2807,6 +2809,15 @@ def create_test_script(
 
     script  = Script(_up = repo)
     cv_script.set(script)
+
+    cv_globals.update(
+        hancho  = sys.modules[__name__],
+        flags   = flags,
+        log     = log,
+        project = project,
+        repo    = repo,
+        script  = script,
+    )
 
     project._repos.append(repo)
     repo._scripts.append(script)
@@ -2894,6 +2905,15 @@ def main():
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, _up = repo)
             cv_script.set(script)
+
+            cv_globals.update(
+                hancho  = sys.modules[__name__],
+                flags   = flags,
+                log     = log,
+                project = project,
+                repo    = repo,
+                script  = script,
+            )
 
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
