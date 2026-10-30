@@ -1162,9 +1162,12 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(self, scope : Scope):
+    def __init__(self, scope : Scope, *args, **kwargs):
         assert not isinstance(scope, Expander)
-        self.exscope = scope
+        if args or kwargs:
+            self.exscope = Dict(*args, _up = scope, **kwargs)
+        else:
+            self.exscope = scope
 
         self.scope_tag    = Utils.instance_tag(self.exscope)
         self.scope_color  = Utils.obj_to_ansi_color(self.exscope)
