@@ -900,19 +900,19 @@ class Scope:
         for rhs in (*args, kwargs):
             Utils.merge(self, rhs)
 
-    def find(self, key : str, default = Sentinel.MISSING) -> Any:
-        cursor = self
-        while cursor is not None:
-            if cursor.__dict__.get("_name", Sentinel.MISSING) == key:
-                return cursor
-            if key in cursor.__dict__:
-                return cursor.__dict__[key]
-            cursor = cursor.get("_up", None)
-
-        if default is not Sentinel.MISSING:
-            return default
-
-        raise KeyError(key)
+#    def find(self, key : str, default = Sentinel.MISSING) -> Any:
+#        cursor = self
+#        while cursor is not None:
+#            if cursor.__dict__.get("_name", Sentinel.MISSING) == key:
+#                return cursor
+#            if key in cursor.__dict__:
+#                return cursor.__dict__[key]
+#            cursor = cursor.get("_up", None)
+#
+#        if default is not Sentinel.MISSING:
+#            return default
+#
+#        raise KeyError(key)
 
     def get(self, key, default = None):
         return self.__dict__.get(key, default)
@@ -1171,7 +1171,21 @@ class Expander(abc.Mapping):
         result = None
         try:
             self.trace_start("get", key)
-            result = self.scope.find(key)
+
+            result = Sentinel.MISSING
+            scope = self.scope
+
+            while scope is not None:
+                if scope.get("_name", Sentinel.MISSING) == key:
+                    result = scope
+                    break
+                if key in scope:
+                    result = scope[key]
+                    break
+                scope = scope.get("_up", None)
+
+            if result is Sentinel.MISSING:
+                raise KeyError(key)
 
             if isinstance(result, Scope):
                 # have to do this so that "read nested c first" resolves in the dest dict first
@@ -2340,7 +2354,7 @@ class Task(Scope):
         # And we're done
 
     def update_repo_stat_db(self):
-        repo = self.find('repo')
+        repo = cv_repo.get()
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile:
@@ -2480,7 +2494,7 @@ class Task(Scope):
 
     def sanity_check(self):
         # Check for all task issues that break the build
-        repo = self.find('repo')
+        repo = cv_repo.get()
         flags = cv_flags.get()
         project = cv_project.get()
 
@@ -2528,7 +2542,7 @@ class Task(Scope):
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
 
-        repo = self.find('repo')
+        repo = cv_repo.get()
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2564,7 +2578,7 @@ class Task(Scope):
 
     async def run_command(self : Task, command : str):
 
-        repo = self.find('repo')
+        repo = cv_repo.get()
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
@@ -2615,8 +2629,8 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback):
-        script = self.find('script')
-        repo   = self.find('repo')
+        script = cv_script.get()
+        repo   = cv_repo.get()
         callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
@@ -2697,11 +2711,13 @@ class Script(Scope):
         self.log = log
 
         # We want users to see the repo object so they can stash things in it.
-        self.repo     = self.find('repo')
+        self.repo     = cv_repo.get()
 
         # This has to be here as otherwise scripts don't work without an 'import hancho', and we
         # don't want to require that.
         self.hancho   = sys.modules[__name__]
+
+        self._globals = Dict()
 
         # We add __file__ because some scripts might expect it (see dynamic_dependencies/filelist/build.hancho)
         self.__file__ = self.path
@@ -2736,8 +2752,18 @@ class Script(Scope):
                 source = file.read()
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
-            with chdir(self.root), cv_script.set(self), cv_log.set(log):
-                exec(code, self.__dict__)
+            new_globals = dict(  # noqa: C408
+                hancho   = sys.modules[__name__],
+                flags    = cv_flags.get(),
+                log      = cv_log.get(),
+                project  = cv_project.get(),
+                repo     = cv_repo.get(),
+                script   = self,
+            )
+
+            with chdir(self.root), cv_script.set(self), cv_log.set(log), cv_globals.update(new_globals):
+                exec(code, new_globals)
+                Utils.merge(self, new_globals)
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
@@ -2774,10 +2800,12 @@ def create_test_script(
     cv_log.set(builtins.log)
 
     project = Project(_up = flags)
-    repo    = Repo(_up = project)
-    script  = Script(_up = repo)
-
     cv_project.set(project)
+
+    repo    = Repo(_up = project)
+    cv_repo.set(repo)
+
+    script  = Script(_up = repo)
     cv_script.set(script)
 
     project._repos.append(repo)
@@ -2859,6 +2887,7 @@ def main():
     with log.indenter(Log.VERBOSE, Log.ORANGE):
 
         repo = Repo(_up = project)
+        cv_repo.set(repo)
         project._repos.append(repo)
 
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
@@ -2908,7 +2937,7 @@ def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwar
     old_script = cv_script.get()
     log     = cv_log.get()
     project = cv_project.get()
-    repo    = old_script.find('repo')
+    repo    = cv_repo.get()
 
     temp = Dict(
         *args,
@@ -2971,6 +3000,7 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
         return dupe
 
     new_repo = Repo(_up = project)
+    cv_repo.set(new_repo)
     project._repos.append(new_repo)
 
     new_script = Script(*args, _up = new_repo, **kwargs)
@@ -2983,10 +3013,28 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
 def build():
     return cv_project.get().build()
 
+
+class CVGlobals:
+    def __init__(self, *args, **kwargs):
+        self._cv = contextvars.ContextVar("CVGlobals")
+        self._cv.set(Dict())
+        self.update(*args, **kwargs)
+
+    def update(self, *args, **kwargs) -> contextvars.Token:
+        new_dict = Dict(self._cv.get(), *args, **kwargs)
+        return self._cv.set(new_dict)
+
+    def __getattr__(self, key):
+        return self._cv.get().__getattr__(key)
+
+
+cv_globals = CVGlobals()
+
 cv_script  = contextvars.ContextVar("current_script")
 cv_log     = contextvars.ContextVar("log")
 cv_flags   = contextvars.ContextVar("flags")
 cv_project = contextvars.ContextVar("project")
+cv_repo    = contextvars.ContextVar("repo")
 
 path = __file__
 root = os.path.dirname(path)
