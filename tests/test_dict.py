@@ -42,11 +42,11 @@ class TestDict(unittest.TestCase):
         d1 = {"a": {"x": 1, "y": 2}}
         d2 = {"a": {"y": 3, "z": 4}}
 
-        d3 = {}
-        hancho.Utils.merge_variant(d3, d1) # type: ignore
-        hancho.Utils.merge_variant(d3, d2) # type: ignore
+        d3 = hancho.Dict()
+        d3.merge(d1)
+        d3.merge(d2)
 
-        self.assertIsInstance(d3, dict)
+        self.assertIsInstance(d3, hancho.Dict)
         self.assertIsInstance(d3['a'], dict)
 
         self.assertEqual(d3['a']['x'], 1)

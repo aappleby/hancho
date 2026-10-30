@@ -100,7 +100,7 @@ base_types   = (int, float, complex, bool, str, tuple, types.NoneType, type)
 # These types don't get dumped because they're not really dumpable.
 opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, types.ModuleType)
 
-default_folds = ["_repos", "_project", "_dedupe", "_scripts"]
+default_folds = ["_repos", "_project", "_dedupe", "_scripts", "_expander"]
 
 # endregion
 # ==================================================================================================
@@ -452,7 +452,7 @@ class Utils:
     #     - Otherwise rightmost non-None wins.
 
     @staticmethod
-    def merge_variant(
+    def merge(
         lhs: Any,
         rhs: Any,
         *,
@@ -484,7 +484,7 @@ class Utils:
             if lhs2 is rhs2:
                 pass
             elif Utils.is_mut_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_mappings:
-                Utils.merge_variant(lhs2, rhs2)
+                Utils.merge(lhs2, rhs2)
             elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
                 ldict[key] = [*lhs2, *rhs2]
             elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_sets:
@@ -497,16 +497,6 @@ class Utils:
             ldict[key] = rdict[key]
 
         return lhs
-
-    @staticmethod
-    def fill_variant(lhs, *args, **kwargs):
-        for rhs in [*args, kwargs]:
-            Utils.merge_variant(lhs, rhs, keep_rhs = False)
-
-    @staticmethod
-    def merge_variants(lhs, *args, **kwargs):
-        for rhs in [*args, kwargs]:
-            Utils.merge_variant(lhs, rhs)
 
 # endregion
 # ==================================================================================================
@@ -557,7 +547,8 @@ class Log:
         self.log_width     = shutil.get_terminal_size().columns
         self.log_stdout    = sys.stdout
 
-        Utils.fill_variant(self, *args, **kwargs)
+        for rhs in [*args, kwargs]:
+            Utils.merge(self, rhs, keep_rhs = False)
 
         self._level_int     = getattr(Log, self.log_level.upper())
         self._time_origin   = time.perf_counter()
@@ -895,6 +886,20 @@ class Scope:
     def expand_collection(self, var):
         return Expander(self, current_script.get().log).expand_collection(var)
 
+    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+    # only keys that were already in lhs. For example, if you have a Dict that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+    def fill(self, *args, **kwargs):
+        for rhs in (*args, kwargs):
+            Utils.merge(self, rhs, keep_rhs = False)
+
+    def merge(self, *args, **kwargs):
+        for rhs in (*args, kwargs):
+            Utils.merge(self, rhs)
+
     def find(self, key : str, default = Sentinel.MISSING) -> Any:
         cursor = self
         while cursor:
@@ -936,7 +941,8 @@ class Dict(Scope, abc.MutableMapping):
             _name = kwargs.pop('_name', None),
             _up = kwargs.pop('_up', None)
         )
-        Utils.merge_variants(self, *args, **kwargs)
+        for rhs in [*args, kwargs]:
+            self.merge(rhs)
 
     def __getattr__(self, key):
         try:
@@ -954,17 +960,6 @@ class Dict(Scope, abc.MutableMapping):
     def __delitem__(self, key):
         del self.__dict__[key]
 
-    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-    # only keys that were already in lhs. For example, if you have a Dict that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-    def fill(self, *args, **kwargs):
-        lhs = Dict(self)
-        for rhs in (*args, kwargs):
-            Utils.merge_variant(lhs, rhs, keep_rhs = False)
-        return lhs
 
 
 
@@ -1069,7 +1064,7 @@ class Flags(Scope):
             with open(opt_file_name) as f:
                 try:
                     opt_file = json.load(f)
-                    Utils.merge_variant(flag_dict, opt_file)
+                    flag_dict.merge(opt_file)
                 except Exception as _:
                     print(f"Opt file {opt_file_name!r} invalid!\n")
                     traceback.print_exc()
@@ -1108,7 +1103,7 @@ class Flags(Scope):
 
                 set_by_path(flag_dict, key, val)
 
-        Utils.merge_variants(self, flag_dict)
+        self.merge(flag_dict)
 
 # endregion
 # ==================================================================================================
@@ -1829,7 +1824,7 @@ class Project(Scope):
         self.root    = "{flags.root}"
         self.targets = "{flags.targets}"
 
-        Utils.fill_variant(self, *args, **kwargs)
+        self.merge(*args, **kwargs)
 
         ex = Expander(self, self.find('log'))
         self.name = ex.expand(self.name)
@@ -1955,24 +1950,18 @@ class Repo(Scope):
     def __init__(self, *args, _up, **kwargs):
         super().__init__(_name = "repo", _up = _up)
         self.name         = "<repo>"
+        self.file         = "{project.file}"
         self.path         = "{project.path}"
         self.root         = "{project.root}"
+
         self.build_root   = "{join(root, flags.build_dir, flags.build_tag)}"
         self.stat_db_path = "{join(build_root, 'hancho.json')}"
         self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
-        Utils.fill_variant(self, *args, **kwargs)
+        self.merge(*args, **kwargs)
 
         log = self.find('log')
-        self._expander = Expander(self, log)
-
-        self.name = self._expander.expand(self.name)
-        self.path = self._expander.expand(self.path)
-        self.root = self._expander.expand(self.root)
-
-        self.build_root   = self._expander.expand(self.build_root)
-        self.stat_db_path = self._expander.expand(self.stat_db_path)
-        self.comp_db_path = self._expander.expand(self.comp_db_path)
+        Expander(self, log).xip_collection(self.__dict__)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
@@ -2066,7 +2055,7 @@ class Repo(Scope):
         new_stat['command'] = Dumper.depointer(repr(command)) if command is not None else None
         if file in self._stat_db:
             old_stat = self._stat_db[file]
-            self._stat_db[file] = Utils.merge_variant(old_stat, new_stat)
+            self._stat_db[file] = Utils.merge(old_stat, new_stat)
         else:
             self._stat_db[file] = new_stat
 
@@ -2114,8 +2103,8 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        _up = current_script.get()
-        super().__init__(_name = "task", _up = _up)
+        script = current_script.get()
+        super().__init__(_name = "task", _up = script)
 
         self.name        = "<task>"
         self.desc        = "<no desc>"
@@ -2127,13 +2116,12 @@ class Task(Scope):
         self.in_depfile  = None
         self.job_size    = 1
 
-        Utils.merge_variants(self, *args, **kwargs)
+        # This can't be self.fill, users may have added stuff via args that's needed for expansion.
+        self.merge(*args, **kwargs)
 
         # ----------------------------------------
         # Private fields
 
-        #log = self.find('log')
-        #self._expander = Expander(self, log)
         self._enabled = False
 
         # These two have to be dicts so that downstream tasks can pick named outputs from it if
@@ -2162,7 +2150,7 @@ class Task(Scope):
         self._complete = False
         self._deplines = []
 
-        self.find('script')._tasks.append(self)
+        script._tasks.append(self)
 
         # ----------------------------------------
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
@@ -2246,6 +2234,8 @@ class Task(Scope):
         return self._out_files
 
     async def task_main(self):
+        flags = self.find('flags')
+
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
 
@@ -2277,7 +2267,7 @@ class Task(Scope):
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
 
-        if self.find('flags').build_dry:
+        if flags.build_dry:
             return
 
         # ------------------------------------
@@ -2350,16 +2340,17 @@ class Task(Scope):
         # And we're done
 
     def update_repo_stat_db(self):
+        repo = self.find('repo')
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile:
                 self._deplines = Repo.load_depfile(self.in_depfile, self.depformat, self.cwd)
 
             for file in Utils.yield_leaves([self._in_files, self._deplines]):
-                self.find('repo').update_stat(file, None)
+                repo.update_stat(file, None)
 
             for file in Utils.yield_leaves(self._out_files):
-                self.find('repo').update_stat(file, self.command)
+                repo.update_stat(file, self.command)
 
     async def await_inputs(self):
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -2381,14 +2372,13 @@ class Task(Scope):
     def expand_task(self):
         log = self.find('log')
         flags = self.find('flags')
+        ex = Expander(self, log)
 
-        if self.find('log')._level_int <= Log.DEBUG:
+        if log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
         # We eval these first because we need them for filename expansion
-
-        ex = Expander(self, self.find('log'))
 
         script_root = ex.expand("{script.root}")
         build_root  = ex.expand("{build_root}")
@@ -2681,6 +2671,7 @@ class Script(Scope):
         super().__init__(_name = "script", _up = _up)
 
         self.name       = "<script>"
+        self.file       = "{repo.file}"
         self.path       = "{repo.path}"
         self.root       = "{repo.root}"
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
@@ -2691,7 +2682,9 @@ class Script(Scope):
         #self.builtins = builtins
         #self.flags    = flags
 
-        Utils.merge_variants(self, *args, **kwargs)
+        # FIXME merge or fill?
+        self.fill(*args, **kwargs)
+        #self.merge(*args, **kwargs)
 
         log = self.find('log')
         ex = Expander(self, log)
@@ -2756,9 +2749,22 @@ class Script(Scope):
 # ==================================================================================================
 # region create_test_script
 
-def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, extra_flags) -> Script:
+def create_test_script(
+        *,
+        name : str,
+        file : str,
+        root : str,
+        stdout = sys.stdout,
+        extra_flags) -> Script:
+
     flags = Flags(_up = builtins)
-    flags.parse_flags(f"--name={name}", f"--file={file}", f"--root={root}", *extra_flags)
+
+    flags.parse_flags(
+        f"--name={name}",
+        f"--file={file}",
+        f"--root={root}",
+        *extra_flags
+    )
 
     Utils.reset()
     Repo.reset()
@@ -2767,19 +2773,14 @@ def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, ext
     builtins.log = Log(flags, log_stdout = stdout)
     builtins.log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
 
-    args = ()
-    kwargs = {}
-
-    # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
-    dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
-    assert " _" not in dedupe_key
-
     project = Project(_up = flags)
-    repo    = Repo(_up = project, name = name, file = file, root = root)
-    project._repos.append(repo)
+    repo    = Repo(_up = project)
+    script  = Script(_up = repo)
 
-    script = Script(_up = repo, name = name, file = file, root = root)
+    project._repos.append(repo)
     repo._scripts.append(script)
+
+    dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
     project._dedupe[dedupe_key] = script
 
     current_script.set(script)

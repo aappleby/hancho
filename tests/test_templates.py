@@ -6,8 +6,6 @@ import hancho
 
 #from typing import cast
 
-Exp = hancho.Expander
-
 # --------------------------------------------------------------------------------------------------
 
 class TestTemplates(unittest.TestCase):
@@ -30,15 +28,13 @@ class TestTemplates(unittest.TestCase):
 
     def test_basic_eval(self):
         d = hancho.Dict(a = 1, b = 2)
-        e = Exp(d, self.log)
-
-        self.assertEqual('a',    e.expand("a"))
-        self.assertEqual('b',    e.expand("b"))
-        self.assertEqual(1,      e.expand("{a}"))
-        self.assertEqual(2,      e.expand("{b}"))
-        self.assertEqual('1212', e.expand("{a}{b}{a}{b}"))
-        self.assertEqual(1212,   e.expand("{{a}{b}{a}{b}}"))
-        self.assertEqual("",     e.expand(""))
+        self.assertEqual('a',    d.expand("a"))
+        self.assertEqual('b',    d.expand("b"))
+        self.assertEqual(1,      d.expand("{a}"))
+        self.assertEqual(2,      d.expand("{b}"))
+        self.assertEqual('1212', d.expand("{a}{b}{a}{b}"))
+        self.assertEqual(1212,   d.expand("{{a}{b}{a}{b}}"))
+        self.assertEqual("",     d.expand(""))
 
         # Non-strings are not modified by expand()
         class Dummy:
@@ -47,12 +43,11 @@ class TestTemplates(unittest.TestCase):
         bad_types = [None, [], {}, (1,2,3), {1,2,3}, object(), Dummy()]
         for b in bad_types:
             with self.assertRaises(TypeError):
-                e.expand(b)
+                d.expand(b)
 
     def test_macro_to_fixed_point(self):
         d = hancho.Dict(a = "{b}", b = "{c}", c = "{d}")
-        e = Exp(d, self.log)
-        self.assertEqual("{d}", e.expand("{a}"))
+        self.assertEqual("{d}", d.expand("{a}"))
 
     def test_expand_dict(self):
         d = hancho.Dict(a = hancho.Dict(foo = 1, bar = 2, baz = "x{foo}x{bar}x"))
@@ -152,21 +147,20 @@ class TestTemplates(unittest.TestCase):
         def recursive():
             return recursive()
         d = hancho.Dict(func = recursive)
-        e = hancho.Expander(d, self.log)
         with self.assertRaises(RecursionError):
-            e.expand("{func()}")
+            d.expand("{func()}")
 
     def test_macro_evals_to_collection(self):
         # If we expand a macro (_not_ a template) that evals to a collection, we should receive
         # a reference to the collection and not a copy.
         d = hancho.Dict(a=["{b}","{b}"], b="x")
-        e = hancho.Expander(d, self.log).expand("{a}")
+        e = d.expand("{a}")
         self.assertIs(e, d.a)
 
         # If we expand a template that references a collection, we should get a string that also
         # expands and stringizes the contents of the collection.
         d = hancho.Dict(a=["{b}","{b}"], b="x")
-        e = hancho.Expander(d, self.log).expand("hello {a}")
+        e = d.expand("hello {a}")
         self.assertEqual(e, "hello x x")
 
 
