@@ -902,7 +902,7 @@ class Scope:
 
     def find(self, key : str, default = Sentinel.MISSING) -> Any:
         cursor = self
-        while cursor:
+        while cursor is not None:
             if cursor.__dict__.get("_name", Sentinel.MISSING) == key:
                 return cursor
             if key in cursor.__dict__:
@@ -1949,6 +1949,8 @@ class Repo(Scope):
 
     def __init__(self, *args, _up, **kwargs):
         super().__init__(_name = "repo", _up = _up)
+        log = self.find('log')
+
         self.name         = "<repo>"
         self.file         = "{project.file}"
         self.path         = "{project.path}"
@@ -1959,8 +1961,6 @@ class Repo(Scope):
         self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
         self.merge(*args, **kwargs)
-
-        log = self.find('log')
         Expander(self, log).xip_collection(self.__dict__)
 
         self._scripts = []
