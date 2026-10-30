@@ -102,6 +102,28 @@ opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, ty
 
 default_folds = ["_repos", "_project", "_dedupe", "_scripts", "_expander"]
 
+class CVGlobals:
+    def __init__(self, *args, **kwargs):
+        object.__setattr__(self, "_cv", contextvars.ContextVar("CVGlobals"))
+        self._cv.set({})
+        self.update(*args, **kwargs)
+
+    def update(self, *args, **kwargs) -> contextvars.Token:
+        new_dict = dict(self._cv.get())
+        for d in [*args, kwargs]:
+            new_dict |= d
+        return self._cv.set(new_dict)
+
+    def __setattr__(self, key, val):
+        new_dict = dict(self._cv.get()) | {key:val}
+        #new_dict[key] = val
+        return self._cv.set(new_dict)
+
+    def __getattr__(self, key):
+        return self._cv.get()[key]
+
+cv_globals = CVGlobals()
+
 # endregion
 # ==================================================================================================
 # region Sentinel
@@ -3007,29 +3029,6 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
 def build():
     return cv_globals.project.build()
 
-
-class CVGlobals:
-    def __init__(self, *args, **kwargs):
-        object.__setattr__(self, "_cv", contextvars.ContextVar("CVGlobals"))
-        self._cv.set({})
-        self.update(*args, **kwargs)
-
-    def update(self, *args, **kwargs) -> contextvars.Token:
-        new_dict = dict(self._cv.get())
-        for d in [*args, kwargs]:
-            new_dict |= d
-        return self._cv.set(new_dict)
-
-    def __setattr__(self, key, val):
-        new_dict = dict(self._cv.get()) | {key:val}
-        #new_dict[key] = val
-        return self._cv.set(new_dict)
-
-    def __getattr__(self, key):
-        return self._cv.get()[key]
-
-
-cv_globals = CVGlobals()
 
 path = __file__
 root = os.path.dirname(path)
