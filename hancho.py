@@ -1841,7 +1841,7 @@ class Project(Scope):
     def build(self) -> int:
         time_a3 = time.perf_counter()
         log = cv_log.get()
-        flags = self.find('flags')
+        flags = cv_flags.get()
 
         # ------------------------------------
         # Select the set of tasks to run.
@@ -2234,7 +2234,7 @@ class Task(Scope):
         return self._out_files
 
     async def task_main(self):
-        flags = self.find('flags')
+        flags = cv_flags.get()
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2371,7 +2371,7 @@ class Task(Scope):
 
     def expand_task(self):
         log = cv_log.get()
-        flags = self.find('flags')
+        flags = cv_flags.get()
         ex = Expander(self, log)
 
         if log._level_int <= Log.DEBUG:
@@ -2481,8 +2481,8 @@ class Task(Scope):
     def sanity_check(self):
         # Check for all task issues that break the build
         repo = self.find('repo')
-        flags = self.find('flags')
-        project = self.find('project')
+        flags = cv_flags.get()
+        project = cv_project.get()
 
         if not Path.exists(self.cwd):
             raise Task.BROKEN(f"Task working directory '{self.cwd}' does not exist")
@@ -2696,9 +2696,6 @@ class Script(Scope):
         # used in tests
         self.log = log
 
-        # needed for current_script.get().project.build() :/
-        self.project  = self.find('project')
-
         # We want users to see the repo object so they can stash things in it.
         self.repo     = self.find('repo')
 
@@ -2766,6 +2763,8 @@ def create_test_script(
         *extra_flags
     )
 
+    cv_flags.set(flags)
+
     Utils.reset()
     Repo.reset()
     Runner.reset(flags)
@@ -2778,13 +2777,15 @@ def create_test_script(
     repo    = Repo(_up = project)
     script  = Script(_up = repo)
 
+    cv_project.set(project)
+    cv_script.set(script)
+
     project._repos.append(repo)
     repo._scripts.append(script)
 
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
     project._dedupe[dedupe_key] = script
 
-    cv_script.set(script)
 
     # do _not_ exec the dummy script
 
@@ -2825,6 +2826,7 @@ builtins = Builtins(
 def main():
     flags = Flags(_up = builtins)
     flags.parse_flags(*sys.argv)
+    cv_flags.set(flags)
 
     Utils.reset()
     Repo.reset()
@@ -2851,6 +2853,7 @@ def main():
     time_a1 = time.perf_counter()
 
     project = Project(_up = flags)
+    cv_project.set(project)
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
     with log.indenter(Log.VERBOSE, Log.ORANGE):
@@ -2904,7 +2907,7 @@ def _start():
 def load(file, path = "{resolve(file)}", root = "{dirname(path)}", *args, **kwargs):
     old_script = cv_script.get()
     log     = cv_log.get()
-    project = old_script.find('project')
+    project = cv_project.get()
     repo    = old_script.find('repo')
 
     temp = Dict(
@@ -2954,7 +2957,7 @@ def include(file):
 def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     old_script = cv_script.get()
     log        = cv_log.get()
-    project    = old_script.find('project')
+    project    = cv_project.get()
 
     ex   = Expander(old_script, old_script.log)
     path = Path.resolve(ex.expand(file))
@@ -2978,10 +2981,12 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
     return new_script
 
 def build():
-    return cv_script.get().project.build()
+    return cv_project.get().build()
 
-cv_script = contextvars.ContextVar("current_script")
-cv_log = contextvars.ContextVar("log")
+cv_script  = contextvars.ContextVar("current_script")
+cv_log     = contextvars.ContextVar("log")
+cv_flags   = contextvars.ContextVar("flags")
+cv_project = contextvars.ContextVar("project")
 
 path = __file__
 root = os.path.dirname(path)
