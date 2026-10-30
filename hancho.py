@@ -98,7 +98,9 @@ type command_type = str | list[str] | task_callback
 base_types   = (int, float, complex, bool, str, tuple, types.NoneType, type)
 
 # These types don't get dumped because they're not really dumpable.
-opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task)
+opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, types.ModuleType)
+
+default_folds = ["_repos", "_project", "_dedupe", "_scripts"]
 
 # endregion
 # ==================================================================================================
@@ -106,7 +108,7 @@ opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task)
 
 class Sentinel:
     def __init__(self, name):     self.name = name
-    def __repr__(self):           return Log.VIOLET + self.name + Log.RESET
+    def __repr__(self):           return self.name
     def __bool__(self):           return False
     def __copy__(self):           return self
     def __deepcopy__(self, memo): return self
@@ -931,10 +933,6 @@ class Scope:
     def __iter__(self):
         yield from filter(is_public, self.__dict__)
 
-    # This makes traces hard to read because we unfold _every_ scope that we read
-    def __repr__(self):
-        return Dumper.dump(self)
-
 # ====================================
 # A Dict is a Scope that can be used as an abc.MutableMapping.
 
@@ -991,6 +989,7 @@ class Flags(Scope):
 
         self.name        = "<flags>"
         self.file        = "build.hancho"
+        self.path        = "{resolve(file)}"
         self.root : str  = "{dirname(path)}"
         self.targets     = []
 
@@ -1012,17 +1011,10 @@ class Flags(Scope):
 
         Utils.merge_variants(self, *args, **kwargs)
 
-        self.path = Path.resolve(self.file)
         self.name = self.expand(self.name)
         self.file = self.expand(self.file)
+        self.path = self.expand(self.path)
         self.root = self.expand(self.root)
-
-
-        if self.root is None:
-            self.root = Path.dirname(self.path)
-        else:
-            self.root = Path.resolve(self.root)
-
 
     @staticmethod
     def parse_flags(*argv) -> Flags:
@@ -1435,7 +1427,7 @@ class Dumper:
     @dataclass
     class Opts:
         cur_depth : int = 0
-        max_depth : int = 3
+        max_depth : int = 5
         indent_stack2 : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
         fold : list[str] = dataclasses.field(default_factory=list)  # Any container fields with these names will _not_ be recursively dumped
         print_id : bool = True
@@ -1468,7 +1460,7 @@ class Dumper:
         new_seen = set() if old_seen is None else old_seen
 
         with Dumper.seen.set(new_seen):
-            fold = fold or []
+            fold = fold or default_folds
             indent_stack2 = [" "] * indent_level
             opts = Dumper.Opts(cur_depth, max_depth, indent_stack2, fold, print_id, color_code, dump_private, tab, len, width, False)
             return cls._dump_to_str(None, val, opts)
@@ -1482,6 +1474,8 @@ class Dumper:
     def _dump_to_str(cls, key, val : Any, opts):
         if opts.cur_depth > 0 and (key in opts.fold or val in opts.fold or type(val) in opts.fold):
             return cls._dump_prefix(key, val, opts) + str(Sentinel.FOLDED)
+        elif isinstance(val, opaque_types):
+            return cls._dump_scalar(key, val, opts)
         elif key == "_up":
             return cls._dump_prefix(key, val, opts) + "<up>"
         elif key == "__builtins__":
@@ -1494,7 +1488,7 @@ class Dumper:
             return val.__dump__(key, opts)
         elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
             return cls._dump_vector(key, val, val, opts)
-        elif hasattr(val, "__dict__") and not isinstance(val, opaque_types):
+        elif hasattr(val, "__dict__"):
             return cls._dump_vector(key, val, val.__dict__, opts)
         else:
             return cls._dump_scalar(key, val, opts)
@@ -1859,18 +1853,19 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(self, flags, log, name : str, path : str, root : str, targets : list[str], *args, **kwargs):
+    def __init__(self, *args, flags, log, name : str, path : str, root : str, targets : list[str], **kwargs):
         super().__init__(_name = "project", _up = flags)
         self.name : str = "<project>"
         self.path : str = path
         self.root : str = root
         self.targets : list[str] = targets
-
-        # FIXME how many of these do we actually need?
-        #self.flags = flags
-        self.log   = log
+        self.log : Log = log
 
         Utils.merge_variants(self, *args, **kwargs)
+
+        self.name = self.expand(self.name)
+        self.path = self.expand(self.path)
+        self.root = self.expand(self.root)
 
         self._real_filenames = set()
         self._dedupe = Dict()
@@ -1992,15 +1987,14 @@ class Repo(Scope):
         self.name = "<repo>"
         self.path = path
         self.root = root
-        #self.log  = log
         self.build_root = "{join(root, flags.build_dir, flags.build_tag)}"
 
-        # FIXME how many of these do we actually need?
-        #self.flags   = flags
-        #self.log     = log
-        #self.project = project
-
         Utils.merge_variants(self, *args, **kwargs)
+
+        self.name = self.expand(self.name)
+        self.path = self.expand(self.path)
+        self.root = self.expand(self.root)
+        self.build_root = self.expand(self.build_root)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
@@ -2153,13 +2147,6 @@ class Task(Scope):
         self.depformat   = "gcc" if os.name == "posix" else "msvc"
         self.in_depfile  = None
         self.job_size    = 1
-
-        # FIXME how many of these do we actually need?
-        #self.flags   = script.flags
-        #self.log     = script.log
-        #self.project = script.project
-        #self.repo    = script.repo
-        #self.script  = script.script
 
         Utils.merge_variants(self, *args, **kwargs)
 
@@ -2448,10 +2435,9 @@ class Task(Scope):
                         if len(files) > 1:
                             raise Task.BROKEN("in_depfile can't be a list")
                     elif field_name.startswith("in_"):
-                        # If we're in a dry run, we can't necessarily resolve all the input files
-                        self._in_files[field_name] = [Path.join(self_cwd, file) for file in files]
+                        self._in_files[field_name]  = [Path.join(self_cwd, file) for file in files]
                     elif field_name.startswith("out_"):
-                        self._out_files[field_name] = [os.path.abspath(file) for file in files]
+                        self._out_files[field_name] = [Path.join(self_cwd, file) for file in files]
         finally:
             Tracer.trace_end(self, "range", "expand io fields", None)
 
@@ -2703,11 +2689,11 @@ class Script(Scope):
 
         # FIXME how many of these do we actually need?
         self.script  = self
-        self.repo    = _repo
-        self.project = project
-        self.flags   = flags
         self.builtins = builtins
+        self.flags   = flags
         self.log     = log
+        self.project = project
+        self.repo    = _repo
         self.hancho  = sys.modules[__name__]
 
         Utils.merge_variants(self, *args, **kwargs)
@@ -2770,6 +2756,7 @@ class Script(Scope):
 # region create_test_script
 
 def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, extra_flags) -> Script:
+    current_script.set(Dict(log = Log()))
     flags = Flags.parse_flags(
         f"--name={name}",
         f"--file={file}",
@@ -2792,7 +2779,7 @@ def create_test_script(*, name, file : str, root : str, stdout = sys.stdout, ext
     dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
     assert " _" not in dedupe_key
 
-    project = Project(flags, log, flags.name, flags.path, flags.root, flags.targets)
+    project = Project(flags = flags, log = log, name = flags.name, path = flags.path, root = flags.root, targets = flags.targets)
 
     repo = Repo(flags, log, project, flags.name, flags.path, flags.root)
     project._repos.append(repo)
@@ -2840,7 +2827,7 @@ def main():
 
     time_a1 = time.perf_counter()
 
-    project = Project(flags, log, flags.name, flags.path, flags.root, flags.targets)
+    project = Project(flags = flags, log = log, name = flags.name, path = flags.path, root = flags.root, targets = flags.targets)
 
     log.verbose(Log.ORANGE + f"project {project.path}\n")
     with log.indenter(Log.VERBOSE, Log.ORANGE):
@@ -2851,6 +2838,7 @@ def main():
         log.verbose(Log.ORANGE + f"repo {repo.path}\n")
         with log.indenter(Log.VERBOSE, Log.ORANGE):
             script = Script(flags, log, project, repo, flags.name, flags.path, flags.root)
+            current_script.set(script)
             project._dedupe[dedupe_key] = script
             repo._scripts.append(script)
             script.exec()

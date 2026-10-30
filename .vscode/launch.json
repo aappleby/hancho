@@ -15,16 +15,29 @@
       "preLaunchTask": "wipe_workspace_build"
     },
 
+//    {
+//      "name"    : "Debug scratch/build.hancho",
+//      "type"    : "debugpy",
+//      "request" : "launch",
+//      "program": "${workspaceFolder}/hancho.py",
+//      "cwd"     : "${workspaceFolder}/scratch",
+//      "console" : "internalConsole",
+//      //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
+//      //"args"    : ["-ltrace", "--log_width=120"],
+//      "args"    : ["-ldebug", "--log_width=120"],
+//      //"preLaunchTask": "wipe_scratch_build"
+//    },
+
     {
       "name"    : "Debug scratch/build.hancho",
       "type"    : "debugpy",
       "request" : "launch",
       "program": "${workspaceFolder}/hancho.py",
-      "cwd"     : "${workspaceFolder}/scratch",
+      "cwd"     : "${workspaceFolder}",
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
       //"args"    : ["-ltrace", "--log_width=120"],
-      "args"    : ["-ldebug", "--log_width=120"],
+      "args"    : ["-ldebug", "--log_width=120", "-f=scratch/build.hancho"],
       //"preLaunchTask": "wipe_scratch_build"
     },
 
