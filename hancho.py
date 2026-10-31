@@ -1004,6 +1004,17 @@ class Tool(Dict):
     def __call__(self, *args, **kwargs):
         return Task(self, *args, **kwargs)
 
+# ====================================
+
+class Stats(Dict):
+    def __init__(self):
+        self.stat_calls = 0
+        self.hash_calls = 0
+        self.hash_bytes = 0
+        self.hash_time = 0
+        self.expand_depth = 0
+        self.expand_evals = 0
+
 # endregion
 # ==================================================================================================
 # region Flags
@@ -1193,14 +1204,14 @@ class Expander(abc.Mapping):
         raise AssertionError()
 
     # ====================================
+    # This is the main "find a variable referenced by a template" lookup function.
 
     def internal_get(self, key : str):
-        result = None
+        result = Sentinel.MISSING
+        cursor = self.expand_scope
+
         try:
             self.trace_start("get", key)
-
-            result = Sentinel.MISSING
-            cursor = self.expand_scope
 
             while cursor is not None:
                 if type(cursor).__name__ == key:
@@ -1214,17 +1225,18 @@ class Expander(abc.Mapping):
                     break
                 cursor = cursor.get("_up", None)
 
-            if result is Sentinel.MISSING:
-                raise KeyError(key)
-
             if isinstance(result, Scope):
-                # have to do this so that "read nested c first" resolves in the dest dict first
                 result = Expander(scope = result)
             elif isinstance(result, str):
                 result = self.expand(result)
+            elif result is Sentinel.MISSING:
+                raise KeyError(key)
+            return result
+
         finally:
             self.trace_end("get", key, result)
-        return result
+
+    # ====================================
 
     # Trivial classes just so we can distinguish between literal strings and macro strings without
     # having to do regex stuff every time.
@@ -1243,16 +1255,14 @@ class Expander(abc.Mapping):
     # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
     # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
 
-    # These could potentially be attributes on self, but creating ContextVars is _expensive_ for
-    # some reason.
     MAX_DEPTH : int = 30
     MAX_EVALS : int = 300
 
     # ==============================================================================================
+    # Expand-in-place
 
     def xip(self, var : abc.Collection) -> Any:
-        inplace = True
-        result : Any = var if inplace else type(var)()
+        result : Any = var
         if Utils.is_mut_sequence(var):
             for i, v in enumerate(result):
                 result[i] = self.xip(v)
@@ -1395,11 +1405,13 @@ class Expander(abc.Mapping):
         return out_blocks
 
     # ====================================
-    # ┌─
-    # └─
 
     def trace_start(self, action : str, arg):
         if cg.log._level_int > Log.TRACE: return
+
+        # a copy of our box chars for copy-pasting
+        # ┌─
+        # └─
 
         if action == "range":
             cg.log.trace(f"{Log.WHITE}┌── {self.scope_color}{self.scope_tag}{Log.RESET} begin {arg}\n")
@@ -1410,22 +1422,23 @@ class Expander(abc.Mapping):
             cg.log.indent(self.indent_color)
 
     def trace_up(self, up, action, arg):
+        # This can be used to trace "traverse an _up link", but it was spammy so it's not used at
+        # the moment.
         if cg.log._level_int > Log.TRACE: return
-
         up_color   = Utils.obj_to_ansi_color(up)
         up_tag     = Utils.instance_tag(up)
-
         cg.log.trace(f"{self.scope_color}┌ {self.scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
 
     def trace_end(self, action : str, arg, result):
-        if cg.log._level_int > Log.TRACE: return
-        cg.log.dedent()
+        log = cg.log
+        if log._level_int > Log.TRACE: return
+        log.dedent()
 
         if isinstance(result, Expander):
             result = result.expand_scope
 
         if action == "range":
-            cg.log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
+            log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
             scope_tag}{Log.RESET} end {arg}\n")
         else:
             result_color = Log.RESET
@@ -1434,12 +1447,11 @@ class Expander(abc.Mapping):
             if Utils.is_mapping(result):
                 result_color = Utils.obj_to_ansi_color(result)
 
-            cg.log.trace(f"{self.indent_color}└ {self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
+            log.trace(f"{self.indent_color}└ {self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
             if not Utils.is_scalar(result):
-                cg.log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
+                log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
             else:
-                cg.log.trace(f"{result_color}{result!r}\n")
-
+                log.trace(f"{result_color}{result!r}\n")
 
 # endregion
 # ==================================================================================================
@@ -1710,9 +1722,9 @@ class Dumper:
 class Runner:
 
     @classmethod
-    def reset(cls, flags):
-        cls.max_jobs   = flags.max_jobs
-        cls.max_errors = flags.max_errors
+    def reset(cls):
+        cls.max_jobs   = cg.flags.max_jobs
+        cls.max_errors = cg.flags.max_errors
 
         cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
         cls.core_lock : asyncio.Lock = asyncio.Lock()
@@ -1757,6 +1769,7 @@ class Runner:
     @staticmethod
     async def async_run_tasks(project : Project):
         """Run all tasks until we run out."""
+        log = cg.log
 
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
@@ -1769,7 +1782,7 @@ class Runner:
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        cg.log.verbose("Running tasks...\n")
+        log.verbose("Running tasks...\n")
 
         while Runner.live_aio_tasks and (Runner.tasks_broken + Runner.tasks_failed) <= Runner.max_errors:
             finished_aio_task : asyncio.Task | None = None
@@ -1796,7 +1809,7 @@ class Runner:
                 case Task.FAILED:
                     Runner.tasks_failed += 1
                 case _:
-                    cg.log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
+                    log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
                     Runner.tasks_failed += 1
 
             if finished_aio_task is not None:
@@ -1804,10 +1817,10 @@ class Runner:
 
         failures = Runner.tasks_broken + Runner.tasks_failed
         if failures > Runner.max_errors:
-            cg.log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
+            log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            cg.log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
+            log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
 
             # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
             # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
@@ -2640,14 +2653,18 @@ class Task(Scope):
 
 class Script(Scope):
 
-    def __init__(self : Script, *args, _up, **kwargs):
+    # build_root
+
+    def __init__(self : Script, *args, _up, name, file, path, root, build_root, is_repo, is_dummy, **kwargs):
         super().__init__(_id = "script", _up = _up)
 
-        self.name       = "<script>"
-        self.file       = "{repo.file}"
-        self.path       = "{repo.path}"
-        self.root       = "{repo.root}"
-        self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
+        self.name       = name
+        self.file       = file
+        self.path       = path
+        self.root       = root
+        self.build_root = build_root
+        self.is_repo    = is_repo
+        self.is_dummy   = is_dummy
 
         self.merge(*args, **kwargs)
         Expander(scope = self).xip(self.__dict__)
@@ -2658,24 +2675,56 @@ class Script(Scope):
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
-    def exec(self : Script):
-        dedupe_key = Dumper.any_to_key(self)
-        cg.project._dedupe[dedupe_key] = self
-        cg.repo._scripts.append(self)
+    @classmethod
+    def load(cls, *args, file, path = "{resolve(file)}", root = "{dirname(path)}", build_root = "{join(repo.build_root, relpath(root, repo.root))}", is_repo, is_dummy, **kwargs):
+        log     = cg.log
+        project = cg.project
+        repo    = Repo(_up = cg.project) if is_repo else cg.repo
 
-        assert self.path.endswith(".hancho")
-        cg.log.verbose(Log.ORANGE + f"Running script {self.path}\n")
+        script = Script(
+            *args,
+            _up=repo,
+            name=os.path.splitext(file)[0],
+            file=file,
+            path=path,
+            root=root,
+            build_root=build_root,
+            is_repo=is_repo,
+            is_dummy=is_dummy,
+            **kwargs,
+        )
 
-        with open(self.path, encoding="utf-8") as file:
+        dedupe_key = Dumper.any_to_key(script)
+        if dupe := project._dedupe.get(dedupe_key, None):
+            log.verbose(Log.LIME + f"Deduped {script.file}\n")
+            return dupe
+
+        # File was _not_ deduped.
+
+        project._dedupe[dedupe_key] = script
+        repo._scripts.append(script)
+
+        if is_repo:
+            cg.repo = repo
+            project._repos.append(repo)
+
+        if is_dummy:
+            return script
+
+        with open(script.path, encoding="utf-8") as file:
             source = file.read()
-            code = compile(source, self.path, "exec", dont_inherit=True)
+            code = compile(source, script.path, "exec", dont_inherit=True)
 
-        with cg.log.indenter(Log.VERBOSE, Log.ORANGE), chdir(self.root), cg.update(script = self):
-            Utils.merge(self.__dict__, cg._cv.get())
-            exec(code, self.__dict__)
+        with cg.log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root), cg.update(script = script):
+            Utils.merge(script.__dict__, cg._cv.get())
 
-        if "__builtins__" in self.__dict__:
-            del self.__dict__["__builtins__"]
+            cg.log.verbose(Log.ORANGE + f"Running script {script.path}\n")
+            exec(code, script.__dict__)
+
+        if "__builtins__" in script.__dict__:
+            del script.__dict__["__builtins__"]
+
+        return script
 
 # endregion
 # ==================================================================================================
@@ -2684,6 +2733,7 @@ class Script(Scope):
 def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdout, extra_flags) -> Script:
 
     cg.hancho = sys.modules[__name__]
+    cg.stats = Stats()
 
     cg.flags = Flags(_up = builtins)
     cg.flags.parse_flags(
@@ -2697,14 +2747,18 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
     cg.log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
 
     Utils.reset()
-    Runner.reset(cg.flags)
+    Runner.reset()
 
     cg.project = Project(_up = cg.flags)
     cg.repo    = Repo(_up = cg.project)
-    cg.script  = Script(_up = cg.repo)
 
-    cg.project._repos.append(cg.repo)
-    cg.repo._scripts.append(cg.script)
+
+    cg.script = Script.load(file = file, is_repo = True, is_dummy = True)
+
+
+    #cg.script  = Script(_up = cg.repo)
+    #cg.project._repos.append(cg.repo)
+    #cg.repo._scripts.append(cg.script)
 
     # do _not_ exec the dummy script
 
@@ -2744,40 +2798,37 @@ builtins = Builtins(
 )
 
 def main():
-    cg.hancho = sys.modules[__name__]
-    cg.flags = Flags(_up = builtins)
-    cg.flags.parse_flags(*sys.argv)
-    cg.log = Log(cg.flags)
+    hancho = sys.modules[__name__]
+    cg.hancho = hancho
+    cg.stats = Stats()
+
+    flags = Flags(_up = builtins)
+    flags.parse_flags(*sys.argv)
+
+    cg.flags = flags
+
+    log = Log(cg.flags)
+    cg.log = log
+
+
+    project = Project(_up = cg.flags)
+    cg.project = project
 
     Utils.reset()
-    Runner.reset(cg.flags)
+    Runner.reset()
 
-    cg.log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
-    cg.log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    cg.log.verbose(Log.GRAY3 + "Verbose mode on\n")
-    cg.log.debug(Log.GRAY3 + "Debug mode on\n")
-    cg.log.trace(Log.GRAY3 + "Trace mode on\n")
+    log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
+    log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    log.debug(Log.GRAY3 + "Debug mode on\n")
+    log.trace(Log.GRAY3 + "Trace mode on\n")
 
     # ------------------------------------
 
     time_a1 = time.perf_counter()
 
-    cg.project = Project(_up = cg.flags)
-
-    #def load2(is_repo, file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
-
-    #cg.repo = Repo(_up = cg.project)
-    #cg.project._repos.append(cg.repo)
-    #new_script = Script(*args, _up  = cg.repo, file = file, path = path, root = root, **kwargs)
-    #new_script.exec()
-
-
-    cg.script = load2(True, cg.flags.file)
-    #cg.repo = Repo(_up = cg.project)
-    #cg.project._repos.append(cg.repo)
-    #cg.script = Script(_up = cg.repo)
-    #cg.script.exec()
-
+    script = Script.load(file = cg.flags.file, is_repo = True, is_dummy = False)
+    cg.script = script
 
     time_b1 = time.perf_counter()
 
@@ -2789,7 +2840,7 @@ def main():
     cg.project.stats()
     cg.project.passfail()
 
-    cg.log._flush()
+    log._flush()
     return cg.project._result
 
 # ----------------------------------------
@@ -2812,44 +2863,8 @@ def _start():
 # ==================================================================================================
 # region User API
 
-class Stats(Dict):
-    pass
-
-cg.stats = Stats(
-    stat_calls = 0,
-    hash_calls = 0,
-    hash_bytes = 0,
-    hash_time = 0,
-    expand_depth = 0,
-    expand_evals = 0
-)
-
-def check_dupe(script):
-    dedupe_key = Dumper.any_to_key(script)
-    if dupe := cg.project._dedupe.get(dedupe_key, None):
-        cg.log.verbose(Log.LIME + f"Deduped {script.file}\n")
-        return dupe
-    else:
-        return None
-
-def load2(is_repo, file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
-    new_repo = Repo(_up = cg.project) if is_repo else cg.repo
-    new_script = Script(*args, _up  = new_repo, file = file, path = path, root = root, **kwargs)
-
-    if dupe := check_dupe(new_script):
-        return dupe
-
-    if is_repo:
-        cg.repo = new_repo
-        cg.project._repos.append(new_repo)
-
-    new_script.exec()
-
-    return new_script
-
 def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
-    return load2(False, file, *args, path = path, root = root, **kwargs)
-
+    return Script.load(*args, file = file, path = path, root = root, is_repo = False, is_dummy = False, **kwargs)
 
 def include(file):
 
@@ -2868,7 +2883,7 @@ def include(file):
         del cg.script.__dict__["__builtins__"]
 
 def load_repo(file, *args, path = "{resolve(file)}", root =  "{dirname(path)}", **kwargs) -> Script:
-    return load2(True, file, *args, path = path, root = root, **kwargs)
+    return Script.load(True, file, *args, path = path, root = root, **kwargs)
 
 def build():
     return cg.project.build()
