@@ -1853,12 +1853,12 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, file, path, root, **kwargs):
         super().__init__(_id = "project", _up = cg.flags)
         self.name    = "<project>"
-        self.path    = "{flags.path}"
-        self.root    = "{flags.root}"
-        self.targets = "{flags.targets}"
+        self.path    = file
+        self.root    = path
+        self.targets = root
 
         self.merge(*args, **kwargs)
 
@@ -1932,13 +1932,13 @@ class FileStat:
 
 class Repo(Scope):
 
-    def __init__(self, *args, _up, **kwargs):
+    def __init__(self, *args, _up, file, path, root, **kwargs):
         super().__init__(_id = "repo", _up = _up)
 
         self.name         = "<repo>"
-        self.file         = "{project.file}"
-        self.path         = "{project.path}"
-        self.root         = "{project.root}"
+        self.file         = file
+        self.path         = path
+        self.root         = root
 
         self.build_root   = "{join(root, flags.build_dir, flags.build_tag)}"
         self.stat_db_path = "{join(build_root, 'hancho.json')}"
@@ -2623,7 +2623,7 @@ class Script(Scope):
 
     # build_root
 
-    def __init__(self : Script, *args, _up, name, file, path, root, build_root, is_repo, is_dummy, **kwargs):
+    def __init__(self : Script, *args, _up, name, file, path, root, build_root, **kwargs):
         super().__init__(_id = "script", _up = _up)
 
         self.name       = name
@@ -2631,8 +2631,6 @@ class Script(Scope):
         self.path       = path
         self.root       = root
         self.build_root = build_root
-        self.is_repo    = is_repo
-        self.is_dummy   = is_dummy
 
         self.merge(*args, **kwargs)
         Expander(scope = self).xip(self.__dict__)
@@ -2643,11 +2641,25 @@ class Script(Scope):
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
+    #path="{resolve(file)}",
+    #root="{dirname(path)}",
+    #build_root="{join(repo.build_root, relpath(root, repo.root))}",
+
     @classmethod
-    def load(cls, *args, file, path = "{resolve(file)}", root = "{dirname(path)}", build_root = "{join(repo.build_root, relpath(root, repo.root))}", is_repo, is_dummy, **kwargs):
+    def load(
+        cls,
+        *args,
+        file,
+        path,
+        root,
+        build_root,
+        is_repo,
+        is_dummy,
+        **kwargs,
+    ):
         log     = cg.log
         project = cg.project
-        repo    = Repo(_up = cg.project) if is_repo else cg.repo
+        repo    = Repo(_up = cg.project, file = file, path = path, root = root) if is_repo else cg.repo
 
         script = Script(
             *args,
@@ -2657,8 +2669,6 @@ class Script(Scope):
             path=path,
             root=root,
             build_root=build_root,
-            is_repo=is_repo,
-            is_dummy=is_dummy,
             **kwargs,
         )
 
@@ -2668,7 +2678,6 @@ class Script(Scope):
             return dupe
 
         # File was _not_ deduped.
-
         project._dedupe[dedupe_key] = script
         repo._scripts.append(script)
 
@@ -2719,18 +2728,15 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
     Utils.reset()
     Runner.reset()
 
-    cg.project = Project(_up = cg.flags)
-    cg.repo    = Repo(_up = cg.project)
+    path = cg.flags.path
+    #root = "{dirname(path)}"
+    build_root = "{join(repo.build_root, relpath(root, repo.root))}"
+
+    cg.project = Project(_up = cg.flags, file = file, path = path, root = root)
+    cg.repo    = Repo(_up = cg.project, file = file, path = path, root = root)
 
 
-    cg.script = Script.load(file = file, is_repo = True, is_dummy = True)
-
-
-    #cg.script  = Script(_up = cg.repo)
-    #cg.project._repos.append(cg.repo)
-    #cg.repo._scripts.append(cg.script)
-
-    # do _not_ exec the dummy script
+    cg.script = Script.load(file = file, path = path, root = root, build_root = build_root, is_repo = True, is_dummy = True)
 
     return cg.script
 
@@ -2773,7 +2779,7 @@ def main():
     cg.flags.parse_flags(*sys.argv)
 
     cg.log      = Log(cg.flags)
-    cg.project  = Project()
+    cg.project  = Project(file = cg.flags.file, path = cg.flags.path, root = cg.flags.root)
 
     Utils.reset()
     Runner.reset()
@@ -2788,7 +2794,8 @@ def main():
     # Load the root script, which will transitively load everything else.
 
     with timeit("Loading scripts"):
-        cg.script = Script.load(file = cg.flags.file, is_repo = True, is_dummy = False)
+        build_root="{join(repo.build_root, relpath(root, repo.root))}"
+        cg.script = Script.load(file = cg.flags.file, path = cg.flags.path, root = cg.flags.root, build_root = build_root, is_repo = True, is_dummy = False)
 
     # ------------------------------------
     # Build everything
@@ -2859,7 +2866,8 @@ def _start():
 # region User API
 
 def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
-    return Script.load(*args, file = file, path = path, root = root, is_repo = False, is_dummy = False, **kwargs)
+    build_root="{join(repo.build_root, relpath(root, repo.root))}"
+    return Script.load(*args, file = file, path = path, root = root, build_root = build_root, is_repo = False, is_dummy = False, **kwargs)
 
 def include(file):
 
