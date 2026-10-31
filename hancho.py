@@ -1245,8 +1245,6 @@ class Expander(abc.Mapping):
 
     # These could potentially be attributes on self, but creating ContextVars is _expensive_ for
     # some reason.
-    cv_depth = contextvars.ContextVar("depth", default = 0)
-    cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH : int = 30
     MAX_EVALS : int = 300
 
@@ -1288,10 +1286,10 @@ class Expander(abc.Mapping):
         var : Any = text
 
         # Bail out if we've recursed too many times.
-        old_depth = self.cv_depth.get()
+        old_depth = cg.stats.expand_depth
         if old_depth > Expander.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
-        self.cv_depth.set(old_depth + 1)
+        cg.stats.expand_depth = old_depth + 1
 
         try:
             old_var = None
@@ -1325,10 +1323,10 @@ class Expander(abc.Mapping):
                 finally:
                     self.trace_end("expand", old_var, var)
         finally:
-            self.cv_depth.set(old_depth)
+            cg.stats.expand_depth = old_depth
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
-                self.cv_evals.set(0)
+                cg.stats.expand_evals = 0
 
         if isinstance(var, Expander):
             var = var.expand_scope
@@ -1336,10 +1334,10 @@ class Expander(abc.Mapping):
 
     def eval(self, var : str) -> Any:
         # Bail out if we've done too many evals already.
-        old_evals = self.cv_evals.get()
+        old_evals = cg.stats.expand_evals
         if old_evals >= self.MAX_EVALS:
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
-        self.cv_evals.set(old_evals + 1)
+        cg.stats.expand_evals = old_evals + 1
 
         result = eval(var, {}, self)
         return result
@@ -2846,7 +2844,14 @@ def _start():
 class Stats(Dict):
     pass
 
-cg.stats = Stats(stat_calls = 0, hash_calls = 0, hash_bytes = 0, hash_time  = 0)
+cg.stats = Stats(
+    stat_calls = 0,
+    hash_calls = 0,
+    hash_bytes = 0,
+    hash_time = 0,
+    expand_depth = 0,
+    expand_evals = 0
+)
 
 
 def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **kwargs):
