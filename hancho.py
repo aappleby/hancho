@@ -1845,8 +1845,8 @@ class Project(Scope):
         #self._build_reasons = Counter()
         self._runner = Runner()
 
-    def get_dupe(self, path, root, args, kwargs):
-        key = Dumper.any_to_key([path, root, *args, kwargs])
+    def get_dupe(self, script):
+        key = Dumper.any_to_key(script)
         assert " _" not in key
 
         if dupe := self._dedupe.get(key, None):
@@ -2717,7 +2717,7 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
     cg.project._repos.append(cg.repo)
     cg.repo._scripts.append(cg.script)
 
-    _, dupe_key = cg.project.get_dupe(path, root, (), {})
+    _, dupe_key = cg.project.get_dupe(cg.script)
 
     cg.project.set_dupe(dupe_key, cg.script)
 
@@ -2858,7 +2858,7 @@ def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **k
         **kwargs
     )
 
-    dupe1, dedupe_key1 = cg.project.get_dupe(new_script.path, new_script.root, args, kwargs)
+    dupe1, dedupe_key1 = cg.project.get_dupe(new_script)
     if dupe1:
         return dupe1
 
