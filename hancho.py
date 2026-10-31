@@ -1163,14 +1163,9 @@ class Expander(abc.Mapping):
     # expanded an outer Dict, and things will still Just Work.
 
     def __init__(self, *args, scope : Scope, **kwargs):
-        assert not isinstance(scope, Expander)
-        if args or kwargs:
-            self.exscope = Dict(*args, _up = scope, **kwargs)
-        else:
-            self.exscope = scope
-
-        self.scope_tag    = Utils.instance_tag(self.exscope)
-        self.scope_color  = Utils.obj_to_ansi_color(self.exscope)
+        self.expand_scope = Dict(*args, _up = scope, **kwargs) if args or kwargs else scope
+        self.scope_tag    = Utils.instance_tag(scope)
+        self.scope_color  = Utils.obj_to_ansi_color(scope)
         self.indent_color = self.scope_color
 
     # ====================================
@@ -1201,7 +1196,7 @@ class Expander(abc.Mapping):
             self.trace_start("get", key)
 
             result = Sentinel.MISSING
-            cursor = self.exscope
+            cursor = self.expand_scope
 
             while cursor is not None:
                 if cursor.get("_name", Sentinel.MISSING) == key:
@@ -1241,7 +1236,8 @@ class Expander(abc.Mapping):
     # The evals and depth limits are arbitrary, but should be plenty - Hancho's test suites
     # currently pass with MAX_DEPTH = 3 and MAX_EVALS = 12.
 
-    # FIXME move the cvs to __init__
+    # These could potentially be attributes on self, but creating ContextVars is _expensive_ for
+    # some reason.
     cv_depth = contextvars.ContextVar("depth", default = 0)
     cv_evals = contextvars.ContextVar("evals", default = 0)
     MAX_DEPTH : int = 30
@@ -1250,22 +1246,17 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     def xip_collection(self, var : abc.Collection) -> Any:
-        if not isinstance(var, abc.Collection):
-            raise TypeError(var)
-        self._xip_collection(var)
-
-    def _xip_collection(self, var : abc.Collection) -> Any:
         if Utils.is_mut_sequence(var):
             for i, v in enumerate(var):
-                var [i] = self._xip_collection(v)
+                var [i] = self.xip_collection(v)
         elif Utils.is_mut_mapping(var):
             for k, v in var.items():
-                var[k] = self._xip_collection(v)
+                var[k] = self.xip_collection(v)
         elif Utils.is_mut_set(var):
             temp = list(var)
             var.clear()
             for v in temp:
-                var.add(self._xip_collection(v))
+                var.add(self.xip_collection(v))
         elif isinstance(var, str):
             var = self.expand(var)
         return var
@@ -1292,6 +1283,14 @@ class Expander(abc.Mapping):
         return var
 
     # ==============================================================================================
+    # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
+    # callers. As of Python 3.11, this includes asyncio.CancelledError.
+
+    # IMPORTANT IMPORTANT IMPORTANT
+    # If you can't eval a macro, you return it unchanged.
+
+    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
+    # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
     def expand(self, text : str) -> Any:
         if not isinstance(text, str):
@@ -1317,9 +1316,14 @@ class Expander(abc.Mapping):
 
                 if len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
                     # If there's only one macro block, eval it.
-                    var = self._eval_macro(block)
-                    if isinstance(var, Expander):
-                        var = var.exscope
+                    self.trace_start("eval", var)
+                    try:
+                        var = self.eval(block[1:-1])
+                    except RecursionError:
+                        raise
+                    except Exception:
+                        pass
+                    self.trace_end("eval", old_var, var)
                     continue
 
                 # Otherwise we're doing a template expansion.
@@ -1337,41 +1341,18 @@ class Expander(abc.Mapping):
                 # We just finished an expansion - reset the eval budget
                 self.cv_evals.set(0)
 
-
+        if isinstance(var, Expander):
+            var = var.expand_scope
         return var
 
-    # ==============================================================================================
-    # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
-    # callers. As of Python 3.11, this includes asyncio.CancelledError.
-
-    # IMPORTANT IMPORTANT IMPORTANT
-    # If you can't eval a macro, you return it unchanged.
-
-    # TEFINAE : Template Expansion Failure Is Not An Error. Same idea as SFINAE in C++
-    # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
-
-    def _eval_macro(self, var : str) -> Any:
+    def eval(self, var : str) -> Any:
         # Bail out if we've done too many evals already.
         old_evals = self.cv_evals.get()
         if old_evals >= self.MAX_EVALS:
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
         self.cv_evals.set(old_evals + 1)
 
-        result = var
-        try:
-            self.trace_start("eval", var[1:-1])
-            result = eval(var[1:-1], {}, self)
-        except RecursionError:
-            raise
-        except Exception as ex:
-            _ = ex
-            # If you uncomment this line, things will be super spammy.4
-            #dprint(f"##########\neval failed because >{ex}<\n##########\n")
-            pass
-        finally:
-            self.trace_end("eval", var[1:-1], result)
-            pass
-
+        result = eval(var, {}, self)
         return result
 
     # ==============================================================================================
@@ -1451,10 +1432,10 @@ class Expander(abc.Mapping):
 
     def trace_end(self, action : str, arg, result):
         if cg.log._level_int > Log.TRACE: return
-        if isinstance(result, Expander):
-            result = result.exscope
-
         cg.log.dedent()
+
+        if isinstance(result, Expander):
+            result = result.expand_scope
 
         if action == "range":
             cg.log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
@@ -1867,10 +1848,7 @@ class Project(Scope):
         self.merge(*args, **kwargs)
 
         ex = Expander(scope = self)
-        self.name = ex.expand(self.name)
-        self.path = ex.expand(self.path)
-        self.root = ex.expand(self.root)
-        self.targets = ex.expand(self.targets)
+        ex.xip_collection(self)
 
         self._real_filenames = set()
         self._dedupe = Dict()
@@ -2054,7 +2032,7 @@ class Repo(Scope):
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        comp_db_path = Expander(scope = self).expand("{join(build_root, 'compile_commands.json')}")
+#        comp_db_path = Expander(scope = self).eval("join(build_root, 'compile_commands.json')")
 #        cg.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
@@ -2420,9 +2398,9 @@ class Task(Scope):
 
         # We eval these first because we need them for filename expansion
 
-        script_root = ex.expand("{script.root}")
-        build_root  = ex.expand("{build_root}")
-        self_cwd    = ex.expand("{cwd}")
+        script_root = ex.eval("script.root")
+        build_root  = ex.eval("build_root")
+        self_cwd    = ex.eval("cwd")
 
         try:
             ex.trace_start("range", "expand io fields")
@@ -2700,6 +2678,8 @@ class Script(Scope):
     def __init__(self : Script, *args, _up, **kwargs):
         super().__init__(_name = "script", _up = _up)
 
+        ex = Expander(scope = self)
+
         self.name       = "<script>"
         self.file       = "{repo.file}"
         self.path       = "{repo.path}"
@@ -2707,10 +2687,12 @@ class Script(Scope):
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
         # FIXME merge or fill?
-        self.fill(*args, **kwargs)
-        #self.merge(*args, **kwargs)
+        #self.fill(*args, **kwargs)
+        self.merge(*args, **kwargs)
 
-        ex = Expander(scope = self)
+        # FIXME why doesn't this work?
+        #ex.xip_collection(self)
+
         self.name       = ex.expand(self.name)
         self.path       = ex.expand(self.path)
         self.root       = ex.expand(self.root)
@@ -2923,7 +2905,6 @@ def _start():
 # region User API
 
 def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **kwargs):
-    #ex1 = Expander(scope = cg.script)
     ex2 = Expander(scope = cg.script, file = file2, path = path2, root = root2)
 
     dupe1, dedupe_key1 = cg.project.get_dupe(ex2.path, ex2.root, args, kwargs)
