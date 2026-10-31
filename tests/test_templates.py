@@ -195,12 +195,12 @@ class TestTemplates(unittest.TestCase):
         _map = hancho.Dict({"1" : _number, "2" : _text, "3" : _func})
         d = hancho.Dict(x_number = _number, x_text = _text, x_func = _func, x_tuple = _tuple, x_list = _list, x_map = _map)
 
-        self.assertIs(_number, d.expand("{x_number}"))
-        self.assertIs(_text,   d.expand("{x_text}"))
-        self.assertIs(_func,   d.expand("{x_func}"))
-        self.assertIs(_tuple,  d.expand("{x_tuple}"))
-        self.assertIs(_list,   d.expand("{x_list}"))
-        self.assertIs(_map,    d.expand("{x_map}"))
+        self.assertEqual(_number, d.expand("{x_number}"))
+        self.assertEqual(_text,   d.expand("{x_text}"))
+        self.assertEqual(_func,   d.expand("{x_func}"))
+        self.assertEqual(_tuple,  d.expand("{x_tuple}"))
+        self.assertEqual(_list,   d.expand("{x_list}"))
+        self.assertEqual(_map,    d.expand("{x_map}"))
 
     def test_read_nested_c_first(self):
         # Reading a field from a nested Dict should read the _innermost_ 'c', as it is expanded in

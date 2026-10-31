@@ -1317,11 +1317,14 @@ class Expander(abc.Mapping):
                 blocks = self._split_text(var)
 
                 # Stop if we have nothing in the string to expand.
-                if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], self.Literal)):
-                    break
+                if len(blocks) == 0:
+                    return ""
+
+                elif len(blocks) == 1 and isinstance(blocks[0], self.Literal):
+                    return blocks[0]
 
                 # If there's only one macro block, eval it.
-                if len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
+                elif len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
                     #var = self.eval(block)
 
                     # Bail out if we've done too many evals already.
@@ -1330,31 +1333,29 @@ class Expander(abc.Mapping):
                         raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {block!r}")
                     cg.stats.expand_evals = old_evals + 1
 
-                    result = block
                     try:
                         self.trace_start("eval", block)
-                        result = eval(block[1:-1], {}, self)
+                        var = eval(block[1:-1], {}, self)
                     except RecursionError:
                         raise
                     except Exception:
                         pass
                     finally:
-                        self.trace_end("eval", block, result)
-
-                    var = result.expand_scope if isinstance(result, Expander) else result
-                    continue
+                        self.trace_end("eval", block, var)
 
                 # Otherwise we're doing a template expansion.
-                # FIXME Note that we want to _expand_ the macro and not _eval_ the
-                # macro - the former keps expanding and eval'ing until we reach a fixed
-                # point, the latter only does one pass. Otherwise we could accidentally
-                # put partially-expanded templates from a sub-Dict into the parent Dict's expansion
-                # where they would not be expandable. We need a test case for this.
+                # FIXME Note that we want to _expand_ each macro in the template and not _eval_
+                # them - the former keps expanding and eval'ing until we reach a fixed point, the
+                # latter only does one pass.
+                # Otherwise we could accidentally put partially-expanded templates from a sub-Dict
+                # into the parent Dict's expansion where they would not be expandable.
+                # We need a test case for this.
 
-                for i, block in enumerate(blocks):
-                    if isinstance(block, Expander.Macro):
-                        blocks[i] = self.expand(block)
-                var = "".join(Utils.stringify(block) for block in blocks)
+                else:
+                    for i, block in enumerate(blocks):
+                        if isinstance(block, Expander.Macro):
+                            blocks[i] = self.expand(block)
+                    var = "".join(Utils.stringify(block) for block in blocks)
 
         finally:
             self.trace_end("expand", old_var, var)
@@ -1363,6 +1364,7 @@ class Expander(abc.Mapping):
                 # We just finished an expansion - reset the eval budget
                 cg.stats.expand_evals = 0
 
+        var = var.expand_scope if isinstance(var, Expander) else var
         return var
 
 
