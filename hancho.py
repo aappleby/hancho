@@ -2678,33 +2678,14 @@ class Script(Scope):
     def __init__(self : Script, *args, _up, **kwargs):
         super().__init__(_name = "script", _up = _up)
 
-        ex = Expander(scope = self)
-
         self.name       = "<script>"
         self.file       = "{repo.file}"
         self.path       = "{repo.path}"
         self.root       = "{repo.root}"
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
-        # FIXME merge or fill?
-        #self.fill(*args, **kwargs)
         self.merge(*args, **kwargs)
-
-        # FIXME why doesn't this work?
-        #ex.xip_collection(self)
-
-        self.name       = ex.expand(self.name)
-        self.path       = ex.expand(self.path)
-        self.root       = ex.expand(self.root)
-        self.build_root = ex.expand(self.build_root)
-
-        # Required for templates to resolve {hancho.root}?
-        self.hancho = sys.modules[__name__]
-
-        self._globals = Dict()
-
-        # We add __file__ because some scripts might expect it (see dynamic_dependencies/filelist/build.hancho)
-        self.__file__ = self.path
+        Expander(scope = self).xip_collection(self.__dict__)
 
         self.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
         self._tasks      = []
@@ -2715,7 +2696,7 @@ class Script(Scope):
     def exec(self : Script):
         assert self.path.endswith(".hancho")
 
-        cg.log.verbose(Log.ORANGE + f"script {self.path}\n")
+        cg.log.verbose(Log.ORANGE + f"Running script {self.path}\n")
 
         with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
             code = None
@@ -2734,59 +2715,43 @@ class Script(Scope):
 # ==================================================================================================
 # region create_test_script
 
-def create_test_script(
-        *,
-        name : str,
-        file : str,
-        root : str,
-        stdout = sys.stdout,
-        extra_flags) -> Script:
+def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdout, extra_flags) -> Script:
 
     cg.hancho = sys.modules[__name__]
 
-    flags = Flags(_up = builtins)
-
-    flags.parse_flags(
+    cg.flags = Flags(_up = builtins)
+    cg.flags.parse_flags(
         f"--name={name}",
         f"--file={file}",
         f"--root={root}",
         *extra_flags
     )
 
-    cg.flags = flags
+    cg.log = Log(cg.flags, log_stdout = stdout)
+    cg.log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
 
     Utils.reset()
     Repo.reset()
-    Runner.reset(flags)
+    Runner.reset(cg.flags)
 
-    log = Log(flags, log_stdout = stdout)
-    log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
+    cg.project = Project(_up = cg.flags)
+    cg.repo    = Repo(_up = cg.project)
+    cg.script  = Script(_up = cg.repo)
 
-    cg.log = log
-    builtins.log = log
 
-    project = Project(_up = flags)
-    cg.project = project
+    cg.project._repos.append(cg.repo)
+    cg.repo._scripts.append(cg.script)
 
-    repo    = Repo(_up = project)
-    cg.repo = repo
+    _, dupe_key = cg.project.get_dupe(path, root, (), {})
 
-    script  = Script(_up = repo)
-    cg.script = script
-
-    project._repos.append(repo)
-    repo._scripts.append(script)
-
-    _, dupe_key = project.get_dupe(path, root, (), {})
-
-    project.set_dupe(dupe_key, script)
+    cg.project.set_dupe(dupe_key, cg.script)
 
     #dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
     #project._dedupe[dedupe_key] = script
 
     # do _not_ exec the dummy script
 
-    return script
+    return cg.script
 
 # endregion
 # ==================================================================================================
@@ -2823,66 +2788,57 @@ builtins = Builtins(
 
 def main():
     cg.hancho = sys.modules[__name__]
-    flags = Flags(_up = builtins)
-    flags.parse_flags(*sys.argv)
-    cg.flags = flags
+    cg.flags = Flags(_up = builtins)
+    cg.flags.parse_flags(*sys.argv)
+    cg.log = Log(cg.flags)
 
     Utils.reset()
     Repo.reset()
-    Runner.reset(flags)
+    Runner.reset(cg.flags)
 
-    builtins.log = Log(flags)
-    log = builtins.log
-    cg.log = log
-
-    log.verbose(Log.ORANGE + f"create_test_script {flags.path}\n")
-    log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    log.verbose(Log.GRAY3 + "Verbose mode on\n")
-    log.debug(Log.GRAY3 + "Debug mode on\n")
-    log.trace(Log.GRAY3 + "Trace mode on\n")
+    cg.log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
+    cg.log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    cg.log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    cg.log.debug(Log.GRAY3 + "Debug mode on\n")
+    cg.log.trace(Log.GRAY3 + "Trace mode on\n")
     args = ()
     kwargs = {}
 
     # FIXME need to make sure private fields aren't in the dump, but i'll deal with it properly later.
-    dedupe_key = Dumper.any_to_key([flags.path, flags.root, *args, kwargs])
+    dedupe_key = Dumper.any_to_key([cg.flags.path, cg.flags.root, *args, kwargs])
     assert " _" not in dedupe_key
 
     # ------------------------------------
 
     time_a1 = time.perf_counter()
 
-    project = Project(_up = flags)
-    cg.project = project
+    cg.project = Project(_up = cg.flags)
 
-    log.verbose(Log.ORANGE + f"project {project.path}\n")
-    with log.indenter(Log.VERBOSE, Log.ORANGE):
+    cg.log.verbose(Log.ORANGE + f"project {cg.project.path}\n")
+    with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
 
-        repo = Repo(_up = project)
-        cg.repo = repo
-        project._repos.append(repo)
+        cg.repo = Repo(_up = cg.project)
+        cg.project._repos.append(cg.repo)
 
-        log.verbose(Log.ORANGE + f"repo {repo.path}\n")
-        with log.indenter(Log.VERBOSE, Log.ORANGE):
-            script = Script(flags, _up = repo)
-            cg.script = script
-
-            project._dedupe[dedupe_key] = script
-            repo._scripts.append(script)
-            script.exec()
+        cg.log.verbose(Log.ORANGE + f"repo {cg.repo.path}\n")
+        with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
+            cg.script = Script(cg.flags, _up = cg.repo)
+            cg.project._dedupe[dedupe_key] = cg.script
+            cg.repo._scripts.append(cg.script)
+            cg.script.exec()
 
         time_b1 = time.perf_counter()
 
-    log.verbose(Log.DBLUE + f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
+    cg.log.verbose(Log.DBLUE + f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
 
     # ------------------------------------
 
-    project.build()
-    project.stats()
-    project.passfail()
+    cg.project.build()
+    cg.project.stats()
+    cg.project.passfail()
 
-    log._flush()
-    return project._result
-
+    cg.log._flush()
+    return cg.project._result
 
 # ----------------------------------------
 

@@ -9,7 +9,7 @@
       "name"    : "Debug hancho.py",
       "type"    : "debugpy",
       "request" : "launch",
-      "program": "${workspaceFolder}/hancho.py",
+      "program": "${workspaceFolder}/hancho.py",~
       "console" : "internalConsole",
       "args"    : ["-ldebug"],
       "preLaunchTask": "wipe_workspace_build"
