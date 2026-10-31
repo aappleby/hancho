@@ -132,6 +132,11 @@ class CVGlobals:
 
 cg = CVGlobals()
 
+cg.stat_calls = 0
+cg.hash_calls = 0
+cg.hash_bytes = 0
+cg.hash_time  = 0
+
 # endregion
 # ==================================================================================================
 # region Sentinel
@@ -1926,10 +1931,10 @@ class Project(Scope):
         cg.log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
         cg.log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
         cg.log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        cg.log.verbose(Log.DBLUE + f"Mtime calls:      {Repo.stat_calls}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash calls:       {Repo.hash_calls}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash bytes:       {Repo.hash_bytes}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash time:        {Repo.hash_time:8.6f}\n")
+        cg.log.verbose(Log.DBLUE + f"Mtime calls:      {cg.stat_calls}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash calls:       {cg.hash_calls}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash bytes:       {cg.hash_bytes}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash time:        {cg.hash_time:8.6f}\n")
 
         #log.verbose("Rebuild reasons:\n")
         #for reason, count in project._build_reasons.items():
@@ -1964,14 +1969,6 @@ class Stat:
 # region Repo
 
 class Repo(Scope):
-
-    @classmethod
-    def reset(cls):
-        cls.stat_calls : int = 0
-        cls.hash_calls : int = 0
-        cls.hash_bytes : int = 0
-        cls.hash_time  : float = 0
-
 
     def __init__(self, *args, _up, **kwargs):
         super().__init__(_name = "repo", _up = _up)
@@ -2050,17 +2047,17 @@ class Repo(Scope):
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
-        Repo.hash_calls += 1
+        cg.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
-            Repo.hash_bytes += os.fstat(f.fileno()).st_size
+            cg.hash_bytes += os.fstat(f.fileno()).st_size
             digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=16)).hexdigest()
         time_b = time.perf_counter()
-        Repo.hash_time += time_b - time_a
+        cg.hash_time += time_b - time_a
         return digest
 
     def get_stat(self, file : str) -> dict:
-        self.stat_calls += 1
+        cg.stat_calls += 1
 
         _hash = self.hash_file(file)
         _stat = os.stat(file)
@@ -2731,7 +2728,6 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
     cg.log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
 
     Utils.reset()
-    Repo.reset()
     Runner.reset(cg.flags)
 
     cg.project = Project(_up = cg.flags)
@@ -2793,7 +2789,6 @@ def main():
     cg.log = Log(cg.flags)
 
     Utils.reset()
-    Repo.reset()
     Runner.reset(cg.flags)
 
     cg.log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
