@@ -2821,41 +2821,11 @@ def check_dupe(script):
     else:
         return None
 
-def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
 
-    new_script = Script(
-        *args,
-        _up  = cg.repo,
-        file = file,
-        path = path,
-        root = root,
-        **kwargs
-    )
+def load2(is_repo, file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
 
-    if dupe := check_dupe(new_script):
-        return dupe
+    new_repo = Repo(_up = cg.project) if is_repo else cg.repo
 
-    new_script.exec()
-    return new_script
-
-def include(file):
-    path = Path.resolve(Expander(scope = cg.script).expand(file))
-
-    code = None
-    with open(path, encoding="utf-8") as file:
-        source = file.read()
-        code = compile(source, path, "exec", dont_inherit=True)
-
-        cg.script.log.verbose(Log.ORANGE + f"include {path}\n")
-
-        exec(code, cg._cv.get())
-        Utils.merge(cg.script, cg._cv.get())
-
-        if "__builtins__" in cg.script.__dict__:
-            del cg.script.__dict__["__builtins__"]
-
-def load_repo(file, *args, path = "{resolve(file)}", root =  "{dirname(path)}", **kwargs) -> Script:
-    new_repo = Repo(_up = cg.project)
     new_script = Script(
         *args,
         _up  = new_repo,
@@ -2868,11 +2838,35 @@ def load_repo(file, *args, path = "{resolve(file)}", root =  "{dirname(path)}", 
     if dupe := check_dupe(new_script):
         return dupe
 
-    cg.repo = new_repo
-    cg.project._repos.append(new_repo)
+    if is_repo:
+        cg.repo = new_repo
+        cg.project._repos.append(new_repo)
 
     new_script.exec()
     return new_script
+
+def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
+    return load2(False, file, *args, path = path, root = root, **kwargs)
+
+
+def include(file):
+
+    path = Path.resolve(cg.script.expand(file))
+
+    with open(path, encoding="utf-8") as file:
+        source = file.read()
+        code = compile(source, path, "exec", dont_inherit=True)
+
+    cg.log.verbose(Log.ORANGE + f"include {path}\n")
+
+    exec(code, cg._cv.get())
+    Utils.merge(cg.script, cg._cv.get())
+
+    if "__builtins__" in cg.script.__dict__:
+        del cg.script.__dict__["__builtins__"]
+
+def load_repo(file, *args, path = "{resolve(file)}", root =  "{dirname(path)}", **kwargs) -> Script:
+    return load2(True, file, *args, path = path, root = root, **kwargs)
 
 def build():
     return cg.project.build()
