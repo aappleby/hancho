@@ -1320,14 +1320,13 @@ class Expander(abc.Mapping):
                 if len(blocks) == 0:
                     return ""
 
+                # If there's only one literal block, return var instead of the block as var is a
+                # str and blocks[0] is a Literal
                 elif len(blocks) == 1 and isinstance(blocks[0], self.Literal):
-                    return blocks[0]
+                    return var
 
-                # If there's only one macro block, eval it.
+                # If there's only one macro block, eval it unless we've done too many evals already.
                 elif len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
-                    #var = self.eval(block)
-
-                    # Bail out if we've done too many evals already.
                     old_evals = cg.stats.expand_evals
                     if old_evals >= self.MAX_EVALS:
                         raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {block!r}")
@@ -1711,6 +1710,7 @@ class Dumper:
 
     @classmethod
     def any_to_key(cls, var):
+        # FIXME this needs a test case
         key = Dumper.dump(
             var,
             color_code=False,
