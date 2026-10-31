@@ -912,8 +912,11 @@ class Scope:
     def __init__(self, *, _self, _up):
         # The _self field is the name of _this_ scope while inside a template.
 
-        # This is for stuff like "{script.root}" - the script is not _named_  'script', but its
+        # This is for stuff like "{script.root}" - the script is not _named_ 'script', but its
         # _self is 'script' so it matches.
+
+        # Prefixing "{root}" with "script." also disambiguates it if multiple scopes in the _up
+        # chain have a .root
 
         if _self is not None:
             self.__dict__['_self'] = _self
@@ -1855,12 +1858,13 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(self, *args, file, path, root, **kwargs):
+    def __init__(self, *args, file, path = None, root = None, targets = None, **kwargs):
         super().__init__(_self = "project", _up = cg.flags)
         self.name    = "<project>"
-        self.path    = file
-        self.root    = path
-        self.targets = root
+        self.file    = file
+        self.path    = path or "{resolve(project.file)}"
+        self.root    = root or "{dirname(project.path)}"
+        self.targets = targets or []
 
         self.merge(*args, **kwargs)
 
@@ -1993,7 +1997,6 @@ class Repo(Scope):
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        comp_db_path = Expander(scope = self).expand("{join(build_root, 'compile_commands.json')}")
 #        cg.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
@@ -2347,8 +2350,8 @@ class Task(Scope):
         # We eval these first because we need them for filename expansion
 
         script_root = ex.expand("{script.root}")
-        build_root  = ex.expand("{build_root}")
-        self_cwd    = ex.expand("{cwd}")
+        build_root  = ex.expand("{task.build_root}")
+        self_cwd    = ex.expand("{task.cwd}")
 
         try:
             ex.trace_start("range", "expand io fields")
@@ -2643,10 +2646,6 @@ class Script(Scope):
     def dump(self, *args, **kwargs):
         dprint(Dumper.dump(*args, **kwargs))
 
-    #path="{resolve(file)}",
-    #root="{dirname(path)}",
-    #build_root="{join(repo.build_root, relpath(root, repo.root))}",
-
     @classmethod
     def load(
         cls,
@@ -2730,15 +2729,11 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
     Utils.reset()
     Runner.reset()
 
-    path = cg.flags.path
-    #root = "{dirname(path)}"
-    build_root = "{join(repo.build_root, relpath(root, repo.root))}"
-
-    cg.project = Project(_up = cg.flags, file = file, path = path, root = root)
-    cg.repo    = Repo(_up = cg.project, file = file, path = path, root = root)
+    cg.project = Project(_up = cg.flags, file = file)
+    cg.repo    = Repo(_up = cg.project, file = file)
 
 
-    cg.script = Script.load(file = file, path = path, root = root, build_root = build_root, is_repo = True, is_dummy = True)
+    cg.script = Script.load(file = file, path = None, root = None, build_root = None, is_repo = True, is_dummy = True)
 
     return cg.script
 
@@ -2796,8 +2791,7 @@ def main():
     # Load the root script, which will transitively load everything else.
 
     with timeit("Loading scripts"):
-        build_root="{join(repo.build_root, relpath(root, repo.root))}"
-        cg.script = Script.load(file = cg.flags.file, path = cg.flags.path, root = cg.flags.root, build_root = build_root, is_repo = True, is_dummy = False)
+        cg.script = Script.load(file = cg.flags.file, path = cg.flags.path, root = cg.flags.root, build_root = None, is_repo = True, is_dummy = False)
 
     # ------------------------------------
     # Build everything
@@ -2886,7 +2880,7 @@ def include(file):
     if "__builtins__" in cg.script.__dict__:
         del cg.script.__dict__["__builtins__"]
 
-def load_repo(file, *args, path = "{resolve(file)}", root =  "{dirname(path)}", **kwargs) -> Script:
+def load_repo(file, *args, path = None, root = None, **kwargs) -> Script:
     return Script.load(True, file, *args, path = path, root = root, **kwargs)
 
 def build():
