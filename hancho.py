@@ -1854,9 +1854,6 @@ class Project(Scope):
             return dupe, key
         return None, key
 
-    def set_dupe(self, key, new_script):
-        self._dedupe[key] = new_script
-
     def build(self) -> int:
         time_a3 = time.perf_counter()
 
@@ -2713,16 +2710,12 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
     cg.repo    = Repo(_up = cg.project)
     cg.script  = Script(_up = cg.repo)
 
-
     cg.project._repos.append(cg.repo)
     cg.repo._scripts.append(cg.script)
 
     _, dupe_key = cg.project.get_dupe(cg.script)
 
-    cg.project.set_dupe(dupe_key, cg.script)
-
-    #dedupe_key = Dumper.any_to_key([flags.path, flags.root, {}])
-    #project._dedupe[dedupe_key] = script
+    cg.project._dedupe[dupe_key] = cg.script
 
     # do _not_ exec the dummy script
 
@@ -2862,7 +2855,8 @@ def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **k
     if dupe1:
         return dupe1
 
-    cg.project.set_dupe(dedupe_key1, new_script)
+    cg.project._dedupe[dedupe_key1] = new_script
+
     cg.repo._scripts.append(new_script)
 
     new_script.exec()
@@ -2891,6 +2885,8 @@ def load_repo(file, root =  "{dirname(path)}", *args, **kwargs) -> Script:
 
     dedupe_key = Dumper.any_to_key([path, root, *args, kwargs])
     assert " _" not in dedupe_key
+
+    # FIXME inconsistent use of deduping, need to use dedupe_key(script) everywere
 
     if dupe := cg.project._dedupe.get(dedupe_key, None):
         cg.log.verbose(Log.LIME + f"Deduped repo('{path}')\n")
