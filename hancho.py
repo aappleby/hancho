@@ -2848,20 +2848,19 @@ cg.stats = Stats(
 
 
 def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **kwargs):
-    ex2 = Expander(scope = cg.script, file = file2, path = path2, root = root2)
-
-    dupe1, dedupe_key1 = cg.project.get_dupe(ex2.path, ex2.root, args, kwargs)
-    if dupe1:
-        return dupe1
 
     new_script = Script(
         *args,
         _up  = cg.repo,
-        file = ex2.file,
-        path = ex2.path,
-        root = ex2.root,
+        file = file2,
+        path = path2,
+        root = root2,
         **kwargs
     )
+
+    dupe1, dedupe_key1 = cg.project.get_dupe(new_script.path, new_script.root, args, kwargs)
+    if dupe1:
+        return dupe1
 
     cg.project.set_dupe(dedupe_key1, new_script)
     cg.repo._scripts.append(new_script)
