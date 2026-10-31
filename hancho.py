@@ -1308,8 +1308,9 @@ class Expander(abc.Mapping):
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
         cg.stats.expand_depth = old_depth + 1
 
+        old_var = None
         try:
-            old_var = None
+            self.trace_start("expand", var)
             while isinstance(var, str) and var != old_var:
                 old_var = var
                 blocks = self._split_text(var)
@@ -1320,33 +1321,28 @@ class Expander(abc.Mapping):
 
                 if len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
                     # If there's only one macro block, eval it.
-                    self.trace_start("eval", var)
-                    try:
-                        var = self.eval(block[1:-1])
-                    except RecursionError:
-                        raise
-                    except Exception:
-                        pass
-                    self.trace_end("eval", old_var, var)
-                    continue
-
-                # Otherwise we're doing a template expansion.
-                try:
-                    self.trace_start("expand", var)
+                    var = self.eval(block)
+                    if isinstance(var, Expander):
+                        var = var.expand_scope
+                else:
+                    # Otherwise we're doing a template expansion.
                     for i, b in enumerate(blocks):
                         if isinstance(b, Expander.Macro):
+                            # FIXME Note that we want to _expand_ the macro and not _eval_ the
+                            # macro - the former keps expanding and eval'ing until we reach a fixed
+                            # point, the latter only does one pass. Otherwise we could accidentally
+                            # put templates from a sub-Dict into the parent Dict's expansion where
+                            # they would not be expandable. We need a test case for this.
+
                             blocks[i] = self.expand(b)
                     var = "".join(Utils.stringify(b) for b in blocks)
-                finally:
-                    self.trace_end("expand", old_var, var)
         finally:
+            self.trace_end("expand", old_var, var)
             cg.stats.expand_depth = old_depth
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
                 cg.stats.expand_evals = 0
 
-        if isinstance(var, Expander):
-            var = var.expand_scope
         return var
 
     def eval(self, var : str) -> Any:
@@ -1356,7 +1352,17 @@ class Expander(abc.Mapping):
             raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
         cg.stats.expand_evals = old_evals + 1
 
-        result = eval(var, {}, self)
+        result = var
+        try:
+            self.trace_start("eval", var)
+            result = eval(var[1:-1], {}, self)
+        except RecursionError:
+            raise
+        except Exception:
+            pass
+        finally:
+            self.trace_end("eval", var, result)
+
         return result
 
     # ==============================================================================================
@@ -1982,7 +1988,7 @@ class Repo(Scope):
 
 #    def save_comp_db(self):
 #        # Haven't tested this in an IDE, but I think it matches the spec.
-#        comp_db_path = Expander(scope = self).eval("join(build_root, 'compile_commands.json')")
+#        comp_db_path = Expander(scope = self).expand("{join(build_root, 'compile_commands.json')}")
 #        cg.log.verbose(f"Saving comp_db {comp_db_path}\n")
 #
 #        comp_db = []
@@ -2335,9 +2341,9 @@ class Task(Scope):
 
         # We eval these first because we need them for filename expansion
 
-        script_root = ex.eval("script.root")
-        build_root  = ex.eval("build_root")
-        self_cwd    = ex.eval("cwd")
+        script_root = ex.expand("{script.root}")
+        build_root  = ex.expand("{build_root}")
+        self_cwd    = ex.expand("{cwd}")
 
         try:
             ex.trace_start("range", "expand io fields")
