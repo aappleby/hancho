@@ -2672,9 +2672,7 @@ class Script(Scope):
 
     def exec(self : Script):
         assert self.path.endswith(".hancho")
-
         cg.log.verbose(Log.ORANGE + f"Running script {self.path}\n")
-
         with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
             code = None
             with open(self.path, encoding="utf-8") as file:
@@ -2682,14 +2680,9 @@ class Script(Scope):
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
             with chdir(self.root), cg.update(script = self):
-
-                old_globals = dict(cg._cv.get())
-
-                exec(code, cg._cv.get())
-
-                for k, v in cg._cv.get().items():
-                    if k not in old_globals:
-                        self.__dict__[k] = v
+                cg_dict = cg._cv.get()
+                Utils.merge(self.__dict__, cg_dict)
+                exec(code, self.__dict__)
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
