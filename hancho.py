@@ -391,8 +391,8 @@ class Utils:
     @staticmethod
     def instance_tag(obj):
         result = ""
-        if hasattr(obj, "_id") and obj._id is not None:
-            result += obj._id
+        if hasattr(obj, "_self") and obj._self is not None:
+            result += obj._self
             result += ":"
         result += type(obj).__name__
         result += "@"
@@ -909,12 +909,14 @@ class Path:
 # FIXME this breaks if we do Scope(abc.Mapping)?
 
 class Scope:
-    def __init__(self, *, _id, _up):
-        # If a scope does not _contain_ a variable but it's _id matches the variable, we return
-        # the scope itself. This is for stuff like "{script.root}" - the script is not _named_
-        # 'script', but its id is 'script' so it matches.
-        if _id is not None:
-            self.__dict__['_id'] = _id
+    def __init__(self, *, _self, _up):
+        # The _self field is the name of _this_ scope while inside a template.
+
+        # This is for stuff like "{script.root}" - the script is not _named_  'script', but its
+        # _self is 'script' so it matches.
+
+        if _self is not None:
+            self.__dict__['_self'] = _self
 
         # If a scope does _not_ contain a variable, we look for it in _up next.
         if _up is not None:
@@ -944,7 +946,7 @@ class Scope:
 #    def find(self, key : str, default = Sentinel.MISSING) -> Any:
 #        cursor = self
 #        while cursor is not None:
-#            if cursor.__dict__.get("_id", Sentinel.MISSING) == key:
+#            if cursor.__dict__.get("_self", Sentinel.MISSING) == key:
 #                return cursor
 #            if key in cursor.__dict__:
 #                return cursor.__dict__[key]
@@ -979,7 +981,7 @@ class Dict(Scope, abc.MutableMapping):
 
     def __init__(self, *args, **kwargs):
         super().__init__(
-            _id = kwargs.pop('_id', None),
+            _self = kwargs.pop('_self', None),
             _up = kwargs.pop('_up', None)
         )
         for rhs in [*args, kwargs]:
@@ -1028,13 +1030,13 @@ class Stats(Dict):
 
 class Flags(Scope):
     def __init__(self, *, _up):
-        super().__init__(_id = "flags", _up = _up)
+        super().__init__(_self = "flags", _up = _up)
 
-        self.name        = "<flags>"
-        self.file        = "build.hancho"
-        self.path        = "{resolve(file)}"
-        self.root : str  = "{dirname(path)}"
-        self.targets     = []
+        self.name    = "<flags>"
+        self.file    = "build.hancho"
+        self.path    = "{resolve(flags.file)}"
+        self.root    = "{dirname(flags.path)}"
+        self.targets = []
 
         self.build_dir   = "build"
         self.build_tag   = ""
@@ -1224,7 +1226,7 @@ class Expander(abc.Mapping):
                 if type(cursor).__name__ == key:
                     result = cursor
                     break
-                if cursor.get("_id", Sentinel.MISSING) == key:
+                if cursor.get("_self", Sentinel.MISSING) == key:
                     result = cursor
                     break
                 elif key in cursor:
@@ -1694,10 +1696,10 @@ class Dumper:
             prefix += val.__name__
         elif hasattr(val, 'name') and val.name is not None:
             prefix += val.name
-        elif hasattr(val, '_id') and val._id is not None:
-            prefix += val._id
-        elif isinstance(val, abc.Mapping) and '_id' in val and val['_id'] is not None:
-            prefix += val['_id']
+        elif hasattr(val, '_self') and val._self is not None:
+            prefix += val._self
+        elif isinstance(val, abc.Mapping) and '_self' in val and val['_self'] is not None:
+            prefix += val['_self']
 
         if isinstance(val, type):
             prefix += ":type"
@@ -1854,7 +1856,7 @@ class Runner:
 
 class Project(Scope):
     def __init__(self, *args, file, path, root, **kwargs):
-        super().__init__(_id = "project", _up = cg.flags)
+        super().__init__(_self = "project", _up = cg.flags)
         self.name    = "<project>"
         self.path    = file
         self.root    = path
@@ -1932,17 +1934,17 @@ class FileStat:
 
 class Repo(Scope):
 
-    def __init__(self, *args, _up, file, path, root, **kwargs):
-        super().__init__(_id = "repo", _up = _up)
+    def __init__(self, *args, _up, file, path = None, root = None, **kwargs):
+        super().__init__(_self = "repo", _up = _up)
 
         self.name         = "<repo>"
         self.file         = file
-        self.path         = path
-        self.root         = root
+        self.path         = path or "{resolve(repo.file)}"
+        self.root         = root or "{dirname(repo.path)}"
 
-        self.build_root   = "{join(root, flags.build_dir, flags.build_tag)}"
-        self.stat_db_path = "{join(build_root, 'hancho.json')}"
-        self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
+        self.build_root   = "{join(repo.root, flags.build_dir, flags.build_tag)}"
+        self.stat_db_path = "{join(repo.build_root, 'hancho.json')}"
+        self.comp_db_path = "{join(repo.build_root, 'compile_commands.json')}"
 
         self.merge(*args, **kwargs)
         Expander(scope = self).xip(self.__dict__)
@@ -2087,7 +2089,7 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        super().__init__(_id = "task", _up = cg.script)
+        super().__init__(_self = "task", _up = cg.script)
 
         self.name        = "<task>"
         self.desc        = "<no desc>"
@@ -2624,13 +2626,13 @@ class Script(Scope):
     # build_root
 
     def __init__(self : Script, *args, _up, name, file, path, root, build_root, **kwargs):
-        super().__init__(_id = "script", _up = _up)
+        super().__init__(_self = "script", _up = _up)
 
         self.name       = name
         self.file       = file
-        self.path       = path
-        self.root       = root
-        self.build_root = build_root
+        self.path       = path or "{resolve(script.file)}"
+        self.root       = root or "{dirname(script.path)}"
+        self.build_root = build_root or "{join(repo.build_root, relpath(script.root, repo.root))}"
 
         self.merge(*args, **kwargs)
         Expander(scope = self).xip(self.__dict__)
@@ -2746,7 +2748,7 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
 
 class Builtins(Dict):
     def __init__(self):
-        super().__init__(_up = None, _id = "builtins")
+        super().__init__(_up = None, _self = "builtins")
         self.hancho   = sys.modules[__name__]
         self.log      = Log()
         self.Dict     = Dict
@@ -2865,8 +2867,7 @@ def _start():
 # ==================================================================================================
 # region User API
 
-def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
-    build_root="{join(repo.build_root, relpath(root, repo.root))}"
+def load(file, *args, path = None, root = None, build_root = None, **kwargs):
     return Script.load(*args, file = file, path = path, root = root, build_root = build_root, is_repo = False, is_dummy = False, **kwargs)
 
 def include(file):
