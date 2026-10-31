@@ -2665,19 +2665,17 @@ class Script(Scope):
 
         assert self.path.endswith(".hancho")
         cg.log.verbose(Log.ORANGE + f"Running script {self.path}\n")
-        with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
-            code = None
-            with open(self.path, encoding="utf-8") as file:
-                source = file.read()
-                code = compile(source, self.path, "exec", dont_inherit=True)
 
-            with chdir(self.root), cg.update(script = self):
-                cg_dict = cg._cv.get()
-                Utils.merge(self.__dict__, cg_dict)
-                exec(code, self.__dict__)
+        with open(self.path, encoding="utf-8") as file:
+            source = file.read()
+            code = compile(source, self.path, "exec", dont_inherit=True)
 
-            if "__builtins__" in self.__dict__:
-                del self.__dict__["__builtins__"]
+        with cg.log.indenter(Log.VERBOSE, Log.ORANGE), chdir(self.root), cg.update(script = self):
+            Utils.merge(self.__dict__, cg._cv.get())
+            exec(code, self.__dict__)
+
+        if "__builtins__" in self.__dict__:
+            del self.__dict__["__builtins__"]
 
 # endregion
 # ==================================================================================================
@@ -2765,13 +2763,9 @@ def main():
     cg.project = Project(_up = cg.flags)
     cg.repo = Repo(_up = cg.project)
     cg.project._repos.append(cg.repo)
-    cg.script = Script(_up = cg.repo)
-
-    dedupe_key = Dumper.any_to_key(cg.script)
-    cg.project._dedupe[dedupe_key] = cg.script
-    cg.repo._scripts.append(cg.script)
 
     time_a1 = time.perf_counter()
+    cg.script = Script(_up = cg.repo)
     cg.script.exec()
     time_b1 = time.perf_counter()
 
@@ -2819,6 +2813,14 @@ cg.stats = Stats(
 )
 
 
+def check_dupe(script):
+    dedupe_key = Dumper.any_to_key(script)
+    if dupe := cg.project._dedupe.get(dedupe_key, None):
+        cg.log.verbose(Log.LIME + f"Deduped {script.file}\n")
+        return dupe
+    else:
+        return None
+
 def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
 
     new_script = Script(
@@ -2830,13 +2832,8 @@ def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwar
         **kwargs
     )
 
-    dedupe_key = Dumper.any_to_key(new_script)
-    if dupe := cg.project._dedupe.get(dedupe_key, None):
-        cg.log.verbose(Log.LIME + f"Deduped script {new_script.file}\n")
+    if dupe := check_dupe(new_script):
         return dupe
-    cg.project._dedupe[dedupe_key] = new_script
-
-    cg.repo._scripts.append(new_script)
 
     new_script.exec()
     return new_script
@@ -2868,9 +2865,7 @@ def load_repo(file, *args, path = "{resolve(file)}", root =  "{dirname(path)}", 
         **kwargs
     )
 
-    dedupe_key = Dumper.any_to_key(new_script)
-    if dupe := cg.project._dedupe.get(dedupe_key, None):
-        cg.log.verbose(Log.LIME + f"Deduped repo {new_script.file}\n")
+    if dupe := check_dupe(new_script):
         return dupe
 
     cg.repo = new_repo
