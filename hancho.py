@@ -1204,10 +1204,13 @@ class Expander(abc.Mapping):
             cursor = self.expand_scope
 
             while cursor is not None:
+                if type(cursor).__name__ == key:
+                    result = cursor
+                    break
                 if cursor.get("_id", Sentinel.MISSING) == key:
                     result = cursor
                     break
-                if key in cursor:
+                elif key in cursor:
                     result = cursor[key]
                     break
                 cursor = cursor.get("_up", None)
@@ -1251,41 +1254,49 @@ class Expander(abc.Mapping):
     # ==============================================================================================
 
     def xip_collection(self, var : abc.Collection) -> Any:
+        inplace = True
+        result : Any = var if inplace else type(var)()
         if Utils.is_mut_sequence(var):
-            for i, v in enumerate(var):
-                var [i] = self.xip_collection(v)
+            for i, v in enumerate(result):
+                result[i] = self.xip_collection(v)
         elif Utils.is_mut_mapping(var):
-            for k, v in var.items():
-                var[k] = self.xip_collection(v)
+            for k, v in result.items():
+                result[k] = self.xip_collection(v)
         elif Utils.is_mut_set(var):
             temp = list(var)
-            var.clear()
+            result.clear()
             for v in temp:
-                var.add(self.xip_collection(v))
+                result.add(self.xip_collection(v))
         elif isinstance(var, str):
-            var = self.expand(var)
-        return var
+            result = self.expand(var)
+
+        return result
 
     def expand_collection(self, var : abc.Collection) -> Any:
-        if Utils.is_mut_mapping(var):
-            result1 : abc.MutableMapping = type(var)()
-            for k, v in var.items():
-                result1[k] = self.expand_collection(v)
-            return result1
-        elif Utils.is_mut_sequence(var):
-            result2 : abc.MutableSequence = type(var)()
-            for v in var:
-                result2.append(self.expand_collection(v))
-            return result2
-        elif Utils.is_mut_set(var):
-            result3 = type(var)()
-            for v in enumerate(var):
-                result3.add(self.expand_collection(v))
-            return result3
-        elif isinstance(var, str):
-            var = self.expand(var)
+        inplace = False
+        result : Any = var
 
-        return var
+
+        if Utils.is_mut_mapping(var):
+            result : Any = var if inplace else type(var)()
+            for k, v in var.items():
+                result[k] = self.expand_collection(v)
+            return result
+        elif Utils.is_mut_sequence(var):
+            result : Any = var if inplace else type(var)()
+            for v in var:
+                result.append(self.expand_collection(v))
+            return result
+        elif Utils.is_mut_set(var):
+            result : Any = var if inplace else type(var)()
+            for v in enumerate(var):
+                result.add(self.expand_collection(v))
+            return result
+        elif isinstance(var, str):
+            result = self.expand(var)
+            return result
+        else:
+            return result
 
     # ==============================================================================================
     # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
@@ -2177,11 +2188,10 @@ class Task(Scope):
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
         # we need to queue up input tasks before this task starts (and then expands everything else)
 
+        ex = Expander(scope = self)
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex = Expander(scope = self)
-                v = ex.expand_collection(v)
-                self.__dict__[k] = v
+                ex.xip_collection(v)
 
         # ----------------------------------------
         # Add all input fields that are tasks to _input_tasks so we can await them later.
