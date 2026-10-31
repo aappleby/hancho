@@ -100,7 +100,14 @@ base_types   = (int, float, complex, bool, str, tuple, types.NoneType, type)
 # These types don't get dumped because they're not really dumpable.
 opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, types.ModuleType)
 
-default_folds = ["_dedupe", "_repos", "_scripts", "_tasks"]
+default_folds = ["_dedupe", "_repos", "_scripts", "_tasks", "Builtins"]
+
+@contextmanager
+def timeit(name):
+    a = time.perf_counter()
+    yield
+    b = time.perf_counter()
+    cg.log.verbose(Log.DBLUE + f"{name} took {b - a:8.6f} seconds\n")
 
 # endregion
 # ==================================================================================================
@@ -1381,12 +1388,8 @@ class Expander(abc.Mapping):
         idelim = -1
         macros = 0
 
-        if "«" in text:
-            ldelim = "«"
-            rdelim = "»"
-        else:
-            ldelim = "{"
-            rdelim = "}"
+        ldelim = "{"
+        rdelim = "}"
 
         for i, c in enumerate(text):
             if c == ldelim:
@@ -1767,9 +1770,10 @@ class Runner:
             cls.core_sem.release()
 
     @staticmethod
-    async def async_run_tasks(project : Project):
+    async def async_run_tasks():
         """Run all tasks until we run out."""
         log = cg.log
+        project = cg.project
 
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
@@ -1840,8 +1844,8 @@ class Runner:
 # region Project
 
 class Project(Scope):
-    def __init__(self, *args, _up, **kwargs):
-        super().__init__(_id = "project", _up = _up)
+    def __init__(self, *args, **kwargs):
+        super().__init__(_id = "project", _up = cg.flags)
         self.name    = "<project>"
         self.path    = "{flags.path}"
         self.root    = "{flags.root}"
@@ -1858,9 +1862,7 @@ class Project(Scope):
         #self._build_reasons = Counter()
         self._runner = Runner()
 
-    def build(self) -> int:
-        time_a3 = time.perf_counter()
-
+    def build(self):
         # ------------------------------------
         # Select the set of tasks to run.
 
@@ -1885,53 +1887,19 @@ class Project(Scope):
         # ------------------------------------
         # Run the tasks.
 
-        result = asyncio.run(Runner.async_run_tasks(self))
+        result = asyncio.run(Runner.async_run_tasks())
 
         # ------------------------------------
         # Update stat DBs.
 
         if not cg.flags.build_dry:
-            for repo in self._repos:
+            for repo in cg.project._repos:
                 for task in repo.yield_tasks():
                     if task._complete:
                         task.update_repo_stat_db()
                 repo.save_stat_db()
 
-        time_b3 = time.perf_counter()
-        cg.log.verbose(Log.DBLUE + f"Build took {time_b3 - time_a3:8.6f} seconds\n")
-        self._result = result
         return result
-
-    def stats(self):
-        task_count = 0
-        for repo in self._repos:
-            task_count += len(list(repo.yield_tasks()))
-
-        # FIXME all the stats should move to Project
-        cg.log.verbose(Log.DBLUE + f"Tasks created:    {task_count}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks enabled:    {Runner.tasks_enabled}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks started:    {Runner.tasks_started}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks finished:   {Runner.tasks_finished}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks broken:     {Runner.tasks_broken}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
-        cg.log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        cg.log.verbose(Log.DBLUE + f"Mtime calls:      {cg.stats.stat_calls}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash calls:       {cg.stats.hash_calls}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash bytes:       {cg.stats.hash_bytes}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash time:        {cg.stats.hash_time:8.6f}\n")
-
-        #log.verbose("Rebuild reasons:\n")
-        #for reason, count in project._build_reasons.items():
-        #    log.verbose(f"{reason:17} {count}\n")
-
-    def passfail(self):
-        if self._runner.tasks_failed or self._runner.tasks_broken:
-            cg.log.error("BUILD FAILED\n")
-        elif Runner.tasks_finished:
-            cg.log.info(Log.GREEN + "BUILD PASSED\n")
-        else:
-            cg.log.info(Log.BLUE + "BUILD CLEAN\n")
 
 # endregion
 # ==================================================================================================
@@ -2033,11 +2001,13 @@ class Repo(Scope):
     @classmethod
     def hash_file(cls, abs_path, h = 0):
         cg.stats.hash_calls += 1
+
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
             cg.stats.hash_bytes += os.fstat(f.fileno()).st_size
             digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=16)).hexdigest()
         time_b = time.perf_counter()
+
         cg.stats.hash_time += time_b - time_a
         return digest
 
@@ -2299,31 +2269,20 @@ class Task(Scope):
         # ------------------------------------
         # Run all the commands
 
-        time_a = time.perf_counter()
+        curlify = str.maketrans({"«" : "{", "»" : "}"})
 
-
-        def fix_cmd(cmd):
-            curlify = str.maketrans({"«" : "{", "»" : "}"})
-            cmd = cmd.translate(curlify)
-            # Hacky way to rel-ify all paths in the command, but bleh
-            #cmd = cmd.replace(self.cwd + "/", "")
-            return cmd
-
-        if isinstance(self.command, str):
-            command = fix_cmd(self.command)
-            await self.run_command(command)
-        elif isinstance(self.command, list):
-            for command in self.command:
-                command = fix_cmd(command)
+        with timeit("Task"):
+            if isinstance(self.command, str):
+                command = self.command.translate(curlify)
                 await self.run_command(command)
-        elif isinstance(self.command, abc.Callable):
-            await self.call_callback(self.command)
-        elif self.command is not None:
-            raise TypeError(type(self.command))
-
-        time_b = time.perf_counter()
-
-        self.log_task(Log.VERBOSE, Log.VIOLET + f"Task took {time_b-time_a:8.6f} sec: {text}\n")
+            elif isinstance(self.command, list):
+                for command in self.command:
+                    command = command.translate(curlify)
+                    await self.run_command(command)
+            elif isinstance(self.command, abc.Callable):
+                await self.call_callback(self.command)
+            elif self.command is not None:
+                raise TypeError(type(self.command))
 
         # ------------------------------------
         # See if the task wrote all its output files
@@ -2734,6 +2693,8 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
 
     cg.hancho = sys.modules[__name__]
     cg.stats = Stats()
+    builtins = Builtins()
+    cg.builtins = builtins
 
     cg.flags = Flags(_up = builtins)
     cg.flags.parse_flags(
@@ -2769,79 +2730,104 @@ def create_test_script(*, name : str, file : str, root : str, stdout = sys.stdou
 # region main
 
 class Builtins(Dict):
-    pass
-
-builtins = Builtins(
-    _up      = None,
-    _id      = "builtins",
-    hancho   = sys.modules[__name__],
-    log      = Log(),
-    Dict     = Dict,
-    Task     = Task,
-    Tool     = Tool,
-    Dumper   = Dumper,
-    getcwd   = os.getcwd,
-    dprint   = dprint,
-    dump     = Dumper.dprint,
-    flatten  = Utils.flatten_tree,
-    run_cmd  = Utils.run_cmd,
-    weave    = Utils.weave,
-    resolve  = Path.resolve,
-    abspath  = Path.abspath,
-    normpath = Path.normpath,
-    relpath  = Path.relpath,
-    basename = Path.basename,
-    dirname  = Path.dirname,
-    split    = Path.split,
-    join     = Path.join,
-    swapext  = Path.swapext,
-)
+    def __init__(self):
+        super().__init__(_up = None, _id = "builtins")
+        self.hancho   = sys.modules[__name__]
+        self.log      = Log()
+        self.Dict     = Dict
+        self.Task     = Task
+        self.Tool     = Tool
+        self.Dumper   = Dumper
+        self.getcwd   = os.getcwd
+        self.dprint   = dprint
+        self.dump     = Dumper.dprint
+        self.flatten  = Utils.flatten_tree
+        self.run_cmd  = Utils.run_cmd
+        self.weave    = Utils.weave
+        self.resolve  = Path.resolve
+        self.abspath  = Path.abspath
+        self.normpath = Path.normpath
+        self.relpath  = Path.relpath
+        self.basename = Path.basename
+        self.dirname  = Path.dirname
+        self.split    = Path.split
+        self.join     = Path.join
+        self.swapext  = Path.swapext
 
 def main():
-    hancho = sys.modules[__name__]
-    cg.hancho = hancho
-    cg.stats = Stats()
+    cg.hancho   = sys.modules[__name__]
+    cg.stats    = Stats()
+    cg.builtins = Builtins()
 
-    flags = Flags(_up = builtins)
-    flags.parse_flags(*sys.argv)
+    cg.flags    = Flags(_up = cg.builtins)
 
-    cg.flags = flags
+    cg.flags.parse_flags(*sys.argv)
 
-    log = Log(cg.flags)
-    cg.log = log
-
-
-    project = Project(_up = cg.flags)
-    cg.project = project
+    cg.log      = Log(cg.flags)
+    cg.project  = Project()
 
     Utils.reset()
     Runner.reset()
 
-    log.verbose(Log.ORANGE + f"create_test_script {cg.flags.path}\n")
-    log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    log.verbose(Log.GRAY3 + "Verbose mode on\n")
-    log.debug(Log.GRAY3 + "Debug mode on\n")
-    log.trace(Log.GRAY3 + "Trace mode on\n")
+    cg.log.verbose(Log.ORANGE + f"Script {cg.flags.path}\n")
+    cg.log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    cg.log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    cg.log.debug(Log.GRAY3 + "Debug mode on\n")
+    cg.log.trace(Log.GRAY3 + "Trace mode on\n")
 
     # ------------------------------------
+    # Load the root script, which will transitively load everything else.
 
-    time_a1 = time.perf_counter()
-
-    script = Script.load(file = cg.flags.file, is_repo = True, is_dummy = False)
-    cg.script = script
-
-    time_b1 = time.perf_counter()
-
-    cg.log.verbose(Log.DBLUE + f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
+    with timeit("Loading scripts"):
+        cg.script = Script.load(file = cg.flags.file, is_repo = True, is_dummy = False)
 
     # ------------------------------------
+    # Build everything
 
-    cg.project.build()
-    cg.project.stats()
-    cg.project.passfail()
+    with timeit("Build"):
+        result = cg.project.build()
 
-    log._flush()
-    return cg.project._result
+    # ------------------------------------
+    # Print build stats
+
+    task_count = 0
+    for repo in cg.project._repos:
+        task_count += len(list(repo.yield_tasks()))
+
+    # FIXME all the stats should move to Project
+    cg.log.verbose(Log.DBLUE + f"Tasks created:    {task_count}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks enabled:    {Runner.tasks_enabled}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks started:    {Runner.tasks_started}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks finished:   {Runner.tasks_finished}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks broken:     {Runner.tasks_broken}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
+    cg.log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
+    cg.log.verbose(Log.DBLUE + f"Mtime calls:      {cg.stats.stat_calls}\n")
+    cg.log.verbose(Log.DBLUE + f"Hash calls:       {cg.stats.hash_calls}\n")
+    cg.log.verbose(Log.DBLUE + f"Hash bytes:       {cg.stats.hash_bytes}\n")
+    cg.log.verbose(Log.DBLUE + f"Hash time:        {cg.stats.hash_time:8.6f}\n")
+
+    #log.verbose("Rebuild reasons:\n")
+    #for reason, count in project._build_reasons.items():
+    #    log.verbose(f"{reason:17} {count}\n")
+
+    # ------------------------------------
+    # Print pass/fail
+
+    if cg.project._runner.tasks_failed or cg.project._runner.tasks_broken:
+        cg.log.error("BUILD FAILED\n")
+    elif Runner.tasks_finished:
+        cg.log.info(Log.GREEN + "BUILD PASSED\n")
+    else:
+        cg.log.info(Log.BLUE + "BUILD CLEAN\n")
+
+    # ------------------------------------
+    # Done
+
+    cg.log._flush()
+
+    return result
 
 # ----------------------------------------
 
