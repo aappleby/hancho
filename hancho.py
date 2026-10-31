@@ -1310,32 +1310,52 @@ class Expander(abc.Mapping):
 
         old_var = None
         try:
+
             self.trace_start("expand", var)
             while isinstance(var, str) and var != old_var:
                 old_var = var
                 blocks = self._split_text(var)
 
+                # Stop if we have nothing in the string to expand.
                 if len(blocks) == 0 or (len(blocks) == 1 and isinstance(blocks[0], self.Literal)):
-                    # Stop if we have nothing in the string to expand.
                     break
 
+                # If there's only one macro block, eval it.
                 if len(blocks) == 1 and isinstance(block := blocks[0], Expander.Macro):
-                    # If there's only one macro block, eval it.
-                    var = self.eval(block)
-                    if isinstance(var, Expander):
-                        var = var.expand_scope
-                else:
-                    # Otherwise we're doing a template expansion.
-                    for i, b in enumerate(blocks):
-                        if isinstance(b, Expander.Macro):
-                            # FIXME Note that we want to _expand_ the macro and not _eval_ the
-                            # macro - the former keps expanding and eval'ing until we reach a fixed
-                            # point, the latter only does one pass. Otherwise we could accidentally
-                            # put templates from a sub-Dict into the parent Dict's expansion where
-                            # they would not be expandable. We need a test case for this.
+                    #var = self.eval(block)
 
-                            blocks[i] = self.expand(b)
-                    var = "".join(Utils.stringify(b) for b in blocks)
+                    # Bail out if we've done too many evals already.
+                    old_evals = cg.stats.expand_evals
+                    if old_evals >= self.MAX_EVALS:
+                        raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {block!r}")
+                    cg.stats.expand_evals = old_evals + 1
+
+                    result = block
+                    try:
+                        self.trace_start("eval", block)
+                        result = eval(block[1:-1], {}, self)
+                    except RecursionError:
+                        raise
+                    except Exception:
+                        pass
+                    finally:
+                        self.trace_end("eval", block, result)
+
+                    var = result.expand_scope if isinstance(result, Expander) else result
+                    continue
+
+                # Otherwise we're doing a template expansion.
+                # FIXME Note that we want to _expand_ the macro and not _eval_ the
+                # macro - the former keps expanding and eval'ing until we reach a fixed
+                # point, the latter only does one pass. Otherwise we could accidentally
+                # put partially-expanded templates from a sub-Dict into the parent Dict's expansion
+                # where they would not be expandable. We need a test case for this.
+
+                for i, block in enumerate(blocks):
+                    if isinstance(block, Expander.Macro):
+                        blocks[i] = self.expand(block)
+                var = "".join(Utils.stringify(block) for block in blocks)
+
         finally:
             self.trace_end("expand", old_var, var)
             cg.stats.expand_depth = old_depth
@@ -1345,25 +1365,6 @@ class Expander(abc.Mapping):
 
         return var
 
-    def eval(self, var : str) -> Any:
-        # Bail out if we've done too many evals already.
-        old_evals = cg.stats.expand_evals
-        if old_evals >= self.MAX_EVALS:
-            raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {var!r}")
-        cg.stats.expand_evals = old_evals + 1
-
-        result = var
-        try:
-            self.trace_start("eval", var)
-            result = eval(var[1:-1], {}, self)
-        except RecursionError:
-            raise
-        except Exception:
-            pass
-        finally:
-            self.trace_end("eval", var, result)
-
-        return result
 
     # ==============================================================================================
 
