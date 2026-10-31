@@ -2760,13 +2760,25 @@ def main():
 
     # ------------------------------------
 
-    cg.project = Project(_up = cg.flags)
-    cg.repo = Repo(_up = cg.project)
-    cg.project._repos.append(cg.repo)
-
     time_a1 = time.perf_counter()
-    cg.script = Script(_up = cg.repo)
-    cg.script.exec()
+
+    cg.project = Project(_up = cg.flags)
+
+    #def load2(is_repo, file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
+
+    #cg.repo = Repo(_up = cg.project)
+    #cg.project._repos.append(cg.repo)
+    #new_script = Script(*args, _up  = cg.repo, file = file, path = path, root = root, **kwargs)
+    #new_script.exec()
+
+
+    cg.script = load2(True, cg.flags.file)
+    #cg.repo = Repo(_up = cg.project)
+    #cg.project._repos.append(cg.repo)
+    #cg.script = Script(_up = cg.repo)
+    #cg.script.exec()
+
+
     time_b1 = time.perf_counter()
 
     cg.log.verbose(Log.DBLUE + f"Loading took {time_b1 - time_a1:8.6f} seconds\n")
@@ -2812,7 +2824,6 @@ cg.stats = Stats(
     expand_evals = 0
 )
 
-
 def check_dupe(script):
     dedupe_key = Dumper.any_to_key(script)
     if dupe := cg.project._dedupe.get(dedupe_key, None):
@@ -2821,19 +2832,9 @@ def check_dupe(script):
     else:
         return None
 
-
 def load2(is_repo, file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
-
     new_repo = Repo(_up = cg.project) if is_repo else cg.repo
-
-    new_script = Script(
-        *args,
-        _up  = new_repo,
-        file = file,
-        path = path,
-        root = root,
-        **kwargs
-    )
+    new_script = Script(*args, _up  = new_repo, file = file, path = path, root = root, **kwargs)
 
     if dupe := check_dupe(new_script):
         return dupe
@@ -2843,6 +2844,7 @@ def load2(is_repo, file, *args, path = "{resolve(file)}", root = "{dirname(path)
         cg.project._repos.append(new_repo)
 
     new_script.exec()
+
     return new_script
 
 def load(file, *args, path = "{resolve(file)}", root = "{dirname(path)}", **kwargs):
