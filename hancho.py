@@ -100,7 +100,7 @@ base_types   = (int, float, complex, bool, str, tuple, types.NoneType, type)
 # These types don't get dumped because they're not really dumpable.
 opaque_types = (types.GeneratorType, type, contextvars.Context, asyncio.Task, types.ModuleType)
 
-default_folds = ["_repos", "_project", "_dedupe", "_scripts"]
+default_folds = ["_dedupe", "_repos", "_scripts", "_tasks"]
 
 # endregion
 # ==================================================================================================
@@ -131,11 +131,6 @@ class CVGlobals:
         return self._cv.get()[key]
 
 cg = CVGlobals()
-
-cg.stat_calls = 0
-cg.hash_calls = 0
-cg.hash_bytes = 0
-cg.hash_time  = 0
 
 # endregion
 # ==================================================================================================
@@ -389,8 +384,8 @@ class Utils:
     @staticmethod
     def instance_tag(obj):
         result = ""
-        if hasattr(obj, "_name") and obj._name is not None:
-            result += obj._name
+        if hasattr(obj, "_id") and obj._id is not None:
+            result += obj._id
             result += ":"
         result += type(obj).__name__
         result += "@"
@@ -907,9 +902,14 @@ class Path:
 # FIXME this breaks if we do Scope(abc.Mapping)?
 
 class Scope:
-    def __init__(self, *, _name, _up):
-        if _name is not None:
-            self.__dict__['_name'] = _name
+    def __init__(self, *, _id, _up):
+        # If a scope does not _contain_ a variable but it's _id matches the variable, we return
+        # the scope itself. This is for stuff like "{script.root}" - the script is not _named_
+        # 'script', but its id is 'script' so it matches.
+        if _id is not None:
+            self.__dict__['_id'] = _id
+
+        # If a scope does _not_ contain a variable, we look for it in _up next.
         if _up is not None:
             self.__dict__['_up'] = _up
 
@@ -938,7 +938,7 @@ class Scope:
 #    def find(self, key : str, default = Sentinel.MISSING) -> Any:
 #        cursor = self
 #        while cursor is not None:
-#            if cursor.__dict__.get("_name", Sentinel.MISSING) == key:
+#            if cursor.__dict__.get("_id", Sentinel.MISSING) == key:
 #                return cursor
 #            if key in cursor.__dict__:
 #                return cursor.__dict__[key]
@@ -973,7 +973,7 @@ class Dict(Scope, abc.MutableMapping):
 
     def __init__(self, *args, **kwargs):
         super().__init__(
-            _name = kwargs.pop('_name', None),
+            _id = kwargs.pop('_id', None),
             _up = kwargs.pop('_up', None)
         )
         for rhs in [*args, kwargs]:
@@ -1011,7 +1011,7 @@ class Tool(Dict):
 
 class Flags(Scope):
     def __init__(self, *, _up):
-        super().__init__(_name = "flags", _up = _up)
+        super().__init__(_id = "flags", _up = _up)
 
         self.name        = "<flags>"
         self.file        = "build.hancho"
@@ -1204,7 +1204,7 @@ class Expander(abc.Mapping):
             cursor = self.expand_scope
 
             while cursor is not None:
-                if cursor.get("_name", Sentinel.MISSING) == key:
+                if cursor.get("_id", Sentinel.MISSING) == key:
                     result = cursor
                     break
                 if key in cursor:
@@ -1687,10 +1687,12 @@ class Dumper:
             prefix += f"{key}"
         elif isinstance(val, (ABCMeta, abc.Callable, types.ModuleType)):
             prefix += val.__name__
-        elif hasattr(val, '_name') and val._name is not None:
-            prefix += val._name
-        elif isinstance(val, abc.Mapping) and '_name' in val and val['_name'] is not None:
-            prefix += val['_name']
+        elif hasattr(val, 'name') and val.name is not None:
+            prefix += val.name
+        elif hasattr(val, '_id') and val._id is not None:
+            prefix += val._id
+        elif isinstance(val, abc.Mapping) and '_id' in val and val['_id'] is not None:
+            prefix += val['_id']
 
         if isinstance(val, type):
             prefix += ":type"
@@ -1844,7 +1846,7 @@ class Runner:
 
 class Project(Scope):
     def __init__(self, *args, _up, **kwargs):
-        super().__init__(_name = "project", _up = _up)
+        super().__init__(_id = "project", _up = _up)
         self.name    = "<project>"
         self.path    = "{flags.path}"
         self.root    = "{flags.root}"
@@ -1931,10 +1933,10 @@ class Project(Scope):
         cg.log.verbose(Log.DBLUE + f"Tasks failed:     {Runner.tasks_failed}\n")
         cg.log.verbose(Log.DBLUE + f"Tasks cancelled:  {Runner.tasks_cancelled}\n")
         cg.log.verbose(Log.DBLUE + f"Tasks skipped:    {Runner.tasks_skipped}\n")
-        cg.log.verbose(Log.DBLUE + f"Mtime calls:      {cg.stat_calls}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash calls:       {cg.hash_calls}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash bytes:       {cg.hash_bytes}\n")
-        cg.log.verbose(Log.DBLUE + f"Hash time:        {cg.hash_time:8.6f}\n")
+        cg.log.verbose(Log.DBLUE + f"Mtime calls:      {cg.stats.stat_calls}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash calls:       {cg.stats.hash_calls}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash bytes:       {cg.stats.hash_bytes}\n")
+        cg.log.verbose(Log.DBLUE + f"Hash time:        {cg.stats.hash_time:8.6f}\n")
 
         #log.verbose("Rebuild reasons:\n")
         #for reason, count in project._build_reasons.items():
@@ -1952,7 +1954,7 @@ class Project(Scope):
 # ==================================================================================================
 # region Stat
 
-class Stat:
+class FileStat:
     def __init__(self):
         self.cwd : str
         self.directory : str
@@ -1971,7 +1973,7 @@ class Stat:
 class Repo(Scope):
 
     def __init__(self, *args, _up, **kwargs):
-        super().__init__(_name = "repo", _up = _up)
+        super().__init__(_id = "repo", _up = _up)
 
         self.name         = "<repo>"
         self.file         = "{project.file}"
@@ -2047,17 +2049,17 @@ class Repo(Scope):
 
     @classmethod
     def hash_file(cls, abs_path, h = 0):
-        cg.hash_calls += 1
+        cg.stats.hash_calls += 1
         time_a = time.perf_counter()
         with open(abs_path, "rb") as f:
-            cg.hash_bytes += os.fstat(f.fileno()).st_size
+            cg.stats.hash_bytes += os.fstat(f.fileno()).st_size
             digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=16)).hexdigest()
         time_b = time.perf_counter()
-        cg.hash_time += time_b - time_a
+        cg.stats.hash_time += time_b - time_a
         return digest
 
     def get_stat(self, file : str) -> dict:
-        cg.stat_calls += 1
+        cg.stats.stat_calls += 1
 
         _hash = self.hash_file(file)
         _stat = os.stat(file)
@@ -2123,7 +2125,7 @@ class Task(Scope):
     def __init__(self, *args, **kwargs):
         # Ideally, this should be the only reference to current_script we actually need
         # (well, apart from the global load/repo/include)
-        super().__init__(_name = "task", _up = cg.script)
+        super().__init__(_id = "task", _up = cg.script)
 
         self.name        = "<task>"
         self.desc        = "<no desc>"
@@ -2243,12 +2245,9 @@ class Task(Scope):
             Runner.release(self._cores)
 
         if self._error:
-            #print("================")
             self.log_task(Log.ERROR, traceback.format_exception(self._error))
             if (self._stdout_text or self._stderr_text):
                 self.log_task(Log.ERROR, self.dump_stdout())
-            #print("================")
-            #self.log_task(Log.ERROR, traceback.format_exception(self._error))
 
         return self._out_files
 
@@ -2673,7 +2672,7 @@ class Task(Scope):
 class Script(Scope):
 
     def __init__(self : Script, *args, _up, **kwargs):
-        super().__init__(_name = "script", _up = _up)
+        super().__init__(_id = "script", _up = _up)
 
         self.name       = "<script>"
         self.file       = "{repo.file}"
@@ -2684,7 +2683,7 @@ class Script(Scope):
         self.merge(*args, **kwargs)
         Expander(scope = self).xip_collection(self.__dict__)
 
-        self.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
+        #self.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
         self._tasks      = []
 
     def dump(self, *args, **kwargs):
@@ -2702,8 +2701,14 @@ class Script(Scope):
                 code = compile(source, self.path, "exec", dont_inherit=True)
 
             with chdir(self.root), cg.update(script = self):
+
+                old_globals = dict(cg._cv.get())
+
                 exec(code, cg._cv.get())
-                Utils.merge(self, cg._cv.get())
+
+                for k, v in cg._cv.get().items():
+                    if k not in old_globals:
+                        self.__dict__[k] = v
 
             if "__builtins__" in self.__dict__:
                 del self.__dict__["__builtins__"]
@@ -2758,7 +2763,7 @@ class Builtins(Dict):
 
 builtins = Builtins(
     _up      = None,
-    _name    = "builtins",
+    _id      = "builtins",
     hancho   = sys.modules[__name__],
     log      = Log(),
     Dict     = Dict,
@@ -2817,7 +2822,7 @@ def main():
 
         cg.log.verbose(Log.ORANGE + f"repo {cg.repo.path}\n")
         with cg.log.indenter(Log.VERBOSE, Log.ORANGE):
-            cg.script = Script(cg.flags, _up = cg.repo)
+            cg.script = Script(_up = cg.repo)
             cg.project._dedupe[dedupe_key] = cg.script
             cg.repo._scripts.append(cg.script)
             cg.script.exec()
@@ -2854,6 +2859,12 @@ def _start():
 #endregion
 # ==================================================================================================
 # region User API
+
+class Stats(Dict):
+    pass
+
+cg.stats = Stats(stat_calls = 0, hash_calls = 0, hash_bytes = 0, hash_time  = 0)
+
 
 def load(file2, path2 = "{resolve(file)}", root2 = "{dirname(path)}", *args, **kwargs):
     ex2 = Expander(scope = cg.script, file = file2, path = path2, root = root2)
