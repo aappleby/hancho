@@ -18,7 +18,7 @@ class TestTemplates(unittest.TestCase):
             stdout = sys.stdout,
             extra_flags = [
                 "--log_level=critical",
-                #"--log_level=trace",
+                #"--log_level=debug",
                 "--log_wrap=True",
                 "--max_errors=999",
                 *args
@@ -89,7 +89,7 @@ class TestTemplates(unittest.TestCase):
 
         d.big_array = [f"{{name}}_{i:04d}" for i in range(count)]
 
-        expanded = d.expand_collection("hello {big_array}")
+        expanded = d.expand("hello {big_array}")
         expected = " ".join(["hello", *(f"prefix_{i:04d}" for i in range(count))])
         self.assertEqual(expanded, expected)
 
@@ -259,7 +259,7 @@ class TestTemplates(unittest.TestCase):
     def test_expand_nested_list(self):
         d = hancho.Dict(a = 1, b = 2, c = 3)
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
-        r = d.expand_collection(v)
+        r = d.xip(v)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self):

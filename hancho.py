@@ -913,13 +913,12 @@ class Scope:
         if _up is not None:
             self.__dict__['_up'] = _up
 
-
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var):
         return Expander(scope = self).expand(var)
 
-    def expand_collection(self, var):
-        return Expander(scope = self).expand_collection(var)
+    def xip(self, var):
+        return Expander(scope = self).xip(var)
 
     # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
     # only keys that were already in lhs. For example, if you have a Dict that contains
@@ -1253,50 +1252,24 @@ class Expander(abc.Mapping):
 
     # ==============================================================================================
 
-    def xip_collection(self, var : abc.Collection) -> Any:
+    def xip(self, var : abc.Collection) -> Any:
         inplace = True
         result : Any = var if inplace else type(var)()
         if Utils.is_mut_sequence(var):
             for i, v in enumerate(result):
-                result[i] = self.xip_collection(v)
+                result[i] = self.xip(v)
         elif Utils.is_mut_mapping(var):
             for k, v in result.items():
-                result[k] = self.xip_collection(v)
+                result[k] = self.xip(v)
         elif Utils.is_mut_set(var):
             temp = list(var)
             result.clear()
             for v in temp:
-                result.add(self.xip_collection(v))
+                result.add(self.xip(v))
         elif isinstance(var, str):
             result = self.expand(var)
 
         return result
-
-    def expand_collection(self, var : abc.Collection) -> Any:
-        inplace = False
-        result : Any = var
-
-
-        if Utils.is_mut_mapping(var):
-            result : Any = var if inplace else type(var)()
-            for k, v in var.items():
-                result[k] = self.expand_collection(v)
-            return result
-        elif Utils.is_mut_sequence(var):
-            result : Any = var if inplace else type(var)()
-            for v in var:
-                result.append(self.expand_collection(v))
-            return result
-        elif Utils.is_mut_set(var):
-            result : Any = var if inplace else type(var)()
-            for v in enumerate(var):
-                result.add(self.expand_collection(v))
-            return result
-        elif isinstance(var, str):
-            result = self.expand(var)
-            return result
-        else:
-            return result
 
     # ==============================================================================================
     # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
@@ -1866,7 +1839,7 @@ class Project(Scope):
         self.merge(*args, **kwargs)
 
         ex = Expander(scope = self)
-        ex.xip_collection(self)
+        ex.xip(self)
 
         self._real_filenames = set()
         self._dedupe = Dict()
@@ -1996,7 +1969,7 @@ class Repo(Scope):
         self.comp_db_path = "{join(build_root, 'compile_commands.json')}"
 
         self.merge(*args, **kwargs)
-        Expander(scope = self).xip_collection(self.__dict__)
+        Expander(scope = self).xip(self.__dict__)
 
         self._scripts = []
         self._stat_db : dict[str, dict] = {}
@@ -2191,7 +2164,7 @@ class Task(Scope):
         ex = Expander(scope = self)
         for k, v in self.__dict__.items():
             if k.startswith("in_"):
-                ex.xip_collection(v)
+                ex.xip(v)
 
         # ----------------------------------------
         # Add all input fields that are tasks to _input_tasks so we can await them later.
@@ -2430,7 +2403,7 @@ class Task(Scope):
                 files : list[str] = list(yield_files(file_tree))
 
                 if files:
-                    ex.xip_collection(files)
+                    ex.xip(files)
                     files = self.fix_paths(field_name, files, script_root, build_root)
                     setattr(self, field_name, files[0] if len(files) == 1 else files)
 
@@ -2451,7 +2424,7 @@ class Task(Scope):
         # a context, all other tasks using the shared data will get incorrectly-expanded values
 
         if isinstance(self.command, list):
-            ex.xip_collection(self.command)
+            ex.xip(self.command)
         elif isinstance(self.command, str):
             self.command = ex.expand(self.command)
         elif not isinstance(self.command, abc.Callable):
@@ -2691,7 +2664,7 @@ class Script(Scope):
         self.build_root = "{join(repo.build_root, relpath(root, repo.root))}"
 
         self.merge(*args, **kwargs)
-        Expander(scope = self).xip_collection(self.__dict__)
+        Expander(scope = self).xip(self.__dict__)
 
         #self.__spec__    = None # The Python module loading machinery looks for this field, but it can be None.
         self._tasks      = []
