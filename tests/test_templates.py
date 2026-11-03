@@ -12,9 +12,9 @@ class TestTemplates(unittest.TestCase):
 
     def setUp(self, *args):
         self.script = hancho.create_test_script(
-            name   = "TestTemplates",
-            file   =  __file__,
-            root   = os.getcwd(),
+            raw_name = "TestTemplates",
+            raw_file = __file__,
+            raw_root = os.getcwd(),
             stdout = sys.stdout,
             extra_flags = [
                 "--log_level=critical",

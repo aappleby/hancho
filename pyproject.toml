@@ -9,15 +9,34 @@ exclude = ["*.hancho"]
 
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "ISC"]
-ignore = ["E501", "E701"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "ISC", "ANN"]
+ignore = ["E501", "E701", "ANN401"]
+#ignore = ["E501", "E701"]
 
 [tool.pyright]
 exclude = ["*.hancho"]
-reportUnknownMemberType = "none"
-reportUnknownVariableType = "none"
-reportUnknownArgumentType = "none"
-reportUnknownParameterType = "none"
-reportUnknownLambdaType = "none"
-reportMissingTypeArgument = "none"
+#reportUnknownMemberType = "none"
+#reportUnknownVariableType = "none"
+#reportUnknownArgumentType = "none"
+#reportUnknownParameterType = "none"
+#reportUnknownLambdaType = "none"
+#reportMissingTypeArgument = "none"
 ignore = ["**/*.hancho"]
+
+
+#//  "python.analysis.typeCheckingMode": "strict",
+#//  "python.analysis.inlayHints.variableTypes": true,
+#//  "python.analysis.inlayHints.functionReturnTypes": true,
+#//  "python.analysis.inlayHints.callArgumentNames": "all",
+#//  "python.analysis.diagnosticMode": "workspace",
+
+#//  "python.analysis.diagnosticSeverityOverrides": {
+#//      "reportUnknownMemberType": "none",
+#//      "reportUnknownVariableType": "none",
+#//      "reportUnknownArgumentType": "none",
+#//      "reportUnknownParameterType": "none",
+#//      "reportUnknownLambdaType": "none",
+#//      "reportMissingTypeArgument": "none",
+#//      "reportPossiblyUnboundVariable": "none",
+#//      "reportMissingImports": "none", // because build.hanchos complain about import hancho
+#//  },

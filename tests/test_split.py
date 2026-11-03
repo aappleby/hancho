@@ -9,7 +9,9 @@ import hancho
 # --------------------------------------------------------------------------------------------------
 
 def split(template):
-    return hancho.Expander._split_text(template)
+    out_blocks = hancho.Expander.Blocks()
+    hancho.Expander.split_text(template, out_blocks)
+    return out_blocks
 
 # --------------------------------------------------------------------------------------------------
 
