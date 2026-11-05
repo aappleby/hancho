@@ -28,11 +28,11 @@ class TestApp(unittest.TestCase):
             "--log_width=9999",
         ]
 
+#def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Script:
+
         self.stdout = io.StringIO()
-        self.script: hancho.Script = hancho.create_test_script(
-            raw_name   = "TestApp",
-            raw_file   = __file__,
-            raw_root   = os.getcwd(),
+        self.script = hancho.create_test_script(
+            in_file = __file__,
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
@@ -68,31 +68,31 @@ class TestApp(unittest.TestCase):
 
     def test_verbosities(self) -> None:
         self.setUp("--log_level=trace")
-        self.assertEqual("trace", cvg.log.log_level)
+        self.assertEqual("trace", cvg.log.level)
         self.assertEqual(cvg.log.TRACE, cvg.log._level_int)
 
         self.setUp("--log_level=debug")
-        self.assertEqual("debug", cvg.log.log_level)
+        self.assertEqual("debug", cvg.log.level)
         self.assertEqual(cvg.log.DEBUG, cvg.log._level_int)
 
         self.setUp("--log_level=info")
-        self.assertEqual("info", cvg.log.log_level)
+        self.assertEqual("info", cvg.log.level)
         self.assertEqual(cvg.log.INFO, cvg.log._level_int)
 
         self.setUp("--log_level=warning")
-        self.assertEqual("warning", cvg.log.log_level)
+        self.assertEqual("warning", cvg.log.level)
         self.assertEqual(cvg.log.WARNING, cvg.log._level_int)
 
         self.setUp("--log_level=error")
-        self.assertEqual("error", cvg.log.log_level)
+        self.assertEqual("error", cvg.log.level)
         self.assertEqual(cvg.log.ERROR, cvg.log._level_int)
 
         self.setUp("--log_level=critical")
-        self.assertEqual("critical", cvg.log.log_level)
+        self.assertEqual("critical", cvg.log.level)
         self.assertEqual(cvg.log.CRITICAL, cvg.log._level_int)
 
         self.setUp("--log_level=quiet")
-        self.assertEqual("quiet", cvg.log.log_level)
+        self.assertEqual("quiet", cvg.log.level)
         self.assertEqual(cvg.log.QUIET, cvg.log._level_int)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger

@@ -5,5 +5,5 @@ tools_fpga  = hancho.load("tools/tools_fpga.hancho")
 tools_riscv = hancho.load("tools/tools_riscv.hancho")
 tools_wasm  = hancho.load("tools/tools_wasm.hancho")
 
-#examples = hancho.load("examples/examples.hancho")
+examples = hancho.load("examples/examples.hancho")
 

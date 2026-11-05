@@ -52,9 +52,7 @@ class TestTasks(unittest.TestCase):
 
     def reset(self, *args : Any) -> None:
         self.script: hancho.Script = hancho.create_test_script(
-            raw_file =  __file__,
-            raw_name = "TestTasks",
-            raw_root = os.getcwd(),
+            in_file = __file__,
             stdout = sys.stdout,
             extra_flags = [
                 "--log_level=critical",
@@ -468,7 +466,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
-    def test_lambda_command(self):
+    def test_lambda_command(self) -> None:
         hancho.Task(
             name="result.txt",
             desc="The 'command' field of rules should be OK handling a lambda",
@@ -480,8 +478,8 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(os.path.exists("build/result.txt"))
 
-    def test_sync_callback(self):
-        def sync_callback(task):
+    def test_sync_callback(self) -> None:
+        def sync_callback(task : hancho.Task) -> None:
             time.sleep(0.1)
             force_touch(task.out_file)
 
@@ -490,8 +488,8 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/test_sync_callback.txt").exists())
 
-    def test_sync_callback_raises(self):
-        def sync_callback_raises(_):
+    def test_sync_callback_raises(self) -> None:
+        def sync_callback_raises(_ : hancho.Task) -> None:
             time.sleep(0.1)
             raise ValueError("I do not like value.")
 
@@ -500,8 +498,8 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_sync_callback_raises.txt").exists())
 
-    def test_async_callback(self):
-        async def async_callback(task):
+    def test_async_callback(self) -> None:
+        async def async_callback(task : hancho.Task) -> None:
             await asyncio.sleep(0.1)
             force_touch(task.out_file)
 
@@ -510,8 +508,8 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/test_async_callback.txt").exists())
 
-    def test_async_callback_raises(self):
-        async def async_callback_raises(_):
+    def test_async_callback_raises(self) -> None:
+        async def async_callback_raises(_ : hancho.Task) -> None:
             await asyncio.sleep(0.1)
             raise ValueError("I do not like value.")
 
@@ -520,7 +518,7 @@ class TestTasks(unittest.TestCase):
         self.assertIsInstance(task._error, ValueError)
         self.assertFalse(Path("build/test_async_callback_raises.txt").exists())
 
-    def test_cancellation(self):
+    def test_cancellation(self) -> None:
         # A task that receives a cancellation exception should not run.
         task_that_fails = hancho.Task(
             desc="task that fails",
@@ -555,7 +553,7 @@ class TestTasks(unittest.TestCase):
         self.assertFalse(os.path.exists("build/fail_result.txt"))
         self.assertFalse(os.path.exists("build/should_not_be_created.txt"))
 
-    def test_no_mixed_commands(self):
+    def test_no_mixed_commands(self) -> None:
         bad_task = hancho.Task(
             command = [
                 "echo test_no_mixed_commands",
@@ -566,13 +564,16 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
 
-    def test_task_creates_task(self):
+    def test_task_creates_task(self) -> None:
         # Tasks using callbacks can create new tasks when they run.
-        def callback(task):
-            hancho.Task(command = lambda task : force_touch(task.out_obj), in_src=[], out_obj="dummy.txt")
-            return []
 
-        hancho.Task(command=callback, in_src=[], out_obj=[])
+        def callback2(task : hancho.Task) -> None:
+            force_touch(task.out_obj)
+
+        def callback1(_ : hancho.Task) -> None:
+            hancho.Task(command = callback2, in_src=[], out_obj="dummy.txt")
+
+        hancho.Task(command=callback1, in_src=[], out_obj=[])
 
         self.assertFalse(Path("build/dummy.txt").exists())
         self.run_tasks(0)
@@ -580,7 +581,7 @@ class TestTasks(unittest.TestCase):
 
     # This is really slow on Windows for some reason - takes 10 secondss.
     @unittest.skipUnless(os.name == "posix", "requires Linux")
-    def test_tons_of_tasks(self):
+    def test_tons_of_tasks(self) -> None:
         # We should be able to queue up 1000+ tasks at once.
         for i in range(1000):
             hancho.Task(
@@ -595,7 +596,7 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(1000, len(glob.glob("build/dummy*.txt")))
 
     # This one takes about a second on Windows
-    def test_jobs(self):
+    def test_jobs(self) -> None:
         # We should be able to dispatch tasks that require various numbers of jobs/cores.
         # Queues up 100 tasks that use random numbers of cores, then a "Job Hog" that uses all cores, then
         # another batch of 100 tasks that use random numbers of cores.
@@ -632,7 +633,7 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertTrue(Path("build/slow_result.txt").exists())
 
-    def test_dry_run(self):
+    def test_dry_run(self) -> None:
         self.reset("--build_dry=True")
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
@@ -647,8 +648,8 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(0)
         self.assertFalse(Path("build").exists())
 
-    def test_dependency_skipped(self):
-        def run():
+    def test_dependency_skipped(self) -> None:
+        def run() -> tuple[hancho.Task, hancho.Task]:
             self.reset("--max_jobs=1")
             task1 = hancho.Task(
                 name="task1",

@@ -52,6 +52,7 @@ from itertools import product
 from types import CodeType, FunctionType, GeneratorType, ModuleType, NoneType
 from typing import (
     IO,
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Concatenate,
@@ -92,10 +93,12 @@ def dprint(*args : Any, **kwargs : Any) -> None:
 # c : list[str] = ["bar"]
 # d : tree[str] = c
 
-type container[T] = abc.Sequence[T] | abc.Set[T] | abc.Mapping[str, T]
 # type inference doesnt' like this
+#type container[T] = abc.Sequence[T] | abc.Set[T] | abc.Mapping[str, T]
 #type branch[LEAF] = LEAF | container[branch[LEAF]]
 #type tree[LEAF]   = container[branch[LEAF]]
+
+# but this is OK
 type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
 type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
 
@@ -104,6 +107,8 @@ type item[T] = tuple[int | str | None, T]
 type command_type = str | list[str] | task_callback | None
 
 type dump_key = str | int | None
+
+type up_type = ScopeBase | None
 
 # These types don't need a type annotation when dumped.
 base_types: tuple[type, ...] = (int, float, complex, bool, str, tuple, NoneType, type)
@@ -131,47 +136,6 @@ def check(cls: Any, obj: object) -> Any:
     if not isinstance(obj, cls):
         raise TypeError(f"expected {cls}, got {type(obj).__name__}")
     return obj
-
-# endregion
-# ==================================================================================================
-# region CVGlobals
-
-class CVGlobals:
-    """A 'globals()'-type object stored in a contextvar. All modifications replace its entire
-    contents, so that if something is hold a reference to an old global scope it doesn't get
-    modified indirectly."""
-
-    def __init__(self) -> None:
-        object.__setattr__(self, "_cv", contextvars.ContextVar("CVGlobals"))
-
-        # These are just here so we get some type checking on the things that are usually in cvg.
-        self.builtins : Builtins
-        self.flags : Flags
-        self.hancho : ModuleType
-        self.log : Log
-        self.project : Project
-        self.repo : Repo
-        self.script : Script
-        self.stats : Stats
-
-        self._cv.set({})
-
-    def update(self, *args : Any, **kwargs : Any) -> contextvars.Token:
-        new_dict: dict[Any, Any] = dict(self._cv.get())
-        for d in [*args, kwargs]:
-            new_dict |= d
-        return self._cv.set(new_dict)
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        #new_dict = dict(self._cv.get()) | {key:val}
-        ##new_dict[key] = val
-        #return self._cv.set(new_dict)
-        self._cv.get()[key] = val
-
-    def __getattr__(self, key : str) -> Any:
-        return self._cv.get()[key]
-
-cvg = CVGlobals()
 
 # endregion
 # ==================================================================================================
@@ -236,7 +200,9 @@ class Utils:
             for v in branch:
                 yield from Utils.yield_leaves(v)
         elif Utils.is_mapping(branch):
-            for v in branch.values():
+            v2 = list(branch.values())
+            pass
+            for v in v2:
                 yield from Utils.yield_leaves(v)
         else:
             yield cast(T, branch)
@@ -299,25 +265,6 @@ class Utils:
         elif Utils.is_sequence(variant) or Utils.is_set(variant):
             for v2 in variant:
                 yield from Utils.yield_unique_values(v2, seen)
-        else:
-            yield variant
-
-    @staticmethod
-    def yield_public_values(variant : tree[Any], seen : set[Any] | None = None) -> Any:
-        if seen is None: seen = set()
-
-        if id(variant) in seen:
-            return
-        elif not isinstance(variant, base_types):
-            seen.add(id(variant))
-
-        if Utils.is_mapping(variant):
-            for k, v  in variant.items():
-                if is_public(k):
-                    yield from Utils.yield_public_values(v, seen)
-        elif Utils.is_sequence(variant) or Utils.is_set(variant):
-            for v in variant:
-                yield from Utils.yield_public_values(v, seen)
         else:
             yield variant
 
@@ -441,9 +388,10 @@ class Utils:
     @staticmethod
     def instance_tag(obj : Any) -> str:
         result : str = ""
-        if hasattr(obj, "_self") and obj._self is not None:
-            result += obj._self
+        if isinstance(obj, ScopeBase):
+            result += obj.self_()
             result += ":"
+
         result += type(obj).__name__
         result += "@"
         result += Utils.hex_tag(obj)
@@ -540,56 +488,287 @@ class Utils:
 
     @staticmethod
     def merge(
-        lhs: object|abc.Mapping[str,Any],
-        rhs: object|abc.Mapping[str,Any],
+        lhs : dict,
+        rhs : dict,
         *,
-        merge_private: bool = False,
         merge_mappings: bool = True,
         merge_sequences: bool = True,
         merge_sets: bool = True,
         keep_lhs: bool = True,
         keep_rhs: bool = True,
     ) -> Any:
-        if rhs is None:
-            return lhs
+        assert type(lhs) is dict
+        assert type(rhs) is dict
 
-        ldict:abc.Mapping[str,Any] = lhs if isinstance(lhs, dict) else lhs.__dict__
-        rdict:abc.Mapping[str,Any] = rhs if isinstance(rhs, dict) else rhs.__dict__
-        lkeys:list[str] = [k for k in ldict if is_public(k) or merge_private]
-        rkeys:list[str] = [k for k in rdict if is_public(k) or merge_private]
+        lkeys = lhs.keys()
+        rkeys = rhs.keys()
 
         # Prune lhs keys if needed
         for key in (k for k in lkeys if k not in rkeys and not keep_lhs):
-            del ldict[key]
+            del lhs[key]
 
         # Merge all lhs+rhs pairs
         for key in (k for k in lkeys if k in rkeys):
 
-            lhs2:Any = ldict.get(key)
-            rhs2:Any = rdict.get(key)
+            lhs2:Any = lhs.get(key)
+            rhs2:Any = rhs.get(key)
 
             if lhs2 is rhs2:
                 pass
             elif Utils.is_mut_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_mappings:
+                if not isinstance(lhs2, dict):
+                    lhs2 = lhs2.__dict__
+                if not isinstance(rhs2, dict):
+                    rhs2 = rhs2.__dict__
                 Utils.merge(lhs2, rhs2)
             elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
-                ldict[key] = [*lhs2, *rhs2]
+                lhs[key] = [*lhs2, *rhs2]
             elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_sets:
-                ldict[key] = lhs2 | rhs2
+                lhs[key] = lhs2 | rhs2
             elif rhs2 is not None:
-                ldict[key] = rhs2
+                lhs[key] = rhs2
 
         # Save rhs keys if needed
         for key in (k for k in rkeys if k not in lkeys and keep_rhs):
-            ldict[key] = rdict[key]
+            lhs[key] = rhs[key]
 
         return lhs
 
 # endregion
 # ==================================================================================================
+# region Scope
+
+# A Scope is just some mapping-like object that can be used in template expansion.
+# Note that it only exposes _public_ fields through iter/len
+
+# FIXME this breaks if we do Scope(abc.Mapping)?
+
+class ScopeBase:
+    def __init__(self, self_ : str, up_ : up_type, /) -> None:
+        # The __self field is the name of _this_ scope while inside a template.
+        # This is for stuff like "{script.repo_root}" - the script is not _named_ 'script', but its
+        # __self is 'script' so it matches.
+
+        # If a scope does _not_ contain a variable, we look for it in up next.
+
+        self.__self : str
+        self.__up : up_type
+        self.__public : dict
+        self.__private : dict
+
+        prefix = f"_{__class__.__name__}"
+        super().__setattr__(prefix + "__self",    self_)
+        super().__setattr__(prefix + "__up",      up_)
+        super().__setattr__(prefix + "__public",  {})
+        super().__setattr__(prefix + "__private", {})
+
+        # this doesn't work if a subclass redefines __setattr__
+        #self.__self    = self_
+        #self.__up      = up_
+        #self.__public  = {}
+        #self.__private = {}
+
+
+    def self_(self) -> str:
+        return self.__self
+
+    def up_(self) -> up_type:
+        return self.__up
+
+    def public_(self) -> dict:
+        return self.__public
+
+    def private_(self) -> dict:
+        return self.__private
+
+    def _get(self, key : str, default : Any | None = Sentinel.MISSING) -> Any | None:
+        if not isinstance(key, str) or key.startswith("__"):
+            raise KeyError(key)
+
+        if key.startswith(f"_{__class__.__name__}__"):
+            return self.__dict__[key]
+        elif key.startswith('_'):
+            return self.__private[key]
+        elif key in self.__public:
+            return self.__public[key]
+        elif default is Sentinel.MISSING:
+            raise KeyError(key)
+        else:
+            return default
+
+    def _set(self, key : Any, val : Any) -> None:
+        if not isinstance(key, str) or key.startswith("__"):
+            raise KeyError(key)
+
+        if key.startswith(f"_{__class__.__name__}__"):
+            self.__dict__[key] = val
+        elif key.startswith('_'):
+            self.__private[key] = val
+        else:
+            self.__public[key] = val
+
+
+
+
+class Scope(ScopeBase):
+    def __init__(self, self_ : str, up_ : up_type, /) -> None:
+        super().__init__(self_, up_)
+
+    def xip2(self) -> None:
+        Expander(self).xip(self.public_())
+
+    # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
+    def expand(self, var : str) -> Any:
+        return Expander(self).expand(var)
+
+    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+    # only keys that were already in lhs. For example, if you have a Dict that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+    #def fill(self, *args : Any, **kwargs : Any) -> None:
+    #    for rhs in (*args, kwargs):
+    #        Utils.merge(self.__dict__, rhs, keep_rhs = False)
+
+    def merge(self, *args : dict[str, Any], **kwargs : Any) -> None:
+        for rhs in (*args, kwargs):
+            if isinstance(rhs, Scope):
+                Utils.merge(self.public_(), rhs.public_())
+            else:
+                Utils.merge(self.public_(), rhs)
+
+    # ----------------------------------------
+
+    # We don't want the type checker to see this or it will stop type-checking attributes
+    if not TYPE_CHECKING:
+        def __getattr__(self, key : Any) -> Any:
+            try:
+                return self._get(key)
+            except KeyError as err:
+                raise AttributeError(key) from err
+
+    def __setattr__(self, key : Any, val : Any) -> None:
+        try:
+            return self._set(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    # ----------------------------------------
+    # Delegate the mapping protocol to our public dict.
+
+    def __iter__(self) -> abc.Iterator[Any]:
+        yield from self.public_().keys()
+
+    def __len__(self) -> int:
+        return len(self.public_())
+
+    def __contains__(self, key : Any) -> bool:
+        return (key in self.public_())
+
+    def __getitem__(self, key : Any) -> Any:
+        return self.public_()[key]
+
+    def __setitem__(self, key : Any, val : Any) -> None:
+        if not isinstance(key, str) or key.startswith("_"):
+            print("tried to set a non-public key on a scope via the mapping interface")
+            raise KeyError(key)
+        self.public_()[key] = val
+
+    def __delitem__(self, key : Any, val : Any) -> None:
+        raise AssertionError("no deleting from a scope's public?")
+        del self.public_()[key]
+
+    def keys(self) -> abc.KeysView:
+        return self.public_().keys()
+
+    def values(self) -> abc.ValuesView:
+        return self.public_().values()
+
+    def items(self) -> abc.ItemsView:
+        return self.public_().items()
+
+# endregion
+# ==================================================================================================
+# region CVGlobals
+
+class CVGlobals(ScopeBase):
+    """A 'globals()'-type object stored in a contextvar. All modifications replace its entire
+    contents, so that if something is holding a reference to an old global scope it doesn't get
+    modified indirectly."""
+
+    def __init__(self, up_ : up_type, /) -> None:
+        super().__init__("globals", up_)
+
+        self.__cv : contextvars.ContextVar[dict]
+
+        prefix = f"_{__class__.__name__}"
+        super().__setattr__(prefix + "__cv", contextvars.ContextVar("CVGlobals"))
+        self.__cv.set({})
+
+        # These are just here so we get some type checking on the things that are usually in cvg.
+        self.log      : Log     #= Sentinel.MISSING
+        self.stats    : Stats   #= Sentinel.MISSING
+        self.project  : Project #= Sentinel.MISSING
+        self.build    : Build   #= Sentinel.MISSING
+        self.runner   : Runner  #= Sentinel.MISSING
+        self.repo     : Repo    #= Sentinel.MISSING
+        self.script   : Script  #= Sentinel.MISSING
+
+    def cv_(self) -> dict:
+        return self.__cv.get()
+
+    def update(self, *args : Any, **kwargs : Any) -> contextvars.Token:
+        new_contents = {}
+        for rhs in [self.__cv.get(), *args, kwargs]:
+            Utils.merge(new_contents, rhs)
+        return self.__cv.set(new_contents) # type: ignore
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        raise AttributeError(key)
+
+    # We don't want the type checker to see this or it will stop type-checking attributes
+    if not TYPE_CHECKING:
+        def __getattr__(self, key : str) -> Any:
+            val = self.__cv.get()[key]
+            if val is Sentinel.MISSING:
+                raise AttributeError(key)
+            return val
+
+    # ----------------------------------------
+    # Delegate the mapping protocol to our public dict.
+
+    def __iter__(self) -> abc.Iterator[Any]:
+        yield from self.__cv.get().items()
+
+    def __len__(self) -> int:
+        return len(self.__cv.get())
+
+    def __contains__(self, key : Any) -> bool:
+        return (key in self.__cv.get())
+
+    def __getitem__(self, key : Any) -> Any:
+        return self.__cv.get()[key]
+
+    def __setitem__(self, key : Any, val : Any) -> None:
+        if not isinstance(key, str) or key.startswith("_"):
+            print("tried to set a non-public key on a scope via the mapping interface")
+            raise KeyError(key)
+        self.__cv.get()[key] = val
+
+    def __delitem__(self, key : Any, val : Any) -> None:
+        del self.__cv.get()[key]
+
+    def items(self) -> abc.ItemsView:
+        return self.__cv.get().items()
+
+cvg : CVGlobals
+
+# endregion
+# ==================================================================================================
 # region Log
 
-class Log:
+class Log(Scope):
 
     """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
     RED     = Utils.hex_to_ansi(0xCC6666)
@@ -625,31 +804,31 @@ class Log:
     CRITICAL = 50
     QUIET    = 60
 
-    def __init__(self, *args : Any, **kwargs : Any) -> None:
+    def __init__(self) -> None:
+        super().__init__("log", None)
+        self.level     : str
+        self.wrap      : bool
+        self.color     : bool
+        self.timestamp : bool
+        self.width     : int
+        self.stdout    : TextIO
 
-        self.log_level     = "info"
-        self.log_wrap      = False
-        self.log_color     = True
-        self.log_timestamp = True
-        self.log_width: int     = shutil.get_terminal_size().columns
-        self.log_stdout: TextIO = sys.stdout
+    def xip(self) -> None:
+        super().xip2()
 
-        for rhs in [*args, kwargs]:
-            Utils.merge(self, rhs, keep_rhs = False)
-
-        self._level_int:int     = getattr(Log, self.log_level.upper())
+        self._level_int:int     = getattr(Log, self.level.upper())
         self._time_origin:float   = time.perf_counter()
         self._indent_stack:list[str]  = []
         self._line_buffer:str   = ""
         self._match_escapes: re.Pattern[str] = re.compile(r"(\x1B.*?m)")
 
         self._stdout : TextIO
-        if isinstance(self.log_stdout, str):
-            self._stdout = open(str(self.log_stdout), "w")  # noqa: SIM115
-        elif isinstance(self.log_stdout, io.TextIOBase):
-            self._stdout = self.log_stdout
+        if isinstance(self.stdout, str):
+            self._stdout = open(str(self.stdout), "w")  # noqa: SIM115
+        elif isinstance(self.stdout, io.TextIOBase):
+            self._stdout = self.stdout
         else:
-            raise ValueError(f"Don't know how to use {self.log_stdout} as an output")
+            raise ValueError(f"Don't know how to use {self.stdout} as an output")
 
     def indent(self, ansi_color : str = RESET) -> None:
         #self._indent_stack.append(f"{ansi_color}│{Log.RESET}")
@@ -706,7 +885,7 @@ class Log:
         lines: list[str] = text.splitlines(keepends=True)
         for line in lines:
             if self._line_buffer == "":
-                self._line_buffer += f"[{time.perf_counter() - self._time_origin:8.3f}] " if self.log_timestamp else ""
+                self._line_buffer += f"[{time.perf_counter() - self._time_origin:8.3f}] " if self.timestamp else ""
                 self._line_buffer += f"│{Log.RESET} ".join([*self._indent_stack, ""])
 
             self._line_buffer += color
@@ -724,16 +903,16 @@ class Log:
         # Dumps the line buffer to stdout and then clears it.
         if self._line_buffer:
             # If we want a non-colorized log, strip color codes from the line.
-            if not self.log_color:
+            if not self.color:
                 self._line_buffer = re.sub(self._match_escapes, "", self._line_buffer)
 
             # If the line wasn't finished (because we're exiting the app), stick a newline on it.
             if self._line_buffer[-1] != "\n":
                 self._line_buffer += "\n"
 
-            if not self.log_wrap:
-                _ = self.log_width
-                self._line_buffer = self._clip_printable(self._line_buffer, self.log_width)
+            if not self.wrap:
+                _ = self.width
+                self._line_buffer = self._clip_printable(self._line_buffer, self.width)
 
             self._stdout.write(self._line_buffer)
             self._line_buffer = ""
@@ -935,9 +1114,10 @@ class Realpath(Goodpath):
 
 class Identifier(str):
     def __new__(cls, text : str) -> Self:
-        if not isinstance(text, str) or not text.isidentifier():
-            raise ValueError(f"String {text!r} is not a valid identifier")
         return super().__new__(cls, text)
+        #if not isinstance(text, str) or not text.isidentifier():
+        #    raise ValueError(f"String {text!r} is not a valid identifier")
+        #return super().__new__(cls, text)
 
 class Literal(str):
     def __new__(cls, text : str) -> Self:
@@ -974,103 +1154,42 @@ class Expression(str):
 
 # endregion
 # ==================================================================================================
-# region Scope/Dict/Tool
-
-# A Scope is just some mapping-like object that can be used in template expansion.
-# Note that it only exposes _public_ fields through iter/len
-
-# FIXME this breaks if we do Scope(abc.Mapping)?
-
-class Scope:
-    def __init__(self, *, _self : str | None, _up : object | None) -> None:
-        # The _self field is the name of _this_ scope while inside a template.
-
-        # This is for stuff like "{script.root_s}" - the script is not _named_ 'script', but its
-        # _self is 'script' so it matches.
-
-        if _self is not None:
-            self.__dict__['_self'] = _self
-
-        # If a scope does _not_ contain a variable, we look for it in _up next.
-        if _up is not None:
-            self.__dict__['_up'] = _up
-
-    # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
-    def expand(self, var : str) -> Any:
-        return Expander(self).expand(var)
-
-    def xip(self, var : Any) -> Any:
-        return Expander(self).xip(var)
-
-    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-    # only keys that were already in lhs. For example, if you have a Dict that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-    def fill(self, *args : Any, **kwargs : Any) -> None:
-        for rhs in (*args, kwargs):
-            Utils.merge(self, rhs, keep_rhs = False)
-
-    def merge(self, *args : Any, **kwargs : Any) -> None:
-        for rhs in (*args, kwargs):
-            Utils.merge(self, rhs)
-
-    def get(self, key : str, default : Any | None = None) -> Any | None:
-        return self.__dict__.get(key, default)
-
-    def __contains__(self, key : str) -> bool:
-        return is_public(key) and key in self.__dict__
-
-    def __getitem__(self, key : str) -> Any:
-        if is_private(key):
-            raise KeyError(key)
-        return self.__dict__[key]
-
-    def __len__(self) -> int:
-        return sum(1 for _ in self)
-
-    def __iter__(self) -> abc.Iterator[Any]:
-        yield from filter(is_public, self.__dict__)
-
-# ====================================
-# A Dict is a Scope that can be used as an abc.MutableMapping.
+# region Dict :  A Dict is a Scope that can be used as an abc.MutableMapping.
 
 class Dict(Scope, abc.MutableMapping):
 
     # FIXME why this no werk
     #def __init__(self, *args : Dict[V], **kwargs : dict[str, V]):
-    def __init__(self, *args : Any, **kwargs : Any) -> None:
-        _self = kwargs.pop('_self', None)
-        if _self is not None:
-            _self = Identifier(_self)
-        _up   = kwargs.pop('_up', None)
 
-        super().__init__(_self = _self, _up = _up)
+    def __init__(self, *args : Any, **kwargs : Any) -> None:
+        # FIXME test this
+        super().__init__(kwargs.pop('self_', "dict"), kwargs.pop('up_', None))
         for rhs in [*args, kwargs]:
             self.merge(rhs)
 
+    # Silence unknown attribute accesses on Dict
     def __getattr__(self, key : str) -> Any:
-        try:
-            return self.__dict__[key]
-        except KeyError as ex:
-            raise AttributeError from ex
+        return super().__getattribute__(key)
 
-    def __setattr__(self, key : str, val : Any) -> None:
-        super().__setattr__(key, val)
-
-    def __setitem__(self, key : str, val : Any) -> None:
-        self.__dict__[key] = val
-
-    def __delitem__(self, key : str) -> None:
-        del self.__dict__[key]
+#
+#    def __setattr__(self, key : str, val : Any) -> None:
+#        super().__setattr__(key, val)
+#
+#    def __setitem__(self, key : str, val : Any) -> None:
+#        self.__dict__[key] = val
+#
+#    def __delitem__(self, key : str) -> None:
+#        del self.__dict__[key]
 
 # ====================================
 # A Tool is just a callable alias for Dict to make build scripts more readable.
 
 class Tool(Dict):
     def __call__(self, *args : Any, **kwargs : Any) -> Task:
-        return Task(self, *args, **kwargs)
+        t = Task(self, *args, **kwargs)
+        #t.xip(self, *args, **kwargs)
+        cvg.script._tasks.append(t)
+        return t
 
 # endregion
 # ==================================================================================================
@@ -1078,7 +1197,8 @@ class Tool(Dict):
 # loops/recursion
 
 class Stats(Scope):
-    def __init__(self) -> None:
+    def __init__(self, up_ : up_type, /) -> None:
+        super().__init__("stats", up_)
         self.stat_calls = 0
         self.hash_calls = 0
         self.hash_bytes = 0
@@ -1097,77 +1217,21 @@ class Stats(Scope):
 
 # endregion
 # ==================================================================================================
-# region Defaults
-
-@dataclass
-class Defaults:
-    name : str   = "{topdir(path)}_{stem(path)}"
-    file : str   = "build.hancho"
-    path : str   = "{resolve(file)}"
-    root : str   = "{dirname(path)}"
-    root_b : str = "{join(repo.root_b, relpath(script.root_s, repo.root_r))}"
-
-    targets: list[str] = field(default_factory=list)
-    build_dir: str = "build"
-    build_tag: str = ""
-    build_force: bool = False
-    build_all: bool = False
-    build_dry: bool = False
-    strict: bool = True
-    max_errors: int = 0
-    max_jobs: int = os.cpu_count() or 1
-    log_level: str = "info"
-    log_wrap: bool = False
-    log_color: bool = True
-    log_timestamp = True
-    log_width: int = shutil.get_terminal_size().columns
-    log_stdout: TextIO | str = sys.stdout
-
-
-# endregion
-# ==================================================================================================
 # region Flags
 
-class Flags(Scope):
-    def __init__(self, *, raw_flags : Dict) -> None:
-        super().__init__(_self = "flags", _up = cvg.builtins)
+class Flags:
+    def __init__(self) -> None:
+        self.project = {}
+        self.build   = {}
+        self.log     = {}
 
-        self.name: str = raw_flags.pop("name", "{topdir(path)}")
-        self.file: str = raw_flags.pop("file", "build.hancho")
-        self.path: str = raw_flags.pop("path", "{resolve(file)}")
-        self.root: str = raw_flags.pop("root", "{dirname(path)}")
-
-        self.root_p: str = self.root
-        self.root_r: str = self.root
-        self.root_s: str = self.root
-        self.root_t: str = self.root
-        self.root_b: str = raw_flags.pop("build_root", "{join(repo.root_b, relpath(script.root_s, repo.root_r))}")
-
-        self.targets : list[str]  = raw_flags.pop("targets",       [])
-        self.build_dir : str      = raw_flags.pop("build_dir",     "build")
-        self.build_tag : str      = raw_flags.pop("build_tag",     "")
-        self.build_force : bool   = raw_flags.pop("build_force",   False)
-        self.build_all : bool     = raw_flags.pop("build_all",     False)
-        self.build_dry : bool     = raw_flags.pop("build_dry",     False)
-        self.strict : bool        = raw_flags.pop("strict",        True)
-        self.max_errors : int     = raw_flags.pop("max_errors",    0)
-        self.max_jobs : int       = raw_flags.pop("max_jobs",      os.cpu_count() or 1)
-        self.log_level : str      = raw_flags.pop("log_level",     "info")
-        self.log_wrap : bool      = raw_flags.pop("log_wrap",      False)
-        self.log_color : str      = raw_flags.pop("log_color",     True)
-        self.log_timestamp : bool = raw_flags.pop("log_timestamp", True)
-        self.log_width : int      = raw_flags.pop("log_width",     shutil.get_terminal_size().columns)
-        self.log_stdout : IO[str] = raw_flags.pop("log_stdout",    sys.stdout)
-
-        for k, v in raw_flags.items():
-            if v is not None:
-                self.__dict__[k] = v
-
-    @classmethod
-    def parse_flags(cls, *argv : str) -> Flags:
+    def parse_flags(self, *argv : str) -> None:
 
         if len(argv) > 0 and "hancho.py" in argv[0]:
             argv = argv[1:]
+
+        # ------------------------------------
+        # fmt: off
 
         desc = textwrap.dedent("""
         ================================================================================
@@ -1178,14 +1242,6 @@ class Flags(Scope):
         class MyFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
             pass
 
-        parser = argparse.ArgumentParser(
-            description=desc,
-            formatter_class=MyFormatter
-        )
-
-        # ------------------------------------
-        # fmt: off
-
         levels: list[str] = ["trace", "debug", "verbose", "info", "warning", "error", "critical", "quiet"]
 
         def str_to_bool(v : str) -> bool:
@@ -1193,43 +1249,48 @@ class Flags(Scope):
             if v.lower() in ("no", "false", "f", "n"): return False
             raise argparse.ArgumentTypeError("Not a bool")
 
-        parser.add_argument("targets", nargs="*", help="The names or partial names of targets to build")
+        default_root  = "{dirname(resolve(project.file))}"
+        default_jobs  = os.cpu_count() or 1
+        default_width = shutil.get_terminal_size().columns
 
-        parser.add_argument("-o", "--opts",          type=str,         help="File containing JSON that will be used as additional options")
-        parser.add_argument(      "--name",          type=str,         help="Name of the whole build project, if you don't want it to be <project>")
-        parser.add_argument("-f", "--file",          type=str,         help="Path to the .hancho file that starts the build.")
-        parser.add_argument("-r", "--root",          type=str,         help="The top script runs in this directory.")
-        parser.add_argument(      "--build_root",    type=str,         help="Overrides the absolute path of the build directory.")
-        parser.add_argument(      "--build_dir",     type=str,         help="Build artifacts go in this directory at the top of each repo.")
-        parser.add_argument(      "--build_tag",     type=str,         help="Tagged builds will have separate subdirectories under the build directory.")
-        parser.add_argument(      "--build_force",   type=str_to_bool, help="Rebuild targets even if they're clean.")
-        parser.add_argument("-a", "--build_all",     type=str_to_bool, help="Build every task in every repo.")
-        parser.add_argument("-n", "--build_dry",     type=str_to_bool, help="Dry run - Do everything except actually run commands.")
-        parser.add_argument(      "--strict",        type=str_to_bool, help="Strict mode, slightly more error checking to catch footguns.")
-        parser.add_argument(      "--max_errors",    type=int,         help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument("-j", "--max_jobs",      type=int,         help="Run a maximum of N jobs in parallel.")
-        parser.add_argument("-l", "--log_level",     choices=levels,   help="Select verbosity level.")
-        parser.add_argument("-w", "--log_wrap",      type=str_to_bool, help="Wrap lines around the console instead of clipping them")
-        parser.add_argument("-c", "--log_color",     type=str_to_bool, help="Use color in the log for better readability")
-        parser.add_argument(      "--log_timestamp", type=str_to_bool, help="Timestamp each log line")
-        parser.add_argument(      "--log_width",     type=int,         help="Max width (in characters) of the log if not wrapping lines")
-        parser.add_argument(      "--log_stdout",    type=str,         help="Redirect the log's output to this filename")
+        parser = argparse.ArgumentParser(description = desc, formatter_class = MyFormatter)
+
+        parser.add_argument(        "project.targets",   nargs="*",                                   help="The names or partial names of targets to build")
+        parser.add_argument("-o", "--project.opts",      type=str,         default = None,            help="File containing JSON that will be used as additional options")
+        parser.add_argument(      "--project.name",      type=str,         default = "<project>",     help="Name of the whole build project, if you don't want it to be <project>")
+        parser.add_argument("-f", "--project.file",      type=str,         default = "build.hancho",  help="Path to the .hancho file that starts the build.")
+        parser.add_argument("-r", "--project.root",      type=str,         default = default_root,    help="The top script runs in this directory.")
+
+        parser.add_argument(      "--build.dir",         type=str,         default = 'build',         help="The name of the directory to put output files in.")
+        parser.add_argument(      "--build.tag",         type=str,         default = "",              help="Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument(      "--build.force",       type=str_to_bool, default = False,           help="Rebuild targets even if they're clean.")
+        parser.add_argument("-a", "--build.all_targets", type=str_to_bool, default = False,           help="Build every task in every repo.")
+        parser.add_argument("-n", "--build.dry_run",     type=str_to_bool, default = False,           help="Dry run - Do everything except actually run commands.")
+        parser.add_argument(      "--build.strict",      type=str_to_bool, default = True,            help="Strict mode, slightly more error checking to catch footguns.")
+        parser.add_argument(      "--build.max_errors",  type=int,         default = 0,               help="The maximum number of task errors we tolerate before abandoning the build")
+        parser.add_argument("-j", "--build.max_jobs",    type=int,         default = default_jobs,    help="Run a maximum of N jobs in parallel.")
+
+        parser.add_argument("-l", "--log.level",         choices=levels,   default = "info",          help="Select verbosity level.")
+        parser.add_argument("-w", "--log.wrap",          type=str_to_bool, default = False,           help="Wrap lines around the console instead of clipping them")
+        parser.add_argument("-c", "--log.color",         type=str_to_bool, default = True,            help="Use color in the log for better readability")
+        parser.add_argument(      "--log.timestamp",     type=str_to_bool, default = True,            help="Timestamp each log line")
+        parser.add_argument(      "--log.width",         type=int,         default = default_width,   help="Max width (in characters) of the log if not wrapping lines")
+        parser.add_argument(      "--log.stdout",        type=str,         default = sys.stdout,      help="Redirect the log's output to this filename")
+
+        (argv_namespace, unrecognized) = parser.parse_known_args(args=argv)
+        argv_vars = vars(argv_namespace)
 
         # fmt: on
-
-        flag_dict = Dict()
-        (argv_vars, unrecognized) = parser.parse_known_args(args=argv)
-
         # ------------------------------------
         # Load flags from opt_file if present
 
-        opt_file_name = argv_vars.__dict__.pop("project.opts", None)
+        opt_file_name = argv_vars.pop("project.opts", None)
         #loaded_opts = False
         if opt_file_name and os.path.exists(opt_file_name):
             with open(str(opt_file_name)) as f:
                 try:
                     opt_file = json.load(f)
-                    flag_dict.merge(opt_file)
+                    Utils.merge(self.__dict__, opt_file)
                 except Exception as _:
                     print(f"Opt file {opt_file_name!r} invalid!\n")
                     traceback.print_exc()
@@ -1245,9 +1306,9 @@ class Flags(Scope):
                 lhs = lhs[part]
             lhs[parts[-1]] = val
 
-        for k, v in argv_vars.__dict__.items():
+        for k, v in argv_vars.items():
             if v is not None:
-                set_by_path(flag_dict, k, v)
+                set_by_path(self.__dict__, k, v)
 
         # ------------------------------------
         # Unrecognized command line flags also become config fields if they are flag-like.
@@ -1270,11 +1331,7 @@ class Flags(Scope):
                     return None
 
                 val2 = convert(val)
-                #print(f"unrecognized flag - key {key!r} : value {val2!r}")
-
-                set_by_path(flag_dict, key, val2)
-
-        return cls(raw_flags = flag_dict)
+                set_by_path(self.__dict__, key, val2)
 
 # endregion
 # ==================================================================================================
@@ -1304,6 +1361,7 @@ class Expander(abc.Mapping):
     # expanded an outer Dict, and things will still Just Work.
 
     def __init__(self, scope : Scope) -> None:
+
         self.expand_scope: Scope = scope
 
         self.scope_tag: str    = Utils.instance_tag(scope)
@@ -1317,7 +1375,7 @@ class Expander(abc.Mapping):
         try:
             return self.internal_get(key)
         except KeyError as ex:
-            raise AttributeError from ex
+            raise AttributeError(key) from ex
 
     def __getitem__(self, key : str) -> Any:
         return self.internal_get(key)
@@ -1333,7 +1391,7 @@ class Expander(abc.Mapping):
 
     def internal_get(self, key : str) -> Any:
         result : Any = Sentinel.MISSING
-        cursor : Scope = self.expand_scope
+        cursor : up_type = self.expand_scope
 
         try:
             self.trace_start("get", key)
@@ -1342,14 +1400,14 @@ class Expander(abc.Mapping):
                 if type(cursor).__name__ == key:
                     result = cursor
                     break
-                if cursor.get("_self", Sentinel.MISSING) == key:
+                if cursor.self_() == key:
                     result = cursor
                     break
                 elif key in cursor:
                     result = cursor[key]
                     break
 
-                new_cursor: Any | None =  cursor.get("_up", None)
+                new_cursor: up_type = cursor.up_()
                 if new_cursor is None:
                     break
                 else:
@@ -1387,23 +1445,32 @@ class Expander(abc.Mapping):
     # ==============================================================================================
     # Expand-in-place
 
-    def xip(self, var : abc.Collection) -> Any:
-        result : Any = var
+    def xip(self, var : abc.Collection | Scope) -> Any:
+        def expand(v : Any) -> Any:
+            if Utils.is_collection(v):
+                v = self.xip(v)
+            elif isinstance(v, str):
+                v = self.expand(v)
+            return v
+
+        if isinstance(var, Scope):
+            for k, v in var:
+                var[k] = expand(v)
         if Utils.is_mut_sequence(var):
-            for i, v in enumerate(result):
-                result[i] = self.xip(v)
+            for i, v in enumerate(var):
+                var[i] = expand(v)
         elif Utils.is_mut_mapping(var):
-            for k, v in result.items():
-                result[k] = self.xip(v)
+            for k, _ in var.items():
+                var[k] = self[k]
         elif Utils.is_mut_set(var):
             temp = list(var)
-            result.clear()
+            var.clear()
             for v in temp:
-                result.add(self.xip(v))
-        elif isinstance(var, str):
-            result = self.expand(var)
+                var.add(expand(v))
+        else:
+            raise TypeError(f"Xip argument {var!r} is not a mutable collection")
 
-        return result
+        return var
 
     # ==============================================================================================
     # Note that we do _not_ suppress any BaseExceptions - they _must_ be propagated up to
@@ -1460,8 +1527,8 @@ class Expander(abc.Mapping):
                         var = eval(exp, {}, self)
                     except RecursionError:
                         raise
-                    except Exception as ex:
-                        #print(f"Eval failed because {ex!r}")
+                    except Exception as _:
+                        print(f"Eval failed because {_!r}")
                         pass
                     finally:
                         self.trace_end("eval", block, var)
@@ -1547,6 +1614,7 @@ class Expander(abc.Mapping):
     # └─
 
     def trace_start(self, action : str, arg : Any) -> None:
+        if 'log' not in cvg: return
         log = cvg.log
         if log._level_int > Log.TRACE: return
 
@@ -1572,15 +1640,17 @@ class Expander(abc.Mapping):
             log.trace(f"{indent_color}V {self.scope_color}{self.scope_tag}{Log.RESET}.{self.action_color}{action}{Log.RESET}({arg})\n")
             log.indent(indent_color)
 
-    def trace_up(self, up : Scope, action : str, arg : Any) -> None:
-        # This can be used to trace "traverse an _up link", but it was spammy so it's not used at
+    def trace_up(self, up_ : Scope, action : str, arg : Any) -> None:
+        if 'log' not in cvg: return
+        # This can be used to trace "traverse an up link", but it was spammy so it's not used at
         # the moment.
         if cvg.log._level_int > Log.TRACE: return
-        up_color   = Utils.obj_to_ansi_color(up)
-        up_tag     = Utils.instance_tag(up)
+        up_color   = Utils.obj_to_ansi_color(up_)
+        up_tag     = Utils.instance_tag(up_)
         cvg.log.trace(f"{self.scope_color}┌ {self.scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
 
     def trace_end(self, action : str, arg : Any, result : Any) -> None:
+        if 'log' not in cvg: return
         log = cvg.log
         if log._level_int > Log.TRACE: return
         indent_color = log._indent_stack[-1]
@@ -1679,9 +1749,12 @@ class Dumper:
     def _dump_to_str(cls, key : dump_key, val : Any, opts : Opts)-> str:
         if opts.cur_depth > 0 and (key in opts.fold or val in opts.fold or type(val) in opts.fold):
             return cls._dump_prefix(key, val, opts) + str(Sentinel.FOLDED)
+        elif isinstance(val, ScopeBase):
+            return cls._dump_scope(key, val, opts)
         elif isinstance(val, opaque_types):
             return cls._dump_scalar(key, val, opts)
-        elif key == "_up":
+        elif key == "_Scope__up": # ugh hardcoding. do we ever hit this?
+            breakpoint()
             return cls._dump_prefix(key, val, opts) + "<up>"
         elif key == "__builtins__":
             return cls._dump_prefix(key, val, opts) + "<builtins>"
@@ -1693,8 +1766,10 @@ class Dumper:
             return val.__dump__(key, opts)
         elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
             return cls._dump_vector(key, val, val, opts)
-        elif hasattr(val, "__dict__"):
-            return cls._dump_vector(key, val, val.__dict__, opts)
+        elif isinstance(val, str):
+            return cls._dump_scalar(key, val, opts)
+        #elif hasattr(val, "__dict__"):
+        #    return cls._dump_vector(key, val, val.__dict__, opts)
         else:
             return cls._dump_scalar(key, val, opts)
 
@@ -1720,14 +1795,14 @@ class Dumper:
 
     @classmethod
     def _dump_vector(cls, key : dump_key, val : Any, contents : Any, opts : Opts) -> str:
-        prefix : str= cls._dump_prefix(key, val, opts)
+        prefix : str = cls._dump_prefix(key, val, opts)
 
         if opts.cur_depth == opts.max_depth:
             return prefix + "<too deep>"
 
         seen : set[Any] = Dumper.seen.get()
         if id(val) in seen:
-            return cls._dump_prefix(key, val, opts) + "<deduped>"
+            return prefix + "<deduped>"
         elif not isinstance(val, base_types):
             seen.add(id(val))
 
@@ -1750,19 +1825,95 @@ class Dumper:
         else:
             raise AssertionError(f"Don't know what to do with {type(val)}")
 
+        return cls._dump_items(key, prefix, ld, items, rd, opts)
+
+
+
+
+#    @classmethod
+#    def _dump_vector2(cls, key : dump_key, val : Any, contents : Any, opts : Opts) -> str:
+#        prefix : str = cls._dump_prefix(key, val, opts)
+#
+#        if opts.cur_depth == opts.max_depth:
+#            return prefix + "<too deep>"
+#
+#        seen : set[Any] = Dumper.seen.get()
+#        if id(val) in seen:
+#            return prefix + "<deduped>"
+#        elif not isinstance(val, base_types):
+#            seen.add(id(val))
+#
+#        items : list[item[Any]]
+#        if Utils.is_mapping(contents):
+#            ld, items, rd = "{", list(contents.items()), "}"
+#        elif Utils.is_sequence(contents):
+#            items = [(None, v) for v in contents]
+#            if isinstance(contents, tuple):
+#                ld : str = "("
+#                rd : str = ",)" if len(items) == 1 else ")"
+#            else:
+#                ld : str = "["
+#                rd : str = "]"
+#        elif Utils.is_set(contents):
+#            items = [(None, v) for v in contents]
+#            ld : str = "{"
+#            rd : str = "}"
+#
+#        else:
+#            raise AssertionError(f"Don't know what to do with {type(val)}")
+#
+#        dump_private: bool = opts.dump_private
+#        items2:list[Any] = []
+#        any_private = False
+#
+#        for x in items:
+#            if is_public(x[0]) or dump_private:
+#                items2.append(x)
+#            else:
+#                any_private = True
+#        if any_private:
+#            items2.append(("<private fields>", Sentinel.FOLDED))
+#
+#        return cls._dump_items(key, prefix, ld, items2, rd, opts)
+
+
+
+    @classmethod
+    def _dump_scope(cls, key : dump_key, val : ScopeBase, opts : Opts) -> str:
+        prefix : str = cls._dump_prefix(key, val, opts)
+        result = prefix + "{\n"
+
+        opts.indent_stack2.append(" ")
+        pad : str = (" " * opts.tab) * len(opts.indent_stack2)
+        new_opts : Dumper.Opts = replace(opts, len = len(pad) + 1)
+
+        self_ = val.self_()
+        result += pad
+        result += cls._dump_scalar("__self", self_, new_opts)
+        result += ',\n'
+
+        up_ = val.up_()
+        result += pad
+        result += cls._dump_scalar("__up", up_, new_opts)
+        result += ',\n'
+
+        public_ = val.public_()
+        result += pad
+        result += cls._dump_items("__public", "__public = ", '{', list(public_.items()), '}', new_opts)
+        result += ',\n'
+
         dump_private: bool = opts.dump_private
-        items2:list[Any] = []
-        any_private = False
 
-        for x in items:
-            if is_public(x[0]) or dump_private:
-                items2.append(x)
-            else:
-                any_private = True
-        if any_private:
-            items2.append(("<private fields>", Sentinel.FOLDED))
+        if dump_private:
+            private_ = val.private_()
+            result += pad
+            result += cls._dump_items("__private", "__private = ", '{', list(private_.items()), '}', new_opts)
+            result += ',\n'
 
-        return cls._dump_items(key, prefix, ld, items2, rd, opts)
+        opts.indent_stack2.pop()
+
+        pad = (" " * opts.tab) * len(opts.indent_stack2)
+        return result + pad + "}"
 
     @classmethod
     def _dump_items(cls, key : dump_key, prefix : str, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
@@ -1777,22 +1928,22 @@ class Dumper:
             raise AssertionError()
 
         if opts.flat:
-            return prefix + cls._dump_items_flat(key, ld, items, rd, opts)
+            return prefix + cls._dump_items_flat(ld, items, rd, opts)
         else:
             # If the dump_items_flat fails, we _must_ roll back the seen set to its
             # old value.
             old_contents :list[Any]= list(Dumper.seen.get())
             try:
-                return prefix + cls._dump_items_flat(key, ld, items, rd, replace(opts, flat = True))
+                return prefix + cls._dump_items_flat(ld, items, rd, replace(opts, flat = True))
             except Dumper.LineTooLong:
                 seen:set[Any] = Dumper.seen.get()
                 seen.clear()
                 seen.update(old_contents)
-                rhs:str = cls._dump_items_deep(key, ld, items, rd, opts)
+                rhs:str = cls._dump_items_deep(ld, items, rd, opts)
                 return prefix + rhs
 
     @classmethod
-    def _dump_items_flat(cls, key : dump_key, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
+    def _dump_items_flat(cls, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
         result : str = ld
 
         for i in range(len(items)):
@@ -1806,7 +1957,7 @@ class Dumper:
         return result + rd
 
     @classmethod
-    def _dump_items_deep(cls, key : dump_key, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
+    def _dump_items_deep(cls, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
         result = ld + "\n"
 
         opts = replace(opts, cur_depth = opts.cur_depth + 1)
@@ -1837,10 +1988,8 @@ class Dumper:
             prefix += val.__name__
         elif hasattr(val, 'name') and val.name is not None:
             prefix += val.name
-        elif hasattr(val, '_self') and val._self is not None:
-            prefix += val._self
-        elif isinstance(val, abc.Mapping) and '_self' in val and val['_self'] is not None:
-            prefix += val['_self']
+        elif isinstance(val, ScopeBase):
+            prefix += val.self_()
 
         if isinstance(val, type):
             prefix += ":type"
@@ -1895,44 +2044,42 @@ def print_tree(k : str, v : Any, lhs : str = "") -> None:
 # ==================================================================================================
 # region Runner
 
-class Runner:
+class Runner(Scope):
 
-    @classmethod
-    def reset(cls) -> None:
-        cls.max_jobs:int   = cvg.flags.max_jobs
-        cls.max_errors:int = cvg.flags.max_errors
+    def __init__(self, up_ : up_type, /) -> None:
+        super().__init__("runner", up_)
+        self.max_jobs : int   = "{build.max_jobs}"   #type:ignore
+        self.max_errors : int = "{build.max_errors}" #type:ignore
 
-        cls.core_sem  : asyncio.Semaphore = asyncio.Semaphore(cls.max_jobs)
-        cls.core_lock : asyncio.Lock = asyncio.Lock()
+    def xip(self) -> None:
+        super().xip2()
+        self._core_sem  : asyncio.Semaphore = asyncio.Semaphore(self.max_jobs)
+        self._core_lock : asyncio.Lock = asyncio.Lock()
+        self._aio_done_queue : asyncio.Queue = asyncio.Queue()
+        self._live_aio_tasks : set[asyncio.Task] = set()
 
-        cls.aio_done_queue : asyncio.Queue = asyncio.Queue()
-        cls.live_aio_tasks : set[asyncio.Task] = set()
-
-    @classmethod
-    async def acquire(cls, count : int) -> int:
+    async def acquire(self, count : int) -> int:
         # A task that requires a lot of cores can block tasks behind it in the queue. This is
         # intended behavior.
 
-        if count > cls.max_jobs:
-            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {cls.max_jobs}")
-        async with cls.core_lock:
+        if count > self.max_jobs:
+            raise ValueError(f"Tried to acquire {count} cores, which exceeds the max {self.max_jobs}")
+        async with self._core_lock:
             acquired = 0
             try:
                 while acquired < count:
-                    await cls.core_sem.acquire()
+                    await self._core_sem.acquire()
                     acquired += 1
                 return count
             except BaseException:
-                cls.release(acquired)
+                self.release(acquired)
                 raise
 
-    @classmethod
-    def release(cls, count : int) -> None:
+    def release(self, count : int) -> None:
         for _ in range(count):
-            cls.core_sem.release()
+            self._core_sem.release()
 
-    @classmethod
-    async def async_run_tasks(cls) -> int:
+    async def async_run_tasks(self) -> int:
         """Run all tasks until we run out."""
         log: Log = cvg.log
         project: Project = cvg.project
@@ -1951,8 +2098,8 @@ class Runner:
 
         log.verbose("Running tasks...\n")
 
-        while Runner.live_aio_tasks and (cvg.stats.tasks_broken + cvg.stats.tasks_failed) <= Runner.max_errors:
-            finished_aio_task:asyncio.Task = await Runner.aio_done_queue.get()
+        while self._live_aio_tasks and (cvg.stats.tasks_broken + cvg.stats.tasks_failed) <= self.max_errors:
+            finished_aio_task:asyncio.Task = await self._aio_done_queue.get()
             task:Task = finished_aio_task.hancho_task # type: ignore
 
             if task._error is None:
@@ -1976,25 +2123,25 @@ class Runner:
                         stats.tasks_failed += 1
 
             if finished_aio_task is not None:
-                Runner.live_aio_tasks.discard(finished_aio_task)
+                self._live_aio_tasks.discard(finished_aio_task)
 
         failures: int = stats.tasks_broken + stats.tasks_failed
-        if failures > Runner.max_errors:
+        if failures > self.max_errors:
             log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            log.warning(f"Cancelling {len(Runner.live_aio_tasks)} tasks\n")
+            log.warning(f"Cancelling {len(self._live_aio_tasks)} tasks\n")
 
             # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
             # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
             # to failures or someone ctrl-c'ing the build, this is purely cosmetic.
 
-            stats.tasks_cancelled += len(Runner.live_aio_tasks)
-            for t in Runner.live_aio_tasks:
+            stats.tasks_cancelled += len(self._live_aio_tasks)
+            for t in self._live_aio_tasks:
                 t.cancel()
 
             # and then wait on their cancellations to complete (it isn't instantaneous)
-            await asyncio.gather(*Runner.live_aio_tasks, return_exceptions=True)
+            await asyncio.gather(*self._live_aio_tasks, return_exceptions=True)
 
         return 1 if stats.tasks_failed or stats.tasks_broken else 0
 
@@ -2002,14 +2149,24 @@ class Runner:
 # ==================================================================================================
 # region Project
 
-class Project(Scope):
-    def __init__(self, *, name : Identifier, root_p : Realpath, targets : list[str]) -> None:
-        super().__init__(_self = "project", _up = cvg.flags)
-        self.name: Identifier  = name
-        self.root_p: Realpath = root_p
-        self.targets: list[str] = targets or []
+# parser.add_argument(        "project.targets",   nargs="*",                                   help="The names or partial names of targets to build")
+# parser.add_argument("-o", "--project.opts",      type=str,         default = None,            help="File containing JSON that will be used as additional options")
+# parser.add_argument(      "--project.name",      type=str,         default = "<project>",     help="Name of the whole build project, if you don't want it to be <project>")
+# parser.add_argument("-f", "--project.file",      type=str,         default = "build.hancho",  help="Path to the .hancho file that starts the build.")
+# parser.add_argument("-r", "--project.root",      type=str,         default = default_root,    help="The top script runs in this directory.")
 
-        self.out_files : set[Goodpath] = set()
+class Project(Scope):
+    def __init__(self, up_ : up_type, /) -> None:
+        super().__init__("project", up_)
+        self.name : str          = Sentinel.MISSING
+        self.file : str          = Sentinel.MISSING
+        self.path : Realpath     = "{realpath(file)}"  # type: ignore
+        self.root : Realpath     = Sentinel.MISSING
+        self.targets : list[str] = Sentinel.MISSING
+
+    def xip(self) -> None:
+        super().xip2()
+        self._all_outputs : set[Goodpath] = set()
         self._dedupe = Dict()
         self._repos : list[Repo] = []
 
@@ -2025,7 +2182,7 @@ class Project(Scope):
                         if task.name is not None and target in task.name:
                             task.queue_task()
 
-        elif cvg.flags.build_all:
+        elif cvg.build.all_targets:
             for repo in self._repos:
                 for task in repo.yield_tasks():
                     task.queue_task()
@@ -2038,12 +2195,12 @@ class Project(Scope):
         # ------------------------------------
         # Run the tasks.
 
-        result: int = asyncio.run(Runner.async_run_tasks())
+        result: int = asyncio.run(cvg.runner.async_run_tasks())
 
         # ------------------------------------
         # Update stat DBs.
 
-        if not cvg.flags.build_dry:
+        if not cvg.build.dry_run:
             for repo in cvg.project._repos:
                 for task in repo.yield_tasks():
                     if task._complete:
@@ -2054,21 +2211,50 @@ class Project(Scope):
 
 # endregion
 # ==================================================================================================
+# region Build
+
+class Build(Scope):
+    def __init__(self, up_ : up_type, /) -> None:
+        super().__init__("build", up_)
+
+        self.dir : str          = Sentinel.MISSING
+        self.dest : str         = "{goodpath(join(repo.root, dir))}"
+        self.tag : str          = Sentinel.MISSING
+        self.force : bool       = Sentinel.MISSING
+        self.all_targets : bool = Sentinel.MISSING
+        self.dry_run : bool     = Sentinel.MISSING
+        self.strict : bool      = Sentinel.MISSING
+        self.max_jobs : int     = Sentinel.MISSING
+        self.max_errors : int   = Sentinel.MISSING
+
+    def xip(self) -> None:
+        super().xip2()
+
+# endregion
+# ==================================================================================================
 # region Repo
+
+#        self.name : str          = Sentinel.MISSING
+#        self.file : str          = Sentinel.MISSING
+#        self.path : Realpath     = "{realpath(file)}"  # type: ignore
+#        self.root : Realpath     = Sentinel.MISSING
+#        self.targets : list[str] = Sentinel.MISSING
 
 class Repo(Scope):
 
-    def __init__(self, *, name : Identifier, path : Realpath, root_r : Realpath, root_b : Goodpath) -> None:
-        super().__init__(_self = "repo", _up = cvg.project)
+    def __init__(self, up_ : up_type, /) -> None:
+        super().__init__("repo", up_)
+        self.name : str      = "<repo>"
+        self.file : str      = "{project.file}"
+        self.path : Realpath = "{realpath(file)}"         #type:ignore
+        self.root : Realpath = "{dirname(file)}"          #type:ignore
+        self.dest : Goodpath = "{join(root, build.dir)}"  #type:ignore
 
-        self.name: Identifier  = name
-        self.path: Realpath  = path
-        self.root_r: Realpath = root_r
-        self.root_b: Goodpath = root_b
+        self.stat_db_path : Goodpath = "{goodpath(join(dest, 'hancho.json'))}" #type:ignore
+        self.comp_db_path : Goodpath = "{goodpath(join(dest, 'compile_commands.json'))}" #type:ignore
 
-        ex: Expander = Expander(self)
-        self.stat_db_path = Goodpath(ex.expand("{join(repo.root_b, 'hancho.json')}"))
-        self.comp_db_path = Goodpath(ex.expand("{join(repo.root_b, 'compile_commands.json')}"))
+    def xip(self) -> None:
+        super().xip2()
 
         self._scripts : list[Script] = []
         self._stat_db : dict[str, dict] = {}
@@ -2089,9 +2275,6 @@ class Repo(Scope):
 
         if not Path.isfile(filename):
             return []
-
-        filename = Realpath(filename)
-        task_cwd = Realpath(task_cwd)
 
         with open(str(filename), encoding="utf-8") as depcontents:
             if format == "msvc":
@@ -2204,38 +2387,52 @@ class Task(Scope):
     class BROKEN(Exception):    pass
 
     def __init__(self, *args : Any, **kwargs : Any) -> None:
-        # Ideally, this should be the only reference to current_script we actually need
-        # (well, apart from the global load/repo/include)
-        super().__init__(_self = "task", _up = cvg.script)
+        super().__init__("task", cvg.script)
 
-        script = cvg.script
+        self.command: command_type  = []
+        self.name: str              = "task"
+        self.desc: str              = "<no desc>"
+        self.command: command_type  = ""
+        self.cwd: Realpath          = "{script.root}"  # type:ignore
+        self.dest: Goodpath         = "{script.dest}"  # type:ignore
+        self.depformat: str         = "gcc" if os.name == "posix" else "msvc"
+        self.dry_run: str           = "{build.dry_run}"
+        self.in_depfile: str | None = None
+        self.job_size: int          = 1
+        self.force: bool            = "{build.force}"    # type:ignore
+        self.strict: bool           = "{build.strict}"   # type:ignore
 
-        self.name        = "task"
-        self.desc        = "<no desc>"
-        self.command : str | task_callback | list[str]    = ""
-        self.root_b      = script.root_b
-        self.cwd         = script.root_s
-        self.depformat   = "gcc" if os.name == "posix" else "msvc"
-        self.in_depfile : Goodpath | None = None
-        self.job_size    = 1
-        self.build_force = "{flags.build_force}"
+        # These two have to be dicts so that downstream tasks can pick named outputs from it if
+        # needed.
+        self.in_files :  dict[str, list[Goodpath]] = {}
+        self.out_files : dict[str, list[Goodpath]] = {}
 
-        # This can't be self.fill, users may have added stuff via args that's needed for expansion.
         self.merge(*args, **kwargs)
+
+        # We can't expand everything yet as commands or paths may depend on the paths of the
+        # output files from the input tasks, which we don't know until the input tasks are
+        # complete.
+
+        ex = Expander(self)
+        self.cwd = Realpath(ex.expand(self.cwd))
+
+        # ----------------------------------------
+        # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
+        # we need to queue up input tasks before this task starts (and then expands everything else)
+
+        for k, v in self.items():
+            if k.startswith("in_") and isinstance(v, str):
+                self[k] = ex[k]
 
         # ----------------------------------------
         # Private fields
 
         self._enabled = False
-
-        self.cwd   : Realpath
-        self.root_s : Realpath
-        self.root_b : Goodpath
-
-        # These two have to be dicts so that downstream tasks can pick named outputs from it if
-        # needed.
-        self._in_files :  dict[str, list[Goodpath]] = {}
-        self._out_files : dict[str, list[Goodpath]] = {}
+        self._complete = False
+        self._skipped = False
+        self._task_id : int = -1
+        self._cores = 0
+        self._error : BaseException | None = None # The "return value" for the task as a whole, or "None" if the task was successful.
 
         # We don't immediately create an asyncio.Task here because we may not
         # actually need to run this task if its outputs are up to date.
@@ -2245,41 +2442,20 @@ class Task(Scope):
         # to it when the task starts.
         self._aio_context = contextvars.copy_context()
 
-        # The "return value" for the task as a whole, or "None" if the task was successful.
-        self._error : BaseException | None = None
-
-        self._skipped = False
-
-        # Bookkeeping stuff
-        self._task_id : int = -1
         self._stdout_text : str = ""
         self._stderr_text : str = ""
-        self._cores = 0
-        self._complete = False
         self._deplines : list[Realpath] = []
 
-        cvg.script._tasks.append(self)
-
         # ----------------------------------------
-        # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
-        # we need to queue up input tasks before this task starts (and then expands everything else)
+        # Add all input fields that are tasks to _in_tasks so we can await them later.
 
-        ex = Expander(self)
-        for k, v in self.__dict__.items():
-            if k.startswith("in_"):
-                ex.xip(v)
-
-        # ----------------------------------------
-        # Add all input fields that are tasks to _input_tasks so we can await them later.
-
-        input_tasks = []
-        leaves = list(Utils.yield_leaves(self.__dict__))
+        self._in_tasks = []
+        leaves = list(Utils.yield_leaves(self.public_()))
         for v in leaves:
             if isinstance(v, Task):
                 if v is self:
                     assert v is not self
-                input_tasks.append(v)
-        self._input_tasks = input_tasks
+                self._in_tasks.append(v)
 
         # ----------------------------------------
 
@@ -2287,9 +2463,10 @@ class Task(Scope):
         if Utils.in_event_loop():
             self.queue_task()
 
-    # These are here so the linter doesn't complain about arbitrary attribute access
+    # Silence unknown attribute accesses on Task
     def __getattr__(self, name: str) -> Any:
-        return self.__dict__.get(name)
+        # __getattr__ is there, it's just hidden for type checking
+        return Scope.__getattr__(self, name) # type: ignore
 
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
@@ -2307,8 +2484,8 @@ class Task(Scope):
         if self._aio_task is None:
             t = asyncio.create_task(self.task_top(), context=self._aio_context)
             setattr(t, "hancho_task", self)  # noqa: B010
-            Runner.live_aio_tasks.add(t)
-            t.add_done_callback(lambda t: Runner.aio_done_queue.put_nowait(t))
+            cvg.runner._live_aio_tasks.add(t)
+            t.add_done_callback(lambda t: cvg.runner._aio_done_queue.put_nowait(t))
             self._aio_task = t
 
     def queue_task(self) -> None:
@@ -2324,7 +2501,7 @@ class Task(Scope):
 
         # Start all tasks referenced by the config so we don't deadlock while waiting for them.
         # FIXME we should pull all the upstream tasks out earlier or something
-        for input_task in self._input_tasks:
+        for input_task in self._in_tasks:
             input_task.queue_task()
 
     async def task_top(self) -> dict | None:
@@ -2335,14 +2512,14 @@ class Task(Scope):
         except (Exception, asyncio.CancelledError) as ex:
             self._error = ex
         finally:
-            Runner.release(self._cores)
+            cvg.runner.release(self._cores)
 
         if self._error:
             self.log_task(Log.ERROR, traceback.format_exception(self._error))
             if (self._stdout_text or self._stderr_text):
                 self.log_task(Log.ERROR, self.dump_stdout())
 
-        return self._out_files
+        return self.out_files
 
     async def task_main(self) -> None:
 
@@ -2373,7 +2550,7 @@ class Task(Scope):
         # Dry runs early out after the task is initialized but before we do .exists() checks or
         # run any commands.
 
-        if cvg.flags.build_dry:
+        if self.dry_run:
             return
 
         # ------------------------------------
@@ -2381,7 +2558,7 @@ class Task(Scope):
 
         if self.in_depfile and Path.isfile(self.in_depfile):
             real_depfile = Realpath(self.in_depfile)
-            self._deplines = Repo.load_depfile(real_depfile, self.depformat, self._cwd)
+            self._deplines = Repo.load_depfile(real_depfile, self.depformat, self.cwd)
 
         text  = repr(self.name) if self.name else ""
         text += " : " if self.name and self.desc else ""
@@ -2396,7 +2573,7 @@ class Task(Scope):
         # ------------------------------------
         # Wait for enough jobs to free up to run this task.
 
-        self._cores = await Runner.acquire(self.job_size)
+        self._cores = await cvg.runner.acquire(self.job_size)
 
         # ------------------------------------
         # Print what we're about to run
@@ -2425,7 +2602,7 @@ class Task(Scope):
         # ------------------------------------
         # See if the task wrote all its output files
 
-        for file in Utils.yield_leaves(self._out_files):
+        for file in Utils.yield_leaves(self.out_files):
             if not os.path.exists(file):
                 raise Task.FAILED(f"Task ran, but output file still missing: {file}")
 
@@ -2436,16 +2613,16 @@ class Task(Scope):
         # And we're done
 
     def update_repo_stat_db(self) -> None:
-        with chdir(self._cwd):
+        with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile and Path.isfile(self.in_depfile):
-                self._deplines = Repo.load_depfile(Realpath(self.in_depfile), self.depformat, self._cwd)
+                self._deplines = Repo.load_depfile(Realpath(self.in_depfile), self.depformat, self.cwd)
 
-            for file in Utils.yield_leaves([self._in_files, self._deplines]):
+            for file in Utils.yield_leaves([self.in_files, self._deplines]):
                 if Path.exists(file):
                     cvg.repo.update_stat(file, None)
 
-            for file in Utils.yield_leaves(self._out_files):
+            for file in Utils.yield_leaves(self.out_files):
                 if Path.exists(file):
                     cvg.repo.update_stat(file, self.command)
 
@@ -2454,7 +2631,7 @@ class Task(Scope):
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        for input_task in self._input_tasks:
+        for input_task in self._in_tasks:
             if not isinstance(input_task, Task):
                 raise TypeError(f"Input task is not a task, it's a {type(input_task)!r}")
 
@@ -2475,14 +2652,13 @@ class Task(Scope):
 
         # We eval these first because we need them for filename expansion
 
-        self._root_s = Realpath(ex.expand("{script.root_s}"))
-        self._root_b = Goodpath(ex.expand("{task.root_b}"))
-        self._cwd   = Realpath(ex.expand("{task.cwd}"))
+        repo_root  = Realpath(ex.expand("{repo.root}"))
+        build_dest = Goodpath(ex.expand("{build.dest}"))
 
         try:
             ex.trace_start("range", "expand io fields")
             # Then we expand all io fields and fix their paths.
-            io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
+            io_fields = [k for k in self if k.startswith("in_") or k.startswith("out_")]
 
             for field_name in io_fields:
                 # if task is a scope, then flattening in_files produces an array of the _attributes_
@@ -2493,7 +2669,7 @@ class Task(Scope):
                         return
                     for x in Utils.yield_leaves(f):
                         if isinstance(x, Task):
-                            yield from Utils.yield_leaves(x._out_files)
+                            yield from Utils.yield_leaves(x.out_files)
                         else:
                             yield x
 
@@ -2502,20 +2678,22 @@ class Task(Scope):
 
                 if files:
                     ex.xip(files)
-                    goodfiles = self.fix_paths(field_name, files, self._root_s, self._root_b)
+                    if field_name == "in_depfile":
+                        pass
+                    goodfiles = self.fix_paths(field_name, files, repo_root, build_dest)
                     setattr(self, field_name, goodfiles[0] if len(goodfiles) == 1 else goodfiles)
 
                     if field_name == "in_depfile":
                         if len(goodfiles) > 1:
-                            raise Task.BROKEN("iF_depfile can't be a list")
+                            raise Task.BROKEN("in_depfile can't be a list")
                     elif field_name.startswith("in_"):
-                        self._in_files[field_name]  = goodfiles
+                        self.in_files[field_name]  = goodfiles
                     elif field_name.startswith("out_"):
-                        self._out_files[field_name] = goodfiles
+                        self.out_files[field_name] = goodfiles
                     #elif field_name.startswith("in_"):
-                    #    self._in_files[field_name]  = [Path.join(self_cwd, file) for file in goodfiles]
+                    #    self.in_files[field_name]  = [Path.join(self.cwd, file) for file in goodfiles]
                     #elif field_name.startswith("out_"):
-                    #    self._out_files[field_name] = [Path.join(self_cwd, file) for file in goodfiles]
+                    #    self.out_files[field_name] = [Path.join(self.cwd, file) for file in goodfiles]
         finally:
             ex.trace_end("range", "expand io fields", None)
 
@@ -2532,44 +2710,54 @@ class Task(Scope):
         elif not isinstance(self.command, abc.Callable):
             raise TypeError(self.command)
 
-        for key in ["name", "desc", "build_force", "root_b", "cwd", "depformat", "job_size"]:
-            val = self.__dict__[key]
-            if isinstance(val, str):
-                setattr(self, key, ex.expand(val))
+        #self.command: command_type = []
+        #self.cwd: Realpath = "{script.root}"  # type:ignore
+        #self.depformat: str = "gcc" if os.name == "posix" else "msvc"
+        #self.desc: str = "<no desc>"
+        #self.dest: Goodpath = "{script.dest}"  # type:ignore
+        #self.force: bool = "{build.force}"  # type:ignore
+        #self.in_depfile: str | None = None
+        #self.job_size: int = 1
+        #self.name: str = "task"
 
-        if not cvg.flags.build_dry:
-            temp = list(self._out_files.values())
+        required_keys = ['command', 'cwd', 'depformat', 'desc', 'dest', 'dry_run', 'force', 'job_size', 'name']
+
+        for key in required_keys:
+            val = self[key]
+            if isinstance(val, str):
+                self[key] = ex.expand(val)
+
+        if not self.dry_run:
+            temp = list(self.out_files.values())
             for file in Utils.yield_leaves(temp):
                 os.makedirs(os.path.dirname(file), exist_ok=True)
             if self.in_depfile:
+                if len(self.in_depfile) == 0:
+                    pass
+                dir = os.path.dirname(self.in_depfile)
+                if len(dir) == 0:
+                    pass
                 os.makedirs(os.path.dirname(self.in_depfile), exist_ok=True)
 
         if cvg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
             self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
 
-    def fix_paths(self, field : str, raw_files : list[str], root_s : Realpath, root_b : Goodpath) -> list[Goodpath]:
-        return [self.fix_path(field, raw_file, root_s, root_b) for raw_file in raw_files]
+    def fix_paths(self, field : str, raw_files : list[str], repo_root : Realpath, build_root : Goodpath) -> list[Goodpath]:
+        return [self.fix_path(field, raw_file, repo_root, build_root) for raw_file in raw_files]
 
-    def fix_path(self, field : str, raw_file : str, root_s : Realpath, root_b : Goodpath) -> Goodpath:
-        """
-        Input and output file paths in .hancho scripts are declared relative to the directory the
-        script is in (stored in the config under 'script_cwd').
-        In general we want to run commands from the root of the repo and store output files in
-        repo/build, so we need to fix up the paths to match.
-        """
-
+    def fix_path(self, field : str, raw_file : str, repo_root : Realpath, build_root : Goodpath) -> Goodpath:
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
-        goodfile = Goodpath(os.path.join(root_s, raw_file))
+        goodfile = Goodpath(os.path.join(repo_root, raw_file))
 
-        # Move all outputs under root_b and ensure their directories exist.
-        # Note - This will also move "in_depfile" under root_b - this is _intentional_ as
+        # Move all outputs under build_root and ensure their directories exist.
+        # Note - This will also move "in_depfile" under build_root - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
 
-        if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(goodfile, root_b):
-            chunk = Path.relpath(goodfile, root_s)
-            file = os.path.join(root_b, chunk)
+        if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(goodfile, build_root):
+            chunk = Path.relpath(goodfile, repo_root)
+            file = os.path.join(build_root, chunk)
             goodfile = Goodpath(file)
 
         if Utils.is_template(goodfile):
@@ -2580,10 +2768,13 @@ class Task(Scope):
         return goodfile
 
     def sanity_check(self) -> None:
+        repo = cvg.repo
+        project = cvg.project
+
         # Check for all task issues that break the build
 
-        if not Path.startswith(self.root_b, cvg.repo.root_r):
-            raise Task.BROKEN(f"The build root {self.root_b} is not under the repo root {cvg.repo.root_r}")
+        if not Path.startswith(self.dest, repo.root):
+            raise Task.BROKEN(f"The build destination {self.dest} is not under the repo root {repo.root}")
 
         if isinstance(self.command, list):
             for command in self.command:
@@ -2593,30 +2784,30 @@ class Task(Scope):
             raise Task.BROKEN(f"Command is not a string or callable: {self.command}")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
-        if cvg.flags.strict:
+        if self.strict:
             for command in Utils.yield_leaves(self.command):
                 if isinstance(command, str) and (
                     Utils.is_macro(command) or Utils.is_template(command)
                 ):
                     raise Task.BROKEN(f"STRICT: Command not fully expanded: {command!r}")
 
-        # Check that all build files would end up under root_b
-        for files in self._out_files.values():
+        # Check that all build files would end up under dest
+        for files in self.out_files.values():
             for file in files:
-                if not Path.startswith(file, self.root_b):
-                    raise Task.BROKEN(f"Path error, output file _out_files:{file} is not under build root {self.root_b}")
+                if not Path.startswith(file, self.dest):
+                    raise Task.BROKEN(f"Path error, output file {file} is not under task destination {self.dest}")
 
         # Check for task collisions
-        for files in self._out_files.values():
+        for files in self.out_files.values():
             for file in files:
-                if file in cvg.project.out_files:
+                if file in project._all_outputs:
                     raise Task.BROKEN(f"TaskCollision: Multiple tasks build {file}")
-                cvg.project.out_files.add(file)
+                project._all_outputs.add(file)
 
-        # Check for missing inputs. We have to check build_dry, as the input files may only exist if
+        # Check for missing inputs. We have to check dry_run, as the input files may only exist if
         # we're really running tasks.
-        if not cvg.flags.build_dry:
-            for files in self._in_files.values():
+        if not self.dry_run:
+            for files in self.in_files.values():
                 for file in files:
                     if not Path.exists(file):
                         raise Task.BROKEN(f"Input file missing - {file}")
@@ -2627,25 +2818,24 @@ class Task(Scope):
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
-
-        repo = check(Repo, cvg.repo)
+        repo = cvg.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
 
-        if self.build_force:
+        if self.force:
             return "Task forced to rebuild"
 
-        if not any(Utils.yield_leaves(self._in_files)):
+        if not any(Utils.yield_leaves(self.in_files)):
             return "Always rebuild a task with no inputs"
 
-        if not any(Utils.yield_leaves(self._out_files)):
+        if not any(Utils.yield_leaves(self.out_files)):
             return "Always rebuild a task with no outputs"
 
         # ------------------------------------
         # Check for file modifications
 
-        all_files : tree[str] = [self._in_files, self._out_files, self._deplines]
+        all_files : tree[str] = [self.in_files, self.out_files, self._deplines]
 
         for file in Utils.yield_leaves(all_files):
             if not Path.isfile(file):
@@ -2654,7 +2844,7 @@ class Task(Scope):
             if reason := repo.stat_changed2(file):
                 return reason
 
-        for file in Utils.yield_leaves(self._out_files):
+        for file in Utils.yield_leaves(self.out_files):
             file = Realpath(file)
             if repo.command_changed(file, self.command):
                 return f"Command mismatch for {file!r}"
@@ -2663,11 +2853,11 @@ class Task(Scope):
         return ""
 
     async def run_command(self : Task, command : str) -> None:
-        repo = check(Repo, cvg.repo)
+        repo = cvg.repo
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
-        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, repo.root_r)}$ {command}\n")
+        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2714,13 +2904,16 @@ class Task(Scope):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback) -> None:
-        callback_dir = Path.relpath(cvg.script.root_s, cvg.repo.root_r)
+        repo = cvg.repo
+        script = cvg.script
+
+        callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
 
-        with chdir(cvg.script.root_s):
+        with chdir(cvg.script.root):
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2763,40 +2956,32 @@ class Task(Scope):
 
 class Script(Scope):
 
-    def __init__(self : Script, name : Identifier, path : Realpath, root_s : Realpath, root_b : Goodpath) -> None:
-        super().__init__(_self = "script", _up = cvg.repo)
-        self.name   = name
-        self.path   = path
-        self.root_s  = root_s
-        self.root_b  = root_b
+    def __init__(self : Script, up_ : up_type, /) -> None:
+        super().__init__("script", up_)
+        self.name : str      = "{repo.name}"
+        self.file : str      = "{project.file}"
+        self.path : Realpath = "{realpath(file)}" #type:ignore
+        self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
+        self.dest : Goodpath = "{repo.dest}" #type:ignore
+
+    def xip(self) -> None:
+        super().xip2()
+
+        assert isinstance(self.path, Realpath)
+        assert isinstance(self.root, Realpath)
+        assert isinstance(self.dest, Goodpath)
+
         self._tasks = []
 
     def dump(self, *args : Any, **kwargs : Any) -> None:
         dprint(Dumper.dump(*args, **kwargs))
 
-    @classmethod
-    def load(
-        cls,
-        *args : Any,
-        name : Identifier,
-        path : Realpath,
-        root_s : Realpath,
-        root_b : Goodpath,
-        is_repo : bool,
-        is_dummy : bool,
-        **kwargs : Any,
-    ) -> Script:
+    @staticmethod
+    def load(repo : Repo, script : Script, is_repo : bool, is_dummy : bool) -> Script:
         log     = cvg.log
         project = cvg.project
 
-        repo = cvg.repo
-        if is_repo:
-            repo = Repo(name = name, path = path, root_r = root_s, root_b = root_b)
-
-        script = Script(name = name, path = path, root_s = root_s, root_b = root_b)
-        script.merge(*args, **kwargs)
-
-        dedupe_key = Dumper.any_to_key(script)
+        dedupe_key = Dumper.any_to_key(script.public_())
         if dupe := project._dedupe.get(dedupe_key, None):
             log.verbose(Log.LIME + f"Deduped {script.path}\n")
             return dupe
@@ -2804,9 +2989,7 @@ class Script(Scope):
         # File was _not_ deduped.
         project._dedupe[dedupe_key] = script
         repo._scripts.append(script)
-
         if is_repo:
-            cvg.repo = repo
             project._repos.append(repo)
 
         if is_dummy:
@@ -2816,72 +2999,32 @@ class Script(Scope):
             source: str = file.read()
             code: CodeType = compile(source, str(script.path), "exec", dont_inherit=True)
 
-        with cvg.log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root_s), cvg.update(script = script):
-            Utils.merge(script.__dict__, cvg._cv.get())
+        cvg.log.verbose(Log.ORANGE + f"┌─── Running script {script.path}\n")
 
-            cvg.log.verbose(Log.ORANGE + f"Running script {script.path}\n")
-            exec(code, script.__dict__)
+        with cvg.log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root), cvg.update(repo = repo, script = script):
+            # Merge CVG into the current script so the script can see everything in CVG.
+            Utils.merge(script.public_(), cvg.cv_())
 
-        if "__builtins__" in script.__dict__:
-            del script.__dict__["__builtins__"]
+            # ┌─
+            # └─
+
+            # Run the script
+            exec(code, script.public_())
+
+        # exec() will automatically add a __builtins__ to the script dict - remove it.
+        if "__builtins__" in script.public_():
+            del script.public_()["__builtins__"]
 
         return script
 
 # endregion
 # ==================================================================================================
-# region create_test_script
-
-def create_test_script(raw_file : str, *, raw_name : str | None = None, raw_root : str | None = None, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Script:
-
-    cvg.hancho = sys.modules[__name__]
-    cvg.builtins = Builtins()
-    cvg.flags = Flags.parse_flags(
-        f"--name={raw_name}",
-        f"--file={raw_file}",
-        f"--root={raw_root}",
-        *(extra_flags or [])
-    )
-    cvg.stats = Stats()
-    cvg.log = Log(cvg.flags, log_stdout = stdout)
-    cvg.log.verbose(Log.ORANGE + f"create_test_script {cvg.flags.path}\n")
-
-    name  = Identifier(raw_name or "script")
-    path = Realpath(raw_file)
-    raw_root = raw_root or Path.dirname(path)
-    root_r = Realpath(raw_root)
-    root_s = Realpath(raw_root)
-    root_b = Goodpath(Path.join(root_r, cvg.flags.build_dir))
-
-    Runner.reset()
-
-    cvg.project = Project(name = name, root_p = root_r, targets = [])
-    cvg.repo    = Repo(
-        name  = name,
-        path  = path,
-        root_r = root_r,
-        root_b = root_b
-    )
-
-    cvg.script = Script.load(
-        name = name,
-        path = path,
-        root_s = root_s,
-        root_b = root_b,
-        is_repo = True,
-        is_dummy = True
-    )
-
-    return cvg.script
-
-# endregion
-# ==================================================================================================
-# region main
+# region builtins
 
 class Builtins(Scope):
     def __init__(self) -> None:
-        super().__init__(_up = None, _self = "builtins")
+        super().__init__("builtins", None)
         self.hancho   = sys.modules[__name__]
-        self.log      = Log()
         self.Dict     = Dict
         self.Task     = Task
         self.Tool     = Tool
@@ -2912,81 +3055,136 @@ class Builtins(Scope):
         self.basename = Path.basename
         self.dirname  = Path.dirname
 
+# endregion
+# ==================================================================================================
+# region create_test_script
+
+def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Script:
+    flags = Flags()
+    flags.parse_flags(f"--project.file={in_file}", *(extra_flags or []))
+    flags.log['stdout'] = stdout
+
+    builtins = Builtins()
+
+    log = Log()
+    log.merge(flags.log)
+    log.xip()
+    log.verbose(Log.ORANGE + f"create_test_script {in_file}\n")
+
+    # ------------------------------------
+
+    global cvg
+    cvg = CVGlobals(builtins)
+
+    cvg.update(
+        log     = log,
+        stats   = Stats(cvg),
+        runner  = Runner(cvg),
+        project = Project(cvg),
+        build   = Build(cvg),
+        repo    = Repo(cvg),
+        script  = Script(cvg),
+    )
+
+    cvg.project.merge(flags.project)
+    cvg.build.merge(flags.build)
+
+    log.debug("xip project\n")
+    cvg.project.xip()
+    log.debug("xip build\n")
+    cvg.build.xip()
+    log.debug("xip repo\n")
+    cvg.repo.xip()
+    log.debug("xip runner\n")
+    cvg.runner.xip()
+    log.debug("xip script\n")
+    cvg.script.xip()
+
+    Script.load(cvg.repo, cvg.script, is_repo = True, is_dummy = True)
+
+    return cvg.script
+
+# endregion
+# ==================================================================================================
+# region _start/main
+
+def _start() -> int:
+    # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
+    # we failed to catch an exception during load/build. The 'except' clause should catch
+    # Exception and not BaseException so ctrl-c doesn't get misinterpreted as a Hancho bug.
+    try:
+        return main()
+    except Exception:
+        print(f"{Log.RED}Hancho hit an unhandled exception:{Log.RESET}\n")
+        print(traceback.format_exc())
+        print(Log.RESET)
+
+        # Re-raise in debug builds so the debugger will stop execution.
+        raise
+
+# ----------------------------------------
+
+cvg : CVGlobals
 
 def main() -> int:
-    cvg.hancho   = sys.modules[__name__]
-    cvg.stats    = Stats()
-    cvg.builtins = Builtins()
+    flags = Flags()
+    flags.parse_flags(*sys.argv)
 
-    #cvg.flags    = Flags(_up = cvg.builtins)
-    #cvg.flags.parse_flags(*sys.argv)
-    flags = Flags.parse_flags(*sys.argv)
-    cvg.flags = flags
+    builtins = Builtins()
 
-    log = Log(flags)
-    cvg.log = log
+    global cvg
+    cvg = CVGlobals(builtins)
+    cvg.update(stats = Stats(cvg))
 
-    temp = Dict(
-        _self  = "temp",
-        _up    = flags,
-        #file   = flags.file,
-        #name   = flags.name,
-        #path   = flags.path,
-        #root_s = flags.root_s,
-        #root_r = flags.root_r,
-        #root_b = flags.root_b,
-    )
+    log = Log()
+    log.merge(flags.log)
+    log.xip()
+    cvg.update(log = log)
 
-    ex = Expander(temp)
-
-
-    name   = Identifier(ex.name)
-    path   = Realpath(ex.path)
-    root_p = Realpath(ex.root)
-    root_r = Realpath(ex.root)
-    root_s = Realpath(ex.root)
-    root_b = Goodpath(Path.join(ex.root_r, cvg.flags.build_dir))
-
-    flags.name   = name
-    flags.path   = path
-    flags.root_p = root_p
-    flags.root_r = root_r
-    flags.root_s = root_s
-    flags.root_b = root_b
-
-    cvg.project  = Project(
-        name    = name,
-        root_p  = root_p,
-        targets = flags.targets
-    )
-
-    cvg.repo = Repo(
-        name = name,
-        path = path,
-        root_r = root_r,
-        root_b = root_b
-    )
-
-    Runner.reset()
-
-    log.verbose(Log.ORANGE + f"Script {cvg.flags.path}\n")
     log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
     log.verbose(Log.GRAY3 + "Verbose mode on\n")
     log.debug(Log.GRAY3 + "Debug mode on\n")
     log.trace(Log.GRAY3 + "Trace mode on\n")
 
     # ------------------------------------
+
+
+    cvg.update(
+        runner  = Runner(cvg),
+        project = Project(cvg),
+        build   = Build(cvg),
+        repo    = Repo(cvg),
+        script  = Script(cvg),
+    )
+
+    cvg.project.merge(flags.project)
+    cvg.build.merge(flags.build)
+
+    log.debug(Log.GREEN + "┌──── xip project\n")
+    with log.indenter(Log.DEBUG, Log.GREEN):
+        cvg.project.xip()
+
+    log.debug(Log.GREEN + "┌──── xip build\n")
+    with log.indenter(Log.DEBUG, Log.GREEN):
+        cvg.build.xip()
+
+    log.debug(Log.GREEN + "┌──── xip repo\n")
+    with log.indenter(Log.DEBUG, Log.GREEN):
+        cvg.repo.xip()
+
+    log.debug(Log.GREEN + "┌──── xip runner\n")
+    with log.indenter(Log.DEBUG, Log.GREEN):
+        cvg.runner.xip()
+
+    log.debug(Log.GREEN + "┌──── xip script\n")
+    with log.indenter(Log.DEBUG, Log.GREEN):
+        cvg.script.xip()
+
+    # ------------------------------------
     # Load the root script, which will transitively load everything else.
 
     with timeit("Loading scripts"):
-        cvg.script = Script.load(
-            name     = name,
-            path     = path,
-            root_s   = root_s,
-            root_b   = root_b,
-            is_repo  = True,
-            is_dummy = False
-        )
+        Script.load(cvg.repo, cvg.script, is_repo = True, is_dummy = False)
 
     # ------------------------------------
     # Build everything
@@ -3001,7 +3199,7 @@ def main() -> int:
     for repo in cvg.project._repos:
         cvg.stats.tasks_created += len(list(repo.yield_tasks()))
 
-    cvg.log._log(Log.VERBOSE, Log.DBLUE, Dumper.dump(cvg.stats) + "\n")
+    cvg.log._log(Log.VERBOSE, Log.DBLUE, "Stats: " + Dumper.dump(cvg.stats.public_(), print_id = False) + "\n")
 
     # ------------------------------------
     # Print pass/fail
@@ -3020,145 +3218,75 @@ def main() -> int:
 
     return result
 
-# ----------------------------------------
-
-def _start() -> int:
-    # Top-level exception handler just so we can print a big red "SOMETHING BROKE" message if
-    # we failed to catch an exception during load/build. The 'except' clause should catch
-    # Exception and not BaseException so ctrl-c doesn't get misinterpreted as a Hancho bug.
-    try:
-        return main()
-    except Exception:
-        print(f"{Log.RED}Hancho hit an unhandled exception:{Log.RESET}\n")
-        print(traceback.format_exc())
-        print(Log.RESET)
-
-        # Re-raise in debug builds so the debugger will stop execution.
-        raise
-
 #endregion
 # ==================================================================================================
 # region User API
 
-#def _load(file, *args, name, path, root, build_root, **kwargs):
-#    assert Path.isresolved(path)
-#    assert Path.isresolved(root)
-#    assert Path.isabs(build_root) # may not exist yet
-#    return Script.load(*args, name = name, file = file, path = path, root_s = root, root_b = build_root, is_repo = False, is_dummy = False, **kwargs)
+def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
+    file = cvg.script.expand(file)
 
-def load(raw_file : str, *args : Any, raw_name : str | None = None, raw_root : str | None = None, raw_root_b : str | None = None, **kwargs : Any) -> Script:
+    if is_repo:
+        repo   = Repo(cvg.project)
+        repo.file = file
+        repo.xip()
+    else:
+        repo = cvg.repo
 
-    raw_name   = raw_name   or Defaults.name
-    raw_root   = raw_root   or Defaults.root
-    raw_root_b = raw_root_b or Defaults.root_b
+    script = Script(repo)
+    script.file = file
+    script.xip()
 
-    temp = Dict(
-        _self    = "temp",
-        _up      = cvg.script,
-        file     = raw_file,
-        path     = "{resolve(file)}",
-        name     = raw_name,
-        root     = raw_root,
-        root_b   = raw_root_b,
-        is_repo  = False,
-        is_dummy = False,
-        hancho = sys.modules[__name__]
-    )
-
-    ex = Expander(temp)
-
-    name   = Identifier(ex.name)
-    path   = Realpath(ex.file)
-    root_s = Realpath(ex.root)
-    root_b = Goodpath(ex.root_b)
-
-    return Script.load(
-        *args,
-        name     = name,
-        path     = path,
-        root_s   = root_s,
-        root_b   = root_b,
-        is_repo  = False,
-        is_dummy = False,
-        **kwargs,
-    )
+    return Script.load(cvg.repo, script, is_repo, is_dummy = False)
 
 
-def include(raw_file : str) -> None:
 
-    temp = Dict(
-        _self    = "temp",
-        _up      = cvg.script,
-        file     = raw_file,
-        is_repo  = False,
-        is_dummy = False
-    )
+#def include(raw_file : str) -> None:
+#
+#    temp = Dict(
+#        self_    = "temp",
+#        up_      = cvg.script,
+#        file     = raw_file,
+#        is_repo  = False,
+#        is_dummy = False
+#    )
+#
+#    ex = Expander(temp)
+#    path  = Realpath(ex.file)
+#
+#    with open(str(path), encoding="utf-8") as file:
+#        source = file.read()
+#        code = compile(source, path, "exec", dont_inherit=True)
+#
+#    cvg.log.verbose(Log.ORANGE + f"include {path}\n")
+#
+#    exec(code, cvg.get_dict())
+#    Utils.merge(cvg.script, cvg.get_dict())
+#
+#    if "__builtins__" in cvg.script.__dict__:
+#        del cvg.script.__dict__["__builtins__"]
 
-    ex = Expander(temp)
-    path  = Realpath(ex.file)
+def load(file : str, *args : Any, **kwargs : Any) -> Script:
+    return _load(file, False, *args, **kwargs)
 
-    with open(str(path), encoding="utf-8") as file:
-        source = file.read()
-        code = compile(source, path, "exec", dont_inherit=True)
+def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
+    return _load(file, True, *args, **kwargs)
 
-    cvg.log.verbose(Log.ORANGE + f"include {path}\n")
-
-    exec(code, cvg._cv.get())
-    Utils.merge(cvg.script, cvg._cv.get())
-
-    if "__builtins__" in cvg.script.__dict__:
-        del cvg.script.__dict__["__builtins__"]
-
-def load_repo(raw_file : str, *args : Any, raw_name : str | None = None, raw_root : str | None = None, raw_root_b : str | None = None, **kwargs : Any) -> Script:
-    # FIXME we should be able to collapse this down a lot.
-
-    temp = Dict(
-        *args,
-        _self    = "temp",
-        _up      = cvg.script,
-        file     = raw_file,
-        name     = raw_name,
-        root     = raw_root,
-        root_b   = raw_root_b,
-        is_repo  = False,
-        is_dummy = False,
-        **kwargs
-    )
-    ex = Expander(temp)
-
-    name   = Identifier(ex.name)
-    path   = Realpath(ex.file)
-    root_s = Realpath(ex.root or cvg.repo.root_r)
-    root_b = Goodpath(ex.root_b or Path.join(root_s, cvg.flags.build_dir))
-
-    #script = Script(name = name, path = path, root_s = root_s, root_b = root_b)
-    #script.merge(*args, **kwargs)
-
-
-    return Script.load(
-        *args,
-        name     = name,
-        path     = path,
-        root_s   = root_s,
-        root_b   = root_b,
-        is_repo  = True,
-        is_dummy = False,
-        **kwargs
-    )
 
 def build() -> int:
     return cvg.project.build()
 
-
 sys.modules["hancho"] = sys.modules[__name__]
-
-def blah() -> None:
-    sys.modules["hancho"].path = __file__ # type: ignore
-    sys.modules["hancho"].root = os.path.dirname(__file__) # type: ignore
-blah()
+sys.modules["hancho"].path = __file__ # type: ignore
+sys.modules["hancho"].root = os.path.dirname(__file__) # type: ignore
 
 # endregion
 # ==================================================================================================
+
+class Nopp(Scope):
+    def __init__(self, self_ : str, up_ : up_type) -> None:
+        super().__init__(self_, up_)
+        self.blah = 10
+        self._bar = 8
 
 if __name__ == "__main__":
     sys.exit(_start())
