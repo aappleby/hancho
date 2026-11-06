@@ -84,9 +84,9 @@ Ugh ignore everything this is all busted
 Field naming drives dependency tracking:
 - `in_*` fields are **input files**. If a value is a `Task` (or list containing Tasks),
   Hancho awaits that task and substitutes its output files - this is what wires the graph.
-- `out_*` fields are **output files**. They are relocated under `build_root`.
+- `out_*` fields are **output files**. They are relocated under `build.dest`.
 - `in_depfile` is a special case: a single compiler-generated dependency file (`.d`) that is
-  treated as *both* an output (it's written under `build_root`) and an input (its listed
+  treated as *both* an output (it's written under `build.dest`) and an input (its listed
   headers are checked for the rebuild decision). Supports `gcc` (`-MMD`) and `msvc`
   (`/sourceDependencies`) formats via the `depformat` field.
 
@@ -140,12 +140,12 @@ but not mixed types in one list):
 
 ### The build lifecycle (per task)
 Roughly, in `Task.task_main` / `task_init`:
-1. Expand non-IO path/flag fields (`build_root`, `task_cwd`, etc.).
+1. Expand non-IO path/flag fields (`build.dest`, `task_cwd`, etc.).
 2. `await` all `in_*` fields, replacing Task references with their output file lists.
 3. `chdir` into `task_cwd` and run `task_init` synchronously: flatten/validate the command,
-   expand all `in_`/`out_` filenames, relocate outputs under `build_root` (creating dirs),
+   expand all `in_`/`out_` filenames, relocate outputs under `build.dest` (creating dirs),
    then expand `name`/`desc`/`command`.
-4. Sanity checks: outputs must be under `build_root`; no two tasks may build the same real
+4. Sanity checks: outputs must be under `build.dest`; no two tasks may build the same real
    file (**TaskCollision**); inputs must exist; `--strict` rejects leftover `{}` in a
    command (a typo guard).
 5. Decide whether to rebuild (`rebuild_reason`): forced rebuild; no inputs or no outputs
@@ -172,7 +172,7 @@ Task outcome exceptions: `CANCELLED` (a dependency failed or build aborted), `FA
 - `repo_dir` / `repo_file` / `this_repo` - the current repo (rebased by `hancho.load_repo`).
 - `script_dir` / `script_file` / `this_module` - the currently executing script.
 - `task_cwd` - where shell commands run (defaults to `repo_dir`).
-- `repo.build` (`{join(repo_dir, 'build')}`), `build_tag`, `build_root`
+- `repo.build` (`{join(repo_dir, 'build')}`), `build_tag`, `build.dest`
   (`{join(repo.build, build_tag, relpath(task_cwd, repo_dir))}`) - where outputs go. `--build_tag`
   gives a build its own subtree (e.g. debug vs. release).
 - `name` / `desc` / `command`, `job_size`, `depformat`, `dry_run`, `enabled`.
@@ -182,7 +182,7 @@ Task outcome exceptions: `CANCELLED` (a dependency failed or build aborted), `FA
 `target` (regex), `-C/--root_dir`, `-f/--root_file`, `-t/--tool` (e.g. `clean` wipes
 `repo.build`), `--build_tag`, `-j/--max_jobs`, `--max_errors`, `-n/--dry_run`,
 `-a/--rebuild`, `--log-wrap`, `--strict`, and verbosity shortcuts `-q/-v/-d/--trace` or
-`--log_level=LEVEL`. **Unrecognized `--flags` become config fields**
+`--log.level=LEVEL`. **Unrecognized `--flags` become config fields**
 (`--foo` -> `foo=True`, `--foo=3` -> `foo=3`), so scripts can read arbitrary CLI options.
 
 ### Embedding Hancho

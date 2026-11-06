@@ -23,8 +23,8 @@
 //      "cwd"     : "${workspaceFolder}/scratch",
 //      "console" : "internalConsole",
 //      //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
-//      //"args"    : ["-ltrace", "--log_width=120"],
-//      "args"    : ["-ldebug", "--log_width=120"],
+//      //"args"    : ["-ltrace", "--log.width=120"],
+//      "args"    : ["-ldebug", "--log.width=120"],
 //      //"preLaunchTask": "wipe_scratch_build"
 //    },
 
@@ -36,7 +36,7 @@
       "cwd"     : "${workspaceFolder}",
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
-      //"args"    : ["-ltrace", "--log_width=120"],
+      //"args"    : ["-ltrace", "--log.width=120"],
       "args"    : ["-ldebug", "--log.width=120", "-f=scratch/build.hancho"],
       //"preLaunchTask": "wipe_scratch_build"
     },
@@ -87,7 +87,7 @@
       "program": "${workspaceFolder}/hancho.py",
       "cwd"     : "${workspaceFolder}/examples/bazel-cpp-tutorial/stage3",
       "console" : "internalConsole",
-      "args"    : ["--log_level=debug", "--max_jobs=1"],
+      "args"    : ["--log.level=debug", "--build.max_jobs=1"],
       //"args"    : ["-ltrace"],
     },
 

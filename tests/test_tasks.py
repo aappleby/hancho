@@ -14,7 +14,7 @@ import hancho
 # FIXME we need some tests that verify that using a shared data structure in multiple tasks
 # (see gcc_flags) does _not_ modify it even if it contains template stuff.
 
-cvg: hancho.CVGlobals = hancho.cvg
+cvg: hancho.CVGlobals
 
 # --------------------------------------------------------------------------------------------------
 
@@ -55,14 +55,16 @@ class TestTasks(unittest.TestCase):
             in_file = __file__,
             stdout = sys.stdout,
             extra_flags = [
-                "--log_level=critical",
-                #"--log_level=debug",
-                #"--log_level=trace",
-                "--log_wrap=True",
-                "--max_errors=999",
+                "--log.level=critical",
+                #"--log.level=debug",
+                #"--log.level=trace",
+                "--log.wrap=True",
+                "--build.max_errors=999",
                 *args
             ],
         )
+        global cvg
+        cvg = hancho.cvg
 
     def run_tasks(self, expected : int) -> None:
         result: int = hancho.build()
@@ -101,7 +103,7 @@ class TestTasks(unittest.TestCase):
         good_task = hancho.Task(
             command="echo {in_src} >> {out_obj}",
             in_src="src/foo.c",
-            out_obj="{repo.root_b}/narp/foo.o",
+            out_obj="{build.dest}/narp/foo.o",
         )
         self.assertFalse(Path("build/narp/foo.o").exists())
         self.run_tasks(0)
@@ -321,7 +323,7 @@ class TestTasks(unittest.TestCase):
 
     def test_absolute_inputs(self) -> None:
         # If input filenames are absolute paths, we should still end up with build files under
-        # build_root.
+        # build.dest.
 
         hancho.Task(
             desc="In_src is absolute path",
@@ -430,7 +432,13 @@ class TestTasks(unittest.TestCase):
         self.reset(
             "--flarp=flarp.txt",
             "--gnarp=1",
-            "--snarp=True"
+            "--snarp=True",
+            "--barp.a=a",
+            "--barp.b=b",
+            "--build.color=chartreuse",
+            "--log.cursive=false",
+            "--project.is_worth_money=hellno",
+            #"--log.level=trace"
         )
 
         def callback(task : hancho.Task) -> None:
@@ -441,11 +449,16 @@ class TestTasks(unittest.TestCase):
             desc = "yes it's a test case",
             command = callback,
             in_files=[],
-            out_file="{flags.flarp}",
+            out_file="{flarp}",
         )
         self.assertEqual(hancho.Expander(t).flarp, "flarp.txt")
         self.assertEqual(hancho.Expander(t).gnarp, 1)
         self.assertEqual(hancho.Expander(t).snarp, True)
+
+        barp = hancho.Expander(t).barp
+        self.assertIsInstance(barp, dict)
+        self.assertEqual(barp['a'], 'a')
+        self.assertEqual(barp['b'], 'b')
 
         self.assertFalse(os.path.exists("build/flarp.txt"))
         self.run_tasks(0)
@@ -634,7 +647,7 @@ class TestTasks(unittest.TestCase):
         self.assertTrue(Path("build/slow_result.txt").exists())
 
     def test_dry_run(self) -> None:
-        self.reset("--build_dry=True")
+        self.reset("--build.dry_run=True")
         task1 = hancho.Task(
             command = "echo foo >> {out_file}",
             out_file = "dry_stuff/test1.txt",
@@ -650,7 +663,7 @@ class TestTasks(unittest.TestCase):
 
     def test_dependency_skipped(self) -> None:
         def run() -> tuple[hancho.Task, hancho.Task]:
-            self.reset("--max_jobs=1")
+            self.reset("--build.max_jobs=1")
             task1 = hancho.Task(
                 name="task1",
                 #command="cp {in_file} {out_file}",
@@ -664,7 +677,7 @@ class TestTasks(unittest.TestCase):
                 command = lambda task : shutil.copy(task.in_file, task.out_file),
                 in_file=task1,
                 out_file="blerp/nerp",
-                build_force=True,
+                force=True,
             )
             self.run_tasks(0)
             return (task1, task2)
@@ -684,6 +697,8 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(hancho.cvg.stats.tasks_failed, 0)
         self.assertEqual(hancho.cvg.stats.tasks_cancelled, 0)
         self.assertEqual(hancho.cvg.stats.tasks_skipped, 0)
+
+        hancho.cvg.log.info("#############################################\n")
 
         (task1, task2) = run()
         self.assertTrue(task1._skipped)

@@ -10,7 +10,7 @@ import hancho
 
 # FIXME we need some tests that run hancho as if it were launched from the command line
 
-cvg: hancho.CVGlobals = hancho.cvg
+cvg: hancho.CVGlobals
 
 # --------------------------------------------------------------------------------------------------
 
@@ -21,14 +21,12 @@ class TestApp(unittest.TestCase):
 
         options: list[str] =[
             # We use 'info' here because we're capturing the log to a StringIO
-            "--log_level=debug",
-            "--log_wrap=False",
-            "--log_color=False",
-            "--log_timestamp=False",
-            "--log_width=9999",
+            "--log.level=debug",
+            "--log.wrap=False",
+            "--log.color=False",
+            "--log.timestamp=False",
+            "--log.width=9999",
         ]
-
-#def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Script:
 
         self.stdout = io.StringIO()
         self.script = hancho.create_test_script(
@@ -37,6 +35,9 @@ class TestApp(unittest.TestCase):
             extra_flags = [*options, *args]
         )
         self.clear_stdout()
+
+        global cvg
+        cvg = hancho.cvg
 
     def clear_stdout(self) -> None:
         self.stdout.truncate(0)
@@ -67,36 +68,36 @@ class TestApp(unittest.TestCase):
         self.assertIn("Hancho is a simple, pleasant build system", result.stdout)
 
     def test_verbosities(self) -> None:
-        self.setUp("--log_level=trace")
+        self.setUp("--log.level=trace")
         self.assertEqual("trace", cvg.log.level)
         self.assertEqual(cvg.log.TRACE, cvg.log._level_int)
 
-        self.setUp("--log_level=debug")
+        self.setUp("--log.level=debug")
         self.assertEqual("debug", cvg.log.level)
         self.assertEqual(cvg.log.DEBUG, cvg.log._level_int)
 
-        self.setUp("--log_level=info")
+        self.setUp("--log.level=info")
         self.assertEqual("info", cvg.log.level)
         self.assertEqual(cvg.log.INFO, cvg.log._level_int)
 
-        self.setUp("--log_level=warning")
+        self.setUp("--log.level=warning")
         self.assertEqual("warning", cvg.log.level)
         self.assertEqual(cvg.log.WARNING, cvg.log._level_int)
 
-        self.setUp("--log_level=error")
+        self.setUp("--log.level=error")
         self.assertEqual("error", cvg.log.level)
         self.assertEqual(cvg.log.ERROR, cvg.log._level_int)
 
-        self.setUp("--log_level=critical")
+        self.setUp("--log.level=critical")
         self.assertEqual("critical", cvg.log.level)
         self.assertEqual(cvg.log.CRITICAL, cvg.log._level_int)
 
-        self.setUp("--log_level=quiet")
+        self.setUp("--log.level=quiet")
         self.assertEqual("quiet", cvg.log.level)
         self.assertEqual(cvg.log.QUIET, cvg.log._level_int)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger
-        #cmd = [sys.executable, "../hancho.py", "--log_level=boo"]
+        #cmd = [sys.executable, "../hancho.py", "--log.level=boo"]
         #result = subprocess.run(cmd, capture_output=True, text=True)
         #self.assertIn("invalid choice: 'boo'", result.stderr)
 
@@ -172,7 +173,7 @@ class TestApp(unittest.TestCase):
             c = (3, 3, 3),
             d:object = <object object at 0x...>,
             e = 'foobar',
-            f:Blarp = {},
+            f:Blarp = <tests.test_app.TestApp.test_dumper.<locals>.Blarp object at 0x...>,
             g:dict = {
                 a = 'laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa'
             }

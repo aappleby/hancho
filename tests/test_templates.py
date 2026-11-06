@@ -15,9 +15,9 @@ class TestTemplates(unittest.TestCase):
             in_file = __file__,
             stdout = sys.stdout,
             extra_flags = [
-                "--log_level=critical",
-                #"--log_level=debug",
-                "--log_wrap=True",
+                "--log.level=critical",
+                #"--log.level=debug",
+                "--log.wrap=True",
                 "--max_errors=999",
                 *args
             ],
@@ -257,7 +257,7 @@ class TestTemplates(unittest.TestCase):
     def test_expand_nested_list(self) -> None:
         d = hancho.Dict(a = 1, b = 2, c = 3)
         v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
-        r = d.xip(v)
+        r = hancho.Expander(d).xip(v)
         self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
     def test_multi_eval(self) -> None:
