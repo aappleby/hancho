@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
+import builtins
 import colorsys
 import contextvars
 import functools
@@ -68,6 +69,8 @@ from typing import (
 # endregion
 # ==================================================================================================
 # region Constants and globals
+
+builtins.hancho = sys.modules[__name__] #type:ignore
 
 def is_public(key : int | str | None) -> bool:
     if not isinstance(key, str) and key is not None:
@@ -117,7 +120,7 @@ base_types: tuple[type, ...] = (int, float, complex, bool, str, tuple, NoneType,
 
 opaque_types: tuple[type, ...] = (GeneratorType, contextvars.Context, asyncio.Task, ModuleType, type)
 
-default_folds: list[str] = ["_dedupe", "_repos", "_scripts", "_tasks", "Builtins"]
+default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "Builtins", asyncio.Task]
 
 @contextmanager
 def timeit(name : str) -> Generator[None]:
@@ -620,16 +623,6 @@ class Scope(ScopeBase):
     # OK while maybe expand shouldn't really be in here, it's annoying to use otherwise.
     def expand(self, var : str) -> Any:
         return Expander(self).expand(var)
-
-    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
-    # only keys that were already in lhs. For example, if you have a Dict that contains
-    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
-    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
-    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
-
-    #def fill(self, *args : Any, **kwargs : Any) -> None:
-    #    for rhs in (*args, kwargs):
-    #        Utils.merge(self.__dict__, rhs, keep_rhs = False)
 
     def merge(self, *args : Scope | dict[str, Any], **kwargs : Any) -> None:
         for rhs in (*args, kwargs):
@@ -1173,6 +1166,19 @@ class Dict(Scope, abc.MutableMapping):
     def __getattr__(self, key : str) -> Any:
         # it's there just hidden from the type checker
         return Scope.__getattr__(self, key) #type:ignore
+
+    # Fill-in-the-blank (or override what's there): Merges lhs and args into a new Dict, keeping
+    # only keys that were already in lhs. For example, if you have a Dict that contains
+    # "out_bin" and you merge it with "compile_cpp", Hancho will complain that "out_bin" is missing
+    # - it sees both "out_obj" and "out_bin" and assumes the task produces both. If you do
+    # compile_cpp.fill(...), "out_bin" does not get added to compile_cpp.
+
+    def fill(self, *args : Any, **kwargs : Any) -> Dict:
+        result = Dict(self)
+        for rhs in (*args, kwargs):
+            Utils.merge(result.public_(), rhs, keep_rhs = False)
+        return result
+
 
 #
 #    def __setattr__(self, key : str, val : Any) -> None:
@@ -1896,6 +1902,16 @@ class Dumper:
     @classmethod
     def _dump_scope(cls, key : dump_key, val : ScopeBase, opts : Opts) -> str:
         prefix : str = cls._dump_prefix(key, val, opts)
+
+        seen : set[Any] = Dumper.seen.get()
+        if id(val) in seen:
+            return prefix + "<deduped>"
+        elif not isinstance(val, base_types):
+            seen.add(id(val))
+
+
+
+
         result = prefix + "{\n"
 
         opts.indent_stack2.append(" ")
@@ -2045,7 +2061,7 @@ def print_tree(k : str, v : Any, lhs : str = "") -> None:
 
     if not isinstance(v, dict):
         print(leaf + str(k) + ": " + repr(v))
-    elif any(v is f for f in folded):
+    elif any(v is f for f in folded) or any(type(v) is f for f in folded):
         print(fold + str(k))
     else:
         print(open + str(k))
@@ -2660,12 +2676,13 @@ class Task(Scope):
 
         if cvg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task, asyncio.Task, contextvars.Context], dump_private = True) + "\n")
 
         # We eval these first because we need them for filename expansion
 
         repo_root  = Realpath(ex.expand("{repo.root}"))
-        build_dest = Goodpath(ex.expand("{build.dest}"))
+        script_root = Realpath(ex.expand("{script.root}"))
+        script_dest = Goodpath(ex.expand("{script.dest}"))
 
         try:
             ex.trace_start("range", "expand io fields")
@@ -2689,7 +2706,7 @@ class Task(Scope):
                     ex.xip(files)
                     if field_name == "in_depfile":
                         pass
-                    goodfiles = self.fix_paths(field_name, files, repo_root, build_dest)
+                    goodfiles = self.fix_paths(field_name, files, script_root, script_dest)
                     setattr(self, field_name, goodfiles[0] if len(goodfiles) == 1 else goodfiles)
 
                     if field_name == "in_depfile":
@@ -2750,23 +2767,23 @@ class Task(Scope):
 
         if cvg.log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task after expand:\n")
-            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[Task], dump_private = True) + "\n")
+            self.log_task(Log.DEBUG, Dumper.dump(self, fold=[*default_folds, Task, asyncio.Task, contextvars.Context], dump_private = True) + "\n")
 
-    def fix_paths(self, field : str, raw_files : list[str], repo_root : Realpath, build_dest : Goodpath) -> list[Goodpath]:
-        return [self.fix_path(field, raw_file, repo_root, build_dest) for raw_file in raw_files]
+    def fix_paths(self, field : str, raw_files : list[str], script_root : Realpath, script_dest : Goodpath) -> list[Goodpath]:
+        return [self.fix_path(field, raw_file, script_root, script_dest) for raw_file in raw_files]
 
-    def fix_path(self, field : str, raw_file : str, repo_root : Realpath, build_dest : Goodpath) -> Goodpath:
+    def fix_path(self, field : str, raw_file : str, script_root : Realpath, script_dest : Goodpath) -> Goodpath:
         # File paths _must_ be abs'd after joining, otherwise they might look like they're under
         # script_dir, but they're not because the paths could have "../../../../.." in them.
-        goodfile = Goodpath(os.path.join(repo_root, raw_file))
+        goodfile = Goodpath(os.path.join(script_root, raw_file))
 
         # Move all outputs under build.root and ensure their directories exist.
         # Note - This will also move "in_depfile" under build.root - this is _intentional_ as
         # it's an _output_ from the compiler and is not checked in to the source tree.
 
-        if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(goodfile, build_dest):
-            chunk = Path.relpath(goodfile, repo_root)
-            file = os.path.join(build_dest, chunk)
+        if (field.startswith("out_") or field == "in_depfile") and not Path.startswith(goodfile, script_dest):
+            chunk = Path.relpath(goodfile, script_root)
+            file = os.path.join(script_dest, chunk)
             goodfile = Goodpath(file)
 
         if Utils.is_template(goodfile):
@@ -2971,7 +2988,7 @@ class Script(Scope):
         self.file : str      = "{project.file}"
         self.path : Realpath = "{realpath(file)}" #type:ignore
         self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
-        self.dest : Goodpath = "{repo.dest}" #type:ignore
+        self.dest : Goodpath = "{join(repo.dest, relpath(script.root, repo.root))}" #type:ignore
 
     def xip(self) -> None:
         super().xip()
@@ -3013,9 +3030,6 @@ class Script(Scope):
         with cvg.log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root), cvg.update(repo = repo, script = script):
             # Merge CVG into the current script so the script can see everything in CVG.
             Utils.merge(script.public_(), cvg.get())
-
-            # ┌─
-            # └─
 
             # Run the script
             exec(code, script.public_())
@@ -3285,7 +3299,6 @@ sys.modules["hancho"].root = os.path.dirname(__file__) # type: ignore
 
 # endregion
 # ==================================================================================================
-
 class Nopp(Scope):
     def __init__(self, self_ : str, up_ : up_type) -> None:
         super().__init__(self_, up_)

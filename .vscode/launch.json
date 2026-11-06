@@ -11,7 +11,7 @@
       "request" : "launch",
       "program": "${workspaceFolder}/hancho.py",
       "console" : "internalConsole",
-      "args"    : ["-ldebug"],
+      "args"    : ["-ldebug", "--log.wrap=true"],
       "preLaunchTask": "wipe_workspace_build"
     },
 

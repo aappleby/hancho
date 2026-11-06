@@ -10,17 +10,15 @@ compile_cpp = hancho.Tool(
 )
 
 main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
-util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
-
-link_cpp_bin = hancho.Tool(
-    desc    = "Linking {basename(out_bin)}",
-    command = "g++ {in_objs} -o {out_bin}"
-)
-
-main_app = hancho.Task(
-    link_cpp_bin,
-    in_objs = [main_o, util_o],
-    out_bin = "hello_world",
-)
-
-#print(hancho.dump(main_app, depth=3))
+#util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
+#
+#link_cpp_bin = hancho.Tool(
+#    desc    = "Linking {basename(out_bin)}",
+#    command = "g++ {in_objs} -o {out_bin}"
+#)
+#
+#main_app = hancho.Task(
+#    link_cpp_bin,
+#    in_objs = [main_o, util_o],
+#    out_bin = "hello_world",
+#)
