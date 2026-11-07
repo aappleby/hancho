@@ -2680,7 +2680,6 @@ class Task(Scope):
 
         # We eval these first because we need them for filename expansion
 
-        repo_root  = Realpath(ex.expand("{repo.root}"))
         script_root = Realpath(ex.expand("{script.root}"))
         script_dest = Goodpath(ex.expand("{script.dest}"))
 
@@ -3008,9 +3007,11 @@ class Script(Scope):
         project = cvg.project
 
         dedupe_key = Dumper.any_to_key(script.public_())
+        #print(dedupe_key)
         if dupe := project._dedupe.get(dedupe_key, None):
             log.verbose(Log.LIME + f"Deduped {script.path}\n")
             return dupe
+
 
         # File was _not_ deduped.
         project._dedupe[dedupe_key] = script
@@ -3241,7 +3242,7 @@ def main() -> int:
 # region User API
 
 def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-    file = cvg.script.expand(file)
+    file = Realpath(cvg.script.expand(file))
 
     if is_repo:
         repo   = Repo(cvg.project)
