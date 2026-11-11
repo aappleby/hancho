@@ -62,5 +62,3 @@ def cc_binary(*, out_bin, in_srcs):
     objs = [compile_cpp(in_src = src) for src in hancho.Utils.flatten_tree(in_srcs)]
     bin = link_cpp_bin(out_bin = out_bin, in_objs = objs)
     return bin
-
-pass

@@ -71,24 +71,16 @@ link_cpp_bin = hancho.Tool(
 )
 
 def cc_library(*, in_srcs = None, **kwargs):
-#    objs = [
-#        hancho.Task(compile_cpp.fill(kwargs), in_src = src)
-#        for src in hancho.Utils.flatten_tree(in_srcs)
-#    ]
-    objs = []
-    for src in hancho.Utils.flatten_tree(in_srcs):
-        config = compile_cpp.fill(kwargs)
-        t = hancho.Task(config, in_src = src)
-        objs.append(t)
+    objs = [
+        hancho.Task(compile_cpp.fill(kwargs), in_src = src)
+        for src in hancho.Utils.flatten_tree(in_srcs)
+    ]
 
-    config2 = link_cpp_lib.fill(kwargs)
-    bin  = hancho.Task(config2, in_objs=objs)
-    return bin
+    return hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
 
 def cc_binary(*, in_srcs = None, **kwargs):
     objs = [
         hancho.Task(compile_cpp.fill(kwargs), in_src=src)
         for src in hancho.Utils.flatten_tree(in_srcs)
     ]
-    bin = hancho.Task(link_cpp_bin.fill(kwargs), in_objs=objs)
-    return bin
+    return hancho.Task(link_cpp_bin.fill(kwargs), in_objs=objs)

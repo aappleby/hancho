@@ -1,5 +1,6 @@
 import os
 import unittest
+from typing import Any
 
 import hancho
 
@@ -9,10 +10,10 @@ import hancho
 # --------------------------------------------------------------------------------------------------
 
 class TestDict(unittest.TestCase):
-    def setUp(self, *args):
+    def setUp(self, *args : Any) -> None:
         os.chdir(os.path.dirname(__file__))
 
-    def test_basic_access(self):
+    def test_basic_access(self) -> None:
         d = hancho.Dict({"a": 1, "b": 2})
         self.assertEqual(d.a, 1)
         self.assertEqual(d["b"], 2)
@@ -30,7 +31,7 @@ class TestDict(unittest.TestCase):
         with self.assertRaises(KeyError):
             _ = d["missing"]
 
-    def test_merge_rightmost_wins(self):
+    def test_merge_rightmost_wins(self) -> None:
         d1 = {"a": 1, "b": 2}
         d2 = {"b": 3, "c": 4}
         merged = hancho.Dict(d1, d2)
@@ -38,7 +39,7 @@ class TestDict(unittest.TestCase):
         self.assertEqual(merged.b, 3)
         self.assertEqual(merged.c, 4)
 
-    def test_recursive_merge(self):
+    def test_recursive_merge(self) -> None:
         d1 = {"a": {"x": 1, "y": 2}}
         d2 = {"a": {"y": 3, "z": 4}}
 
@@ -53,7 +54,7 @@ class TestDict(unittest.TestCase):
         self.assertEqual(d3['a']['y'], 3)
         self.assertEqual(d3['a']['z'], 4)
 
-    def test_basic_merging(self):
+    def test_basic_merging(self) -> None:
         # Basic merging should work
         r = hancho.Dict()
         self.assertEqual(0, len(r))
@@ -67,7 +68,7 @@ class TestDict(unittest.TestCase):
         self.assertEqual(1, len(r))
         self.assertEqual(3, r.bar)
 
-    def test_right_overrides_left(self):
+    def test_right_overrides_left(self) -> None:
         # Right side should always override left side if right val is not None
         a = hancho.Dict({"bar": None}, {"bar": 3})
         self.assertEqual(3, a.bar)
@@ -76,7 +77,7 @@ class TestDict(unittest.TestCase):
         c = hancho.Dict({"bar": 4}, {"bar": None})
         self.assertEqual(4, c.bar)
 
-    def test_none_doesnt_override(self):
+    def test_none_doesnt_override(self) -> None:
         # Right side should _not_ override left side if its val is None
         r = hancho.Dict({"bar": 2}, {"bar": None})
         self.assertEqual(2, r.bar)
@@ -85,7 +86,7 @@ class TestDict(unittest.TestCase):
         r = sorted(hancho.Dict({'a': 1}, b = 2, c = 3).items())
         self.assertEqual([('a', 1), ('b', 2), ('c', 3)], r)
 
-    def test_empty_dict_doesnt_override(self):
+    def test_empty_dict_doesnt_override(self) -> None:
         # Empty right side should not clobber left side
         d = hancho.Dict({"bar": 2}, {})
         self.assertEqual(1, len(d))

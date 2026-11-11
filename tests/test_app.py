@@ -10,7 +10,7 @@ import hancho
 
 # FIXME we need some tests that run hancho as if it were launched from the command line
 
-cvg: hancho.CVGlobals
+#cvg: hancho.cvg
 
 # --------------------------------------------------------------------------------------------------
 

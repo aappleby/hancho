@@ -14,7 +14,7 @@ import hancho
 # FIXME we need some tests that verify that using a shared data structure in multiple tasks
 # (see gcc_flags) does _not_ modify it even if it contains template stuff.
 
-cvg: hancho.CVGlobals
+cvg: hancho.CVG
 
 # --------------------------------------------------------------------------------------------------
 
@@ -451,11 +451,11 @@ class TestTasks(unittest.TestCase):
             in_files=[],
             out_file="{flarp}",
         )
-        self.assertEqual(hancho.Expander(t).flarp, "flarp.txt")
-        self.assertEqual(hancho.Expander(t).gnarp, 1)
-        self.assertEqual(hancho.Expander(t).snarp, True)
+        self.assertEqual(hancho.Expander(t.__dict__).flarp, "flarp.txt")
+        self.assertEqual(hancho.Expander(t.__dict__).gnarp, 1)
+        self.assertEqual(hancho.Expander(t.__dict__).snarp, True)
 
-        barp = hancho.Expander(t).barp
+        barp = hancho.Expander(t.__dict__).barp
         self.assertIsInstance(barp, dict)
         self.assertEqual(barp['a'], 'a')
         self.assertEqual(barp['b'], 'b')

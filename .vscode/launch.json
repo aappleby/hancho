@@ -37,9 +37,23 @@
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
       //"args"    : ["-ltrace", "--log.width=120"],
-      "args"    : ["-ldebug", "--log.width=120", "-f=scratch/build.hancho"],
+      "args"    : ["-ltrace", "-f=scratch/build.hancho"],
       //"preLaunchTask": "wipe_scratch_build"
     },
+
+    {
+      "name"    : "Debug scratch/matrix/build.hancho",
+      "type"    : "debugpy",
+      "request" : "launch",
+      "program": "${workspaceFolder}/hancho.py",
+      "cwd"     : "${workspaceFolder}",
+      "console" : "internalConsole",
+      //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
+      //"args"    : ["-ltrace", "--log.width=120"],
+      "args"    : ["-ldebug", "--log.width=120", "-f=scratch/matrix/build.hancho"],
+      //"preLaunchTask": "wipe_scratch_build"
+    },
+
 
     {
       "name"    : "Debug one test",
