@@ -552,6 +552,12 @@ class Utils:
 
 class ScopeBase:
 
+    def get(self, key : str, default : Any = ___) -> Any:
+        result = self.__dict__.get(key, ___)
+        if result is ___:
+            raise KeyError(key)
+        return result
+
     # ----------------------------------------
     # abc.MutableMapping
 
@@ -1011,6 +1017,7 @@ class Dict(ScopeBase):
         self.merge(*args, **kwargs)
 
     def __getattr__(self, key : str) -> Any:
+        # This is just to appease the type checker
         return super().__getattr__(key) # type:ignore
 
 #    # this is "merge"
@@ -1554,7 +1561,7 @@ class Expander(abc.Mapping):
             log.trace(f"{Log.WHITE}└── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
         else:
             result_color = Utils.obj_to_ansi_color(result)
-            result_type  = type(result)
+            #result_type  = type(result)
 
             if Utils.is_mapping(result):
                 result_color = Utils.obj_to_ansi_color(result)
@@ -2995,7 +3002,7 @@ class Script(ScopeBase):
             # Run the script
             token = ___
             try:
-                merged_builtins = make_builtins(builtins.__dict__, repo = repo, script = script)
+                merged_builtins = make_builtins(builtins, repo = repo, script = script)
                 token = cv_builtins.set(merged_builtins)
                 script.__dict__['__builtins__'] = merged_builtins.__dict__
                 exec(code, script.__dict__)
@@ -3012,7 +3019,7 @@ class Script(ScopeBase):
 # ==================================================================================================
 # region builtins
 
-def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
+def make_builtins(prev_builtins : Dict | None, *args : dict[str, Any], **kwargs : Any) -> Dict:
     result = Dict()
 
     # Copy all the existing builtins over
@@ -3022,13 +3029,13 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
 
     result.name     = "builtins"
     result.hancho   = sys.modules[__name__]
-    result.log      = ___
-    result.runner   = ___
-    result.project  = ___
-    result.build    = ___
-    result.repo     = ___
-    result.script   = ___
-    result.stats    = ___
+    result.log      = prev_builtins.get('log')     if prev_builtins else ___
+    result.runner   = prev_builtins.get('runner')  if prev_builtins else ___
+    result.project  = prev_builtins.get('project') if prev_builtins else ___
+    result.build    = prev_builtins.get('build')   if prev_builtins else ___
+    result.repo     = prev_builtins.get('repo')    if prev_builtins else ___
+    result.script   = prev_builtins.get('script')  if prev_builtins else ___
+    result.stats    = prev_builtins.get('stats')   if prev_builtins else ___
 
     result.Dict     = Dict
     result.Task     = Task
@@ -3079,9 +3086,6 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result.load_repo   = load_repo
     result.start_build = start_build
 
-
-
-
     Utils.merge_all(result.__dict__, *args, **kwargs)
     return result
 
@@ -3103,7 +3107,7 @@ def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags 
     temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
     temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
 
-    builtins = make_builtins()
+    builtins = make_builtins(None)
     cv_builtins.set(builtins)
     file = flags.project['file']
 
@@ -3165,7 +3169,7 @@ def main() -> int:
 
     # ------------------------------------
 
-    builtins = make_builtins()
+    builtins = make_builtins(None)
     cv_builtins.set(builtins)
     file = flags.project['file']
 
@@ -3241,30 +3245,16 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 
     new_script = Script(*args, file = file, **kwargs)
 
-    token = ___
-    try:
-        merged_builtins = make_builtins(builtins.__dict__, repo = repo, script = new_script)
-        token = cv_builtins.set(merged_builtins)
-        new_script.__dict__['__builtins__'] = merged_builtins.__dict__
+    # we have to expand new_script with new_script in builtins, which makes this a little messy.
+    # we can probably move this into Script.load
+
+    merged_builtins = make_builtins(builtins, repo = repo, script = new_script)
+    with cv_builtins.set(merged_builtins):
+        new_script.__dict__['__builtins__'] = cv_builtins.get().__dict__
         new_script.__expand__()
-    except Exception as _:
-        traceback.print_exc()
-        pass
-    finally:
         del new_script.__dict__['__builtins__']
-        cv_builtins.reset(token)
-
-    #print(new_script)
-
-#    builtins.script   = Script(file = file, **flags.extra)
-#    builtins.stats    = Stats() # before build.__expand__
-#    builtins.log.__expand__()
-#    builtins.build.__expand__()
-#    builtins.project.__expand__()
-#    builtins.repo.__expand__()
 
     return Script.load(repo, new_script, is_repo, is_dummy = False)
-
 
 
 #def include(raw_file : str) -> None:
