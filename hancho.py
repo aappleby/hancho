@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-# ruff: noqa: F401
 # region Header
 
 """
@@ -33,7 +32,6 @@ import inspect
 import io
 import json
 import os
-import pathlib
 import re
 import shutil
 import signal
@@ -47,7 +45,6 @@ from collections import Counter, abc, defaultdict
 from collections.abc import Generator, ItemsView, Iterator
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass, field, replace
-from enum import Enum
 from itertools import product
 from types import CodeType, FunctionType, GeneratorType, ModuleType, NoneType
 from typing import (
@@ -371,20 +368,17 @@ class Utils:
     def instance_tag(obj : Any) -> str:
         result : str = ""
 
-        if '_self' in obj:
-            result += obj['_self']
-            result += ":"
-        elif '_name' in obj:
-            result += obj['_name']
-            result += ":"
-        elif 'name' in obj:
-            result += obj['name']
-            result += ":"
-
-        result += type(obj).__name__
-        result += "@"
-        result += Utils.hex_tag(obj)
-        return result
+        if '__name__' in obj:
+            result += obj['__name__']
+            return result
+#        elif 'name' in obj:
+#            result += obj['name']
+#            return result
+        else:
+            result += type(obj).__name__
+            result += "@"
+            result += Utils.hex_tag(obj)
+            return result
 
     @classmethod
     def command_to_string(cls, command: command_type) -> str:
@@ -599,7 +593,7 @@ class ScopeBase:
 
 
     def expand(self, template : str) -> Any:
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
         return ex.expand(template)
 
     # ----------------------------------------
@@ -1153,7 +1147,7 @@ class Flags:
 
             for part in parts[:-1]:
                 if part not in lhs:
-                    lhs[part] = {}
+                    lhs[part] = Dict()
                 lhs = lhs[part]
             lhs[parts[-1]] = val
 
@@ -1227,11 +1221,10 @@ class Expander(abc.Mapping):
     # expanded an outer Dict, and things will still Just Work.
 
     def __init__(self, object : Any) -> None:
+        assert not isinstance(object, dict)
+
         self.expand_scope: dict = object if isinstance(object, dict) else object.__dict__
         self.expand_object: Any = object
-        self.scope_tag: str     = Utils.instance_tag(object)
-        self.scope_color: str   = Utils.obj_to_ansi_color(object)
-        self.action_color: str  = Log.RESET
 
     # ====================================
     # Expander _must_ implement __getattr__ so that macros like "{script.foo}" work.
@@ -1265,49 +1258,60 @@ class Expander(abc.Mapping):
             #print(f"Not expanding type {type(result)}")
             return result
 
-    def internal_get(self, key : str) -> Any:
+    def internal_get2(self, key : str) -> Any:
         if key == "comp_db_path":
             pass
 
+        cursor : (dict | Dict | ScopeBase) = self.expand_object
         result = ___
         try:
-            self.trace_start("get", key)
-            cursor = self.expand_scope
+            self.trace_start(cursor, "get", key)
 
             # "local" and "enclosing" scope
             while cursor is not None:
                 if key in cursor:
                     result = cursor[key]
-                    result = self.wrap_result(key, result)
                     return result
-                elif '_up' in cursor:
-                    next = cursor["_up"]
-                    if not isinstance(next, dict):
-                        raise TypeError(f"Dict has an _up chain that is not a dict - {next}")
-                    cursor = next
+                elif '__up__' in cursor:
+                    next = cursor["__up__"]
+                    if next is None:
+                        break
+                    elif isinstance(next, (dict, Dict)):
+                        self.trace_up(cursor, next, "get", key)
+                        cursor = next
+                    else:
+                        raise TypeError(f"[Dd]ict has an __up__ chain that is not a [Dd]ict - {next}")
                 else:
                     break
 
-            builtins = cv_builtins.get(None)
-            assert builtins is not None
-            if builtins is not None:
-                # "global" scope
-                if builtins.script is not None and key in builtins.script.__dict__:
+            builtins = cv_builtins.get()
+
+            # "global" scope
+            if builtins.script is not None:
+                self.trace_up(cursor, builtins.script, "get", key)
+                cursor = builtins.script
+                if key in builtins.script.__dict__:
                     result = builtins.script.__dict__[key]
-                    result = self.wrap_result(key, result)
                     return result
 
-                # "builtins" scope
-                elif key in builtins.__dict__:
-                    result = builtins.__dict__[key]
-                    result = self.wrap_result(key, result)
-                    return result
+            # "builtins" scope
+            self.trace_up(cursor, builtins, "get", key)
+            cursor = builtins
+
+            if key in builtins.__dict__:
+                result = builtins.__dict__[key]
+                return result
 
             if result is ___:
                 raise KeyError(key)
 
         finally:
-            self.trace_end("get", key, result)
+            self.trace_end(cursor, "get", key, result)
+
+    def internal_get(self, key : str) -> Any:
+        result = self.internal_get2(key)
+        result = self.wrap_result(key, result)
+        return result
 
     # Hancho's template expansions can cause infinite loops, so we need some simple complexity
     # tracking here. This is _not_ some precise thing, it's just a tripwire to keep us from blowing
@@ -1375,7 +1379,7 @@ class Expander(abc.Mapping):
                     stats.expand_evals = old_evals + 1
 
                     try:
-                        self.trace_start("eval", block)
+                        self.trace_start(self.expand_object, "eval", block)
                         exp = Expression(block[1:-1])
                         var = eval(exp, {}, self)
                     except RecursionError:
@@ -1386,7 +1390,7 @@ class Expander(abc.Mapping):
                         log.trace("\n")
                         pass
                     finally:
-                        self.trace_end("eval", block, var)
+                        self.trace_end(self.expand_object, "eval", block, var)
 
                 # Otherwise we're doing a template expansion.
                 # FIXME Note that we want to _expand_ each macro in the template and not _eval_
@@ -1399,7 +1403,7 @@ class Expander(abc.Mapping):
                 else:
                     if not trace_started:
                         trace_started = True
-                        self.trace_start("expand", var)
+                        self.trace_start(self.expand_object, "expand", var)
                     for i, block in enumerate(blocks):
                         if isinstance(block, Macro):
                             blocks[i] = self.expand(block)
@@ -1407,7 +1411,7 @@ class Expander(abc.Mapping):
 
         finally:
             if trace_started:
-                self.trace_end("expand", text, var)
+                self.trace_end(self.expand_object, "expand", text, var)
             stats.expand_depth = old_depth
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
@@ -1468,83 +1472,99 @@ class Expander(abc.Mapping):
     # ┌─
     # └─
 
-    def trace_start(self, action : str, arg : Any) -> None:
+    def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None:
         builtins = cv_builtins.get(None)
-        if builtins is None or 'log' not in builtins.__dict__:
-            return
+        if builtins is None or 'log' not in builtins.__dict__: return
         log = builtins.log
-
         if log._level_int > Log.TRACE: return
 
+        scope_tag    = Utils.instance_tag(scope)
+        scope_color  = Utils.obj_to_ansi_color(scope)
+        action_color = Log.RESET
         indent_color = Log.RESET
+
         if action == "expand":
             arg = repr(arg)
-            self.action_color = Utils.hex_to_ansi(0xFFAAAA)
+            action_color = Utils.hex_to_ansi(0xFFAAAA)
             indent_color = Utils.hex_to_ansi(0xFFAAAA)
         elif action == "eval":
             arg = repr(arg)
-            self.action_color = Utils.hex_to_ansi(0xAAFFAA)
+            action_color = Utils.hex_to_ansi(0xAAFFAA)
             indent_color = Utils.hex_to_ansi(0xAAFFAA)
         elif action == "get":
-            self.action_color = Utils.hex_to_ansi(0xAAAAFF)
+            action_color = Utils.hex_to_ansi(0xAAAAFF)
             indent_color = Utils.hex_to_ansi(0xAAAAFF)
         elif action == "range":
-            self.action_color = Utils.hex_to_ansi(0xFFFFFF)
+            action_color = Utils.hex_to_ansi(0xFFFFFF)
             indent_color = Utils.hex_to_ansi(0xFFFFFF)
 
         if action == "range":
-            log.trace(f"{Log.WHITE}┌── {self.scope_color}{self.scope_tag}{Log.RESET} begin {arg}\n")
+            log.trace(f"{Log.WHITE}┌── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
             log.indent(Log.WHITE)
         else:
-            #log.trace(f"{indent_color}┌ {scope_color}{scope_tag}{Log.RESET}.{action}({arg})\n")
-            log.trace(f"{indent_color}V {self.scope_color}{self.scope_tag}{Log.RESET}.{self.action_color}{action}{Log.RESET}({arg})\n")
+            #log.trace(f"{indent_color}V {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
+            log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
             log.indent(indent_color)
 
-    def trace_up(self, _up : ScopeBase, action : str, arg : Any) -> None:
+    def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None:
         builtins = cv_builtins.get(None)
-        if builtins is None or 'log' not in builtins.__dict__:
-            return
+        if builtins is None or 'log' not in builtins.__dict__: return
         log = builtins.log
-
-        # This can be used to trace "traverse an up link", but it was spammy so it's not used at
-        # the moment.
-
-        if log._level_int > Log.TRACE:
-            return
-
-        up_color = Utils.obj_to_ansi_color(_up)
-        up_tag = Utils.instance_tag(_up)
-        log.trace(f"{self.scope_color}┌ {self.scope_tag}{Log.RESET}.{action}({arg}) -> {up_color}{up_tag}\n")
-
-    def trace_end(self, action : str, arg : Any, result : Any) -> None:
-        builtins = cv_builtins.get(None)
-        if builtins is None or 'log' not in builtins.__dict__:
-            return
-        log = builtins.log
-
         if log._level_int > Log.TRACE: return
+
+        up_tag    = Utils.instance_tag(up)
+        up_color  = Utils.obj_to_ansi_color(up)
+        action_color = Utils.hex_to_ansi(0xAAAAFF)
+
+        log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
+
+#
+#        up_color = Utils.obj_to_ansi_color(up)
+#        up_tag = Utils.instance_tag(up)
+#        log.trace(f"{scope_color}{scope_tag}{Log.RESET}.__up__ = {up_color}{up_tag}\n")
+
+    def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None:
+        builtins = cv_builtins.get(None)
+        if builtins is None or 'log' not in builtins.__dict__: return
+        log = builtins.log
+        if log._level_int > Log.TRACE: return
+
+        scope_tag    = Utils.instance_tag(scope)
+        scope_color  = Utils.obj_to_ansi_color(scope)
+        action_color = Log.RESET
         indent_color = log._indent_stack[-1]
+
         log.dedent()
+
+        if action == "expand":
+            arg = repr(arg)
+            action_color = Utils.hex_to_ansi(0xFFAAAA)
+        elif action == "eval":
+            arg = repr(arg)
+            action_color = Utils.hex_to_ansi(0xAAFFAA)
+        elif action == "get":
+            action_color = Utils.hex_to_ansi(0xAAAAFF)
+        elif action == "range":
+            action_color = Utils.hex_to_ansi(0xFFFFFF)
 
         if isinstance(result, Expander):
             result = result.expand_object
 
         if action == "range":
-            log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
-            scope_tag}{Log.RESET} end {arg}\n")
+            log.trace(f"{Log.WHITE}└── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
         else:
-            result_color = Log.RESET
+            result_color = Utils.obj_to_ansi_color(result)
             result_type  = type(result)
 
             if Utils.is_mapping(result):
                 result_color = Utils.obj_to_ansi_color(result)
 
-            log.trace(f"{indent_color}└─>{self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
-            #log.trace(f"{indent_color}{self.scope_color}{arg}:{result_type.__name__}{Log.RESET} = ")
+            #log.trace(f"{indent_color}└─>{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}) = {Log.RESET}")
+
             if not Utils.is_scalar(result):
-                log.trace(f"{result_color}{Utils.instance_tag(result)}\n")
+                log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{Utils.instance_tag(result)}\n")
             else:
-                log.trace(f"{result_color}{result!r}\n")
+                log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{result!r}\n")
 
 # endregion
 # ==================================================================================================
@@ -1623,7 +1643,7 @@ class Dumper:
             return cls._dump_scope(key, val, opts)
         elif isinstance(val, opaque_types):
             return cls._dump_scalar(key, val, opts)
-        elif key == "_up": # ugh hardcoding. do we ever hit this?
+        elif key == "__up__": # ugh hardcoding. do we ever hit this?
             #breakpoint()
             return cls._dump_prefix(key, val, opts) + "<up>"
         elif key == "__builtins__":
@@ -1770,14 +1790,14 @@ class Dumper:
 #        pad : str = (" " * opts.tab) * len(opts.indent_stack2)
 #        new_opts : Dumper.Opts = replace(opts, len = len(pad) + 1)
 #
-#        _self = val._self
+#        __name__ = val.__name__
 #        result += pad
-#        result += cls._dump_scalar("_self", _self, new_opts)
+#        result += cls._dump_scalar("__name__", __name__, new_opts)
 #        result += ',\n'
 #
-#        _up = val._up
+#        __up__ = val.__up__
 #        result += pad
-#        result += cls._dump_scalar("_up", _up, new_opts)
+#        result += cls._dump_scalar("__up__", __up__, new_opts)
 #        result += ',\n'
 #
 #        public_ = val._public
@@ -1946,7 +1966,7 @@ class Runner(ScopeBase):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
         self.max_jobs   = ex.max_jobs
         self.max_errors = ex.max_errors
 
@@ -2059,7 +2079,7 @@ class Project(ScopeBase):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
 
         self.name = ex.name
         self.file = ex.file
@@ -2142,7 +2162,7 @@ class Build(ScopeBase):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
         for key, val in self.__dict__.items():
             if Utils.is_expandable(val):
                 new_val = ex.expand(val)
@@ -2168,7 +2188,7 @@ class Repo(ScopeBase):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
 
         self.file = ex.file
         self.path = ex.path
@@ -2351,7 +2371,7 @@ class Task(ScopeBase):
         # output files from the input tasks, which we don't know until the input tasks are
         # complete.
 
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
         self.cwd = Realpath(ex.expand(self.cwd))
 
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
@@ -2604,7 +2624,7 @@ class Task(ScopeBase):
     def expand_task(self) -> None:
         builtins = cv_builtins.get()
         log = builtins.log
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
 
         if log._level_int <= Log.DEBUG:
             self.log_task(Log.DEBUG, "Task before expand:\n")
@@ -2617,7 +2637,7 @@ class Task(ScopeBase):
 
         # Then we expand all io fields and fix their paths.
         try:
-            ex.trace_start("range", "expand io fields")
+            ex.trace_start(ex.expand_object, "range", "expand io fields")
             io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
             for field_name in io_fields:
@@ -2634,7 +2654,7 @@ class Task(ScopeBase):
                 elif field_name.startswith("out_"):
                     self._out_files[field_name] = goodfiles
         finally:
-            ex.trace_end("range", "expand io fields", None)
+            ex.trace_end(ex.expand_object, "range", "expand io fields", None)
 
         # IO fields all expanded, we can expand the rest of the task now.
 
@@ -2918,7 +2938,7 @@ class Script(ScopeBase):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
-        ex = Expander(self.__dict__)
+        ex = Expander(self)
 
         self.name = ex.name
         self.file = ex.file
@@ -3014,6 +3034,8 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result.Task     = Task
     result.Tool     = Tool
     result.Dumper   = Dumper
+    result.Expander = Expander
+
     result.getcwd   = os.getcwd
     result.dprint   = dprint
     result.dump     = Dumper.dprint
@@ -3209,7 +3231,7 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
     builtins = cv_builtins.get()
     old_script = builtins.script
 
-    file = Realpath(Expander(old_script.__dict__).expand(file))
+    file = Realpath(Expander(old_script).expand(file))
 
     if is_repo:
         repo = Repo(file)
@@ -3248,8 +3270,8 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 #def include(raw_file : str) -> None:
 #
 #    temp = Dict(
-#        _self    = "temp",
-#        _up      = cvg.script,
+#        __name__ = "temp",
+#        __up__   = cvg.script,
 #        file     = raw_file,
 #        is_repo  = False,
 #        is_dummy = False

@@ -453,14 +453,14 @@ class TestTasks(unittest.TestCase):
             in_files=[],
             out_file="{flarp}",
         )
-        self.assertEqual(hancho.Expander(t.__dict__).flarp, "flarp.txt")
-        self.assertEqual(hancho.Expander(t.__dict__).gnarp, 1)
-        self.assertEqual(hancho.Expander(t.__dict__).snarp, True)
+        self.assertEqual(hancho.Expander(t).flarp, "flarp.txt")
+        self.assertEqual(hancho.Expander(t).gnarp, 1)
+        self.assertEqual(hancho.Expander(t).snarp, True)
 
-        ex = hancho.Expander(t.__dict__)
+        ex = hancho.Expander(t)
         barp = ex.barp
         barp = barp.expand_object
-        self.assertIsInstance(barp, dict)
+        self.assertIsInstance(barp, hancho.Dict)
         self.assertEqual(barp['a'], 'a')
         self.assertEqual(barp['b'], 'b')
 

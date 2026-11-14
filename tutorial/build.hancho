@@ -9,6 +9,6 @@ app = Task(
 )
 
 def bloop(task):
-    print(f"Hello task {task._name}")
+    print(f"Hello task {task.__name__}")
 
 Task(desc = "blarp", command = bloop)

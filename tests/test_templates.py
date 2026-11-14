@@ -263,7 +263,7 @@ class TestTemplates(unittest.TestCase):
 #        d = hancho.Dict(a = 1, b = 2, c = 3)
 #        v = ['a', ['b', ['c', ['{a}{b}{c}'], '{a}+{b}+{c}']]]
 #
-#        r = hancho.Expander(d.__dict__).xip(v)
+#        r = hancho.Expander(d).xip(v)
 #
 #        self.assertEqual(r, ['a', ['b', ['c', ['123'], '1+2+3']]])
 
