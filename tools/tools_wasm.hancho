@@ -1,8 +1,8 @@
+# tools/tools_wasm.hancho
+
 import sys
 
-import hancho
-
-emcc = hancho.Tool(
+emcc = Tool(
     desc    = "Compile Emscripten'd {basename(in_src)}",
     command = "emcc {flags} {weave('-I', includes)} -c {in_src} -o {out_obj}",
     flags   = [
@@ -19,7 +19,7 @@ emcc = hancho.Tool(
     out_obj  = "{swapext(in_src, '.o')}",
 )
 
-emld = hancho.Tool(
+emld = Tool(
     desc    = "Link Emscripten'd {basename(out_js)}",
     command = "emcc {flags} {in_objs} -o {out_js}",
     flags   = [
@@ -36,7 +36,7 @@ emld = hancho.Tool(
     out_js  = None,
 )
 
-ems_package = hancho.Tool(
+ems_package = Tool(
     desc    = "Package {basename(out_data)}",
     command = [
         "rm -f {out_data}",

@@ -1,6 +1,4 @@
-import hancho
-
-compile_cpp = hancho.Dict(
+compile_cpp = Dict(
     name       = "compile_cpp",
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",
@@ -9,7 +7,7 @@ compile_cpp = hancho.Dict(
     out_obj    = "{swapext(in_src, '.o')}",
 )
 
-hello_o = hancho.Task(
+hello_o = Task(
     compile_cpp,
     in_src = "src/main.cpp"
 )
@@ -20,7 +18,7 @@ link_cpp_bin = dict(
     in_objs  = None,
 )
 
-hello = hancho.Task(
+hello = Task(
     link_cpp_bin,
     in_objs = hello_o,
     out_bin = "hello_world",

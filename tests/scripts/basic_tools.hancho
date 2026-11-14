@@ -1,6 +1,4 @@
-import hancho
-
-compile_cpp = hancho.Dict(
+compile_cpp = Dict(
     name       = "compile_cpp",
     desc       = "Compiling C++ {in_src} -> {out_obj}",
     command    = "g++ -MMD -c {in_src} -o {out_obj}",

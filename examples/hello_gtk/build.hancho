@@ -2,9 +2,9 @@
 
 tools_base = load_script("{hancho.root}/tools/tools_base.hancho")
 
-gtk_flags = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
-gtk_incs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
-gtk_libs  = hancho.Utils.run_cmd('pkg-config gtk+-3.0 --libs')
+gtk_flags = run_cmd('pkg-config gtk+-3.0 --cflags-only-other')
+gtk_incs  = run_cmd('pkg-config gtk+-3.0 --cflags-only-I')
+gtk_libs  = run_cmd('pkg-config gtk+-3.0 --libs')
 
 gtk_incs = [name[2:] for name in gtk_incs.split()]
 gtk_libs = [name[2:] for name in gtk_libs.split()]

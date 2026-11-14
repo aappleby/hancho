@@ -3019,8 +3019,11 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result.dump     = Dumper.dprint
     result.Goodpath = Goodpath
     result.Realpath = Realpath
+
     result.run_cmd  = Utils.run_cmd
     result.weave    = Utils.weave
+    result.leaves   = Utils.leaves
+
     result.join     = Path.join
     result.split    = Path.split
     result.swapext  = Path.swapext

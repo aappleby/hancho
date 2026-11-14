@@ -5,9 +5,6 @@ import random
 from contextlib import chdir
 from glob import glob
 
-import hancho
-
-dirname = hancho.Path.dirname
 original_cwd = os.getcwd()
 
 src_files = glob("src/*")
@@ -17,7 +14,7 @@ def touch_in_src(task):
         #print(src)
         os.utime(src, None)
 
-touch_inputs = hancho.Tool(
+touch_inputs = Tool(
     desc = "Touch {basename(in_src)}",
     command = touch_in_src,
     in_src = None,
@@ -30,7 +27,7 @@ def generate_filelist(task):
         for f in random.sample(task.in_src, 3):
             file.write(str(f) + "\n")
 
-filelist_txt = hancho.Task(
+filelist_txt = Task(
     desc     = "Write the names of 3 random files in src/ to {basename(out_list)}",
     command  = generate_filelist,
     in_src   = src_files,
@@ -44,7 +41,7 @@ def generate_result(task):
 
         from_filelist = [f.strip() for f in file.readlines()]
 
-        new_task = hancho.Task(
+        new_task = Task(
             desc      = "Concatenate {basename(in_files)} into {basename(out_files)}",
             command   = "cat {in_files} > {out_files}",
             in_files  = from_filelist,
@@ -53,14 +50,14 @@ def generate_result(task):
             cwd = os.getcwd(),
         )
 
-    hancho.Task(
+    Task(
         desc    = "Copy {basename(in_text)} -> {basename(out_cat)}",
         command = "cat {in_text} >> {out_cat}",
         in_text = new_task,
         out_cat = "result2.txt"
     )
 
-result_txt = hancho.Task(
+result_txt = Task(
     desc        = "Generate a new task from {basename(in_filelist)}",
     command     = generate_result,
     in_filelist = filelist_txt,

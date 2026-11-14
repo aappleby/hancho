@@ -1,5 +1,3 @@
-import hancho
-
 hancho.foo = 100
 load_script("sticky_hancho2.hancho")
 assert hancho.bar == 200

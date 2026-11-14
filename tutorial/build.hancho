@@ -1,6 +1,6 @@
-import hancho
+# tutorial/build.hancho
 
-app = hancho.Task(
+app = Task(
     desc = "Compile and link build/app",
     command = [
         "mkdir -p build",
@@ -11,4 +11,4 @@ app = hancho.Task(
 def bloop(task):
     print(f"Hello task {task._name}")
 
-hancho.Task(desc = "blarp", command = bloop)
+Task(desc = "blarp", command = bloop)

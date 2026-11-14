@@ -1,8 +1,8 @@
-import hancho
+# tools/tools_riscv.hancho
 
 opt_mode = "-O0"
 
-toolchain = hancho.Dict(
+toolchain = Dict(
     arch     = "riscv64",
     compiler = "{arch}-unknown-elf-g++ {cc_flags}",
     linker   = "{arch}-unknown-elf-g++ {ld_flags}",
@@ -27,7 +27,7 @@ toolchain = hancho.Dict(
     ],
 )
 
-rv_compile = hancho.Tool(
+rv_compile = Tool(
     desc       = "Compiling {out_obj}",
     command    = "{toolchain.compiler} -c {in_src} -o {out_obj}",
 
@@ -44,7 +44,7 @@ rv_compile = hancho.Tool(
 
 #linkerscript = "{repo_dir}/pinwheel/tools/pinwheel.ld",
 
-rv_link = hancho.Tool(
+rv_link = Tool(
     desc         = "Linking {out_bin}",
     command      = "{toolchain.linker} {in_objs} -o {out_bin} -lgcc",
 

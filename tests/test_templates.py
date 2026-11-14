@@ -299,7 +299,6 @@ class TestTemplates(unittest.TestCase):
 #
 #        script_path = os.path.join(os.getcwd(), "fake_script.hancho")
 #        source = textwrap.dedent("""
-#        import hancho
 #        foo_in_script = [1, 2, 3]
 #        """)
 #

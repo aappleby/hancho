@@ -1,23 +1,21 @@
 # examples/hello_world/build.hancho
 
-import hancho
-
-compile_cpp = hancho.Tool(
+compile_cpp = Tool(
     desc    = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command = "g++ -MMD -c {in_src} -o {out_obj}",
     out_obj = "{swapext(in_src, '.o')}",
     in_depfile = "{swapext(out_obj, '.d')}",
 )
 
-main_o = hancho.Task(compile_cpp, in_src = "main.cpp")
-util_o = hancho.Task(compile_cpp, in_src = "util.cpp")
+main_o = Task(compile_cpp, in_src = "main.cpp")
+util_o = Task(compile_cpp, in_src = "util.cpp")
 
-link_cpp_bin = hancho.Tool(
+link_cpp_bin = Tool(
     desc    = "Linking {basename(out_bin)}",
     command = "g++ {in_objs} -o {out_bin}"
 )
 
-main_app = hancho.Task(
+main_app = Task(
     link_cpp_bin,
     in_objs = [main_o, util_o],
     out_bin = "hello_world",

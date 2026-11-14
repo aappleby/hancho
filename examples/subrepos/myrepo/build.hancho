@@ -1,8 +1,6 @@
 # examples/subrepos/myrepo/build.hancho
 
-import hancho
-
-util_o = hancho.Task(
+util_o = Task(
     desc    = "Compile {basename(in_src)}",
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "util.cpp",
@@ -10,7 +8,7 @@ util_o = hancho.Task(
 )
 
 # This should not be built, as it's not in the root repo and it's not depended on by anything.
-broken_o = hancho.Task(
+broken_o = Task(
     desc    = "SHOULD NOT BE BUILT! Compile {basename(in_src)}",
     command = "g++ -c {in_src} -o {out_obj}",
     in_src  = "broken.cpp",

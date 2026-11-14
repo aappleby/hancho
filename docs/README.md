@@ -260,9 +260,6 @@ Hancho comes with a simple text-expansion tracing tool for debugging your build 
 Here's what the tracer generates for the above example:
 
 ```py
-Python 3.12.3 (main, Sep 11 2024, 14:17:37) [GCC 13.2.0] on linux
-Type "help", "copyright", "credits" or "license" for more information.
->>> import hancho
 >>> foo = Dict(msg = "What's a {bar.thing}?")
 >>> bar = Dict(thing = "bear")
 >>> baz = Dict(foo = foo, bar = bar, trace=True)

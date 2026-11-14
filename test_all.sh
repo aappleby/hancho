@@ -7,4 +7,4 @@ python -m unittest
 hancho -lverbose
 echo
 echo
-hancho -f scratch/build.hancho -lverbose
+hancho -f scratch/build.hancho --log.level=verbose

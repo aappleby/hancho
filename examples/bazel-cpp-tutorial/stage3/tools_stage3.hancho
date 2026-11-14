@@ -3,8 +3,6 @@
 # Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
 # This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
 
-import hancho
-
 gcc_flags = [
     "-U_FORTIFY_SOURCE",
     "-fstack-protector",
@@ -38,7 +36,7 @@ ld_libs = [
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
-compile_cpp = hancho.Tool(
+compile_cpp = Tool(
     desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} {weave('-I', includes)} -c {in_src} -o {out_obj}",
     #----------
@@ -50,7 +48,7 @@ compile_cpp = hancho.Tool(
     includes   = []
 )
 
-link_cpp_lib = hancho.Tool(
+link_cpp_lib = Tool(
     desc     = "Bundling {basename(out_lib)}",
     command  = "ar rcs {out_lib} {in_objs}",
     #----------
@@ -58,7 +56,7 @@ link_cpp_lib = hancho.Tool(
     out_lib  = None,
 )
 
-link_cpp_bin = hancho.Tool(
+link_cpp_bin = Tool(
     desc     = "Linking {basename(out_bin)}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {in_deps} {ld_libs}",
     #----------
@@ -72,15 +70,15 @@ link_cpp_bin = hancho.Tool(
 
 def cc_library(*, in_srcs = None, **kwargs):
     objs = [
-        hancho.Task(compile_cpp.fill(kwargs), in_src = src)
-        for src in hancho.Utils.leaves(in_srcs)
+        Task(compile_cpp.fill(kwargs), in_src = src)
+        for src in leaves(in_srcs)
     ]
 
-    return hancho.Task(link_cpp_lib.fill(kwargs), in_objs=objs)
+    return Task(link_cpp_lib.fill(kwargs), in_objs=objs)
 
 def cc_binary(*, in_srcs = None, **kwargs):
     objs = [
-        hancho.Task(compile_cpp.fill(kwargs), in_src=src)
-        for src in hancho.Utils.leaves(in_srcs)
+        Task(compile_cpp.fill(kwargs), in_src=src)
+        for src in leaves(in_srcs)
     ]
-    return hancho.Task(link_cpp_bin.fill(kwargs), in_objs=objs)
+    return Task(link_cpp_bin.fill(kwargs), in_objs=objs)

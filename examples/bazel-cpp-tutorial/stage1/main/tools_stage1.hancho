@@ -1,8 +1,6 @@
 # Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
 # This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
 
-import hancho
-
 gcc_flags = [
     "-U_FORTIFY_SOURCE",
     "-fstack-protector",
@@ -36,7 +34,7 @@ ld_libs = [
     "-Wl,--push-state,-as-needed -lm      -Wl,--pop-state",
 ]
 
-compile_cpp = hancho.Tool(
+compile_cpp = Tool(
     desc       = "Compiling {basename(in_src)} -> {basename(out_obj)}",
     command    = "g++ {gcc_flags} -c {in_src} -o {out_obj}",
     #----------
@@ -47,7 +45,7 @@ compile_cpp = hancho.Tool(
     out_obj    = "{swapext(in_src, '.o')}",
 )
 
-link_cpp_bin = hancho.Tool(
+link_cpp_bin = Tool(
     desc     = "Linking {basename(in_objs)} -> {basename(out_bin)}",
     command  = "gcc {ld_flags} {in_objs} -o {out_bin} {ld_libs}",
     #----------
@@ -59,6 +57,6 @@ link_cpp_bin = hancho.Tool(
 )
 
 def cc_binary(*, out_bin, in_srcs):
-    objs = [compile_cpp(in_src = src) for src in hancho.Utils.leaves(in_srcs)]
+    objs = [compile_cpp(in_src = src) for src in leaves(in_srcs)]
     bin = link_cpp_bin(out_bin = out_bin, in_objs = objs)
     return bin

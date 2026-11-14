@@ -1,5 +1,3 @@
-import hancho
-
 # This just builds all three stages of the Bazel tutorial
 load_script("stage1/build.hancho")
 load_script("stage2/build.hancho")

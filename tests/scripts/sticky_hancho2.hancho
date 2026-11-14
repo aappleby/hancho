@@ -1,4 +1,2 @@
-import hancho
-
 assert hancho.foo == 100
 hancho.bar = 200
