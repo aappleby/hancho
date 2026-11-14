@@ -34,7 +34,7 @@ Dict @ 0x788c818610e0 {
 |```weave```  | Joins arbitrary arrays of paths together, combinatorially. ```join_path(['a','b'],['c','d'])``` -> ```['a/c', 'a/d', 'b/c', 'b/d']```|
 |```ext```        | Replaces a filename's extension.|
 |```flatten```    | Converts nested arrays to a single flat array, non-array arguments to a one-element array, and ```None```s to an empty array. Used all over the place to normalize inputs.|
-|```hancho.dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```hancho.load("{hancho.root}/base_rules.hancho")```|
+|```hancho.dir``` | The physical path to ```hancho.py```. Useful if you've cloned the Hancho repo and want to call ```load_script("{hancho.root}/base_rules.hancho")```|
 |```glob```       | Python's ```glob.glob```|
 |```re```         | Python's ```re``` regular expression module|
 |```path```       | Python's ```os.path``` module|
@@ -46,7 +46,7 @@ Dict @ 0x788c818610e0 {
 
 Hancho is explicitly designed to allow for build scripts that span multiple files, multiple directories, and multiple repos.
 
-To load the contents of another ```.hancho``` file into the current one, use ```hancho.load(filename)```. The return value from ```load()``` will be a Dict containing all the global variables defined in the file, minus imported modules and 'private' variables prefixed with an underscore.
+To load the contents of another ```.hancho``` file into the current one, use ```load_script(filename)```. The return value from ```load()``` will be a Dict containing all the global variables defined in the file, minus imported modules and 'private' variables prefixed with an underscore.
 
 ```py
 # stuff.hancho
@@ -58,7 +58,7 @@ def helper_function():
 
 ```py
 # build.hancho
-stuff = hancho.load("stuff.hancho")
+stuff = load_script("stuff.hancho")
 print(stuff)
 ```
 
@@ -77,7 +77,7 @@ Build scripts loaded this way get a _deep copy_ of the loader's ```hancho``` obj
 # build.hancho
 hancho.options = 42
 hancho.Context.thing = "cat"
-stuff = hancho.load("stuff.hancho")
+stuff = load_script("stuff.hancho")
 ```
 
 ```sh
@@ -88,11 +88,11 @@ hancho.Context.thing = cat
 hancho: BUILD CLEAN
 ```
 
-If your project uses Git subrepos and your subrepo also builds with Hancho, you can load the subrepo's build script via ```hancho.load_repo()``` - this will ensure that all of its build targets go in ```build.dest/build_tag/subrepo/path-relative-to-subrepo``` instead of getting mixed in with the rest of your build files.
+If your project uses Git subrepos and your subrepo also builds with Hancho, you can load the subrepo's build script via ```load_repo()``` - this will ensure that all of its build targets go in ```build.dest/build_tag/subrepo/path-relative-to-subrepo``` instead of getting mixed in with the rest of your build files.
 
 ```py
-tools_base = hancho.load("{hancho.root}/tools/tools_base.hancho")
-awesomelib = hancho.load_repo("subrepos/awesomelib/build.hancho")
+tools_base = load_script("{hancho.root}/tools/tools_base.hancho")
+awesomelib = load_repo("subrepos/awesomelib/build.hancho")
 
 hancho.Task(
   tools_base.cpp_binary,

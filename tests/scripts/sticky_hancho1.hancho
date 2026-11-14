@@ -1,7 +1,7 @@
 import hancho
 
 hancho.foo = 100
-hancho.load("sticky_hancho2.hancho")
+load_script("sticky_hancho2.hancho")
 assert hancho.bar == 200
-hancho.load("sticky_hancho3.hancho")
+load_script("sticky_hancho3.hancho")
 assert hancho.baz == 300

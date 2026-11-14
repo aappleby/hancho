@@ -310,7 +310,7 @@ class TestTemplates(unittest.TestCase):
 #            blarp = 1234
 #        )
 #
-#        script = hancho.load_source(
+#        script = load_script(
 #            env,
 #            parent=parent_script,
 #            #child_params=child_params,

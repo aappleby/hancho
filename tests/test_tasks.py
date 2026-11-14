@@ -69,7 +69,7 @@ class TestTasks(unittest.TestCase):
         self.stats = self.builtins.stats
 
     def run_tasks(self, expected : int) -> None:
-        result: int = hancho.build()
+        result: int = self.builtins.start_build()
         self.assertEqual(result, expected)
 
     def test_trivial(self) -> None:

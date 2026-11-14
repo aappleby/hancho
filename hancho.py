@@ -3034,6 +3034,28 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result.realpath = lambda x : Realpath(x)
     result.goodpath = lambda x : Goodpath(x)
 
+    @staticmethod
+    def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
+        # FIXME handle args/kwargs
+        return _load(file, False, *args, **kwargs)
+
+    @staticmethod
+    def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
+        # FIXME handle args/kwargs
+        return _load(file, True, *args, **kwargs)
+
+    @staticmethod
+    def start_build() -> int:
+        builtins = cv_builtins.get()
+        project = builtins.project
+        return project.build()
+
+    result.load_script = load_script
+    result.load_repo   = load_repo
+    result.start_build = start_build
+
+
+
 
     Utils.merge_all(result.__dict__, *args, **kwargs)
     return result
@@ -3244,20 +3266,6 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 #
 #    if "__builtins__" in cvg.script.__dict__:
 #        del cvg.script.__dict__["__builtins__"]
-
-def load(file : str, *args : Any, **kwargs : Any) -> Script:
-    # FIXME handle args/kwargs
-    return _load(file, False, *args, **kwargs)
-
-def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
-    # FIXME handle args/kwargs
-    return _load(file, True, *args, **kwargs)
-
-
-def build() -> int:
-    builtins = cv_builtins.get()
-    project = builtins.project
-    return project.build()
 
 sys.modules["hancho"] = sys.modules[__name__]
 sys.modules["hancho"].path = __file__ # type: ignore

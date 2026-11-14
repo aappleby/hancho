@@ -1,8 +1,6 @@
 # hancho/examples/windows/build.hancho - Builds a trivial Win32 app.
 
-import hancho
-
-base_rules = hancho.load("{hancho.root}/tools/tools_base.hancho")
+base_rules = load_script("{hancho.root}/tools/tools_base.hancho")
 
 main_o = base_rules.compile_cpp(in_src="src/main.cpp")
 

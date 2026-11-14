@@ -1,5 +1,3 @@
 # examples/dynamic_dependencies/build.hancho
 
-import hancho
-
-hancho.load("filelist/build.hancho")
+load_script("filelist/build.hancho")

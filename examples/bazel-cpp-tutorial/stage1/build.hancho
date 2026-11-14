@@ -1,3 +1,1 @@
-import hancho
-
-hancho.load("main/build.hancho")
+load_script("main/build.hancho")

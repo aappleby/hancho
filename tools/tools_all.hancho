@@ -1,6 +1,6 @@
 import hancho
 
-tools_base  = hancho.load("base.hancho")
-tools_fpga  = hancho.load("fpga.hancho")
-tools_riscv = hancho.load("riscv.hancho")
-tools_wasm  = hancho.load("wasm.hancho")
+tools_base  = load_script("base.hancho")
+tools_fpga  = load_script("fpga.hancho")
+tools_riscv = load_script("riscv.hancho")
+tools_wasm  = load_script("wasm.hancho")
