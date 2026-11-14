@@ -2284,10 +2284,8 @@ class Repo(ScopeBase):
     def update_stat(self, file : Realpath, command : command_type) -> None:
         new_stat = self.get_stat(file)
         if command is not None:
-            new_stat['command'] = Dumper.depointer(repr(command))
+            new_stat['command'] = Dumper.depointer(str(command))
         if file in self._stat_db:
-            #old_stat = self._stat_db[file]
-            #self._stat_db[file] = Utils.merge(old_stat, new_stat)
             Utils.merge(self._stat_db[file], new_stat)
         else:
             self._stat_db[file] = new_stat
@@ -2312,7 +2310,7 @@ class Repo(ScopeBase):
 
     def command_changed(self, file : Realpath, command : command_type) -> bool:
         old_command : str = self._stat_db[file]['command']
-        new_command : str = Dumper.depointer(repr(command))
+        new_command : str = Dumper.depointer(str(command))
         return old_command != new_command
 
 # endregion
@@ -2645,6 +2643,9 @@ class Task(ScopeBase):
         # a context, all other tasks using the shared data will get incorrectly-expanded values
 
         self.command = [(ex.expand(c) if isinstance(c, str) else c) for c in Utils.leaves(self.command)]
+
+        if len(self.command) == 1:
+            self.command = self.command[0]
 
         required_keys = ['command', 'cwd', 'depformat', 'desc', 'dest', 'dry_run', 'force', 'job_size', 'name']
 
