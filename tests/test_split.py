@@ -8,29 +8,29 @@ import hancho
 
 # --------------------------------------------------------------------------------------------------
 
-def split(template):
-    out_blocks = hancho.Expander.Blocks()
+def split(template : str) -> hancho.Blocks:
+    out_blocks = hancho.Blocks()
     hancho.Expander.split_text(template, out_blocks)
     return out_blocks
 
 # --------------------------------------------------------------------------------------------------
 
 class TestSplit(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         os.chdir(os.path.dirname(__file__))
         sys.stdout.flush()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         sys.stdout.flush()
 
-    def test_trivial(self):
+    def test_trivial(self) -> None:
         self.assertIsNotNone(hancho)
 
-    def test_hash_matches_str(self):
+    def test_hash_matches_str(self) -> None:
         self.assertEqual(hash("a"), hash("a"))
         self.assertEqual(hash("{a}"), hash("{a}"))
 
-    def test_basic(self):
+    def test_basic(self) -> None:
         # Sanity check - Single braces should produce a block
         self.assertEqual(split("a {b} c"), ["a ", "{b}", " c"])
 

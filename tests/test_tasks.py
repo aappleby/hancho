@@ -14,7 +14,8 @@ import hancho
 # FIXME we need some tests that verify that using a shared data structure in multiple tasks
 # (see gcc_flags) does _not_ modify it even if it contains template stuff.
 
-cvg: hancho.CVG
+#import contextvars
+#cvg : contextvars.ContextVar[hancho.Script] = contextvars.ContextVar("CVG")
 
 # --------------------------------------------------------------------------------------------------
 
@@ -48,7 +49,7 @@ class TestTasks(unittest.TestCase):
         self.reset(*args)
 
     def tearDown(self) -> None:
-        cvg.log._flush()
+        self.log._flush()
 
     def reset(self, *args : Any) -> None:
         self.script: hancho.Script = hancho.create_test_script(
@@ -63,8 +64,9 @@ class TestTasks(unittest.TestCase):
                 *args
             ],
         )
-        global cvg
-        cvg = hancho.cvg
+        self.builtins = hancho.cv_builtins.get()
+        self.log   = self.builtins.log
+        self.stats = self.builtins.stats
 
     def run_tasks(self, expected : int) -> None:
         result: int = hancho.build()
@@ -93,9 +95,9 @@ class TestTasks(unittest.TestCase):
             raise asyncio.CancelledError()
 
         hancho.Task(command=asyncio_cancelled, out_file="asyncio_cancelled.txt")
-        self.assertEqual(0, hancho.cvg.stats.tasks_cancelled)
+        self.assertEqual(0, self.stats.tasks_cancelled)
         self.run_tasks(0)
-        self.assertEqual(1, hancho.cvg.stats.tasks_cancelled)
+        self.assertEqual(1, self.stats.tasks_cancelled)
 
     # ----------------------------------------------------------------------------------------------
 
@@ -558,9 +560,9 @@ class TestTasks(unittest.TestCase):
         self.assertIsNone(task_that_passes._error)
         self.assertIsInstance(should_be_cancelled._error, hancho.Task.CANCELLED)
 
-        self.assertEqual(1, hancho.cvg.stats.tasks_cancelled)
-        self.assertEqual(1, hancho.cvg.stats.tasks_failed)
-        self.assertEqual(1, hancho.cvg.stats.tasks_finished)
+        self.assertEqual(1, self.stats.tasks_cancelled)
+        self.assertEqual(1, self.stats.tasks_failed)
+        self.assertEqual(1, self.stats.tasks_finished)
 
         self.assertTrue(os.path.exists("build/pass_result.txt"))
         self.assertFalse(os.path.exists("build/fail_result.txt"))
@@ -692,13 +694,13 @@ class TestTasks(unittest.TestCase):
         mtime1a = mtime_ns("build/blerp/sherp")
         mtime2a = mtime_ns("build/blerp/nerp")
 
-        self.assertEqual(hancho.cvg.stats.tasks_finished, 2)
-        self.assertEqual(hancho.cvg.stats.tasks_broken, 0)
-        self.assertEqual(hancho.cvg.stats.tasks_failed, 0)
-        self.assertEqual(hancho.cvg.stats.tasks_cancelled, 0)
-        self.assertEqual(hancho.cvg.stats.tasks_skipped, 0)
+        self.assertEqual(self.stats.tasks_finished, 2)
+        self.assertEqual(self.stats.tasks_broken, 0)
+        self.assertEqual(self.stats.tasks_failed, 0)
+        self.assertEqual(self.stats.tasks_cancelled, 0)
+        self.assertEqual(self.stats.tasks_skipped, 0)
 
-        hancho.cvg.log.info("#############################################\n")
+        self.log.info("#############################################\n")
 
         (task1, task2) = run()
         self.assertTrue(task1._skipped)
@@ -710,11 +712,11 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(mtime1a, mtime1b) # first task clean, should be skipped
         self.assertLess (mtime2a, mtime2b)  # second task always rebuilds and the skipped task shouldn't stop it.
 
-        self.assertEqual(hancho.cvg.stats.tasks_finished, 1)
-        self.assertEqual(hancho.cvg.stats.tasks_broken, 0)
-        self.assertEqual(hancho.cvg.stats.tasks_failed, 0)
-        self.assertEqual(hancho.cvg.stats.tasks_cancelled, 0)
-        self.assertEqual(hancho.cvg.stats.tasks_skipped, 1)
+        self.assertEqual(self.stats.tasks_finished, 1)
+        self.assertEqual(self.stats.tasks_broken, 0)
+        self.assertEqual(self.stats.tasks_failed, 0)
+        self.assertEqual(self.stats.tasks_cancelled, 0)
+        self.assertEqual(self.stats.tasks_skipped, 1)
 
 # --------------------------------------------------------------------------------------------------
 

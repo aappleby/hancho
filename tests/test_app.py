@@ -1,3 +1,4 @@
+import contextvars
 import io
 import os
 import subprocess
@@ -10,7 +11,7 @@ import hancho
 
 # FIXME we need some tests that run hancho as if it were launched from the command line
 
-#cvg: hancho.cvg
+cvg : contextvars.ContextVar[hancho.Script] = contextvars.ContextVar("CVG")
 
 # --------------------------------------------------------------------------------------------------
 
@@ -34,10 +35,9 @@ class TestApp(unittest.TestCase):
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
+        self.builtins = hancho.cv_builtins.get()
+        self.log = self.builtins.log
         self.clear_stdout()
-
-        global cvg
-        cvg = hancho.cvg
 
     def clear_stdout(self) -> None:
         self.stdout.truncate(0)
@@ -47,19 +47,20 @@ class TestApp(unittest.TestCase):
         pass
 
     def test_log_redirection(self) -> None:
+
         # Our default verbosity is 'critical', so these should appear in the log.
-        cvg.log.critical("This is a message\n")
-        cvg.log.critical("This is another message\n")
-        cvg.log._flush()
+        self.log.critical("This is a message\n")
+        self.log.critical("This is another message\n")
+        self.log._flush()
         self.assertEqual("This is a message\nThis is another message\n", self.stdout.getvalue())
 
         # If we clear the log and print the same thing at 'trace' level they should not appear.
         self.stdout.seek(0)
         self.stdout.truncate(0)
 
-        cvg.log.trace("This is a message\n")
-        cvg.log.trace("This is another message\n")
-        cvg.log._flush()
+        self.log.trace("This is a message\n")
+        self.log.trace("This is another message\n")
+        self.log._flush()
         self.assertEqual("", self.stdout.getvalue())
 
     def test_we_can_show_help(self) -> None:
@@ -69,32 +70,32 @@ class TestApp(unittest.TestCase):
 
     def test_verbosities(self) -> None:
         self.setUp("--log.level=trace")
-        self.assertEqual("trace", cvg.log.level)
-        self.assertEqual(cvg.log.TRACE, cvg.log._level_int)
+        self.assertEqual("trace", self.log.level)
+        self.assertEqual(self.log.TRACE, self.log._level_int)
 
         self.setUp("--log.level=debug")
-        self.assertEqual("debug", cvg.log.level)
-        self.assertEqual(cvg.log.DEBUG, cvg.log._level_int)
+        self.assertEqual("debug", self.log.level)
+        self.assertEqual(self.log.DEBUG, self.log._level_int)
 
         self.setUp("--log.level=info")
-        self.assertEqual("info", cvg.log.level)
-        self.assertEqual(cvg.log.INFO, cvg.log._level_int)
+        self.assertEqual("info", self.log.level)
+        self.assertEqual(self.log.INFO, self.log._level_int)
 
         self.setUp("--log.level=warning")
-        self.assertEqual("warning", cvg.log.level)
-        self.assertEqual(cvg.log.WARNING, cvg.log._level_int)
+        self.assertEqual("warning", self.log.level)
+        self.assertEqual(self.log.WARNING, self.log._level_int)
 
         self.setUp("--log.level=error")
-        self.assertEqual("error", cvg.log.level)
-        self.assertEqual(cvg.log.ERROR, cvg.log._level_int)
+        self.assertEqual("error", self.log.level)
+        self.assertEqual(self.log.ERROR, self.log._level_int)
 
         self.setUp("--log.level=critical")
-        self.assertEqual("critical", cvg.log.level)
-        self.assertEqual(cvg.log.CRITICAL, cvg.log._level_int)
+        self.assertEqual("critical", self.log.level)
+        self.assertEqual(self.log.CRITICAL, self.log._level_int)
 
         self.setUp("--log.level=quiet")
-        self.assertEqual("quiet", cvg.log.level)
-        self.assertEqual(cvg.log.QUIET, cvg.log._level_int)
+        self.assertEqual("quiet", self.log.level)
+        self.assertEqual(self.log.QUIET, self.log._level_int)
 
         # FIXME We need to test this some other way, it seems to f' up the debugger
         #cmd = [sys.executable, "../hancho.py", "--log.level=boo"]
@@ -102,43 +103,43 @@ class TestApp(unittest.TestCase):
         #self.assertIn("invalid choice: 'boo'", result.stderr)
 
     def test_indentation(self) -> None:
-        cvg.log.info("line1\n")
-        cvg.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
-        cvg.log.info("line2\n")
-        cvg.log.dedent()
-        cvg.log.info("line3\n")
+        self.log.info("line1\n")
+        self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
+        self.log.info("line2\n")
+        self.log.dedent()
+        self.log.info("line3\n")
         self.assertEqual(
             repr("line1\n│ line2\nline3\n"),
             repr(self.stdout.getvalue())
         )
 
     def test_no_color(self) -> None:
-        cvg.log.info("this should _not_ be blue\n")
+        self.log.info("this should _not_ be blue\n")
         self.assertEqual("this should _not_ be blue\n", self.stdout.getvalue())
         self.assertNotIn("\x1B", self.stdout.getvalue())
 
     def test_newlines(self) -> None:
-        cvg.log.info("one")
-        cvg.log.info("two")
-        cvg.log.info("three")
-        cvg.log.info("four\n")
+        self.log.info("one")
+        self.log.info("two")
+        self.log.info("three")
+        self.log.info("four\n")
         self.assertEqual('onetwothreefour\n', self.stdout.getvalue())
 
     def test_flush(self) -> None:
-        cvg.log.info("one")
-        cvg.log.info("two")
-        cvg.log.info("three")
+        self.log.info("one")
+        self.log.info("two")
+        self.log.info("three")
         self.assertEqual('', self.stdout.getvalue())
-        cvg.log._flush()
+        self.log._flush()
         self.assertEqual('onetwothree\n', self.stdout.getvalue())
 
     def test_indent_dedent(self) -> None:
-        cvg.log.info("┌ one\n")
-        cvg.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
-        cvg.log.info("boop\n")
-        cvg.log.dedent()
-        cvg.log.info("└ two\n")
-        cvg.log.info("soop\n")
+        self.log.info("┌ one\n")
+        self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
+        self.log.info("boop\n")
+        self.log.dedent()
+        self.log.info("└ two\n")
+        self.log.info("soop\n")
 
         self.assertEqual(
             repr('┌ one\n│ boop\n└ two\nsoop\n'),

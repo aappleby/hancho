@@ -37,7 +37,7 @@
       "console" : "internalConsole",
       //"args"    : ["-ltrace", "--floobert=schoobert", "--train.goes=choochoo", "--project.spargy=3484"],
       //"args"    : ["-ltrace", "--log.width=120"],
-      "args"    : ["-ltrace", "-f=scratch/build.hancho"],
+      "args"    : ["--log.level=trace", "--log.wrap=True", "-f=scratch/build.hancho", "--myflag=very_flaggy"],
       //"preLaunchTask": "wipe_scratch_build"
     },
 
