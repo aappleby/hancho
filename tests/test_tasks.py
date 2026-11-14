@@ -457,7 +457,9 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(hancho.Expander(t.__dict__).gnarp, 1)
         self.assertEqual(hancho.Expander(t.__dict__).snarp, True)
 
-        barp = hancho.Expander(t.__dict__).barp
+        ex = hancho.Expander(t.__dict__)
+        barp = ex.barp
+        barp = barp.expand_object
         self.assertIsInstance(barp, dict)
         self.assertEqual(barp['a'], 'a')
         self.assertEqual(barp['b'], 'b')

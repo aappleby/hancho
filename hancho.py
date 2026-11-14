@@ -44,7 +44,7 @@ import time
 import traceback
 from abc import ABCMeta
 from collections import Counter, abc, defaultdict
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, ItemsView, Iterator
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -180,10 +180,7 @@ class Utils:
         """Converts any type into a template-compatible string."""
 
         if isinstance(variant, ScopeBase):
-            print("stringifying a scope!")
             variant = {k:v for k,v in variant.__dict__.items() if not k.startswith("_")}
-            Dumper.dprint(variant)
-            pass
 
         result : str = ""
         for v in Utils.leaves(variant):
@@ -581,6 +578,29 @@ class ScopeBase:
 
     def __len__(self) -> int:
         return len(self.__dict__)
+
+    def items(self) -> ItemsView[str, Any]:
+        return self.__dict__.items()
+
+    # ----------------------------------------
+
+    def merge(self, *args : Any, **kwargs : Any) -> None:
+        for d in [*args, kwargs]:
+            if not isinstance(d, dict):
+                d = d.__dict__
+            Utils.merge(self.__dict__, d)
+
+    def fill(self, *args : dict[str, Any], **kwargs : Any) -> ScopeBase:
+        result = type(self)()
+        Utils.merge(result.__dict__, self.__dict__)
+        for rhs in (*args, kwargs):
+            Utils.merge(result.__dict__, rhs, keep_rhs = False)
+        return result
+
+
+    def expand(self, template : str) -> Any:
+        ex = Expander(self.__dict__)
+        return ex.expand(template)
 
     # ----------------------------------------
     # We don't want the type checker to see this or it will stop type-checking attributes
@@ -992,9 +1012,9 @@ class Blocks(list[Literal | Macro]):
 
 class Dict(ScopeBase):
 
-    def __init__(self, *args : dict, **kwargs : Any) -> None:
+    def __init__(self, *args : Any, **kwargs : Any) -> None:
         super().__init__()
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        self.merge(*args, **kwargs)
 
     def __getattr__(self, key : str) -> Any:
         return super().__getattr__(key) # type:ignore
@@ -1206,10 +1226,11 @@ class Expander(abc.Mapping):
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
 
-    def __init__(self, scope : dict) -> None:
-        self.expand_scope: dict = scope
-        self.scope_tag: str     = Utils.instance_tag(scope)
-        self.scope_color: str   = Utils.obj_to_ansi_color(scope)
+    def __init__(self, object : Any) -> None:
+        self.expand_scope: dict = object if isinstance(object, dict) else object.__dict__
+        self.expand_object: Any = object
+        self.scope_tag: str     = Utils.instance_tag(object)
+        self.scope_color: str   = Utils.obj_to_ansi_color(object)
         self.action_color: str  = Log.RESET
 
     # ====================================
@@ -1236,11 +1257,8 @@ class Expander(abc.Mapping):
     # This is the main "find a variable referenced by a template" lookup function.
 
     def wrap_result(self, key : str, result : Any) -> Any:
-        if isinstance(result, dict):
+        if isinstance(result, (dict, ScopeBase)):
             return Expander(result)
-        elif isinstance(result, ScopeBase):
-            #print(f"Expanding __dict__ from ScopeBase type {type(result)}")
-            return Expander(result.__dict__)
         elif isinstance(result, str):
             return self.expand(result)
         else:
@@ -1395,7 +1413,7 @@ class Expander(abc.Mapping):
                 # We just finished an expansion - reset the eval budget
                 stats.expand_evals = 0
 
-        var = var.expand_scope if isinstance(var, Expander) else var
+        var = var.expand_object if isinstance(var, Expander) else var
         return var
 
     # ==============================================================================================
@@ -1509,7 +1527,7 @@ class Expander(abc.Mapping):
         log.dedent()
 
         if isinstance(result, Expander):
-            result = result.expand_scope
+            result = result.expand_object
 
         if action == "range":
             log.trace(f"{Log.WHITE}└── {self.scope_color}{self.
@@ -2682,12 +2700,23 @@ class Task(ScopeBase):
         if not Path.startswith(self.dest, repo.root):
             raise Task.BROKEN(f"The build destination {self.dest} is not under the repo root {repo.root}")
 
-        if isinstance(self.command, list):
-            for command in self.command:
-                if not isinstance(command, str):
-                    raise Task.BROKEN(f"Command is not a list of strings: {self.command}")
-        elif not isinstance(self.command, (str, abc.Callable)):
-            raise Task.BROKEN(f"Command is not a string or callable: {self.command}")
+        has_str      = any(isinstance(x, str)                     for x in Utils.leaves(self.command))
+        has_callable = any(isinstance(x, abc.Callable)            for x in Utils.leaves(self.command))
+        has_other    = any(not isinstance(x, (str, abc.Callable)) for x in Utils.leaves(self.command))
+
+        if has_str and has_callable:
+            raise Task.BROKEN(f"Command list is a mix of strings and callables: {self.command}")
+        if has_other:
+            raise Task.BROKEN(f"Command contains a non-string/callable: {self.command}")
+
+
+        #if isinstance(self.command, list):
+        #    if len(self.command) > 1:
+        #        for command in self.command:
+        #            if not isinstance(command, str):
+        #                raise Task.BROKEN(f"Command is not a list of strings: {self.command}")
+        #elif not isinstance(self.command, (str, abc.Callable)):
+        #    raise Task.BROKEN(f"Command is not a string or callable: {self.command}")
 
         # In strict mode, we mark a task broken if its command still has delimiters in it.
         if self.strict:
@@ -2964,6 +2993,12 @@ class Script(ScopeBase):
 
 def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result = Dict()
+
+    # Copy all the existing builtins over
+    import builtins
+    for key, val in builtins.__dict__.items():
+        result[key] = val
+
     result.name     = "builtins"
     result.hancho   = sys.modules[__name__]
     result.log      = ___
@@ -2973,12 +3008,6 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result.repo     = ___
     result.script   = ___
     result.stats    = ___
-
-    import builtins
-
-    result.print      = builtins.print
-    result.__import__ = builtins.__import__
-    result.globals    = globals
 
     result.Dict     = Dict
     result.Task     = Task
@@ -3004,52 +3033,56 @@ def make_builtins(*args : dict[str, Any], **kwargs : Any) -> Dict:
     result.realpath = lambda x : Realpath(x)
     result.goodpath = lambda x : Goodpath(x)
 
+
     Utils.merge_all(result.__dict__, *args, **kwargs)
     return result
 
 cv_builtins : contextvars.ContextVar[Dict] = contextvars.ContextVar("builtins")
-#cv_builtins.set(make_builtins())
 
 # endregion
 # ==================================================================================================
 # region create_test_script
 
 def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Script:
-
-    stats = Stats()
-
     flags = Flags()
     flags.parse_flags(f"--project.file={in_file}", *(extra_flags or []))
     flags.log['stdout'] = stdout
 
-    log = Log(flags.log)
-    log.__expand__()
-    log.verbose(Log.ORANGE + f"create_test_script {in_file}\n")
+    temp_log = Log(flags.log)
+    temp_log.__expand__()
+    temp_log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    temp_log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
+    temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
+
+    builtins = make_builtins()
+    cv_builtins.set(builtins)
+    file = flags.project['file']
+
+    builtins.build    = Build(flags.build)
+    builtins.log      = Log(flags.log)
+    builtins.project  = Project(flags.project, file = file)
+    builtins.repo     = Repo(file = file)
+    builtins.runner   = Runner()
+    builtins.script   = Script(file = file, **flags.extra)
+    builtins.stats    = Stats()
+
+    builtins.log.__expand__()
+    builtins.build.__expand__()
+    builtins.project.__expand__()
+    builtins.repo.__expand__()
+    builtins.runner.__expand__()
+    builtins.script.__expand__()
+    builtins.stats.__expand__()
+
+    builtins.log.verbose(Log.ORANGE + f"create_test_script {in_file}\n")
 
     # ------------------------------------
 
-    runner = Runner()
-    project = Project(flags.project, file = in_file)
-    build   = Build(flags.build)
-    repo    = Repo(file = in_file)
-    script  = Script(file = in_file, **flags.extra)
+    with timeit("Loading scripts"):
+        Script.load(builtins.repo, builtins.script, is_repo = True, is_dummy = True)
 
-    # FIXME : This is all wrong with the new builtin setup
-    builtins = cv_builtins.get()
-
-    builtins.stats   = stats
-    builtins.log     = log
-    builtins.runner  = runner
-    builtins.project = project
-    builtins.build   = build
-    builtins.repo    = repo
-    builtins.script  = script
-
-    # ------------------------------------
-
-    Script.load(repo, script, is_repo = True, is_dummy = True)
-
-    return script
+    return builtins.script
 
 # endregion
 # ==================================================================================================
@@ -3147,8 +3180,6 @@ def main() -> int:
 # region User API
 
 def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-    # FIXME handle args/kwargs
-
     builtins = cv_builtins.get()
     old_script = builtins.script
 
@@ -3161,7 +3192,21 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
         repo = builtins.repo
 
     new_script = Script(*args, file = file, **kwargs)
-    new_script.__expand__()
+
+    token = ___
+    try:
+        merged_builtins = make_builtins(builtins.__dict__, repo = repo, script = new_script)
+        token = cv_builtins.set(merged_builtins)
+        new_script.__dict__['__builtins__'] = merged_builtins.__dict__
+        new_script.__expand__()
+    except Exception as _:
+        traceback.print_exc()
+        pass
+    finally:
+        del new_script.__dict__['__builtins__']
+        cv_builtins.reset(token)
+
+    #print(new_script)
 
 #    builtins.script   = Script(file = file, **flags.extra)
 #    builtins.stats    = Stats() # before build.__expand__

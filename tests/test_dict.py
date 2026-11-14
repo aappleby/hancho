@@ -39,6 +39,14 @@ class TestDict(unittest.TestCase):
         self.assertEqual(merged.b, 3)
         self.assertEqual(merged.c, 4)
 
+    def test_merge_Dicts(self) -> None:
+        d1 = hancho.Dict(a = 1, b = 2)
+        d2 = hancho.Dict(b = 3, c = 4)
+        merged = hancho.Dict(d1, d2)
+        self.assertEqual(merged.a, 1)
+        self.assertEqual(merged.b, 3)
+        self.assertEqual(merged.c, 4)
+
     def test_recursive_merge(self) -> None:
         d1 = {"a": {"x": 1, "y": 2}}
         d2 = {"a": {"y": 3, "z": 4}}
