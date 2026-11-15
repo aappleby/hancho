@@ -2931,7 +2931,6 @@ class Task(ScopeBase):
 # So, we put the script in a contextvar and have the task capture it, then when the tasks's
 # asyncio.task runs it sets the contextvar back to that script.
 
-
 class Script(ScopeBase):
 
     def __init__(self : Script, *args : dict[str, Any], file : str, **kwargs : Any) -> None:
@@ -2942,7 +2941,10 @@ class Script(ScopeBase):
         self.path : Realpath = "{realpath(file)}" #type:ignore
         self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
         self.dest : Goodpath = "{join(repo.dest, relpath(script.root, repo.root))}" #type:ignore
+
         Utils.merge_all(self.__dict__, *args, **kwargs)
+
+        self._tasks = []
 
     def __expand__(self) -> None:
         ex = Expander(self)
@@ -2963,8 +2965,6 @@ class Script(ScopeBase):
         assert isinstance(self.root, Realpath)
         assert isinstance(self.dest, Goodpath)
 
-        self._tasks = []
-
     def dump(self, *args : Any, **kwargs : Any) -> None:
         dprint(Dumper.dump(*args, **kwargs))
 
@@ -2972,7 +2972,9 @@ class Script(ScopeBase):
 # ==================================================================================================
 # region builtins
 
-def make_builtins(prev_builtins : Dict | None, *args : dict[str, Any], **kwargs : Any) -> Dict:
+cv_builtins : contextvars.ContextVar[Dict] = contextvars.ContextVar("builtins")
+
+def make_builtins() -> Dict:
     result = Dict()
 
     # Copy all the existing builtins over
@@ -2982,13 +2984,13 @@ def make_builtins(prev_builtins : Dict | None, *args : dict[str, Any], **kwargs 
 
     result.name     = "builtins"
     result.hancho   = sys.modules[__name__]
-    result.log      = prev_builtins.get('log')     if prev_builtins else ___
-    result.runner   = prev_builtins.get('runner')  if prev_builtins else ___
-    result.project  = prev_builtins.get('project') if prev_builtins else ___
-    result.build    = prev_builtins.get('build')   if prev_builtins else ___
-    result.repo     = prev_builtins.get('repo')    if prev_builtins else ___
-    result.script   = prev_builtins.get('script')  if prev_builtins else ___
-    result.stats    = prev_builtins.get('stats')   if prev_builtins else ___
+    result.log      = ___
+    result.runner   = ___
+    result.project  = ___
+    result.build    = ___
+    result.repo     = ___
+    result.script   = ___
+    result.stats    = ___
 
     result.Dict     = Dict
     result.Task     = Task
@@ -3039,10 +3041,7 @@ def make_builtins(prev_builtins : Dict | None, *args : dict[str, Any], **kwargs 
     result.load_repo   = load_repo
     result.start_build = start_build
 
-    Utils.merge_all(result.__dict__, *args, **kwargs)
     return result
-
-cv_builtins : contextvars.ContextVar[Dict] = contextvars.ContextVar("builtins")
 
 # endregion
 # ==================================================================================================
@@ -3083,7 +3082,7 @@ def _start() -> int:
 
 # ----------------------------------------
 
-def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
+def init(argv : list[str], stdout : TextIO) -> Dict:
     flags = Flags()
     flags.parse_flags(*argv)
     flags.log['stdout'] = stdout
@@ -3095,7 +3094,7 @@ def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
     temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
     temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
 
-    builtins = make_builtins(None)
+    builtins = make_builtins()
 
     file = flags.project['file']
 
@@ -3107,82 +3106,78 @@ def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
     builtins.stats    = Stats()
     builtins.script   = Script(file = file, **flags.extra)
 
-    cv_builtins.set(builtins)
-
-    builtins.log.__expand__()
-    builtins.build.__expand__()
-    builtins.project.__expand__()
-    builtins.repo.__expand__()
-    builtins.runner.__expand__()
-    builtins.stats.__expand__()
-
     with cv_builtins.set(builtins):
         builtins.script.__dict__['__builtins__'] = builtins.__dict__
+
+        builtins.log.__expand__()
+        builtins.build.__expand__()
+        builtins.project.__expand__()
+        builtins.repo.__expand__()
+        builtins.runner.__expand__()
+        builtins.stats.__expand__()
         builtins.script.__expand__()
+
         del builtins.script.__dict__['__builtins__']
 
-    builtins.script = actually_load_script(builtins, builtins.repo, builtins.script, is_repo = True, is_dummy = is_dummy)
+    builtins.repo._scripts.append(builtins.script)
+    builtins.project._repos.append(builtins.repo)
+    cv_builtins.set(builtins)
+    return builtins
 
 # ----------------------------------------
 
-def actually_load_script(builtins : Dict, repo : Repo, script : Script, is_repo : bool, is_dummy : bool) -> Script:
+def actually_load_script(builtins : Dict, script : Script) -> None:
 
-    with cv_builtins.set(builtins):
-        log = builtins.log
-        project = builtins.project
+    builtins.log.verbose(Log.ORANGE + f"┌─── Running script {script.path}\n")
 
-        repo._scripts.append(script)
-        if is_repo:
-            project._repos.append(repo)
-        if is_dummy:
-            return script
-        with open(str(script.path), encoding="utf-8") as file:
-            source: str = file.read()
-            code: CodeType = compile(source, str(script.path), "exec", dont_inherit=True)
-        log.verbose(Log.ORANGE + f"┌─── Running script {script.path}\n")
+    with (
+        builtins.log.indenter(Log.VERBOSE, Log.ORANGE),
+        chdir(script.root),
+        open(str(script.path), encoding="utf-8") as file,
+    ):
+        # Run the script
+        script.__dict__['__builtins__'] = builtins.__dict__
 
-        with log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root):
-            # Run the script
-            try:
-                script.__dict__['__builtins__'] = builtins.__dict__
-                exec(code, script.__dict__)
-            except Exception as _:
-                traceback.print_exc()
-                pass
-            finally:
-                del script.__dict__['__builtins__']
+        source: str = file.read()
+        code: CodeType = compile(source, str(script.path), "exec", dont_inherit=True)
+        exec(code, script.__dict__)
 
-        return builtins.script
+        del script.__dict__['__builtins__']
 
 # ----------------------------------------
 
 def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
     old_builtins = cv_builtins.get()
-    old_script = old_builtins.script
 
-    file   = Realpath(Expander(old_script).expand(file))
+    file   = Realpath(Expander(old_builtins.script).expand(file))
     repo   = Repo(file) if is_repo else old_builtins.repo
     script = Script(*args, file = file, **kwargs)
 
-    new_builtins = make_builtins(old_builtins, repo = repo, script = script)
+    new_builtins = Dict(old_builtins, repo = repo, script = script)
 
+    # Expand repo/script
     with cv_builtins.set(new_builtins):
+        script.__dict__['__builtins__'] = new_builtins.__dict__
         if is_repo:
             repo.__expand__()
-        script.__dict__['__builtins__'] = new_builtins.__dict__
         script.__expand__()
         del script.__dict__['__builtins__']
 
-        public_stuff = {k:v for k, v in script.__dict__.items() if not k.startswith("_")}
-        dedupe_key = Dumper.any_to_key(public_stuff)
-        if dupe := new_builtins.project._dedupe.get(dedupe_key, None):
-            new_builtins.log.verbose(Log.LIME + f"Deduped {script.path}\n")
-            return dupe
+    # Check for duplicates
+    public_stuff = {k:v for k, v in script.__dict__.items() if not k.startswith("_")}
+    dedupe_key = Dumper.any_to_key(public_stuff)
+    if dupe := new_builtins.project._dedupe.get(dedupe_key, None):
+        new_builtins.log.verbose(Log.LIME + f"Deduped {script.path}\n")
+        return dupe
 
     # File was _not_ deduped.
     new_builtins.project._dedupe[dedupe_key] = script
+    repo._scripts.append(script)
+    if is_repo:
+        new_builtins.project._repos.append(repo)
 
-    new_builtins.script = actually_load_script(new_builtins, repo, script, is_repo = is_repo, is_dummy = False)
+    with cv_builtins.set(new_builtins):
+        actually_load_script(new_builtins, script)
 
     return new_builtins.script
 
@@ -3214,17 +3209,21 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 
 def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Dict:
     argv = [f"--project.file={in_file}", *(extra_flags or [])]
-    init(argv, stdout, is_dummy = True)
-    return cv_builtins.get()
+    builtins = init(argv, stdout)
+    return builtins
 
 # ----------------------------------------
 
 def main() -> int:
-    init(sys.argv, sys.stdout, is_dummy = False)
-    builtins = cv_builtins.get()
+    builtins = init(sys.argv, sys.stdout)
+
+    with cv_builtins.set(builtins):
+        actually_load_script(builtins, builtins.script)
 
     # ------------------------------------
     # Build everything
+
+    cv_builtins.set(builtins)
 
     with timeit("Build"):
         result = builtins.project.build()
