@@ -1,6 +1,10 @@
 # tools/tools_wasm.hancho
 
+import shutil
 import sys
+
+if not shutil.which("emcc"):
+    log.error("emcc not found")
 
 emcc = Tool(
     desc    = "Compile Emscripten'd {basename(in_src)}",

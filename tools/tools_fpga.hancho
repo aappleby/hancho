@@ -1,3 +1,5 @@
+# tools/tools_fpga.hancho
+
 import shutil
 
 tools_base = load_script("{hancho.root}/tools/tools_base.hancho")
@@ -5,7 +7,7 @@ tools_base = load_script("{hancho.root}/tools/tools_base.hancho")
 # FIXME there should be some check that the tools are installed when we load this script
 
 if not shutil.which("iverilog"):
-    log.info("iverilog not found")
+    log.error("iverilog not found")
 
 def ivparams(params):
     if not params:
@@ -107,7 +109,6 @@ def verilator(*, in_sv, **kwargs):
         out_header   = "{in_verilated.out_header}",
     )
 
-
 def chparams(c):
     if not c:
         return []
@@ -128,7 +129,6 @@ yosys = Tool(
     top      = "{swapext(basename(in_sv), '')}",
     out_json = "{swapext(in_sv, '.json')}",
 )
-
 
 sv2v = Tool(
     desc     = "Run sv2v on {basename(in_sv)}",

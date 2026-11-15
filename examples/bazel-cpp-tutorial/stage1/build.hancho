@@ -1,1 +1,3 @@
+# examples/bazel-cpp-tutorial/stage1/build.hancho
+
 load_script("main/build.hancho")

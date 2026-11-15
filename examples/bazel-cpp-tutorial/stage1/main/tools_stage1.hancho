@@ -1,3 +1,5 @@
+# examples/bazel-cpp-tutorial/stage1/main/tools_stage1.hancho
+
 # Hancho doesn't come with any built-in rules, so we have to define the ones we need here.
 # This 'cc_binary' rule was extracted from Bazel via "bazel -s //main:hello_world".
 
@@ -40,7 +42,7 @@ compile_cpp = Tool(
     #----------
     gcc_flags  = gcc_flags,
     #----------
-    in_src     = None,
+    in_src     = ___,
     in_depfile = "{swapext(out_obj, '.d')}",
     out_obj    = "{swapext(in_src, '.o')}",
 )
@@ -52,8 +54,8 @@ link_cpp_bin = Tool(
     ld_flags = ld_flags,
     ld_libs  = ld_libs,
     #----------
-    in_objs  = None,
-    out_bin  = None,
+    in_objs  = ___,
+    out_bin  = ___,
 )
 
 def cc_binary(*, out_bin, in_srcs):

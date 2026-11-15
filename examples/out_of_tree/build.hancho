@@ -1,3 +1,5 @@
+# examples/out_of_tree/build.hancho
+
 import os
 
 Task(command = "touch {out_file}", out_file = "stuff.txt")

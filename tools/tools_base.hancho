@@ -57,10 +57,10 @@ if os.name == "posix":
         cpp_std    ="gnu++2a",
         opt_mode   = "-O0",
         debug      = True,
-        warnings   = [],
-        defines    = [],
-        includes   = [],
-        cpp_flags  = [],
+        warnings   = None,
+        defines    = None,
+        includes   = None,
+        cpp_flags  = None,
         in_src     = None,
         in_depfile = "{swapext(out_obj, '.d')}", # Note - this swaps out_obj and not in_src in case the user redirects out_obj
         out_obj    = "{swapext(in_src, '.o')}",
@@ -144,10 +144,10 @@ def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
 def make(*, in_makefile, **kwargs):
     cmd = Tool(
-        desc      = "Run makefile {basename(in_makefile)}",
-        command   = "make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
-        make_dir  = "{dirname(in_makefile)}",
-        make_file = "{basename(in_makefile)}",
+        desc        = "Run makefile {basename(in_makefile)}",
+        command     = "make -C {make_dir} -f {make_file} {flags}",  #  > /dev/null
+        make_dir    = "{dirname(in_makefile)}",
+        make_file   = "{basename(in_makefile)}",
         in_makefile = None,
     )
     return Task(cmd, in_makefile=in_makefile, **kwargs)

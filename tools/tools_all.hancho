@@ -1,3 +1,5 @@
+# tools/tools_all.hancho
+
 tools_base  = load_script("base.hancho")
 tools_fpga  = load_script("fpga.hancho")
 tools_riscv = load_script("riscv.hancho")

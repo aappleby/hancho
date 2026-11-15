@@ -1,3 +1,5 @@
+# examples/hello_multibuild/build.hancho
+
 # This example demonstrates how to manage multiple build types (debug, release, profile...) in
 # Hancho.
 

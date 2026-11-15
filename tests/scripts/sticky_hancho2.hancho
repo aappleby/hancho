@@ -1,2 +1,4 @@
+# tests/scripts/sticky_hancho2.hancho
+
 assert hancho.foo == 100
 hancho.bar = 200

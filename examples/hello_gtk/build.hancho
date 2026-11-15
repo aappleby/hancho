@@ -1,3 +1,5 @@
+# examples/hello_gtk/build.hancho
+
 # You'll need to run "sudo apt-get install libgtk-3-dev" to compile this example.
 
 tools_base = load_script("{hancho.root}/tools/tools_base.hancho")

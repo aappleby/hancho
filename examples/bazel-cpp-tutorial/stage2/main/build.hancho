@@ -1,3 +1,5 @@
+# examples/bazel-cpp-tutorial/stage2/main/build.hancho
+
 tools = load_script("tools_stage2.hancho")
 
 hello_greet = tools.cc_library(

@@ -1,3 +1,5 @@
+# examples/bazel-cpp-tutorial/stage3/build.hancho
+
 import os
 import sys
 

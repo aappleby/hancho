@@ -1,3 +1,8 @@
+# tests/scripts/sticky_hancho1.hancho
+
+# FIXME this was testing that we could stick stuff to the hancho object, I don't think that's
+# relevant anymore.
+
 hancho.foo = 100
 load_script("sticky_hancho2.hancho")
 assert hancho.bar == 200

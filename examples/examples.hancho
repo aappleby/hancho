@@ -7,7 +7,8 @@ if os.name == "posix":
     load_script("dynamic_dependencies/build.hancho")
     load_script("hello_gtk/build.hancho")
     load_script("hello_world/build.hancho")
-    #load_script("hello_world/out_of_tree.hancho") # don't think this one is done
-    #load_script("subrepos/build.hancho") # this one also not done
+    #load_script("out_of_tree/build.hancho") # don't think this one is done
+    load_script("subrepos/build.hancho")
+    #load_script("hello_multibuild/build.hancho") # not finished
 elif os.name == "nt":
     load_script("windows/build.hancho")

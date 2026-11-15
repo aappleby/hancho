@@ -15,9 +15,9 @@ def touch_in_src(task):
         os.utime(src, None)
 
 touch_inputs = Tool(
-    desc = "Touch {basename(in_src)}",
+    desc    = "Touch {basename(in_src)}",
     command = touch_in_src,
-    in_src = None,
+    in_src  = ___,
 )
 
 random_touch = touch_inputs(in_src = random.sample(src_files, 3))
@@ -47,7 +47,6 @@ def generate_result(task):
             in_files  = from_filelist,
             in_deps   = [random_touch, filelist_txt],
             out_files = "result.txt",
-            cwd = os.getcwd(),
         )
 
     Task(

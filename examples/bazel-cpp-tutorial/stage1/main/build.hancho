@@ -1,3 +1,5 @@
+# examples/bazel-cpp-tutorial/stage1/main/build.hancho
+
 tools = load_script("tools_stage1.hancho")
 
 tools.cc_binary(
