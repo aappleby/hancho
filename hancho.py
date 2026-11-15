@@ -3093,51 +3093,6 @@ cv_builtins : contextvars.ContextVar[Dict] = contextvars.ContextVar("builtins")
 
 # endregion
 # ==================================================================================================
-# region create_test_script
-
-def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Script:
-    flags = Flags()
-    flags.parse_flags(f"--project.file={in_file}", *(extra_flags or []))
-    flags.log['stdout'] = stdout
-
-    temp_log = Log(flags.log)
-    temp_log.__expand__()
-    temp_log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    temp_log.verbose(Log.GRAY3 + "Verbose mode on\n")
-    temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
-    temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
-
-    builtins = make_builtins(None)
-    cv_builtins.set(builtins)
-    file = flags.project['file']
-
-    builtins.build    = Build(flags.build)
-    builtins.log      = Log(flags.log)
-    builtins.project  = Project(flags.project, file = file)
-    builtins.repo     = Repo(file = file)
-    builtins.runner   = Runner()
-    builtins.script   = Script(file = file, **flags.extra)
-    builtins.stats    = Stats()
-
-    builtins.log.__expand__()
-    builtins.build.__expand__()
-    builtins.project.__expand__()
-    builtins.repo.__expand__()
-    builtins.runner.__expand__()
-    builtins.script.__expand__()
-    builtins.stats.__expand__()
-
-    builtins.log.verbose(Log.ORANGE + f"create_test_script {in_file}\n")
-
-    # ------------------------------------
-
-    with timeit("Loading scripts"):
-        Script.load(builtins.repo, builtins.script, is_repo = True, is_dummy = True)
-
-    return builtins.script
-
-# endregion
-# ==================================================================================================
 # region _start/main
 
 def _start() -> int:
@@ -3156,9 +3111,10 @@ def _start() -> int:
 
 # ----------------------------------------
 
-def main() -> int:
+def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
     flags = Flags()
-    flags.parse_flags(*sys.argv)
+    flags.parse_flags(*argv)
+    flags.log['stdout'] = stdout
 
     temp_log = Log(flags.log)
     temp_log.__expand__()
@@ -3167,10 +3123,8 @@ def main() -> int:
     temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
     temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
 
-    # ------------------------------------
-
     builtins = make_builtins(None)
-    cv_builtins.set(builtins)
+
     file = flags.project['file']
 
     builtins.build    = Build(flags.build)
@@ -3179,21 +3133,73 @@ def main() -> int:
     builtins.repo     = Repo(file = file)
     builtins.runner   = Runner()
     builtins.script   = Script(file = file, **flags.extra)
-    builtins.stats    = Stats() # before build.__expand__
+    builtins.stats    = Stats()
+
+    cv_builtins.set(builtins)
 
     builtins.log.__expand__()
     builtins.build.__expand__()
     builtins.project.__expand__()
     builtins.repo.__expand__()
     builtins.runner.__expand__()
-    builtins.script.__expand__()
     builtins.stats.__expand__()
 
-    # ------------------------------------
-    # Load the root script, which will transitively load everything else.
 
-    with timeit("Loading scripts"):
-        Script.load(builtins.repo, builtins.script, is_repo = True, is_dummy = False)
+    builtins.script.__dict__['__builtins__'] = cv_builtins.get().__dict__
+    builtins.script.__expand__()
+    del builtins.script.__dict__['__builtins__']
+
+    builtins.script = actually_load_script(builtins.repo, builtins.script, is_repo = True, is_dummy = is_dummy)
+
+# ----------------------------------------
+
+def actually_load_script(repo : Repo, script : Script, is_repo : bool, is_dummy : bool) -> Script:
+    builtins = cv_builtins.get()
+    builtins.script = Script.load(repo, script, is_repo = is_repo, is_dummy = is_dummy)
+    return builtins.script
+
+# ----------------------------------------
+
+def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
+    old_builtins = cv_builtins.get()
+    old_script = old_builtins.script
+
+    file = Realpath(Expander(old_script).expand(file))
+
+    if is_repo:
+        repo = Repo(file)
+        repo.__expand__()
+    else:
+        repo = old_builtins.repo
+
+    script = Script(*args, file = file, **kwargs)
+
+    new_builtins = make_builtins(old_builtins, repo = repo, script = script)
+    with cv_builtins.set(new_builtins):
+        script.__dict__['__builtins__'] = new_builtins.__dict__
+        script.__expand__()
+        del script.__dict__['__builtins__']
+        new_builtins.script = actually_load_script(repo, script, is_repo = is_repo, is_dummy = False)
+
+    return new_builtins.script
+
+
+# ----------------------------------------
+
+def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Dict:
+    argv = [f"--project.file={in_file}", *(extra_flags or [])]
+    init(argv, stdout, is_dummy = True)
+    builtins = cv_builtins.get()
+
+    builtins.log.verbose(Log.ORANGE + f"create_test_script {in_file}\n")
+
+    return builtins
+
+# ----------------------------------------
+
+def main() -> int:
+    init(sys.argv, sys.stdout, is_dummy = False)
+    builtins = cv_builtins.get()
 
     # ------------------------------------
     # Build everything
@@ -3229,33 +3235,6 @@ def main() -> int:
 
 #endregion
 # ==================================================================================================
-# region User API
-
-def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-    builtins = cv_builtins.get()
-    old_script = builtins.script
-
-    file = Realpath(Expander(old_script).expand(file))
-
-    if is_repo:
-        repo = Repo(file)
-        repo.__expand__()
-    else:
-        repo = builtins.repo
-
-    new_script = Script(*args, file = file, **kwargs)
-
-    # we have to expand new_script with new_script in builtins, which makes this a little messy.
-    # we can probably move this into Script.load
-
-    merged_builtins = make_builtins(builtins, repo = repo, script = new_script)
-    with cv_builtins.set(merged_builtins):
-        new_script.__dict__['__builtins__'] = cv_builtins.get().__dict__
-        new_script.__expand__()
-        del new_script.__dict__['__builtins__']
-
-    return Script.load(repo, new_script, is_repo, is_dummy = False)
-
 
 #def include(raw_file : str) -> None:
 #

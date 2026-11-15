@@ -30,12 +30,12 @@ class TestApp(unittest.TestCase):
         ]
 
         self.stdout = io.StringIO()
-        self.script = hancho.create_test_script(
+        self.builtins = hancho.create_test_script(
             in_file = __file__,
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
-        self.builtins = hancho.cv_builtins.get()
+        self.script = self.builtins.script
         self.log = self.builtins.log
         self.clear_stdout()
 

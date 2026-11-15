@@ -52,7 +52,7 @@ class TestTasks(unittest.TestCase):
         self.log._flush()
 
     def reset(self, *args : Any) -> None:
-        self.script: hancho.Script = hancho.create_test_script(
+        self.builtins = hancho.create_test_script(
             in_file = __file__,
             stdout = sys.stdout,
             extra_flags = [
@@ -64,7 +64,7 @@ class TestTasks(unittest.TestCase):
                 *args
             ],
         )
-        self.builtins = hancho.cv_builtins.get()
+        self.script = self.builtins.script
         self.log   = self.builtins.log
         self.stats = self.builtins.stats
 
