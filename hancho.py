@@ -2968,53 +2968,6 @@ class Script(ScopeBase):
     def dump(self, *args : Any, **kwargs : Any) -> None:
         dprint(Dumper.dump(*args, **kwargs))
 
-    @staticmethod
-    def load(repo : Repo, script : Script, is_repo : bool, is_dummy : bool) -> Script:
-        builtins = cv_builtins.get()
-        log = builtins.log
-        project = builtins.project
-
-        public_stuff = {k:v for k, v in script.__dict__.items() if not k.startswith("_")}
-
-        dedupe_key = Dumper.any_to_key(public_stuff)
-        #print(dedupe_key)
-        if dupe := project._dedupe.get(dedupe_key, None):
-            log.verbose(Log.LIME + f"Deduped {script.path}\n")
-            return dupe
-
-
-        # File was _not_ deduped.
-        project._dedupe[dedupe_key] = script
-        repo._scripts.append(script)
-        if is_repo:
-            project._repos.append(repo)
-
-        if is_dummy:
-            return script
-
-        with open(str(script.path), encoding="utf-8") as file:
-            source: str = file.read()
-            code: CodeType = compile(source, str(script.path), "exec", dont_inherit=True)
-
-        log.verbose(Log.ORANGE + f"┌─── Running script {script.path}\n")
-
-        with log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root):
-            # Run the script
-            token = ___
-            try:
-                merged_builtins = make_builtins(builtins, repo = repo, script = script)
-                token = cv_builtins.set(merged_builtins)
-                script.__dict__['__builtins__'] = merged_builtins.__dict__
-                exec(code, script.__dict__)
-            except Exception as _:
-                traceback.print_exc()
-                pass
-            finally:
-                del script.__dict__['__builtins__']
-                cv_builtins.reset(token)
-
-        return script
-
 # endregion
 # ==================================================================================================
 # region builtins
@@ -3109,6 +3062,25 @@ def _start() -> int:
         # Re-raise in debug builds so the debugger will stop execution.
         raise
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ----------------------------------------
 
 def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
@@ -3132,8 +3104,8 @@ def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
     builtins.project  = Project(flags.project, file = file)
     builtins.repo     = Repo(file = file)
     builtins.runner   = Runner()
-    builtins.script   = Script(file = file, **flags.extra)
     builtins.stats    = Stats()
+    builtins.script   = Script(file = file, **flags.extra)
 
     cv_builtins.set(builtins)
 
@@ -3144,19 +3116,43 @@ def init(argv : list[str], stdout : TextIO, is_dummy : bool) -> None:
     builtins.runner.__expand__()
     builtins.stats.__expand__()
 
+    with cv_builtins.set(builtins):
+        builtins.script.__dict__['__builtins__'] = builtins.__dict__
+        builtins.script.__expand__()
+        del builtins.script.__dict__['__builtins__']
 
-    builtins.script.__dict__['__builtins__'] = cv_builtins.get().__dict__
-    builtins.script.__expand__()
-    del builtins.script.__dict__['__builtins__']
-
-    builtins.script = actually_load_script(builtins.repo, builtins.script, is_repo = True, is_dummy = is_dummy)
+    builtins.script = actually_load_script(builtins, builtins.repo, builtins.script, is_repo = True, is_dummy = is_dummy)
 
 # ----------------------------------------
 
-def actually_load_script(repo : Repo, script : Script, is_repo : bool, is_dummy : bool) -> Script:
-    builtins = cv_builtins.get()
-    builtins.script = Script.load(repo, script, is_repo = is_repo, is_dummy = is_dummy)
-    return builtins.script
+def actually_load_script(builtins : Dict, repo : Repo, script : Script, is_repo : bool, is_dummy : bool) -> Script:
+
+    with cv_builtins.set(builtins):
+        log = builtins.log
+        project = builtins.project
+
+        repo._scripts.append(script)
+        if is_repo:
+            project._repos.append(repo)
+        if is_dummy:
+            return script
+        with open(str(script.path), encoding="utf-8") as file:
+            source: str = file.read()
+            code: CodeType = compile(source, str(script.path), "exec", dont_inherit=True)
+        log.verbose(Log.ORANGE + f"┌─── Running script {script.path}\n")
+
+        with log.indenter(Log.VERBOSE, Log.ORANGE), chdir(script.root):
+            # Run the script
+            try:
+                script.__dict__['__builtins__'] = builtins.__dict__
+                exec(code, script.__dict__)
+            except Exception as _:
+                traceback.print_exc()
+                pass
+            finally:
+                del script.__dict__['__builtins__']
+
+        return builtins.script
 
 # ----------------------------------------
 
@@ -3164,24 +3160,54 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
     old_builtins = cv_builtins.get()
     old_script = old_builtins.script
 
-    file = Realpath(Expander(old_script).expand(file))
-
-    if is_repo:
-        repo = Repo(file)
-        repo.__expand__()
-    else:
-        repo = old_builtins.repo
-
+    file   = Realpath(Expander(old_script).expand(file))
+    repo   = Repo(file) if is_repo else old_builtins.repo
     script = Script(*args, file = file, **kwargs)
 
     new_builtins = make_builtins(old_builtins, repo = repo, script = script)
+
     with cv_builtins.set(new_builtins):
+        if is_repo:
+            repo.__expand__()
         script.__dict__['__builtins__'] = new_builtins.__dict__
         script.__expand__()
         del script.__dict__['__builtins__']
-        new_builtins.script = actually_load_script(repo, script, is_repo = is_repo, is_dummy = False)
+
+        public_stuff = {k:v for k, v in script.__dict__.items() if not k.startswith("_")}
+        dedupe_key = Dumper.any_to_key(public_stuff)
+        if dupe := new_builtins.project._dedupe.get(dedupe_key, None):
+            new_builtins.log.verbose(Log.LIME + f"Deduped {script.path}\n")
+            return dupe
+
+    # File was _not_ deduped.
+    new_builtins.project._dedupe[dedupe_key] = script
+
+    new_builtins.script = actually_load_script(new_builtins, repo, script, is_repo = is_repo, is_dummy = False)
 
     return new_builtins.script
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ----------------------------------------
@@ -3189,11 +3215,7 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Dict:
     argv = [f"--project.file={in_file}", *(extra_flags or [])]
     init(argv, stdout, is_dummy = True)
-    builtins = cv_builtins.get()
-
-    builtins.log.verbose(Log.ORANGE + f"create_test_script {in_file}\n")
-
-    return builtins
+    return cv_builtins.get()
 
 # ----------------------------------------
 
