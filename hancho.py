@@ -504,6 +504,15 @@ class Utils:
 
 class ScopeBase:
 
+    # Expand all expandables at the top level of this scope.
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, val in self.__dict__.items():
+            if Utils.is_expandable(val):
+                new_val = ex.expand(val)
+                assert not Utils.is_expandable(new_val)
+                self.__dict__[key] = new_val
+
     def get(self, key : str, default : Any = ___) -> Any:
         result = self.__dict__.get(key, ___)
         if result is ___:
@@ -635,7 +644,6 @@ class Log(ScopeBase):
         self.stdout    : TextIO = sys.stdout
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    def __expand__(self) -> None:
         self._level_int     : int        = getattr(Log, self.level.upper())
         self._time_origin   : float      = time.perf_counter()
         self._indent_stack  : list[str]  = []
@@ -649,7 +657,6 @@ class Log(ScopeBase):
             self._stdout = self.stdout
         else:
             raise ValueError(f"Don't know how to use {self.stdout} as an output")
-
 
     def indent(self, ansi_color : str = RESET) -> None:
         #self._indent_stack.append(f"{ansi_color}│{Log.RESET}")
@@ -986,9 +993,6 @@ class Stats(ScopeBase):
         self.tasks_cancelled = 0
         self.tasks_skipped = 0
         self.build_reasons = Counter()
-
-    def __expand__(self) -> None:
-        pass
 
 # endregion
 # ==================================================================================================
@@ -1778,10 +1782,7 @@ class Runner(ScopeBase):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
-        ex = Expander(self)
-        self.max_jobs   = ex.max_jobs
-        self.max_errors = ex.max_errors
-
+        super().__expand__()
         self._core_sem  : asyncio.Semaphore = asyncio.Semaphore(self.max_jobs)
         self._core_lock : asyncio.Lock = asyncio.Lock()
         self._aio_done_queue : asyncio.Queue = asyncio.Queue()
@@ -1898,15 +1899,6 @@ class Project(ScopeBase):
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    # FIXME this can move to scopebase
-    def __expand__(self) -> None:
-        ex = Expander(self)
-        for key, val in self.__dict__.items():
-            if Utils.is_expandable(val):
-                new_val = ex.expand(val)
-                assert not Utils.is_expandable(new_val)
-                self.__dict__[key] = new_val
-
 # endregion
 # ==================================================================================================
 # region Build
@@ -1928,14 +1920,6 @@ class Build(ScopeBase):
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    def __expand__(self) -> None:
-        ex = Expander(self)
-        for key, val in self.__dict__.items():
-            if Utils.is_expandable(val):
-                new_val = ex.expand(val)
-                assert not Utils.is_expandable(new_val)
-                self.__dict__[key] = new_val
-
 # endregion
 # ==================================================================================================
 # region Repo
@@ -1954,27 +1938,10 @@ class Repo(ScopeBase):
         self.comp_db_path : Goodpath = "{goodpath(join(dest, 'compile_commands.json'))}" #type:ignore
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    def __expand__(self) -> None:
-        ex = Expander(self)
-
-        self.file = ex.file
-        self.path = ex.path
-        self.root = ex.root
-        self.dest = ex.dest
-
-        self.stat_db_path = ex.stat_db_path
-        self.comp_db_path = ex.comp_db_path
-
-        assert not Utils.is_expandable(self.file)
-        assert not Utils.is_expandable(self.path)
-        assert not Utils.is_expandable(self.root)
-        assert not Utils.is_expandable(self.dest)
-        assert not Utils.is_expandable(self.stat_db_path)
-        assert not Utils.is_expandable(self.comp_db_path)
-
         self._scripts : list[Script] = []
         self._stat_db : dict[str, dict] = {}
 
+    def load_stat_db(self) -> None:
         builtins = cv_builtins.get()
 
         if Path.isfile(self.stat_db_path):
@@ -2685,26 +2652,6 @@ class Script(ScopeBase):
 
         self._tasks = []
 
-    # FIXME use scopebase.__expand__
-    def __expand__(self) -> None:
-        ex = Expander(self)
-
-        self.name = ex.name
-        self.file = ex.file
-        self.path = ex.path
-        self.root = ex.root
-        self.dest = ex.dest
-
-        assert not Utils.is_expandable(self.name)
-        assert not Utils.is_expandable(self.file)
-        assert not Utils.is_expandable(self.path)
-        assert not Utils.is_expandable(self.root)
-        assert not Utils.is_expandable(self.dest)
-
-        assert isinstance(self.path, Realpath)
-        assert isinstance(self.root, Realpath)
-        assert isinstance(self.dest, Goodpath)
-
     def exec(self, builtins : Dict) -> None:
 
         with (
@@ -2798,6 +2745,7 @@ def make_builtins() -> Dict:
             script.__dict__['__builtins__'] = new_builtins.__dict__
             if is_repo:
                 repo.__expand__()
+                repo.load_stat_db()
             script.__expand__()
             del script.__dict__['__builtins__']
 
@@ -2945,7 +2893,6 @@ def init(argv : list[str], stdout : TextIO) -> Dict:
     flags.log['stdout'] = stdout
 
     temp_log = Log(flags.log)
-    temp_log.__expand__()
     temp_log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
     temp_log.verbose(Log.GRAY3 + "Verbose mode on\n")
     temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
@@ -2966,13 +2913,13 @@ def init(argv : list[str], stdout : TextIO) -> Dict:
 
     builtins.script.__dict__['__builtins__'] = builtins.__dict__
 
-    builtins.log.__expand__()
     builtins.build.__expand__()
     builtins.project.__expand__()
     builtins.repo.__expand__()
     builtins.runner.__expand__()
-    builtins.stats.__expand__()
     builtins.script.__expand__()
+
+    builtins.repo.load_stat_db()
 
     del builtins.script.__dict__['__builtins__']
 
