@@ -507,9 +507,13 @@ class ScopeBase:
     # Expand all expandables at the top level of this scope.
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, val in self.__dict__.items():
-            if Utils.is_expandable(val):
-                new_val = ex.expand(val)
+        for key, old_val in self.__dict__.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                if Utils.is_expandable(new_val):
+                    print(f"{old_val} : {new_val}")
+                    new_val = ex.expand(old_val)
+                    pass
                 assert not Utils.is_expandable(new_val)
                 self.__dict__[key] = new_val
 
@@ -1744,28 +1748,29 @@ class Dumper:
         result = "".join(result.split())
         return result
 
-# Not using this for dumper yet, but I might. Or I could use it for tracing.
-def print_tree(k : str, v : Any, lhs : str = "") -> None:
-    leaf = '⊡ '
-    open = '⊟ '
-    fold = '⊞ '
-    tee  = '├──'
-    pipe = '│  '
-    hook = '└──'
-    gap  = '   '
-    folded = []
+    # Not using this for dumper yet, but I might. Or I could use it for tracing.
+    @staticmethod
+    def print_tree(k : str, v : Any, lhs : str = "") -> None:
+        leaf = '⊡ '
+        open = '⊟ '
+        fold = '⊞ '
+        tee  = '├──'
+        pipe = '│  '
+        hook = '└──'
+        gap  = '   '
+        folded = []
 
-    if not isinstance(v, dict):
-        print(leaf + str(k) + ": " + repr(v))
-    #elif any(v is f for f in folded) or any(type(v) is f for f in folded):
-    elif v in folded or type(v) in folded:
-        print(fold + str(k))
-    else:
-        print(open + str(k))
-        for i, (k2, v2) in enumerate(v.items()):
-            tab1, tab2 = (hook, gap) if i == len(v) - 1 else (tee, pipe)
-            print(lhs + tab1, end="")
-            print_tree(k2, v2, lhs + tab2)
+        if not isinstance(v, dict):
+            print(leaf + str(k) + ": " + repr(v))
+        #elif any(v is f for f in folded) or any(type(v) is f for f in folded):
+        elif v in folded or type(v) in folded:
+            print(fold + str(k))
+        else:
+            print(open + str(k))
+            for i, (k2, v2) in enumerate(v.items()):
+                tab1, tab2 = (hook, gap) if i == len(v) - 1 else (tee, pipe)
+                print(lhs + tab1, end="")
+                Dumper.print_tree(k2, v2, lhs + tab2)
 
 
 # endregion
@@ -2652,7 +2657,7 @@ class Script(ScopeBase):
 
         self._tasks = []
 
-    def exec(self, builtins : Dict) -> None:
+    def exec(self, builtins : Builtins) -> None:
 
         with (
             cv_builtins.set(builtins),
@@ -2675,60 +2680,67 @@ class Script(ScopeBase):
 # ==================================================================================================
 # region builtins
 
-cv_builtins : contextvars.ContextVar[Dict] = contextvars.ContextVar("builtins")
+cv_builtins : contextvars.ContextVar[Builtins] = contextvars.ContextVar("builtins")
 
-# FIXME turn this back into a class?
-def make_builtins() -> Dict:
-    result = Dict()
+class Builtins(Dict):
+    # FIXME turn this back into a class?
+    def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
+        # Copy all the existing builtins over
+        import builtins as _builtins
+        for key, val in _builtins.__dict__.items():
+            self[key] = val
 
-    # Copy all the existing builtins over
-    import builtins
-    for key, val in builtins.__dict__.items():
-        result[key] = val
+        self.name     = "builtins"
+        self.hancho   = sys.modules[__name__]
+        self.___      = ___
+        self.log      = ___
+        self.runner   = ___
+        self.project  = ___
+        self.build    = ___
+        self.repo     = ___
+        self.script   = ___
+        self.stats    = ___
 
-    result.name     = "builtins"
-    result.hancho   = sys.modules[__name__]
-    result.___      = ___
-    result.log      = ___
-    result.runner   = ___
-    result.project  = ___
-    result.build    = ___
-    result.repo     = ___
-    result.script   = ___
-    result.stats    = ___
+        self.Dict     = Dict
+        self.Task     = Task
+        self.Tool     = Tool
+        self.Dumper   = Dumper
+        self.Expander = Expander
 
+        self.getcwd   = os.getcwd
+        self.dprint   = dprint
+        self.dump     = Dumper.dprint
+        self.Goodpath = Goodpath
+        self.Realpath = Realpath
 
-    result.Dict     = Dict
-    result.Task     = Task
-    result.Tool     = Tool
-    result.Dumper   = Dumper
-    result.Expander = Expander
+        self.run_cmd  = Utils.run_cmd
+        self.weave    = Utils.weave
+        self.leaves   = Utils.leaves
 
-    result.getcwd   = os.getcwd
-    result.dprint   = dprint
-    result.dump     = Dumper.dprint
-    result.Goodpath = Goodpath
-    result.Realpath = Realpath
+        # FIXME probably want tree versions of all of these?
 
-    result.run_cmd  = Utils.run_cmd
-    result.weave    = Utils.weave
-    result.leaves   = Utils.leaves
+        self.join     = Path.join
+        self.split    = Path.split
+        self.swapext  = Path.swapext
+        self.topdir   = Path.topdir
+        self.relpath  = Path.relpath
+        self.stem     = Path.stem
+        self.basename = Utils.tree_map(Path.basename)
 
-    # FIXME probably want tree versions of all of these?
+        self.dirname  = Path.dirname
+        self.resolve  = lambda x : Realpath(x)
+        self.abspath  = lambda x : Goodpath(x)
+        self.realpath = lambda x : Realpath(x)
+        self.goodpath = lambda x : Goodpath(x)
 
-    result.join     = Path.join
-    result.split    = Path.split
-    result.swapext  = Path.swapext
-    result.topdir   = Path.topdir
-    result.relpath  = Path.relpath
-    result.stem     = Path.stem
-    result.basename = Utils.tree_map(Path.basename)
+        # These have to be directly in the builtins object, as client code only sees
+        # builtins.__dict__
+        self.load_script = Builtins.load_script
+        self.load_repo   = Builtins.load_repo
+        self.start_build = Builtins.start_build
 
-    result.dirname  = Path.dirname
-    result.resolve  = lambda x : Realpath(x)
-    result.abspath  = lambda x : Goodpath(x)
-    result.realpath = lambda x : Realpath(x)
-    result.goodpath = lambda x : Goodpath(x)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
+
 
     @staticmethod
     def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
@@ -2738,9 +2750,9 @@ def make_builtins() -> Dict:
         repo   = Repo(file) if is_repo else old_builtins.repo
         script = Script(*args, file = file, **kwargs)
 
-        new_builtins = Dict(old_builtins, repo = repo, script = script)
+        new_builtins = Builtins(old_builtins.__dict__, repo = repo, script = script)
 
-        # Expand repo/script
+        # Expand repo/script - should be done under new_builtins.
         with cv_builtins.set(new_builtins):
             script.__dict__['__builtins__'] = new_builtins.__dict__
             if is_repo:
@@ -2770,12 +2782,12 @@ def make_builtins() -> Dict:
     @staticmethod
     def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
         # FIXME handle args/kwargs
-        return _load(file, False, *args, **kwargs)
+        return Builtins._load(file, False, *args, **kwargs)
 
     @staticmethod
     def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
         # FIXME handle args/kwargs
-        return _load(file, True, *args, **kwargs)
+        return Builtins._load(file, True, *args, **kwargs)
 
     @staticmethod
     def start_build() -> int:
@@ -2820,13 +2832,6 @@ def make_builtins() -> Dict:
 
         return result
 
-    # These have to be directly in the builtins object, as client code only sees builtins.__dict__
-    result.load_script = load_script
-    result.load_repo   = load_repo
-    result.start_build = start_build
-
-    return result
-
 # endregion
 # ==================================================================================================
 # region _start/main
@@ -2866,7 +2871,11 @@ def main() -> int:
     for repo in builtins.project._repos:
         builtins.stats.tasks_created += len(list(repo.yield_tasks()))
 
-    builtins.log._log(Log.VERBOSE, Log.DBLUE, "Stats: " + Dumper.dump(builtins.stats.__dict__, print_id = False) + "\n")
+    builtins.log._log(
+        Log.VERBOSE,
+        Log.DBLUE,
+        "Stats: " + Dumper.dump(builtins.stats.__dict__, print_id=False) + "\n",
+    )
 
     # ------------------------------------
     # Print pass/fail
@@ -2898,7 +2907,7 @@ def init(argv : list[str], stdout : TextIO) -> Dict:
     temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
     temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
 
-    builtins = make_builtins()
+    builtins = Builtins()
     cv_builtins.set(builtins)
 
     file = flags.project['file']
@@ -2911,18 +2920,13 @@ def init(argv : list[str], stdout : TextIO) -> Dict:
     builtins.stats    = Stats()
     builtins.script   = Script(file = file, **flags.extra)
 
-    builtins.script.__dict__['__builtins__'] = builtins.__dict__
-
-    builtins.build.__expand__()
-    builtins.project.__expand__()
-    builtins.repo.__expand__()
     builtins.runner.__expand__()
+    builtins.project.__expand__()
+    builtins.build.__expand__()
+    builtins.repo.__expand__()
     builtins.script.__expand__()
 
     builtins.repo.load_stat_db()
-
-    del builtins.script.__dict__['__builtins__']
-
     builtins.repo._scripts.append(builtins.script)
     builtins.project._repos.append(builtins.repo)
 
@@ -2930,10 +2934,12 @@ def init(argv : list[str], stdout : TextIO) -> Dict:
 
 # ----------------------------------------
 
-def create_test_script(in_file : str, stdout : TextIO = sys.stdout, extra_flags : list[str] | None = None) -> Dict:
+def create_test_script(
+    in_file: str, stdout: TextIO, extra_flags: list[str]) -> Dict:
     argv = [f"--project.file={in_file}", *(extra_flags or [])]
     builtins = init(argv, stdout)
     return builtins
+
 
 #endregion
 # ==================================================================================================
