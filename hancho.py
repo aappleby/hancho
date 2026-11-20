@@ -1586,12 +1586,6 @@ class Dumper:
 
     @classmethod
     def _dump_scalar(cls, key : key_type, val : Any, opts : Opts) -> str:
-        # FIXME how else can we verify that this is really a scalar?
-        #scalars = (int, float, str, bool, types.NoneType, object, types.FunctionType)
-        #if type(val) not in scalars:
-        #    msg = f"Trying to dump {key}:{type(val)}={val}, but it's not a scalar"
-        #    raise TypeError(msg)
-
         if val is ___:
             return f"{key} = ___"
 
@@ -1601,8 +1595,13 @@ class Dumper:
         elif not isinstance(val, base_types):
             seen.add(id(val))
 
-        # FIXME should we always be using repr here?
-        return cls._dump_prefix(key, val, opts) + repr(val)
+        if isinstance(val, base_types):
+            return cls._dump_prefix(key, val, opts) + repr(val)
+        else:
+            val_cls  = type(val)
+            text = repr(val)
+            text = text.replace(val_cls.__module__ + ".", "", 1)
+            return cls._dump_prefix(key, val, opts) + text
 
     @classmethod
     def _dump_vector(cls, key : key_type, val : Any, contents : Any, opts : Opts) -> str:

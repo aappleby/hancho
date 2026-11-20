@@ -164,7 +164,9 @@ class TestApp(unittest.TestCase):
             "d": object(),
             "e": "foobar",
             "f": Blarp(),
-            "g": {"a" : "laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa"}
+            "g": {"a" : "laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa"},
+            "h": hancho.___,
+            "i": 12345.6789012345678901234
         }
 
         expected = """
@@ -174,10 +176,12 @@ class TestApp(unittest.TestCase):
             c = (3, 3, 3),
             d:object = <object object at 0x...>,
             e = 'foobar',
-            f:Blarp = <tests.test_app.TestApp.test_dumper.<locals>.Blarp object at 0x...>,
+            f:Blarp = <TestApp.test_dumper.<locals>.Blarp object at 0x...>,
             g:dict = {
                 a = 'laksdjflaksdjfa;sldkjfas;ldkjfa;sdlkjf;alkdsjf;askldjf;alsdkjfa;skdjfa;sdlkfja;sdlkfja;sdklfja;sldkfja;sldkjfa'
-            }
+            },
+            h = ___,
+            i = 12345.678901234567
         }
         """
         check(thing1, expected, print_id = False)
