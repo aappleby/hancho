@@ -4,7 +4,6 @@ import io
 import os
 import random
 import shutil
-import sys
 import time
 import unittest
 from pathlib import Path
@@ -23,16 +22,10 @@ import hancho
 def mtime_ns(filename : str) -> int:
     return os.stat(filename).st_mtime_ns
 
-def force_touch(filename : str, append_text  : str | None = None) -> None:
-    if isinstance(filename, list):
-        (force_touch(f, append_text) for f in filename)
-
+def force_touch(filename : str) -> None:
     if not Path(filename).exists():
         Path(filename).touch()
 
-    if append_text:
-        with open(filename, "a") as f:
-            f.write(append_text)
     old_mtime: int = mtime_ns(filename)
     while old_mtime == mtime_ns(filename):
         os.utime(filename, None)
@@ -95,6 +88,16 @@ class TestTasks(unittest.TestCase):
         self.run_tasks(1)
         self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
         self.assertFalse(Path("build/foo.o").exists())
+
+    def test_bash_error(self) -> None:
+        self.reset("--log.level=info")
+        # (exit 2)
+        bad_task = hancho.Task(
+            command = "(exit 2)",
+        )
+        self.run_tasks(1)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
+        self.assertIn("bash error", self.stdout.getvalue())
 
     def test_no_inputs(self) -> None:
         hancho.Task(
@@ -447,11 +450,11 @@ class TestTasks(unittest.TestCase):
         if os.name == 'posix':
             command="gcc -MMD -c {in_src} -o {out_obj}"
             depformat="gcc"
-        elif os.name == 'nt':
-            command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
-            depformat="msvc"
-        else:
-            raise AssertionError("Don't know this platform")
+#        elif os.name == 'nt':
+#            command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
+#            depformat="msvc"
+#        else:
+#            raise AssertionError("Don't know this platform")
 
         def run() -> int:
             self.reset()
@@ -793,8 +796,3 @@ class TestTasks(unittest.TestCase):
         self.assertEqual(self.stats.tasks_failed, 0)
         self.assertEqual(self.stats.tasks_cancelled, 0)
         self.assertEqual(self.stats.tasks_skipped, 1)
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)

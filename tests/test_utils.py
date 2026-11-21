@@ -75,10 +75,3 @@ class TestUtils(unittest.TestCase):
         ld = hancho.Utils.weave(la, lb, lc)
         expected = [a+b+c for a in la for b in lb for c in lc]
         self.assertEqual(ld, expected)
-
-    # ----------------------------------------
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)

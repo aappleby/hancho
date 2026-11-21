@@ -7,14 +7,14 @@ import hancho
 # --------------------------------------------------------------------------------------------------
 
 class TestRepos(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         os.chdir(os.path.dirname(__file__))
         sys.stdout.flush()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         sys.stdout.flush()
 
-    def test_trivial(self):
+    def test_trivial(self) -> None:
         self.assertIsNotNone(hancho)
 
     # FIXME
@@ -80,8 +80,3 @@ class TestRepos(unittest.TestCase):
 #        self.assertTrue(Path("subrepo_tests/build/submodule_tests/top.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo1/repo1.txt").exists())
 #        self.assertTrue(Path("subrepo_tests/build/repo2/repo2.txt").exists())
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)

@@ -102,8 +102,3 @@ class TestSplit(unittest.TestCase):
 #        self.assertEqual(split(r"a \{a\} a"), [r"a \{a\} a"])
 #        self.assertEqual(split(r"a \\{a\\} a"), [r"a \\", r"{a\\}", r" a"])
 #        self.assertEqual(split(r"a \\\{a\\\} a"), [r"a \\\{a\\\} a"])
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)

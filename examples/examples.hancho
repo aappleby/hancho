@@ -10,5 +10,5 @@ if os.name == "posix":
     #load_script("out_of_tree/build.hancho") # don't think this one is done
     load_script("subrepos/build.hancho")
     #load_script("hello_multibuild/build.hancho") # not finished
-elif os.name == "nt":
-    load_script("windows/build.hancho")
+#elif os.name == "nt":
+#    load_script("windows/build.hancho")

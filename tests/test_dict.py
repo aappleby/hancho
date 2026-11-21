@@ -99,8 +99,3 @@ class TestDict(unittest.TestCase):
         d = hancho.Dict({"bar": 2}, {})
         self.assertEqual(1, len(d))
         self.assertEqual(2, d.bar)
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)

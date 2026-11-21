@@ -41,7 +41,7 @@ import time
 import traceback
 from abc import ABCMeta
 from collections import Counter, abc, defaultdict
-from collections.abc import Generator, ItemsView, Iterator
+from collections.abc import Generator, ItemsView
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from itertools import product
@@ -71,14 +71,14 @@ def dprint(*args : Any, **kwargs : Any) -> None: # pragma: no cover
     print("DBG: ", end="")
     print(*args, **kwargs)
 
-# 'branch' must be sequence/set/mapping in order for this to typecheck:
+# 'branch' must be sequence/mapping in order for this to typecheck:
 # a : str = "foo"
 # b : tree[str] = a
 # c : list[str] = ["bar"]
 # d : tree[str] = c
 
-type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]] | None
-type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Set[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
+type branch[LEAF] = LEAF | abc.Sequence[branch[LEAF]] | abc.Mapping[str, branch[LEAF]] | None
+type tree[LEAF] = abc.Sequence[branch[LEAF]] | abc.Mapping[str, branch[LEAF]]
 
 type task_callback = abc.Callable[[Task], Any]
 type item[T] = tuple[int | str | None, T]
@@ -127,7 +127,7 @@ class Sentinel: # pragma: no cover
         raise TypeError("Can't copy sentinels")
 
     def __reduce__(self) -> str:
-        raise TypeError("Can't pickle sentinels")
+        raise TypeError("Can't pickle WWWW VVVV sentinels")
 
 # Marks a function argument or template parameter as "not present" for when None would be a valid
 # value.
@@ -156,13 +156,10 @@ class Utils:
 
         result : str = ""
         for v in Utils.leaves(variant):
-            if v is ___:
-                continue
-            if isinstance(v, Task):
-                raise AssertionError("We should never be stringifying tasks, something is broken")
-            if result:
-                result += " "
-            result += str(v) if v is not None else ""
+            if v is not None:
+                if result:
+                    result += " "
+                result += str(v) if v is not None else ""
         return result
 
     @staticmethod
@@ -179,7 +176,7 @@ class Utils:
     def yield_leaves[T](branch : branch[T]) -> Generator[T]:
         if branch is None:
             return
-        elif Utils.is_sequence(branch) or Utils.is_set(branch):
+        elif Utils.is_sequence(branch):
             for b in branch:
                 yield from Utils.yield_leaves(b)
         elif Utils.is_mapping(branch):
@@ -207,13 +204,6 @@ class Utils:
         elif isinstance(val, list):
             for i, v in enumerate(val):
                 val[i] = Utils.map_in_place(map, i, v)
-        elif isinstance(val, set):
-            temp = list(val)
-            for i, v in enumerate(temp):
-                temp[i] = Utils.map_in_place(map, i, v)
-            val.clear()
-            for v in temp:
-                val.add(v)
         else:
             val = map(key, val)
 
@@ -251,15 +241,11 @@ class Utils:
     @staticmethod
     def is_scalar(v : Any) -> bool:
         if type(v) is object: return True
-        return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
+        return not (Utils.is_sequence(v) or Utils.is_mapping(v))
 
     @staticmethod
     def is_sequence(v : Any) -> TypeIs[abc.Sequence[Any]]:
         return isinstance(v, abc.Sequence) and not isinstance(v, (str, bytes, bytearray))
-
-    @staticmethod
-    def is_set(v : Any) -> TypeIs[abc.Set]:
-        return isinstance(v, abc.Set)
 
     @staticmethod
     def is_mapping(v : Any) -> TypeIs[abc.Mapping[Any, Any]]:
@@ -316,7 +302,7 @@ class Utils:
             if isinstance(obj, abc.Mapping):
                 map_items = {k : apply1(v, seen, *args, **kwargs) for k, v in obj.items()}
                 result = repack(obj, map_items)
-            if isinstance(obj, (abc.Set, abc.Sequence)) and not isinstance(obj, (str, bytes, bytearray)):
+            if isinstance(obj, abc.Sequence) and not isinstance(obj, (str, bytes, bytearray)):
                 list_items = [apply1(v, seen, *args, **kwargs) for v in obj]
                 result = repack(obj, list_items)
             else:
@@ -400,8 +386,6 @@ class Utils:
                 Utils.merge(lhs2, rhs2)
             elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
                 lhs[key] = [*lhs2, *rhs2]
-            elif Utils.is_set(lhs2) and Utils.is_set(rhs2) and merge_sets:
-                lhs[key] = lhs2 | rhs2
             elif rhs2 is not None:
                 lhs[key] = rhs2
 
@@ -740,11 +724,7 @@ class Path:
 
     @staticmethod
     def startswith(path : str, prefix : str) -> bool:
-        try:
-            common = os.path.commonpath([path, prefix])
-            return common == prefix
-        except Exception as ex:
-            raise ex
+        return os.path.commonpath([path, prefix]) == prefix
 
     # Generating relative paths in the presence of symlinks doesn't work with either
     # Path.relative_to or os.path.relpath - the former balks at generating ".." in paths, the
@@ -816,7 +796,7 @@ class Path:
 
 #    @staticmethod
 #    def relpath_t(lhs, rhs) -> tree[str]:
-#        if isinstance(rhs, (list, tuple, set)):
+#        if isinstance(rhs, list):
 #            return [Path.relpath_t(lhs, rh) for rh in rhs]
 #            #result = [Path.relpath(lhs, rh) for rh in Utils.leaves(rhs)]
 #            #return cast(list[str], result)
@@ -1090,9 +1070,7 @@ class Expander(abc.Mapping):
             raise AttributeError(key) from ex
 
     def __getitem__(self, key : str) -> Any:
-        result = self.internal_get(key)
-        pass
-        return result
+        return self.internal_get(key)
 
     def __iter__(self) -> NoReturn:
         raise AssertionError()
@@ -1103,9 +1081,6 @@ class Expander(abc.Mapping):
     # ------------------------------------
 
     def find(self, key : str) -> Any:
-        if key == "comp_db_path":
-            pass
-
         cursor : (dict | Dict | ScopeBase) = self.expand_object
         result = ___
         try:
@@ -1494,7 +1469,7 @@ class Dumper:  #pragma: no cover
             return cls._dump_prefix(key, val, opts) + "<hancho module>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts)
-        elif Utils.is_sequence(val) or Utils.is_mapping(val) or Utils.is_set(val):
+        elif Utils.is_sequence(val) or Utils.is_mapping(val):
             return cls._dump_vector(key, val, val, opts)
         elif isinstance(val, str):
             return cls._dump_scalar(key, val, opts)
@@ -1546,11 +1521,6 @@ class Dumper:  #pragma: no cover
             else:
                 ld : str = "["
                 rd : str = "]"
-        elif Utils.is_set(contents):
-            items = [(None, v) for v in contents]
-            ld : str = "{"
-            rd : str = "}"
-
         else:
             raise AssertionError(f"Don't know what to do with {type(val)}")
 

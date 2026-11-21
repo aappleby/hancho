@@ -91,31 +91,31 @@ if os.name == "posix":
         sys_libs   = None,
         out_bin    = None,
     )
-elif os.name == "nt":
-    compile_cpp = Tool(
-        desc="Compiling {basename(in_src)} -> {basename(out_obj)} ({build_tag})",
-        command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
-        depformat = "msvc",
-        in_src  = None,
-        in_depfile = "{swapext(out_obj, '.d')}",
-        out_obj = "{swapext(in_src, '.o')}",
-    )
-
-    link_cpp_lib = Tool(
-        desc      = "Link {basename(in_objs)} -> {basename(out_bin)}",
-        command   = "link.exe {libs} {in_objs} {out_lib}",
-        libs      = None,
-        in_objs   = None,
-        out_lib   = None,
-    )
-
-    link_cpp_bin = Tool(
-        desc      = "Link {basename(in_objs)} -> {basename(out_bin)}",
-        command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin}",
-        libs      = "user32.lib"
-    )
-else:
-    raise AssertionError(f"Don't know how to compile or link stuff for os.name = {os.name}")
+#elif os.name == "nt":
+#    compile_cpp = Tool(
+#        desc="Compiling {basename(in_src)} -> {basename(out_obj)} ({build_tag})",
+#        command="cl.exe /nologo /c {in_src} /sourceDependencies {in_depfile} /Fo:{out_obj}",
+#        depformat = "msvc",
+#        in_src  = None,
+#        in_depfile = "{swapext(out_obj, '.d')}",
+#        out_obj = "{swapext(in_src, '.o')}",
+#    )
+#
+#    link_cpp_lib = Tool(
+#        desc      = "Link {basename(in_objs)} -> {basename(out_bin)}",
+#        command   = "link.exe {libs} {in_objs} {out_lib}",
+#        libs      = None,
+#        in_objs   = None,
+#        out_lib   = None,
+#    )
+#
+#    link_cpp_bin = Tool(
+#        desc      = "Link {basename(in_objs)} -> {basename(out_bin)}",
+#        command   = "link.exe /nologo {libs} {in_objs} /out:{out_bin}",
+#        libs      = "user32.lib"
+#    )
+#else:
+#    raise AssertionError(f"Don't know how to compile or link stuff for os.name = {os.name}")
 
 # ----------------------------------------
 

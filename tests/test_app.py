@@ -205,8 +205,3 @@ class TestApp(unittest.TestCase):
         }
         """
         check(thing1, expected, print_id = False)
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)

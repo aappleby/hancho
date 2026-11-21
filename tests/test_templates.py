@@ -341,8 +341,3 @@ class TestTemplates(unittest.TestCase):
 #        #self.assertEqual("{foo_in_script}", Dict().expand("{foo_in_script}"))
 #        #self.assertEqual("{blarp}", Dict().expand("{blarp}"))
 #        self.assertIsNotNone(script)
-
-# --------------------------------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    unittest.main(verbosity=999)
