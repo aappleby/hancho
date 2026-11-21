@@ -146,6 +146,26 @@ class TestApp(unittest.TestCase):
             repr(self.stdout.getvalue())
         )
 
+    def test_indenter(self) -> None:
+        self.log.info("┌ one\n")
+        with self.log.indenter(hancho.Log.INFO, hancho.Utils.hex_to_ansi(0xFFFFFFFF)):
+            self.log.info("boop\n")
+        self.log.info("└ two\n")
+        self.log.info("soop\n")
+
+        self.assertEqual(
+            repr('┌ one\n│ boop\n└ two\nsoop\n'),
+            repr(self.stdout.getvalue())
+        )
+
+    def test_log_non_strings(self) -> None:
+        self.log.error(object)
+        self.assertEqual(
+            "<class 'object'>\n",
+            self.stdout.getvalue()
+        )
+
+
     def test_dumper(self) -> None:
         def dump(text : str, **kwargs : Any) -> str:
             return hancho.Dumper.depointer(hancho.Dumper.dump(text, **kwargs))

@@ -67,7 +67,7 @@ sys.modules["hancho"] = sys.modules[__name__]
 sys.modules["hancho"].path = __file__ # type: ignore
 sys.modules["hancho"].root = os.path.dirname(__file__) # type: ignore
 
-def dprint(*args : Any, **kwargs : Any) -> None:
+def dprint(*args : Any, **kwargs : Any) -> None: # pragma: no cover
     print("DBG: ", end="")
     print(*args, **kwargs)
 
@@ -110,7 +110,7 @@ def timeit(name : str) -> Generator[None]:
 # ==================================================================================================
 # region Sentinel
 
-class Sentinel:
+class Sentinel: # pragma: no cover
     def __init__(self, name: str) -> None:
         self.name: str = name
 
@@ -118,18 +118,19 @@ class Sentinel:
         return self.name
 
     def __bool__(self) -> bool:
-        return False
+        raise TypeError("Can't convert sentinels to bools")
 
     def __copy__(self) -> Sentinel:
-        return self
+        raise TypeError("Can't copy sentinels")
 
     def __deepcopy__(self, _: dict[int, Any]) -> Sentinel:
-        return self
+        raise TypeError("Can't copy sentinels")
 
     def __reduce__(self) -> str:
-        return self.name
+        raise TypeError("Can't pickle sentinels")
 
-# Marks a function argument as "not present" for when None would be a valid value.
+# Marks a function argument or template parameter as "not present" for when None would be a valid
+# value.
 ___ : Any = Sentinel("MISSING")
 
 # endregion
@@ -192,18 +193,6 @@ class Utils:
         return list(Utils.yield_leaves(branch))
 
     @staticmethod
-    def yield_leaf_items[T](var : abc.Mapping[Any, T]) -> Iterator[item[T]]:
-        for k, v in var.items():
-            if Utils.is_mapping(v):
-                yield from Utils.yield_leaf_items(v)
-            else:
-                yield (k, v)
-
-    @staticmethod
-    def leaf_items[T](var : abc.Mapping[Any, T]) -> list[item[T]]:
-        return list(Utils.yield_leaf_items(var))
-
-    @staticmethod
     def weave(*args : tree[str]) -> list[str]:
         return [
             functools.reduce(lambda x, y: x + y, t)
@@ -230,39 +219,7 @@ class Utils:
 
         return val
 
-    @staticmethod
-    async def async_map_in_place(map : abc.Callable, val : Any, key : key_type = None) -> Any:
-        if isinstance(val, dict):
-            for k, v in val.items():
-                val[k] = await Utils.async_map_in_place(map, val = v, key = k)
-        elif isinstance(val, list):
-            for i, v in enumerate(val):
-                val[i] = await Utils.async_map_in_place(map, val = v, key = i)
-        elif isinstance(val, set):
-            temp = list(val)
-            for i, v in enumerate(temp):
-                temp[i] = await Utils.async_map_in_place(map, val = v, key = i)
-            val.clear()
-            for v in temp:
-                val.add(v)
-        else:
-            val = await map(key, val)
-
-        return val
-
     # ------------------------------------
-
-    @staticmethod
-    def obj_to_float(obj : object) -> float:
-        """
-        Generates a "random" float in the range [0.0,1.0) by hashing the object's ID.
-        """
-        temp : int
-        temp = id(obj) & 0xFFFFFFFF
-        temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
-        temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
-        temp = ((temp ^ (temp >> 19)) * 0x23456789) & 0xFFFFFFFF
-        return (temp & 0xFFFFFFFF) / 0x100000000
 
     color_map : ClassVar[dict] = {}
     color_cursor : ClassVar[int] = 0
@@ -297,27 +254,12 @@ class Utils:
         return not (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
 
     @staticmethod
-    def is_collection(v : Any) -> TypeIs[abc.Sequence[Any]] | TypeIs[abc.Set[Any]] | TypeIs[abc.Mapping[Any, Any]]:
-        if type(v) is object: return False
-        return (Utils.is_sequence(v) or Utils.is_mapping(v) or Utils.is_set(v))
-
-    @staticmethod
     def is_sequence(v : Any) -> TypeIs[abc.Sequence[Any]]:
         return isinstance(v, abc.Sequence) and not isinstance(v, (str, bytes, bytearray))
 
     @staticmethod
-    def is_mut_sequence(v : Any) -> TypeIs[abc.MutableSequence[Any]]:
-        if isinstance(v, (str, bytes, bytearray)):
-            return False
-        return isinstance(v, abc.MutableSequence)
-
-    @staticmethod
     def is_set(v : Any) -> TypeIs[abc.Set]:
         return isinstance(v, abc.Set)
-
-    @staticmethod
-    def is_mut_set(v : Any) -> TypeIs[abc.MutableSet[Any]]:
-        return isinstance(v, abc.MutableSet)
 
     @staticmethod
     def is_mapping(v : Any) -> TypeIs[abc.Mapping[Any, Any]]:
@@ -352,19 +294,6 @@ class Utils:
             result += "@"
             result += Utils.hex_tag(obj)
             return result
-
-    @classmethod
-    def command_to_string(cls, command: command_type) -> str:
-        if command is None:
-            return ""
-        elif isinstance(command, list):
-            return "; ".join(cls.command_to_string(c) for c in command)
-        elif isinstance(command, str):
-            return command
-        elif callable(command):
-            return command.__name__
-        else:
-            raise TypeError(type(command))
 
     @staticmethod
     def tree_map[X, Y, **P](func: abc.Callable[Concatenate[Any, P], Y]) -> abc.Callable[Concatenate[tree[X], P], tree[Y]]:
@@ -510,10 +439,6 @@ class ScopeBase:
         for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
-                if Utils.is_expandable(new_val):
-                    print(f"{old_val} : {new_val}")
-                    new_val = ex.expand(old_val)
-                    pass
                 assert not Utils.is_expandable(new_val)
                 self.__dict__[key] = new_val
 
@@ -701,16 +626,10 @@ class Log(ScopeBase):
         self._log(Log.CRITICAL, Log.RED, text)
 
     def _log(self, log_level : int, color : str, text : Any) -> None:
-        if isinstance(text, list):
-            for t in text:
-                self._log(log_level, color, t)
-            return
-        elif not isinstance(text, str):
+        if not isinstance(text, str):
             text = repr(text) + "\n"
 
         if log_level < self._level_int:
-            return
-        if not isinstance(text, str) or len(text) == 0:
             return
 
         # FIXME str.partition might be easier here
@@ -1398,7 +1317,7 @@ class Expander(abc.Mapping):
 
         return Expander.SplitCount(literals = literals, macros = macros)
 
-    def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None:
+    def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None: #pragma: no cover
         builtins = cv_builtins.get(None)
         if builtins is None or 'log' not in builtins.__dict__: return
         log = builtins.log
@@ -1432,7 +1351,7 @@ class Expander(abc.Mapping):
             log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
             log.indent(indent_color)
 
-    def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None:
+    def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None: #pragma: no cover
         builtins = cv_builtins.get(None)
         if builtins is None or 'log' not in builtins.__dict__: return
         log = builtins.log
@@ -1444,7 +1363,7 @@ class Expander(abc.Mapping):
 
         log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
-    def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None:
+    def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None: #pragma: no cover
         builtins = cv_builtins.get(None)
         if builtins is None or 'log' not in builtins.__dict__: return
         log = builtins.log
@@ -1491,7 +1410,7 @@ class Expander(abc.Mapping):
 # ==================================================================================================
 # region Dumper
 
-class Dumper:
+class Dumper:  #pragma: no cover
     """
     Hancho's pretty-printer for various types. Note that this is also used for script deduping:
     if you load "my/app/tools/stuff.hancho" multiple times but the configurations you gave it
@@ -1805,7 +1724,7 @@ class Runner(ScopeBase):
                     await self._core_sem.acquire()
                     acquired += 1
                 return count
-            except BaseException:
+            except BaseException: #pragma: no cover
                 self.release(acquired)
                 raise
 
@@ -1965,12 +1884,9 @@ class Repo(ScopeBase):
         # NOTE: This does not handle filenames with escaped spaces in them, but I don't want to
         # write a whole .d parser yet.
 
-        if not Path.isfile(filename):
-            return []
-
         with open(str(filename), encoding="utf-8") as depcontents:
             if format == "msvc":
-                raw_deplines = json.load(depcontents)["Data"]["Includes"]
+                raw_deplines = json.load(depcontents)["Data"]["Includes"] #pragma: no cover
             elif format == "gcc":
                 raw_deplines = re.sub(r"\\\s*\n", "", depcontents.read()).split()
             else:
@@ -2000,7 +1916,7 @@ class Repo(ScopeBase):
         #for file, stat in self._stat_db.items():
         #    comp_db.append({
         #        "directory" : stat.cwd,
-        #        "command"   : Utils.command_to_string(stat.command),
+        #        "command"   : Dumper.depointer(str(command)),
         #        "file"      : Path.relpath(file, stat.cwd),
         #    })
         #Utils.save_json(comp_db, comp_db_path)
@@ -2111,6 +2027,8 @@ class Task(ScopeBase):
 
         # We can't expand the rest yet as commands or paths may depend on the paths of the output
         # files from the input tasks, which we don't know until the input tasks are complete.
+
+        self._public_fields = [x for x in self.__dict__ if not x.startswith("_")]
 
         ex = Expander(self)
         self.cwd = Realpath(ex.expand(self.cwd))
@@ -2297,9 +2215,7 @@ class Task(ScopeBase):
 
         with timeit("Task"):
             for c in Utils.leaves(self.command):
-                if c is None:
-                    continue
-                elif isinstance(c, str):
+                if isinstance(c, str):
                     c = c.translate(curlify)
                     await self.run_command(c)
                 elif isinstance(c, abc.Callable):
@@ -2338,24 +2254,23 @@ class Task(ScopeBase):
         # modifying tasks after they're created but before they're started. If you point task B's
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
-        # ----------------------------------------
-        # Replace all task fields with the list of output files from that task
+        # Await all input tasks and check if any of them had errors.
+        for field_name in self._public_fields:
+            for leaf in Utils.yield_leaves(self.__dict__[field_name]):
+                if isinstance(leaf, Task):
+                    if leaf._aio_task is None:
+                        raise AssertionError("One of a task's input sub-tasks was not started") #pragma: no cover
+                    await leaf._aio_task
+                    if leaf._error is not None:
+                        raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {leaf._error}")
 
-        async def await_task(key : str, val : Any) -> tree[str]:
-            if not isinstance(val, Task):
-                return val
+        # Replace all tasks in the dict with their _out_files.
+        Utils.map_in_place(
+            lambda k, v : v._out_files if isinstance(v, Task) else v,
+            ___,
+            self.__dict__
+        )
 
-            if val._aio_task is None:
-                raise AssertionError("One of a task's input sub-tasks was not started")
-
-            await val._aio_task
-
-            if val._error is not None:
-                raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {val._error}")
-
-            return val._out_files
-
-        await Utils.async_map_in_place(await_task, self.__dict__)
 
     def expand_task(self) -> None:
         ex = Expander(self)
@@ -2375,6 +2290,8 @@ class Task(ScopeBase):
 
             for field_name in io_fields:
                 files = getattr(self, field_name)
+                if isinstance(files, Task):
+                    files = files._out_files
                 files = [ex.expand(file) for file in Utils.leaves(files)]
                 goodfiles = self.fix_paths(field_name, files, script_root, script_dest)
                 setattr(self, field_name, goodfiles[0] if len(goodfiles) == 1 else goodfiles)
@@ -2433,9 +2350,6 @@ class Task(ScopeBase):
             file = os.path.join(script_dest, chunk)
             goodfile = Goodpath(file)
 
-        if Utils.is_expandable(goodfile):
-            raise ValueError(f"goodfile is expandable {goodfile}")
-
         return goodfile
 
     def sanity_check(self) -> None:
@@ -2483,10 +2397,6 @@ class Task(ScopeBase):
                 for file in files:
                     if not Path.exists(file):
                         raise Task.BROKEN(f"Input file missing - {file}")
-
-        # Tasks should have at most one depfile.
-        if isinstance(self.in_depfile, list) and len(self.in_depfile) > 1:
-            raise Task.BROKEN(f"Tasks can't have more than one dependency file! - {self.in_depfile}")
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
@@ -2546,7 +2456,7 @@ class Task(ScopeBase):
 
             (stdout_text, stderr_text) = await proc.communicate()
 
-        except asyncio.CancelledError as ex:
+        except asyncio.CancelledError as ex: #pragma: no cover
             # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
             # usually (but not always) arises from hitting ctrl-c while the build is running.
             #
@@ -2562,7 +2472,7 @@ class Task(ScopeBase):
                 await proc.wait()
             # Re-raise so that dependent tasks and the top-level except can see the error.
             raise ex
-        except Exception as ex:
+        except Exception as ex: #pragma: no cover
             # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
 
@@ -2654,7 +2564,22 @@ class Script(ScopeBase):
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
+#        self._builtins = {}
+#        self._locals   = {}
+#        self._globals  = {}
+
         self._tasks = []
+
+#    def __getattr__(self, key : str) -> Any:
+#        if key in self._locals:
+#            return self._locals[key]
+#        if key in self:
+#            return self[key]
+#        if key in self._globals:
+#            return self[key]
+#        if key in self._builtins:
+#            return self._builtins[key]
+#        raise AttributeError(key)
 
     def exec(self, builtins : Builtins) -> None:
 
@@ -2669,6 +2594,24 @@ class Script(ScopeBase):
             source: str = file.read()
             code: CodeType = compile(source, str(self.path), "exec", dont_inherit=True)
             exec(code, self.__dict__)
+#            #temp_locals = {}
+#
+#            exec(
+#                code,
+#                #self.__dict__,
+#                #globals = {"iamthewalrus":self.file, "__builtins__":builtins.__dict__},
+#                #locals = self.__dict__,
+#
+#                globals = self.__dict__,
+#                locals  = self._locals, # type: ignore
+#            )
+#
+#            #exec(
+#            #    code,
+#            #    globals = {"__builtins__":builtins.__dict__},
+#            #    #globals = self.__dict__,
+#            #    locals  = self.__dict__,
+#            #)
 
             del self.__dict__['__builtins__']
 
@@ -2724,7 +2667,8 @@ class Builtins(Dict):
         self.topdir   = Path.topdir
         self.relpath  = Path.relpath
         self.stem     = Path.stem
-        self.basename = Utils.tree_map(Path.basename)
+        #self.basename = Utils.tree_map(Path.basename)
+        self.basename = Path.basename
 
         self.dirname  = Path.dirname
         self.resolve  = lambda x : Realpath(x)

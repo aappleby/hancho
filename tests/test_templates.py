@@ -43,6 +43,14 @@ class TestTemplates(unittest.TestCase):
             with self.assertRaises(TypeError):
                 d.expand(b)
 
+    def test_missing_sentinel(self) -> None:
+        """The ___ missing-value placeholder should cause expansion to fail."""
+        d = hancho.Dict(a = 1, b = hancho.___)
+        self.assertEqual(
+            "hello 1 this is {b} calling.",
+            d.expand("hello {a} this is {b} calling.")
+        )
+
     def test_macro_to_fixed_point(self) -> None:
         d = hancho.Dict(a = "{b}", b = "{c}", c = "{d}")
         self.assertEqual("{d}", d.expand("{a}"))

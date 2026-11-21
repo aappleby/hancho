@@ -1,5 +1,6 @@
 import asyncio
 import glob
+import io
 import os
 import random
 import shutil
@@ -52,9 +53,12 @@ class TestTasks(unittest.TestCase):
         self.log._flush()
 
     def reset(self, *args : Any) -> None:
+
+        self.stdout = io.StringIO()
+
         self.builtins = hancho.create_test_script(
             in_file = __file__,
-            stdout = sys.stdout,
+            stdout = self.stdout,
             extra_flags = [
                 "--log.level=critical",
                 #"--log.level=debug",
@@ -80,6 +84,76 @@ class TestTasks(unittest.TestCase):
         good_task = hancho.Task(command="echo test_run_tasks_zero")
         self.run_tasks(0)
         self.assertIsNone(good_task._error)
+
+    def test_command_wrong_type(self) -> None:
+        bad_task = hancho.Task(
+            desc="This task's command is neither a string nor a callback",
+            command=object(),
+            in_src="src/foo.c",
+            out_obj="../../../foo.o",
+        )
+        self.run_tasks(1)
+        self.assertIsInstance(bad_task._error, hancho.Task.BROKEN)
+        self.assertFalse(Path("build/foo.o").exists())
+
+    def test_no_inputs(self) -> None:
+        hancho.Task(
+            command = "echo blah > {out_txt}",
+            out_txt = "test_no_inputs.txt",
+        )
+        self.run_tasks(0)
+        self.assertEqual(1, self.stats.tasks_finished)
+
+        self.reset()
+
+        hancho.Task(
+            command = "echo blah > {out_txt}",
+            out_txt = "test_no_inputs.txt",
+        )
+        self.run_tasks(0)
+        self.assertEqual(1, self.stats.tasks_finished)
+
+    def test_no_outputs(self) -> None:
+        hancho.Task(
+            command = "echo {in_txt}",
+            in_txt = "src/main.cpp",
+        )
+        self.run_tasks(0)
+        self.assertEqual(1, self.stats.tasks_finished)
+
+        self.reset()
+
+        hancho.Task(
+            command = "echo {in_txt}",
+            in_txt = "src/main.cpp",
+        )
+        self.run_tasks(0)
+        self.assertEqual(1, self.stats.tasks_finished)
+
+    def test_too_many_jobs(self) -> None:
+        hancho.Task(
+            command = "echo hello world",
+            job_size = (os.cpu_count() or 1)
+        )
+        self.run_tasks(0)
+        self.reset()
+        hancho.Task(
+            command = "echo hello world",
+            job_size = (os.cpu_count() or 1) + 1
+        )
+        self.run_tasks(1)
+
+    def test_bad_depformat(self) -> None:
+        self.reset("--log.level=info")
+        os.makedirs("build", exist_ok = True)
+        force_touch("build/invalid_deps.asdf")
+        hancho.Task(
+            command = "echo hello world",
+            in_depfile = "invalid_deps.asdf",
+            depformat = "invalidformat",
+        )
+        self.run_tasks(1)
+        self.assertIn("Invalid depfile format invalidformat", self.stdout.getvalue())
 
     # ----------------------------------------------------------------------------------------------
 
