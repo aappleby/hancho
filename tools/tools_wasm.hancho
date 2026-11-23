@@ -4,7 +4,7 @@ import shutil
 import sys
 
 if not shutil.which("emcc"):
-    log.error("emcc not found")
+    log.error("emcc not found\n")
 
 emcc = Tool(
     desc    = "Compile Emscripten'd {basename(in_src)}",

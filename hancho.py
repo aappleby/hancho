@@ -96,13 +96,6 @@ opaque_types: tuple[type, ...] = (GeneratorType, contextvars.Context, asyncio.Ta
 
 default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins", asyncio.Task]
 
-@contextmanager
-def timeit(name : str) -> Generator[None]:
-    a: float = time.perf_counter()
-    yield
-    b: float = time.perf_counter()
-    cv_globals.log.verbose(text=Log.DBLUE + f"{name} took {b - a:8.6f} seconds\n")
-
 # endregion
 # ==================================================================================================
 # region Sentinel
@@ -938,48 +931,51 @@ class Flags:
         ================================================================================
         """)
 
-        class MyFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
-            pass
-
         levels: list[str] = ["trace", "debug", "verbose", "info", "warning", "error", "critical", "quiet"]
 
         def str_to_bool(v : str) -> bool:
-            if v.lower() in ("yes", "true", "t", "y"): return True
-            if v.lower() in ("no", "false", "f", "n"): return False
+            if v.lower() in ("yes", "true", "t", "y", "1"): return True
+            if v.lower() in ("no", "false", "f", "n", "0"): return False
             raise argparse.ArgumentTypeError("Not a bool")
 
-        default_root  = "{dirname(resolve(project.file))}"
-        default_jobs  = os.cpu_count() or 1
-        default_width = shutil.get_terminal_size().columns
+        parser = argparse.ArgumentParser(description = desc, formatter_class = argparse.RawDescriptionHelpFormatter)
 
-        parser = argparse.ArgumentParser(description = desc, formatter_class = MyFormatter)
+        parser.add_argument("project.targets",     nargs="*",           help = "The names or partial names of targets to build")
 
-        parser.add_argument(        "project.targets",   nargs="*",                                   help="The names or partial names of targets to build")
-        parser.add_argument("-o", "--project.opts",      type=str,         default = None,            help="File containing JSON that will be used as additional options")
-        parser.add_argument(      "--project.name",      type=str,         default = "project",       help="Name of the whole build project, if you don't want it to be 'project'")
-        parser.add_argument("-f", "--project.file",      type=str,         default = "build.hancho",  help="Path to the .hancho file that starts the build.")
-        parser.add_argument("-r", "--project.root",      type=str,         default = default_root,    help="The top script runs in this directory.")
+        parser.add_argument("--project.opts",      type=str,            help = "File containing JSON that will be used as additional options")
+        parser.add_argument("--project.name",      type=str,            help = "Name of the whole build project, if you don't want it to be 'project'")
+        parser.add_argument("--project.file",      type=str,            help = "Path to the .hancho file that starts the build.")
+        parser.add_argument("--project.root",      type=str,            help = "The top script runs in this directory.")
 
-        parser.add_argument(      "--build.dir",         type=str,         default = "build",         help="The name of the directory to put output files in.")
-        parser.add_argument(      "--build.tag",         type=str,         default = "",              help="Tagged builds will have separate subdirectories under the build directory.")
-        parser.add_argument(      "--build.force",       type=str_to_bool, default = False,           help="Rebuild targets even if they're clean.")
-        parser.add_argument("-a", "--build.all_targets", type=str_to_bool, default = False,           help="Build every task in every repo.")
-        parser.add_argument("-n", "--build.dry_run",     type=str_to_bool, default = False,           help="Dry run - Do everything except actually run commands.")
-        parser.add_argument(      "--build.strict",      type=str_to_bool, default = True,            help="Strict mode, slightly more error checking to catch footguns.")
-        parser.add_argument(      "--build.max_errors",  type=int,         default = 0,               help="The maximum number of task errors we tolerate before abandoning the build")
-        parser.add_argument("-j", "--build.max_jobs",    type=int,         default = default_jobs,    help="Run a maximum of N jobs in parallel.")
+        parser.add_argument("--build.dir",         type=str,            help = "The name of the directory to put output files in.")
+        parser.add_argument("--build.tag",         type=str,            help = "Tagged builds will have separate subdirectories under the build directory.")
+        parser.add_argument("--build.force",       type=str_to_bool,    help = "Rebuild targets even if they're clean.")
+        parser.add_argument("--build.all_targets", type=str_to_bool,    help = "Build every task in every repo.")
+        parser.add_argument("--build.dry_run",     type=str_to_bool,    help = "Dry run - Do everything except actually run commands.")
+        parser.add_argument("--build.strict",      type=str_to_bool,    help = "Strict mode, slightly more error checking to catch footguns.")
+        parser.add_argument("--build.max_errors",  type=int,            help = "The maximum number of task errors we tolerate before abandoning the build")
+        parser.add_argument("--build.max_jobs",    type=int,            help = "Run a maximum of N jobs in parallel.")
 
-        parser.add_argument("-l", "--log.level",         choices=levels,   default = "info",          help="Select verbosity level.")
-        parser.add_argument("-w", "--log.wrap",          type=str_to_bool, default = False,           help="Wrap lines around the console instead of clipping them")
-        parser.add_argument("-c", "--log.color",         type=str_to_bool, default = True,            help="Use color in the log for better readability")
-        parser.add_argument(      "--log.timestamp",     type=str_to_bool, default = True,            help="Timestamp each log line")
-        parser.add_argument(      "--log.width",         type=int,         default = default_width,   help="Max width (in characters) of the log if not wrapping lines")
-        parser.add_argument(      "--log.stdout",        type=str,         default = sys.stdout,      help="Redirect the log's output to this filename")
+        parser.add_argument("--log.level",         choices=levels,      help = "Select verbosity level.")
+        parser.add_argument("--log.wrap",          type=str_to_bool,    help = "Wrap lines around the console instead of clipping them")
+        parser.add_argument("--log.color",         type=str_to_bool,    help = "Colorize output")
+        parser.add_argument("--log.timestamp",     type=str_to_bool,    help = "Timestamp each log line")
+        parser.add_argument("--log.width",         type=int,            help = "Max width (in characters) of the log if not wrapping lines")
+        parser.add_argument("--log.stdout",        type=str,            help = "Redirect the log's output to this filename")
+
+        # FIXME test -C
+
+        parser.add_argument("-o", dest="project.opts",      type=str,            help = "--project.opts=<file>")
+        parser.add_argument("-f", dest="project.file",      type=str,            help = "--project.file=<file>")
+        parser.add_argument("-C", dest="project.root",      type=str,            help = "--project.root=<path>")
+        parser.add_argument("-a", dest="build.all_targets", action='store_const', const = True, help = "--build.all_targets=True")
+        parser.add_argument("-n", dest="build.dry_run",     action='store_const', const = True, help = "--build.dry_run=True")
+        parser.add_argument("-w", dest="log.wrap",          action='store_const', const = True, help = "--log.wrap=True")
+        parser.add_argument("-j", dest="build.max_jobs",    type=int,            help = "--build.max_jobs=<N>")
+        parser.add_argument("-l", dest="log.level",         choices=levels,      help = "--log.level=<level>")
 
         (argv_namespace, unrecognized) = parser.parse_known_args(args=argv)
         argv_vars = vars(argv_namespace)
-
-        opt_file_name = argv_vars.pop("project.opts", None)
 
         # fmt: on
         # ------------------------------------
@@ -1004,7 +1000,7 @@ class Flags:
         # ------------------------------------
         # Load flags from opt_file if present
 
-        if opt_file_name and os.path.exists(opt_file_name):
+        if (opt_file_name := argv_vars.get("project.opts", None)) and os.path.exists(opt_file_name):
             with open(str(opt_file_name)) as f:
                 try:
                     opt_file = json.load(f)
@@ -1775,9 +1771,9 @@ class Project(ScopeMixin):
     def __init__(self, *args : dict[str, Any], file : str, **kwargs : Any) -> None:
         self.name : str          = "project@" + Path.basename(file)
         self.file : str          = file
-        self.path : Realpath     = "{realpath(file)}"  # type: ignore
-        self.root : Realpath     = ___
-        self.targets : list[str] = ___
+        self.path : Realpath     = "{realpath(file)}"  # type:ignore
+        self.root : Realpath     = "{dirname(resolve(project.file))}" #type:ignore
+        self.targets : list[str] = []
 
         self._all_outputs : set[Goodpath] = set()
         self._dedupe = {}
@@ -2161,15 +2157,17 @@ class Task(ScopeMixin):
 
         curlify = str.maketrans({"«" : "{", "»" : "}"})
 
-        with timeit("Task"):
-            for c in Utils.leaves(self.command):
-                if isinstance(c, str):
-                    c = c.translate(curlify)
-                    await self.run_command(c)
-                elif isinstance(c, abc.Callable):
-                    await self.call_callback(c)
-                else:
-                    raise TypeError(type(c))
+        time_a = time.perf_counter()
+        for c in Utils.leaves(self.command):
+            if isinstance(c, str):
+                c = c.translate(curlify)
+                await self.run_command(c)
+            elif isinstance(c, abc.Callable):
+                await self.call_callback(c)
+            else:
+                raise TypeError(type(c))
+        time_b = time.perf_counter()
+        self.log_task(Log.VERBOSE, Log.DBLUE + f"Task took {time_b - time_a:8.6f} seconds\n")
 
         # ------------------------------------
         # See if the task wrote all its output files
@@ -2753,8 +2751,11 @@ def main() -> int:
     # ------------------------------------
     # Build everything
 
-    with cv_globals.set(globals), timeit("Build"):
+    time_a = time.perf_counter()
+    with cv_globals.set(globals):
         result = globals.start_build()
+    time_b = time.perf_counter()
+    globals.log.verbose(text=Log.DBLUE + f"Build took {time_b - time_a:8.6f} seconds\n")
 
     # ------------------------------------
     # Print build stats
@@ -2801,7 +2802,7 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
 
     globals = Globals()
 
-    file = flags.project['file']
+    file = flags.project.get('file', "build.hancho")
 
     globals.log      = Log(flags.log)
     globals.runner   = Runner()
