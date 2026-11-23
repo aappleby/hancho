@@ -2529,7 +2529,7 @@ class Script(ScopeMixin):
 
 # endregion
 # ==================================================================================================
-# region builtins
+# region Globals
 
 class Globals(Dict):
     def __init__(self, *args : dict | Dict, **kwargs : Any) -> None:
@@ -2543,7 +2543,7 @@ class Globals(Dict):
         self.script   : Script    = ___
         self.stats    : Stats     = ___
 
-        self.__builtins__ = Builtins.inst().__dict__
+        self.__builtins__ = Builtins.inst.__dict__
 
         # These methods have to be copied to the instance, as client code only sees Globals.__dict__
         self.load_script = self.load_script
@@ -2552,16 +2552,14 @@ class Globals(Dict):
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    @staticmethod
-    def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-        old_globals = cv_globals.get()
-        old_repo    = old_globals.repo
-        old_script  = old_globals.script
+    def _load(self, file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
+        old_repo    = self.repo
+        old_script  = self.script
 
         new_file   = Realpath(Expander(old_script).expand(file))
         new_repo   = Repo(new_file) if is_repo else old_repo
 
-        new_globals = Globals(old_globals, repo = new_repo)
+        new_globals = Globals(self, repo = new_repo)
         new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
         new_script = new_globals.script
 
@@ -2670,8 +2668,7 @@ cv_globals = CVGlobals()
 
 class Builtins(Dict):
 
-    def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
-        # Copy all the existing builtins over
+    def __init__(self) -> None:
         import builtins as _builtins
         Utils.merge(self.__dict__, _builtins.__dict__)
 
@@ -2710,15 +2707,9 @@ class Builtins(Dict):
         self.realpath = lambda x : Realpath(x)
         self.goodpath = lambda x : Goodpath(x)
 
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+    inst = ___
 
-    _instance = ___
-
-    @staticmethod
-    def inst() -> Builtins:
-        if Builtins._instance is ___:
-            Builtins._instance = Builtins()
-        return Builtins._instance
+Builtins.inst = Builtins()
 
 # endregion
 # ==================================================================================================
@@ -2813,7 +2804,7 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
     globals.repo     = Repo(file = file)
     globals.script   = Script(file = file, globals = globals)
     globals.stats    = Stats()
-    globals.builtins = Builtins.inst()
+    globals.builtins = Builtins.inst
 
     Utils.merge(globals.__dict__, flags.extra)
 
