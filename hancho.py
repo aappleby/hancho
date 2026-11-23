@@ -101,7 +101,7 @@ def timeit(name : str) -> Generator[None]:
     a: float = time.perf_counter()
     yield
     b: float = time.perf_counter()
-    cv_globals.get().log.verbose(text=Log.DBLUE + f"{name} took {b - a:8.6f} seconds\n")
+    cv_globals.log.verbose(text=Log.DBLUE + f"{name} took {b - a:8.6f} seconds\n")
 
 # endregion
 # ==================================================================================================
@@ -469,6 +469,9 @@ class ScopeBase:
 
     def items(self) -> ItemsView[str, Any]:
         return self.__dict__.items()
+
+    #def __contains__(self, key : str) -> bool:
+    #    return key in self.__dict__
 
     # ----------------------------------------
     # We don't want the type checker to see this or it will stop type-checking attributes
@@ -1100,16 +1103,14 @@ class Expander(abc.Mapping):
                 else:
                     break
 
-            globals = cv_globals.get()
-
             # "global" scope
-            self.trace_up(cursor, globals, "get", key)
-            if key in globals.__dict__:
-                result = globals.__dict__[key]
+            self.trace_up(cursor, cv_globals.get(), "get", key)
+            if key in cv_globals.get().__dict__:
+                result = cv_globals[key]
                 return result
 
             # "builtins" scope
-            builtins = globals.builtins
+            builtins = cv_globals.builtins
             self.trace_up(cursor, builtins, "get", key)
 
             if key in builtins.__dict__:
@@ -1156,14 +1157,12 @@ class Expander(abc.Mapping):
     # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
     def expand(self, text : str) -> Any:
-        globals = cv_globals.get()
-
-        log = globals.log
+        log = cv_globals.log
 
         if not isinstance(text, str):
             raise TypeError(f"_expand - can't expand a {type(text)}")
 
-        stats = globals.stats
+        stats = cv_globals.stats
 
         var : Any = text
 
@@ -1288,9 +1287,8 @@ class Expander(abc.Mapping):
         return Expander.SplitCount(literals = literals, macros = macros)
 
     def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None: #pragma: no cover
-        globals = cv_globals.get()
-        if 'log' not in globals.__dict__: return
-        log = globals.log
+        if 'log' not in cv_globals.get().__dict__: return
+        log = cv_globals.log
         if log._level_int > Log.TRACE: return
 
         scope_tag    = Utils.instance_tag(scope)
@@ -1322,9 +1320,8 @@ class Expander(abc.Mapping):
             log.indent(indent_color)
 
     def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None: #pragma: no cover
-        globals = cv_globals.get()
-        if 'log' not in globals.__dict__: return
-        log = globals.log
+        if 'log' not in cv_globals.get().__dict__: return
+        log = cv_globals.log
         if log._level_int > Log.TRACE: return
 
         up_tag    = Utils.instance_tag(up)
@@ -1334,9 +1331,8 @@ class Expander(abc.Mapping):
         log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
     def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None: #pragma: no cover
-        globals = cv_globals.get()
-        if 'log' not in globals.__dict__: return
-        log = globals.log
+        if 'log' not in cv_globals.get().__dict__: return
+        log = cv_globals.log
         if log._level_int > Log.TRACE: return
 
         scope_tag    = Utils.instance_tag(scope)
@@ -1703,10 +1699,9 @@ class Runner(ScopeBase):
 
     async def _async_run_tasks(self) -> int:
         """Run all tasks until we run out."""
-        globals = cv_globals.get()
-        log     = globals.log
-        project = globals.project
-        stats   = globals.stats
+        log     = cv_globals.log
+        project = cv_globals.project
+        stats   = cv_globals.stats
 
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
@@ -1830,16 +1825,14 @@ class Repo(ScopeBase):
         self._stat_db : dict[str, dict] = {}
 
     def load_stat_db(self) -> None:
-        globals = cv_globals.get()
-
         if Path.isfile(self.stat_db_path):
-            log = globals.log
+            log = cv_globals.log
             log.verbose(f"Loading stat_db {self.stat_db_path}\n")
             json_stats = Utils.load_json(self.stat_db_path)
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            log = globals.log
+            log = cv_globals.log
             log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
 
     # FIXME this should go to Utils
@@ -1867,8 +1860,7 @@ class Repo(ScopeBase):
         return deplines
 
     def save_stat_db(self) -> None:
-        globals = cv_globals.get()
-        log = globals.log
+        log = cv_globals.log
         log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
         Utils.save_json(self._stat_db, self.stat_db_path)
 
@@ -1893,8 +1885,7 @@ class Repo(ScopeBase):
     # FIXME move to Utils
     @classmethod
     def hash_file(cls, abs_path : Realpath) -> str:
-        globals = cv_globals.get()
-        stats = globals.stats
+        stats = cv_globals.stats
         stats.hash_calls += 1
 
         time_a = time.perf_counter()
@@ -1908,8 +1899,7 @@ class Repo(ScopeBase):
 
     # FIXME move to Utils
     def get_stat(self, file : Realpath) -> dict:
-        globals = cv_globals.get()
-        stats = globals.stats
+        stats = cv_globals.stats
         stats.stat_calls += 1
 
         _hash = self.hash_file(file)
@@ -2039,7 +2029,7 @@ class Task(ScopeBase):
 
         # ----------------------------------------
 
-        script = cv_globals.get().script
+        script = cv_globals.script
         script._tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
@@ -2062,8 +2052,7 @@ class Task(ScopeBase):
         raise AssertionError()
 
     def create_aio_task(self) -> None:
-        globals = cv_globals.get()
-        runner = globals.runner
+        runner = cv_globals.runner
         assert Utils.in_event_loop()
 
         if self._aio_task is None:
@@ -2074,8 +2063,7 @@ class Task(ScopeBase):
             self._aio_task = t
 
     def queue_task(self) -> None:
-        globals = cv_globals.get()
-        stats = globals.stats
+        stats = cv_globals.stats
         if self._enabled:
             return
 
@@ -2094,8 +2082,7 @@ class Task(ScopeBase):
     async def task_top(self) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
-        globals = cv_globals.get()
-        runner = globals.runner
+        runner = cv_globals.runner
 
         try:
             await self.task_main()
@@ -2112,9 +2099,8 @@ class Task(ScopeBase):
         return self._out_files
 
     async def task_main(self) -> None:
-        globals = cv_globals.get()
-        stats = globals.stats
-        runner = globals.runner
+        stats = cv_globals.stats
+        runner = cv_globals.runner
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2198,8 +2184,7 @@ class Task(ScopeBase):
         # And we're done
 
     def update_repo_stat_db(self) -> None:
-        globals = cv_globals.get()
-        repo = globals.repo
+        repo = cv_globals.repo
 
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
@@ -2318,9 +2303,8 @@ class Task(ScopeBase):
         return goodfile
 
     def sanity_check(self) -> None:
-        globals = cv_globals.get()
-        repo = globals.repo
-        project = globals.project
+        repo    = cv_globals.repo
+        project = cv_globals.project
 
         # Check for all task issues that break the build
 
@@ -2365,8 +2349,7 @@ class Task(ScopeBase):
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
-        globals = cv_globals.get()
-        repo = globals.repo
+        repo = cv_globals.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2401,8 +2384,7 @@ class Task(ScopeBase):
         return ""
 
     async def run_command(self : Task, command : str) -> None:
-        globals = cv_globals.get()
-        repo = globals.repo
+        repo = cv_globals.repo
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
@@ -2453,9 +2435,8 @@ class Task(ScopeBase):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback) -> None:
-        globals = cv_globals.get()
-        script   = globals.script
-        repo     = globals.repo
+        script   = cv_globals.script
+        repo     = cv_globals.repo
 
         callback_dir = Path.relpath(script.root, repo.root)
         self.log_task(Log.INFO, Log.GRAY3 + f"{callback_dir}$ {command}\n")
@@ -2486,9 +2467,8 @@ class Task(ScopeBase):
     def log_task(self : Task, level : int, message : str | list[str]) -> None:
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
-        globals = cv_globals.get()
-        log      = globals.log
-        stats    = globals.stats
+        log      = cv_globals.log
+        stats    = cv_globals.stats
         color    = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
@@ -2692,16 +2672,36 @@ class Globals(Dict):
 
         return result
 
+class CVGlobals:
+    def __init__(self) -> None:
+        self._cv : contextvars.ContextVar[Globals] = contextvars.ContextVar("globals")
 
-cv_globals : contextvars.ContextVar[Globals] = contextvars.ContextVar("globals")
+    def get(self) -> Globals:
+        return self._cv.get()
+
+    def set(self, globals : Globals) -> contextvars.Token[Globals]:
+        return self._cv.set(globals)
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return self.__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(f"key '{key}' not in CVGlobals") from err
+
+    def __getitem__(self, key : str) -> bool:
+        return self._cv.get()[key]
+
+    def __contains__(self, key : str) -> bool:
+        return self._cv.get().__contains__(key)
+
+cv_globals = CVGlobals()
 
 class Builtins2(Dict):
 
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         # Copy all the existing builtins over
         import builtins as _builtins
-        for key, val in _builtins.__dict__.items():
-            self[key] = val
+        Utils.merge(self.__dict__, _builtins.__dict__)
 
         self.___      = ___
         self.hancho   = sys.modules[__name__]
@@ -2859,8 +2859,9 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
 
     return globals
 
+if __name__ == "__main__":
+    sys.exit(_start())
+
 #endregion
 # ==================================================================================================
 
-if __name__ == "__main__":
-    sys.exit(_start())
