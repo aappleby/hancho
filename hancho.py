@@ -1105,7 +1105,7 @@ class Expander(abc.Mapping):
 
             # "global" scope
             self.trace_up(cursor, cv_globals.get(), "get", key)
-            if key in cv_globals.get().__dict__:
+            if key in cv_globals:
                 result = cv_globals[key]
                 return result
 
@@ -1287,7 +1287,7 @@ class Expander(abc.Mapping):
         return Expander.SplitCount(literals = literals, macros = macros)
 
     def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None: #pragma: no cover
-        if 'log' not in cv_globals.get().__dict__: return
+        if 'log' not in cv_globals: return
         log = cv_globals.log
         if log._level_int > Log.TRACE: return
 
@@ -1320,7 +1320,7 @@ class Expander(abc.Mapping):
             log.indent(indent_color)
 
     def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None: #pragma: no cover
-        if 'log' not in cv_globals.get().__dict__: return
+        if 'log' not in cv_globals: return
         log = cv_globals.log
         if log._level_int > Log.TRACE: return
 
@@ -1331,7 +1331,7 @@ class Expander(abc.Mapping):
         log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
     def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None: #pragma: no cover
-        if 'log' not in cv_globals.get().__dict__: return
+        if 'log' not in cv_globals: return
         log = cv_globals.log
         if log._level_int > Log.TRACE: return
 
@@ -2546,7 +2546,7 @@ class Script(ScopeBase):
             )
             # This merge is _mandatory_, otherwise functions declared in a script cannot see their
             # sibling functions because they do _not_ bind locals, only globals.
-            Utils.merge(cv_globals.get().__dict__, self._locals.__dict__)
+            Utils.merge(cv_globals.get(), self._locals)
 
     def dump(self, *args : Any, **kwargs : Any) -> None:
         dprint(Dumper.dump(*args, **kwargs))
@@ -2566,7 +2566,7 @@ class Globals(Dict):
         self.repo     : Repo      = ___
         self.script   : Script    = ___
         self.stats    : Stats     = ___
-        self.builtins : Builtins2 = Builtins2.inst()
+        self.builtins : Builtins = Builtins.inst()
 
         # These have to be directly in the builtins object, as client code only sees
         # builtins.__dict__
@@ -2630,9 +2630,9 @@ class Globals(Dict):
 
     @staticmethod
     def start_build() -> int:
-        project = cv_globals.get().project
-        build = cv_globals.get().build
-        runner = cv_globals.get().runner
+        project = cv_globals.project
+        build = cv_globals.build
+        runner = cv_globals.runner
 
         # ------------------------------------
         # Select the set of tasks to run.
@@ -2689,14 +2689,14 @@ class CVGlobals:
             raise AttributeError(f"key '{key}' not in CVGlobals") from err
 
     def __getitem__(self, key : str) -> bool:
-        return self._cv.get()[key]
+        return self.get()[key]
 
     def __contains__(self, key : str) -> bool:
-        return self._cv.get().__contains__(key)
+        return key in self.get()
 
 cv_globals = CVGlobals()
 
-class Builtins2(Dict):
+class Builtins(Dict):
 
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         # Copy all the existing builtins over
@@ -2743,10 +2743,10 @@ class Builtins2(Dict):
     _instance = ___
 
     @staticmethod
-    def inst() -> Builtins2:
-        if Builtins2._instance is ___:
-            Builtins2._instance = Builtins2()
-        return Builtins2._instance
+    def inst() -> Builtins:
+        if Builtins._instance is ___:
+            Builtins._instance = Builtins()
+        return Builtins._instance
 
 # endregion
 # ==================================================================================================
@@ -2771,20 +2771,20 @@ def _start() -> int:
 def create_test_script(in_file: str, stdout: TextIO, extra_flags: list[str]) -> Globals:
     argv = [f"--project.file={in_file}", *(extra_flags or [])]
     globals = init(argv, stdout)
+    cv_globals.set(globals)
     return globals
 
 # ----------------------------------------
 
 def main() -> int:
     globals = init(sys.argv, sys.stdout)
-
     globals.log.verbose(Log.ORANGE + f"┌─── Running top script {globals.script.path}\n")
     globals.script.exec()
 
     # ------------------------------------
     # Build everything
 
-    with timeit("Build"):
+    with cv_globals.set(globals), timeit("Build"):
         result = Globals.start_build()
 
     # ------------------------------------
@@ -2832,8 +2832,6 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
 
     globals = Globals()
 
-    cv_globals.set(globals)
-
     file = flags.project['file']
 
     globals.log      = Log(flags.log)
@@ -2843,19 +2841,20 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
     globals.repo     = Repo(file = file)
     globals.script   = Script(file = file, globals = globals)
     globals.stats    = Stats()
-    globals.builtins = Builtins2.inst()
+    globals.builtins = Builtins.inst()
 
     Utils.merge(globals.__dict__, flags.extra)
 
-    globals.runner.__expand__()
-    globals.project.__expand__()
-    globals.build.__expand__()
-    globals.repo.__expand__()
-    globals.script.__expand__()
+    with cv_globals.set(globals):
+        globals.runner.__expand__()
+        globals.project.__expand__()
+        globals.build.__expand__()
+        globals.repo.__expand__()
+        globals.script.__expand__()
 
-    globals.repo.load_stat_db()
-    globals.repo._scripts.append(globals.script)
-    globals.project._repos.append(globals.repo)
+        globals.repo.load_stat_db()
+        globals.repo._scripts.append(globals.script)
+        globals.project._repos.append(globals.repo)
 
     return globals
 
