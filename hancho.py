@@ -2535,11 +2535,11 @@ class Script(ScopeBase):
 
     def __getattr__(self, key : str) -> Any:
 
-        if key in self._locals:
-            return self._locals[key]
-
         if key in self:
             return self[key]
+
+        if key in self._locals:
+            return self._locals[key]
 
         if key in self._globals:
             return self._globals[key]
@@ -2588,9 +2588,110 @@ class Globals(Dict):
         self.stats    : Stats     = ___
         self.builtins : Builtins2 = Builtins2.inst()
 
+        # These have to be directly in the builtins object, as client code only sees
+        # builtins.__dict__
+        self.load_script = Globals.load_script
+        self.load_repo   = Globals.load_repo
+        self.start_build = Globals.start_build
+
         self.__builtins__ = self.builtins.__dict__
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
+
+    @staticmethod
+    def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
+        old_globals = cv_globals.get()
+        old_repo    = old_globals.repo
+        old_script  = old_globals.script
+
+        new_file   = Realpath(Expander(old_script).expand(file))
+        new_repo   = Repo(new_file) if is_repo else old_repo
+
+        new_globals = Globals(old_globals, repo = new_repo)
+        new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
+        new_script = new_globals.script
+
+        # Expand repo/script - should be done under new_builtins.
+        with cv_globals.set(new_globals):
+            #new_script.__dict__['__builtins__'] = new_builtins.__dict__
+            if is_repo:
+                new_repo.__expand__()
+                new_repo.load_stat_db()
+            new_script.__expand__()
+            #del new_script.__dict__['__builtins__']
+
+        # Check for duplicates
+        public_stuff = {k:v for k, v in new_script.__dict__.items() if not k.startswith("_")}
+        dedupe_key = Dumper.any_to_key(public_stuff)
+        if dupe := new_globals.project._dedupe.get(dedupe_key, None):
+            new_globals.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
+            return dupe
+
+        # File was _not_ deduped.
+        new_globals.project._dedupe[dedupe_key] = new_script
+        new_repo._scripts.append(new_script)
+        if is_repo:
+            new_globals.project._repos.append(new_repo)
+
+        new_globals.log.verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
+        new_script.exec()
+
+        return new_script
+
+    @staticmethod
+    def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
+        # FIXME handle args/kwargs
+        return Globals._load(file, False, *args, **kwargs)
+
+    @staticmethod
+    def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
+        # FIXME handle args/kwargs
+        return Globals._load(file, True, *args, **kwargs)
+
+    @staticmethod
+    def start_build() -> int:
+        project = cv_globals.get().project
+        build = cv_globals.get().build
+        runner = cv_globals.get().runner
+
+        # ------------------------------------
+        # Select the set of tasks to run.
+
+        if project.targets:
+            for target in project.targets:
+                # Enable all tasks whose name contains any of the targets
+                for repo in project._repos:
+                    for task in repo.yield_tasks():
+                        if task.name is not None and target in task.name:
+                            task.queue_task()
+
+        elif build.all_targets:
+            for repo in project._repos:
+                for task in repo.yield_tasks():
+                    task.queue_task()
+
+        else:
+            # Enable all tasks in the top repo
+            for task in project._repos[0].yield_tasks():
+                task.queue_task()
+
+        # ------------------------------------
+        # Run the tasks.
+
+        result: int = runner.run_tasks()
+
+        # ------------------------------------
+        # Update stat DBs.
+
+        if not build.dry_run:
+            for repo in project._repos:
+                for task in repo.yield_tasks():
+                    if task._complete:
+                        task.update_repo_stat_db()
+                repo.save_stat_db()
+
+        return result
+
 
 cv_globals : contextvars.ContextVar[Globals] = contextvars.ContextVar("globals")
 
@@ -2637,12 +2738,6 @@ class Builtins2(Dict):
         self.realpath = lambda x : Realpath(x)
         self.goodpath = lambda x : Goodpath(x)
 
-        # These have to be directly in the builtins object, as client code only sees
-        # builtins.__dict__
-        self.load_script = Builtins2.load_script
-        self.load_repo   = Builtins2.load_repo
-        self.start_build = Builtins2.start_build
-
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     _instance = ___
@@ -2652,100 +2747,6 @@ class Builtins2(Dict):
         if Builtins2._instance is ___:
             Builtins2._instance = Builtins2()
         return Builtins2._instance
-
-    @staticmethod
-    def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-        old_globals = cv_globals.get()
-        old_repo    = old_globals.repo
-        old_script  = old_globals.script
-
-        new_file   = Realpath(Expander(old_script).expand(file))
-        new_repo   = Repo(new_file) if is_repo else old_repo
-
-        new_globals = Globals(old_globals, repo = new_repo)
-        new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
-        new_script = new_globals.script
-
-        # Expand repo/script - should be done under new_builtins.
-        with cv_globals.set(new_globals):
-            #new_script.__dict__['__builtins__'] = new_builtins.__dict__
-            if is_repo:
-                new_repo.__expand__()
-                new_repo.load_stat_db()
-            new_script.__expand__()
-            #del new_script.__dict__['__builtins__']
-
-        # Check for duplicates
-        public_stuff = {k:v for k, v in new_script.__dict__.items() if not k.startswith("_")}
-        dedupe_key = Dumper.any_to_key(public_stuff)
-        if dupe := new_globals.project._dedupe.get(dedupe_key, None):
-            new_globals.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
-            return dupe
-
-        # File was _not_ deduped.
-        new_globals.project._dedupe[dedupe_key] = new_script
-        new_repo._scripts.append(new_script)
-        if is_repo:
-            new_globals.project._repos.append(new_repo)
-
-        new_globals.log.verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
-        new_script.exec()
-
-        return new_script
-
-    @staticmethod
-    def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
-        # FIXME handle args/kwargs
-        return Builtins2._load(file, False, *args, **kwargs)
-
-    @staticmethod
-    def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
-        # FIXME handle args/kwargs
-        return Builtins2._load(file, True, *args, **kwargs)
-
-    @staticmethod
-    def start_build() -> int:
-        project = cv_globals.get().project
-        build = cv_globals.get().build
-        runner = cv_globals.get().runner
-
-        # ------------------------------------
-        # Select the set of tasks to run.
-
-        if project.targets:
-            for target in project.targets:
-                # Enable all tasks whose name contains any of the targets
-                for repo in project._repos:
-                    for task in repo.yield_tasks():
-                        if task.name is not None and target in task.name:
-                            task.queue_task()
-
-        elif build.all_targets:
-            for repo in project._repos:
-                for task in repo.yield_tasks():
-                    task.queue_task()
-
-        else:
-            # Enable all tasks in the top repo
-            for task in project._repos[0].yield_tasks():
-                task.queue_task()
-
-        # ------------------------------------
-        # Run the tasks.
-
-        result: int = runner.run_tasks()
-
-        # ------------------------------------
-        # Update stat DBs.
-
-        if not build.dry_run:
-            for repo in project._repos:
-                for task in repo.yield_tasks():
-                    if task._complete:
-                        task.update_repo_stat_db()
-                repo.save_stat_db()
-
-        return result
 
 # endregion
 # ==================================================================================================
@@ -2784,7 +2785,7 @@ def main() -> int:
     # Build everything
 
     with timeit("Build"):
-        result = globals.builtins.start_build()
+        result = Globals.start_build()
 
     # ------------------------------------
     # Print build stats

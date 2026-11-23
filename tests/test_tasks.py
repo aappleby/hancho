@@ -66,7 +66,7 @@ class TestTasks(unittest.TestCase):
         self.stats = self.globals.stats
 
     def run_tasks(self, expected : int) -> None:
-        result: int = self.globals.builtins.start_build()
+        result: int = self.globals.start_build()
         self.assertEqual(result, expected)
 
     def test_trivial(self) -> None:
