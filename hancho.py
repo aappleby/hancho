@@ -148,7 +148,7 @@ class Utils:
     def stringify(variant : Any) -> str:
         """Converts any type into a template-compatible string."""
 
-        if isinstance(variant, ScopeBase):
+        if isinstance(variant, ScopeMixin):
             variant = {k:v for k,v in variant.__dict__.items() if not k.startswith("_")}
 
         result : str = ""
@@ -412,7 +412,7 @@ class Utils:
 # ==================================================================================================
 # region Scope
 
-class ScopeBase:
+class ScopeMixin:
 
     # Expand all expandables at the top level of this scope.
     def __expand__(self) -> None:
@@ -435,7 +435,7 @@ class ScopeBase:
                 d = d.__dict__
             Utils.merge(self.__dict__, d)
 
-    def fill(self, *args : dict[str, Any], **kwargs : Any) -> ScopeBase:
+    def fill(self, *args : dict[str, Any], **kwargs : Any) -> ScopeMixin:
         result = type(self)()
         Utils.merge(result.__dict__, self.__dict__)
         for rhs in (*args, kwargs):
@@ -490,10 +490,9 @@ class ScopeBase:
 # ==================================================================================================
 # region Dict/Tool
 
-class Dict(ScopeBase):
+class Dict(ScopeMixin):
 
     def __init__(self, *args : Any, **kwargs : Any) -> None:
-        super().__init__()
         self.merge(*args, **kwargs)
 
     def __getattr__(self, key : str) -> Any:
@@ -511,7 +510,7 @@ class Tool(Dict):
 # ==================================================================================================
 # region Log
 
-class Log(ScopeBase):
+class Log(ScopeMixin):
 
     """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
     RED     = Utils.hex_to_ansi(0xCC6666)
@@ -548,7 +547,6 @@ class Log(ScopeBase):
     QUIET    = 60
 
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
-        super().__init__()
         self.level     : str    = "info"
         self.wrap      : bool   = False
         self.color     : bool   = True
@@ -878,9 +876,8 @@ class Blocks(list[Literal | Macro]):
 # region Stats - trivial build statistics and tracking vars for expansion to catch infinite
 # loops/recursion
 
-class Stats(ScopeBase):
+class Stats(ScopeMixin):
     def __init__(self) -> None:
-        super().__init__()
         self.stat_calls = 0
         self.hash_calls = 0
         self.hash_bytes = 0
@@ -1081,7 +1078,7 @@ class Expander(abc.Mapping):
     # ------------------------------------
 
     def find(self, key : str) -> Any:
-        cursor : (dict | Dict | ScopeBase) = self.expand_object
+        cursor : (dict | Dict | ScopeMixin) = self.expand_object
         result = ___
         try:
             self.trace_start(cursor, "get", key)
@@ -1127,7 +1124,7 @@ class Expander(abc.Mapping):
 
     def internal_get(self, key : str) -> Any:
         result = self.find(key)
-        if isinstance(result, (dict, ScopeBase)):
+        if isinstance(result, (dict, ScopeMixin)):
             return Expander(result)
         elif isinstance(result, str):
             return self.expand(result)
@@ -1286,7 +1283,7 @@ class Expander(abc.Mapping):
 
         return Expander.SplitCount(literals = literals, macros = macros)
 
-    def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None: #pragma: no cover
+    def trace_start(self, scope : (dict | Dict | ScopeMixin), action : str, arg : Any) -> None: #pragma: no cover
         if 'log' not in cv_globals: return
         log = cv_globals.log
         if log._level_int > Log.TRACE: return
@@ -1319,7 +1316,7 @@ class Expander(abc.Mapping):
             log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
             log.indent(indent_color)
 
-    def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None: #pragma: no cover
+    def trace_up(self, scope : (dict | Dict | ScopeMixin), up : (dict | Dict | ScopeMixin), action : str, arg : str) -> None: #pragma: no cover
         if 'log' not in cv_globals: return
         log = cv_globals.log
         if log._level_int > Log.TRACE: return
@@ -1330,7 +1327,7 @@ class Expander(abc.Mapping):
 
         log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
-    def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None: #pragma: no cover
+    def trace_end(self, scope : (dict | Dict | ScopeMixin), action : str, arg : Any, result : Any) -> None: #pragma: no cover
         if 'log' not in cv_globals: return
         log = cv_globals.log
         if log._level_int > Log.TRACE: return
@@ -1445,7 +1442,7 @@ class Dumper:  #pragma: no cover
     def _dump_to_str(cls, key : key_type, val : Any, opts : Opts)-> str:
         if opts.cur_depth > 0 and (key in opts.fold or val in opts.fold or type(val) in opts.fold):
             return cls._dump_prefix(key, val, opts) + "<folded>"
-        elif isinstance(val, ScopeBase):
+        elif isinstance(val, ScopeMixin):
             return cls._dump_scope(key, val, opts)
         elif isinstance(val, opaque_types):
             return cls._dump_scalar(key, val, opts)
@@ -1518,7 +1515,7 @@ class Dumper:  #pragma: no cover
         return cls._dump_items(key, prefix, ld, items, rd, opts)
 
     @classmethod
-    def _dump_scope(cls, key : key_type, val : ScopeBase, opts : Opts) -> str:
+    def _dump_scope(cls, key : key_type, val : ScopeMixin, opts : Opts) -> str:
         return cls._dump_vector(key, val, val.__dict__, opts)
 
     @classmethod
@@ -1590,7 +1587,7 @@ class Dumper:  #pragma: no cover
         prefix: str = ""
         if key:
             prefix += f"{key}"
-        elif isinstance(val, ScopeBase):
+        elif isinstance(val, ScopeMixin):
             prefix += type(val).__name__.lower()
         elif hasattr(val, 'name') and val.name is not None:
             prefix += val.name
@@ -1656,10 +1653,9 @@ class Dumper:  #pragma: no cover
 # ==================================================================================================
 # region Runner
 
-class Runner(ScopeBase):
+class Runner(ScopeMixin):
 
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
-        super().__init__()
         self.name : str = "runner"
         self.max_jobs : int   = "{build.max_jobs}"   #type:ignore
         self.max_errors : int = "{build.max_errors}" #type:ignore
@@ -1767,9 +1763,8 @@ class Runner(ScopeBase):
 # ==================================================================================================
 # region Project
 
-class Project(ScopeBase):
+class Project(ScopeMixin):
     def __init__(self, *args : dict[str, Any], file : str, **kwargs : Any) -> None:
-        super().__init__()
         self.name : str          = "project@" + Path.basename(file)
         self.file : str          = file
         self.path : Realpath     = "{realpath(file)}"  # type: ignore
@@ -1786,10 +1781,8 @@ class Project(ScopeBase):
 # ==================================================================================================
 # region Build
 
-class Build(ScopeBase):
+class Build(ScopeMixin):
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
-        super().__init__()
-
         self.name : str         = "build"
         self.dir : str          = "build"
         self.dest : str         = "{goodpath(join(repo.root, dir))}"
@@ -1807,10 +1800,9 @@ class Build(ScopeBase):
 # ==================================================================================================
 # region Repo
 
-class Repo(ScopeBase):
+class Repo(ScopeMixin):
 
     def __init__(self, file : str, *args : dict[str, Any], **kwargs : Any) -> None:
-        super().__init__()
         self.name : str      = "repo@" + Path.basename(file)
         self.file : str      = file
         self.path : Realpath = "{realpath(file)}"         #type:ignore
@@ -1951,14 +1943,13 @@ class Repo(ScopeBase):
 
 # FIXME get() should call eval or something? a lot of these task fields should delegate to script
 
-class Task(ScopeBase):
+class Task(ScopeMixin):
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
     class BROKEN(Exception):    pass
 
     def __init__(self, *args : Any, **kwargs : Any) -> None:
-        super().__init__()
         self.command: command_type  = []
         self.name: str              = "task"
         self.desc: str              = "<no desc>"
@@ -2496,11 +2487,9 @@ class Task(ScopeBase):
 # So, we put the script in a contextvar and have the task capture it, then when the tasks's
 # asyncio.task runs it sets the contextvar back to that script.
 
-class Script(ScopeBase):
+class Script(ScopeMixin):
 
     def __init__(self : Script, *args : dict[str, Any], file : str, globals : Globals, **kwargs : Any) -> None:
-        super().__init__()
-
         self.name : str      = "script@" + Path.basename(file)
         self.file : str      = file
         self.path : Realpath = "{realpath(file)}" #type:ignore
@@ -2541,12 +2530,12 @@ class Script(ScopeBase):
             code: CodeType = compile(source, str(self.path), "exec", dont_inherit=True)
             exec(
                 code,
-                cv_globals.get().__dict__,
+                self._globals.__dict__,
                 self._locals.__dict__
             )
             # This merge is _mandatory_, otherwise functions declared in a script cannot see their
             # sibling functions because they do _not_ bind locals, only globals.
-            Utils.merge(cv_globals.get(), self._locals)
+            Utils.merge(self._globals, self._locals)
 
     def dump(self, *args : Any, **kwargs : Any) -> None:
         dprint(Dumper.dump(*args, **kwargs))
