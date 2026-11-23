@@ -121,22 +121,22 @@ if os.name == "posix":
 
 def cpp_lib(*, in_srcs=None, in_objs=None, **kwargs):
     new_objs = [
-        Task(compile_cpp.fill(kwargs), in_src=f)
+        compile_cpp.fill(kwargs)(in_src=f)
         for f in leaves(in_srcs)
     ]
 
-    return Task(link_cpp_lib.fill(kwargs), in_objs = [new_objs, in_objs])
+    return link_cpp_lib.fill(kwargs)(in_objs = [new_objs, in_objs])
 
 # ----------------------------------------
 
 def cpp_bin(*, in_srcs=None, in_objs=None, in_libs=None, **kwargs):
 
     new_objs = [
-        Task(compile_cpp.fill(kwargs), in_src=file)
+        compile_cpp.fill(kwargs)(in_src=file)
         for file in leaves(in_srcs)
     ]
 
-    return Task(link_cpp_bin.fill(kwargs), in_objs = [new_objs, in_objs, in_libs])
+    return link_cpp_bin.fill(kwargs)(in_objs = [new_objs, in_objs, in_libs])
 
 
 ####################################################################################################
@@ -150,7 +150,7 @@ def make(*, in_makefile, **kwargs):
         make_file   = "{basename(in_makefile)}",
         in_makefile = None,
     )
-    return Task(cmd, in_makefile=in_makefile, **kwargs)
+    return cmd(in_makefile=in_makefile, **kwargs)
 
 ####################################################################################################
 # Tests
@@ -167,14 +167,13 @@ run_test = Tool(
 def cpp_test(*, in_srcs=None, in_objs=None, **kwargs):
 
     new_objs = [
-        Task(compile_cpp.fill(kwargs), in_src=src)
+        compile_cpp.fill(kwargs)(in_src=src)
         for src in leaves(in_srcs)
     ]
 
-    test_bin = Task(
-        link_cpp_bin.fill(kwargs),
+    test_bin = link_cpp_bin.fill(kwargs)(
         in_objs=[new_objs, in_objs],
         test_dir = "{script3.root}",
     )
 
-    return Task(run_test.fill(kwargs), in_test=test_bin)
+    return run_test.fill(kwargs)(in_test=test_bin)

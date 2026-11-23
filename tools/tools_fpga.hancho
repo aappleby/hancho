@@ -64,28 +64,22 @@ def verilator(*, in_sv, **kwargs):
     global verilated_o, verilated_threads_o
 
     if not verilated_o:
-        verilated_o = Task(
-            tools_base.compile_cpp,
+        verilated_o = tools_base.compile_cpp(
             in_src  = "/usr/local/share/verilator/include/verilated.cpp",
             out_obj = "verilated.o",
             dest    = "{repo.dest}/verilator",
         )
 
     if not verilated_threads_o:
-        verilated_threads_o = Task(
-            tools_base.compile_cpp,
+        verilated_threads_o = tools_base.compile_cpp(
             in_src  = "/usr/local/share/verilator/include/verilated_threads.cpp",
             out_obj = "verilated_threads.o",
             dest    = "{repo.dest}/verilator",
         )
 
-    verilated = Task(
-        verilator_cmd.fill(kwargs),
-        in_sv = in_sv,
-    )
+    verilated = verilator_cmd.fill(kwargs)(in_sv = in_sv)
 
-    compiled = Task(
-        tools_base.make.fill(kwargs),
+    compiled = tools_base.make.fill(kwargs)(
         # FIXME this is reading out_makefile from verilated, needs a test 'cause stuff has changed
         verilated = verilated,
         out_obj = "{swapext(verilated['out_makefile'], '__ALL.o')}",
@@ -94,8 +88,7 @@ def verilator(*, in_sv, **kwargs):
         ],
     )
 
-    verilated_lib = Task(
-        tools_base.cpp_lib.fill(kwargs),
+    verilated_lib = tools_base.cpp_lib.fill(kwargs)(
         in_sv   = in_sv,
         in_objs = [verilated_threads_o, verilated_o, compiled],
         out_lib = "{swapext(in_sv, '.a')}",

@@ -98,13 +98,10 @@ default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins
 
 @contextmanager
 def timeit(name : str) -> Generator[None]:
-    builtins = cv_builtins.get()
-    builtins = cv_builtins.get()
-    log = builtins.log
     a: float = time.perf_counter()
     yield
     b: float = time.perf_counter()
-    log.verbose(text=Log.DBLUE + f"{name} took {b - a:8.6f} seconds\n")
+    cv_globals.get().log.verbose(text=Log.DBLUE + f"{name} took {b - a:8.6f} seconds\n")
 
 # endregion
 # ==================================================================================================
@@ -351,8 +348,8 @@ class Utils:
 
     @staticmethod
     def merge(
-        lhs : dict,
-        rhs : dict,
+        lhs : dict | Dict,
+        rhs : dict | Dict,
         *,
         merge_mappings: bool = True,
         merge_sequences: bool = True,
@@ -360,8 +357,8 @@ class Utils:
         keep_lhs: bool = True,
         keep_rhs: bool = True,
     ) -> Any:
-        assert type(lhs) is dict
-        assert type(rhs) is dict
+        if isinstance(lhs, Dict): lhs = lhs.__dict__
+        if isinstance(rhs, Dict): rhs = rhs.__dict__
 
         lkeys = lhs.keys()
         rkeys = rhs.keys()
@@ -396,7 +393,7 @@ class Utils:
         return lhs
 
     @staticmethod
-    def merge_all(lhs : dict[str, Any], *args : dict[str, Any], **kwargs : Any) -> None:
+    def merge_all(lhs : dict[str, Any] | Dict, *args : dict[str, Any] | Dict, **kwargs : Any) -> None:
         for rhs in (*args, kwargs):
             Utils.merge(lhs, rhs)
 
@@ -587,26 +584,26 @@ class Log(ScopeBase):
         if level >= log_level:
             self.dedent()
 
-    def trace(self, text : str) -> None:
+    def trace(self, text : Any) -> None:
         # Traces do their own color coding
         self._log(Log.TRACE, "", text)
 
-    def debug(self, text : str) -> None:
+    def debug(self, text : Any) -> None:
         self._log(Log.DEBUG, Log.GRAY3, text)
 
-    def verbose(self, text : str) -> None:
+    def verbose(self, text : Any) -> None:
         self._log(Log.VERBOSE, Log.GRAY4, text)
 
-    def info(self, text : str) -> None:
+    def info(self, text : Any) -> None:
         self._log(Log.INFO, "", text)
 
-    def warning(self, text : str) -> None:
+    def warning(self, text : Any) -> None:
         self._log(Log.WARNING, Log.YELLOW, text)
 
-    def error(self, text : str) -> None:
+    def error(self, text : Any) -> None:
         self._log(Log.ERROR, Log.ORANGE, text)
 
-    def critical(self, text : str) -> None:
+    def critical(self, text : Any) -> None:
         self._log(Log.CRITICAL, Log.RED, text)
 
     def _log(self, log_level : int, color : str, text : Any) -> None:
@@ -1103,19 +1100,17 @@ class Expander(abc.Mapping):
                 else:
                     break
 
-            builtins = cv_builtins.get()
+            globals = cv_globals.get()
 
             # "global" scope
-            if builtins.script is not None:
-                self.trace_up(cursor, builtins.script, "get", key)
-                cursor = builtins.script
-                if key in builtins.script.__dict__:
-                    result = builtins.script.__dict__[key]
-                    return result
+            self.trace_up(cursor, globals, "get", key)
+            if key in globals.__dict__:
+                result = globals.__dict__[key]
+                return result
 
             # "builtins" scope
+            builtins = globals.builtins
             self.trace_up(cursor, builtins, "get", key)
-            cursor = builtins
 
             if key in builtins.__dict__:
                 result = builtins.__dict__[key]
@@ -1161,14 +1156,14 @@ class Expander(abc.Mapping):
     # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
     def expand(self, text : str) -> Any:
-        builtins = cv_builtins.get()
+        globals = cv_globals.get()
 
-        log = builtins.log
+        log = globals.log
 
         if not isinstance(text, str):
             raise TypeError(f"_expand - can't expand a {type(text)}")
 
-        stats = builtins.stats
+        stats = globals.stats
 
         var : Any = text
 
@@ -1293,9 +1288,9 @@ class Expander(abc.Mapping):
         return Expander.SplitCount(literals = literals, macros = macros)
 
     def trace_start(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any) -> None: #pragma: no cover
-        builtins = cv_builtins.get(None)
-        if builtins is None or 'log' not in builtins.__dict__: return
-        log = builtins.log
+        globals = cv_globals.get()
+        if 'log' not in globals.__dict__: return
+        log = globals.log
         if log._level_int > Log.TRACE: return
 
         scope_tag    = Utils.instance_tag(scope)
@@ -1327,9 +1322,9 @@ class Expander(abc.Mapping):
             log.indent(indent_color)
 
     def trace_up(self, scope : (dict | Dict | ScopeBase), up : (dict | Dict | ScopeBase), action : str, arg : str) -> None: #pragma: no cover
-        builtins = cv_builtins.get(None)
-        if builtins is None or 'log' not in builtins.__dict__: return
-        log = builtins.log
+        globals = cv_globals.get()
+        if 'log' not in globals.__dict__: return
+        log = globals.log
         if log._level_int > Log.TRACE: return
 
         up_tag    = Utils.instance_tag(up)
@@ -1339,9 +1334,9 @@ class Expander(abc.Mapping):
         log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
     def trace_end(self, scope : (dict | Dict | ScopeBase), action : str, arg : Any, result : Any) -> None: #pragma: no cover
-        builtins = cv_builtins.get(None)
-        if builtins is None or 'log' not in builtins.__dict__: return
-        log = builtins.log
+        globals = cv_globals.get()
+        if 'log' not in globals.__dict__: return
+        log = globals.log
         if log._level_int > Log.TRACE: return
 
         scope_tag    = Utils.instance_tag(scope)
@@ -1708,10 +1703,10 @@ class Runner(ScopeBase):
 
     async def _async_run_tasks(self) -> int:
         """Run all tasks until we run out."""
-        builtins = cv_builtins.get()
-        log     = builtins.log
-        project = builtins.project
-        stats   = builtins.stats
+        globals = cv_globals.get()
+        log     = globals.log
+        project = globals.project
+        stats   = globals.stats
 
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
@@ -1835,16 +1830,16 @@ class Repo(ScopeBase):
         self._stat_db : dict[str, dict] = {}
 
     def load_stat_db(self) -> None:
-        builtins = cv_builtins.get()
+        globals = cv_globals.get()
 
         if Path.isfile(self.stat_db_path):
-            log = builtins.log
+            log = globals.log
             log.verbose(f"Loading stat_db {self.stat_db_path}\n")
             json_stats = Utils.load_json(self.stat_db_path)
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            log = builtins.log
+            log = globals.log
             log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
 
     # FIXME this should go to Utils
@@ -1872,8 +1867,8 @@ class Repo(ScopeBase):
         return deplines
 
     def save_stat_db(self) -> None:
-        builtins = cv_builtins.get()
-        log = builtins.log
+        globals = cv_globals.get()
+        log = globals.log
         log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
         Utils.save_json(self._stat_db, self.stat_db_path)
 
@@ -1898,8 +1893,8 @@ class Repo(ScopeBase):
     # FIXME move to Utils
     @classmethod
     def hash_file(cls, abs_path : Realpath) -> str:
-        builtins = cv_builtins.get()
-        stats = builtins.stats
+        globals = cv_globals.get()
+        stats = globals.stats
         stats.hash_calls += 1
 
         time_a = time.perf_counter()
@@ -1913,8 +1908,8 @@ class Repo(ScopeBase):
 
     # FIXME move to Utils
     def get_stat(self, file : Realpath) -> dict:
-        builtins = cv_builtins.get()
-        stats = builtins.stats
+        globals = cv_globals.get()
+        stats = globals.stats
         stats.stat_calls += 1
 
         _hash = self.hash_file(file)
@@ -2044,7 +2039,7 @@ class Task(ScopeBase):
 
         # ----------------------------------------
 
-        script = cv_builtins.get().script
+        script = cv_globals.get().script
         script._tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
@@ -2067,8 +2062,8 @@ class Task(ScopeBase):
         raise AssertionError()
 
     def create_aio_task(self) -> None:
-        builtins = cv_builtins.get()
-        runner = builtins.runner
+        globals = cv_globals.get()
+        runner = globals.runner
         assert Utils.in_event_loop()
 
         if self._aio_task is None:
@@ -2079,8 +2074,8 @@ class Task(ScopeBase):
             self._aio_task = t
 
     def queue_task(self) -> None:
-        builtins = cv_builtins.get()
-        stats = builtins.stats
+        globals = cv_globals.get()
+        stats = globals.stats
         if self._enabled:
             return
 
@@ -2099,8 +2094,8 @@ class Task(ScopeBase):
     async def task_top(self) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
-        builtins = cv_builtins.get()
-        runner = builtins.runner
+        globals = cv_globals.get()
+        runner = globals.runner
 
         try:
             await self.task_main()
@@ -2117,9 +2112,9 @@ class Task(ScopeBase):
         return self._out_files
 
     async def task_main(self) -> None:
-        builtins = cv_builtins.get()
-        stats = builtins.stats
-        runner = builtins.runner
+        globals = cv_globals.get()
+        stats = globals.stats
+        runner = globals.runner
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2203,8 +2198,8 @@ class Task(ScopeBase):
         # And we're done
 
     def update_repo_stat_db(self) -> None:
-        builtins = cv_builtins.get()
-        repo = builtins.repo
+        globals = cv_globals.get()
+        repo = globals.repo
 
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
@@ -2323,9 +2318,9 @@ class Task(ScopeBase):
         return goodfile
 
     def sanity_check(self) -> None:
-        builtins = cv_builtins.get()
-        repo = builtins.repo
-        project = builtins.project
+        globals = cv_globals.get()
+        repo = globals.repo
+        project = globals.project
 
         # Check for all task issues that break the build
 
@@ -2370,8 +2365,8 @@ class Task(ScopeBase):
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
-        builtins = cv_builtins.get()
-        repo = builtins.repo
+        globals = cv_globals.get()
+        repo = globals.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2406,8 +2401,8 @@ class Task(ScopeBase):
         return ""
 
     async def run_command(self : Task, command : str) -> None:
-        builtins = cv_builtins.get()
-        repo = builtins.repo
+        globals = cv_globals.get()
+        repo = globals.repo
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
@@ -2458,12 +2453,12 @@ class Task(ScopeBase):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback) -> None:
-        builtins = cv_builtins.get()
-        script   = builtins.script
-        repo     = builtins.repo
+        globals = cv_globals.get()
+        script   = globals.script
+        repo     = globals.repo
 
         callback_dir = Path.relpath(script.root, repo.root)
-        self.log_task(Log.INFO, f"{callback_dir}$ {command}\n")
+        self.log_task(Log.INFO, Log.GRAY3 + f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
@@ -2491,9 +2486,9 @@ class Task(ScopeBase):
     def log_task(self : Task, level : int, message : str | list[str]) -> None:
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
-        builtins = cv_builtins.get()
-        log      = builtins.log
-        stats    = builtins.stats
+        globals = cv_globals.get()
+        log      = globals.log
+        stats    = globals.stats
         color    = Log.YELLOW if level > Log.INFO else ""
 
         all_lines = []
@@ -2523,7 +2518,7 @@ class Task(ScopeBase):
 
 class Script(ScopeBase):
 
-    def __init__(self : Script, *args : dict[str, Any], file : str, **kwargs : Any) -> None:
+    def __init__(self : Script, *args : dict[str, Any], file : str, globals : Globals, **kwargs : Any) -> None:
         super().__init__()
 
         self.name : str      = "script@" + Path.basename(file)
@@ -2534,56 +2529,44 @@ class Script(ScopeBase):
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-#        self._builtins = {}
-#        self._locals   = {}
-#        self._globals  = {}
+        self._locals  = Dict()
+        self._globals = globals
+        self._tasks   = []
 
-        self._tasks = []
+    def __getattr__(self, key : str) -> Any:
 
-#    def __getattr__(self, key : str) -> Any:
-#        if key in self._locals:
-#            return self._locals[key]
-#        if key in self:
-#            return self[key]
-#        if key in self._globals:
-#            return self[key]
-#        if key in self._builtins:
-#            return self._builtins[key]
-#        raise AttributeError(key)
+        if key in self._locals:
+            return self._locals[key]
 
-    def exec(self, builtins : Builtins) -> None:
+        if key in self:
+            return self[key]
+
+        if key in self._globals:
+            return self._globals[key]
+
+        if key in self._builtins:
+            return self._builtins[key]
+
+        raise AttributeError(key)
+
+    def exec(self) -> None:
 
         with (
-            cv_builtins.set(builtins),
-            builtins.log.indenter(Log.VERBOSE, Log.ORANGE),
+            cv_globals.set(self._globals),
+            self._globals.log.indenter(Log.VERBOSE, Log.ORANGE),
             chdir(self.root),
             open(str(self.path), encoding="utf-8") as file,
         ):
-            self.__dict__['__builtins__'] = builtins.__dict__
-
             source: str = file.read()
             code: CodeType = compile(source, str(self.path), "exec", dont_inherit=True)
-            exec(code, self.__dict__)
-#            #temp_locals = {}
-#
-#            exec(
-#                code,
-#                #self.__dict__,
-#                #globals = {"iamthewalrus":self.file, "__builtins__":builtins.__dict__},
-#                #locals = self.__dict__,
-#
-#                globals = self.__dict__,
-#                locals  = self._locals, # type: ignore
-#            )
-#
-#            #exec(
-#            #    code,
-#            #    globals = {"__builtins__":builtins.__dict__},
-#            #    #globals = self.__dict__,
-#            #    locals  = self.__dict__,
-#            #)
-
-            del self.__dict__['__builtins__']
+            exec(
+                code,
+                cv_globals.get().__dict__,
+                self._locals.__dict__
+            )
+            # This merge is _mandatory_, otherwise functions declared in a script cannot see their
+            # sibling functions because they do _not_ bind locals, only globals.
+            Utils.merge(cv_globals.get().__dict__, self._locals.__dict__)
 
     def dump(self, *args : Any, **kwargs : Any) -> None:
         dprint(Dumper.dump(*args, **kwargs))
@@ -2592,27 +2575,35 @@ class Script(ScopeBase):
 # ==================================================================================================
 # region builtins
 
-cv_builtins : contextvars.ContextVar[Builtins] = contextvars.ContextVar("builtins")
+class Globals(Dict):
+    def __init__(self, *args : dict | Dict, **kwargs : Any) -> None:
+        self.name = "globals"
 
-class Builtins(Dict):
-    # FIXME turn this back into a class?
+        self.log      : Log       = ___
+        self.runner   : Runner    = ___
+        self.project  : Project   = ___
+        self.build    : Build     = ___
+        self.repo     : Repo      = ___
+        self.script   : Script    = ___
+        self.stats    : Stats     = ___
+        self.builtins : Builtins2 = Builtins2.inst()
+
+        self.__builtins__ = self.builtins.__dict__
+
+        Utils.merge_all(self.__dict__, *args, **kwargs)
+
+cv_globals : contextvars.ContextVar[Globals] = contextvars.ContextVar("globals")
+
+class Builtins2(Dict):
+
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         # Copy all the existing builtins over
         import builtins as _builtins
         for key, val in _builtins.__dict__.items():
             self[key] = val
 
-        self.name     = "builtins"
-        self.hancho   = sys.modules[__name__]
         self.___      = ___
-        self.log      = ___
-        self.runner   = ___
-        self.project  = ___
-        self.build    = ___
-        self.repo     = ___
-        self.script   = ___
-        self.stats    = ___
-
+        self.hancho   = sys.modules[__name__]
         self.Dict     = Dict
         self.Task     = Task
         self.Tool     = Tool
@@ -2648,64 +2639,75 @@ class Builtins(Dict):
 
         # These have to be directly in the builtins object, as client code only sees
         # builtins.__dict__
-        self.load_script = Builtins.load_script
-        self.load_repo   = Builtins.load_repo
-        self.start_build = Builtins.start_build
+        self.load_script = Builtins2.load_script
+        self.load_repo   = Builtins2.load_repo
+        self.start_build = Builtins2.start_build
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
+    _instance = ___
+
+    @staticmethod
+    def inst() -> Builtins2:
+        if Builtins2._instance is ___:
+            Builtins2._instance = Builtins2()
+        return Builtins2._instance
 
     @staticmethod
     def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-        old_builtins = cv_builtins.get()
+        old_globals = cv_globals.get()
+        old_repo    = old_globals.repo
+        old_script  = old_globals.script
 
-        file   = Realpath(Expander(old_builtins.script).expand(file))
-        repo   = Repo(file) if is_repo else old_builtins.repo
-        script = Script(*args, file = file, **kwargs)
+        new_file   = Realpath(Expander(old_script).expand(file))
+        new_repo   = Repo(new_file) if is_repo else old_repo
 
-        new_builtins = Builtins(old_builtins.__dict__, repo = repo, script = script)
+        new_globals = Globals(old_globals, repo = new_repo)
+        new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
+        new_script = new_globals.script
 
         # Expand repo/script - should be done under new_builtins.
-        with cv_builtins.set(new_builtins):
-            script.__dict__['__builtins__'] = new_builtins.__dict__
+        with cv_globals.set(new_globals):
+            #new_script.__dict__['__builtins__'] = new_builtins.__dict__
             if is_repo:
-                repo.__expand__()
-                repo.load_stat_db()
-            script.__expand__()
-            del script.__dict__['__builtins__']
+                new_repo.__expand__()
+                new_repo.load_stat_db()
+            new_script.__expand__()
+            #del new_script.__dict__['__builtins__']
 
         # Check for duplicates
-        public_stuff = {k:v for k, v in script.__dict__.items() if not k.startswith("_")}
+        public_stuff = {k:v for k, v in new_script.__dict__.items() if not k.startswith("_")}
         dedupe_key = Dumper.any_to_key(public_stuff)
-        if dupe := new_builtins.project._dedupe.get(dedupe_key, None):
-            new_builtins.log.verbose(Log.LIME + f"Deduped {script.path}\n")
+        if dupe := new_globals.project._dedupe.get(dedupe_key, None):
+            new_globals.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
             return dupe
 
         # File was _not_ deduped.
-        new_builtins.project._dedupe[dedupe_key] = script
-        repo._scripts.append(script)
+        new_globals.project._dedupe[dedupe_key] = new_script
+        new_repo._scripts.append(new_script)
         if is_repo:
-            new_builtins.project._repos.append(repo)
+            new_globals.project._repos.append(new_repo)
 
-        old_builtins.log.verbose(Log.ORANGE + f"┌─── Running script {script.path}\n")
-        script.exec(new_builtins)
+        new_globals.log.verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
+        new_script.exec()
 
-        return new_builtins.script
+        return new_script
 
     @staticmethod
     def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
         # FIXME handle args/kwargs
-        return Builtins._load(file, False, *args, **kwargs)
+        return Builtins2._load(file, False, *args, **kwargs)
 
     @staticmethod
     def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
         # FIXME handle args/kwargs
-        return Builtins._load(file, True, *args, **kwargs)
+        return Builtins2._load(file, True, *args, **kwargs)
 
     @staticmethod
     def start_build() -> int:
-        builtins = cv_builtins.get()
-        project = builtins.project
+        project = cv_globals.get().project
+        build = cv_globals.get().build
+        runner = cv_globals.get().runner
 
         # ------------------------------------
         # Select the set of tasks to run.
@@ -2718,7 +2720,7 @@ class Builtins(Dict):
                         if task.name is not None and target in task.name:
                             task.queue_task()
 
-        elif builtins.build.all_targets:
+        elif build.all_targets:
             for repo in project._repos:
                 for task in repo.yield_tasks():
                     task.queue_task()
@@ -2731,13 +2733,13 @@ class Builtins(Dict):
         # ------------------------------------
         # Run the tasks.
 
-        result: int = builtins.runner.run_tasks()
+        result: int = runner.run_tasks()
 
         # ------------------------------------
         # Update stat DBs.
 
-        if not builtins.build.dry_run:
-            for repo in builtins.project._repos:
+        if not build.dry_run:
+            for repo in project._repos:
                 for task in repo.yield_tasks():
                     if task._complete:
                         task.update_repo_stat_db()
@@ -2765,51 +2767,58 @@ def _start() -> int:
 
 # ----------------------------------------
 
-def main() -> int:
-    builtins = init(sys.argv, sys.stdout)
+def create_test_script(in_file: str, stdout: TextIO, extra_flags: list[str]) -> Globals:
+    argv = [f"--project.file={in_file}", *(extra_flags or [])]
+    globals = init(argv, stdout)
+    return globals
 
-    builtins.log.verbose(Log.ORANGE + f"┌─── Running top script {builtins.script.path}\n")
-    builtins.script.exec(builtins)
+# ----------------------------------------
+
+def main() -> int:
+    globals = init(sys.argv, sys.stdout)
+
+    globals.log.verbose(Log.ORANGE + f"┌─── Running top script {globals.script.path}\n")
+    globals.script.exec()
 
     # ------------------------------------
     # Build everything
 
     with timeit("Build"):
-        result = builtins.start_build()
+        result = globals.builtins.start_build()
 
     # ------------------------------------
     # Print build stats
 
-    builtins.stats.tasks_created = 0
-    for repo in builtins.project._repos:
-        builtins.stats.tasks_created += len(list(repo.yield_tasks()))
+    globals.stats.tasks_created = 0
+    for repo in globals.project._repos:
+        globals.stats.tasks_created += len(list(repo.yield_tasks()))
 
-    builtins.log._log(
+    globals.log._log(
         Log.VERBOSE,
         Log.DBLUE,
-        "Stats: " + Dumper.dump(builtins.stats.__dict__, print_id=False) + "\n",
+        "Stats: " + Dumper.dump(globals.stats.__dict__, print_id=False) + "\n",
     )
 
     # ------------------------------------
     # Print pass/fail
 
-    if builtins.stats.tasks_failed or builtins.stats.tasks_broken:
-        builtins.log.error("BUILD FAILED\n")
-    elif builtins.stats.tasks_finished:
-        builtins.log.info(Log.GREEN + "BUILD PASSED\n")
+    if globals.stats.tasks_failed or globals.stats.tasks_broken:
+        globals.log.error("BUILD FAILED\n")
+    elif globals.stats.tasks_finished:
+        globals.log.info(Log.GREEN + "BUILD PASSED\n")
     else:
-        builtins.log.info(Log.BLUE + "BUILD CLEAN\n")
+        globals.log.info(Log.BLUE + "BUILD CLEAN\n")
 
     # ------------------------------------
     # Done
 
-    builtins.log._flush()
+    globals.log._flush()
 
     return result
 
 # ----------------------------------------
 
-def init(argv : list[str], stdout : TextIO) -> Dict:
+def init(argv : list[str], stdout : TextIO) -> Globals:
     flags = Flags()
     flags.parse_flags(*argv)
     flags.log['stdout'] = stdout
@@ -2820,39 +2829,34 @@ def init(argv : list[str], stdout : TextIO) -> Dict:
     temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
     temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
 
-    builtins = Builtins()
-    cv_builtins.set(builtins)
+    globals = Globals()
+
+    cv_globals.set(globals)
 
     file = flags.project['file']
 
-    builtins.build    = Build(flags.build)
-    builtins.log      = Log(flags.log)
-    builtins.project  = Project(flags.project, file = file)
-    builtins.repo     = Repo(file = file)
-    builtins.runner   = Runner()
-    builtins.stats    = Stats()
-    builtins.script   = Script(file = file, **flags.extra)
+    globals.log      = Log(flags.log)
+    globals.runner   = Runner()
+    globals.project  = Project(flags.project, file = file)
+    globals.build    = Build(flags.build)
+    globals.repo     = Repo(file = file)
+    globals.script   = Script(file = file, globals = globals)
+    globals.stats    = Stats()
+    globals.builtins = Builtins2.inst()
 
-    builtins.runner.__expand__()
-    builtins.project.__expand__()
-    builtins.build.__expand__()
-    builtins.repo.__expand__()
-    builtins.script.__expand__()
+    Utils.merge(globals.__dict__, flags.extra)
 
-    builtins.repo.load_stat_db()
-    builtins.repo._scripts.append(builtins.script)
-    builtins.project._repos.append(builtins.repo)
+    globals.runner.__expand__()
+    globals.project.__expand__()
+    globals.build.__expand__()
+    globals.repo.__expand__()
+    globals.script.__expand__()
 
-    return builtins
+    globals.repo.load_stat_db()
+    globals.repo._scripts.append(globals.script)
+    globals.project._repos.append(globals.repo)
 
-# ----------------------------------------
-
-def create_test_script(
-    in_file: str, stdout: TextIO, extra_flags: list[str]) -> Dict:
-    argv = [f"--project.file={in_file}", *(extra_flags or [])]
-    builtins = init(argv, stdout)
-    return builtins
-
+    return globals
 
 #endregion
 # ==================================================================================================

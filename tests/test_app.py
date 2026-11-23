@@ -165,7 +165,6 @@ class TestApp(unittest.TestCase):
             self.stdout.getvalue()
         )
 
-
     def test_dumper(self) -> None:
         def dump(text : str, **kwargs : Any) -> str:
             return hancho.Dumper.depointer(hancho.Dumper.dump(text, **kwargs))

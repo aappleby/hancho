@@ -70,15 +70,15 @@ link_cpp_bin = Tool(
 
 def cc_library(*, in_srcs = None, **kwargs):
     objs = [
-        Task(compile_cpp.fill(kwargs), in_src = src)
+        compile_cpp.fill(kwargs)(in_src = src)
         for src in leaves(in_srcs)
     ]
 
-    return Task(link_cpp_lib.fill(kwargs), in_objs=objs)
+    return link_cpp_lib.fill(kwargs)(in_objs=objs)
 
 def cc_binary(*, in_srcs = None, **kwargs):
     objs = [
-        Task(compile_cpp.fill(kwargs), in_src=src)
+        compile_cpp.fill(kwargs)(in_src=src)
         for src in leaves(in_srcs)
     ]
-    return Task(link_cpp_bin.fill(kwargs), in_objs=objs)
+    return link_cpp_bin.fill(kwargs)(in_objs=objs)

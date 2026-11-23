@@ -7,16 +7,12 @@ compile_cpp = Tool(
     in_depfile = "{swapext(out_obj, '.d')}",
 )
 
-main_o = Task(compile_cpp, in_src = "main.cpp")
-util_o = Task(compile_cpp, in_src = "util.cpp")
+main_o = compile_cpp(in_src = "main.cpp")
+util_o = compile_cpp(in_src = "util.cpp")
 
 link_cpp_bin = Tool(
     desc    = "Linking {basename(out_bin)}",
     command = "g++ {in_objs} -o {out_bin}"
 )
 
-main_app = Task(
-    link_cpp_bin,
-    in_objs = [main_o, util_o],
-    out_bin = "hello_world",
-)
+main_app = link_cpp_bin(in_objs = [main_o, util_o], out_bin = "hello_world")

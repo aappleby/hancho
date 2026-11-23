@@ -49,7 +49,7 @@ class TestTasks(unittest.TestCase):
 
         self.stdout = io.StringIO()
 
-        self.builtins = hancho.create_test_script(
+        self.globals = hancho.create_test_script(
             in_file = __file__,
             stdout = self.stdout,
             extra_flags = [
@@ -61,12 +61,12 @@ class TestTasks(unittest.TestCase):
                 *args
             ],
         )
-        self.script = self.builtins.script
-        self.log   = self.builtins.log
-        self.stats = self.builtins.stats
+        self.script = self.globals.script
+        self.log   = self.globals.log
+        self.stats = self.globals.stats
 
     def run_tasks(self, expected : int) -> None:
-        result: int = self.builtins.start_build()
+        result: int = self.globals.builtins.start_build()
         self.assertEqual(result, expected)
 
     def test_trivial(self) -> None:

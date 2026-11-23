@@ -10,5 +10,5 @@ platform = ["rv64", "aarch64", ""]
 
 tools = load_script("{hancho.root}/tools/tools_base.hancho")
 
-main_o   = Task(tools.compile_cpp,  in_src = "main.cpp")
-main_bin = Task(tools.link_cpp_bin, in_obj = main_o)
+main_o   = tools.compile_cpp(in_src = "main.cpp")
+main_bin = tools.link_cpp_bin(in_obj = main_o)
