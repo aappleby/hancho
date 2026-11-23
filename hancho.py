@@ -410,9 +410,13 @@ class Utils:
 
 # endregion
 # ==================================================================================================
-# region Scope
+# region ScopeMixin
 
 class ScopeMixin:
+    """
+    Implements various helper functions and dunders so that we don't duplicate this in every class
+    that's part of our global scope and that can be used in template expansion.
+    """
 
     # Expand all expandables at the top level of this scope.
     def __expand__(self) -> None:
@@ -470,8 +474,8 @@ class ScopeMixin:
     def items(self) -> ItemsView[str, Any]:
         return self.__dict__.items()
 
-    #def __contains__(self, key : str) -> bool:
-    #    return key in self.__dict__
+    def __contains__(self, key : str) -> bool:
+        return key in self.__dict__
 
     # ----------------------------------------
     # We don't want the type checker to see this or it will stop type-checking attributes
@@ -489,6 +493,8 @@ class ScopeMixin:
 # endregion
 # ==================================================================================================
 # region Dict/Tool
+
+# A Dict is a trivial scope
 
 class Dict(ScopeMixin):
 
@@ -831,10 +837,16 @@ class Path:
 # ==================================================================================================
 # region Goodpath/Realpath/Literal/Macro/Blocks
 
-# Strings are immutable, if we want to normalize the path we have to do it in __new__.
+"""
+# Some string wrappers to help with type checking and reduce redundant abspath()/realpath() calls.
+"""
 
 class Goodpath(str):
-    """A path string that we know is bash-expanded, home-expanded, and normalized."""
+    """
+    A path string that we know is bash-expanded, home-expanded, and normalized.
+    Strings are immutable, if we want to normalize the path we have to do it in __new__.
+    """
+
     def __new__(cls, path : str) -> Self:
         if isinstance(path, cls): return path
         path = os.path.expanduser(path)
@@ -873,10 +885,12 @@ class Blocks(list[Literal | Macro]):
 
 # endregion
 # ==================================================================================================
-# region Stats - trivial build statistics and tracking vars for expansion to catch infinite
-# loops/recursion
+# region Stats
 
-class Stats(ScopeMixin):
+class Stats:
+    """
+    Trivial build statistics and tracking vars for expansion to catch infinite loops/recursion
+    """
     def __init__(self) -> None:
         self.stat_calls = 0
         self.hash_calls = 0
@@ -899,6 +913,10 @@ class Stats(ScopeMixin):
 # region Flags
 
 class Flags:
+    """
+    Command-line flag handling. The argparse library handles known flags, but the user can also
+    use arbitrary "--foo.bar.baz=12" flags as well, which will turn into cv_globals.foo.bar.baz.
+    """
 
     def __init__(self) -> None:
         self.project = {}
@@ -1028,28 +1046,22 @@ class Flags:
 # ==================================================================================================
 # region Expander
 
-# Expander _must_ be a mapping in order to go in eval()
-
-class Expander(abc.Mapping):
+class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in eval()
+    """
     # Hancho's text expansion system.
     #
     # WARNING - Again, Hancho is NOT A SANDBOX. Expander is the part that evaluates the arbitrary
     # Python code that then formats your hard drive and sends spam to all your coworkers.
     #
-    # Expander works similarly to Python's F-strings, but with quite a bit more power. The code
-    # here requires some explanation.
-    #
-    # We do not necessarily know in advance how the users will nest strings, macros, callbacks,
-    # etcetera. Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we
-    # always end up with flat strings.
-    #
-    # The result of this is that the functions here are mutually recursive in a way that can lead
-    # to confusing callstacks, but that should handle every possible case of stuff inside other
-    # stuff.
+    # Expander works similarly to Python's F-strings, but with quite a bit more power. We do not
+    # necessarily know in advance how the users will nest strings, macros, callbacks, etcetera.
+    # Text expansion therefore requires dynamic-dispatch-type stuff to ensure that we always end up
+    # with flat strings.
     #
     # Also - TEFINAE - Text Expansion Failure Is Not An Error. Dicts can contain macros that are
     # not expandable by that Dict. This allows nested dicts to contain templates that can only be
     # expanded an outer Dict, and things will still Just Work.
+    """
 
     def __init__(self, object : Any) -> None:
         assert not isinstance(object, dict)
@@ -1154,20 +1166,16 @@ class Expander(abc.Mapping):
     # - we don't fail on expansion failure so we can retry somewhere/somewhen else.
 
     def expand(self, text : str) -> Any:
-        log = cv_globals.log
-
         if not isinstance(text, str):
             raise TypeError(f"_expand - can't expand a {type(text)}")
-
-        stats = cv_globals.stats
 
         var : Any = text
 
         # Bail out if we've recursed too many times.
-        old_depth = stats.expand_depth
+        old_depth = cv_globals.stats.expand_depth
         if old_depth > Expander.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
-        stats.expand_depth = old_depth + 1
+        cv_globals.stats.expand_depth = old_depth + 1
 
         trace_started = False
         old_var = None
@@ -1189,10 +1197,10 @@ class Expander(abc.Mapping):
                 # If there's only one macro block, eval it unless we've done too many evals already.
                 elif literals == 0 and macros == 1:
                     block = blocks[0]
-                    old_evals = stats.expand_evals
+                    old_evals = cv_globals.stats.expand_evals
                     if old_evals >= self.MAX_EVALS:
                         raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {block!r}")
-                    stats.expand_evals = old_evals + 1
+                    cv_globals.stats.expand_evals = old_evals + 1
 
                     try:
                         self.trace_start(self.expand_object, "eval", block)
@@ -1201,9 +1209,9 @@ class Expander(abc.Mapping):
                     except RecursionError:
                         raise
                     except Exception as _:
-                        log.trace("\n")
-                        log.trace(f"Eval failed because {_!r}\n")
-                        log.trace("\n")
+                        cv_globals.log.trace("\n")
+                        cv_globals.log.trace(f"Eval failed because {_!r}\n")
+                        cv_globals.log.trace("\n")
                         pass
                     finally:
                         self.trace_end(self.expand_object, "eval", block, var)
@@ -1228,10 +1236,10 @@ class Expander(abc.Mapping):
         finally:
             if trace_started:
                 self.trace_end(self.expand_object, "expand", text, var)
-            stats.expand_depth = old_depth
+            cv_globals.stats.expand_depth = old_depth
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
-                stats.expand_evals = 0
+                cv_globals.stats.expand_evals = 0
 
         var = var.expand_object if isinstance(var, Expander) else var
         return var
@@ -1940,8 +1948,6 @@ class Repo(ScopeMixin):
 # endregion
 # ==================================================================================================
 # region Task
-
-# FIXME get() should call eval or something? a lot of these task fields should delegate to script
 
 class Task(ScopeMixin):
 
