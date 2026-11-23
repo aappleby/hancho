@@ -2478,15 +2478,6 @@ class Task(ScopeMixin):
 # This is not a types.ModuleType, but it still works fine as one. Making it a ModuleType is a bit
 # annoying to work with.
 
-# If a function in script A calls a function in script B, the function in script B always sees B's
-# globals.
-
-# That's not what we want - we always want it to see "the script currently being loaded".
-# And we want that to be true _after_ the script is loaded as well - expanding fields in a task
-# should always see the script that was being loaded when that task was created.
-# So, we put the script in a contextvar and have the task capture it, then when the tasks's
-# asyncio.task runs it sets the contextvar back to that script.
-
 class Script(ScopeMixin):
 
     def __init__(self : Script, *args : dict[str, Any], file : str, globals : Globals, **kwargs : Any) -> None:
@@ -2499,24 +2490,20 @@ class Script(ScopeMixin):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
         self._locals  = Dict()
-        self._globals = globals
+        self._globals = globals # All functions declared in the script will bind to this _globals dict.
         self._tasks   = []
 
     def __getattr__(self, key : str) -> Any:
-
         if key in self:
             return self[key]
-
-        if key in self._locals:
+        elif key in self._locals:
             return self._locals[key]
-
-        if key in self._globals:
+        elif key in self._globals:
             return self._globals[key]
-
-        if key in self._builtins:
+        elif key in self._builtins:
             return self._builtins[key]
-
-        raise AttributeError(key)
+        else:
+            raise AttributeError(key)
 
     def exec(self) -> None:
 
@@ -2555,15 +2542,13 @@ class Globals(Dict):
         self.repo     : Repo      = ___
         self.script   : Script    = ___
         self.stats    : Stats     = ___
-        self.builtins : Builtins = Builtins.inst()
 
-        # These have to be directly in the builtins object, as client code only sees
-        # builtins.__dict__
-        self.load_script = Globals.load_script
-        self.load_repo   = Globals.load_repo
-        self.start_build = Globals.start_build
+        self.__builtins__ = Builtins.inst().__dict__
 
-        self.__builtins__ = self.builtins.__dict__
+        # These methods have to be copied to the instance, as client code only sees Globals.__dict__
+        self.load_script = self.load_script
+        self.load_repo   = self.load_repo
+        self.start_build = self.start_build
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
@@ -2607,53 +2592,47 @@ class Globals(Dict):
 
         return new_script
 
-    @staticmethod
-    def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
+    def load_script(self, file : str, *args : Any, **kwargs : Any) -> Script:
         # FIXME handle args/kwargs
-        return Globals._load(file, False, *args, **kwargs)
+        return self._load(file, False, *args, **kwargs)
 
-    @staticmethod
-    def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
+    def load_repo(self, file : str, *args : Any, **kwargs : Any) -> Script:
         # FIXME handle args/kwargs
-        return Globals._load(file, True, *args, **kwargs)
+        return self._load(file, True, *args, **kwargs)
 
-    @staticmethod
-    def start_build() -> int:
-        project = cv_globals.project
-        build = cv_globals.build
-        runner = cv_globals.runner
+    def start_build(self) -> int:
 
         # ------------------------------------
         # Select the set of tasks to run.
 
-        if project.targets:
-            for target in project.targets:
+        if self.project.targets:
+            for target in self.project.targets:
                 # Enable all tasks whose name contains any of the targets
-                for repo in project._repos:
+                for repo in self.project._repos:
                     for task in repo.yield_tasks():
                         if task.name is not None and target in task.name:
                             task.queue_task()
 
-        elif build.all_targets:
-            for repo in project._repos:
+        elif self.build.all_targets:
+            for repo in self.project._repos:
                 for task in repo.yield_tasks():
                     task.queue_task()
 
         else:
             # Enable all tasks in the top repo
-            for task in project._repos[0].yield_tasks():
+            for task in self.project._repos[0].yield_tasks():
                 task.queue_task()
 
         # ------------------------------------
         # Run the tasks.
 
-        result: int = runner.run_tasks()
+        result: int = self.runner.run_tasks()
 
         # ------------------------------------
         # Update stat DBs.
 
-        if not build.dry_run:
-            for repo in project._repos:
+        if not self.build.dry_run:
+            for repo in self.project._repos:
                 for task in repo.yield_tasks():
                     if task._complete:
                         task.update_repo_stat_db()
@@ -2684,6 +2663,10 @@ class CVGlobals:
         return key in self.get()
 
 cv_globals = CVGlobals()
+
+# endregion
+# ==================================================================================================
+# region Builtins
 
 class Builtins(Dict):
 
@@ -2774,7 +2757,7 @@ def main() -> int:
     # Build everything
 
     with cv_globals.set(globals), timeit("Build"):
-        result = Globals.start_build()
+        result = globals.start_build()
 
     # ------------------------------------
     # Print build stats
