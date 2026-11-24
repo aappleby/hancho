@@ -1109,17 +1109,16 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
                     break
 
             # "global" scope
-            self.trace_up(cursor, cv_globals.get(), "get", key)
-            if key in cv_globals:
-                result = cv_globals[key]
+            self.trace_up(cursor, cv.get(), "get", key)
+            if key in cv:
+                result = cv[key]
                 return result
 
             # "builtins" scope
-            builtins = cv_globals.builtins
-            self.trace_up(cursor, builtins, "get", key)
+            self.trace_up(cursor, cv.builtins, "get", key)
 
-            if key in builtins.__dict__:
-                result = builtins.__dict__[key]
+            if key in cv.builtins.__dict__:
+                result = cv.builtins.__dict__[key]
                 return result
 
             if result is ___:
@@ -1168,10 +1167,10 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
         var : Any = text
 
         # Bail out if we've recursed too many times.
-        old_depth = cv_globals.stats.expand_depth
+        old_depth = cv.stats.expand_depth
         if old_depth > Expander.MAX_DEPTH:
             raise RecursionError(f"Expansion failed to terminate after {old_depth} recursions: {var!r}")
-        cv_globals.stats.expand_depth = old_depth + 1
+        cv.stats.expand_depth = old_depth + 1
 
         trace_started = False
         old_var = None
@@ -1193,10 +1192,10 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
                 # If there's only one macro block, eval it unless we've done too many evals already.
                 elif literals == 0 and macros == 1:
                     block = blocks[0]
-                    old_evals = cv_globals.stats.expand_evals
+                    old_evals = cv.stats.expand_evals
                     if old_evals >= self.MAX_EVALS:
                         raise RecursionError(f"Expansion failed to terminate after {old_evals} evals: {block!r}")
-                    cv_globals.stats.expand_evals = old_evals + 1
+                    cv.stats.expand_evals = old_evals + 1
 
                     try:
                         self.trace_start(self.expand_object, "eval", block)
@@ -1205,9 +1204,9 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
                     except RecursionError:
                         raise
                     except Exception as _:
-                        cv_globals.log.trace("\n")
-                        cv_globals.log.trace(f"Eval failed because {_!r}\n")
-                        cv_globals.log.trace("\n")
+                        cv.log.trace("\n")
+                        cv.log.trace(f"Eval failed because {_!r}\n")
+                        cv.log.trace("\n")
                         pass
                     finally:
                         self.trace_end(self.expand_object, "eval", block, var)
@@ -1232,10 +1231,10 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
         finally:
             if trace_started:
                 self.trace_end(self.expand_object, "expand", text, var)
-            cv_globals.stats.expand_depth = old_depth
+            cv.stats.expand_depth = old_depth
             if old_depth == 0:
                 # We just finished an expansion - reset the eval budget
-                cv_globals.stats.expand_evals = 0
+                cv.stats.expand_evals = 0
 
         var = var.expand_object if isinstance(var, Expander) else var
         return var
@@ -1288,9 +1287,8 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
         return Expander.SplitCount(literals = literals, macros = macros)
 
     def trace_start(self, scope : (dict | Dict | ScopeMixin), action : str, arg : Any) -> None: #pragma: no cover
-        if 'log' not in cv_globals: return
-        log = cv_globals.log
-        if log._level_int > Log.TRACE: return
+        if 'log' not in cv: return
+        if cv.log._level_int > Log.TRACE: return
 
         scope_tag    = Utils.instance_tag(scope)
         scope_color  = Utils.obj_to_ansi_color(scope)
@@ -1313,35 +1311,32 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             indent_color = Utils.hex_to_ansi(0xFFFFFF)
 
         if action == "range":
-            log.trace(f"{Log.WHITE}┌── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
-            log.indent(Log.WHITE)
+            cv.log.trace(f"{Log.WHITE}┌── {scope_color}{scope_tag}{Log.RESET} begin {arg}\n")
+            cv.log.indent(Log.WHITE)
         else:
-            #log.trace(f"{indent_color}V {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
-            log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
-            log.indent(indent_color)
+            cv.log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
+            cv.log.indent(indent_color)
 
     def trace_up(self, scope : (dict | Dict | ScopeMixin), up : (dict | Dict | ScopeMixin), action : str, arg : str) -> None: #pragma: no cover
-        if 'log' not in cv_globals: return
-        log = cv_globals.log
-        if log._level_int > Log.TRACE: return
+        if 'log' not in cv: return
+        if cv.log._level_int > Log.TRACE: return
 
         up_tag    = Utils.instance_tag(up)
         up_color  = Utils.obj_to_ansi_color(up)
         action_color = Utils.hex_to_ansi(0xAAAAFF)
 
-        log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
+        cv.log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
     def trace_end(self, scope : (dict | Dict | ScopeMixin), action : str, arg : Any, result : Any) -> None: #pragma: no cover
-        if 'log' not in cv_globals: return
-        log = cv_globals.log
-        if log._level_int > Log.TRACE: return
+        if 'log' not in cv: return
+        if cv.log._level_int > Log.TRACE: return
 
         scope_tag    = Utils.instance_tag(scope)
         scope_color  = Utils.obj_to_ansi_color(scope)
         action_color = Log.RESET
-        indent_color = log._indent_stack[-1]
+        indent_color = cv.log._indent_stack[-1]
 
-        log.dedent()
+        cv.log.dedent()
 
         if action == "expand":
             arg = repr(arg)
@@ -1358,7 +1353,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             result = result.expand_object
 
         if action == "range":
-            log.trace(f"{Log.WHITE}└── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
+            cv.log.trace(f"{Log.WHITE}└── {scope_color}{scope_tag}{Log.RESET} end {arg}\n")
         else:
             result_color = Utils.obj_to_ansi_color(result)
             #result_type  = type(result)
@@ -1369,9 +1364,9 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             #log.trace(f"{indent_color}└─>{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}) = {Log.RESET}")
 
             if not Utils.is_scalar(result):
-                log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{Utils.instance_tag(result)}\n")
+                cv.log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{Utils.instance_tag(result)}\n")
             else:
-                log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{result!r}\n")
+                cv.log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{result!r}\n")
 
 # endregion
 # ==================================================================================================
@@ -1699,14 +1694,11 @@ class Runner(ScopeMixin):
 
     async def _async_run_tasks(self) -> int:
         """Run all tasks until we run out."""
-        log     = cv_globals.log
-        project = cv_globals.project
-        stats   = cv_globals.stats
 
         # ------------------------------------
         # Create asyncio tasks for all enabled Hancho tasks.
 
-        for repo in project._repos:
+        for repo in cv.project._repos:
             for task in repo.yield_tasks():
                 if task._enabled:
                     task.create_aio_task()
@@ -1714,54 +1706,54 @@ class Runner(ScopeMixin):
         # ------------------------------------
         # Await tasks in the asyncio queue until the queue is empty, or we hit too many failures.
 
-        log.verbose("Running tasks...\n")
+        cv.log.verbose("Running tasks...\n")
 
-        while self._live_aio_tasks and (stats.tasks_broken + stats.tasks_failed) <= self.max_errors:
+        while self._live_aio_tasks and (cv.stats.tasks_broken + cv.stats.tasks_failed) <= self.max_errors:
             finished_aio_task:asyncio.Task = await self._aio_done_queue.get()
             task:Task = finished_aio_task.hancho_task # type: ignore
 
             if task._error is None:
                 task._complete = True
                 if task._skipped:
-                    stats.tasks_skipped += 1
+                    cv.stats.tasks_skipped += 1
                 else:
-                    stats.tasks_finished += 1
+                    cv.stats.tasks_finished += 1
             else:
                 match type(task._error):
                     case asyncio.CancelledError:
-                        stats.tasks_cancelled += 1
+                        cv.stats.tasks_cancelled += 1
                     case Task.CANCELLED:
-                        stats.tasks_cancelled += 1
+                        cv.stats.tasks_cancelled += 1
                     case Task.BROKEN:
-                        stats.tasks_broken += 1
+                        cv.stats.tasks_broken += 1
                     case Task.FAILED:
-                        stats.tasks_failed += 1
+                        cv.stats.tasks_failed += 1
                     case _:
-                        log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
-                        stats.tasks_failed += 1
+                        cv.log.warning(f"Weird exception {type(task._error)} >{task._error}< at {time.perf_counter()}\n")
+                        cv.stats.tasks_failed += 1
 
             if finished_aio_task is not None:
                 self._live_aio_tasks.discard(finished_aio_task)
 
-        failures: int = stats.tasks_broken + stats.tasks_failed
+        failures: int = cv.stats.tasks_broken + cv.stats.tasks_failed
         if failures > self.max_errors:
-            log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
+            cv.log.error(f"Too many failures after {failures}, cancelling tasks and stopping build\n")
 
             # Cancel all the asyncio.Tasks that haven't completed yet
-            log.warning(f"Cancelling {len(self._live_aio_tasks)} tasks\n")
+            cv.log.warning(f"Cancelling {len(self._live_aio_tasks)} tasks\n")
 
             # This tasks_cancelled count may be off by one or two due to in-flight tasks not being
             # accounted for in live_aio_tasks, but it doesn't matter - we're about to bail out due
             # to failures or someone ctrl-c'ing the build, this is purely cosmetic.
 
-            stats.tasks_cancelled += len(self._live_aio_tasks)
+            cv.stats.tasks_cancelled += len(self._live_aio_tasks)
             for t in self._live_aio_tasks:
                 t.cancel()
 
             # and then wait on their cancellations to complete (it isn't instantaneous)
             await asyncio.gather(*self._live_aio_tasks, return_exceptions=True)
 
-        return 1 if stats.tasks_failed or stats.tasks_broken else 0
+        return 1 if cv.stats.tasks_failed or cv.stats.tasks_broken else 0
 
 # endregion
 # ==================================================================================================
@@ -1822,14 +1814,12 @@ class Repo(ScopeMixin):
 
     def load_stat_db(self) -> None:
         if Path.isfile(self.stat_db_path):
-            log = cv_globals.log
-            log.verbose(f"Loading stat_db {self.stat_db_path}\n")
+            cv.log.verbose(f"Loading stat_db {self.stat_db_path}\n")
             json_stats = Utils.load_json(self.stat_db_path)
             for file, json_stat in json_stats.items():
                 self._stat_db[file] = json_stat
         else:
-            log = cv_globals.log
-            log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
+            cv.log.verbose(Log.DRED + f"Stat db not found: {self.stat_db_path}\n")
 
     # FIXME this should go to Utils
     @classmethod
@@ -1856,8 +1846,7 @@ class Repo(ScopeMixin):
         return deplines
 
     def save_stat_db(self) -> None:
-        log = cv_globals.log
-        log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
+        cv.log.verbose(Log.DGREEN + f"Saving stat_db {self.stat_db_path}\n")
         Utils.save_json(self._stat_db, self.stat_db_path)
 
     def save_comp_db(self) -> None:
@@ -1881,22 +1870,20 @@ class Repo(ScopeMixin):
     # FIXME move to Utils
     @classmethod
     def hash_file(cls, abs_path : Realpath) -> str:
-        stats = cv_globals.stats
-        stats.hash_calls += 1
+        cv.stats.hash_calls += 1
 
         time_a = time.perf_counter()
         with open(str(abs_path), "rb") as f:
-            stats.hash_bytes += os.fstat(f.fileno()).st_size
+            cv.stats.hash_bytes += os.fstat(f.fileno()).st_size
             digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=16)).hexdigest()
         time_b = time.perf_counter()
 
-        stats.hash_time += time_b - time_a
+        cv.stats.hash_time += time_b - time_a
         return digest
 
     # FIXME move to Utils
     def get_stat(self, file : Realpath) -> dict:
-        stats = cv_globals.stats
-        stats.stat_calls += 1
+        cv.stats.stat_calls += 1
 
         _hash = self.hash_file(file)
         _stat = os.stat(file)
@@ -2022,8 +2009,7 @@ class Task(ScopeMixin):
 
         # ----------------------------------------
 
-        script = cv_globals.script
-        script._tasks.append(self)
+        cv.script._tasks.append(self)
 
         # Auto-start the task if it was created dynamically during the build.
         if Utils.in_event_loop():
@@ -2045,23 +2031,21 @@ class Task(ScopeMixin):
         raise AssertionError()
 
     def create_aio_task(self) -> None:
-        runner = cv_globals.runner
         assert Utils.in_event_loop()
 
         if self._aio_task is None:
             t = asyncio.create_task(self.task_top(), context=self._aio_context)
             setattr(t, "hancho_task", self)  # noqa: B010
-            runner._live_aio_tasks.add(t)
-            t.add_done_callback(lambda t: runner._aio_done_queue.put_nowait(t))
+            cv.runner._live_aio_tasks.add(t)
+            t.add_done_callback(lambda t: cv.runner._aio_done_queue.put_nowait(t))
             self._aio_task = t
 
     def queue_task(self) -> None:
-        stats = cv_globals.stats
         if self._enabled:
             return
 
         self._enabled = True
-        stats.tasks_enabled += 1
+        cv.stats.tasks_enabled += 1
 
         # If this task was dynamically created during the build, add it to asyncio immediately.
         if Utils.in_event_loop():
@@ -2075,14 +2059,12 @@ class Task(ScopeMixin):
     async def task_top(self) -> dict | None:
         # Entry point for tasks, just so we can keep all the task-level exception handling together.
 
-        runner = cv_globals.runner
-
         try:
             await self.task_main()
         except (Exception, asyncio.CancelledError) as ex:
             self._error = ex
         finally:
-            runner.release(self._cores)
+            cv.runner.release(self._cores)
 
         if self._error:
             self.log_task(Log.ERROR, traceback.format_exception(self._error))
@@ -2092,8 +2074,6 @@ class Task(ScopeMixin):
         return self._out_files
 
     async def task_main(self) -> None:
-        stats = cv_globals.stats
-        runner = cv_globals.runner
 
         # ------------------------------------
         # Await all tasks in our input fields and then flatten them.
@@ -2103,8 +2083,8 @@ class Task(ScopeMixin):
         # ------------------------------------
         # We're ready to run
 
-        stats.tasks_started += 1
-        self._task_id = stats.tasks_started
+        cv.stats.tasks_started += 1
+        self._task_id = cv.stats.tasks_started
 
         # ------------------------------------
         # Expand all mandatory fields in the raw config and fix raw file paths.
@@ -2145,7 +2125,7 @@ class Task(ScopeMixin):
         # ------------------------------------
         # Wait for enough jobs to free up to run this task.
 
-        self._cores = await runner.acquire(self.job_size)
+        self._cores = await cv.runner.acquire(self.job_size)
 
         # ------------------------------------
         # Print what we're about to run
@@ -2179,8 +2159,6 @@ class Task(ScopeMixin):
         # And we're done
 
     def update_repo_stat_db(self) -> None:
-        repo = cv_globals.repo
-
         with chdir(self.cwd):
             # Reload the depfile post-build so we pick up new deps
             if self.in_depfile and Path.isfile(self.in_depfile):
@@ -2188,11 +2166,11 @@ class Task(ScopeMixin):
 
             for file in Utils.leaves([self._in_files, self._deplines]):
                 if Path.exists(file):
-                    repo.update_stat(file, None)
+                    cv.repo.update_stat(file, None)
 
             for file in Utils.leaves(self._out_files):
                 if Path.exists(file):
-                    repo.update_stat(file, self.command)
+                    cv.repo.update_stat(file, self.command)
 
     async def await_inputs(self) -> None:
         # NOTE: Hancho _cannot_ have dependency cycles unless you do something really sketchy via
@@ -2298,13 +2276,10 @@ class Task(ScopeMixin):
         return goodfile
 
     def sanity_check(self) -> None:
-        repo    = cv_globals.repo
-        project = cv_globals.project
-
         # Check for all task issues that break the build
 
-        if not Path.startswith(self.dest, repo.root):
-            raise Task.BROKEN(f"The build destination {self.dest} is not under the repo root {repo.root}")
+        if not Path.startswith(self.dest, cv.repo.root):
+            raise Task.BROKEN(f"The build destination {self.dest} is not under the repo root {cv.repo.root}")
 
         has_str      = any(isinstance(x, str)                     for x in Utils.leaves(self.command))
         has_callable = any(isinstance(x, abc.Callable)            for x in Utils.leaves(self.command))
@@ -2330,9 +2305,9 @@ class Task(ScopeMixin):
         # Check for task collisions
         for files in self._out_files.values():
             for file in files:
-                if file in project._all_outputs:
+                if file in cv.project._all_outputs:
                     raise Task.BROKEN(f"TaskCollision: Multiple tasks build {file}")
-                project._all_outputs.add(file)
+                cv.project._all_outputs.add(file)
 
         # Check for missing inputs. We have to check dry_run, as the input files may only exist if
         # we're really running tasks.
@@ -2344,7 +2319,6 @@ class Task(ScopeMixin):
 
     def rebuild_reason(self) -> str:
         """Figures out why we have to run a Task, or returns "" if we don't."""
-        repo = cv_globals.repo
 
         # ------------------------------------
         # Check the trivial reasons to rebuild
@@ -2367,23 +2341,22 @@ class Task(ScopeMixin):
             if not Path.isfile(file):
                 return f"File missing: {file!r}"
             file = Realpath(file)
-            if reason := repo.stat_changed2(file):
+            if reason := cv.repo.stat_changed2(file):
                 return reason
 
         for file in Utils.leaves(self._out_files):
             file = Realpath(file)
-            if repo.command_changed(file, self.command):
+            if cv.repo.command_changed(file, self.command):
                 return f"Command mismatch for {file!r}"
 
         # No changes, no reason to rebuild.
         return ""
 
     async def run_command(self : Task, command : str) -> None:
-        repo = cv_globals.repo
 
         # Print the cwd and command about to run
         # some/folder$ g++ blah blah blah
-        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, repo.root)}$ {command}\n")
+        self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, cv.repo.root)}$ {command}\n")
 
         proc = None
         try:
@@ -2430,16 +2403,14 @@ class Task(ScopeMixin):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
     async def call_callback(self : Task, command : task_callback) -> None:
-        script   = cv_globals.script
-        repo     = cv_globals.repo
 
-        callback_dir = Path.relpath(script.root, repo.root)
+        callback_dir = Path.relpath(cv.script.root, cv.repo.root)
         self.log_task(Log.INFO, Log.GRAY3 + f"{callback_dir}$ {command}\n")
 
         # Callbacks run from the script dir where they were defined so that relative paths used
         # in the callback will be correct.
 
-        with chdir(script.root):
+        with chdir(cv.script.root):
             result = command(self)
 
         # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
@@ -2462,18 +2433,15 @@ class Task(ScopeMixin):
     def log_task(self : Task, level : int, message : str | list[str]) -> None:
         # Log helper that adds the [ NN/ XX] tag before the log line.
 
-        log      = cv_globals.log
-        stats    = cv_globals.stats
         color    = Log.YELLOW if level > Log.INFO else ""
-
         all_lines = []
         for chunk in Utils.leaves(message):
             all_lines.extend(chunk.splitlines(keepends = True))
 
         for line in all_lines:
-            if not log._line_buffer:
-                log._log(level, "", f"[{self._task_id:3d}/{stats.tasks_enabled:3d}] ")
-            log._log(level, color, line)
+            if not cv.log._line_buffer:
+                cv.log._log(level, "", f"[{self._task_id:3d}/{cv.stats.tasks_enabled:3d}] ")
+            cv.log._log(level, color, line)
 
 # endregion
 # ==================================================================================================
@@ -2512,7 +2480,7 @@ class Script(ScopeMixin):
     def exec(self) -> None:
 
         with (
-            cv_globals.set(self._globals),
+            cv.set(self._globals),
             self._globals.log.indenter(Log.VERBOSE, Log.ORANGE),
             chdir(self.root),
             open(str(self.path), encoding="utf-8") as file,
@@ -2568,7 +2536,7 @@ class Globals(Dict):
         new_script = new_globals.script
 
         # Expand repo/script - should be done under new_builtins.
-        with cv_globals.set(new_globals):
+        with cv.set(new_globals):
             #new_script.__dict__['__builtins__'] = new_builtins.__dict__
             if is_repo:
                 new_repo.__expand__()
@@ -2664,7 +2632,7 @@ class CVGlobals:
     def __contains__(self, key : str) -> bool:
         return key in self.get()
 
-cv_globals = CVGlobals()
+cv = CVGlobals()
 
 # endregion
 # ==================================================================================================
@@ -2738,7 +2706,7 @@ def _start() -> int:
 def create_test_script(in_file: str, stdout: TextIO, extra_flags: list[str]) -> Globals:
     argv = [f"--project.file={in_file}", *(extra_flags or [])]
     globals = init(argv, stdout)
-    cv_globals.set(globals)
+    cv.set(globals)
     return globals
 
 # ----------------------------------------
@@ -2752,7 +2720,7 @@ def main() -> int:
     # Build everything
 
     time_a = time.perf_counter()
-    with cv_globals.set(globals):
+    with cv.set(globals):
         result = globals.start_build()
     time_b = time.perf_counter()
     globals.log.verbose(text=Log.DBLUE + f"Build took {time_b - time_a:8.6f} seconds\n")
@@ -2815,7 +2783,7 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
 
     Utils.merge(globals.__dict__, flags.extra)
 
-    with cv_globals.set(globals):
+    with cv.set(globals):
         globals.runner.__expand__()
         globals.project.__expand__()
         globals.build.__expand__()
