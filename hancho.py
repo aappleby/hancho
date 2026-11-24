@@ -168,21 +168,19 @@ class Utils:
             return False
 
     @staticmethod
-    def _yield_leaves[T](branch : branch[T]) -> Generator[T]:
-        if branch is None:
-            return
-        elif Utils.is_sequence(branch):
-            for b in branch:
-                yield from Utils._yield_leaves(b)
-        elif Utils.is_mapping(branch):
-            for b in branch.values():
-                yield from Utils._yield_leaves(b)
-        else:
-            yield cast(T, branch)
-
-    @staticmethod
-    def leaves[T](*args : Any, **kwargs : Any) -> Generator[T]:
-        yield from Utils._yield_leaves([args, kwargs])
+    def leaves(*args : Any, **kwargs : Any) -> Generator[Any]:
+        branches = [*args, kwargs]
+        for branch in branches:
+            if branch is None:
+                return
+            elif Utils.is_sequence(branch):
+                for b in branch:
+                    yield from Utils.leaves(b)
+            elif Utils.is_mapping(branch):
+                for b in branch.values():
+                    yield from Utils.leaves(b)
+            else:
+                yield branch
 
     @staticmethod
     def weave(*args : tree[str]) -> list[str]:
