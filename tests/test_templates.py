@@ -11,7 +11,7 @@ import hancho
 class TestTemplates(unittest.TestCase):
 
     def setUp(self, *args : Any) -> None:
-        self.builtins = hancho.create_test_script(
+        self.globals = hancho.init_for_testing(
             in_file = __file__,
             stdout = sys.stdout,
             extra_flags = [
@@ -22,7 +22,7 @@ class TestTemplates(unittest.TestCase):
                 *args
             ],
         )
-        self.script = self.builtins.script
+        self.script = self.globals.script
 
     def test_basic_eval(self) -> None:
         d = hancho.Dict(a = 1, b = 2)

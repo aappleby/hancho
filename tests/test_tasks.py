@@ -49,7 +49,7 @@ class TestTasks(unittest.TestCase):
 
         self.stdout = io.StringIO()
 
-        self.globals = hancho.create_test_script(
+        self.globals = hancho.init_for_testing(
             in_file = __file__,
             stdout = self.stdout,
             extra_flags = [

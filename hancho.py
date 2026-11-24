@@ -68,6 +68,10 @@ sys.modules["hancho"].path = __file__ # type: ignore
 sys.modules["hancho"].root = os.path.dirname(__file__) # type: ignore
 
 def dprint(*args : Any, **kwargs : Any) -> None: # pragma: no cover
+    """
+    Just wraps print() so that we can search-and-replace for any dprints() we added for debugging
+    and remove them.
+    """
     print("DBG: ", end="")
     print(*args, **kwargs)
 
@@ -91,9 +95,9 @@ type key_type = str | int | None
 base_types: tuple[type, ...] = (int, float, complex, bool, str, tuple, NoneType, type)
 
 # These types don't get dumped because they're not really dumpable.
-
 opaque_types: tuple[type, ...] = (GeneratorType, contextvars.Context, asyncio.Task, ModuleType, type)
 
+# We generally don't need to see the contents of these in a dump.
 default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins", asyncio.Task]
 
 # endregion
@@ -101,6 +105,11 @@ default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins
 # region Sentinel
 
 class Sentinel: # pragma: no cover
+    """
+    We need a sentinel value that means "not present" which is not None, as None can be a valid
+    value. This isn't a very good implementation of that, but it works for now.
+    """
+
     def __init__(self, name: str) -> None:
         self.name: str = name
 
@@ -119,8 +128,6 @@ class Sentinel: # pragma: no cover
     def __reduce__(self) -> str:
         raise TypeError("Can't pickle WWWW VVVV sentinels")
 
-# Marks a function argument or template parameter as "not present" for when None would be a valid
-# value.
 ___ : Any = Sentinel("MISSING")
 
 # endregion
@@ -160,24 +167,26 @@ class Utils:
         except RuntimeError:
             return False
 
-    # ------------------------------------
-
     @staticmethod
-    def yield_leaves[T](branch : branch[T]) -> Generator[T]:
+    def _yield_leaves[T](branch : branch[T]) -> Generator[T]:
         if branch is None:
             return
         elif Utils.is_sequence(branch):
             for b in branch:
-                yield from Utils.yield_leaves(b)
+                yield from Utils._yield_leaves(b)
         elif Utils.is_mapping(branch):
             for b in branch.values():
-                yield from Utils.yield_leaves(b)
+                yield from Utils._yield_leaves(b)
         else:
             yield cast(T, branch)
 
     @staticmethod
-    def leaves[T](branch : branch[T]) -> list[T]:
-        return list(Utils.yield_leaves(branch))
+    def yield_leaves[T](*args : Any, **kwargs : Any) -> Generator[T]:
+        yield from Utils._yield_leaves([args, kwargs])
+
+    @staticmethod
+    def leaves[T](*args : Any, **kwargs : Any) -> list[T]:
+        return list(Utils._yield_leaves([args, kwargs]))
 
     @staticmethod
     def weave(*args : tree[str]) -> list[str]:
@@ -2318,10 +2327,9 @@ class Task(ScopeMixin):
                         raise Task.BROKEN(f"Input file missing - {file}")
 
     def rebuild_reason(self) -> str:
-        """Figures out why we have to run a Task, or returns "" if we don't."""
-
-        # ------------------------------------
-        # Check the trivial reasons to rebuild
+        """
+        Figures out why we have to run a Task, or returns "" if we don't.
+        """
 
         if self.force:
             return "Task forced to rebuild"
@@ -2331,9 +2339,6 @@ class Task(ScopeMixin):
 
         if not any(Utils.leaves(self._out_files)):
             return "Always rebuild a task with no outputs"
-
-        # ------------------------------------
-        # Check for file modifications
 
         all_files : tree[str] = [self._in_files, self._out_files, self._deplines]
 
@@ -2353,9 +2358,11 @@ class Task(ScopeMixin):
         return ""
 
     async def run_command(self : Task, command : str) -> None:
+        """
+        Runs a single command in a task as a subprocess in asyncio.
+        """
 
-        # Print the cwd and command about to run
-        # some/folder$ g++ blah blah blah
+        # Prints "some/folder$ g++ blah blah blah"
         self.log_task(Log.INFO, Log.GRAY3 + f"{Path.relpath(self.cwd, cv.repo.root)}$ {command}\n")
 
         proc = None
@@ -2372,21 +2379,24 @@ class Task(ScopeMixin):
             (stdout_text, stderr_text) = await proc.communicate()
 
         except asyncio.CancelledError as ex: #pragma: no cover
-            # The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
-            # usually (but not always) arises from hitting ctrl-c while the build is running.
-            #
-            # If we see a CancelledError while running a command, we can't trust asyncio to clean
-            # up all cancelled processes, so we do it the hard way here and kill the whole process
-            # group.
-            #
-            # Note - this only works on Linux. We may need a slightly different implementation for
-            # Windows.
+            """
+            The 'asyncio.CancelledError' exception is _special_. It's not an Exception, and it
+            usually (but not always) arises from hitting ctrl-c while the build is running.
+
+            If we see a CancelledError while running a command, we can't trust asyncio to clean
+            up all cancelled processes, so we do it the hard way here and kill the whole process
+            group.
+
+            Note - this only works on Linux. We may need a slightly different implementation for
+            Windows.
+            """
             if os.name == "posix" and proc is not None:
                 with suppress(ProcessLookupError):
                     os.killpg(proc.pid, signal.SIGKILL)
                 await proc.wait()
             # Re-raise so that dependent tasks and the top-level except can see the error.
             raise ex
+
         except Exception as ex: #pragma: no cover
             # All other exceptions are treated as a task failure.
             raise Task.FAILED(f"Command threw an exception : {ex}") from ex
@@ -2402,21 +2412,19 @@ class Task(ScopeMixin):
         if (self._stdout_text or self._stderr_text):
             self.log_task(Log.DEBUG, self.dump_stdout())
 
-    async def call_callback(self : Task, command : task_callback) -> None:
-
-        callback_dir = Path.relpath(cv.script.root, cv.repo.root)
-        self.log_task(Log.INFO, Log.GRAY3 + f"{callback_dir}$ {command}\n")
-
-        # Callbacks run from the script dir where they were defined so that relative paths used
-        # in the callback will be correct.
+    async def call_callback(self : Task, command : task_callback) -> Any:
+        """
+        If the user set "command = <function>" in their task, we call that callback here.
+        Callbacks run from the script dir where they were defined so that relative paths used
+        in the callback will be correct.
+        """
 
         with chdir(cv.script.root):
             result = command(self)
+            if inspect.isawaitable(result):
+                result = await result
 
-        # It would seem like we wouldn't have to explicitly unwrap one level of await-ness here,
-        # but apparently that's just how Python waitables work.
-        if inspect.isawaitable(result):
-            result = await result
+        return result
 
     def dump_stdout(self : Task) -> str:
         result = ""
@@ -2430,10 +2438,10 @@ class Task(ScopeMixin):
             result += "----------------------------------------\n"
         return result
 
-    def log_task(self : Task, level : int, message : str | list[str]) -> None:
-        # Log helper that adds the [ NN/ XX] tag before the log line.
+    def log_task(self : Task, level : int, message : branch[str]) -> None:
+        """Adds the [ NN/ XX] tag before the log line."""
 
-        color    = Log.YELLOW if level > Log.INFO else ""
+        color = Log.YELLOW if level > Log.INFO else ""
         all_lines = []
         for chunk in Utils.leaves(message):
             all_lines.extend(chunk.splitlines(keepends = True))
@@ -2451,6 +2459,11 @@ class Task(ScopeMixin):
 # annoying to work with.
 
 class Script(ScopeMixin):
+    """
+    The Script class holds the self/local/globals/builtin scopes we use when exec()ing the script.
+    Any extra args passed into hancho.load(*args, **kwargs) are attached to the script global
+    context.
+    """
 
     def __init__(self : Script, *args : dict[str, Any], file : str, globals : Globals, **kwargs : Any) -> None:
         self.name : str      = "script@" + Path.basename(file)
@@ -2459,13 +2472,17 @@ class Script(ScopeMixin):
         self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
         self.dest : Goodpath = "{join(repo.dest, relpath(script.root, repo.root))}" #type:ignore
 
-        Utils.merge_all(self.__dict__, *args, **kwargs)
-
         self._locals  = Dict()
         self._globals = globals # All functions declared in the script will bind to this _globals dict.
         self._tasks   = []
 
+        # FIXME we still need a test for load(script, test_these_script_args, and_also_these)
+        Utils.merge_all(self._globals.__dict__, *args, **kwargs)
+
     def __getattr__(self, key : str) -> Any:
+        """
+        Script.attribute name resolution goes self -> locals -> globals -> builtins.
+        """
         if key in self:
             return self[key]
         elif key in self._locals:
@@ -2478,6 +2495,9 @@ class Script(ScopeMixin):
             raise AttributeError(key)
 
     def exec(self) -> None:
+        """
+        Run the actual code inside the script with the globals contextvar bound to self._globals.
+        """
 
         with (
             cv.set(self._globals),
@@ -2496,14 +2516,18 @@ class Script(ScopeMixin):
             # sibling functions because they do _not_ bind locals, only globals.
             Utils.merge(self._globals, self._locals)
 
-    def dump(self, *args : Any, **kwargs : Any) -> None:
-        dprint(Dumper.dump(*args, **kwargs))
-
 # endregion
 # ==================================================================================================
 # region Globals
 
 class Globals(Dict):
+    """
+    The Globals class holds global objects for Hancho (log/runner/project/etc. below) and makes
+    those objects accessible to templates and scripts.
+
+    The load/start_build methods are for use in scripts and test suites.
+    """
+
     def __init__(self, *args : dict | Dict, **kwargs : Any) -> None:
         self.name = "globals"
 
@@ -2517,7 +2541,7 @@ class Globals(Dict):
 
         self.__builtins__ = Builtins.inst.__dict__
 
-        # These methods have to be copied to the instance, as client code only sees Globals.__dict__
+        # These methods *must* be copied to the instance, as client code only sees Globals.__dict__
         self.load_script = self.load_script
         self.load_repo   = self.load_repo
         self.start_build = self.start_build
@@ -2525,33 +2549,30 @@ class Globals(Dict):
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def _load(self, file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-        old_repo    = self.repo
-        old_script  = self.script
 
-        new_file   = Realpath(Expander(old_script).expand(file))
-        new_repo   = Repo(new_file) if is_repo else old_repo
+        # Create new_globals/new_script but do _not_ exec the script yet.
+        new_file   = Realpath(Expander(self.script).expand(file))
+        new_repo   = Repo(new_file) if is_repo else self.repo
 
         new_globals = Globals(self, repo = new_repo)
         new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
         new_script = new_globals.script
 
-        # Expand repo/script - should be done under new_builtins.
+        # Expand repo/script - *must* be done in new_globals otherwise things break.
         with cv.set(new_globals):
-            #new_script.__dict__['__builtins__'] = new_builtins.__dict__
             if is_repo:
                 new_repo.__expand__()
                 new_repo.load_stat_db()
             new_script.__expand__()
-            #del new_script.__dict__['__builtins__']
 
-        # Check for duplicates
+        # Check if the requested script + args is a duplicate.
         public_stuff = {k:v for k, v in new_script.__dict__.items() if not k.startswith("_")}
         dedupe_key = Dumper.any_to_key(public_stuff)
-        if dupe := new_globals.project._dedupe.get(dedupe_key, None):
-            new_globals.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
+        if dupe := cv.project._dedupe.get(dedupe_key, None):
+            cv.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
             return dupe
 
-        # File was _not_ deduped.
+        # Script is not a dupe, add it to the project and exec it.
         new_globals.project._dedupe[dedupe_key] = new_script
         new_repo._scripts.append(new_script)
         if is_repo:
@@ -2563,11 +2584,9 @@ class Globals(Dict):
         return new_script
 
     def load_script(self, file : str, *args : Any, **kwargs : Any) -> Script:
-        # FIXME handle args/kwargs
         return self._load(file, False, *args, **kwargs)
 
     def load_repo(self, file : str, *args : Any, **kwargs : Any) -> Script:
-        # FIXME handle args/kwargs
         return self._load(file, True, *args, **kwargs)
 
     def start_build(self) -> int:
@@ -2611,6 +2630,13 @@ class Globals(Dict):
         return result
 
 class CVGlobals:
+    """
+    We need to bind the globals object to a contextvar so that when Tasks run inside asyncio, they
+    always see the set of globals they were created with and _not_ globals from some other task/
+    script/repo.
+    This class is a trivial wrapper around a contextvar to make accessing global objects easier -
+    instead of only "cv.get().project", "cv.project" also works.
+    """
     def __init__(self) -> None:
         self._cv : contextvars.ContextVar[Globals] = contextvars.ContextVar("globals")
 
@@ -2701,16 +2727,6 @@ def _start() -> int:
         # Re-raise in debug builds so the debugger will stop execution.
         raise
 
-# ----------------------------------------
-
-def create_test_script(in_file: str, stdout: TextIO, extra_flags: list[str]) -> Globals:
-    argv = [f"--project.file={in_file}", *(extra_flags or [])]
-    globals = init(argv, stdout)
-    cv.set(globals)
-    return globals
-
-# ----------------------------------------
-
 def main() -> int:
     globals = init(sys.argv, sys.stdout)
     globals.log.verbose(Log.ORANGE + f"┌─── Running top script {globals.script.path}\n")
@@ -2755,24 +2771,21 @@ def main() -> int:
 
     return result
 
-# ----------------------------------------
-
 def init(argv : list[str], stdout : TextIO) -> Globals:
     flags = Flags()
     flags.parse_flags(*argv)
     flags.log['stdout'] = stdout
 
-    temp_log = Log(flags.log)
-    temp_log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    temp_log.verbose(Log.GRAY3 + "Verbose mode on\n")
-    temp_log.debug  (Log.GRAY3 + "Debug mode on\n")
-    temp_log.trace  (Log.GRAY3 + "Trace mode on\n")
-
-    globals = Globals()
-
     file = flags.project.get('file', "build.hancho")
 
-    globals.log      = Log(flags.log)
+    globals = Globals()
+    globals.log = Log(flags.log)
+
+    globals.log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    globals.log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    globals.log.debug  (Log.GRAY3 + "Debug mode on\n")
+    globals.log.trace  (Log.GRAY3 + "Trace mode on\n")
+
     globals.runner   = Runner()
     globals.project  = Project(flags.project, file = file)
     globals.build    = Build(flags.build)
@@ -2794,6 +2807,12 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
         globals.repo._scripts.append(globals.script)
         globals.project._repos.append(globals.repo)
 
+    return globals
+
+def init_for_testing(in_file: str, stdout: TextIO, extra_flags: list[str]) -> Globals:
+    argv = [f"--project.file={in_file}", *(extra_flags or [])]
+    globals = init(argv, stdout)
+    cv.set(globals)
     return globals
 
 if __name__ == "__main__":

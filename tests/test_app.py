@@ -30,13 +30,13 @@ class TestApp(unittest.TestCase):
         ]
 
         self.stdout = io.StringIO()
-        self.builtins = hancho.create_test_script(
+        self.globals = hancho.init_for_testing(
             in_file = __file__,
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
-        self.script = self.builtins.script
-        self.log = self.builtins.log
+        self.script = self.globals.script
+        self.log = self.globals.log
         self.clear_stdout()
 
     def clear_stdout(self) -> None:
