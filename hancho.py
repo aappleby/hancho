@@ -181,12 +181,8 @@ class Utils:
             yield cast(T, branch)
 
     @staticmethod
-    def yield_leaves[T](*args : Any, **kwargs : Any) -> Generator[T]:
+    def leaves[T](*args : Any, **kwargs : Any) -> Generator[T]:
         yield from Utils._yield_leaves([args, kwargs])
-
-    @staticmethod
-    def leaves[T](*args : Any, **kwargs : Any) -> list[T]:
-        return list(Utils._yield_leaves([args, kwargs]))
 
     @staticmethod
     def weave(*args : tree[str]) -> list[str]:
@@ -795,7 +791,7 @@ class Path:
 #
 #        @functools.wraps(func)
 #        def wrapper(variant : Any, *args : Any, **kwargs : Any) -> bool:
-#            return all(func(v, *args, **kwargs) for v in Utils.leaves(variant))
+#            return all(func(v, *args, **kwargs) for v in Utils.yield_leaves(variant))
 #
 #        return staticmethod(wrapper)
 
@@ -804,7 +800,7 @@ class Path:
 #    def relpath_t(lhs, rhs) -> tree[str]:
 #        if isinstance(rhs, list):
 #            return [Path.relpath_t(lhs, rh) for rh in rhs]
-#            #result = [Path.relpath(lhs, rh) for rh in Utils.leaves(rhs)]
+#            #result = [Path.relpath(lhs, rh) for rh in Utils.yield_leaves(rhs)]
 #            #return cast(list[str], result)
 #
 #        if not os.path.isabs(lhs):
@@ -1987,7 +1983,7 @@ class Task(ScopeMixin):
         # Add all input fields that are tasks to _in_tasks so we can await them later.
         in_tasks = []
         for v in self.__dict__.values():
-            for x in Utils.yield_leaves(v):
+            for x in Utils.leaves(v):
                 if isinstance(x, Task):
                     in_tasks.append(x)
         self._in_tasks = in_tasks
@@ -2188,7 +2184,7 @@ class Task(ScopeMixin):
 
         # Await all input tasks and check if any of them had errors.
         for field_name in self._public_fields:
-            for leaf in Utils.yield_leaves(self.__dict__[field_name]):
+            for leaf in Utils.leaves(self.__dict__[field_name]):
                 if isinstance(leaf, Task):
                     if leaf._aio_task is None:
                         raise AssertionError("One of a task's input sub-tasks was not started") #pragma: no cover
