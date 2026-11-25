@@ -14,7 +14,9 @@ class TestDict(unittest.TestCase):
         os.chdir(os.path.dirname(__file__))
 
     def test_basic_access(self) -> None:
-        d = hancho.Dict({"a": 1, "b": 2})
+        asdf = {"a": 1, "b": 2}
+
+        d = hancho.Dict(asdf)
         self.assertEqual(d.a, 1)
         self.assertEqual(d["b"], 2)
 

@@ -16,7 +16,6 @@ class TestTemplates(unittest.TestCase):
             stdout = sys.stdout,
             extra_flags = [
                 "--log.level=critical",
-                #"--log.level=debug",
                 "--log.wrap=True",
                 "--max_errors=999",
                 *args

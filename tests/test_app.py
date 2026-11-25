@@ -21,8 +21,7 @@ class TestApp(unittest.TestCase):
         self.maxDiff = 99999
 
         options: list[str] =[
-            # We use 'info' here because we're capturing the log to a StringIO
-            "--log.level=debug",
+            "--log.level=quiet",
             "--log.wrap=False",
             "--log.color=False",
             "--log.timestamp=False",
@@ -46,7 +45,11 @@ class TestApp(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
+    def test_nothing(self) -> None:
+        pass
+
     def test_log_redirection(self) -> None:
+        self.setUp("--log.level=critical")
 
         # Our default verbosity is 'critical', so these should appear in the log.
         self.log.critical("This is a message\n")
@@ -103,6 +106,7 @@ class TestApp(unittest.TestCase):
         #self.assertIn("invalid choice: 'boo'", result.stderr)
 
     def test_indentation(self) -> None:
+        self.setUp("--log.level=info")
         self.log.info("line1\n")
         self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         self.log.info("line2\n")
@@ -114,11 +118,13 @@ class TestApp(unittest.TestCase):
         )
 
     def test_no_color(self) -> None:
+        self.setUp("--log.level=info")
         self.log.info("this should _not_ be blue\n")
         self.assertEqual("this should _not_ be blue\n", self.stdout.getvalue())
         self.assertNotIn("\x1B", self.stdout.getvalue())
 
     def test_newlines(self) -> None:
+        self.setUp("--log.level=info")
         self.log.info("one")
         self.log.info("two")
         self.log.info("three")
@@ -126,6 +132,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual('onetwothreefour\n', self.stdout.getvalue())
 
     def test_flush(self) -> None:
+        self.setUp("--log.level=info")
         self.log.info("one")
         self.log.info("two")
         self.log.info("three")
@@ -134,6 +141,7 @@ class TestApp(unittest.TestCase):
         self.assertEqual('onetwothree\n', self.stdout.getvalue())
 
     def test_indent_dedent(self) -> None:
+        self.setUp("--log.level=info")
         self.log.info("┌ one\n")
         self.log.indent(hancho.Utils.hex_to_ansi(0xFFFFFFFF))
         self.log.info("boop\n")
@@ -147,6 +155,7 @@ class TestApp(unittest.TestCase):
         )
 
     def test_indenter(self) -> None:
+        self.setUp("--log.level=info")
         self.log.info("┌ one\n")
         with self.log.indenter(hancho.Log.INFO, hancho.Utils.hex_to_ansi(0xFFFFFFFF)):
             self.log.info("boop\n")
@@ -159,6 +168,7 @@ class TestApp(unittest.TestCase):
         )
 
     def test_log_non_strings(self) -> None:
+        self.setUp("--log.level=info")
         self.log.error(object)
         self.assertEqual(
             "<class 'object'>\n",

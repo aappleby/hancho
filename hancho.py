@@ -40,7 +40,7 @@ import textwrap
 import time
 import traceback
 from abc import ABCMeta
-from collections import Counter, abc, defaultdict
+from collections import Counter, abc
 from collections.abc import Generator, ItemsView
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass, field, replace
@@ -114,7 +114,8 @@ class Sentinel: # pragma: no cover
         self.name: str = name
 
     def __repr__(self) -> str:
-        return self.name
+        #return self.name
+        raise TypeError()
 
     def __bool__(self) -> bool:
         raise TypeError("Can't convert sentinels to bools")
@@ -173,10 +174,10 @@ class Utils:
         for branch in branches:
             if branch is None:
                 return
-            elif Utils.is_sequence(branch):
+            elif isinstance(branch, list):
                 for b in branch:
                     yield from Utils.leaves(b)
-            elif Utils.is_mapping(branch):
+            elif isinstance(branch, dict):
                 for b in branch.values():
                     yield from Utils.leaves(b)
             else:
@@ -231,22 +232,22 @@ class Utils:
         result: str = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
-    @staticmethod
-    def is_scalar(v : Any) -> bool:
-        if type(v) is object: return True
-        return not (Utils.is_sequence(v) or Utils.is_mapping(v))
-
-    @staticmethod
-    def is_sequence(v : Any) -> TypeIs[abc.Sequence[Any]]:
-        return isinstance(v, abc.Sequence) and not isinstance(v, (str, bytes, bytearray))
-
-    @staticmethod
-    def is_mapping(v : Any) -> TypeIs[abc.Mapping[Any, Any]]:
-        return isinstance(v, abc.Mapping)
-
-    @staticmethod
-    def is_mut_mapping(v : Any) -> TypeIs[abc.MutableMapping[Any, Any]]:
-        return isinstance(v, abc.MutableMapping)
+#    @staticmethod
+#    def is_scalar(v : Any) -> bool:
+#        if type(v) is object: return True
+#        return not (Utils.is_sequence(v) or Utils.is_mapping(v))
+#
+#    @staticmethod
+#    def is_sequence(v : Any) -> TypeIs[abc.Sequence[Any]]:
+#        return isinstance(v, abc.Sequence) and not isinstance(v, (str, bytes, bytearray))
+#
+#    @staticmethod
+#    def is_mapping(v : Any) -> TypeIs[abc.Mapping[Any, Any]]:
+#        return isinstance(v, abc.Mapping)
+#
+#    @staticmethod
+#    def is_mut_mapping(v : Any) -> TypeIs[abc.MutableMapping[Any, Any]]:
+#        return isinstance(v, abc.MutableMapping)
 
     @classmethod
     def is_expandable(cls, text : str) -> bool:
@@ -331,8 +332,8 @@ class Utils:
         keep_lhs: bool = True,
         keep_rhs: bool = True,
     ) -> Any:
-        if isinstance(lhs, Dict): lhs = lhs.__dict__
-        if isinstance(rhs, Dict): rhs = rhs.__dict__
+        #if isinstance(lhs, Dict): lhs = lhs.__dict__
+        #if isinstance(rhs, Dict): rhs = rhs.__dict__
 
         lkeys = lhs.keys()
         rkeys = rhs.keys()
@@ -349,13 +350,13 @@ class Utils:
 
             if lhs2 is rhs2:
                 pass
-            elif Utils.is_mut_mapping(lhs2) and Utils.is_mapping(rhs2) and merge_mappings:
+            elif isinstance(lhs2, dict) and isinstance(rhs2, dict) and merge_mappings:
                 if not isinstance(lhs2, dict):
                     lhs2 = lhs2.__dict__
                 if not isinstance(rhs2, dict):
                     rhs2 = rhs2.__dict__
                 Utils.merge(lhs2, rhs2)
-            elif Utils.is_sequence(lhs2) and Utils.is_sequence(rhs2) and merge_sequences:
+            elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_sequences:
                 lhs[key] = [*lhs2, *rhs2]
             elif rhs2 is not None:
                 lhs[key] = rhs2
@@ -413,16 +414,16 @@ class ScopeMixin:
                 d = d.__dict__
             Utils.merge(self.__dict__, d)
 
-    def fill(self, *args : dict[str, Any], **kwargs : Any) -> ScopeMixin:
-        result = type(self)()
-        Utils.merge(result.__dict__, self.__dict__)
-        for rhs in (*args, kwargs):
-            Utils.merge(result.__dict__, rhs, keep_rhs = False)
-        return result
+#    def fill(self, *args : dict[str, Any], **kwargs : Any) -> ScopeMixin:
+#        result = type(self)()
+#        Utils.merge(result.__dict__, self.__dict__)
+#        for rhs in (*args, kwargs):
+#            Utils.merge(result.__dict__, rhs, keep_rhs = False)
+#        return result
 
-    def expand(self, template : str) -> Any:
-        ex = Expander(self)
-        return ex.expand(template)
+#    def expand(self, template : str) -> Any:
+#        ex = Expander(self)
+#        return ex.expand(template)
 
     # ----------------------------------------
     # abc.MutableMapping
@@ -468,15 +469,39 @@ class ScopeMixin:
 # ==================================================================================================
 # region Dict/Tool
 
-class Dict(ScopeMixin):
+class Dict(dict):
     """A Dict is a trivial scope intended to be used like the built-in dict."""
 
     def __init__(self, *args : Any, **kwargs : Any) -> None:
         self.merge(*args, **kwargs)
 
+    def __setattr__(self, key : str, val : Any) -> None:
+        self[key] = val
+
     def __getattr__(self, key : str) -> Any:
-        # This is just to appease the type checker
-        return super().__getattr__(key) # type:ignore
+        try:
+            return self.__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __delattr__(self, key : str) -> Any:
+        del self[key]
+
+    def merge(self, *args : dict[str, Any], **kwargs : Any) -> None:
+        for k in [*args, kwargs]:
+            Utils.merge(self, k)
+
+    def expand(self, template : str) -> Any:
+        ex = Expander(self)
+        return ex.expand(template)
+
+    def fill(self, *args : dict[str, Any], **kwargs : Any) -> Dict:
+        result = type(self)()
+        Utils.merge(result, self)
+        for rhs in (*args, kwargs):
+            Utils.merge(result, rhs, keep_rhs = False)
+        return result
+
 
 # ====================================
 # A Tool is just a callable alias for Dict to make build scripts more readable.
@@ -484,6 +509,7 @@ class Dict(ScopeMixin):
 class Tool(Dict):
     def __call__(self, *args : Any, **kwargs : Any) -> Task:
         return Task(self, *args, **kwargs)
+
 
 # endregion
 # ==================================================================================================
@@ -1032,8 +1058,6 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
     """
 
     def __init__(self, object : Any) -> None:
-        assert not isinstance(object, dict)
-
         self.expand_scope: dict = object if isinstance(object, dict) else object.__dict__
         self.expand_object: Any = object
 
@@ -1089,14 +1113,13 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             # "builtins" scope
             self.trace_up(cursor, cv.builtins, "get", key)
 
-            if key in cv.builtins.__dict__:
-                result = cv.builtins.__dict__[key]
+            if key in cv.builtins:
+                result = cv.builtins[key]
                 return result
 
+        finally:
             if result is ___:
                 raise KeyError(key)
-
-        finally:
             self.trace_end(cursor, "get", key, result)
 
     # ------------------------------------
@@ -1179,7 +1202,6 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
                         cv.log.trace("\n")
                         cv.log.trace(f"Eval failed because {_!r}\n")
                         cv.log.trace("\n")
-                        pass
                     finally:
                         self.trace_end(self.expand_object, "eval", block, var)
 
@@ -1330,12 +1352,12 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             result_color = Utils.obj_to_ansi_color(result)
             #result_type  = type(result)
 
-            if Utils.is_mapping(result):
+            if isinstance(result, dict):
                 result_color = Utils.obj_to_ansi_color(result)
 
             #log.trace(f"{indent_color}└─>{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}) = {Log.RESET}")
 
-            if not Utils.is_scalar(result):
+            if isinstance(result, (list, dict)):
                 cv.log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{Utils.instance_tag(result)}\n")
             else:
                 cv.log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{result!r}\n")
@@ -1428,7 +1450,7 @@ class Dumper:  #pragma: no cover
             return cls._dump_prefix(key, val, opts) + "<hancho module>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts)
-        elif Utils.is_sequence(val) or Utils.is_mapping(val):
+        elif isinstance(val, (list, dict)):
             return cls._dump_vector(key, val, val, opts)
         elif isinstance(val, str):
             return cls._dump_scalar(key, val, opts)
@@ -1470,9 +1492,9 @@ class Dumper:  #pragma: no cover
             seen.add(id(val))
 
         items : list[item[Any]]
-        if Utils.is_mapping(contents):
+        if isinstance(contents, dict):
             ld, items, rd = "{", list(contents.items()), "}"
-        elif Utils.is_sequence(contents):
+        elif isinstance(contents, list):
             items = [(None, v) for v in contents]
             if isinstance(contents, tuple):
                 ld : str = "("
@@ -2435,7 +2457,9 @@ class Script(ScopeMixin):
         self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
         self.dest : Goodpath = "{join(repo.dest, relpath(script.root, repo.root))}" #type:ignore
 
-        self._locals  = Dict()
+        assert "Dict" in globals.__builtins__
+
+        self._locals  = {}
         self._globals = globals # All functions declared in the script will bind to this _globals dict.
         self._tasks   = []
 
@@ -2473,17 +2497,17 @@ class Script(ScopeMixin):
             exec(
                 code,
                 self._globals.__dict__,
-                self._locals.__dict__
+                self._locals
             )
             # This merge is _mandatory_, otherwise functions declared in a script cannot see their
             # sibling functions because they do _not_ bind locals, only globals.
-            Utils.merge(self._globals, self._locals)
+            Utils.merge(self._globals.__dict__, self._locals)
 
 # endregion
 # ==================================================================================================
 # region Globals
 
-class Globals(Dict):
+class Globals(ScopeMixin):
     """
     The Globals class holds global objects for Hancho (log/runner/project/etc. below) and makes
     those objects accessible to templates and scripts.
@@ -2491,7 +2515,7 @@ class Globals(Dict):
     The load/start_build methods are for use in scripts and test suites.
     """
 
-    def __init__(self, *args : dict | Dict, **kwargs : Any) -> None:
+    def __init__(self, *args : dict, **kwargs : Any) -> None:
         self.name = "globals"
 
         self.log      : Log       = ___
@@ -2501,6 +2525,9 @@ class Globals(Dict):
         self.repo     : Repo      = ___
         self.script   : Script    = ___
         self.stats    : Stats     = ___
+        self.builtins : Builtins  = Builtins.inst
+
+        assert "Dict" in Builtins.inst
 
         self.__builtins__ = Builtins.inst.__dict__
 
@@ -2517,7 +2544,7 @@ class Globals(Dict):
         new_file   = Realpath(Expander(self.script).expand(file))
         new_repo   = Repo(new_file) if is_repo else self.repo
 
-        new_globals = Globals(self, repo = new_repo)
+        new_globals = Globals(self.__dict__, repo = new_repo)
         new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
         new_script = new_globals.script
 
@@ -2627,7 +2654,7 @@ cv = CVGlobals()
 # ==================================================================================================
 # region Builtins
 
-class Builtins(Dict):
+class Builtins:
 
     def __init__(self) -> None:
         import builtins as _builtins
@@ -2667,6 +2694,12 @@ class Builtins(Dict):
         self.abspath  = lambda x : Goodpath(x)
         self.realpath = lambda x : Realpath(x)
         self.goodpath = lambda x : Goodpath(x)
+
+    def __contains__(self, key : str) -> bool:
+        return key in self.__dict__
+
+    def __getitem__(self, key : str) -> Any:
+        return self.__dict__[key]
 
     inst = ___
 
@@ -2755,7 +2788,7 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
     globals.repo     = Repo(file = file)
     globals.script   = Script(file = file, globals = globals)
     globals.stats    = Stats()
-    globals.builtins = Builtins.inst
+    #globals.builtins = Builtins.inst
 
     Utils.merge(globals.__dict__, flags.extra)
 
