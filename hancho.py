@@ -275,39 +275,18 @@ class Utils:
             return result
 
     @staticmethod
-    def tree_map[X, Y, **P](func: abc.Callable[Concatenate[Any, P], Y]) -> abc.Callable[Concatenate[tree[X], P], tree[Y]]:
-
-        """Turns a mapping function into one that can be applied to arbitrarily nested containers."""
-
-        def repack(obj: tree[X], *args: Any, **kwargs: Any) -> tree[Y]:
-            if hasattr(obj, "_make"):
-                # Namedtuple special case
-                constructor = obj.__dict__["_make"]
-            elif isinstance(obj, defaultdict):
-                # Default dict special case
-                constructor = functools.partial(type(obj), obj.default_factory)
-            else:
-                # Everything else
-                constructor = type(obj)
-            return cast(tree[Y], constructor(*args, **kwargs))
-
-        def apply1(obj : branch[X], seen : dict[str, Any], *args : P.args, **kwargs : P.kwargs) -> branch[Y]:
-            if isinstance(obj, abc.Mapping):
-                map_items = {k : apply1(v, seen, *args, **kwargs) for k, v in obj.items()}
-                result = repack(obj, map_items)
-            if isinstance(obj, abc.Sequence) and not isinstance(obj, (str, bytes, bytearray)):
-                list_items = [apply1(v, seen, *args, **kwargs) for v in obj]
-                result = repack(obj, list_items)
-            else:
-                result = func(obj, *args, **kwargs)
-            return result
+    def tree_map[X, Y, **P](func: abc.Callable[Concatenate[X, P], Y]) -> abc.Callable[Concatenate[branch[X], P], branch[Y]]:
 
         @functools.wraps(func)
-        def apply2(obj: tree[X], *args : P.args, **kwargs : P.kwargs) -> tree[Y]:
-            result = apply1(obj, {}, *args, **kwargs)
-            return cast(tree[Y], result)
+        def wrapper(arg: branch[X], *args: P.args, **kwargs: P.kwargs) -> branch[Y]:
+            if isinstance(arg, list):
+                return type(arg)(wrapper(x, *args, **kwargs) for x in arg) #type:ignore
+            elif isinstance(arg, dict):
+                return type(arg)(**{k: wrapper(v, *args, **kwargs) for k, v in arg.items()}) #type:ignore
+            else:
+                return func(cast(X, arg), *args, **kwargs)
 
-        return staticmethod(apply2)
+        return wrapper
 
     @classmethod
     @contextmanager
@@ -333,7 +312,7 @@ class Utils:
     @classmethod
     def save_json(cls, variant : Any, path : Goodpath) -> None:
         os.makedirs(os.path.dirname(path), exist_ok = True)
-        with cls.write_and_swap(path) as file:
+        with open(path, "w") as file:
             json.dump(variant, file, indent=4, default=lambda x: x.__dict__)
             file.write("\n")
 
@@ -349,7 +328,6 @@ class Utils:
         *,
         merge_mappings: bool = True,
         merge_sequences: bool = True,
-        merge_sets: bool = True,
         keep_lhs: bool = True,
         keep_rhs: bool = True,
     ) -> Any:
@@ -411,7 +389,7 @@ class Utils:
 class ScopeMixin:
     """
     Implements various helper functions and dunders so that we don't duplicate this in every class
-    that's part of our global scope and that can be used in template expansion.
+    that's part of our global scope / that can be used in template expansion.
     """
 
     # Expand all expandables at the top level of this scope.
@@ -490,9 +468,8 @@ class ScopeMixin:
 # ==================================================================================================
 # region Dict/Tool
 
-# A Dict is a trivial scope
-
 class Dict(ScopeMixin):
+    """A Dict is a trivial scope intended to be used like the built-in dict."""
 
     def __init__(self, *args : Any, **kwargs : Any) -> None:
         self.merge(*args, **kwargs)
@@ -572,7 +549,6 @@ class Log(ScopeMixin):
             raise ValueError(f"Don't know how to use {self.stdout} as an output")
 
     def indent(self, ansi_color : str = RESET) -> None:
-        #self._indent_stack.append(f"{ansi_color}│{Log.RESET}")
         self._indent_stack.append(ansi_color)
 
     def dedent(self) -> None:
@@ -795,16 +771,9 @@ class Path:
 
 
 #    @staticmethod
-#    def relpath_t(lhs, rhs) -> tree[str]:
+#    def relpath_t(lhs : Goodpath, rhs : Goodpath) -> tree[str]:
 #        if isinstance(rhs, list):
 #            return [Path.relpath_t(lhs, rh) for rh in rhs]
-#            #result = [Path.relpath(lhs, rh) for rh in Utils.yield_leaves(rhs)]
-#            #return cast(list[str], result)
-#
-#        if not os.path.isabs(lhs):
-#            lhs = os.path.abspath(lhs)
-#        if not os.path.isabs(rhs):
-#            rhs = os.path.abspath(rhs)
 #
 #        prefix = os.path.commonpath([lhs, rhs])
 #
@@ -834,7 +803,7 @@ class Path:
 # region Goodpath/Realpath/Literal/Macro/Blocks
 
 """
-# Some string wrappers to help with type checking and reduce redundant abspath()/realpath() calls.
+Some string wrappers to help with type checking and reduce redundant abspath()/realpath() calls.
 """
 
 class Goodpath(str):

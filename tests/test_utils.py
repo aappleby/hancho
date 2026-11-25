@@ -2,6 +2,7 @@ import os
 import sys
 import unittest
 from collections import abc
+from typing import Any
 
 import hancho
 
@@ -32,6 +33,45 @@ class TestUtils(unittest.TestCase):
         a = [1, 1, 1]
         b = list(hancho.Utils.leaves(a))
         self.assertEqual(a, b)
+
+    # ----------------------------------------
+    # Tree map stuff
+
+    def test_tree_map_basic(self) -> None:
+        def upperize(x : str) -> str:
+            return x.upper()
+
+        upperize_t = hancho.Utils.tree_map(upperize)
+
+        def tree_equal(a : Any, b : Any) -> None:
+            self.assertIs(type(a), type(b))
+            if isinstance(a, list):
+                self.assertEqual(len(a), len(b))
+                for i in range(len(a)):
+                    tree_equal(a[i], b[i])
+            elif isinstance(a, dict):
+                self.assertEqual(a.keys(), b.keys())
+                for k in a:
+                    tree_equal(a[k], b[k])
+            else:
+                self.assertEqual(a, b)
+
+        tree_equal(upperize_t("foo"), "FOO")
+        tree_equal(upperize_t(["foo", "bar"]), ['FOO', 'BAR'])
+        tree_equal(upperize_t(["foo", "bar", ["baz"]]), ['FOO', 'BAR', ['BAZ']])
+        tree_equal(upperize_t({"foo":"bar"}), {'foo': 'BAR'})
+
+        thing1 = ["foo", "bar", ["baz", "qux"], {"a" : "blarp", "b" : "glarp", "c" : ["narp", "barp"]}]
+        thing2 = ['FOO', 'BAR', ['BAZ', 'QUX'], {'a' : 'BLARP', 'b' : 'GLARP', 'c' : ['NARP', 'BARP']}]
+        tree_equal(upperize_t(thing1), thing2)
+
+        class MyDict(dict): pass
+        class MyList(list): pass
+
+        thing3 = MyList(["foo", "bar", MyList(["baz", "qux"]), MyDict(a = "blarp", b = "glarp", c = MyList(["narp", "barp"]))])
+        thing4 = MyList(['FOO', 'BAR', MyList(['BAZ', 'QUX']), MyDict(a = 'BLARP', b = 'GLARP', c = MyList(['NARP', 'BARP']))])
+
+        tree_equal(upperize_t(thing3), thing4)
 
     # ----------------------------------------
     # Cross-joiny stuff
