@@ -1723,7 +1723,7 @@ class Runner(ScopeMixin):
 # ==================================================================================================
 # region Project
 
-class Project(ScopeMixin):
+class Project(dict):
     def __init__(self, *args : dict[str, Any], file : str, **kwargs : Any) -> None:
         self.name : str          = "project@" + Path.basename(file)
         self.file : str          = file
@@ -1735,7 +1735,27 @@ class Project(ScopeMixin):
         self._dedupe = {}
         self._repos : list[Repo] = []
 
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        Utils.merge_all(self, *args, **kwargs)
+
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
 # endregion
 # ==================================================================================================
