@@ -324,17 +324,14 @@ class Utils:
 
     @staticmethod
     def merge(
-        lhs : dict | Dict,
-        rhs : dict | Dict,
+        lhs : dict,
+        rhs : dict,
         *,
         merge_mappings: bool = True,
         merge_sequences: bool = True,
         keep_lhs: bool = True,
         keep_rhs: bool = True,
     ) -> Any:
-        #if isinstance(lhs, Dict): lhs = lhs.__dict__
-        #if isinstance(rhs, Dict): rhs = rhs.__dict__
-
         lkeys = lhs.keys()
         rkeys = rhs.keys()
 
@@ -351,10 +348,6 @@ class Utils:
             if lhs2 is rhs2:
                 pass
             elif isinstance(lhs2, dict) and isinstance(rhs2, dict) and merge_mappings:
-                if not isinstance(lhs2, dict):
-                    lhs2 = lhs2.__dict__
-                if not isinstance(rhs2, dict):
-                    rhs2 = rhs2.__dict__
                 Utils.merge(lhs2, rhs2)
             elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_sequences:
                 lhs[key] = [*lhs2, *rhs2]
@@ -396,34 +389,11 @@ class ScopeMixin:
     # Expand all expandables at the top level of this scope.
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.__dict__.items():
+        for key, old_val in self.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
                 self.__dict__[key] = new_val
-
-    def get(self, key : str, default : Any = ___) -> Any:
-        result = self.__dict__.get(key, ___)
-        if result is ___:
-            raise KeyError(key)
-        return result
-
-    def merge(self, *args : Any, **kwargs : Any) -> None:
-        for d in [*args, kwargs]:
-            if not isinstance(d, dict):
-                d = d.__dict__
-            Utils.merge(self.__dict__, d)
-
-#    def fill(self, *args : dict[str, Any], **kwargs : Any) -> ScopeMixin:
-#        result = type(self)()
-#        Utils.merge(result.__dict__, self.__dict__)
-#        for rhs in (*args, kwargs):
-#            Utils.merge(result.__dict__, rhs, keep_rhs = False)
-#        return result
-
-#    def expand(self, template : str) -> Any:
-#        ex = Expander(self)
-#        return ex.expand(template)
 
     # ----------------------------------------
     # abc.MutableMapping
@@ -463,7 +433,7 @@ class ScopeMixin:
             return result
 
     def __setattr__(self, key : str, val : Any) -> None:
-        self.__dict__[key] = val
+        self.__setitem__(key, val)
 
 # endregion
 # ==================================================================================================
@@ -1280,7 +1250,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
 
         return Expander.SplitCount(literals = literals, macros = macros)
 
-    def trace_start(self, scope : (dict | Dict | ScopeMixin), action : str, arg : Any) -> None: #pragma: no cover
+    def trace_start(self, scope : Any, action : str, arg : Any) -> None: #pragma: no cover
         if 'log' not in cv: return
         if cv.log._level_int > Log.TRACE: return
 
@@ -1311,7 +1281,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             cv.log.trace(f"{indent_color}{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET}\n")
             cv.log.indent(indent_color)
 
-    def trace_up(self, scope : (dict | Dict | ScopeMixin), up : (dict | Dict | ScopeMixin), action : str, arg : str) -> None: #pragma: no cover
+    def trace_up(self, scope : Any, up : Any, action : str, arg : str) -> None: #pragma: no cover
         if 'log' not in cv: return
         if cv.log._level_int > Log.TRACE: return
 
@@ -1321,7 +1291,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
 
         cv.log.trace(f"{up_color}^{up_tag}.{action_color}{action}({arg}){Log.RESET}\n")
 
-    def trace_end(self, scope : (dict | Dict | ScopeMixin), action : str, arg : Any, result : Any) -> None: #pragma: no cover
+    def trace_end(self, scope : Any, action : str, arg : Any, result : Any) -> None: #pragma: no cover
         if 'log' not in cv: return
         if cv.log._level_int > Log.TRACE: return
 
@@ -1771,7 +1741,7 @@ class Project(ScopeMixin):
 # ==================================================================================================
 # region Build
 
-class Build(ScopeMixin):
+class Build(dict):
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         self.name : str         = "build"
         self.dir : str          = "build"
@@ -1784,7 +1754,19 @@ class Build(ScopeMixin):
         self.max_jobs : int     = os.cpu_count() or 1
         self.max_errors : int   = 0
 
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        Utils.merge_all(self, *args, **kwargs)
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
 # endregion
 # ==================================================================================================
@@ -2795,7 +2777,6 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
     with cv.set(globals):
         globals.runner.__expand__()
         globals.project.__expand__()
-        globals.build.__expand__()
         globals.repo.__expand__()
         globals.script.__expand__()
 
