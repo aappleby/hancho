@@ -1052,7 +1052,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
     # ------------------------------------
 
     def find(self, key : str) -> Any:
-        cursor : (dict | Dict | ScopeMixin) = self.expand_object
+        cursor : Any = self.expand_object
         result = ___
         try:
             self.trace_start(cursor, "get", key)
@@ -1066,7 +1066,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
                     next = cursor["__up__"]
                     if next is None:
                         break
-                    elif isinstance(next, (dict, Dict)):
+                    elif isinstance(next, dict):
                         self.trace_up(cursor, next, "get", key)
                         cursor = next
                     else:
@@ -1792,7 +1792,7 @@ class Build(dict):
 # ==================================================================================================
 # region Repo
 
-class Repo(ScopeMixin):
+class Repo(dict):
 
     def __init__(self, file : str, *args : dict[str, Any], **kwargs : Any) -> None:
         self.name : str      = "repo@" + Path.basename(file)
@@ -1803,10 +1803,30 @@ class Repo(ScopeMixin):
 
         self.stat_db_path : Goodpath = "{goodpath(join(dest, 'hancho.json'))}" #type:ignore
         self.comp_db_path : Goodpath = "{goodpath(join(dest, 'compile_commands.json'))}" #type:ignore
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        Utils.merge_all(self, *args, **kwargs)
 
         self._scripts : list[Script] = []
         self._stat_db : dict[str, dict] = {}
+
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
     def load_stat_db(self) -> None:
         if Path.isfile(self.stat_db_path):
@@ -2274,8 +2294,11 @@ class Task(ScopeMixin):
     def sanity_check(self) -> None:
         # Check for all task issues that break the build
 
-        if not Path.startswith(self.dest, cv.repo.root):
-            raise Task.BROKEN(f"The build destination {self.dest} is not under the repo root {cv.repo.root}")
+        try:
+            if not Path.startswith(self.dest, cv.repo.root):
+                raise Task.BROKEN(f"The build destination {self.dest} is not under the repo root {cv.repo.root}")
+        finally:
+            pass
 
         has_str      = any(isinstance(x, str)                     for x in Utils.leaves(self.command))
         has_callable = any(isinstance(x, abc.Callable)            for x in Utils.leaves(self.command))
@@ -2466,7 +2489,7 @@ class Script(ScopeMixin):
         self._tasks   = []
 
         # FIXME we still need a test for load(script, test_these_script_args, and_also_these)
-        Utils.merge_all(self._globals.__dict__, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __getattr__(self, key : str) -> Any:
         """
@@ -2538,7 +2561,8 @@ class Globals(ScopeMixin):
         self.load_repo   = self.load_repo
         self.start_build = self.start_build
 
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        for arg in [*args, kwargs]:
+            self.__dict__.update(**arg)
 
     def _load(self, file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 
