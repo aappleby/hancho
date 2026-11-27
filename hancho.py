@@ -393,41 +393,44 @@ class ScopeMixin:
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self.__dict__[key] = new_val
+                self.get_dict()[key] = new_val
+
+    def get_dict(self) -> dict:
+        return self.__dict__
 
     # ----------------------------------------
     # abc.MutableMapping
 
     def __getitem__(self, key : str) -> Any:
-        result = self.__dict__.get(key, ___)
+        result = self.get_dict().get(key, ___)
         if result is ___:
             raise KeyError(key)
         return result
 
     def __setitem__(self, key : str, val : Any) -> None:
-        self.__dict__[key] = val
+        self.get_dict()[key] = val
 
     def __delitem__(self, key : str) -> None:
-        del self.__dict__[key]
+        del self.get_dict()[key]
 
     def __iter__(self) -> abc.Iterator[Any]:
-        return self.__dict__.__iter__()
+        return self.get_dict().__iter__()
 
     def __len__(self) -> int:
-        return len(self.__dict__)
+        return len(self.get_dict())
 
     def items(self) -> ItemsView[str, Any]:
-        return self.__dict__.items()
+        return self.get_dict().items()
 
     def __contains__(self, key : str) -> bool:
-        return key in self.__dict__
+        return key in self.get_dict()
 
     # ----------------------------------------
     # We don't want the type checker to see this or it will stop type-checking attributes
 
     if not TYPE_CHECKING:
         def __getattr__(self, key : str) -> Any:
-            result = self.__dict__.get(key, ___)
+            result = self.get_dict().get(key, ___)
             if result is ___:
                 raise AttributeError(key)
             return result
@@ -485,7 +488,7 @@ class Tool(Dict):
 # ==================================================================================================
 # region Log
 
-class Log(ScopeMixin):
+class Log(dict):
 
     """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
     RED     = Utils.hex_to_ansi(0xCC6666)
@@ -528,7 +531,7 @@ class Log(ScopeMixin):
         self.timestamp : bool   = True
         self.width     : int    = shutil.get_terminal_size().columns
         self.stdout    : TextIO = sys.stdout
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        Utils.merge_all(self, *args, **kwargs)
 
         self._level_int     : int        = getattr(Log, self.level.upper())
         self._time_origin   : float      = time.perf_counter()
@@ -543,6 +546,26 @@ class Log(ScopeMixin):
             self._stdout = self.stdout
         else:
             raise ValueError(f"Don't know how to use {self.stdout} as an output")
+
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
     def indent(self, ansi_color : str = RESET) -> None:
         self._indent_stack.append(ansi_color)
@@ -848,7 +871,7 @@ class Blocks(list[Literal | Macro]):
 # ==================================================================================================
 # region Stats
 
-class Stats:
+class Stats(dict):
     """
     Trivial build statistics and tracking vars for expansion to catch infinite loops/recursion
     """
@@ -869,11 +892,24 @@ class Stats:
         self.tasks_skipped = 0
         self.build_reasons = Counter()
 
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+
 # endregion
 # ==================================================================================================
 # region Flags
 
-class Flags:
+class Flags(dict):
     """
     Command-line flag handling. The argparse library handles known flags, but the user can also
     use arbitrary "--foo.bar.baz=12" flags as well, which will turn into cv_globals.foo.bar.baz.
@@ -884,6 +920,18 @@ class Flags:
         self.build   = {}
         self.log     = {}
         self.extra   = {}
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
     def parse_flags(self, *argv : str) -> None:
 
@@ -955,7 +1003,7 @@ class Flags:
             parts: list[str] = key.split(".")
 
             # Flags we don't know about get shunted to flags.extra
-            if parts[0] not in self.__dict__:
+            if parts[0] not in self:
                 parts = ['extra', *parts]
 
             for part in parts[:-1]:
@@ -973,7 +1021,7 @@ class Flags:
                 try:
                     opt_file = json.load(f)
                     for k, v in opt_file.items():
-                        set_by_path(self.__dict__, k, v)
+                        set_by_path(self, k, v)
                 except Exception as _:
                     print(f"Opt file {opt_file_name!r} invalid!\n")
                     traceback.print_exc()
@@ -982,7 +1030,7 @@ class Flags:
         # Add argv_vars
 
         for k, v in argv_vars.items():
-            set_by_path(self.__dict__, k, v)
+            set_by_path(self, k, v)
 
         # ------------------------------------
         # Unrecognized command line flags also become config fields if they are flag-like.
@@ -1004,7 +1052,7 @@ class Flags:
                             pass
                     return None
 
-                set_by_path(self.__dict__, key, convert(val))
+                set_by_path(self, key, convert(val))
 
 # endregion
 # ==================================================================================================
@@ -1479,7 +1527,7 @@ class Dumper:  #pragma: no cover
 
     @classmethod
     def _dump_scope(cls, key : key_type, val : ScopeMixin, opts : Opts) -> str:
-        return cls._dump_vector(key, val, val.__dict__, opts)
+        return cls._dump_vector(key, val, val.get_dict(), opts)
 
     @classmethod
     def _dump_items(cls, key : key_type, prefix : str, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
@@ -1616,20 +1664,39 @@ class Dumper:  #pragma: no cover
 # ==================================================================================================
 # region Runner
 
-class Runner(ScopeMixin):
+class Runner(dict):
 
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         self.name : str = "runner"
         self.max_jobs : int   = "{build.max_jobs}"   #type:ignore
         self.max_errors : int = "{build.max_errors}" #type:ignore
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        Utils.merge_all(self, *args, **kwargs)
 
     def __expand__(self) -> None:
-        super().__expand__()
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
         self._core_sem  : asyncio.Semaphore = asyncio.Semaphore(self.max_jobs)
         self._core_lock : asyncio.Lock = asyncio.Lock()
         self._aio_done_queue : asyncio.Queue = asyncio.Queue()
         self._live_aio_tasks : set[asyncio.Task] = set()
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+
 
     async def acquire(self, count : int) -> int:
         # A task that requires a lot of cores can block tasks behind it in the queue. This is
@@ -1971,7 +2038,7 @@ class Task(ScopeMixin):
         for m in [*args, kwargs]:
             if not isinstance(m, dict):
                 m = m.__dict__
-            Utils.merge(self.__dict__, m)
+            Utils.merge(self.get_dict(), m)
 
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
         # we need to queue up input tasks before this task starts.
@@ -1979,21 +2046,21 @@ class Task(ScopeMixin):
         # We can't expand the rest yet as commands or paths may depend on the paths of the output
         # files from the input tasks, which we don't know until the input tasks are complete.
 
-        self._public_fields = [x for x in self.__dict__ if not x.startswith("_")]
+        self._public_fields = [x for x in self.get_dict() if not x.startswith("_")]
 
         ex = Expander(self)
         self.cwd = Realpath(ex.expand(self.cwd))
 
-        for k, v in self.__dict__.items():
+        for k, v in self.get_dict().items():
             if k.startswith("in_") and isinstance(v, str):
-                self.__dict__[k] = ex.expand(v)
+                self.get_dict()[k] = ex.expand(v)
 
         # ----------------------------------------
         # Private fields
 
         # Add all input fields that are tasks to _in_tasks so we can await them later.
         in_tasks = []
-        for v in self.__dict__.values():
+        for v in self.get_dict().values():
             for x in Utils.leaves(v):
                 if isinstance(x, Task):
                     in_tasks.append(x)
@@ -2031,13 +2098,33 @@ class Task(ScopeMixin):
         if Utils.in_event_loop():
             self.queue_task()
 
-    # Silence unknown attribute accesses on Task
-    def __getattr__(self, name: str) -> Any:
-        # __getattr__ is there, it's just hidden for type checking
-        return super().__getattr__(name) # type: ignore
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        super().__setattr__(name, value)
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+#    # Silence unknown attribute accesses on Task
+#    def __getattr__(self, name: str) -> Any:
+#        # __getattr__ is there, it's just hidden for type checking
+#        return super().__getattr__(name) # type: ignore
+#
+#    def __setattr__(self, name: str, value: Any) -> None:
+#        super().__setattr__(name, value)
 
     def __copy__(self) -> NoReturn:
         # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -2195,7 +2282,7 @@ class Task(ScopeMixin):
 
         # Await all input tasks and check if any of them had errors.
         for field_name in self._public_fields:
-            for leaf in Utils.leaves(self.__dict__[field_name]):
+            for leaf in Utils.leaves(self.get_dict()[field_name]):
                 if isinstance(leaf, Task):
                     if leaf._aio_task is None:
                         raise AssertionError("One of a task's input sub-tasks was not started") #pragma: no cover
@@ -2207,7 +2294,7 @@ class Task(ScopeMixin):
         Utils.map_in_place(
             lambda k, v : v._out_files if isinstance(v, Task) else v,
             ___,
-            self.__dict__
+            self.get_dict()
         )
 
 
@@ -2225,7 +2312,7 @@ class Task(ScopeMixin):
         # Then we expand all io fields and fix their paths.
         try:
             ex.trace_start(ex.expand_object, "range", "expand io fields")
-            io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
+            io_fields = [k for k in self.get_dict() if k.startswith("in_") or k.startswith("out_")]
 
             for field_name in io_fields:
                 files = getattr(self, field_name)
@@ -2259,9 +2346,9 @@ class Task(ScopeMixin):
         required_keys = ['command', 'cwd', 'depformat', 'desc', 'dest', 'dry_run', 'force', 'job_size', 'name']
 
         for key in required_keys:
-            val = self.__dict__[key]
+            val = self.get_dict()[key]
             if isinstance(val, str):
-                self.__dict__[key] = ex.expand(val)
+                self.get_dict()[key] = ex.expand(val)
 
         if not self.dry_run:
             for file in Utils.leaves(self._out_files):
@@ -2468,7 +2555,7 @@ class Task(ScopeMixin):
 # This is not a types.ModuleType, but it still works fine as one. Making it a ModuleType is a bit
 # annoying to work with.
 
-class Script(ScopeMixin):
+class Script(dict):
     """
     The Script class holds the self/local/globals/builtin scopes we use when exec()ing the script.
     Any extra args passed into hancho.load(*args, **kwargs) are attached to the script global
@@ -2489,7 +2576,21 @@ class Script(ScopeMixin):
         self._tasks   = []
 
         # FIXME we still need a test for load(script, test_these_script_args, and_also_these)
-        Utils.merge_all(self.__dict__, *args, **kwargs)
+        Utils.merge_all(self, *args, **kwargs)
+
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
     def __getattr__(self, key : str) -> Any:
         """
@@ -2521,18 +2622,18 @@ class Script(ScopeMixin):
             code: CodeType = compile(source, str(self.path), "exec", dont_inherit=True)
             exec(
                 code,
-                self._globals.__dict__,
+                self._globals,
                 self._locals
             )
             # This merge is _mandatory_, otherwise functions declared in a script cannot see their
             # sibling functions because they do _not_ bind locals, only globals.
-            Utils.merge(self._globals.__dict__, self._locals)
+            Utils.merge(self._globals, self._locals)
 
 # endregion
 # ==================================================================================================
 # region Globals
 
-class Globals(ScopeMixin):
+class Globals(dict):
     """
     The Globals class holds global objects for Hancho (log/runner/project/etc. below) and makes
     those objects accessible to templates and scripts.
@@ -2554,15 +2655,38 @@ class Globals(ScopeMixin):
 
         assert "Dict" in Builtins.inst
 
-        self.__builtins__ = Builtins.inst.__dict__
+        self.__builtins__ = Builtins.inst
 
-        # These methods *must* be copied to the instance, as client code only sees Globals.__dict__
+        # These methods *must* be copied to the instance, as client code doesn't see anything
+        # that's not in the dict storage.
+
         self.load_script = self.load_script
         self.load_repo   = self.load_repo
         self.start_build = self.start_build
 
         for arg in [*args, kwargs]:
-            self.__dict__.update(**arg)
+            self.update(**arg)
+
+    def __expand__(self) -> None:
+        ex = Expander(self)
+        for key, old_val in self.items():
+            if Utils.is_expandable(old_val):
+                new_val = ex.expand(old_val)
+                assert not Utils.is_expandable(new_val)
+                self[key] = new_val
+
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
+
 
     def _load(self, file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 
@@ -2570,7 +2694,7 @@ class Globals(ScopeMixin):
         new_file   = Realpath(Expander(self.script).expand(file))
         new_repo   = Repo(new_file) if is_repo else self.repo
 
-        new_globals = Globals(self.__dict__, repo = new_repo)
+        new_globals = Globals(self, repo = new_repo)
         new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
         new_script = new_globals.script
 
@@ -2582,7 +2706,7 @@ class Globals(ScopeMixin):
             new_script.__expand__()
 
         # Check if the requested script + args is a duplicate.
-        public_stuff = {k:v for k, v in new_script.__dict__.items() if not k.startswith("_")}
+        public_stuff = {k:v for k, v in new_script.items() if not k.startswith("_")}
         dedupe_key = Dumper.any_to_key(public_stuff)
         if dupe := cv.project._dedupe.get(dedupe_key, None):
             cv.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
@@ -2680,11 +2804,11 @@ cv = CVGlobals()
 # ==================================================================================================
 # region Builtins
 
-class Builtins:
+class Builtins(dict):
 
     def __init__(self) -> None:
         import builtins as _builtins
-        Utils.merge(self.__dict__, _builtins.__dict__)
+        Utils.merge(self, _builtins.__dict__)
 
         self.___      = ___
         self.hancho   = sys.modules[__name__]
@@ -2721,11 +2845,17 @@ class Builtins:
         self.realpath = lambda x : Realpath(x)
         self.goodpath = lambda x : Goodpath(x)
 
-    def __contains__(self, key : str) -> bool:
-        return key in self.__dict__
+    def __getattr__(self, key : str) -> Any:
+        try:
+            return super().__getitem__(key)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
-    def __getitem__(self, key : str) -> Any:
-        return self.__dict__[key]
+    def __setattr__(self, key : str, val : Any) -> None:
+        try:
+            super().__setitem__(key, val)
+        except KeyError as err:
+            raise AttributeError(key) from err
 
     inst = ___
 
@@ -2773,7 +2903,7 @@ def main() -> int:
     globals.log._log(
         Log.VERBOSE,
         Log.DBLUE,
-        "Stats: " + Dumper.dump(globals.stats.__dict__, print_id=False) + "\n",
+        "Stats: " + Dumper.dump(globals.stats, print_id=False) + "\n",
     )
 
     # ------------------------------------
@@ -2816,7 +2946,7 @@ def init(argv : list[str], stdout : TextIO) -> Globals:
     globals.stats    = Stats()
     #globals.builtins = Builtins.inst
 
-    Utils.merge(globals.__dict__, flags.extra)
+    Utils.merge(globals, flags.extra)
 
     with cv.set(globals):
         globals.runner.__expand__()
