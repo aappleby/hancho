@@ -41,7 +41,6 @@ import sys
 import textwrap
 import time
 import traceback
-from abc import ABCMeta
 from collections import Counter, abc
 from collections.abc import Generator, ItemsView, Mapping
 from contextlib import chdir, contextmanager, suppress
@@ -100,7 +99,7 @@ base_types: tuple[type, ...] = (int, float, complex, bool, str, tuple, NoneType,
 opaque_types: tuple[type, ...] = (GeneratorType, contextvars.Context, asyncio.Task, ModuleType, type)
 
 # We generally don't need to see the contents of these in a dump.
-default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins", "_public_fields", asyncio.Task]
+default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "__builtins__", asyncio.Task]
 
 # endregion
 # ==================================================================================================
@@ -1109,9 +1108,9 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             return cv[key]
 
         # "builtins" scope
-        self.trace_up(cursor, cv.builtins, "get", key)
-        if key in cv.builtins:
-            return cv.builtins[key]
+        self.trace_up(cursor, cv.__builtins__, "get", key)
+        if key in cv.__builtins__:
+            return cv.__builtins__[key]
 
         raise KeyError(key)
 
@@ -1600,7 +1599,7 @@ class Dumper:  #pragma: no cover
             prefix += f"{key}"
         elif hasattr(val, 'name') and val.name is not None:
             prefix += val.name
-        elif isinstance(val, (ABCMeta, abc.Callable, ModuleType)):
+        elif isinstance(val, (abc.Callable, ModuleType)):
             if '__name__' in val.__dict__:
                 prefix += val.__name__
             else:
@@ -1647,7 +1646,6 @@ class Dumper:  #pragma: no cover
 
         if not Utils.is_dict(v):
             print(leaf + str(k) + ": " + repr(v))
-        #elif any(v is f for f in folded) or any(type(v) is f for f in folded):
         elif v in folded or type(v) in folded:
             print(fold + str(k))
         else:
@@ -1664,11 +1662,10 @@ class Dumper:  #pragma: no cover
 
 class Runner:
 
-    def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
+    def __init__(self) -> None:
         self.name : str = "runner"
         self.max_jobs : int   = "{build.max_jobs}"   #type:ignore
         self.max_errors : int = "{build.max_errors}" #type:ignore
-        Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
         ex = Expander(self)
@@ -1788,9 +1785,6 @@ class Project:
 
         Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
-        return Dumper._dump_scope(key, self, opts)
-
     def __expand__(self) -> None:
         ex = Expander(self)
         for key, old_val in self.__dict__.items():
@@ -1798,6 +1792,10 @@ class Project:
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
                 self.__dict__[key] = new_val
+
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
+
 
 # endregion
 # ==================================================================================================
@@ -2002,8 +2000,6 @@ class Task:
 
         # We can't expand the rest yet as commands or paths may depend on the paths of the output
         # files from the input tasks, which we don't know until the input tasks are complete.
-
-        self._public_fields = [x for x in self.__dict__ if not x.startswith("_")]
 
         ex = Expander(self)
         self.cwd = Realpath(ex.expand(self.cwd))
@@ -2573,6 +2569,52 @@ class Script:
 
 # endregion
 # ==================================================================================================
+# region Builtins
+
+class Builtins(dict):
+    def __init__(self) -> None:
+        Utils.merge(self, _builtins.__dict__)
+
+        self.update(
+            ___      = ___,
+            hancho   = sys.modules[__name__],
+            Dict     = Dict,
+            Task     = Task,
+            Tool     = Tool,
+            Dumper   = Dumper,
+            Expander = Expander,
+
+            getcwd   = os.getcwd,
+            dprint   = dprint,
+            dump     = Dumper.dprint,
+            Goodpath = Goodpath,
+            Realpath = Realpath,
+
+            run_cmd  = Utils.run_cmd,
+            weave    = Utils.weave,
+            leaves   = Utils.leaves,
+
+            # FIXME probably want tree versions of all of these?
+            join     = Path.join,
+            split    = Path.split,
+            swapext  = Path.swapext,
+            topdir   = Path.topdir,
+            relpath  = Path.relpath,
+            stem     = Path.stem,
+            #basename = Utils.tree_map(Path.basename),
+            basename = Path.basename,
+
+            dirname  = Path.dirname,
+            resolve  = lambda x : Realpath(x),
+            abspath  = lambda x : Goodpath(x),
+            realpath = lambda x : Realpath(x),
+            goodpath = lambda x : Goodpath(x),
+        )
+
+builtins_proto = Builtins()
+
+# endregion
+# ==================================================================================================
 # region Globals
 
 def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
@@ -2657,6 +2699,27 @@ def start_build() -> int:
 
     return result
 
+class Globals(dict):
+    pass
+
+globals_proto = Globals()
+
+globals_proto.update(
+    name         = "globals",
+    log          = ___,
+    runner       = ___,
+    project      = ___,
+    build        = ___,
+    repo         = ___,
+    script       = ___,
+    stats        = ___,
+    __builtins__ = builtins_proto,
+
+    load_script = load_script,
+    load_repo   = load_repo,
+    start_build = start_build,
+)
+
 # endregion
 # ==================================================================================================
 # region CVGlobals
@@ -2691,75 +2754,6 @@ class CVGlobals:
         return key in self.get()
 
 cv = CVGlobals()
-
-# endregion
-# ==================================================================================================
-# region Builtins
-
-class Builtins(dict):
-    pass
-
-builtins_proto = Builtins()
-
-Utils.merge(builtins_proto, _builtins.__dict__)
-
-builtins_proto.update(
-    ___      = ___,
-    hancho   = sys.modules[__name__],
-    Dict     = Dict,
-    Task     = Task,
-    Tool     = Tool,
-    Dumper   = Dumper,
-    Expander = Expander,
-
-    getcwd   = os.getcwd,
-    dprint   = dprint,
-    dump     = Dumper.dprint,
-    Goodpath = Goodpath,
-    Realpath = Realpath,
-
-    run_cmd  = Utils.run_cmd,
-    weave    = Utils.weave,
-    leaves   = Utils.leaves,
-
-    # FIXME probably want tree versions of all of these?
-    join     = Path.join,
-    split    = Path.split,
-    swapext  = Path.swapext,
-    topdir   = Path.topdir,
-    relpath  = Path.relpath,
-    stem     = Path.stem,
-    #basename = Utils.tree_map(Path.basename),
-    basename = Path.basename,
-
-    dirname  = Path.dirname,
-    resolve  = lambda x : Realpath(x),
-    abspath  = lambda x : Goodpath(x),
-    realpath = lambda x : Realpath(x),
-    goodpath = lambda x : Goodpath(x),
-)
-
-class Globals(dict):
-    pass
-
-globals_proto = Globals()
-
-globals_proto.update(
-    name         = "globals",
-    log          = ___,
-    runner       = ___,
-    project      = ___,
-    build        = ___,
-    repo         = ___,
-    script       = ___,
-    stats        = ___,
-    builtins     = builtins_proto,
-    __builtins__ = builtins_proto,
-
-    load_script = load_script,
-    load_repo   = load_repo,
-    start_build = start_build,
-)
 
 # endregion
 # ==================================================================================================
