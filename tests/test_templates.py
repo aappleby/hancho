@@ -21,7 +21,7 @@ class TestTemplates(unittest.TestCase):
                 *args
             ],
         )
-        self.script = self.globals.script
+        self.script = self.globals['script']
 
     def test_basic_eval(self) -> None:
         d = hancho.Dict(a = 1, b = 2)

@@ -71,7 +71,9 @@ class TestUtils(unittest.TestCase):
         thing3 = MyList(["foo", "bar", MyList(["baz", "qux"]), MyDict(a = "blarp", b = "glarp", c = MyList(["narp", "barp"]))])
         thing4 = MyList(['FOO', 'BAR', MyList(['BAZ', 'QUX']), MyDict(a = 'BLARP', b = 'GLARP', c = MyList(['NARP', 'BARP']))])
 
-        tree_equal(upperize_t(thing3), thing4)
+        thing5 = upperize_t(thing3)
+
+        tree_equal(thing4, thing5)
 
     # ----------------------------------------
     # Cross-joiny stuff

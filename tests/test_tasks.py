@@ -4,6 +4,7 @@ import io
 import os
 import random
 import shutil
+import sys
 import time
 import unittest
 from pathlib import Path
@@ -47,7 +48,10 @@ class TestTasks(unittest.TestCase):
 
     def reset(self, *args : Any) -> None:
 
-        self.stdout = io.StringIO()
+        if True:
+            self.stdout = io.StringIO()
+        else:
+            self.stdout = sys.stdout
 
         self.globals = hancho.init_for_testing(
             in_file = __file__,
@@ -55,18 +59,18 @@ class TestTasks(unittest.TestCase):
             extra_flags = [
                 "--log.level=critical",
                 #"--log.level=debug",
-                #"--log.level=trace",
-                "--log.wrap=True",
+                "--log.level=trace",
+                #"--log.wrap=True",
                 "--build.max_errors=999",
                 *args
             ],
         )
-        self.script = self.globals.script
-        self.log   = self.globals.log
-        self.stats = self.globals.stats
+        self.script = self.globals['script']
+        self.log   = self.globals['log']
+        self.stats = self.globals['stats']
 
     def run_tasks(self, expected : int) -> None:
-        result: int = self.globals.start_build()
+        result: int = hancho.start_build()
         self.assertEqual(result, expected)
 
     def test_trivial(self) -> None:

@@ -34,8 +34,8 @@ class TestApp(unittest.TestCase):
             stdout = self.stdout,
             extra_flags = [*options, *args]
         )
-        self.script = self.globals.script
-        self.log = self.globals.log
+        self.script = self.globals['script']
+        self.log = self.globals['log']
         self.clear_stdout()
 
     def clear_stdout(self) -> None:

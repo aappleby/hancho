@@ -18,11 +18,13 @@ could format your hard drive and email spam to your grandparents. Use responsibl
 
 # FIXME do a template test with two nested dicts a.b and a.c where a.c contains a template referring to b.d
 # FIXME we need tests that actually load .hancho files, repos, nested loads, etc.
+# FIXME check if places we do isinstance(foo, dict) should be type(foo) == dict/Dict
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import builtins as _builtins
 import colorsys
 import contextvars
 import functools
@@ -41,7 +43,7 @@ import time
 import traceback
 from abc import ABCMeta
 from collections import Counter, abc
-from collections.abc import Generator, ItemsView
+from collections.abc import Generator, ItemsView, Mapping
 from contextlib import chdir, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from itertools import product
@@ -98,7 +100,7 @@ base_types: tuple[type, ...] = (int, float, complex, bool, str, tuple, NoneType,
 opaque_types: tuple[type, ...] = (GeneratorType, contextvars.Context, asyncio.Task, ModuleType, type)
 
 # We generally don't need to see the contents of these in a dump.
-default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins", asyncio.Task]
+default_folds: list[Any] = ["_dedupe", "_repos", "_scripts", "_tasks", "builtins", "_public_fields", asyncio.Task]
 
 # endregion
 # ==================================================================================================
@@ -138,6 +140,23 @@ ___ : Any = Sentinel("MISSING")
 class Utils:
 
     @staticmethod
+    def is_list(val : Any) -> TypeIs[list]:
+        return isinstance(val, list)
+
+    @staticmethod
+    def is_dict(val : Any) -> TypeIs[dict]:
+        return isinstance(val, dict)
+
+    @classmethod
+    def is_expandable(cls, text : str) -> bool:
+        if not isinstance(text, str):
+            return False
+        counts: Expander.SplitCount = Expander.split_text(text)
+        return counts.macros > 0
+
+    # ------------------------------------
+
+    @staticmethod
     def hex_to_ansi(hex : int) -> str:
         """Converts a color hex code into an ANSI escape sequence"""
         r : int = (hex >> 16) & 0xFF
@@ -148,9 +167,6 @@ class Utils:
     @staticmethod
     def stringify(variant : Any) -> str:
         """Converts any type into a template-compatible string."""
-
-        if isinstance(variant, ScopeMixin):
-            variant = {k:v for k,v in variant.__dict__.items() if not k.startswith("_")}
 
         result : str = ""
         for v in Utils.leaves(variant):
@@ -174,10 +190,12 @@ class Utils:
         for branch in branches:
             if branch is None:
                 return
-            elif isinstance(branch, list):
+            elif Utils.is_list(branch):
                 for b in branch:
                     yield from Utils.leaves(b)
-            elif isinstance(branch, dict):
+            # Note that we do _not_ traverse into classes that _inherit_ from dict/Dict, only
+            # into actual dict/Dicts.
+            elif Utils.is_dict(branch):
                 for b in branch.values():
                     yield from Utils.leaves(b)
             else:
@@ -192,14 +210,27 @@ class Utils:
 
     @staticmethod
     def map_in_place(map : abc.Callable, key : key_type, val : Any) -> Any:
-        if isinstance(val, dict):
+        if Utils.is_dict(val):
             for k, v in val.items():
                 val[k] = Utils.map_in_place(map, k, v)
-        elif isinstance(val, list):
+        elif Utils.is_list(val):
             for i, v in enumerate(val):
                 val[i] = Utils.map_in_place(map, i, v)
         else:
             val = map(key, val)
+
+        return val
+
+    @staticmethod
+    async def async_map_in_place(map : abc.Callable, key : key_type, val : Any) -> Any:
+        if Utils.is_dict(val):
+            for k, v in val.items():
+                val[k] = await Utils.async_map_in_place(map, k, v)
+        elif Utils.is_list(val):
+            for i, v in enumerate(val):
+                val[i] = await Utils.async_map_in_place(map, i, v)
+        else:
+            val = await map(key, val)
 
         return val
 
@@ -232,30 +263,6 @@ class Utils:
         result: str = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
         return result
 
-#    @staticmethod
-#    def is_scalar(v : Any) -> bool:
-#        if type(v) is object: return True
-#        return not (Utils.is_sequence(v) or Utils.is_mapping(v))
-#
-#    @staticmethod
-#    def is_sequence(v : Any) -> TypeIs[abc.Sequence[Any]]:
-#        return isinstance(v, abc.Sequence) and not isinstance(v, (str, bytes, bytearray))
-#
-#    @staticmethod
-#    def is_mapping(v : Any) -> TypeIs[abc.Mapping[Any, Any]]:
-#        return isinstance(v, abc.Mapping)
-#
-#    @staticmethod
-#    def is_mut_mapping(v : Any) -> TypeIs[abc.MutableMapping[Any, Any]]:
-#        return isinstance(v, abc.MutableMapping)
-
-    @classmethod
-    def is_expandable(cls, text : str) -> bool:
-        if not isinstance(text, str):
-            return False
-        counts: Expander.SplitCount = Expander.split_text(text)
-        return counts.macros > 0
-
     # ------------------------------------
 
     @staticmethod
@@ -264,9 +271,12 @@ class Utils:
 
     @staticmethod
     def instance_tag(obj : Any) -> str:
+        if isinstance(obj, Expander):
+            obj = obj.expand_object
+
         result : str = ""
 
-        if '__name__' in obj:
+        if hasattr(obj, "__dict__") and '__name__' in obj.__dict__:
             result += obj['__name__']
             return result
         else:
@@ -280,9 +290,9 @@ class Utils:
 
         @functools.wraps(func)
         def wrapper(arg: branch[X], *args: P.args, **kwargs: P.kwargs) -> branch[Y]:
-            if isinstance(arg, list):
+            if Utils.is_list(arg):
                 return type(arg)(wrapper(x, *args, **kwargs) for x in arg) #type:ignore
-            elif isinstance(arg, dict):
+            elif Utils.is_dict(arg):
                 return type(arg)(**{k: wrapper(v, *args, **kwargs) for k, v in arg.items()}) #type:ignore
             else:
                 return func(cast(X, arg), *args, **kwargs)
@@ -347,9 +357,9 @@ class Utils:
 
             if lhs2 is rhs2:
                 pass
-            elif isinstance(lhs2, dict) and isinstance(rhs2, dict) and merge_mappings:
+            elif Utils.is_dict(lhs2) and Utils.is_dict(rhs2) and merge_mappings:
                 Utils.merge(lhs2, rhs2)
-            elif isinstance(lhs2, list) and isinstance(rhs2, list) and merge_sequences:
+            elif Utils.is_list(lhs2) and Utils.is_list(rhs2) and merge_sequences:
                 lhs[key] = [*lhs2, *rhs2]
             elif rhs2 is not None:
                 lhs[key] = rhs2
@@ -393,7 +403,7 @@ class ScopeMixin:
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self.get_dict()[key] = new_val
+                self.__dict__[key] = new_val
 
     def get_dict(self) -> dict:
         return self.__dict__
@@ -402,35 +412,35 @@ class ScopeMixin:
     # abc.MutableMapping
 
     def __getitem__(self, key : str) -> Any:
-        result = self.get_dict().get(key, ___)
+        result = self.__dict__.get(key, ___)
         if result is ___:
             raise KeyError(key)
         return result
 
     def __setitem__(self, key : str, val : Any) -> None:
-        self.get_dict()[key] = val
+        self.__dict__[key] = val
 
     def __delitem__(self, key : str) -> None:
-        del self.get_dict()[key]
+        del self.__dict__[key]
 
     def __iter__(self) -> abc.Iterator[Any]:
-        return self.get_dict().__iter__()
+        return self.__dict__.__iter__()
 
     def __len__(self) -> int:
-        return len(self.get_dict())
+        return len(self.__dict__)
 
     def items(self) -> ItemsView[str, Any]:
-        return self.get_dict().items()
+        return self.__dict__.items()
 
     def __contains__(self, key : str) -> bool:
-        return key in self.get_dict()
+        return key in self.__dict__
 
     # ----------------------------------------
     # We don't want the type checker to see this or it will stop type-checking attributes
 
     if not TYPE_CHECKING:
         def __getattr__(self, key : str) -> Any:
-            result = self.get_dict().get(key, ___)
+            result = self.__dict__.get(key, ___)
             if result is ___:
                 raise AttributeError(key)
             return result
@@ -488,7 +498,7 @@ class Tool(Dict):
 # ==================================================================================================
 # region Log
 
-class Log(dict):
+class Log:
 
     """12 half-saturated, 80% value colors evenly spaced around the HSV wheel"""
     RED     = Utils.hex_to_ansi(0xCC6666)
@@ -531,7 +541,7 @@ class Log(dict):
         self.timestamp : bool   = True
         self.width     : int    = shutil.get_terminal_size().columns
         self.stdout    : TextIO = sys.stdout
-        Utils.merge_all(self, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
 
         self._level_int     : int        = getattr(Log, self.level.upper())
         self._time_origin   : float      = time.perf_counter()
@@ -549,23 +559,11 @@ class Log(dict):
 
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.items():
+        for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self[key] = new_val
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
+                self.__dict__[key] = new_val
 
     def indent(self, ansi_color : str = RESET) -> None:
         self._indent_stack.append(ansi_color)
@@ -769,8 +767,11 @@ class Path:
 
     @staticmethod
     def join(head : Goodpath, *tail : str) -> Goodpath:
-        result: str = os.path.join(head, *tail)
-        return Goodpath(result)
+        try:
+            result: str = os.path.join(head, *tail)
+            return Goodpath(result)
+        except TypeError as err:
+            raise err
 
     @staticmethod
     def exists(p : str) -> TypeIs[Realpath] : return os.path.exists(p)
@@ -791,7 +792,7 @@ class Path:
 
 #    @staticmethod
 #    def relpath_t(lhs : Goodpath, rhs : Goodpath) -> tree[str]:
-#        if isinstance(rhs, list):
+#        if Utils.is_list(rhs):
 #            return [Path.relpath_t(lhs, rh) for rh in rhs]
 #
 #        prefix = os.path.commonpath([lhs, rhs])
@@ -871,7 +872,7 @@ class Blocks(list[Literal | Macro]):
 # ==================================================================================================
 # region Stats
 
-class Stats(dict):
+class Stats:
     """
     Trivial build statistics and tracking vars for expansion to catch infinite loops/recursion
     """
@@ -892,24 +893,11 @@ class Stats(dict):
         self.tasks_skipped = 0
         self.build_reasons = Counter()
 
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-
 # endregion
 # ==================================================================================================
 # region Flags
 
-class Flags(dict):
+class Flags:
     """
     Command-line flag handling. The argparse library handles known flags, but the user can also
     use arbitrary "--foo.bar.baz=12" flags as well, which will turn into cv_globals.foo.bar.baz.
@@ -920,18 +908,6 @@ class Flags(dict):
         self.build   = {}
         self.log     = {}
         self.extra   = {}
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
 
     def parse_flags(self, *argv : str) -> None:
 
@@ -1003,7 +979,7 @@ class Flags(dict):
             parts: list[str] = key.split(".")
 
             # Flags we don't know about get shunted to flags.extra
-            if parts[0] not in self:
+            if parts[0] not in self.__dict__:
                 parts = ['extra', *parts]
 
             for part in parts[:-1]:
@@ -1021,7 +997,7 @@ class Flags(dict):
                 try:
                     opt_file = json.load(f)
                     for k, v in opt_file.items():
-                        set_by_path(self, k, v)
+                        set_by_path(self.__dict__, k, v)
                 except Exception as _:
                     print(f"Opt file {opt_file_name!r} invalid!\n")
                     traceback.print_exc()
@@ -1030,7 +1006,7 @@ class Flags(dict):
         # Add argv_vars
 
         for k, v in argv_vars.items():
-            set_by_path(self, k, v)
+            set_by_path(self.__dict__, k, v)
 
         # ------------------------------------
         # Unrecognized command line flags also become config fields if they are flag-like.
@@ -1052,7 +1028,7 @@ class Flags(dict):
                             pass
                     return None
 
-                set_by_path(self, key, convert(val))
+                set_by_path(self.__dict__, key, convert(val))
 
 # endregion
 # ==================================================================================================
@@ -1076,7 +1052,7 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
     """
 
     def __init__(self, object : Any) -> None:
-        self.expand_scope: dict = object if isinstance(object, dict) else object.__dict__
+        self.expand_scope: dict = object if Utils.is_dict(object) else object.__dict__
         self.expand_object: Any = object
 
     # ====================================
@@ -1101,55 +1077,68 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
 
     def find(self, key : str) -> Any:
         cursor : Any = self.expand_object
-        result = ___
-        try:
-            self.trace_start(cursor, "get", key)
 
-            # "local" and "enclosing" scope
-            while cursor is not None:
-                if key in cursor:
-                    result = cursor[key]
-                    return result
-                elif '__up__' in cursor:
-                    next = cursor["__up__"]
-                    if next is None:
-                        break
-                    elif isinstance(next, dict):
-                        self.trace_up(cursor, next, "get", key)
-                        cursor = next
-                    else:
-                        raise TypeError(f"Dict has an __up__ chain that is not a dict - {next}")
-                else:
-                    break
+        # "local" and "enclosing" scope
+        while cursor is not None:
+            if isinstance(cursor, dict):
+                guts = cursor
+            elif hasattr(cursor, "__dict__"):
+                guts = cursor.__dict__
+            else:
+                guts = cursor
+            assert isinstance(guts, Mapping)
 
-            # "global" scope
-            self.trace_up(cursor, cv.get(), "get", key)
-            if key in cv:
-                result = cv[key]
-                return result
+            if key in guts:
+                return guts[key]
+            elif "__up__" in guts:
+                next = guts["__up__"]
+                self.trace_up(cursor, next, "get", key)
+                cursor = next
+            else:
+                break
 
-            # "builtins" scope
-            self.trace_up(cursor, cv.builtins, "get", key)
+        # "global" scope
+        self.trace_up(cursor, cv.get(), "get", key)
+        if key in cv:
+            return cv[key]
 
-            if key in cv.builtins:
-                result = cv.builtins[key]
-                return result
+        # "builtins" scope
+        self.trace_up(cursor, cv.builtins, "get", key)
+        if key in cv.builtins:
+            return cv.builtins[key]
 
-        finally:
-            if result is ___:
-                raise KeyError(key)
-            self.trace_end(cursor, "get", key, result)
+        raise KeyError(key)
 
     # ------------------------------------
 
     def internal_get(self, key : str) -> Any:
-        result = self.find(key)
-        if isinstance(result, (dict, ScopeMixin)):
-            return Expander(result)
-        elif isinstance(result, str):
+        if key == "build":
+            pass
+
+        if key == "repo":
+            pass
+
+        result = ___
+
+        try:
+            self.trace_start(self, "get", key)
+            result = self.find(key)
+        finally:
+            self.trace_end(self, "get", key, result)
+
+        if result is ___:
+            raise KeyError(key)
+
+        if isinstance(result, str):
             return self.expand(result)
-        else:
-            return result
+
+        if isinstance(result, dict):
+            return Expander(result)
+
+        if hasattr(result, "__dict__") and not callable(result):
+            return Expander(result)
+
+        return result
 
     # ==============================================================================================
     # Hancho's template expansions can cause infinite loops, so we need some simple complexity
@@ -1200,6 +1189,8 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
                 # If there's only one literal block, return var instead of the block as var is a
                 # str and blocks[0] is a Literal
                 elif literals == 1 and macros == 0:
+                    if isinstance(var, Expander):
+                        var = var.expand_object
                     return var
 
                 # If there's only one macro block, eval it unless we've done too many evals already.
@@ -1370,12 +1361,12 @@ class Expander(abc.Mapping): # Expander _must_ be a mapping in order to go in ev
             result_color = Utils.obj_to_ansi_color(result)
             #result_type  = type(result)
 
-            if isinstance(result, dict):
+            if Utils.is_dict(result):
                 result_color = Utils.obj_to_ansi_color(result)
 
             #log.trace(f"{indent_color}└─>{scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}) = {Log.RESET}")
 
-            if isinstance(result, (list, dict)):
+            if Utils.is_list(result) or Utils.is_dict(result):
                 cv.log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{Utils.instance_tag(result)}\n")
             else:
                 cv.log.trace(f"{indent_color}└─> {scope_color}{scope_tag}{Log.RESET}.{action_color}{action}({arg}){Log.RESET} = {result_color}{result!r}\n")
@@ -1453,8 +1444,6 @@ class Dumper:  #pragma: no cover
     def _dump_to_str(cls, key : key_type, val : Any, opts : Opts)-> str:
         if opts.cur_depth > 0 and (key in opts.fold or val in opts.fold or type(val) in opts.fold):
             return cls._dump_prefix(key, val, opts) + "<folded>"
-        elif isinstance(val, ScopeMixin):
-            return cls._dump_scope(key, val, opts)
         elif isinstance(val, opaque_types):
             return cls._dump_scalar(key, val, opts)
         elif key == "__up__": # ugh hardcoding. do we ever hit this?
@@ -1468,12 +1457,17 @@ class Dumper:  #pragma: no cover
             return cls._dump_prefix(key, val, opts) + "<hancho module>"
         elif hasattr(type(val), "__dump__"):
             return val.__dump__(key, opts)
-        elif isinstance(val, (list, dict)):
+        elif Utils.is_list(val) or Utils.is_dict(val):
             return cls._dump_vector(key, val, val, opts)
-        elif isinstance(val, str):
+        elif isinstance(val, str):  # noqa: SIM114
             return cls._dump_scalar(key, val, opts)
+        elif val is ___:
+            return cls._dump_scalar(key, val, opts)
+
+        # Dont' do this, otherwise we dump nearly every object as {}
         #elif hasattr(val, "__dict__"):
-        #    return cls._dump_vector(key, val, val.__dict__, opts)
+        #    return cls._dump_scope(key, val, opts)
+
         else:
             return cls._dump_scalar(key, val, opts)
 
@@ -1510,9 +1504,9 @@ class Dumper:  #pragma: no cover
             seen.add(id(val))
 
         items : list[item[Any]]
-        if isinstance(contents, dict):
+        if Utils.is_dict(contents):
             ld, items, rd = "{", list(contents.items()), "}"
-        elif isinstance(contents, list):
+        elif Utils.is_list(contents):
             items = [(None, v) for v in contents]
             if isinstance(contents, tuple):
                 ld : str = "("
@@ -1526,8 +1520,8 @@ class Dumper:  #pragma: no cover
         return cls._dump_items(key, prefix, ld, items, rd, opts)
 
     @classmethod
-    def _dump_scope(cls, key : key_type, val : ScopeMixin, opts : Opts) -> str:
-        return cls._dump_vector(key, val, val.get_dict(), opts)
+    def _dump_scope(cls, key : key_type, val : Any, opts : Opts) -> str:
+        return cls._dump_vector(key, val, val.__dict__, opts)
 
     @classmethod
     def _dump_items(cls, key : key_type, prefix : str, ld : str, items : list[item[Any]], rd : str, opts : Opts) -> str:
@@ -1598,8 +1592,6 @@ class Dumper:  #pragma: no cover
         prefix: str = ""
         if key:
             prefix += f"{key}"
-        elif isinstance(val, ScopeMixin):
-            prefix += type(val).__name__.lower()
         elif hasattr(val, 'name') and val.name is not None:
             prefix += val.name
         elif isinstance(val, (ABCMeta, abc.Callable, ModuleType)):
@@ -1647,7 +1639,7 @@ class Dumper:  #pragma: no cover
         gap  = '   '
         folded = []
 
-        if not isinstance(v, dict):
+        if not Utils.is_dict(v):
             print(leaf + str(k) + ": " + repr(v))
         #elif any(v is f for f in folded) or any(type(v) is f for f in folded):
         elif v in folded or type(v) in folded:
@@ -1664,39 +1656,25 @@ class Dumper:  #pragma: no cover
 # ==================================================================================================
 # region Runner
 
-class Runner(dict):
+class Runner:
 
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         self.name : str = "runner"
         self.max_jobs : int   = "{build.max_jobs}"   #type:ignore
         self.max_errors : int = "{build.max_errors}" #type:ignore
-        Utils.merge_all(self, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
 
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.items():
+        for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self[key] = new_val
+                self.__dict__[key] = new_val
         self._core_sem  : asyncio.Semaphore = asyncio.Semaphore(self.max_jobs)
         self._core_lock : asyncio.Lock = asyncio.Lock()
         self._aio_done_queue : asyncio.Queue = asyncio.Queue()
         self._live_aio_tasks : set[asyncio.Task] = set()
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-
 
     async def acquire(self, count : int) -> int:
         # A task that requires a lot of cores can block tasks behind it in the queue. This is
@@ -1790,7 +1768,7 @@ class Runner(dict):
 # ==================================================================================================
 # region Project
 
-class Project(dict):
+class Project:
     def __init__(self, *args : dict[str, Any], file : str, **kwargs : Any) -> None:
         self.name : str          = "project@" + Path.basename(file)
         self.file : str          = file
@@ -1802,33 +1780,24 @@ class Project(dict):
         self._dedupe = {}
         self._repos : list[Repo] = []
 
-        Utils.merge_all(self, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
+
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
 
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.items():
+        for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self[key] = new_val
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
+                self.__dict__[key] = new_val
 
 # endregion
 # ==================================================================================================
 # region Build
 
-class Build(dict):
+class Build:
     def __init__(self, *args : dict[str, Any], **kwargs : Any) -> None:
         self.name : str         = "build"
         self.dir : str          = "build"
@@ -1841,25 +1810,16 @@ class Build(dict):
         self.max_jobs : int     = os.cpu_count() or 1
         self.max_errors : int   = 0
 
-        Utils.merge_all(self, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
 
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
 
 # endregion
 # ==================================================================================================
 # region Repo
 
-class Repo(dict):
+class Repo:
 
     def __init__(self, file : str, *args : dict[str, Any], **kwargs : Any) -> None:
         self.name : str      = "repo@" + Path.basename(file)
@@ -1870,30 +1830,21 @@ class Repo(dict):
 
         self.stat_db_path : Goodpath = "{goodpath(join(dest, 'hancho.json'))}" #type:ignore
         self.comp_db_path : Goodpath = "{goodpath(join(dest, 'compile_commands.json'))}" #type:ignore
-        Utils.merge_all(self, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
 
         self._scripts : list[Script] = []
         self._stat_db : dict[str, dict] = {}
 
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
+
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.items():
+        for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self[key] = new_val
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
+                self.__dict__[key] = new_val
 
     def load_stat_db(self) -> None:
         if Path.isfile(self.stat_db_path):
@@ -2015,7 +1966,7 @@ class Repo(dict):
 # ==================================================================================================
 # region Task
 
-class Task(ScopeMixin):
+class Task:
 
     class FAILED(Exception):    pass
     class CANCELLED(Exception): pass
@@ -2036,9 +1987,9 @@ class Task(ScopeMixin):
         self.strict: bool           = "{build.strict}"   # type:ignore
 
         for m in [*args, kwargs]:
-            if not isinstance(m, dict):
+            if not Utils.is_dict(m):
                 m = m.__dict__
-            Utils.merge(self.get_dict(), m)
+            Utils.merge(self.__dict__, m)
 
         # Expand all input fields. These _must_ be expandable into filenames or tasks right now, as
         # we need to queue up input tasks before this task starts.
@@ -2046,21 +1997,21 @@ class Task(ScopeMixin):
         # We can't expand the rest yet as commands or paths may depend on the paths of the output
         # files from the input tasks, which we don't know until the input tasks are complete.
 
-        self._public_fields = [x for x in self.get_dict() if not x.startswith("_")]
+        self._public_fields = [x for x in self.__dict__ if not x.startswith("_")]
 
         ex = Expander(self)
         self.cwd = Realpath(ex.expand(self.cwd))
 
-        for k, v in self.get_dict().items():
+        for k, v in self.__dict__.items():
             if k.startswith("in_") and isinstance(v, str):
-                self.get_dict()[k] = ex.expand(v)
+                self.__dict__[k] = ex.expand(v)
 
         # ----------------------------------------
         # Private fields
 
         # Add all input fields that are tasks to _in_tasks so we can await them later.
         in_tasks = []
-        for v in self.get_dict().values():
+        for v in self.__dict__.values():
             for x in Utils.leaves(v):
                 if isinstance(x, Task):
                     in_tasks.append(x)
@@ -2098,33 +2049,22 @@ class Task(ScopeMixin):
         if Utils.in_event_loop():
             self.queue_task()
 
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
+
+    def __getattr__(self, key : str) -> Any:
+        return getattr(self, key)
+
+    def get_dict(self) -> dict:
+        return self.__dict__
+
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.items():
+        for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self[key] = new_val
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-#    # Silence unknown attribute accesses on Task
-#    def __getattr__(self, name: str) -> Any:
-#        # __getattr__ is there, it's just hidden for type checking
-#        return super().__getattr__(name) # type: ignore
-#
-#    def __setattr__(self, name: str, value: Any) -> None:
-#        super().__setattr__(name, value)
+                self.__dict__[key] = new_val
 
     def __copy__(self) -> NoReturn:
         # Tasks must _not_ be copied or we'll hit the "Multiple tasks generate file X" checks.
@@ -2281,21 +2221,21 @@ class Task(ScopeMixin):
         # inputs at task A and task A's inputs at task B and it blows up, that's on you.
 
         # Await all input tasks and check if any of them had errors.
-        for field_name in self._public_fields:
-            for leaf in Utils.leaves(self.get_dict()[field_name]):
-                if isinstance(leaf, Task):
-                    if leaf._aio_task is None:
-                        raise AssertionError("One of a task's input sub-tasks was not started") #pragma: no cover
-                    await leaf._aio_task
-                    if leaf._error is not None:
-                        raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {leaf._error}")
 
-        # Replace all tasks in the dict with their _out_files.
-        Utils.map_in_place(
-            lambda k, v : v._out_files if isinstance(v, Task) else v,
-            ___,
-            self.get_dict()
-        )
+        async def await_field(key : str, val : Any) -> Any:
+            if not isinstance(val, Task):
+                return val
+
+            if val._aio_task is None:
+                raise AssertionError("One of a task's input sub-tasks was not started") #pragma: no cover
+
+            await val._aio_task
+            if val._error is not None:
+                raise Task.CANCELLED(f"Task {hex(id(self))} is cancelled due to {val._error}")
+
+            return val._out_files
+
+        await Utils.async_map_in_place(await_field, key = ___, val = self.__dict__)
 
 
     def expand_task(self) -> None:
@@ -2312,15 +2252,14 @@ class Task(ScopeMixin):
         # Then we expand all io fields and fix their paths.
         try:
             ex.trace_start(ex.expand_object, "range", "expand io fields")
-            io_fields = [k for k in self.get_dict() if k.startswith("in_") or k.startswith("out_")]
+            io_fields = [k for k in self.__dict__ if k.startswith("in_") or k.startswith("out_")]
 
             for field_name in io_fields:
-                files = getattr(self, field_name)
-                if isinstance(files, Task):
-                    files = files._out_files
+                files = self.__dict__[field_name]
                 files = [ex.expand(file) for file in Utils.leaves(files)]
+
                 goodfiles = self.fix_paths(field_name, files, script_root, script_dest)
-                setattr(self, field_name, goodfiles[0] if len(goodfiles) == 1 else goodfiles)
+                self.__dict__[field_name] = goodfiles[0] if len(goodfiles) == 1 else goodfiles
 
                 if field_name == "in_depfile":
                     if len(goodfiles) > 1:
@@ -2346,9 +2285,9 @@ class Task(ScopeMixin):
         required_keys = ['command', 'cwd', 'depformat', 'desc', 'dest', 'dry_run', 'force', 'job_size', 'name']
 
         for key in required_keys:
-            val = self.get_dict()[key]
+            val = self.__dict__[key]
             if isinstance(val, str):
-                self.get_dict()[key] = ex.expand(val)
+                self.__dict__[key] = ex.expand(val)
 
         if not self.dry_run:
             for file in Utils.leaves(self._out_files):
@@ -2555,55 +2494,52 @@ class Task(ScopeMixin):
 # This is not a types.ModuleType, but it still works fine as one. Making it a ModuleType is a bit
 # annoying to work with.
 
-class Script(dict):
+class Script:
     """
     The Script class holds the self/local/globals/builtin scopes we use when exec()ing the script.
     Any extra args passed into hancho.load(*args, **kwargs) are attached to the script global
     context.
     """
 
-    def __init__(self : Script, *args : dict[str, Any], file : str, globals : Globals, **kwargs : Any) -> None:
+    def __init__(self : Script, *args : dict[str, Any], file : str, globals : dict, **kwargs : Any) -> None:
         self.name : str      = "script@" + Path.basename(file)
         self.file : str      = file
         self.path : Realpath = "{realpath(file)}" #type:ignore
         self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
         self.dest : Goodpath = "{join(repo.dest, relpath(script.root, repo.root))}" #type:ignore
 
-        assert "Dict" in globals.__builtins__
+        assert "Dict" in globals['__builtins__']
 
-        self._locals  = {}
-        self._globals = globals # All functions declared in the script will bind to this _globals dict.
-        self._tasks   = []
+        self._locals   = {}
+        self._globals  = globals # All functions declared in the script will bind to this _globals dict.
+        self._tasks    = []
 
         # FIXME we still need a test for load(script, test_these_script_args, and_also_these)
-        Utils.merge_all(self, *args, **kwargs)
+        Utils.merge_all(self.__dict__, *args, **kwargs)
+
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
 
     def __expand__(self) -> None:
         ex = Expander(self)
-        for key, old_val in self.items():
+        for key, old_val in self.__dict__.items():
             if Utils.is_expandable(old_val):
                 new_val = ex.expand(old_val)
                 assert not Utils.is_expandable(new_val)
-                self[key] = new_val
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
+                self.__dict__[key] = new_val
 
     def __getattr__(self, key : str) -> Any:
         """
         Script.attribute name resolution goes self -> locals -> globals -> builtins.
         """
-        if key in self:
-            return self[key]
+        if key in self.__dict__:
+            return self.__dict__[key]
         elif key in self._locals:
             return self._locals[key]
         elif key in self._globals:
             return self._globals[key]
-        elif key in self._builtins:
-            return self._builtins[key]
+        elif key in self._globals['__builtins__']:
+            return self._globals['__builtins__'][key]
         else:
             raise AttributeError(key)
 
@@ -2614,7 +2550,7 @@ class Script(dict):
 
         with (
             cv.set(self._globals),
-            self._globals.log.indenter(Log.VERBOSE, Log.ORANGE),
+            self._globals['log'].indenter(Log.VERBOSE, Log.ORANGE),
             chdir(self.root),
             open(str(self.path), encoding="utf-8") as file,
         ):
@@ -2633,141 +2569,91 @@ class Script(dict):
 # ==================================================================================================
 # region Globals
 
-class Globals(dict):
-    """
-    The Globals class holds global objects for Hancho (log/runner/project/etc. below) and makes
-    those objects accessible to templates and scripts.
+def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
 
-    The load/start_build methods are for use in scripts and test suites.
-    """
+    # Create new_globals/new_script but do _not_ exec the script yet.
+    new_file   = Realpath(Expander(cv.script).expand(file))
+    new_repo   = Repo(new_file) if is_repo else cv.repo
 
-    def __init__(self, *args : dict, **kwargs : Any) -> None:
-        self.name = "globals"
+    new_globals = dict(cv.get())
+    new_globals['repo'] = new_repo
+    new_globals['script'] = Script(*args, file = new_file, globals = new_globals, **kwargs)
+    new_script = new_globals['script']
 
-        self.log      : Log       = ___
-        self.runner   : Runner    = ___
-        self.project  : Project   = ___
-        self.build    : Build     = ___
-        self.repo     : Repo      = ___
-        self.script   : Script    = ___
-        self.stats    : Stats     = ___
-        self.builtins : Builtins  = Builtins.inst
-
-        assert "Dict" in Builtins.inst
-
-        self.__builtins__ = Builtins.inst
-
-        # These methods *must* be copied to the instance, as client code doesn't see anything
-        # that's not in the dict storage.
-
-        self.load_script = self.load_script
-        self.load_repo   = self.load_repo
-        self.start_build = self.start_build
-
-        for arg in [*args, kwargs]:
-            self.update(**arg)
-
-    def __expand__(self) -> None:
-        ex = Expander(self)
-        for key, old_val in self.items():
-            if Utils.is_expandable(old_val):
-                new_val = ex.expand(old_val)
-                assert not Utils.is_expandable(new_val)
-                self[key] = new_val
-
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
-
-
-    def _load(self, file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
-
-        # Create new_globals/new_script but do _not_ exec the script yet.
-        new_file   = Realpath(Expander(self.script).expand(file))
-        new_repo   = Repo(new_file) if is_repo else self.repo
-
-        new_globals = Globals(self, repo = new_repo)
-        new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
-        new_script = new_globals.script
-
-        # Expand repo/script - *must* be done in new_globals otherwise things break.
-        with cv.set(new_globals):
-            if is_repo:
-                new_repo.__expand__()
-                new_repo.load_stat_db()
-            new_script.__expand__()
-
-        # Check if the requested script + args is a duplicate.
-        public_stuff = {k:v for k, v in new_script.items() if not k.startswith("_")}
-        dedupe_key = Dumper.any_to_key(public_stuff)
-        if dupe := cv.project._dedupe.get(dedupe_key, None):
-            cv.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
-            return dupe
-
-        # Script is not a dupe, add it to the project and exec it.
-        new_globals.project._dedupe[dedupe_key] = new_script
-        new_repo._scripts.append(new_script)
+    # Expand repo/script - *must* be done in new_globals otherwise things break.
+    with cv.set(new_globals):
         if is_repo:
-            new_globals.project._repos.append(new_repo)
+            new_repo.__expand__()
+            new_repo.load_stat_db()
+        new_script.__expand__()
 
-        new_globals.log.verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
-        new_script.exec()
+    # Check if the requested script + args is a duplicate.
+    public_stuff = {k:v for k, v in new_script.items() if not k.startswith("_")}
+    dedupe_key = Dumper.any_to_key(public_stuff)
+    if dupe := cv.project._dedupe.get(dedupe_key, None):
+        cv.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
+        return dupe
 
-        return new_script
+    # Script is not a dupe, add it to the project and exec it.
+    new_globals['project']._dedupe[dedupe_key] = new_script
+    new_repo._scripts.append(new_script)
+    if is_repo:
+        new_globals['project']._repos.append(new_repo)
 
-    def load_script(self, file : str, *args : Any, **kwargs : Any) -> Script:
-        return self._load(file, False, *args, **kwargs)
+    new_globals['log'].verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
+    new_script.exec()
 
-    def load_repo(self, file : str, *args : Any, **kwargs : Any) -> Script:
-        return self._load(file, True, *args, **kwargs)
+    return new_script
 
-    def start_build(self) -> int:
+def load_script(file : str, *args : Any, **kwargs : Any) -> Script:
+    return _load(file, False, *args, **kwargs)
 
-        # ------------------------------------
-        # Select the set of tasks to run.
+def load_repo(file : str, *args : Any, **kwargs : Any) -> Script:
+    return _load(file, True, *args, **kwargs)
 
-        if self.project.targets:
-            for target in self.project.targets:
-                # Enable all tasks whose name contains any of the targets
-                for repo in self.project._repos:
-                    for task in repo.yield_tasks():
-                        if task.name is not None and target in task.name:
-                            task.queue_task()
+def start_build() -> int:
 
-        elif self.build.all_targets:
-            for repo in self.project._repos:
+    # ------------------------------------
+    # Select the set of tasks to run.
+
+    if cv.project.targets:
+        for target in cv.project.targets:
+            # Enable all tasks whose name contains any of the targets
+            for repo in cv.project._repos:
                 for task in repo.yield_tasks():
-                    task.queue_task()
+                    if task.name is not None and target in task.name:
+                        task.queue_task()
 
-        else:
-            # Enable all tasks in the top repo
-            for task in self.project._repos[0].yield_tasks():
+    elif cv.build.all_targets:
+        for repo in cv.project._repos:
+            for task in repo.yield_tasks():
                 task.queue_task()
 
-        # ------------------------------------
-        # Run the tasks.
+    else:
+        # Enable all tasks in the top repo
+        for task in cv.project._repos[0].yield_tasks():
+            task.queue_task()
 
-        result: int = self.runner.run_tasks()
+    # ------------------------------------
+    # Run the tasks.
 
-        # ------------------------------------
-        # Update stat DBs.
+    result: int = cv.runner.run_tasks()
 
-        if not self.build.dry_run:
-            for repo in self.project._repos:
-                for task in repo.yield_tasks():
-                    if task._complete:
-                        task.update_repo_stat_db()
-                repo.save_stat_db()
+    # ------------------------------------
+    # Update stat DBs.
 
-        return result
+    if not cv.build.dry_run:
+        for repo in cv.project._repos:
+            for task in repo.yield_tasks():
+                if task._complete:
+                    task.update_repo_stat_db()
+            repo.save_stat_db()
+
+    return result
+
+# endregion
+# ==================================================================================================
+# region CVGlobals
 
 class CVGlobals:
     """
@@ -2778,12 +2664,12 @@ class CVGlobals:
     instead of only "cv.get().project", "cv.project" also works.
     """
     def __init__(self) -> None:
-        self._cv : contextvars.ContextVar[Globals] = contextvars.ContextVar("globals")
+        self._cv : contextvars.ContextVar[dict] = contextvars.ContextVar("globals")
 
-    def get(self) -> Globals:
+    def get(self) -> dict:
         return self._cv.get()
 
-    def set(self, globals : Globals) -> contextvars.Token[Globals]:
+    def set(self, globals : dict) -> contextvars.Token[dict]:
         return self._cv.set(globals)
 
     def __getattr__(self, key : str) -> Any:
@@ -2805,61 +2691,69 @@ cv = CVGlobals()
 # region Builtins
 
 class Builtins(dict):
+    pass
 
-    def __init__(self) -> None:
-        import builtins as _builtins
-        Utils.merge(self, _builtins.__dict__)
+builtins_proto = Builtins()
 
-        self.___      = ___
-        self.hancho   = sys.modules[__name__]
-        self.Dict     = Dict
-        self.Task     = Task
-        self.Tool     = Tool
-        self.Dumper   = Dumper
-        self.Expander = Expander
+Utils.merge(builtins_proto, _builtins.__dict__)
 
-        self.getcwd   = os.getcwd
-        self.dprint   = dprint
-        self.dump     = Dumper.dprint
-        self.Goodpath = Goodpath
-        self.Realpath = Realpath
+builtins_proto.update(
+    ___      = ___,
+    hancho   = sys.modules[__name__],
+    Dict     = Dict,
+    Task     = Task,
+    Tool     = Tool,
+    Dumper   = Dumper,
+    Expander = Expander,
 
-        self.run_cmd  = Utils.run_cmd
-        self.weave    = Utils.weave
-        self.leaves   = Utils.leaves
+    getcwd   = os.getcwd,
+    dprint   = dprint,
+    dump     = Dumper.dprint,
+    Goodpath = Goodpath,
+    Realpath = Realpath,
 
-        # FIXME probably want tree versions of all of these?
+    run_cmd  = Utils.run_cmd,
+    weave    = Utils.weave,
+    leaves   = Utils.leaves,
 
-        self.join     = Path.join
-        self.split    = Path.split
-        self.swapext  = Path.swapext
-        self.topdir   = Path.topdir
-        self.relpath  = Path.relpath
-        self.stem     = Path.stem
-        #self.basename = Utils.tree_map(Path.basename)
-        self.basename = Path.basename
+    # FIXME probably want tree versions of all of these?
+    join     = Path.join,
+    split    = Path.split,
+    swapext  = Path.swapext,
+    topdir   = Path.topdir,
+    relpath  = Path.relpath,
+    stem     = Path.stem,
+    #basename = Utils.tree_map(Path.basename),
+    basename = Path.basename,
 
-        self.dirname  = Path.dirname
-        self.resolve  = lambda x : Realpath(x)
-        self.abspath  = lambda x : Goodpath(x)
-        self.realpath = lambda x : Realpath(x)
-        self.goodpath = lambda x : Goodpath(x)
+    dirname  = Path.dirname,
+    resolve  = lambda x : Realpath(x),
+    abspath  = lambda x : Goodpath(x),
+    realpath = lambda x : Realpath(x),
+    goodpath = lambda x : Goodpath(x),
+)
 
-    def __getattr__(self, key : str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError as err:
-            raise AttributeError(key) from err
+class Globals(dict):
+    pass
 
-    def __setattr__(self, key : str, val : Any) -> None:
-        try:
-            super().__setitem__(key, val)
-        except KeyError as err:
-            raise AttributeError(key) from err
+globals_proto = Globals()
 
-    inst = ___
+globals_proto.update(
+    name         = "globals",
+    log          = ___,
+    runner       = ___,
+    project      = ___,
+    build        = ___,
+    repo         = ___,
+    script       = ___,
+    stats        = ___,
+    builtins     = builtins_proto,
+    __builtins__ = builtins_proto,
 
-Builtins.inst = Builtins()
+    load_script = load_script,
+    load_repo   = load_repo,
+    start_build = start_build,
+)
 
 # endregion
 # ==================================================================================================
@@ -2881,86 +2775,86 @@ def _start() -> int:
 
 def main() -> int:
     globals = init(sys.argv, sys.stdout)
-    globals.log.verbose(Log.ORANGE + f"┌─── Running top script {globals.script.path}\n")
-    globals.script.exec()
+    globals['log'].verbose(Log.ORANGE + f"┌─── Running top script {globals['script'].path}\n")
+    globals['script'].exec()
 
     # ------------------------------------
     # Build everything
 
     time_a = time.perf_counter()
     with cv.set(globals):
-        result = globals.start_build()
+        result = start_build()
     time_b = time.perf_counter()
-    globals.log.verbose(text=Log.DBLUE + f"Build took {time_b - time_a:8.6f} seconds\n")
+    globals['log'].verbose(text=Log.DBLUE + f"Build took {time_b - time_a:8.6f} seconds\n")
 
     # ------------------------------------
     # Print build stats
 
-    globals.stats.tasks_created = 0
-    for repo in globals.project._repos:
-        globals.stats.tasks_created += len(list(repo.yield_tasks()))
+    globals['stats'].tasks_created = 0
+    for repo in globals['project']._repos:
+        globals['stats'].tasks_created += len(list(repo.yield_tasks()))
 
-    globals.log._log(
+    globals['log']._log(
         Log.VERBOSE,
         Log.DBLUE,
-        "Stats: " + Dumper.dump(globals.stats, print_id=False) + "\n",
+        "Stats: " + Dumper.dump(globals['stats'], print_id=False) + "\n",
     )
 
     # ------------------------------------
     # Print pass/fail
 
-    if globals.stats.tasks_failed or globals.stats.tasks_broken:
-        globals.log.error("BUILD FAILED\n")
-    elif globals.stats.tasks_finished:
-        globals.log.info(Log.GREEN + "BUILD PASSED\n")
+    if globals['stats'].tasks_failed or globals['stats'].tasks_broken:
+        globals['log'].error("BUILD FAILED\n")
+    elif globals['stats'].tasks_finished:
+        globals['log'].info(Log.GREEN + "BUILD PASSED\n")
     else:
-        globals.log.info(Log.BLUE + "BUILD CLEAN\n")
+        globals['log'].info(Log.BLUE + "BUILD CLEAN\n")
 
     # ------------------------------------
     # Done
 
-    globals.log._flush()
+    globals['log']._flush()
 
     return result
 
-def init(argv : list[str], stdout : TextIO) -> Globals:
+def init(argv : list[str], stdout : TextIO) -> dict:
     flags = Flags()
     flags.parse_flags(*argv)
     flags.log['stdout'] = stdout
 
     file = flags.project.get('file', "build.hancho")
 
-    globals = Globals()
-    globals.log = Log(flags.log)
+    globals = Globals(globals_proto)
+    globals['log'] = Log(flags.log)
 
-    globals.log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    globals.log.verbose(Log.GRAY3 + "Verbose mode on\n")
-    globals.log.debug  (Log.GRAY3 + "Debug mode on\n")
-    globals.log.trace  (Log.GRAY3 + "Trace mode on\n")
+    globals['log'].verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    globals['log'].verbose(Log.GRAY3 + "Verbose mode on\n")
+    globals['log'].debug  (Log.GRAY3 + "Debug mode on\n")
+    globals['log'].trace  (Log.GRAY3 + "Trace mode on\n")
 
-    globals.runner   = Runner()
-    globals.project  = Project(flags.project, file = file)
-    globals.build    = Build(flags.build)
-    globals.repo     = Repo(file = file)
-    globals.script   = Script(file = file, globals = globals)
-    globals.stats    = Stats()
+    globals['runner']  = Runner()
+    globals['project'] = Project(flags.project, file = file)
+    globals['build']   = Build(flags.build)
+    globals['repo']    = Repo(file = file)
+    globals['script']  = Script(file = file, globals = globals)
+    globals['stats']   = Stats()
     #globals.builtins = Builtins.inst
 
     Utils.merge(globals, flags.extra)
 
     with cv.set(globals):
-        globals.runner.__expand__()
-        globals.project.__expand__()
-        globals.repo.__expand__()
-        globals.script.__expand__()
+        globals['runner'].__expand__()
+        globals['project'].__expand__()
+        globals['repo'].__expand__()
+        globals['script'].__expand__()
 
-        globals.repo.load_stat_db()
-        globals.repo._scripts.append(globals.script)
-        globals.project._repos.append(globals.repo)
+        globals['repo'].load_stat_db()
+        globals['repo']._scripts.append(globals['script'])
+        globals['project']._repos.append(globals['repo'])
 
     return globals
 
-def init_for_testing(in_file: str, stdout: TextIO, extra_flags: list[str]) -> Globals:
+def init_for_testing(in_file: str, stdout: TextIO, extra_flags: list[str]) -> dict:
     argv = [f"--project.file={in_file}", *(extra_flags or [])]
     globals = init(argv, stdout)
     cv.set(globals)
