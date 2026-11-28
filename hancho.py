@@ -906,10 +906,10 @@ class Flags:
     """
 
     def __init__(self) -> None:
-        self.project = {}
-        self.build   = {}
-        self.log     = {}
-        self.extra   = {}
+        self.project = Dict()
+        self.build   = Dict()
+        self.log     = Dict()
+        self.extra   = Dict()
 
     def __dump__(self, key : str, opts : Dumper.Opts) -> str:
         return Dumper._dump_scope(key, self, opts)
@@ -2503,14 +2503,14 @@ class Script:
     context.
     """
 
-    def __init__(self : Script, *args : dict[str, Any], file : str, globals : dict, **kwargs : Any) -> None:
+    def __init__(self : Script, *args : dict[str, Any], file : str, globals : Globals, **kwargs : Any) -> None:
         self.name : str      = "script@" + Path.basename(file)
         self.file : str      = file
         self.path : Realpath = "{realpath(file)}" #type:ignore
         self.root : Realpath = "{realpath(dirname(path))}" #type:ignore
         self.dest : Goodpath = "{join(repo.dest, relpath(script.root, repo.root))}" #type:ignore
 
-        assert "Dict" in globals['__builtins__']
+        assert "Dict" in globals.__builtins__
 
         self._locals   = {}
         self._globals  = globals # All functions declared in the script will bind to this _globals dict.
@@ -2540,8 +2540,8 @@ class Script:
             return self._locals[key]
         elif key in self._globals:
             return self._globals[key]
-        elif key in self._globals['__builtins__']:
-            return self._globals['__builtins__'][key]
+        elif key in self._globals.__builtins__:
+            return self._globals.__builtins__[key]
         else:
             raise AttributeError(key)
 
@@ -2552,7 +2552,7 @@ class Script:
 
         with (
             cv.set(self._globals),
-            self._globals['log'].indenter(Log.VERBOSE, Log.ORANGE),
+            self._globals.log.indenter(Log.VERBOSE, Log.ORANGE),
             chdir(self.root),
             open(str(self.path), encoding="utf-8") as file,
         ):
@@ -2618,10 +2618,11 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
     new_file   = Realpath(Expander(cv.script).expand(file))
     new_repo   = Repo(new_file) if is_repo else cv.repo
 
-    new_globals = dict(cv.get())
-    new_globals['repo'] = new_repo
-    new_globals['script'] = Script(*args, file = new_file, globals = new_globals, **kwargs)
-    new_script = new_globals['script']
+    new_globals = Globals()
+    new_globals.update(**cv.get())
+    new_globals.repo = new_repo
+    new_globals.script = Script(*args, file = new_file, globals = new_globals, **kwargs)
+    new_script = new_globals.script
 
     # Expand repo/script - *must* be done in new_globals otherwise things break.
     with cv.set(new_globals):
@@ -2638,12 +2639,12 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
         return dupe
 
     # Script is not a dupe, add it to the project and exec it.
-    new_globals['project']._dedupe[dedupe_key] = new_script
+    new_globals.project._dedupe[dedupe_key] = new_script
     new_repo._scripts.append(new_script)
     if is_repo:
-        new_globals['project']._repos.append(new_repo)
+        new_globals.project._repos.append(new_repo)
 
-    new_globals['log'].verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
+    new_globals.log.verbose(Log.ORANGE + f"┌─── Running script {new_script.path}\n")
     new_script.exec()
 
     return new_script
@@ -2765,8 +2766,8 @@ def _start() -> int:
 
 def main() -> int:
     globals = init(sys.argv, sys.stdout)
-    globals['log'].verbose(Log.ORANGE + f"┌─── Running top script {globals['script'].path}\n")
-    globals['script'].exec()
+    globals.log.verbose(Log.ORANGE + f"┌─── Running top script {globals.script.path}\n")
+    globals.script.exec()
 
     # ------------------------------------
     # Build everything
@@ -2775,72 +2776,72 @@ def main() -> int:
     with cv.set(globals):
         result = start_build()
     time_b = time.perf_counter()
-    globals['log'].verbose(text=Log.DBLUE + f"Build took {time_b - time_a:8.6f} seconds\n")
+    globals.log.verbose(text=Log.DBLUE + f"Build took {time_b - time_a:8.6f} seconds\n")
 
     # ------------------------------------
     # Print build stats
 
-    globals['stats'].tasks_created = 0
-    for repo in globals['project']._repos:
-        globals['stats'].tasks_created += len(list(repo.yield_tasks()))
+    globals.stats.tasks_created = 0
+    for repo in globals.project._repos:
+        globals.stats.tasks_created += len(list(repo.yield_tasks()))
 
-    globals['log']._log(
+    globals.log._log(
         Log.VERBOSE,
         Log.DBLUE,
-        "Stats: " + Dumper.dump(globals['stats'], print_id=False) + "\n",
+        "Stats: " + Dumper.dump(globals.stats, print_id=False) + "\n",
     )
 
     # ------------------------------------
     # Print pass/fail
 
-    if globals['stats'].tasks_failed or globals['stats'].tasks_broken:
-        globals['log'].error("BUILD FAILED\n")
-    elif globals['stats'].tasks_finished:
-        globals['log'].info(Log.GREEN + "BUILD PASSED\n")
+    if globals.stats.tasks_failed or globals.stats.tasks_broken:
+        globals.log.error("BUILD FAILED\n")
+    elif globals.stats.tasks_finished:
+        globals.log.info(Log.GREEN + "BUILD PASSED\n")
     else:
-        globals['log'].info(Log.BLUE + "BUILD CLEAN\n")
+        globals.log.info(Log.BLUE + "BUILD CLEAN\n")
 
     # ------------------------------------
     # Done
 
-    globals['log']._flush()
+    globals.log._flush()
 
     return result
 
-def init(argv : list[str], stdout : TextIO) -> dict:
+def init(argv : list[str], stdout : TextIO) -> Globals:
     flags = Flags()
     flags.parse_flags(*argv)
-    flags.log['stdout'] = stdout
+    flags.log.stdout = stdout
 
     file = flags.project.get('file', "build.hancho")
 
     globals = Globals()
-    globals['log'] = Log(flags.log)
+    globals.log = Log(flags.log)
 
-    globals['log'].verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
-    globals['log'].verbose(Log.GRAY3 + "Verbose mode on\n")
-    globals['log'].debug  (Log.GRAY3 + "Debug mode on\n")
-    globals['log'].trace  (Log.GRAY3 + "Trace mode on\n")
+    globals.log.verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
+    globals.log.verbose(Log.GRAY3 + "Verbose mode on\n")
+    globals.log.debug  (Log.GRAY3 + "Debug mode on\n")
+    globals.log.trace  (Log.GRAY3 + "Trace mode on\n")
 
-    globals['runner']  = Runner()
-    globals['project'] = Project(flags.project, file = file)
-    globals['build']   = Build(flags.build)
-    globals['repo']    = Repo(file = file)
-    globals['script']  = Script(file = file, globals = globals)
-    globals['stats']   = Stats()
+    globals.runner  = Runner()
+    globals.project = Project(flags.project, file = file)
+    globals.build   = Build(flags.build)
+    globals.repo    = Repo(file = file)
+    globals.script  = Script(file = file, globals = globals)
+    globals.stats   = Stats()
     #globals.builtins = Builtins.inst
 
     Utils.merge(globals, flags.extra)
 
     with cv.set(globals):
-        globals['runner'].__expand__()
-        globals['project'].__expand__()
-        globals['repo'].__expand__()
-        globals['script'].__expand__()
+        globals.runner.__expand__()
+        globals.project.__expand__()
+        globals.repo.__expand__()
+        globals.script.__expand__()
 
-        globals['repo'].load_stat_db()
-        globals['repo']._scripts.append(globals['script'])
-        globals['project']._repos.append(globals['repo'])
+        globals.repo.load_stat_db()
+        globals.repo._scripts.append(globals.script)
+        globals.project._repos.append(globals.repo)
 
     return globals
 
