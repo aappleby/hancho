@@ -2571,47 +2571,42 @@ class Script:
 # ==================================================================================================
 # region Builtins
 
-class Builtins(dict):
+class Builtins(Dict):
     def __init__(self) -> None:
         Utils.merge(self, _builtins.__dict__)
 
-        self.update(
-            ___      = ___,
-            hancho   = sys.modules[__name__],
-            Dict     = Dict,
-            Task     = Task,
-            Tool     = Tool,
-            Dumper   = Dumper,
-            Expander = Expander,
+        self.___      = ___
+        self.hancho   = sys.modules[__name__]
+        self.Dict     = Dict
+        self.Task     = Task
+        self.Tool     = Tool
+        self.Dumper   = Dumper
+        self.Expander = Expander
 
-            getcwd   = os.getcwd,
-            dprint   = dprint,
-            dump     = Dumper.dprint,
-            Goodpath = Goodpath,
-            Realpath = Realpath,
+        self.getcwd   = os.getcwd
+        self.dprint   = dprint
+        self.dump     = Dumper.dprint
+        self.Goodpath = Goodpath
+        self.Realpath = Realpath
 
-            run_cmd  = Utils.run_cmd,
-            weave    = Utils.weave,
-            leaves   = Utils.leaves,
+        self.run_cmd  = Utils.run_cmd
+        self.weave    = Utils.weave
+        self.leaves   = Utils.leaves
 
-            # FIXME probably want tree versions of all of these?
-            join     = Path.join,
-            split    = Path.split,
-            swapext  = Path.swapext,
-            topdir   = Path.topdir,
-            relpath  = Path.relpath,
-            stem     = Path.stem,
-            #basename = Utils.tree_map(Path.basename),
-            basename = Path.basename,
+        # FIXME probably want tree versions of all of these?
+        self.join     = Path.join
+        self.split    = Path.split
+        self.swapext  = Path.swapext
+        self.topdir   = Path.topdir
+        self.relpath  = Path.relpath
+        self.stem     = Path.stem
+        self.basename = Path.basename
 
-            dirname  = Path.dirname,
-            resolve  = lambda x : Realpath(x),
-            abspath  = lambda x : Goodpath(x),
-            realpath = lambda x : Realpath(x),
-            goodpath = lambda x : Goodpath(x),
-        )
-
-builtins_proto = Builtins()
+        self.dirname  = Path.dirname
+        self.resolve  = lambda x : Realpath(x)
+        self.abspath  = lambda x : Goodpath(x)
+        self.realpath = lambda x : Realpath(x)
+        self.goodpath = lambda x : Goodpath(x)
 
 # endregion
 # ==================================================================================================
@@ -2699,26 +2694,21 @@ def start_build() -> int:
 
     return result
 
-class Globals(dict):
-    pass
+class Globals(Dict):
+    def __init__(self) -> None:
+        self.name         = "globals"
+        self.log          = ___
+        self.runner       = ___
+        self.project      = ___
+        self.build        = ___
+        self.repo         = ___
+        self.script       = ___
+        self.stats        = ___
+        self.__builtins__ = Builtins()
 
-globals_proto = Globals()
-
-globals_proto.update(
-    name         = "globals",
-    log          = ___,
-    runner       = ___,
-    project      = ___,
-    build        = ___,
-    repo         = ___,
-    script       = ___,
-    stats        = ___,
-    __builtins__ = builtins_proto,
-
-    load_script = load_script,
-    load_repo   = load_repo,
-    start_build = start_build,
-)
+        self.load_script = load_script
+        self.load_repo   = load_repo
+        self.start_build = start_build
 
 # endregion
 # ==================================================================================================
@@ -2824,7 +2814,7 @@ def init(argv : list[str], stdout : TextIO) -> dict:
 
     file = flags.project.get('file', "build.hancho")
 
-    globals = Globals(globals_proto)
+    globals = Globals()
     globals['log'] = Log(flags.log)
 
     globals['log'].verbose(Log.GRAY3 + f"Command line : {" ".join(sys.argv)}\n")
