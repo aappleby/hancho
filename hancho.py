@@ -893,6 +893,9 @@ class Stats:
         self.tasks_skipped = 0
         self.build_reasons = Counter()
 
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
+
 # endregion
 # ==================================================================================================
 # region Flags
@@ -908,6 +911,9 @@ class Flags:
         self.build   = {}
         self.log     = {}
         self.extra   = {}
+
+    def __dump__(self, key : str, opts : Dumper.Opts) -> str:
+        return Dumper._dump_scope(key, self, opts)
 
     def parse_flags(self, *argv : str) -> None:
 
@@ -2588,7 +2594,7 @@ def _load(file : str, is_repo : bool, *args : Any, **kwargs : Any) -> Script:
         new_script.__expand__()
 
     # Check if the requested script + args is a duplicate.
-    public_stuff = {k:v for k, v in new_script.items() if not k.startswith("_")}
+    public_stuff = {k:v for k, v in new_script.__dict__.items() if not k.startswith("_")}
     dedupe_key = Dumper.any_to_key(public_stuff)
     if dupe := cv.project._dedupe.get(dedupe_key, None):
         cv.log.verbose(Log.LIME + f"Deduped {new_script.path}\n")
